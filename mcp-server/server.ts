@@ -469,12 +469,13 @@ server.tool(
 	"Mark one or more message receipts as read. Pass the receiptIds from check_messages.",
 	{
 		receiptIds: z
-			.array(z.string())
-			.describe("Array of messageReceipt IDs to mark as read"),
+			.union([z.array(z.string()), z.string()])
+			.describe("Receipt IDs to mark as read — array or single string"),
 	},
 	async ({ receiptIds }) => {
+		const receiptIdsArray = Array.isArray(receiptIds) ? receiptIds : [receiptIds];
 		const count = await convex.mutation(api.messages.markAsRead, {
-			receiptIds: receiptIds as any,
+			receiptIds: receiptIdsArray as any,
 		});
 
 		return {
@@ -1246,8 +1247,8 @@ server.tool(
 			.string()
 			.describe("Topic category — e.g. 'architecture', 'revenue', 'product'"),
 		participants: z
-			.array(z.string())
-			.describe("Who participated — e.g. ['pi', 'laurent']"),
+			.union([z.array(z.string()), z.string()])
+			.describe("Who participated — e.g. ['pi', 'laurent'] or 'pi'"),
 		content: z.string().describe("Full briefing content"),
 		decisions: z
 			.array(z.string())
@@ -1268,10 +1269,11 @@ server.tool(
 		linkedMemoryIds,
 		createdBy,
 	}) => {
+		const participantsArray = Array.isArray(participants) ? participants : [participants];
 		const noteId = await convex.mutation(api.briefingNotes.create, {
 			title,
 			topic,
-			participants,
+			participants: participantsArray,
 			content,
 			decisions,
 			linkedMemoryIds: linkedMemoryIds as any,
