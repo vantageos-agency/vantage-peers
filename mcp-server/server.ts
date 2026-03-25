@@ -828,13 +828,19 @@ server.tool(
 
 server.tool(
 	"complete_task",
-	"Mark a task as done. Shortcut for setting status=done.",
+	"Mark a task as done. ALWAYS provide a completionNote describing what was actually done. " +
+		"This is mandatory — never complete a task without explaining the work.",
 	{
 		taskId: z.string().describe("Convex document ID of the task to complete"),
+		completionNote: z
+			.string()
+			.optional()
+			.describe("What was actually done — summary of work completed (MANDATORY)"),
 	},
-	async ({ taskId }) => {
+	async ({ taskId, completionNote }) => {
 		await convex.mutation(api.tasks.complete, {
 			taskId: taskId as any,
+			completionNote,
 		});
 
 		return {

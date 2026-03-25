@@ -75,6 +75,7 @@ export const get = query({
 			assignedTo: assigneeValidator,
 			priority: priorityValidator,
 			status: statusValidator,
+			completionNote: v.optional(v.string()),
 			claimedByInstance: v.optional(v.string()),
 			dependsOn: v.optional(v.array(v.id("tasks"))),
 			missionId: v.optional(v.id("missions")),
@@ -116,6 +117,7 @@ export const list = query({
 			assignedTo: assigneeValidator,
 			priority: priorityValidator,
 			status: statusValidator,
+			completionNote: v.optional(v.string()),
 			claimedByInstance: v.optional(v.string()),
 			dependsOn: v.optional(v.array(v.id("tasks"))),
 			missionId: v.optional(v.id("missions")),
@@ -233,7 +235,10 @@ export const update = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const complete = mutation({
-	args: { taskId: v.id("tasks") },
+	args: {
+		taskId: v.id("tasks"),
+		completionNote: v.optional(v.string()),
+	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
@@ -247,6 +252,10 @@ export const complete = mutation({
 			completedAt: now,
 			updatedAt: now,
 		};
+
+		if (args.completionNote !== undefined) {
+			patch.completionNote = args.completionNote;
+		}
 
 		// Calculate actualMinutes if startedAt exists
 		if (task.startedAt) {
@@ -302,6 +311,7 @@ export const listByMission = query({
 			assignedTo: assigneeValidator,
 			priority: priorityValidator,
 			status: statusValidator,
+			completionNote: v.optional(v.string()),
 			claimedByInstance: v.optional(v.string()),
 			dependsOn: v.optional(v.array(v.id("tasks"))),
 			missionId: v.optional(v.id("missions")),

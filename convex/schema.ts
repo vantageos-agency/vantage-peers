@@ -222,6 +222,7 @@ export default defineSchema({
 			v.literal("blocked"),
 			v.literal("done"),
 		),
+		completionNote: v.optional(v.string()), // what was actually done — written on complete/review
 		claimedByInstance: v.optional(v.string()), // which instance is working on this
 		dependsOn: v.optional(v.array(v.id("tasks"))), // tasks that must be done first
 		missionId: v.optional(v.id("missions")),
