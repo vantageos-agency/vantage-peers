@@ -218,6 +218,7 @@ export default defineSchema({
 		status: v.union(
 			v.literal("todo"),
 			v.literal("in_progress"),
+			v.literal("review"),
 			v.literal("blocked"),
 			v.literal("done"),
 		),

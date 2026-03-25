@@ -616,7 +616,7 @@ const prioritySchema = z
 	.describe("Task priority level");
 
 const taskStatusSchema = z
-	.enum(["todo", "in_progress", "blocked", "done"])
+	.enum(["todo", "in_progress", "review", "blocked", "done"])
 	.describe("Task status");
 
 server.tool(

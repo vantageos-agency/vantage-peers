@@ -23,6 +23,7 @@ const priorityValidator = v.union(
 const statusValidator = v.union(
 	v.literal("todo"),
 	v.literal("in_progress"),
+	v.literal("review"),
 	v.literal("blocked"),
 	v.literal("done"),
 );
@@ -73,6 +74,7 @@ export const get = query({
 			assignedTo: assigneeValidator,
 			priority: priorityValidator,
 			status: statusValidator,
+			claimedByInstance: v.optional(v.string()),
 			missionId: v.optional(v.id("missions")),
 			estimatedMinutes: v.optional(v.number()),
 			actualMinutes: v.optional(v.number()),
@@ -112,6 +114,7 @@ export const list = query({
 			assignedTo: assigneeValidator,
 			priority: priorityValidator,
 			status: statusValidator,
+			claimedByInstance: v.optional(v.string()),
 			missionId: v.optional(v.id("missions")),
 			estimatedMinutes: v.optional(v.number()),
 			actualMinutes: v.optional(v.number()),
@@ -296,6 +299,7 @@ export const listByMission = query({
 			assignedTo: assigneeValidator,
 			priority: priorityValidator,
 			status: statusValidator,
+			claimedByInstance: v.optional(v.string()),
 			missionId: v.optional(v.id("missions")),
 			estimatedMinutes: v.optional(v.number()),
 			actualMinutes: v.optional(v.number()),
