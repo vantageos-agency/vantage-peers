@@ -1,0 +1,51 @@
+{
+  "name": "vantage-memory",
+  "version": "1.0.0",
+  "description": "Turnkey memory, messaging, and task coordination plugin for Claude Code. Connects any Claude Code instance to a shared Convex-backed memory layer with two specialized agents, five skills, and two lifecycle hooks.",
+  "author": "VantageMemory",
+  "license": "MIT",
+  "components": {
+    "agents": [
+      "agents/memory-manager.md",
+      "agents/message-handler.md"
+    ],
+    "skills": [
+      "skills/check-tasks/SKILL.md",
+      "skills/check-messages/SKILL.md",
+      "skills/close-day/SKILL.md",
+      "skills/standup/SKILL.md",
+      "skills/recall/SKILL.md"
+    ],
+    "hooks": [
+      "hooks/session-start.py",
+      "hooks/session-end.py"
+    ],
+    "templates": [
+      "templates/settings.json",
+      "templates/env.example",
+      "templates/claude-md-snippet.md"
+    ]
+  },
+  "requirements": {
+    "runtime": "bun >= 1.0 || node >= 18",
+    "backend": "convex"
+  },
+  "configuration": {
+    "CONVEX_URL": {
+      "required": true,
+      "description": "Convex deployment URL (e.g. https://your-deployment.convex.cloud)"
+    },
+    "VM_ROLE": {
+      "required": true,
+      "description": "Agent role name, lowercase (e.g. pi, tau, phi)"
+    },
+    "VM_INSTANCE": {
+      "required": true,
+      "description": "Instance identifier, lowercase (e.g. pi-laptop, tau-server)"
+    },
+    "VM_PROJECT": {
+      "required": false,
+      "description": "Default project namespace for recall"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": ["*"]
+  },
+  "mcpServers": {
+    "vantage-memory": {
+      "command": "bun",
+      "args": ["{{PLUGIN_PATH}}/mcp-server/server.ts"],
+      "env": {
+        "CONVEX_URL": "{{CONVEX_URL}}"
+      }
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "VM_ROLE={{ROLE}} VM_INSTANCE={{INSTANCE}} python3 {{PLUGIN_PATH}}/plugin/hooks/session-start.py"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "VM_ROLE={{ROLE}} VM_INSTANCE={{INSTANCE}} python3 {{PLUGIN_PATH}}/plugin/hooks/session-end.py"
+          }
+        ]
+      }
+    ]
+  }
+}
