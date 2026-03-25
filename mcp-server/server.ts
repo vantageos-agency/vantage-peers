@@ -378,27 +378,32 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tool: store_message
+// Tool: send_message
 // ─────────────────────────────────────────────────────────────────────────────
 
 server.tool(
-	"store_message",
-	"Record a peer-to-peer message between orchestrators. Call this after every send_message " +
-		"to keep a permanent log of all inter-orchestrator conversations in Convex.",
+	"send_message",
+	"Send a message to one, many, or all orchestrators. " +
+		"channel: 'broadcast' = all, 'tau' = DM, 'tau,phi' = multi. " +
+		"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
 	{
 		from: creatorSchema.describe("Sender orchestrator"),
-		to: creatorSchema.describe("Recipient orchestrator"),
+		channel: z
+			.string()
+			.describe(
+				"Recipients: 'broadcast' | 'tau' | 'pi,phi' (comma-separated)",
+			),
 		content: z.string().describe("Message content"),
 		sessionDay: z
 			.number()
 			.int()
 			.optional()
-			.describe("Day number (e.g. 16 for Day 16)"),
+			.describe("Day number (e.g. 19 for Day 19)"),
 	},
-	async ({ from, to, content, sessionDay }) => {
-		const messageId = await convex.mutation(api.messages.storeMessage, {
+	async ({ from, channel, content, sessionDay }) => {
+		const messageId = await convex.mutation(api.messages.sendMessage, {
 			from,
-			to,
+			channel,
 			content,
 			sessionDay,
 		});
@@ -407,7 +412,132 @@ server.tool(
 			content: [
 				{
 					type: "text",
-					text: JSON.stringify({ messageId, from, to }, null, 2),
+					text: JSON.stringify({ messageId, from, channel }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: check_messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"check_messages",
+	"Check for unread messages. Returns messages with receiptIds for marking as read. " +
+		"Replaces claude-peers check_messages.",
+	{
+		recipient: creatorSchema.describe("Which orchestrator to check messages for"),
+	},
+	async ({ recipient }) => {
+		const messages = await convex.query(api.messages.checkNewMessages, {
+			recipient,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text:
+						messages.length === 0
+							? "No new messages."
+							: JSON.stringify(messages, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: mark_as_read
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"mark_as_read",
+	"Mark one or more message receipts as read. Pass the receiptIds from check_messages.",
+	{
+		receiptIds: z
+			.array(z.string())
+			.describe("Array of messageReceipt IDs to mark as read"),
+	},
+	async ({ receiptIds }) => {
+		const count = await convex.mutation(api.messages.markAsRead, {
+			receiptIds: receiptIds as any,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ markedAsRead: count }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: set_summary
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"set_summary",
+	"Set a brief summary of what you are currently working on. " +
+		"Visible to other orchestrators via list_peers. Uses the profiles table.",
+	{
+		orchestratorId: z
+			.enum(["pi", "tau", "phi"])
+			.describe("Which orchestrator to update"),
+		summary: z
+			.string()
+			.describe("1-2 sentence summary of current work"),
+	},
+	async ({ orchestratorId, summary }) => {
+		await convex.mutation(api.profiles.updateDynamic, {
+			orchestratorId,
+			currentTask: summary,
+			lastSeen: Date.now(),
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ orchestratorId, summary }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_peers
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_peers",
+	"List all orchestrator profiles with their current status and summary. " +
+		"Replaces claude-peers list_peers.",
+	{},
+	async () => {
+		const profiles = await convex.query(api.profiles.listProfiles, {});
+
+		const peers = profiles.map((p: any) => ({
+			id: p.orchestratorId,
+			name: p.name,
+			role: p.static.role,
+			workspace: p.static.workspace,
+			currentTask: p.dynamic.currentTask ?? "idle",
+			lastSeen: new Date(p.dynamic.lastSeen).toISOString(),
+			sessionCount: p.dynamic.sessionCount,
+		}));
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(peers, null, 2),
 				},
 			],
 		};
@@ -420,7 +550,7 @@ server.tool(
 
 server.tool(
 	"list_messages",
-	"List recorded peer messages. Filter by day, sender, or sender+recipient pair.",
+	"List message history. Filter by day or sender. For unread messages use check_messages instead.",
 	{
 		sessionDay: z
 			.number()
@@ -428,7 +558,6 @@ server.tool(
 			.optional()
 			.describe("Filter to a specific day"),
 		from: creatorSchema.optional().describe("Filter by sender"),
-		to: creatorSchema.optional().describe("Filter by recipient"),
 		limit: z
 			.number()
 			.int()
@@ -438,11 +567,10 @@ server.tool(
 			.default(100)
 			.describe("Max messages to return (default 100)"),
 	},
-	async ({ sessionDay, from, to, limit }) => {
+	async ({ sessionDay, from, limit }) => {
 		const messages = await convex.query(api.messages.listMessages, {
 			sessionDay,
 			from,
-			to,
 			limit: limit ?? 100,
 		});
 

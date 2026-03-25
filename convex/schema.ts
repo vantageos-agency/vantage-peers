@@ -126,19 +126,32 @@ export default defineSchema({
 	}).index("by_orchestrator", ["orchestratorId"]),
 
 	// ── messages ──────────────────────────────────────────────────────────────
-	// Every peer-to-peer message between orchestrators. Auto-stored by MCP server.
-	// Enables: conversation replay, diary generation, delegation debugging.
+	// Inter-orchestrator messaging. Replaces claude-peers.
+	// One message row per send. Recipients tracked via messageReceipts table.
+	// channel: "broadcast" | "pi" | "tau" | "phi" | "pi,tau"
+	// to: deprecated (kept for migration compatibility, will be removed)
 	messages: defineTable({
 		from: creatorValidator,
-		to: creatorValidator,
+		channel: v.optional(v.string()), // optional during migration
+		to: v.optional(creatorValidator), // deprecated — kept for existing data
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
 		createdAt: v.number(),
 	})
 		.index("by_day", ["sessionDay"])
 		.index("by_from", ["from", "createdAt"])
-		.index("by_to", ["to", "createdAt"])
-		.index("by_pair", ["from", "to", "createdAt"]),
+		.index("by_channel", ["channel", "createdAt"]),
+
+	// ── messageReceipts ──────────────────────────────────────────────────────
+	// One row per recipient per message. Tracks read status.
+	// check_new_messages = query receipts where recipient=X AND readAt=undefined
+	messageReceipts: defineTable({
+		messageId: v.id("messages"),
+		recipient: creatorValidator,
+		readAt: v.optional(v.number()), // undefined = unread, ms epoch = read
+	})
+		.index("by_recipient_unread", ["recipient", "readAt"])
+		.index("by_message", ["messageId"]),
 
 	// ── missions ──────────────────────────────────────────────────────────────
 	missions: defineTable({
