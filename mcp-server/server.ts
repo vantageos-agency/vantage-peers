@@ -67,6 +67,19 @@ const severitySchema = z
 	.describe("Episode severity — critical = cross-orchestrator lesson");
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper: normalize string|array inputs to array (agents pass strings for arrays)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toArray(val: string | string[] | undefined): string[] | undefined {
+	if (val === undefined) return undefined;
+	return Array.isArray(val) ? val : [val];
+}
+
+// Schema helper: accepts string or array of strings
+const flexArray = z.union([z.array(z.string()), z.string()]);
+const flexArrayOptional = flexArray.optional();
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Server setup
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -631,9 +644,7 @@ server.tool(
 			.string()
 			.optional()
 			.describe("Project name — e.g. 'vantage-starter', 'perfect-ai-agent'"),
-		tags: z
-			.array(z.string())
-			.optional()
+		tags: flexArrayOptional
 			.describe("Optional tags for categorization"),
 		assignedTo: assigneeSchema,
 		priority: prioritySchema,
@@ -674,11 +685,11 @@ server.tool(
 			title,
 			description,
 			project,
-			tags,
+			tags: toArray(tags),
 			assignedTo,
 			priority,
 			status,
-			dependsOn: dependsOn as any,
+			dependsOn: toArray(dependsOn) as any,
 			missionId: missionId as any,
 			estimatedMinutes,
 			dueDate,
@@ -753,7 +764,7 @@ server.tool(
 		title: z.string().optional().describe("New title"),
 		description: z.string().optional().describe("New description"),
 		project: z.string().optional().describe("New project"),
-		tags: z.array(z.string()).optional().describe("New tags"),
+		tags: flexArrayOptional.describe("New tags"),
 		assignedTo: assigneeSchema.optional().describe("Reassign to"),
 		priority: prioritySchema.optional().describe("New priority"),
 		status: taskStatusSchema.optional().describe("New status"),
@@ -799,11 +810,11 @@ server.tool(
 			title,
 			description,
 			project,
-			tags,
+			tags: toArray(tags),
 			assignedTo,
 			priority,
 			status,
-			dependsOn: dependsOn as any,
+			dependsOn: toArray(dependsOn) as any,
 			missionId: missionId as any,
 			estimatedMinutes,
 			actualMinutes,
@@ -944,7 +955,7 @@ server.tool(
 		status: missionStatusSchema.default("brainstorm"),
 		priority: missionPrioritySchema,
 		pilot: creatorSchema.describe("Lead orchestrator for this mission"),
-		agents: z.array(z.string()).describe("List of agent names involved"),
+		agents: flexArray.describe("List of agent names involved"),
 		brief: z.string().optional().describe("Mission brief / instructions"),
 		startDate: z.number().optional().describe("Planned start date (Unix ms)"),
 		targetDate: z
@@ -975,7 +986,7 @@ server.tool(
 			status,
 			priority,
 			pilot,
-			agents,
+			agents: toArray(agents) as string[],
 			brief,
 			startDate,
 			targetDate,
@@ -1056,7 +1067,7 @@ server.tool(
 		status: missionStatusSchema.optional().describe("New status"),
 		priority: missionPrioritySchema.optional().describe("New priority"),
 		pilot: creatorSchema.optional().describe("New pilot"),
-		agents: z.array(z.string()).optional().describe("New agents list"),
+		agents: flexArrayOptional.describe("New agents list"),
 		brief: z.string().optional().describe("New brief"),
 		startDate: z.number().optional().describe("New start date (Unix ms)"),
 		targetDate: z.number().optional().describe("New target date (Unix ms)"),
@@ -1084,7 +1095,7 @@ server.tool(
 			status,
 			priority,
 			pilot,
-			agents,
+			agents: toArray(agents) as string[],
 			brief,
 			startDate,
 			targetDate,
@@ -1142,19 +1153,17 @@ server.tool(
 		date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
 		orchestrator: creatorSchema.describe("Which orchestrator is writing"),
 		content: z.string().describe("Full diary entry content"),
-		highlights: z
-			.array(z.string())
-			.optional()
+		highlights: flexArrayOptional
 			.describe("Key highlights of the day"),
-		blockers: z.array(z.string()).optional().describe("Blockers encountered"),
+		blockers: flexArrayOptional.describe("Blockers encountered"),
 	},
 	async ({ date, orchestrator, content, highlights, blockers }) => {
 		const diaryId = await convex.mutation(api.diary.write, {
 			date,
 			orchestrator,
 			content,
-			highlights,
-			blockers,
+			highlights: toArray(highlights),
+			blockers: toArray(blockers),
 		});
 
 		return {
@@ -1250,13 +1259,9 @@ server.tool(
 			.union([z.array(z.string()), z.string()])
 			.describe("Who participated — e.g. ['pi', 'laurent'] or 'pi'"),
 		content: z.string().describe("Full briefing content"),
-		decisions: z
-			.array(z.string())
-			.optional()
+		decisions: flexArrayOptional
 			.describe("Decisions made during the briefing"),
-		linkedMemoryIds: z
-			.array(z.string())
-			.optional()
+		linkedMemoryIds: flexArrayOptional
 			.describe("Convex document IDs of related memories"),
 		createdBy: creatorSchema,
 	},
@@ -1269,14 +1274,13 @@ server.tool(
 		linkedMemoryIds,
 		createdBy,
 	}) => {
-		const participantsArray = Array.isArray(participants) ? participants : [participants];
 		const noteId = await convex.mutation(api.briefingNotes.create, {
 			title,
 			topic,
-			participants: participantsArray,
+			participants: toArray(participants) as string[],
 			content,
-			decisions,
-			linkedMemoryIds: linkedMemoryIds as any,
+			decisions: toArray(decisions),
+			linkedMemoryIds: toArray(linkedMemoryIds) as any,
 			createdBy,
 		});
 
