@@ -1,0 +1,1 @@
+/root/coding/elpi-corp/.claude/agents/proposal-generator.md

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)", "Write(**)", "Edit(**)", "Bash(*)", "Agent(*)",
+      "Glob(*)", "Grep(*)", "mcp__vantage-memory__*", "mcp__convex__*"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/session-start-pi-vm.py"
+          }
+        ]
+      }
+    ]
+  }
+}
