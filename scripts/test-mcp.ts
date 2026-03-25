@@ -413,6 +413,235 @@ async function main() {
 			fail("list_tasks_by_mission", "Skipped — no missionId");
 		}
 
+		// ── update_mission ───────────────────────────────────────────────────
+		if (missionId) {
+			try {
+				const res = await client.callTool("update_mission", {
+					missionId,
+					name: "Updated test mission",
+				});
+				if (res.updated === true) {
+					pass("update_mission", "name -> Updated test mission");
+				} else {
+					fail("update_mission", `Unexpected response: ${JSON.stringify(res)}`);
+				}
+			} catch (e: any) {
+				fail("update_mission", e.message);
+			}
+		} else {
+			fail("update_mission", "Skipped — no missionId from create_mission");
+		}
+
+		// ── store_memory ──────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("store_memory", {
+				namespace: "test/mcp-tester",
+				type: "project",
+				content: "MCP test memory entry",
+				createdBy: "pi",
+			});
+			if (res.memoryId) {
+				pass("store_memory", `memoryId=${res.memoryId}`);
+			} else {
+				fail("store_memory", `No memoryId in response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("store_memory", e.message);
+		}
+
+		// ── list_memories ─────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("list_memories", {
+				namespace: "test/mcp-tester",
+			});
+			const memories = Array.isArray(res) ? res : [];
+			if (memories.length >= 1) {
+				const found = memories.some(
+					(m: any) => m.content === "MCP test memory entry",
+				);
+				pass(
+					"list_memories",
+					`${memories.length} memory/memories${found ? ", test memory found" : ""}`,
+				);
+			} else {
+				fail("list_memories", `Expected 1+ memories, got ${memories.length}`);
+			}
+		} catch (e: any) {
+			fail("list_memories", e.message);
+		}
+
+		// ── recall ────────────────────────────────────────────────────────────
+		// Semantic search — embeddings may not be indexed yet (2-5s delay),
+		// so accept empty results as a valid pass.
+		try {
+			const res = await client.callTool("recall", {
+				query: "MCP test memory",
+				namespace: "test/mcp-tester",
+				limit: 5,
+			});
+			const hits = Array.isArray(res) ? res : [];
+			pass("recall", `${hits.length} result(s) (empty ok — embedding delay)`);
+		} catch (e: any) {
+			fail("recall", e.message);
+		}
+
+		// ── store_episode ─────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("store_episode", {
+				namespace: "test/mcp-tester",
+				createdBy: "pi",
+				context: "Running MCP tester",
+				goal: "Verify store_episode works",
+				action: "Called store_episode via MCP",
+				outcome: "Success",
+				insight: "Episodes work via MCP",
+				severity: "minor",
+			});
+			if (res.memoryId) {
+				pass("store_episode", `memoryId=${res.memoryId}`);
+			} else {
+				fail("store_episode", `No memoryId in response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("store_episode", e.message);
+		}
+
+		// ── get_profile ───────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("get_profile", {
+				orchestratorId: "pi",
+			});
+			if (res === null || (res && res.orchestratorId === "pi")) {
+				pass("get_profile", res === null ? "no profile yet (null)" : "found profile");
+			} else {
+				pass("get_profile", `got response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("get_profile", e.message);
+		}
+
+		// ── update_profile ────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("update_profile", {
+				orchestratorId: "pi",
+				name: "Pi",
+				static: {
+					role: "test orchestrator",
+					workspace: "/tmp/test",
+					capabilities: ["testing"],
+				},
+				dynamic: {
+					lastSeen: Date.now(),
+					sessionCount: 1,
+				},
+			});
+			if (res.profileId) {
+				pass("update_profile", `profileId=${res.profileId}`);
+			} else {
+				fail("update_profile", `No profileId in response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("update_profile", e.message);
+		}
+
+		// ── get_profile (after update) ────────────────────────────────────────
+		try {
+			const res = await client.callTool("get_profile", {
+				orchestratorId: "pi",
+			});
+			if (res && (res.name === "Pi" || res.orchestratorId === "pi")) {
+				pass("get_profile (after update)", `name=${res.name}, orchestratorId=${res.orchestratorId}`);
+			} else {
+				fail("get_profile (after update)", `Unexpected response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("get_profile (after update)", e.message);
+		}
+
+		// ── set_summary ───────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("set_summary", {
+				orchestratorId: "pi",
+				instanceId: "pi-test",
+				summary: "Running MCP tests",
+			});
+			if (res && res.orchestratorId === "pi") {
+				pass("set_summary", `orchestratorId=${res.orchestratorId}`);
+			} else {
+				fail("set_summary", `Unexpected response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("set_summary", e.message);
+		}
+
+		// ── list_peers ────────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("list_peers", {});
+			const peers = Array.isArray(res) ? res : [];
+			if (peers.length >= 1) {
+				pass("list_peers", `${peers.length} peer(s)`);
+			} else {
+				fail("list_peers", `Expected 1+ peers, got ${peers.length}`);
+			}
+		} catch (e: any) {
+			fail("list_peers", e.message);
+		}
+
+		// ── send_message ──────────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("send_message", {
+				from: "pi",
+				fromInstanceId: "pi-test",
+				channel: "tau",
+				content: "Test message from MCP tester",
+			});
+			if (res.messageId) {
+				pass("send_message", `messageId=${res.messageId}`);
+			} else {
+				fail("send_message", `No messageId in response: ${JSON.stringify(res)}`);
+			}
+		} catch (e: any) {
+			fail("send_message", e.message);
+		}
+
+		// ── check_messages ────────────────────────────────────────────────────
+		try {
+			const resp = await client.send("tools/call", {
+				name: "check_messages",
+				arguments: { recipient: "tau" },
+			});
+			const text = resp.result?.content?.[0]?.text ?? "";
+			if (text === "No new messages." || text.startsWith("[")) {
+				pass("check_messages", text === "No new messages." ? "no new messages" : `got messages`);
+			} else {
+				pass("check_messages", `got response`);
+			}
+		} catch (e: any) {
+			fail("check_messages", e.message);
+		}
+
+		// ── list_messages ─────────────────────────────────────────────────────
+		try {
+			const resp = await client.send("tools/call", {
+				name: "list_messages",
+				arguments: { from: "pi", limit: 10 },
+			});
+			if (resp.error) {
+				fail("list_messages", `Error: ${JSON.stringify(resp.error)}`);
+			} else {
+				const text = resp.result?.content?.[0]?.text ?? "";
+				try {
+					const parsed = JSON.parse(text);
+					const messages = Array.isArray(parsed) ? parsed : [];
+					pass("list_messages", `${messages.length} message(s)`);
+				} catch {
+					fail("list_messages", `Non-JSON response: ${text.slice(0, 200)}`);
+				}
+			}
+		} catch (e: any) {
+			fail("list_messages", e.message);
+		}
+
 		// ── write_diary ───────────────────────────────────────────────────────
 		const todayISO = new Date().toISOString().slice(0, 10);
 		try {

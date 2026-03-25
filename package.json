@@ -20,6 +20,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "typescript": "^5.9.3"
+    "convex-test": "^0.0.44",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.1"
   }
 }

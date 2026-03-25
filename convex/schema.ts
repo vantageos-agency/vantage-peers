@@ -137,12 +137,10 @@ export default defineSchema({
 	// Inter-orchestrator messaging. Replaces claude-peers.
 	// One message row per send. Recipients tracked via messageReceipts table.
 	// channel: "broadcast" | "pi" | "tau" | "phi" | "pi,tau"
-	// to: deprecated (kept for migration compatibility, will be removed)
 	messages: defineTable({
 		from: creatorValidator,
 		fromInstanceId: v.optional(v.string()), // "pi-chromebook", "tau-vps-1"
-		channel: v.optional(v.string()), // optional during migration
-		to: v.optional(creatorValidator), // deprecated — kept for existing data
+		channel: v.string(),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
 		createdAt: v.number(),

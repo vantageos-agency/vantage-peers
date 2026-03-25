@@ -187,9 +187,10 @@ export const listMessages = query({
 	returns: v.array(
 		v.object({
 			_id: v.id("messages"),
+			_creationTime: v.number(),
 			from: creatorValidator,
-			channel: v.optional(v.string()),
-			to: v.optional(creatorValidator),
+			fromInstanceId: v.optional(v.string()),
+			channel: v.string(),
 			content: v.string(),
 			sessionDay: v.optional(v.number()),
 			createdAt: v.number(),
