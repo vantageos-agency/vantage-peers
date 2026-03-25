@@ -57,6 +57,7 @@ export default defineSchema({
 
 		// Which orchestrator (or system) created this memory
 		createdBy: creatorValidator,
+		instanceId: v.optional(v.string()), // which instance wrote this
 
 		// Graph relations to other memories (Supermemory pattern)
 		// "updates" supersedes target (sets target.isLatest = false)
@@ -101,12 +102,17 @@ export default defineSchema({
 		.index("by_namespace_type", ["namespace", "type", "isLatest"]),
 
 	// ── profiles ────────────────────────────────────────────────────────────────
-	// One row per orchestrator. Supermemory static/dynamic split pattern.
+	// One row per INSTANCE. orchestratorId = role (pi/tau/phi).
+	// instanceId = unique running copy (pi-chromebook, pi-vps, tau-client-acme).
+	// Multiple instances can share the same role.
 	// static  = stable identity facts (role, workspace, capabilities)
 	// dynamic = mutable session state (current task, last seen, session count)
 	profiles: defineTable({
-		// "pi" | "tau" | "phi"
+		// Role: "pi" | "tau" | "phi"
 		orchestratorId: v.string(),
+
+		// Unique instance identifier: "pi-chromebook" | "pi-vps" | "tau-vps-1"
+		instanceId: v.optional(v.string()),
 
 		name: v.string(),
 
@@ -123,7 +129,9 @@ export default defineSchema({
 			lastSeen: v.number(), // ms since epoch
 			sessionCount: v.number(),
 		}),
-	}).index("by_orchestrator", ["orchestratorId"]),
+	})
+		.index("by_orchestrator", ["orchestratorId"])
+		.index("by_instance", ["instanceId"]),
 
 	// ── messages ──────────────────────────────────────────────────────────────
 	// Inter-orchestrator messaging. Replaces claude-peers.
@@ -132,6 +140,7 @@ export default defineSchema({
 	// to: deprecated (kept for migration compatibility, will be removed)
 	messages: defineTable({
 		from: creatorValidator,
+		fromInstanceId: v.optional(v.string()), // "pi-chromebook", "tau-vps-1"
 		channel: v.optional(v.string()), // optional during migration
 		to: v.optional(creatorValidator), // deprecated — kept for existing data
 		content: v.string(),
@@ -147,10 +156,12 @@ export default defineSchema({
 	// check_new_messages = query receipts where recipient=X AND readAt=undefined
 	messageReceipts: defineTable({
 		messageId: v.id("messages"),
-		recipient: creatorValidator,
+		recipient: creatorValidator, // role-level: "pi" | "tau" | "phi"
+		recipientInstanceId: v.optional(v.string()), // instance-level: "pi-vps"
 		readAt: v.optional(v.number()), // undefined = unread, ms epoch = read
 	})
 		.index("by_recipient_unread", ["recipient", "readAt"])
+		.index("by_instance_unread", ["recipientInstanceId", "readAt"])
 		.index("by_message", ["messageId"]),
 
 	// ── missions ──────────────────────────────────────────────────────────────
@@ -210,6 +221,7 @@ export default defineSchema({
 			v.literal("blocked"),
 			v.literal("done"),
 		),
+		claimedByInstance: v.optional(v.string()), // which instance is working on this
 		missionId: v.optional(v.id("missions")),
 		estimatedMinutes: v.optional(v.number()),
 		actualMinutes: v.optional(v.number()),
@@ -230,6 +242,7 @@ export default defineSchema({
 	diary: defineTable({
 		date: v.string(), // "2026-03-25" ISO date
 		orchestrator: creatorValidator,
+		instanceId: v.optional(v.string()), // which instance wrote this
 		content: v.string(), // Full diary entry
 		highlights: v.optional(v.array(v.string())),
 		blockers: v.optional(v.array(v.string())),

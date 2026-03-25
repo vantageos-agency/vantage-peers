@@ -26,6 +26,7 @@ function resolveRecipients(
 export const sendMessage = mutation({
 	args: {
 		from: creatorValidator,
+		fromInstanceId: v.optional(v.string()),
 		channel: v.string(),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
@@ -34,18 +35,26 @@ export const sendMessage = mutation({
 	handler: async (ctx, args) => {
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
+			fromInstanceId: args.fromInstanceId,
 			channel: args.channel,
 			content: args.content,
 			sessionDay: args.sessionDay,
 			createdAt: Date.now(),
 		});
 
-		// Create one receipt per recipient
+		// Resolve recipients — channel can be a role or instanceId
+		// If channel contains "-" (e.g. "pi-vps"), treat as instance-level
 		const recipients = resolveRecipients(args.from, args.channel);
+
 		for (const recipient of recipients) {
+			// Determine if this is an instance target or role target
+			const isInstance = recipient.includes("-");
+			const role = isInstance ? recipient.split("-")[0] : recipient;
+
 			await ctx.db.insert("messageReceipts", {
 				messageId,
-				recipient: recipient as "pi" | "tau" | "phi" | "system",
+				recipient: role as "pi" | "tau" | "phi" | "system",
+				recipientInstanceId: isInstance ? recipient : undefined,
 				readAt: undefined,
 			});
 		}
@@ -62,26 +71,65 @@ export const sendMessage = mutation({
 export const checkNewMessages = query({
 	args: {
 		recipient: creatorValidator,
+		recipientInstanceId: v.optional(v.string()),
 	},
 	returns: v.array(
 		v.object({
 			receiptId: v.id("messageReceipts"),
 			messageId: v.id("messages"),
 			from: creatorValidator,
+			fromInstanceId: v.optional(v.string()),
 			channel: v.optional(v.string()),
 			content: v.string(),
 			createdAt: v.number(),
 		}),
 	),
 	handler: async (ctx, args) => {
-		// Get unread receipts (readAt === undefined)
-		const receipts = await ctx.db
-			.query("messageReceipts")
-			.withIndex("by_recipient_unread", (q) =>
-				q.eq("recipient", args.recipient),
-			)
-			.filter((q) => q.eq(q.field("readAt"), undefined))
-			.take(100);
+		let receipts;
+
+		if (args.recipientInstanceId !== undefined) {
+			// Instance-level: get messages targeted at this specific instance
+			// PLUS role-level messages (recipientInstanceId === undefined)
+			const instanceReceipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_instance_unread", (q) =>
+					q.eq("recipientInstanceId", args.recipientInstanceId!),
+				)
+				.filter((q) => q.eq(q.field("readAt"), undefined))
+				.take(100);
+
+			const roleReceipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_recipient_unread", (q) =>
+					q.eq("recipient", args.recipient),
+				)
+				.filter((q) =>
+					q.and(
+						q.eq(q.field("readAt"), undefined),
+						q.eq(q.field("recipientInstanceId"), undefined),
+					),
+				)
+				.take(100);
+
+			// Merge and deduplicate by receiptId
+			const seen = new Set<string>();
+			receipts = [];
+			for (const r of [...instanceReceipts, ...roleReceipts]) {
+				if (!seen.has(r._id)) {
+					seen.add(r._id);
+					receipts.push(r);
+				}
+			}
+		} else {
+			// Role-level: get all unread for this role
+			receipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_recipient_unread", (q) =>
+					q.eq("recipient", args.recipient),
+				)
+				.filter((q) => q.eq(q.field("readAt"), undefined))
+				.take(100);
+		}
 
 		const results = [];
 		for (const receipt of receipts) {
@@ -91,6 +139,7 @@ export const checkNewMessages = query({
 					receiptId: receipt._id,
 					messageId: receipt.messageId,
 					from: message.from,
+					fromInstanceId: message.fromInstanceId,
 					channel: message.channel,
 					content: message.content,
 					createdAt: message.createdAt,

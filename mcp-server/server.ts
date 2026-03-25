@@ -384,14 +384,18 @@ server.tool(
 server.tool(
 	"send_message",
 	"Send a message to one, many, or all orchestrators. " +
-		"channel: 'broadcast' = all, 'tau' = DM, 'tau,phi' = multi. " +
+		"channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
 		"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
 	{
-		from: creatorSchema.describe("Sender orchestrator"),
+		from: creatorSchema.describe("Sender role (pi/tau/phi)"),
+		fromInstanceId: z
+			.string()
+			.optional()
+			.describe("Sender instance ID — e.g. 'pi-chromebook', 'tau-vps-1'"),
 		channel: z
 			.string()
 			.describe(
-				"Recipients: 'broadcast' | 'tau' | 'pi,phi' (comma-separated)",
+				"Recipients: 'broadcast' | 'tau' | 'pi-vps' | 'tau,phi' (comma-separated)",
 			),
 		content: z.string().describe("Message content"),
 		sessionDay: z
@@ -400,9 +404,10 @@ server.tool(
 			.optional()
 			.describe("Day number (e.g. 19 for Day 19)"),
 	},
-	async ({ from, channel, content, sessionDay }) => {
+	async ({ from, fromInstanceId, channel, content, sessionDay }) => {
 		const messageId = await convex.mutation(api.messages.sendMessage, {
 			from,
+			fromInstanceId,
 			channel,
 			content,
 			sessionDay,
@@ -426,13 +431,19 @@ server.tool(
 server.tool(
 	"check_messages",
 	"Check for unread messages. Returns messages with receiptIds for marking as read. " +
+		"If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
 		"Replaces claude-peers check_messages.",
 	{
-		recipient: creatorSchema.describe("Which orchestrator to check messages for"),
+		recipient: creatorSchema.describe("Orchestrator role (pi/tau/phi)"),
+		recipientInstanceId: z
+			.string()
+			.optional()
+			.describe("Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages."),
 	},
-	async ({ recipient }) => {
+	async ({ recipient, recipientInstanceId }) => {
 		const messages = await convex.query(api.messages.checkNewMessages, {
 			recipient,
+			recipientInstanceId,
 		});
 
 		return {
@@ -484,18 +495,24 @@ server.tool(
 server.tool(
 	"set_summary",
 	"Set a brief summary of what you are currently working on. " +
-		"Visible to other orchestrators via list_peers. Uses the profiles table.",
+		"Visible to other orchestrators via list_peers. Uses the profiles table. " +
+		"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 	{
 		orchestratorId: z
 			.enum(["pi", "tau", "phi"])
-			.describe("Which orchestrator to update"),
+			.describe("Orchestrator role"),
+		instanceId: z
+			.string()
+			.optional()
+			.describe("Instance ID — e.g. 'pi-chromebook', 'pi-vps', 'tau-vps-1'"),
 		summary: z
 			.string()
 			.describe("1-2 sentence summary of current work"),
 	},
-	async ({ orchestratorId, summary }) => {
+	async ({ orchestratorId, instanceId, summary }) => {
 		await convex.mutation(api.profiles.updateDynamic, {
 			orchestratorId,
+			instanceId,
 			currentTask: summary,
 			lastSeen: Date.now(),
 		});
@@ -504,7 +521,7 @@ server.tool(
 			content: [
 				{
 					type: "text",
-					text: JSON.stringify({ orchestratorId, summary }, null, 2),
+					text: JSON.stringify({ orchestratorId, instanceId, summary }, null, 2),
 				},
 			],
 		};
@@ -525,6 +542,7 @@ server.tool(
 
 		const peers = profiles.map((p: any) => ({
 			id: p.orchestratorId,
+			instanceId: p.instanceId ?? p.orchestratorId,
 			name: p.name,
 			role: p.static.role,
 			workspace: p.static.workspace,

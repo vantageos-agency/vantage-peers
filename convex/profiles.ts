@@ -10,6 +10,7 @@ const profileDocValidator = v.object({
   _id: v.id("profiles"),
   _creationTime: v.number(),
   orchestratorId: v.string(),
+  instanceId: v.optional(v.string()),
   name: v.string(),
   static: v.object({
     role: v.string(),
@@ -32,29 +33,46 @@ const memorySnippetValidator = v.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getProfile — fetch orchestrator profile (static + dynamic)
+// getProfile — fetch by orchestratorId (role) or instanceId
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getProfile = query({
-  args: { orchestratorId: v.string() },
+  args: {
+    orchestratorId: v.optional(v.string()),
+    instanceId: v.optional(v.string()),
+  },
   returns: v.union(profileDocValidator, v.null()),
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query("profiles")
-      .withIndex("by_orchestrator", (q) =>
-        q.eq("orchestratorId", args.orchestratorId),
-      )
-      .unique();
+    // Prefer instanceId lookup if provided
+    if (args.instanceId !== undefined) {
+      return await ctx.db
+        .query("profiles")
+        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
+        .unique();
+    }
+
+    if (args.orchestratorId !== undefined) {
+      // Returns first match — for role-level lookup when only one instance exists
+      return await ctx.db
+        .query("profiles")
+        .withIndex("by_orchestrator", (q) =>
+          q.eq("orchestratorId", args.orchestratorId!),
+        )
+        .first();
+    }
+
+    return null;
   },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// upsertProfile — create or update an orchestrator profile
+// upsertProfile — create or update a profile by instanceId (or orchestratorId)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const upsertProfile = mutation({
   args: {
     orchestratorId: v.string(),
+    instanceId: v.optional(v.string()),
     name: v.string(),
     static: v.object({
       role: v.string(),
@@ -69,16 +87,31 @@ export const upsertProfile = mutation({
   },
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("profiles")
-      .withIndex("by_orchestrator", (q) =>
-        q.eq("orchestratorId", args.orchestratorId),
-      )
-      .unique();
+    // Try to find by instanceId first, then by orchestratorId
+    let existing = null;
+    if (args.instanceId !== undefined) {
+      existing = await ctx.db
+        .query("profiles")
+        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
+        .unique();
+    }
+    if (existing === null) {
+      existing = await ctx.db
+        .query("profiles")
+        .withIndex("by_orchestrator", (q) =>
+          q.eq("orchestratorId", args.orchestratorId),
+        )
+        .first();
+      // Only reuse a legacy profile (no instanceId) if we're adding instanceId to it
+      if (existing !== null && existing.instanceId !== undefined && existing.instanceId !== args.instanceId) {
+        existing = null; // Different instance — create new
+      }
+    }
 
     if (existing !== null) {
       await ctx.db.patch(existing._id, {
         name: args.name,
+        instanceId: args.instanceId,
         static: args.static,
         dynamic: args.dynamic,
       });
@@ -87,6 +120,7 @@ export const upsertProfile = mutation({
 
     return await ctx.db.insert("profiles", {
       orchestratorId: args.orchestratorId,
+      instanceId: args.instanceId,
       name: args.name,
       static: args.static,
       dynamic: args.dynamic,
@@ -96,28 +130,54 @@ export const upsertProfile = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // updateDynamic — patch only the dynamic section (called on session start/end)
+// Supports both instanceId and orchestratorId lookup.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const updateDynamic = mutation({
   args: {
     orchestratorId: v.string(),
+    instanceId: v.optional(v.string()),
     currentTask: v.optional(v.string()),
     lastSeen: v.number(),
     sessionCountDelta: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_orchestrator", (q) =>
-        q.eq("orchestratorId", args.orchestratorId),
-      )
-      .unique();
+    // Try instanceId first
+    let profile = null;
+    if (args.instanceId !== undefined) {
+      profile = await ctx.db
+        .query("profiles")
+        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
+        .unique();
+    }
+    if (profile === null) {
+      profile = await ctx.db
+        .query("profiles")
+        .withIndex("by_orchestrator", (q) =>
+          q.eq("orchestratorId", args.orchestratorId),
+        )
+        .first();
+    }
 
     if (profile === null) {
-      throw new Error(
-        `Profile for orchestrator "${args.orchestratorId}" not found. Call upsertProfile first.`,
-      );
+      // Auto-create profile if it doesn't exist
+      await ctx.db.insert("profiles", {
+        orchestratorId: args.orchestratorId,
+        instanceId: args.instanceId,
+        name: args.instanceId ?? args.orchestratorId,
+        static: {
+          role: args.orchestratorId,
+          workspace: "",
+          capabilities: [],
+        },
+        dynamic: {
+          currentTask: args.currentTask,
+          lastSeen: args.lastSeen,
+          sessionCount: 1,
+        },
+      });
+      return null;
     }
 
     await ctx.db.patch(profile._id, {
@@ -135,12 +195,12 @@ export const updateDynamic = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getProfileWithMemories — profile + recent typed memories in one query
-// Supermemory pattern: one call returns stable context + current memories.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getProfileWithMemories = query({
   args: {
     orchestratorId: v.string(),
+    instanceId: v.optional(v.string()),
     namespace: v.string(),
     memoryLimit: v.optional(v.number()),
   },
@@ -151,14 +211,22 @@ export const getProfileWithMemories = query({
   handler: async (ctx, args) => {
     const limit = args.memoryLimit ?? 20;
 
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_orchestrator", (q) =>
-        q.eq("orchestratorId", args.orchestratorId),
-      )
-      .unique();
+    let profile = null;
+    if (args.instanceId !== undefined) {
+      profile = await ctx.db
+        .query("profiles")
+        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
+        .unique();
+    }
+    if (profile === null) {
+      profile = await ctx.db
+        .query("profiles")
+        .withIndex("by_orchestrator", (q) =>
+          q.eq("orchestratorId", args.orchestratorId),
+        )
+        .first();
+    }
 
-    // Fetch recent memories across all types for this namespace
     const allMemories = await ctx.db
       .query("memories")
       .withIndex("by_namespace", (q) =>
@@ -180,13 +248,23 @@ export const getProfileWithMemories = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// listProfiles — list all orchestrator profiles
+// listProfiles — list all profiles (all instances)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const listProfiles = query({
-  args: {},
+  args: {
+    orchestratorId: v.optional(v.string()),
+  },
   returns: v.array(profileDocValidator),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
+    if (args.orchestratorId !== undefined) {
+      return await ctx.db
+        .query("profiles")
+        .withIndex("by_orchestrator", (q) =>
+          q.eq("orchestratorId", args.orchestratorId!),
+        )
+        .collect();
+    }
     return await ctx.db.query("profiles").collect();
   },
 });
