@@ -1,209 +1,202 @@
 # VantageMemory
 
-Shared memory system for AI orchestrators. Built on Convex + `@convex-dev/rag`. Exposes MCP tools that any Claude Code session can use.
+**Shared memory, messaging, and task management MCP server for multi-agent Claude Code.**
 
-## Architecture
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-```
-Pi (ElPi Corp) ──┐
-Tau (VantageStarter) ──┤── vantage-memory MCP ── Convex cloud (efficient-guineapig-356)
-Phi (Perfect AI Agent) ──┘
-```
+## What It Is
 
-One Convex deployment. One MCP server. All orchestrators share the same brain.
+VantageMemory is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, and structured episodic learning -- all exposed as MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
-## How it works
+## Prerequisites
 
-### Store → Embed → Search
+- **Node.js 18+**
+- **Bun** (runtime for the MCP server)
+- **Convex account** (free tier works) -- [https://convex.dev](https://convex.dev)
+- **OpenAI API key** (for `text-embedding-3-small` embeddings, used via AI Gateway)
 
-1. **Store** — orchestrator calls `store_memory` or `store_episode`
-2. **Embed** — Convex scheduler triggers `@convex-dev/rag` to generate a 1536-dim vector via Vercel AI Gateway (OpenAI text-embedding-3-small)
-3. **Search** — `recall` runs semantic vector search, returns top K memories ranked by cosine similarity
+## Quick Start
 
-Embedding is async — there's a ~2-5 second delay between store and searchability.
+```bash
+# 1. Clone the repository
+git clone https://github.com/vantageos/vantage-memory.git
+cd vantage-memory
 
-### Memory types
+# 2. Install dependencies
+npm install
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| `user` | Facts about the user | "Laurent is a solo founder, prefers English" |
-| `feedback` | Behavioral guidance | "Never output unaccented French" |
-| `project` | Project state/decisions | "Three orchestrators: Pi, Tau, Phi" |
-| `reference` | Pointers to external resources | "Pipeline bugs tracked in Linear project INGEST" |
-| `episode` | Structured lessons from experience | context→goal→action→outcome→insight |
+# 3. Start the Convex dev server (creates a new deployment on first run)
+npx convex dev
 
-### Episodes — the differentiator
-
-Episodes are not just facts. They capture **what happened and what was learned**:
-
-```
-Context:  Day 16 — enforce-background-agents.sh used basic grep
-Goal:     Block foreground agents, allow background ones
-Action:   grep -q with \s* (basic mode doesn't support \s)
-Outcome:  Hook blocked ALL agents — foreground AND background
-Insight:  Use grep -qE with [[:space:]]* or Python json.load()
-Severity: critical (shared across all orchestrators)
+# 4. Set your OpenAI-compatible API key as a Convex environment variable
+npx convex env set AI_GATEWAY_API_KEY=your-openai-api-key
 ```
 
-Severity levels:
-- `critical` — cross-orchestrator lesson, everyone must know
-- `major` — important within a namespace
-- `minor` — nice to have
-
-### Namespaces
-
-| Namespace | Who sees it | Use for |
-|-----------|------------|---------|
-| `global` | All orchestrators | Universal rules, user prefs, critical episodes |
-| `orchestrator/pi` | Pi only | ElPi Corp routing, client context |
-| `orchestrator/tau` | Tau only | VantageStarter build patterns |
-| `orchestrator/phi` | Phi only | Novel structure, diary voice |
-| `project/vantage-starter` | Anyone working on VS | Project-specific decisions |
-
-### Graph relations
-
-When a memory supersedes another:
-
-```
-store_memory({
-  content: "New rule replaces old one",
-  relatesTo: { targetId: "old_memory_id", type: "updates" }
-})
-```
-
-Relation types:
-- `updates` — supersedes the target (target gets `isLatest: false`, removed from search)
-- `extends` — adds detail to the target
-- `derives` — inferred from the target
-
-Only `isLatest: true` memories appear in recall results.
-
-### Profiles
-
-Each orchestrator has a profile with static (identity) and dynamic (session state) fields:
-
-```
-{
-  orchestratorId: "pi",
-  name: "Pi",
-  static: {
-    role: "ElPi Corp orchestrator — architect, strategist, delegator",
-    workspace: "/home/laurentperello/coding/ElPi Corp",
-    capabilities: ["orchestration", "delegation", "strategy"]
-  },
-  dynamic: {
-    currentTask: "Day 16 — VantageMemory launch",
-    lastSeen: 1742673600000,
-    sessionCount: 1
-  }
-}
-```
-
-## MCP Tools
-
-### store_memory
-Store a typed memory entry.
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| namespace | yes | e.g. "global", "orchestrator/pi" |
-| type | yes | user, feedback, project, reference, episode |
-| content | yes | Human-readable memory text |
-| createdBy | yes | pi, tau, phi, system |
-| relatesTo | no | `{ targetId, type: "updates"|"extends"|"derives" }` |
-| ttl | no | ISO timestamp for auto-expiry |
-
-### recall
-Semantic vector search over all memories.
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| query | yes | Natural language search query |
-| namespace | no | Filter to a namespace |
-| type | no | Filter to a memory type |
-| limit | no | Max results (default 5, max 50) |
-
-Returns: array of `{ memoryId, score, namespace, type, content }`
-
-### store_episode
-Store a structured episodic memory.
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| namespace | yes | e.g. "orchestrator/tau" |
-| createdBy | yes | pi, tau, phi, system |
-| context | yes | What was the situation |
-| goal | yes | What was being attempted |
-| action | yes | What was done |
-| outcome | yes | What happened (success/failure) |
-| insight | yes | The lesson — what to do differently |
-| severity | yes | critical, major, minor |
-
-### get_profile
-Fetch an orchestrator's profile.
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| orchestratorId | yes | pi, tau, phi |
-
-### update_profile
-Create or update an orchestrator profile.
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| orchestratorId | yes | pi, tau, phi |
-| name | yes | Human-readable name |
-| static | yes | { role, workspace, capabilities[] } |
-| dynamic | yes | { lastSeen, sessionCount, currentTask? } |
-
-### list_memories
-List memories by namespace with optional type filter.
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| namespace | yes | Which namespace to list |
-| type | no | Filter to a type |
-| limit | no | Max results (default 50) |
-
-## Search modes
-
-The Convex backend supports three search modes (via `@convex-dev/rag`):
-
-1. **Vector search** (`recall` MCP tool) — semantic similarity via cosine distance
-2. **Text search** — BM25 full-text search
-3. **Hybrid search** — vector + text merged via Reciprocal Rank Fusion (RRF)
-
-The MCP `recall` tool uses vector search. Text and hybrid search are available via direct Convex function calls.
-
-## Installation
-
-Already installed as user-scoped MCP in `~/.claude/settings.json`:
+Then configure MCP in your Claude Code settings (`~/.claude/settings.json`):
 
 ```json
 {
   "mcpServers": {
     "vantage-memory": {
       "command": "bun",
-      "args": ["/home/laurentperello/coding/vantage-memory/mcp-server/server.ts"],
+      "args": ["/path/to/vantage-memory/mcp-server/server.ts"],
       "env": {
-        "CONVEX_URL": "https://efficient-guineapig-356.convex.cloud"
+        "CONVEX_URL": "https://your-deployment.convex.cloud"
       }
     }
   }
 }
 ```
 
-The Vercel AI Gateway key (`AI_GATEWAY_API_KEY`) is set as a Convex environment variable, not in the MCP config.
+Replace `/path/to/vantage-memory` with the absolute path to your clone, and `your-deployment` with the Convex deployment URL printed by `npx convex dev`.
 
-## Convex deployment
+Verify: open Claude Code and confirm that vantage-memory tools appear in the tool list.
 
-- Project: vantage-memory
-- Dashboard: https://dashboard.convex.dev/d/efficient-guineapig-356
-- Deploy: `cd ~/coding/vantage-memory && npx convex dev --once`
+## Architecture
 
-## CLAUDE.md integration
+```
+Claude Code (Agent 1) ──┐
+Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
+Claude Code (Agent 3) ──┘        |
+                          27 MCP Tools
+```
 
-Add to any orchestrator's CLAUDE.md:
+One Convex deployment. One MCP server process per agent. All agents share the same database.
+
+## Features
+
+- **Semantic memory** -- store facts, decisions, and feedback; retrieve by meaning via vector search
+- **Episodic learning** -- structured context/goal/action/outcome/insight records with severity levels
+- **Memory graph** -- relations between memories (updates, extends, derives) with automatic versioning
+- **Inter-agent messaging** -- send messages to specific agents, channels, or broadcast to all
+- **Task management** -- create, assign, prioritize, and track tasks with dependencies and missions
+- **Mission planning** -- group tasks into missions with status lifecycle (brainstorm through complete)
+- **Diary and notes** -- daily diary entries and briefing notes per agent
+- **Multi-instance support** -- multiple instances of the same agent role can run concurrently
+- **Hybrid search** -- vector, full-text (BM25), and combined search via Reciprocal Rank Fusion
+
+## MCP Tools Reference
+
+### Memory and Search (6 tools)
+
+| Tool | Description |
+|------|-------------|
+| `store_memory` | Store a typed memory entry with optional graph relations |
+| `recall` | Semantic vector search over memories, filtered by namespace/type |
+| `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
+| `list_memories` | List memories by namespace with optional type filter |
+| `get_profile` | Fetch an orchestrator's profile (static identity + dynamic session state) |
+| `update_profile` | Create or update an orchestrator profile |
+
+### Session and Peers (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `set_summary` | Set a status summary visible to other agents via list_peers |
+| `list_peers` | List all registered agent instances and their current summaries |
+
+### Messaging (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Send a message to a channel, agent, or broadcast |
+| `check_messages` | Check for unread messages addressed to a recipient/instance |
+| `mark_as_read` | Mark message receipts as read by receipt ID |
+| `list_messages` | List messages with filters (channel, sender, date range) |
+
+### Tasks (5 tools)
+
+| Tool | Description |
+|------|-------------|
+| `create_task` | Create a new task with assignee, priority, and optional dependencies |
+| `list_tasks` | List tasks filtered by assignee, status, project, or priority |
+| `update_task` | Update any task fields (status, priority, description, etc.) |
+| `complete_task` | Mark a task as done with a mandatory completion note |
+| `start_task` | Claim a task and set its status to in_progress |
+
+### Missions (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `create_mission` | Create a mission grouping related tasks under a project |
+| `list_missions` | List missions filtered by project, pilot, or status |
+| `update_mission` | Update mission fields (description, brief, agents, dates) |
+| `update_mission_status` | Advance a mission through its lifecycle stages |
+
+### Tasks by Mission (1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `list_tasks_by_mission` | List all tasks belonging to a specific mission |
+
+### Diary and Notes (5 tools)
+
+| Tool | Description |
+|------|-------------|
+| `write_diary` | Write a daily diary entry for an agent instance |
+| `get_diary` | Retrieve a diary entry by orchestrator and date |
+| `list_diaries` | List diary entries with optional date range and orchestrator filter |
+| `create_briefing_note` | Create a briefing note with topic, participants, and decisions |
+| `list_briefing_notes` | List briefing notes filtered by topic or creator |
+
+## Database Schema
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `memories` | Core memory store with typed entries and graph relations | namespace, type, content, createdBy, relations, isLatest |
+| `profiles` | Agent identity and session state | orchestratorId, instanceId, static, dynamic |
+| `messages` | Inter-agent messages | from, channel, content, sessionDay |
+| `messageReceipts` | Per-recipient read tracking for messages | messageId, recipient, recipientInstanceId, readAt |
+| `missions` | High-level mission grouping for tasks | name, project, status, priority, pilot |
+| `tasks` | Individual work items with dependencies | title, assignedTo, status, priority, dependsOn, missionId |
+| `diary` | Daily diary entries per agent | date, orchestrator, content, highlights, blockers |
+| `briefingNotes` | Shared briefing documents | title, topic, participants, content, decisions |
+
+## Memory Types
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| `user` | Facts about the user | "Laurent prefers English, solo founder" |
+| `feedback` | Behavioral corrections and guidance | "Always use lowercase for orchestrator names" |
+| `project` | Project state and architectural decisions | "API uses Convex mutations, not REST" |
+| `reference` | Pointers to external resources | "Bug tracker is in Linear project INGEST" |
+| `episode` | Structured lessons from experience | context/goal/action/outcome/insight with severity |
+
+## Search Modes
+
+VantageMemory supports three search strategies via `@convex-dev/rag`:
+
+1. **Vector search** -- semantic similarity using cosine distance on 1536-dim embeddings (`text-embedding-3-small`). This is what the `recall` MCP tool uses.
+2. **Text search** -- BM25 full-text search for exact keyword matching.
+3. **Hybrid search** -- combines vector and text results using Reciprocal Rank Fusion (RRF).
+
+Text and hybrid search are available via direct Convex function calls. The MCP `recall` tool exposes vector search.
+
+Embedding is asynchronous -- there is a 2-5 second delay between storing a memory and it becoming searchable.
+
+## Multi-Instance Support
+
+VantageMemory distinguishes between **roles** and **instances**:
+
+- A **role** (e.g., `pi`, `tau`, `phi`) is a logical agent identity.
+- An **instance** (e.g., `pi-chromebook`, `pi-vps`, `tau-client-acme`) is a specific running copy of that role.
+
+Multiple instances of the same role can run concurrently. Messages can be routed to a role (all instances receive it) or to a specific instance. Each instance can set its own status summary and claim tasks independently.
+
+## Running Tests
+
+```bash
+# Integration tests (29 tests, requires a running Convex deployment)
+bun scripts/test-mcp.ts
+
+# Unit tests (34 tests)
+npx vitest
+```
+
+## CLAUDE.md Integration
+
+Add this snippet to any agent's `CLAUDE.md` to enable the memory protocol:
 
 ```markdown
 ## SHARED MEMORY (non-negotiable)
@@ -214,13 +207,18 @@ You have access to VantageMemory via MCP tools.
 2. After every failure: `store_episode` with context/goal/action/outcome/insight.
 3. Before repeating a mistake: `recall` similar past episodes.
 4. Store non-obvious learnings via `store_memory`.
-5. Use `orchestrator/[name]` for personal, `global` for shared.
+5. Use `orchestrator/[name]` for personal namespace, `global` for shared.
 ```
 
-## Tech stack
+## Tech Stack
 
-- **Convex** — real-time database + vector search
-- **@convex-dev/rag** — embedding, indexing, hybrid search
-- **Vercel AI Gateway** — OpenAI text-embedding-3-small via `@ai-sdk/openai-compatible`
-- **MCP SDK** — `@modelcontextprotocol/sdk` for Claude Code integration
-- **Bun** — runtime for MCP server
+- **Convex** -- real-time database, serverless functions, vector search
+- **@convex-dev/rag** -- embedding generation, indexing, hybrid search
+- **@modelcontextprotocol/sdk** -- MCP server implementation for Claude Code
+- **Bun** -- TypeScript runtime for the MCP server process
+- **OpenAI text-embedding-3-small** -- 1536-dimension embeddings via AI Gateway
+- **TypeScript** -- end to end, both server and Convex functions
+
+## License
+
+[MIT](LICENSE)

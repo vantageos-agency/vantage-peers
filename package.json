@@ -1,14 +1,31 @@
 {
   "name": "vantage-memory",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "Shared memory, messaging, and task management MCP server for multi-agent Claude Code",
+  "keywords": [
+    "convex",
+    "mcp",
+    "memory",
+    "ai-agents",
+    "claude-code",
+    "rag",
+    "vector-search",
+    "multi-agent"
+  ],
+  "author": "VantageOS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vantageos/vantage-memory.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:mcp": "bun scripts/test-mcp.ts",
+    "dev": "npx convex dev"
+  },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.37",
     "@convex-dev/rag": "^0.7.2",
