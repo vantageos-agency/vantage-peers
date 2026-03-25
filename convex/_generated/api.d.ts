@@ -9,6 +9,7 @@
  */
 
 import type * as briefingNotes from "../briefingNotes.js";
+import type * as components_ from "../components.js";
 import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
 import type * as memories from "../memories.js";
@@ -28,6 +29,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   briefingNotes: typeof briefingNotes;
+  components: typeof components_;
   diary: typeof diary;
   episodes: typeof episodes;
   memories: typeof memories;

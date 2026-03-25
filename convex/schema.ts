@@ -265,4 +265,27 @@ export default defineSchema({
 	})
 		.index("by_topic", ["topic"])
 		.index("by_creator", ["createdBy", "createdAt"]),
+
+	// ── components ──────────────────────────────────────────────────────────
+	// Registry of agents, skills, hooks, plugins — backup + inventory.
+	// Content stores the full file so nothing is lost if filesystem is destroyed.
+	components: defineTable({
+		name: v.string(),
+		type: v.union(
+			v.literal("agent"),
+			v.literal("skill"),
+			v.literal("hook"),
+			v.literal("plugin"),
+		),
+		team: v.optional(v.string()), // e.g. "marketing", "development"
+		content: v.string(), // full file content
+		version: v.optional(v.string()),
+		project: v.optional(v.string()),
+		createdBy: creatorValidator,
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_type", ["type"])
+		.index("by_team", ["team", "type"])
+		.index("by_name_type", ["name", "type"]),
 });

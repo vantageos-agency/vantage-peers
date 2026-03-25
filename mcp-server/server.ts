@@ -1334,6 +1334,120 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: register_component
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"register_component",
+	"Register or update a component (agent, skill, hook, or plugin) in the registry. " +
+		"Upserts by name+type — if a component with the same name and type exists, it updates the content.",
+	{
+		name: z.string().describe("Component name — e.g. 'copywriter', 'check-tasks'"),
+		type: z
+			.enum(["agent", "skill", "hook", "plugin"])
+			.describe("Component type"),
+		team: z
+			.string()
+			.optional()
+			.describe("Team this component belongs to — e.g. 'marketing', 'development'"),
+		content: z.string().describe("Full file content of the component"),
+		version: z.string().optional().describe("Version string — e.g. '1.0.0'"),
+		project: z.string().optional().describe("Project this component belongs to"),
+		createdBy: creatorSchema,
+	},
+	async ({ name, type, team, content, version, project, createdBy }) => {
+		const result = await convex.mutation(api.components.register, {
+			name,
+			type,
+			team,
+			content,
+			version,
+			project,
+			createdBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(result, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_components
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_components",
+	"List registered components. Filter by type (agent/skill/hook/plugin) and/or team.",
+	{
+		type: z
+			.enum(["agent", "skill", "hook", "plugin"])
+			.optional()
+			.describe("Filter by component type"),
+		team: z.string().optional().describe("Filter by team"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(500)
+			.optional()
+			.default(100)
+			.describe("Maximum components to return (default 100)"),
+	},
+	async ({ type, team, limit }) => {
+		const components = await convex.query(api.components.list, {
+			type,
+			team,
+			limit: limit ?? 100,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(components, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_component
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_component",
+	"Fetch a single component by name and type. Returns the full content.",
+	{
+		name: z.string().describe("Component name"),
+		type: z
+			.enum(["agent", "skill", "hook", "plugin"])
+			.describe("Component type"),
+	},
+	async ({ name, type }) => {
+		const component = await convex.query(api.components.get, {
+			name,
+			type,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(component, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
 
