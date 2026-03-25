@@ -841,7 +841,8 @@ server.tool(
 server.tool(
 	"complete_task",
 	"Mark a task as done. ALWAYS provide a completionNote describing what was actually done. " +
-		"This is mandatory — never complete a task without explaining the work.",
+		"This is mandatory — never complete a task without explaining the work. " +
+		"After completing, ALWAYS send_message to the task creator (check createdBy field) with a summary of what was done.",
 	{
 		taskId: z.string().describe("Convex document ID of the task to complete"),
 		completionNote: z
