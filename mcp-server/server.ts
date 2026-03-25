@@ -1448,6 +1448,131 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_recurring_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"create_recurring_task",
+	"Create a recurring task that auto-creates tasks on a schedule. " +
+		"Uses cron expressions: '0 9 * * *' = daily 9am, '0 9 * * 1' = Monday 9am, '*/30 * * * *' = every 30min.",
+	{
+		title: z.string().describe("Task title — created each time the cron fires"),
+		description: z.string().optional().describe("Task description"),
+		assignedTo: z.enum(["pi", "tau", "phi", "laurent"]).describe("Who gets the created tasks"),
+		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
+		project: z.string().optional().describe("Project name"),
+		tags: flexArray.optional().describe("Tags for created tasks"),
+		cronExpression: z.string().describe("5-field cron: minute hour day-of-month month day-of-week"),
+		createdBy: creatorSchema,
+	},
+	async ({ title, description, assignedTo, priority, project, tags, cronExpression, createdBy }) => {
+		const tagsArray = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
+		const taskId = await convex.mutation(api.recurringTasks.create, {
+			title,
+			description,
+			assignedTo,
+			priority,
+			project,
+			tags: tagsArray,
+			cronExpression,
+			createdBy,
+		});
+
+		return {
+			content: [{ type: "text", text: JSON.stringify({ taskId, cronExpression }, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_recurring_tasks
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_recurring_tasks",
+	"List recurring task templates. Filter by assignee or active status.",
+	{
+		assignedTo: z.enum(["pi", "tau", "phi", "laurent"]).optional().describe("Filter by assignee"),
+		active: z.boolean().optional().describe("Filter by active status"),
+		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
+	},
+	async ({ assignedTo, active, limit }) => {
+		const tasks = await convex.query(api.recurringTasks.list, {
+			assignedTo,
+			active,
+			limit: limit ?? 50,
+		});
+
+		return {
+			content: [{ type: "text", text: JSON.stringify(tasks, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: pause_recurring_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"pause_recurring_task",
+	"Pause a recurring task — stops auto-creating tasks until resumed.",
+	{
+		taskId: z.string().describe("Recurring task ID"),
+	},
+	async ({ taskId }) => {
+		const result = await convex.mutation(api.recurringTasks.pause, {
+			taskId: taskId as any,
+		});
+
+		return {
+			content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: resume_recurring_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"resume_recurring_task",
+	"Resume a paused recurring task — recalculates next run time.",
+	{
+		taskId: z.string().describe("Recurring task ID"),
+	},
+	async ({ taskId }) => {
+		const result = await convex.mutation(api.recurringTasks.resume, {
+			taskId: taskId as any,
+		});
+
+		return {
+			content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_recurring_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"delete_recurring_task",
+	"Permanently delete a recurring task template.",
+	{
+		taskId: z.string().describe("Recurring task ID"),
+	},
+	async ({ taskId }) => {
+		const result = await convex.mutation(api.recurringTasks.remove, {
+			taskId: taskId as any,
+		});
+
+		return {
+			content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -10,6 +10,7 @@
 
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as components_ from "../components.js";
+import type * as crons from "../crons.js";
 import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
 import type * as memories from "../memories.js";
@@ -18,6 +19,7 @@ import type * as migrations from "../migrations.js";
 import type * as missions from "../missions.js";
 import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
+import type * as recurringTasks from "../recurringTasks.js";
 import type * as search from "../search.js";
 import type * as tasks from "../tasks.js";
 
@@ -30,6 +32,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   briefingNotes: typeof briefingNotes;
   components: typeof components_;
+  crons: typeof crons;
   diary: typeof diary;
   episodes: typeof episodes;
   memories: typeof memories;
@@ -38,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   missions: typeof missions;
   profiles: typeof profiles;
   ragSync: typeof ragSync;
+  recurringTasks: typeof recurringTasks;
   search: typeof search;
   tasks: typeof tasks;
 }>;

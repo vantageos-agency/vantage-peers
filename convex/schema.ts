@@ -288,4 +288,35 @@ export default defineSchema({
 		.index("by_type", ["type"])
 		.index("by_team", ["team", "type"])
 		.index("by_name_type", ["name", "type"]),
+
+	// ── recurringTasks ────────────────────────────────────────────────────────
+	// Templates for tasks that auto-create on a schedule (daily standup, weekly scan, etc.)
+	// Convex cron checks every 15 min and creates tasks when nextRunAt <= now.
+	recurringTasks: defineTable({
+		title: v.string(),
+		description: v.optional(v.string()),
+		assignedTo: v.union(
+			v.literal("pi"),
+			v.literal("tau"),
+			v.literal("phi"),
+			v.literal("laurent"),
+		),
+		priority: v.union(
+			v.literal("urgent"),
+			v.literal("high"),
+			v.literal("medium"),
+			v.literal("low"),
+		),
+		project: v.optional(v.string()),
+		tags: v.optional(v.array(v.string())),
+		cronExpression: v.string(), // "0 9 * * *" = daily 9am, "0 9 * * 1" = Monday 9am
+		lastCreatedAt: v.optional(v.number()),
+		nextRunAt: v.number(),
+		active: v.boolean(),
+		createdBy: creatorValidator,
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_active", ["active", "nextRunAt"])
+		.index("by_assignee", ["assignedTo"]),
 });
