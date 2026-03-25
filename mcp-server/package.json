@@ -1,0 +1,22 @@
+{
+  "name": "vantage-memory-mcp",
+  "version": "1.0.0",
+  "description": "MCP server exposing VantageMemory Convex functions as Claude Code tools",
+  "type": "module",
+  "bin": {
+    "vantage-memory": "./server.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "dev": "bun run server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "convex": "^1.34.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  }
+}

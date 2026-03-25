@@ -1,0 +1,1171 @@
+#!/usr/bin/env bun
+/**
+ * VantageMemory MCP Server
+ * Exposes Convex memory functions as Claude Code tools via stdio transport.
+ *
+ * Tools:
+ *   store_memory    — create a typed memory entry
+ *   recall          — semantic vector search over memories
+ *   store_episode   — create an episodic memory with structured fields
+ *   get_profile     — fetch an orchestrator profile
+ *   update_profile  — upsert an orchestrator profile
+ *   list_memories   — list memories by namespace with optional type filter
+ */
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ConvexHttpClient } from "convex/browser";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { z } from "zod";
+import { api } from "../convex/_generated/api.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bootstrap: resolve CONVEX_URL from env or .env.local
+// ─────────────────────────────────────────────────────────────────────────────
+
+function loadConvexUrl(): string {
+	// 1. Explicit env var always wins
+	if (process.env.CONVEX_URL) {
+		return process.env.CONVEX_URL;
+	}
+
+	// 2. Parse .env.local from the project root (one level up from mcp-server/)
+	const envPath = resolve(import.meta.dirname ?? __dirname, "../.env.local");
+	try {
+		const raw = readFileSync(envPath, "utf-8");
+		for (const line of raw.split("\n")) {
+			const trimmed = line.trim();
+			if (trimmed.startsWith("CONVEX_URL=")) {
+				const value = trimmed.slice("CONVEX_URL=".length).split("#")[0].trim();
+				if (value) return value;
+			}
+		}
+	} catch {
+		// .env.local not found — fall through to error
+	}
+
+	throw new Error(
+		"CONVEX_URL not found. Set it as an environment variable or add it to .env.local",
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared Zod schemas for validated params
+// ─────────────────────────────────────────────────────────────────────────────
+
+const memoryTypeSchema = z
+	.enum(["user", "feedback", "project", "reference", "episode"])
+	.describe("Memory classification type");
+
+const creatorSchema = z
+	.enum(["pi", "tau", "phi", "system"])
+	.describe("Which orchestrator is creating this memory");
+
+const severitySchema = z
+	.enum(["critical", "major", "minor"])
+	.describe("Episode severity — critical = cross-orchestrator lesson");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Server setup
+// ─────────────────────────────────────────────────────────────────────────────
+
+const convexUrl = loadConvexUrl();
+const convex = new ConvexHttpClient(convexUrl);
+
+const server = new McpServer({
+	name: "vantage-memory",
+	version: "1.0.0",
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: store_memory
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"store_memory",
+	"Store a typed memory entry in VantageMemory. Supports user, feedback, project, and reference types. " +
+		"Optional relatesTo creates a graph relation (updates supersedes the target, extends adds detail, derives is an inference).",
+	{
+		namespace: z
+			.string()
+			.describe(
+				"Memory namespace — e.g. 'global', 'orchestrator/pi', 'project/vantage-starter'",
+			),
+		type: memoryTypeSchema,
+		content: z
+			.string()
+			.describe("Human-readable memory content — what the memory says"),
+		createdBy: creatorSchema,
+		relatesTo: z
+			.object({
+				targetId: z
+					.string()
+					.describe("ID of the memory this relates to (Convex document ID)"),
+				type: z
+					.enum(["updates", "extends", "derives"])
+					.describe(
+						"Relation type: updates=supersedes, extends=adds detail, derives=inference",
+					),
+			})
+			.optional()
+			.describe("Optional graph relation to another memory"),
+		ttl: z
+			.string()
+			.optional()
+			.describe("Optional expiry ISO timestamp e.g. '2026-06-01T00:00:00Z'"),
+	},
+	async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
+		const relations = relatesTo
+			? [{ targetId: relatesTo.targetId as any, type: relatesTo.type }]
+			: [];
+
+		const memoryId = await convex.mutation(api.memories.storeMemory, {
+			namespace,
+			type,
+			content,
+			createdBy,
+			relations,
+			ttl,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ memoryId, namespace, type, content }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: recall
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"recall",
+	"Semantic vector search over VantageMemory. Returns top K memories ranked by cosine similarity to the query. " +
+		"Optionally filter by namespace and/or type.",
+	{
+		query: z
+			.string()
+			.describe("Natural language query to search for relevant memories"),
+		namespace: z
+			.string()
+			.optional()
+			.describe("Filter to a specific namespace — omit to search all"),
+		type: memoryTypeSchema
+			.optional()
+			.describe("Filter to a specific memory type — omit to search all"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(50)
+			.optional()
+			.default(5)
+			.describe("Maximum number of results to return (default 5)"),
+	},
+	async ({ query, namespace, type, limit }) => {
+		const results = await convex.action(api.search.recall, {
+			query,
+			namespace,
+			type,
+			limit: limit ?? 5,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(results, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: store_episode
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"store_episode",
+	"Store an episodic memory with structured context/goal/action/outcome/insight fields. " +
+		"Episodes are the 'other half' of memory — not just facts, but what happened and what was learned. " +
+		"Use severity=critical for lessons that should be shared across all orchestrators.",
+	{
+		namespace: z.string().describe("Memory namespace — e.g. 'orchestrator/pi'"),
+		createdBy: creatorSchema,
+		context: z
+			.string()
+			.describe("Situation that triggered this episode — what was the setup"),
+		goal: z.string().describe("What was being attempted"),
+		action: z.string().describe("What was actually done"),
+		outcome: z.string().describe("What happened — success or failure"),
+		insight: z
+			.string()
+			.describe(
+				"The lesson extracted — procedural memory, what to do differently",
+			),
+		severity: severitySchema,
+	},
+	async ({
+		namespace,
+		createdBy,
+		context,
+		goal,
+		action,
+		outcome,
+		insight,
+		severity,
+	}) => {
+		const memoryId = await convex.mutation(api.episodes.storeEpisode, {
+			namespace,
+			createdBy,
+			context,
+			goal,
+			action,
+			outcome,
+			insight,
+			severity,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{ memoryId, type: "episode", severity, namespace },
+						null,
+						2,
+					),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_profile
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_profile",
+	"Fetch an orchestrator profile (static identity + dynamic session state). " +
+		"Returns null if the profile does not exist yet — call update_profile to create it.",
+	{
+		orchestratorId: z
+			.enum(["pi", "tau", "phi"])
+			.describe("Orchestrator identifier"),
+	},
+	async ({ orchestratorId }) => {
+		const profile = await convex.query(api.profiles.getProfile, {
+			orchestratorId,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(profile, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_profile
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_profile",
+	"Create or update an orchestrator profile. " +
+		"static fields are stable identity facts (role, workspace, capabilities). " +
+		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
+	{
+		orchestratorId: z
+			.enum(["pi", "tau", "phi"])
+			.describe("Orchestrator identifier"),
+		name: z.string().describe("Human-readable orchestrator name"),
+		static: z
+			.object({
+				role: z.string().describe("Orchestrator role description"),
+				workspace: z.string().describe("Primary working directory"),
+				capabilities: z
+					.array(z.string())
+					.describe("List of capability keywords"),
+			})
+			.describe("Stable identity facts — infrequently updated"),
+		dynamic: z
+			.object({
+				currentTask: z
+					.string()
+					.optional()
+					.describe("Current task or goal in progress"),
+				lastSeen: z
+					.number()
+					.describe("Unix timestamp (ms) of last session start"),
+				sessionCount: z.number().int().describe("Total sessions to date"),
+			})
+			.describe("Mutable session state — updated each session"),
+	},
+	async ({ orchestratorId, name, static: staticFields, dynamic }) => {
+		const profileId = await convex.mutation(api.profiles.upsertProfile, {
+			orchestratorId,
+			name,
+			static: staticFields,
+			dynamic,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ profileId, orchestratorId, name }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_memories
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_memories",
+	"List active memories for a namespace, ordered newest first. " +
+		"Only returns isLatest=true memories (superseded memories are excluded by default). " +
+		"Use type to filter to a specific memory category.",
+	{
+		namespace: z
+			.string()
+			.describe(
+				"Namespace to list memories from — e.g. 'global', 'orchestrator/pi'",
+			),
+		type: memoryTypeSchema
+			.optional()
+			.describe("Filter to a specific type — omit to return all types"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(20)
+			.describe("Maximum number of memories to return (default 20)"),
+	},
+	async ({ namespace, type, limit }) => {
+		const memories = await convex.query(api.memories.listMemories, {
+			namespace,
+			type,
+			limit: limit ?? 20,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(memories, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: store_message
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"store_message",
+	"Record a peer-to-peer message between orchestrators. Call this after every send_message " +
+		"to keep a permanent log of all inter-orchestrator conversations in Convex.",
+	{
+		from: creatorSchema.describe("Sender orchestrator"),
+		to: creatorSchema.describe("Recipient orchestrator"),
+		content: z.string().describe("Message content"),
+		sessionDay: z
+			.number()
+			.int()
+			.optional()
+			.describe("Day number (e.g. 16 for Day 16)"),
+	},
+	async ({ from, to, content, sessionDay }) => {
+		const messageId = await convex.mutation(api.messages.storeMessage, {
+			from,
+			to,
+			content,
+			sessionDay,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ messageId, from, to }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_messages",
+	"List recorded peer messages. Filter by day, sender, or sender+recipient pair.",
+	{
+		sessionDay: z
+			.number()
+			.int()
+			.optional()
+			.describe("Filter to a specific day"),
+		from: creatorSchema.optional().describe("Filter by sender"),
+		to: creatorSchema.optional().describe("Filter by recipient"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(500)
+			.optional()
+			.default(100)
+			.describe("Max messages to return (default 100)"),
+	},
+	async ({ sessionDay, from, to, limit }) => {
+		const messages = await convex.query(api.messages.listMessages, {
+			sessionDay,
+			from,
+			to,
+			limit: limit ?? 100,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(messages, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+const assigneeSchema = z
+	.enum(["pi", "tau", "phi", "laurent"])
+	.describe("Who the task is assigned to");
+
+const prioritySchema = z
+	.enum(["urgent", "high", "medium", "low"])
+	.describe("Task priority level");
+
+const taskStatusSchema = z
+	.enum(["todo", "in_progress", "blocked", "done"])
+	.describe("Task status");
+
+server.tool(
+	"create_task",
+	"Create a task in VantageMemory. Tasks are assigned to an orchestrator or Laurent, " +
+		"with priority and status tracking. Optionally link to a project or mission.",
+	{
+		title: z.string().describe("Task title"),
+		description: z.string().optional().describe("Detailed task description"),
+		project: z
+			.string()
+			.optional()
+			.describe("Project name — e.g. 'vantage-starter', 'perfect-ai-agent'"),
+		tags: z
+			.array(z.string())
+			.optional()
+			.describe("Optional tags for categorization"),
+		assignedTo: assigneeSchema,
+		priority: prioritySchema,
+		status: taskStatusSchema.default("todo"),
+		missionId: z
+			.string()
+			.optional()
+			.describe("Convex document ID of the parent mission"),
+		estimatedMinutes: z
+			.number()
+			.optional()
+			.describe("Estimated duration in minutes"),
+		dueDate: z
+			.number()
+			.optional()
+			.describe("Optional due date as Unix timestamp (ms)"),
+		createdBy: creatorSchema,
+	},
+	async ({
+		title,
+		description,
+		project,
+		tags,
+		assignedTo,
+		priority,
+		status,
+		missionId,
+		estimatedMinutes,
+		dueDate,
+		createdBy,
+	}) => {
+		const taskId = await convex.mutation(api.tasks.create, {
+			title,
+			description,
+			project,
+			tags,
+			assignedTo,
+			priority,
+			status,
+			missionId: missionId as any,
+			estimatedMinutes,
+			dueDate,
+			createdBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{ taskId, title, assignedTo, priority, status },
+						null,
+						2,
+					),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_tasks
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_tasks",
+	"List tasks from VantageMemory with optional filters. " +
+		"Filter by assignee, status, and/or project. Returns newest first.",
+	{
+		assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
+		status: taskStatusSchema.optional().describe("Filter by status"),
+		project: z.string().optional().describe("Filter by project name"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of tasks to return (default 50)"),
+	},
+	async ({ assignedTo, status, project, limit }) => {
+		const tasks = await convex.query(api.tasks.list, {
+			assignedTo,
+			status,
+			project,
+			limit: limit ?? 50,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(tasks, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_task",
+	"Update any mutable field on a task. Provide only the fields you want to change. " +
+		"updatedAt is set automatically.",
+	{
+		taskId: z.string().describe("Convex document ID of the task to update"),
+		title: z.string().optional().describe("New title"),
+		description: z.string().optional().describe("New description"),
+		project: z.string().optional().describe("New project"),
+		tags: z.array(z.string()).optional().describe("New tags"),
+		assignedTo: assigneeSchema.optional().describe("Reassign to"),
+		priority: prioritySchema.optional().describe("New priority"),
+		status: taskStatusSchema.optional().describe("New status"),
+		missionId: z
+			.string()
+			.optional()
+			.describe("Link to a mission (Convex document ID)"),
+		estimatedMinutes: z
+			.number()
+			.optional()
+			.describe("Estimated duration in minutes"),
+		actualMinutes: z.number().optional().describe("Actual duration in minutes"),
+		startedAt: z.number().optional().describe("When work started (Unix ms)"),
+		completedAt: z
+			.number()
+			.optional()
+			.describe("When work completed (Unix ms)"),
+		dueDate: z.number().optional().describe("New due date (Unix ms)"),
+	},
+	async ({
+		taskId,
+		title,
+		description,
+		project,
+		tags,
+		assignedTo,
+		priority,
+		status,
+		missionId,
+		estimatedMinutes,
+		actualMinutes,
+		startedAt,
+		completedAt,
+		dueDate,
+	}) => {
+		await convex.mutation(api.tasks.update, {
+			taskId: taskId as any,
+			title,
+			description,
+			project,
+			tags,
+			assignedTo,
+			priority,
+			status,
+			missionId: missionId as any,
+			estimatedMinutes,
+			actualMinutes,
+			startedAt,
+			completedAt,
+			dueDate,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ taskId, updated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: complete_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"complete_task",
+	"Mark a task as done. Shortcut for setting status=done.",
+	{
+		taskId: z.string().describe("Convex document ID of the task to complete"),
+	},
+	async ({ taskId }) => {
+		await convex.mutation(api.tasks.complete, {
+			taskId: taskId as any,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ taskId, status: "done" }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: start_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"start_task",
+	"Start a task — sets status to in_progress and records startedAt timestamp. " +
+		"Use this when beginning work on a task to enable automatic duration tracking.",
+	{
+		taskId: z.string().describe("Convex document ID of the task to start"),
+	},
+	async ({ taskId }) => {
+		await convex.mutation(api.tasks.start, {
+			taskId: taskId as any,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ taskId, status: "in_progress" }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_tasks_by_mission
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_tasks_by_mission",
+	"List all tasks linked to a specific mission. Optionally filter by status.",
+	{
+		missionId: z.string().describe("Convex document ID of the mission"),
+		status: taskStatusSchema.optional().describe("Filter by task status"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of tasks to return (default 50)"),
+	},
+	async ({ missionId, status, limit }) => {
+		const tasks = await convex.query(api.tasks.listByMission, {
+			missionId: missionId as any,
+			status,
+			limit: limit ?? 50,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(tasks, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_mission
+// ─────────────────────────────────────────────────────────────────────────────
+
+const missionStatusSchema = z
+	.enum(["brainstorm", "plan", "execute", "validate", "complete"])
+	.describe("Mission lifecycle status");
+
+const missionPrioritySchema = z
+	.enum(["urgent", "high", "medium", "low"])
+	.describe("Mission priority level");
+
+server.tool(
+	"create_mission",
+	"Create a mission in VantageMemory. Missions group related tasks under a project, " +
+		"with a pilot orchestrator and assigned agents. Track progress through lifecycle statuses.",
+	{
+		name: z.string().describe("Mission name"),
+		description: z.string().optional().describe("Mission description"),
+		project: z
+			.string()
+			.describe("Project name — e.g. 'vantage-starter', 'elpi-corp'"),
+		status: missionStatusSchema.default("brainstorm"),
+		priority: missionPrioritySchema,
+		pilot: creatorSchema.describe("Lead orchestrator for this mission"),
+		agents: z.array(z.string()).describe("List of agent names involved"),
+		brief: z.string().optional().describe("Mission brief / instructions"),
+		startDate: z.number().optional().describe("Planned start date (Unix ms)"),
+		targetDate: z
+			.number()
+			.optional()
+			.describe("Target completion date (Unix ms)"),
+		progress: z.number().optional().describe("Progress percentage (0-100)"),
+		createdBy: creatorSchema,
+	},
+	async ({
+		name,
+		description,
+		project,
+		status,
+		priority,
+		pilot,
+		agents,
+		brief,
+		startDate,
+		targetDate,
+		progress,
+		createdBy,
+	}) => {
+		const missionId = await convex.mutation(api.missions.create, {
+			name,
+			description,
+			project,
+			status,
+			priority,
+			pilot,
+			agents,
+			brief,
+			startDate,
+			targetDate,
+			progress,
+			createdBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{ missionId, name, project, pilot, status },
+						null,
+						2,
+					),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_missions
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_missions",
+	"List missions from VantageMemory with optional filters. " +
+		"Filter by project, pilot, and/or status. Returns newest first.",
+	{
+		project: z.string().optional().describe("Filter by project name"),
+		pilot: creatorSchema.optional().describe("Filter by pilot orchestrator"),
+		status: missionStatusSchema.optional().describe("Filter by status"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of missions to return (default 50)"),
+	},
+	async ({ project, pilot, status, limit }) => {
+		const missions = await convex.query(api.missions.list, {
+			project,
+			pilot,
+			status,
+			limit: limit ?? 50,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(missions, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_mission
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_mission",
+	"Update any mutable field on a mission. Provide only the fields you want to change. " +
+		"updatedAt is set automatically.",
+	{
+		missionId: z
+			.string()
+			.describe("Convex document ID of the mission to update"),
+		name: z.string().optional().describe("New name"),
+		description: z.string().optional().describe("New description"),
+		project: z.string().optional().describe("New project"),
+		status: missionStatusSchema.optional().describe("New status"),
+		priority: missionPrioritySchema.optional().describe("New priority"),
+		pilot: creatorSchema.optional().describe("New pilot"),
+		agents: z.array(z.string()).optional().describe("New agents list"),
+		brief: z.string().optional().describe("New brief"),
+		startDate: z.number().optional().describe("New start date (Unix ms)"),
+		targetDate: z.number().optional().describe("New target date (Unix ms)"),
+		progress: z.number().optional().describe("New progress (0-100)"),
+	},
+	async ({
+		missionId,
+		name,
+		description,
+		project,
+		status,
+		priority,
+		pilot,
+		agents,
+		brief,
+		startDate,
+		targetDate,
+		progress,
+	}) => {
+		await convex.mutation(api.missions.update, {
+			missionId: missionId as any,
+			name,
+			description,
+			project,
+			status,
+			priority,
+			pilot,
+			agents,
+			brief,
+			startDate,
+			targetDate,
+			progress,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ missionId, updated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_mission_status
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_mission_status",
+	"Change a mission's status. Shortcut for updating only the status field.",
+	{
+		missionId: z.string().describe("Convex document ID of the mission"),
+		status: missionStatusSchema.describe("New status"),
+	},
+	async ({ missionId, status }) => {
+		await convex.mutation(api.missions.updateStatus, {
+			missionId: missionId as any,
+			status,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ missionId, status }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: write_diary
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"write_diary",
+	"Write or update a diary entry for a specific date and orchestrator. " +
+		"If an entry already exists for that date+orchestrator, it will be updated (upsert).",
+	{
+		date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
+		orchestrator: creatorSchema.describe("Which orchestrator is writing"),
+		content: z.string().describe("Full diary entry content"),
+		highlights: z
+			.array(z.string())
+			.optional()
+			.describe("Key highlights of the day"),
+		blockers: z.array(z.string()).optional().describe("Blockers encountered"),
+	},
+	async ({ date, orchestrator, content, highlights, blockers }) => {
+		const diaryId = await convex.mutation(api.diary.write, {
+			date,
+			orchestrator,
+			content,
+			highlights,
+			blockers,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ diaryId, date, orchestrator }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_diary
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_diary",
+	"Fetch a diary entry for a specific date and orchestrator. Returns null if no entry exists.",
+	{
+		date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
+		orchestrator: creatorSchema.describe("Which orchestrator's diary to fetch"),
+	},
+	async ({ date, orchestrator }) => {
+		const entry = await convex.query(api.diary.get, {
+			date,
+			orchestrator,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(entry, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_diaries
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_diaries",
+	"List diary entries, optionally filtered by orchestrator. Returns newest first.",
+	{
+		orchestrator: creatorSchema
+			.optional()
+			.describe("Filter to a specific orchestrator — omit for all"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(100)
+			.optional()
+			.default(20)
+			.describe("Maximum entries to return (default 20)"),
+	},
+	async ({ orchestrator, limit }) => {
+		const entries = await convex.query(api.diary.list, {
+			orchestrator,
+			limit: limit ?? 20,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(entries, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_briefing_note
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"create_briefing_note",
+	"Create a briefing note — a structured record of a topic discussion, with participants, " +
+		"content, optional decisions, and optional links to existing memories.",
+	{
+		title: z.string().describe("Briefing note title"),
+		topic: z
+			.string()
+			.describe("Topic category — e.g. 'architecture', 'revenue', 'product'"),
+		participants: z
+			.array(z.string())
+			.describe("Who participated — e.g. ['pi', 'laurent']"),
+		content: z.string().describe("Full briefing content"),
+		decisions: z
+			.array(z.string())
+			.optional()
+			.describe("Decisions made during the briefing"),
+		linkedMemoryIds: z
+			.array(z.string())
+			.optional()
+			.describe("Convex document IDs of related memories"),
+		createdBy: creatorSchema,
+	},
+	async ({
+		title,
+		topic,
+		participants,
+		content,
+		decisions,
+		linkedMemoryIds,
+		createdBy,
+	}) => {
+		const noteId = await convex.mutation(api.briefingNotes.create, {
+			title,
+			topic,
+			participants,
+			content,
+			decisions,
+			linkedMemoryIds: linkedMemoryIds as any,
+			createdBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ noteId, title, topic, createdBy }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_briefing_notes
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_briefing_notes",
+	"List briefing notes, optionally filtered by topic. Returns newest first.",
+	{
+		topic: z
+			.string()
+			.optional()
+			.describe("Filter to a specific topic — omit for all"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(100)
+			.optional()
+			.default(20)
+			.describe("Maximum notes to return (default 20)"),
+	},
+	async ({ topic, limit }) => {
+		const notes = await convex.query(api.briefingNotes.list, {
+			topic,
+			limit: limit ?? 20,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(notes, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Start server on stdio transport
+// ─────────────────────────────────────────────────────────────────────────────
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
