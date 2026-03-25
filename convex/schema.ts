@@ -223,6 +223,7 @@ export default defineSchema({
 			v.literal("done"),
 		),
 		claimedByInstance: v.optional(v.string()), // which instance is working on this
+		dependsOn: v.optional(v.array(v.id("tasks"))), // tasks that must be done first
 		missionId: v.optional(v.id("missions")),
 		estimatedMinutes: v.optional(v.number()),
 		actualMinutes: v.optional(v.number()),

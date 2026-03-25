@@ -637,6 +637,10 @@ server.tool(
 		assignedTo: assigneeSchema,
 		priority: prioritySchema,
 		status: taskStatusSchema.default("todo"),
+		dependsOn: z
+			.array(z.string())
+			.optional()
+			.describe("Task IDs that must be completed before this task can start"),
 		missionId: z
 			.string()
 			.optional()
@@ -659,6 +663,7 @@ server.tool(
 		assignedTo,
 		priority,
 		status,
+		dependsOn,
 		missionId,
 		estimatedMinutes,
 		dueDate,
@@ -672,6 +677,7 @@ server.tool(
 			assignedTo,
 			priority,
 			status,
+			dependsOn: dependsOn as any,
 			missionId: missionId as any,
 			estimatedMinutes,
 			dueDate,
@@ -750,6 +756,10 @@ server.tool(
 		assignedTo: assigneeSchema.optional().describe("Reassign to"),
 		priority: prioritySchema.optional().describe("New priority"),
 		status: taskStatusSchema.optional().describe("New status"),
+		dependsOn: z
+			.array(z.string())
+			.optional()
+			.describe("Task IDs that must be completed before this task can start"),
 		missionId: z
 			.string()
 			.optional()
@@ -775,6 +785,7 @@ server.tool(
 		assignedTo,
 		priority,
 		status,
+		dependsOn,
 		missionId,
 		estimatedMinutes,
 		actualMinutes,
@@ -791,6 +802,7 @@ server.tool(
 			assignedTo,
 			priority,
 			status,
+			dependsOn: dependsOn as any,
 			missionId: missionId as any,
 			estimatedMinutes,
 			actualMinutes,
