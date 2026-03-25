@@ -951,7 +951,7 @@ server.tool(
 		description: z.string().optional().describe("Mission description"),
 		project: z
 			.string()
-			.describe("Project name — e.g. 'vantage-starter', 'elpi-corp'"),
+			.describe("Project name — e.g. 'my-project', 'shared'"),
 		status: missionStatusSchema.default("brainstorm"),
 		priority: missionPrioritySchema,
 		pilot: creatorSchema.describe("Lead orchestrator for this mission"),
