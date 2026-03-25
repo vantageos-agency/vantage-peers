@@ -1,14 +1,14 @@
 ---
 name: recall
 description: >
-  Search VantageMemory for stored memories. Use this skill whenever the user says
+  Search VantagePeers for stored memories. Use this skill whenever the user says
   "recall", "remember", "what do we know about", "search memory", "look up",
   "find in memory", or asks about past decisions, context, or stored knowledge --
   even if they don't say "recall" explicitly.
 user-invocable: true
 ---
 
-Quick semantic search across VantageMemory.
+Quick semantic search across VantagePeers.
 
 ## WORKFLOW
 

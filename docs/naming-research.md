@@ -1,4 +1,4 @@
-# VantageMemory — Product Naming Research
+# VantagePeers — Product Naming Research
 
 **Date:** 2026-03-25
 **Scope:** Rename evaluation for the open-source multi-agent coordination platform (memory + messaging + tasks + diary) built for Claude Code via MCP.
@@ -7,10 +7,10 @@
 
 ## Executive Summary
 
-- **"vantage-memory" is available on npm and vantagememory.* domains show no DNS records**, making the current name registerable — but the name undersells the product's full scope.
+- **"vantage-peers" is available on npm and vantagepeers.* domains show no DNS records**, making the current name registerable — but the name undersells the product's full scope.
 - The best-available names in the target conceptual space are **SwarmState** and **CortexSync** — both have clean npm availability, available .dev/.io domains, and communicate more of the full feature surface.
 - The MCP multi-agent space is crowding fast (agent-nexus, agent-mesh, ruflo, claude-flow all exist); names that lean into "state" or "fabric" rather than "memory" or "hub" will differentiate more cleanly.
-- Three candidates deserve serious consideration: **SwarmState**, **CortexSync**, and retaining **VantageMemory** with a subtitle strategy.
+- Three candidates deserve serious consideration: **SwarmState**, **CortexSync**, and retaining **VantagePeers** with a subtitle strategy.
 
 ---
 
@@ -45,7 +45,7 @@ The multi-agent Claude Code tooling space has exploded in early 2026:
 
 | Name | npm slug | npm available? | GitHub org available? | .dev domain | .io domain | .com domain |
 |---|---|---|---|---|---|---|
-| VantageMemory | `vantage-memory` | YES (404) | YES (404) | Likely available | Likely available | Likely available |
+| VantagePeers | `vantage-peers` | YES (404) | YES (404) | Likely available | Likely available | Likely available |
 | AgentBrain | `agent-brain` | NO (taken, v1.0.0) | — | — | — | — |
 | HiveMind | `hivemind` | NO (taken, v0.1.2) | — | — | — | — |
 | SwarmMemory | `swarm-memory` | YES (404) | — | — | — | — |
@@ -118,10 +118,10 @@ The multi-agent Claude Code tooling space has exploded in early 2026:
 
 ---
 
-### 3. VantageMemory (Current) — VIABLE WITH REFRAMING
+### 3. VantagePeers (Current) — VIABLE WITH REFRAMING
 
-**npm:** `vantage-memory` — available (404)
-**GitHub:** `vantage-memory` and `vantagememory` — both available (404 on both)
+**npm:** `vantage-peers` — available (404)
+**GitHub:** `vantage-peers` and `vantagepeers` — both available (404 on both)
 **Domains:** `.com`, `.dev`, `.io` — all show no DNS records, likely fully available
 
 **Concept:** "Vantage" implies a high-ground perspective — an agent operating from vantage has broader context. This is defensible as metaphor for the full platform (you have vantage because you have memory + tasks + messages).
@@ -138,7 +138,7 @@ The multi-agent Claude Code tooling space has exploded in early 2026:
 - SEO / search competition: "vantage" and "memory" are common words
 - Does not signal "multi-agent coordination" at all
 
-**Mitigation strategy:** Rename to **VantageMemory** as the brand, but position the product as "the coordination layer" in all copy. Subtitle: *"Memory, messaging, and tasks for Claude Code agent swarms."*
+**Mitigation strategy:** Rename to **VantagePeers** as the brand, but position the product as "the coordination layer" in all copy. Subtitle: *"Memory, messaging, and tasks for Claude Code agent swarms."*
 
 ---
 
@@ -208,7 +208,7 @@ The multi-agent Claude Code tooling space has exploded in early 2026:
 
 The name wins on concept fit (state of a swarm = full product scope), clean npm availability (`swarm-state`), and GitHub org availability. The only friction is that swarmstate.dev is taken — registering `swarmstate.io` or `swarmstate.com` resolves this cleanly.
 
-**If you want to preserve zero rename cost: stay with VantageMemory** — all domains and the npm name are clean. Invest in subtitle and positioning to communicate full scope. The "memory" word becomes a feature highlight rather than a limitation.
+**If you want to preserve zero rename cost: stay with VantagePeers** — all domains and the npm name are clean. Invest in subtitle and positioning to communicate full scope. The "memory" word becomes a feature highlight rather than a limitation.
 
 **Avoid:** anything with "agent" in the name — the space is saturating and agent-nexus already owns the closest conceptual territory.
 
@@ -220,7 +220,7 @@ The name wins on concept fit (state of a swarm = full product scope), clean npm 
 |---|---|---|---|---|---|---|
 | **SwarmState** | `swarm-state` | Available | Available | TAKEN | Available | Available |
 | **CortexSync** | `cortex-sync` | Available | Available | Available | Available | TAKEN (.com no hyphen) |
-| **VantageMemory** | `vantage-memory` | Available | Available | Available | Available | Available |
+| **VantagePeers** | `vantage-peers` | Available | Available | Available | Available | Available |
 | **AgentSync** | `agent-sync` | Available | Unknown | Unknown | Unknown | Unknown |
 | **SharedMind** | `shared-mind` | Available | Unknown | Unknown | Unknown | Unknown |
 

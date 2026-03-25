@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug in VantageMemory
+about: Report a bug in VantagePeers
 title: "[Bug] "
 labels: bug
 assignees: ''

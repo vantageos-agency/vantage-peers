@@ -1,4 +1,4 @@
-# Why VantageMemory Exists
+# Why VantagePeers Exists
 
 Every agent memory product on the market solves the same problem: store facts, retrieve facts. A read/write API with embeddings on top. Some add a knowledge graph. Some charge $475 a month for the privilege.
 
@@ -37,7 +37,7 @@ The industry built the hippocampus and forgot the rest of the brain.
 
 ## Our Approach
 
-VantageMemory is one system where the industry uses five.
+VantagePeers is one system where the industry uses five.
 
 **Convex cloud** as the backbone. Real-time serverless database with ACID transactions. No ops. No broker process. No Redis instance to babysit. Every agent with a deployment URL and auth token can read, write, message, and track work from anywhere.
 
@@ -47,7 +47,7 @@ VantageMemory is one system where the industry uses five.
 
 **One backend** for memory, messaging, tasks, missions, diaries, and briefing notes. Eight database tables. One Convex deployment. The coordination layer is not an afterthought -- it is the architecture.
 
-## What Makes VantageMemory Different
+## What Makes VantagePeers Different
 
 **Five memory types with semantic search.** Not key-value. Not flat text. Typed memories -- user, feedback, project, reference, episode -- each searchable by meaning via vector similarity, full-text BM25, or hybrid Reciprocal Rank Fusion.
 
@@ -77,7 +77,7 @@ Community-driven roadmap. File an issue. Open a PR. The features that get built 
 
 ## The Bet
 
-The agent memory market is consolidating around expensive, single-concern cloud APIs that solve retrieval and ignore coordination. VantageMemory bets on the opposite: that memory without messaging is a filing cabinet, that tasks without memory are a to-do list, and that agents that cannot talk to each other across machines are not a system.
+The agent memory market is consolidating around expensive, single-concern cloud APIs that solve retrieval and ignore coordination. VantagePeers bets on the opposite: that memory without messaging is a filing cabinet, that tasks without memory are a to-do list, and that agents that cannot talk to each other across machines are not a system.
 
 They are toys pretending to be infrastructure.
 

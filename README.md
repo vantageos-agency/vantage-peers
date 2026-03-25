@@ -1,4 +1,4 @@
-# VantageMemory
+# VantagePeers
 
 **Shared memory, messaging, and task management MCP server for multi-agent Claude Code.**
 
@@ -7,7 +7,7 @@
 
 ## What It Is
 
-VantageMemory is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, and structured episodic learning -- all exposed as MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, and structured episodic learning -- all exposed as MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ VantageMemory is a shared brain for multiple Claude Code agents. It provides per
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/vantageos/vantage-memory.git
+git clone https://github.com/vantageos/vantage-peers.git
 cd vantage-memory
 
 # 2. Install dependencies
@@ -165,7 +165,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 
 ## Search Modes
 
-VantageMemory supports three search strategies via `@convex-dev/rag`:
+VantagePeers supports three search strategies via `@convex-dev/rag`:
 
 1. **Vector search** -- semantic similarity using cosine distance on 1536-dim embeddings (`text-embedding-3-small`). This is what the `recall` MCP tool uses.
 2. **Text search** -- BM25 full-text search for exact keyword matching.
@@ -177,7 +177,7 @@ Embedding is asynchronous -- there is a 2-5 second delay between storing a memor
 
 ## Multi-Instance Support
 
-VantageMemory distinguishes between **roles** and **instances**:
+VantagePeers distinguishes between **roles** and **instances**:
 
 - A **role** (e.g., `pi`, `tau`, `phi`) is a logical agent identity.
 - An **instance** (e.g., `pi-chromebook`, `pi-vps`, `tau-client-acme`) is a specific running copy of that role.
@@ -201,7 +201,7 @@ Add this snippet to any agent's `CLAUDE.md` to enable the memory protocol:
 ```markdown
 ## SHARED MEMORY (non-negotiable)
 
-You have access to VantageMemory via MCP tools.
+You have access to VantagePeers via MCP tools.
 
 1. On session start: `recall` your namespace for relevant context.
 2. After every failure: `store_episode` with context/goal/action/outcome/insight.

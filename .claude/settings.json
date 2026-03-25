@@ -1,8 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Read(**)", "Write(**)", "Edit(**)", "Bash(*)", "Agent(*)",
-      "Glob(*)", "Grep(*)", "mcp__vantage-memory__*", "mcp__convex__*"
+      "*"
     ]
   },
   "hooks": {

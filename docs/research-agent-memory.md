@@ -1,7 +1,7 @@
 # Agent Memory Solutions: Deep Research & Competitive Analysis
 
 **Date:** 2026-03-25
-**Analyst:** Strategy Research (VantageMemory)
+**Analyst:** Strategy Research (VantagePeers)
 **Scope:** Memory layer products for AI agents — pricing, architecture, limitations, multi-agent support, messaging, task management
 
 ---
@@ -341,9 +341,9 @@ Benchmark scores should not be treated as production reliability indicators.
 - Enterprise tiers are entirely opaque — no published pricing for the tier most serious deployments would need
 - The "free tier" of every product is pre-production only: 1,000 episodes/month (Zep) or 10,000 memories (Mem0) exhausted within days of any real workload
 
-### VantageMemory's Differentiated Position
+### VantagePeers's Differentiated Position
 
-Based on this analysis, VantageMemory addresses three gaps that no competitor has solved in a single product:
+Based on this analysis, VantagePeers addresses three gaps that no competitor has solved in a single product:
 
 1. **Memory + Messaging + Task Management in one system** — no competitor combines all three
 2. **Native multi-agent coordination primitives** — shared memory namespaces with messaging semantics (channels, broadcast, receipts)

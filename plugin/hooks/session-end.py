@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""VantageMemory session-end hook.
+"""VantagePeers session-end hook.
 
 Ensures no session ends without updating state. Injects a prompt that
 triggers the close-day routine. If the SessionEnd hook event is not

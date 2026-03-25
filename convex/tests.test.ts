@@ -17,7 +17,7 @@ describe("Memories", () => {
     const memoryId = await t.mutation(api.memories.storeMemory, {
       namespace: "global",
       type: "project",
-      content: "VantageMemory uses Convex as its backend",
+      content: "VantagePeers uses Convex as its backend",
       createdBy: "pi",
       relations: [],
     });
@@ -26,7 +26,7 @@ describe("Memories", () => {
 
     const memory = await t.query(api.memories.getMemory, { memoryId });
     expect(memory).not.toBeNull();
-    expect(memory!.content).toBe("VantageMemory uses Convex as its backend");
+    expect(memory!.content).toBe("VantagePeers uses Convex as its backend");
     expect(memory!.type).toBe("project");
     expect(memory!.namespace).toBe("global");
     expect(memory!.createdBy).toBe("pi");
@@ -597,7 +597,7 @@ describe("Tasks", () => {
   const sampleTask = {
     title: "Write unit tests",
     description: "Create comprehensive vitest test suite",
-    project: "vantage-memory",
+    project: "vantage-peers",
     assignedTo: "pi" as const,
     priority: "high" as const,
     status: "todo" as const,
@@ -696,9 +696,9 @@ describe("Tasks", () => {
 
 describe("Missions", () => {
   const sampleMission = {
-    name: "Launch VantageMemory v1",
+    name: "Launch VantagePeers v1",
     description: "Ship the first production release",
-    project: "vantage-memory",
+    project: "vantage-peers",
     status: "plan" as const,
     priority: "high" as const,
     pilot: "pi" as const,
@@ -714,7 +714,7 @@ describe("Missions", () => {
 
     const mission = await t.query(api.missions.get, { missionId });
     expect(mission).not.toBeNull();
-    expect(mission!.name).toBe("Launch VantageMemory v1");
+    expect(mission!.name).toBe("Launch VantagePeers v1");
     expect(mission!.status).toBe("plan");
     expect(mission!.pilot).toBe("pi");
     expect(mission!.agents).toEqual(["pi", "tau"]);
@@ -727,8 +727,8 @@ describe("Missions", () => {
 
     await t.mutation(api.missions.create, {
       ...sampleMission,
-      name: "VantageMemory v2",
-      project: "vantage-memory",
+      name: "VantagePeers v2",
+      project: "vantage-peers",
     });
 
     await t.mutation(api.missions.create, {
@@ -738,10 +738,10 @@ describe("Missions", () => {
     });
 
     const vmMissions = await t.query(api.missions.list, {
-      project: "vantage-memory",
+      project: "vantage-peers",
     });
     expect(vmMissions).toHaveLength(2);
-    expect(vmMissions.every((m) => m.project === "vantage-memory")).toBe(true);
+    expect(vmMissions.every((m) => m.project === "vantage-peers")).toBe(true);
   });
 
   test("update mission fields", async () => {
@@ -751,14 +751,14 @@ describe("Missions", () => {
 
     await t.mutation(api.missions.update, {
       missionId,
-      name: "Launch VantageMemory v1.1",
+      name: "Launch VantagePeers v1.1",
       priority: "urgent",
       progress: 50,
     });
 
     const mission = await t.query(api.missions.get, { missionId });
     expect(mission).not.toBeNull();
-    expect(mission!.name).toBe("Launch VantageMemory v1.1");
+    expect(mission!.name).toBe("Launch VantagePeers v1.1");
     expect(mission!.priority).toBe("urgent");
     expect(mission!.progress).toBe(50);
   });
@@ -790,7 +790,7 @@ describe("Diary", () => {
     const diaryId = await t.mutation(api.diary.write, {
       date: "2026-03-25",
       orchestrator: "pi",
-      content: "Completed test suite for VantageMemory. All tests passing.",
+      content: "Completed test suite for VantagePeers. All tests passing.",
       highlights: ["Wrote 30+ tests", "100% mutation coverage"],
       blockers: [],
     });

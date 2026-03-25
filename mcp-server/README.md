@@ -1,6 +1,6 @@
-# VantageMemory MCP Server
+# VantagePeers MCP Server
 
-MCP server that exposes VantageMemory Convex functions as Claude Code tools via stdio transport.
+MCP server that exposes VantagePeers Convex functions as Claude Code tools via stdio transport.
 
 ## Prerequisites
 

@@ -1,4 +1,4 @@
-# VantageMemory — Naming Alternatives Research
+# VantagePeers — Naming Alternatives Research
 **Date:** 2026-03-25
 **Constraint:** Name must contain "Vantage"
 **Scope covered:** Memory + Messaging + Tasks + Diary (cross-machine, multi-agent, MCP-native)
@@ -14,7 +14,7 @@ All 10 candidates were checked against:
 
 | Candidate | npm `vantage-X` | GitHub org | `.dev` | `.io` | `.com` |
 |---|---|---|---|---|---|
-| **VantageMemory** (current) | FREE | FREE | FREE | FREE | FREE |
+| **VantagePeers** (current) | FREE | FREE | FREE | FREE | FREE |
 | **VantageSync** | FREE | FREE | FREE | FREE | TAKEN (afternic parked) |
 | **VantageMind** | FREE | FREE | FREE | FREE | TAKEN (active: HK events co.) |
 | **VantageHive** | FREE | FREE | FREE | FREE | TAKEN (atom.com parked) |
@@ -56,7 +56,7 @@ Packages found on npm that could cause confusion or namespace squatting issues:
 
 ## Candidate Evaluations
 
-### 1. VantageMemory (current)
+### 1. VantagePeers (current)
 **Tagline candidate:** "Agent memory, messaging, and tasks — across every machine"
 
 **Scope coverage:** Partial. "Memory" undersells messaging, tasks, and diary.
@@ -243,11 +243,11 @@ Cons:
 | Memorability | High — action verb, 2 syllables |
 | Differentiation from "memory" tools | Strong |
 
-"Sync" is the single word that most accurately describes what VantageMemory actually does: it keeps memory, messages, tasks, and agent state consistent across machines and instances. It signals a protocol/infrastructure role rather than a storage layer. The `.com` is parked on Afternic (domain broker marketplace) — typical acquisition cost is $500–$2,000, which is acceptable for a production OSS project. The `.dev` and `.io` are free for immediate use.
+"Sync" is the single word that most accurately describes what VantagePeers actually does: it keeps memory, messages, tasks, and agent state consistent across machines and instances. It signals a protocol/infrastructure role rather than a storage layer. The `.com` is parked on Afternic (domain broker marketplace) — typical acquisition cost is $500–$2,000, which is acceptable for a production OSS project. The `.dev` and `.io` are free for immediate use.
 
 ---
 
-### #2 — VantageMemory (current)
+### #2 — VantagePeers (current)
 
 **Verdict: Retain if rename cost or disruption is unacceptable**
 
@@ -281,7 +281,7 @@ The current name has zero acquisition and zero migration cost. Its main liabilit
 | Memorability | Moderate |
 | Differentiation | High — unique in the MCP agent space |
 
-The only candidate besides VantageMemory where `.com`, `.dev`, and `.io` are all free. "Peer" aligns with the product's cross-machine agent-to-agent communication model. Ranked #3 rather than #2 because scope coverage is weaker — "peer" does not signal memory or tasks, which are core features.
+The only candidate besides VantagePeers where `.com`, `.dev`, and `.io` are all free. "Peer" aligns with the product's cross-machine agent-to-agent communication model. Ranked #3 rather than #2 because scope coverage is weaker — "peer" does not signal memory or tasks, which are core features.
 
 ---
 
@@ -303,7 +303,7 @@ The only candidate besides VantageMemory where `.com`, `.dev`, and `.io` are all
 
 **If the product is being positioned as infrastructure for multi-agent coordination:** rename to **VantageSync**. Acquire `vantagesync.com` from Afternic, use `vantagesync.dev` in the interim.
 
-**If the product is being positioned as an agent memory layer with messaging/tasks as secondary features:** keep **VantageMemory**. All domains free, zero migration cost, established footprint.
+**If the product is being positioned as an agent memory layer with messaging/tasks as secondary features:** keep **VantagePeers**. All domains free, zero migration cost, established footprint.
 
 **If communication between agents is the primary story:** consider **VantagePeer** — uniquely clean across all TLDs, strong P2P signal, zero acquisition cost.
 

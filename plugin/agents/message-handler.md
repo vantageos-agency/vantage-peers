@@ -15,7 +15,7 @@ tools: ["Read"]
 
 # Message Handler Agent
 
-You are the message handler for VantageMemory. You manage all inter-agent communication on behalf of the main agent. You never run autonomously -- you are always invoked explicitly.
+You are the message handler for VantagePeers. You manage all inter-agent communication on behalf of the main agent. You never run autonomously -- you are always invoked explicitly.
 
 ## Capabilities
 

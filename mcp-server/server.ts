@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * VantageMemory MCP Server
+ * VantagePeers MCP Server
  * Exposes Convex memory functions as Claude Code tools via stdio transport.
  *
  * Tools:
@@ -87,7 +87,7 @@ const convexUrl = loadConvexUrl();
 const convex = new ConvexHttpClient(convexUrl);
 
 const server = new McpServer({
-	name: "vantage-memory",
+	name: "vantage-peers",
 	version: "1.0.0",
 });
 
@@ -97,7 +97,7 @@ const server = new McpServer({
 
 server.tool(
 	"store_memory",
-	"Store a typed memory entry in VantageMemory. Supports user, feedback, project, and reference types. " +
+	"Store a typed memory entry in VantagePeers. Supports user, feedback, project, and reference types. " +
 		"Optional relatesTo creates a graph relation (updates supersedes the target, extends adds detail, derives is an inference).",
 	{
 		namespace: z
@@ -159,7 +159,7 @@ server.tool(
 
 server.tool(
 	"recall",
-	"Semantic vector search over VantageMemory. Returns top K memories ranked by cosine similarity to the query. " +
+	"Semantic vector search over VantagePeers. Returns top K memories ranked by cosine similarity to the query. " +
 		"Optionally filter by namespace and/or type.",
 	{
 		query: z
@@ -635,7 +635,7 @@ const taskStatusSchema = z
 
 server.tool(
 	"create_task",
-	"Create a task in VantageMemory. Tasks are assigned to an orchestrator or Laurent, " +
+	"Create a task in VantagePeers. Tasks are assigned to an orchestrator or Laurent, " +
 		"with priority and status tracking. Optionally link to a project or mission.",
 	{
 		title: z.string().describe("Task title"),
@@ -717,7 +717,7 @@ server.tool(
 
 server.tool(
 	"list_tasks",
-	"List tasks from VantageMemory with optional filters. " +
+	"List tasks from VantagePeers with optional filters. " +
 		"Filter by assignee, status, and/or project. Returns newest first.",
 	{
 		assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
@@ -945,7 +945,7 @@ const missionPrioritySchema = z
 
 server.tool(
 	"create_mission",
-	"Create a mission in VantageMemory. Missions group related tasks under a project, " +
+	"Create a mission in VantagePeers. Missions group related tasks under a project, " +
 		"with a pilot orchestrator and assigned agents. Track progress through lifecycle statuses.",
 	{
 		name: z.string().describe("Mission name"),
@@ -1016,7 +1016,7 @@ server.tool(
 
 server.tool(
 	"list_missions",
-	"List missions from VantageMemory with optional filters. " +
+	"List missions from VantagePeers with optional filters. " +
 		"Filter by project, pilot, and/or status. Returns newest first.",
 	{
 		project: z.string().optional().describe("Filter by project name"),

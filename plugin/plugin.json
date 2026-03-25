@@ -1,8 +1,8 @@
 {
-  "name": "vantage-memory",
+  "name": "vantage-peers",
   "version": "1.0.0",
   "description": "Turnkey memory, messaging, and task coordination plugin for Claude Code. Connects any Claude Code instance to a shared Convex-backed memory layer with two specialized agents, five skills, and two lifecycle hooks.",
-  "author": "VantageMemory",
+  "author": "VantagePeers",
   "license": "MIT",
   "components": {
     "agents": [

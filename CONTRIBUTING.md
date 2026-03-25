@@ -1,12 +1,12 @@
-# Contributing to VantageMemory
+# Contributing to VantagePeers
 
-Thanks for your interest in contributing to VantageMemory.
+Thanks for your interest in contributing to VantagePeers.
 
 ## Development Setup
 
 ```bash
 # Clone the repo
-git clone https://github.com/vantageos/vantage-memory.git
+git clone https://github.com/vantageos/vantage-peers.git
 cd vantage-memory
 
 # Install dependencies

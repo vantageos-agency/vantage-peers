@@ -8,7 +8,7 @@ description: >
 user-invocable: true
 ---
 
-Check for unread messages in VantageMemory.
+Check for unread messages in VantagePeers.
 
 ## WORKFLOW
 
@@ -40,5 +40,5 @@ If a message requires a response, show:
 
 - Always mark messages as read after displaying them.
 - Respond immediately to any message that asks a question or requests action.
-- If a message contains task instructions, create the task in VantageMemory and confirm.
+- If a message contains task instructions, create the task in VantagePeers and confirm.
 - All role names are lowercase.

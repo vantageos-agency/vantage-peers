@@ -14,8 +14,8 @@ You are the end-of-day routine. You run once at session end to close out the day
 ## WHAT YOU DO
 
 Four steps, in order:
-1. **Update tasks** -- review and update all task statuses in VantageMemory
-2. **Write diary** -- store the day's diary entry in VantageMemory
+1. **Update tasks** -- review and update all task statuses in VantagePeers
+2. **Write diary** -- store the day's diary entry in VantagePeers
 3. **Store session summary** -- save a memory summarizing the session
 4. **Close** -- set summary to "session closed"
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-25
 **Analyst:** Strategy Researcher (Claude)
-**Scope:** Agent communication and messaging solutions relevant to VantageMemory positioning
+**Scope:** Agent communication and messaging solutions relevant to VantagePeers positioning
 
 ---
 
@@ -13,7 +13,7 @@
 - **CrewAI / AutoGen / LangGraph** address agent communication within a framework-scoped runtime; they are not general-purpose inter-agent messaging buses and require agents to share the same deployment environment.
 - **OpenAI Swarm** is intentionally stateless and handles control flow, not persistent messaging.
 - **Google A2A** is a protocol standard (like HTTP), not an implementation — it tells agents *how* to talk, but provides no hosted messaging layer.
-- **VantageMemory's messaging layer** (Convex + receipt-indexed schema) is the only design found that delivers: cloud-persisted messages, per-instance delivery routing, read receipts with timestamps, polling that works from any network, and zero broker-process dependency.
+- **VantagePeers's messaging layer** (Convex + receipt-indexed schema) is the only design found that delivers: cloud-persisted messages, per-instance delivery routing, read receipts with timestamps, polling that works from any network, and zero broker-process dependency.
 
 ---
 
@@ -162,7 +162,7 @@ MCP is a **client-tool protocol**, not an agent-to-agent protocol. An MCP server
 **Emerging MCP-based messaging patterns (2025-2026):**
 - **Azure Web PubSub + MCP**: A persistent WebSocket hub maintains connections; an MCP server dispatches messages to agents via the hub. Adds cross-machine real-time delivery, but requires Azure infrastructure and custom integration.
 - **Google Cloud Pub/Sub MCP server**: Anthropic-compatible MCP server that wraps Google Pub/Sub. Agents can publish/subscribe to topics. Cross-machine by nature (cloud pub/sub). No built-in read receipts or per-recipient inbox model.
-- **VantageMemory (this project)**: Convex-backed MCP server. See section 1.8.
+- **VantagePeers (this project)**: Convex-backed MCP server. See section 1.8.
 
 **Assessment of generic MCP-based messaging:**
 
@@ -226,7 +226,7 @@ LinkedIn extended its existing messaging infrastructure as an agent orchestratio
 
 ---
 
-### 1.9 VantageMemory Messaging Layer (this project)
+### 1.9 VantagePeers Messaging Layer (this project)
 
 **Source:** `/root/coding/vantage-memory/convex/messages.ts`, `/root/coding/vantage-memory/convex/schema.ts`
 
@@ -241,7 +241,7 @@ Delivery routing logic (from `messages.ts`):
 
 **Assessment:**
 
-| Dimension | VantageMemory |
+| Dimension | VantagePeers |
 |---|---|
 | Cross-machine support | **Yes.** Convex is cloud-hosted. Any agent with the deployment URL and auth token can send/receive. No broker process required on any machine. |
 | Read receipts | **Yes.** Per-recipient `readAt` timestamp in `messageReceipts`. Query for `readAt === undefined` to find unread. |
@@ -255,7 +255,7 @@ Delivery routing logic (from `messages.ts`):
 
 ## 2. Comparison Table
 
-| Feature | claude-peers | CrewAI | AutoGen | LangGraph | Swarm | Google A2A | Redis Streams | VantageMemory |
+| Feature | claude-peers | CrewAI | AutoGen | LangGraph | Swarm | Google A2A | Redis Streams | VantagePeers |
 |---|---|---|---|---|---|---|---|---|
 | **Cross-machine** | No | Yes | Yes (v0.4+, complex) | Limited | No | Yes (protocol) | Yes | Yes |
 | **Read receipts** | No | No | No | No | No | No | Partial (offset) | Yes (per-recipient, timestamped) |
@@ -276,32 +276,32 @@ Delivery routing logic (from `messages.ts`):
 claude-peers is the only MCP-native peer messaging solution found. It is well-designed for its scope but has a hard architectural ceiling: everything must share localhost. The moment agents run on different machines (a very common deployment pattern — chromebook + VPS, or developer machine + cloud worker), claude-peers provides zero value. No other solution fills this gap at the MCP layer.
 
 **Insight 2 — Framework solutions are not messaging buses**
-CrewAI, AutoGen, LangGraph, and Swarm each solve a specific orchestration problem within their own runtime. None of them provide a general-purpose "send a message to an agent on another machine and confirm it was received" primitive. They assume agents share a deployment context. VantageMemory explicitly does not — it serves heterogeneous agents across machines.
+CrewAI, AutoGen, LangGraph, and Swarm each solve a specific orchestration problem within their own runtime. None of them provide a general-purpose "send a message to an agent on another machine and confirm it was received" primitive. They assume agents share a deployment context. VantagePeers explicitly does not — it serves heterogeneous agents across machines.
 
 **Insight 3 — Google A2A is a protocol, not a product**
 A2A defines *how* agents should talk but provides no hosted relay, no inbox, and no receipt semantics. Implementing A2A requires standing up HTTP services for every agent, implementing Agent Cards, and building your own delivery confirmation. It is a specification burden, not a solution.
 
 **Insight 4 — Read receipts are genuinely absent from the landscape**
-No surveyed solution — including Redis Streams, which has consumer offset tracking — provides per-recipient, per-message read confirmation with timestamps. Redis consumer groups give you "has this consumer group consumed this message" but not "did agent pi-vps specifically read message X at time T." VantageMemory's `messageReceipts.readAt` is a differentiator.
+No surveyed solution — including Redis Streams, which has consumer offset tracking — provides per-recipient, per-message read confirmation with timestamps. Redis consumer groups give you "has this consumer group consumed this message" but not "did agent pi-vps specifically read message X at time T." VantagePeers's `messageReceipts.readAt` is a differentiator.
 
 **Insight 5 — Multi-instance routing is an unsolved problem**
-The concept of "role pi running on three machines simultaneously, but this message is only for pi-vps" does not exist in any surveyed framework. CrewAI A2A requires a separate Agent Card per instance. AutoGen requires separate subscriptions per agent process. VantageMemory's two-tier routing (role-level vs instance-level) addresses this natively.
+The concept of "role pi running on three machines simultaneously, but this message is only for pi-vps" does not exist in any surveyed framework. CrewAI A2A requires a separate Agent Card per instance. AutoGen requires separate subscriptions per agent process. VantagePeers's two-tier routing (role-level vs instance-level) addresses this natively.
 
 ---
 
 ## 4. Strategic Recommendations
 
-**Recommendation 1 — Document VantageMemory as the direct successor to claude-peers (High priority)**
+**Recommendation 1 — Document VantagePeers as the direct successor to claude-peers (High priority)**
 The positioning is clean: "claude-peers, but cross-machine and with receipts." The audience is Claude Code power users who have already hit the localhost ceiling. Write a concrete migration note showing the API equivalence: `send_message` / `check_messages` / `list_peers` map 1:1.
 
 **Recommendation 2 — Do not position against CrewAI/AutoGen/LangGraph (Low priority)**
-These are framework-level solutions for different use cases. Positioning VantageMemory against them creates confusion — they are not competitors. The competitive frame is: "for agents that don't share a runtime and don't want to adopt a heavy framework."
+These are framework-level solutions for different use cases. Positioning VantagePeers against them creates confusion — they are not competitors. The competitive frame is: "for agents that don't share a runtime and don't want to adopt a heavy framework."
 
 **Recommendation 3 — Add WebSocket / reactive delivery as a future capability (Medium priority)**
-The one genuine gap in VantageMemory vs Redis Streams is that Convex requires polling in the MCP context. Convex supports reactive subscriptions natively (WebSocket). If a future VantageMemory server version holds a persistent Convex subscription and pushes to the MCP client via SSE, this gap closes entirely.
+The one genuine gap in VantagePeers vs Redis Streams is that Convex requires polling in the MCP context. Convex supports reactive subscriptions natively (WebSocket). If a future VantagePeers server version holds a persistent Convex subscription and pushes to the MCP client via SSE, this gap closes entirely.
 
 **Recommendation 4 — Monitor Google A2A adoption as a potential integration target (Low-medium priority)**
-As A2A becomes a de facto standard, VantageMemory's messaging layer could serve as an A2A-compatible relay: agents that implement A2A could use VantageMemory as the persistence/receipt layer for their messages, rather than building their own. This is a 12-18 month horizon play.
+As A2A becomes a de facto standard, VantagePeers's messaging layer could serve as an A2A-compatible relay: agents that implement A2A could use VantagePeers as the persistence/receipt layer for their messages, rather than building their own. This is a 12-18 month horizon play.
 
 **Recommendation 5 — Emphasize "offline delivery" explicitly in positioning (High priority)**
 Redis Streams is the only other solution that delivers messages to agents that were offline when the message was sent. However, Redis requires a managed server. Convex is fully managed. The "your agent was offline, messages waited for it" use case is a concrete, relatable story that no other MCP-native solution can tell.

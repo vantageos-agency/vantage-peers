@@ -1,8 +1,8 @@
-# VantageMemory Developer Onboarding Design
+# VantagePeers Developer Onboarding Design
 
 **Goal:** Zero-friction setup. From `git clone` to a working memory system in under 10 minutes.
 
-**Differentiator:** mem0 requires Docker + Redis + Qdrant + API server. SuperMemory needs multiple services and config files. VantageMemory needs one command (`npx convex dev`) and one API key.
+**Differentiator:** mem0 requires Docker + Redis + Qdrant + API server. SuperMemory needs multiple services and config files. VantagePeers needs one command (`npx convex dev`) and one API key.
 
 ---
 
@@ -20,7 +20,7 @@ An interactive Claude Code skill that walks a developer through first-time confi
 
 **Prompt to user:**
 ```
-Checking prerequisites for VantageMemory...
+Checking prerequisites for VantagePeers...
 ```
 
 **Checks (silent unless failed):**
@@ -87,7 +87,7 @@ Convex deployment failed. Common fixes:
 
 **Prompt to user:**
 ```
-VantageMemory uses OpenAI embeddings for semantic search.
+VantagePeers uses OpenAI embeddings for semantic search.
 You need an OpenAI API key (text-embedding-3-small costs ~$0.02 per 1M tokens).
 
 Get one at: https://platform.openai.com/api-keys
@@ -133,7 +133,7 @@ The key must start with "sk-". Get one at https://platform.openai.com/api-keys
 
 **Prompt to user:**
 ```
-Configuring Claude Code to connect to VantageMemory...
+Configuring Claude Code to connect to VantagePeers...
 
 Where should the MCP server be registered?
   (a) Project-level: .claude/settings.json (this project only)
@@ -192,7 +192,7 @@ Testing the memory system with a round-trip store + recall...
 store_memory:
   namespace: "global"
   type: "project"
-  content: "VantageMemory setup completed successfully. Deployment URL: <url>. Date: <today>."
+  content: "VantagePeers setup completed successfully. Deployment URL: <url>. Date: <today>."
   createdBy: "setup"
 
 # Wait 3 seconds for embedding to generate
@@ -211,7 +211,7 @@ recall:
 ```
 Memory stored and recalled successfully.
 
-  Stored: "VantageMemory setup completed successfully..."
+  Stored: "VantagePeers setup completed successfully..."
   Recalled after 3s: match found (score: 0.92)
 
 Note: There is always a 2-5 second delay between storing a memory
@@ -281,7 +281,7 @@ Skipping multi-agent setup. You can configure this later by running /setup-memor
 
 **Prompt to user:**
 ```
-Installing Claude Code hooks and skills for VantageMemory...
+Installing Claude Code hooks and skills for VantagePeers...
 ```
 
 **Files to copy/create:**
@@ -293,7 +293,7 @@ Installing Claude Code hooks and skills for VantageMemory...
 import json, sys
 def main():
     msg = (
-        "You have VantageMemory connected via MCP. "
+        "You have VantagePeers connected via MCP. "
         "STARTUP: "
         "1. Call recall with query='priorities pending blockers', namespace='global', limit=5. "
         "2. Review any recent memories for context."
@@ -301,7 +301,7 @@ def main():
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": f"[VantageMemory] {msg}"
+            "additionalContext": f"[VantagePeers] {msg}"
         }
     }))
     return 0
@@ -364,7 +364,7 @@ if __name__ == "__main__": sys.exit(main())
 ```markdown
 ## SHARED MEMORY (non-negotiable)
 
-You have access to VantageMemory via MCP tools.
+You have access to VantagePeers via MCP tools.
 
 1. On session start: `recall` your namespace for relevant context.
 2. After every failure: `store_episode` with context/goal/action/outcome/insight.
@@ -406,7 +406,7 @@ Running final verification...
 **Success output:**
 ```
 ============================================
-  VantageMemory Setup Complete
+  VantagePeers Setup Complete
 ============================================
 
   Deployment:  https://cool-animal-123.convex.cloud
@@ -430,14 +430,14 @@ Running final verification...
   Next: try storing a memory:
     "Remember that I prefer TypeScript over JavaScript"
 
-  Docs: https://github.com/vantageos/vantage-memory#readme
+  Docs: https://github.com/vantageos/vantage-peers#readme
 ============================================
 ```
 
 **Partial failure output (example):**
 ```
 ============================================
-  VantageMemory Setup -- Partial
+  VantagePeers Setup -- Partial
 ============================================
 
   [OK] Convex deployment reachable
@@ -519,7 +519,7 @@ TUTORIAL 3/5: Tasks
 Create a task, start it, complete it.
 
   create_task:
-    title: "Read the VantageMemory README"
+    title: "Read the VantagePeers README"
     assignedTo: "tutorial-user"
     priority: "low"
     project: "onboarding"
@@ -546,7 +546,7 @@ Write a diary entry to capture what happened today.
     date: "<today's date>"
     orchestrator: "tutorial-user"
     instanceId: "tutorial"
-    content: "Set up VantageMemory and completed the onboarding tutorial."
+    content: "Set up VantagePeers and completed the onboarding tutorial."
     highlights: ["Completed setup in under 10 minutes", "Stored first memory"]
     blockers: []
 
@@ -660,7 +660,7 @@ Copy-paste ready. Append to any project's CLAUDE.md:
 ```markdown
 ## SHARED MEMORY (non-negotiable)
 
-You have access to VantageMemory via MCP tools.
+You have access to VantagePeers via MCP tools.
 
 1. On session start: `recall` your namespace for relevant context.
 2. After every failure: `store_episode` with context/goal/action/outcome/insight.
@@ -676,12 +676,12 @@ File: `.claude/hooks/session-start.py`
 
 ```python
 #!/usr/bin/env python3
-"""VantageMemory session-start hook for single-agent setups."""
+"""VantagePeers session-start hook for single-agent setups."""
 import json, sys
 
 def main():
     msg = (
-        "You have VantageMemory connected via MCP. "
+        "You have VantagePeers connected via MCP. "
         "STARTUP: "
         "1. Call recall with query='priorities pending blockers', namespace='global', limit=5. "
         "2. Review any recent memories for context before starting work."
@@ -689,7 +689,7 @@ def main():
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": f"[VantageMemory] {msg}"
+            "additionalContext": f"[VantagePeers] {msg}"
         }
     }))
     return 0
@@ -706,7 +706,7 @@ Replace `ROLE` and `INSTANCE` with your values (e.g., `pi` and `pi-laptop`).
 
 ```python
 #!/usr/bin/env python3
-"""VantageMemory session-start hook for multi-agent setups."""
+"""VantagePeers session-start hook for multi-agent setups."""
 import json, sys
 
 ROLE = "pi"            # your orchestrator role
@@ -789,7 +789,7 @@ The interactive tutorial adds another 5-10 minutes but is optional and can be do
 
 ## Part 6: Comparison with Alternatives
 
-| Aspect | VantageMemory | mem0 | SuperMemory |
+| Aspect | VantagePeers | mem0 | SuperMemory |
 |---|---|---|---|
 | **Setup steps** | 4 commands | Docker + Redis + Qdrant + API server + SDK | Multiple services + config |
 | **Time to first memory** | ~3 minutes | 15-30 minutes | 10-20 minutes |

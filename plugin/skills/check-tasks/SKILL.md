@@ -1,14 +1,14 @@
 ---
 name: check-tasks
 description: >
-  Check your tasks from VantageMemory. Use this skill whenever the user says
+  Check your tasks from VantagePeers. Use this skill whenever the user says
   "check tasks", "my tasks", "what's pending", "task list", "todo list",
   "what should I work on", "backlog", or asks about pending work --
   even if they don't say "check-tasks" explicitly.
 user-invocable: true
 ---
 
-Check tasks assigned to you in VantageMemory, sorted by priority with dependency awareness.
+Check tasks assigned to you in VantagePeers, sorted by priority with dependency awareness.
 
 ## WORKFLOW
 

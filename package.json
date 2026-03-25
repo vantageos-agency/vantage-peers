@@ -1,5 +1,5 @@
 {
-  "name": "vantage-memory",
+  "name": "vantage-peers",
   "version": "1.0.0",
   "description": "Shared memory, messaging, and task management MCP server for multi-agent Claude Code",
   "keywords": [
@@ -16,7 +16,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vantageos/vantage-memory.git"
+    "url": "https://github.com/vantageos/vantage-peers.git"
   },
   "engines": {
     "node": ">=18.0.0"

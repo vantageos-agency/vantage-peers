@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * VantageMemory MCP Server Tester
+ * VantagePeers MCP Server Tester
  *
  * Spawns the MCP server, sends JSON-RPC requests via stdin,
- * and verifies responses for all VantageMemory tools.
+ * and verifies responses for all VantagePeers tools.
  *
  * Usage: bun scripts/test-mcp.ts
  */

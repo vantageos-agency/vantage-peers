@@ -11,7 +11,7 @@ allowed-tools: Read, Bash(git *), Bash(date)
 
 # Standup
 
-Generate a structured standup report and file it as a briefing note in VantageMemory.
+Generate a structured standup report and file it as a briefing note in VantagePeers.
 
 ## WORKFLOW
 

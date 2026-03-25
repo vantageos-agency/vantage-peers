@@ -8,7 +8,7 @@ Convex agent skills for common tasks can be installed by running `npx convex ai-
 
 ---
 
-## VANTAGEMEMORY MCP — TOOL REFERENCE (mandatory)
+## VANTAGEPEERS MCP — TOOL REFERENCE (mandatory)
 
 All values are **lowercase**. Never use uppercase for orchestrator names.
 

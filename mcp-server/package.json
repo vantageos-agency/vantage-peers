@@ -1,7 +1,7 @@
 {
-  "name": "vantage-memory-mcp",
+  "name": "vantage-peers-mcp",
   "version": "1.0.0",
-  "description": "MCP server exposing VantageMemory Convex functions as Claude Code tools",
+  "description": "MCP server exposing VantagePeers Convex functions as Claude Code tools",
   "type": "module",
   "bin": {
     "vantage-memory": "./server.js"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""VantageMemory session-start hook.
+"""VantagePeers session-start hook.
 
 Injects startup instructions into every new Claude Code session.
 The hook itself does not call MCP tools -- it outputs a JSON prompt

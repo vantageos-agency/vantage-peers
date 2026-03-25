@@ -1,4 +1,4 @@
-# VantageMemory Plugin / Developer Kit
+# VantagePeers Plugin / Developer Kit
 
 ## Design Document
 
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-The VantageMemory Plugin is a turnkey developer kit for Claude Code. A developer runs one command and gets a complete agent coordination system: two specialized agents, six skills, two lifecycle hooks, and pre-wired MCP server configuration -- all connected to a shared Convex-backed memory layer.
+The VantagePeers Plugin is a turnkey developer kit for Claude Code. A developer runs one command and gets a complete agent coordination system: two specialized agents, six skills, two lifecycle hooks, and pre-wired MCP server configuration -- all connected to a shared Convex-backed memory layer.
 
 The goal: any Claude Code instance becomes a memory-aware, message-passing, task-driven autonomous agent within 60 seconds of installation.
 
@@ -92,7 +92,7 @@ vantage-memory-plugin/
 ---
 name: memory-manager
 description: |
-  Use this agent to manage VantageMemory operations: multi-layer recall,
+  Use this agent to manage VantagePeers operations: multi-layer recall,
   decision storage, episode logging, and feedback archival. Delegate to
   this agent after significant decisions, user corrections, or failures.
 model: sonnet
@@ -306,7 +306,7 @@ Found {n} results:
 **File:** `skills/setup-memory/SKILL.md`
 **Trigger phrases:** "setup memory", "configure vantage", "first time setup", "initialize memory"
 
-**Purpose:** First-time setup wizard. Walks a new user through connecting VantageMemory to their Claude Code instance.
+**Purpose:** First-time setup wizard. Walks a new user through connecting VantagePeers to their Claude Code instance.
 
 **Workflow:**
 
@@ -542,7 +542,7 @@ if __name__ == "__main__":
 **File:** `templates/.env.example`
 
 ```bash
-# VantageMemory Configuration
+# VantagePeers Configuration
 # Copy to .env and fill in values
 
 # Convex deployment URL (required)
@@ -569,7 +569,7 @@ VM_PROJECT=my-project
 Contains the two protocol blocks that should be appended to any project's CLAUDE.md:
 
 ```markdown
-## VANTAGEMEMORY MCP -- TOOL REFERENCE (mandatory)
+## VANTAGEPEERS MCP -- TOOL REFERENCE (mandatory)
 
 All values are **lowercase**. Never use uppercase for orchestrator names.
 
@@ -615,7 +615,7 @@ list_peers:     (no args)
 ### 7.1 Automated (recommended)
 
 ```bash
-npx vantage-memory init
+npx vantage-peers init
 ```
 
 The installer performs these steps:
@@ -631,7 +631,7 @@ The installer performs these steps:
 6. **Run verification** -- starts MCP server, calls `list_peers`, confirms connectivity
 7. **Print next steps:**
    ```
-   VantageMemory installed.
+   VantagePeers installed.
 
    Start Claude Code and run /setup-memory to complete first-time configuration.
    Or just start a session -- the startup hook will handle the rest.

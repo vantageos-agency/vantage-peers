@@ -1,4 +1,4 @@
-## VANTAGEMEMORY MCP -- TOOL REFERENCE (mandatory)
+## VANTAGEPEERS MCP -- TOOL REFERENCE (mandatory)
 
 All values are **lowercase**. Never use uppercase for orchestrator names.
 
