@@ -953,6 +953,34 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"delete_task",
+	"Permanently delete a task. Only the creator (or system) can delete.",
+	{
+		taskId: z.string().describe("Convex document ID of the task to delete"),
+		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or system"),
+	},
+	async ({ taskId, callerOrchestrator }) => {
+		const result = await convex.mutation(api.tasks.deleteTask, {
+			taskId: taskId as any,
+			callerOrchestrator,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(result, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_tasks_by_mission
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -353,6 +353,33 @@ export const start = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// deleteTask — hard delete, owner-only (createdBy must match caller)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const deleteTask = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+	},
+	returns: v.object({ deleted: v.boolean() }),
+	handler: async (ctx, args) => {
+		const task = await ctx.db.get(args.taskId);
+		if (!task) throw new Error("Task not found");
+
+		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
+			if (task.createdBy !== args.callerOrchestrator) {
+				throw new Error(
+					`Unauthorized: only ${task.createdBy} (creator) or system can delete this task`,
+				);
+			}
+		}
+
+		await ctx.db.delete(args.taskId);
+		return { deleted: true };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listByMission — list tasks filtered by missionId
 // ─────────────────────────────────────────────────────────────────────────────
 
