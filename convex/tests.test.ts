@@ -644,6 +644,7 @@ describe("Tasks", () => {
 
     await t.mutation(api.tasks.update, {
       taskId,
+      callerOrchestrator: "pi" as const,
       title: "Write unit tests (updated)",
       priority: "urgent",
     });
@@ -659,7 +660,7 @@ describe("Tasks", () => {
 
     const taskId = await t.mutation(api.tasks.create, sampleTask);
 
-    await t.mutation(api.tasks.start, { taskId });
+    await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "pi" as const });
 
     const task = await t.query(api.tasks.get, { taskId });
     expect(task).not.toBeNull();
@@ -674,10 +675,11 @@ describe("Tasks", () => {
     const taskId = await t.mutation(api.tasks.create, sampleTask);
 
     // Start first so we can test actualMinutes calculation
-    await t.mutation(api.tasks.start, { taskId });
+    await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "pi" as const });
 
     await t.mutation(api.tasks.complete, {
       taskId,
+      callerOrchestrator: "pi" as const,
       completionNote: "All 30 tests pass, coverage at 95%",
     });
 

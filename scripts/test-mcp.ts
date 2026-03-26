@@ -241,6 +241,7 @@ async function main() {
 			try {
 				const res = await client.callTool("update_task", {
 					taskId,
+					callerOrchestrator: "pi",
 					priority: "high",
 				});
 				if (res.updated === true) {
@@ -258,7 +259,7 @@ async function main() {
 		// ── complete_task ─────────────────────────────────────────────────────
 		if (taskId) {
 			try {
-				const res = await client.callTool("complete_task", { taskId });
+				const res = await client.callTool("complete_task", { taskId, callerOrchestrator: "pi" });
 				if (res.status === "done") {
 					pass("complete_task", "status -> done");
 				} else {
@@ -370,6 +371,7 @@ async function main() {
 			try {
 				const res = await client.callTool("start_task", {
 					taskId: missionTaskId,
+					callerOrchestrator: "pi",
 				});
 				if (res.status === "in_progress") {
 					pass("start_task", "status -> in_progress");

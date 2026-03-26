@@ -219,6 +219,7 @@ export const list = query({
 export const update = mutation({
 	args: {
 		taskId: v.id("tasks"),
+		callerOrchestrator: creatorValidator,
 		title: v.optional(v.string()),
 		description: v.optional(v.string()),
 		project: v.optional(v.string()),
@@ -235,10 +236,19 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { taskId, ...fields } = args;
+		const { taskId, callerOrchestrator, ...fields } = args;
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new Error(`Task ${taskId} not found`);
+		}
+		const isAuthorized =
+			task.createdBy === args.callerOrchestrator ||
+			task.assignedTo === args.callerOrchestrator ||
+			args.callerOrchestrator === "system";
+		if (!isAuthorized) {
+			throw new Error(
+				`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+			);
 		}
 
 		// Build patch object with only provided fields
@@ -261,6 +271,7 @@ export const update = mutation({
 export const complete = mutation({
 	args: {
 		taskId: v.id("tasks"),
+		callerOrchestrator: creatorValidator,
 		completionNote: v.optional(v.string()),
 	},
 	returns: v.null(),
@@ -268,6 +279,15 @@ export const complete = mutation({
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new Error(`Task ${args.taskId} not found`);
+		}
+		const isAuthorized =
+			task.createdBy === args.callerOrchestrator ||
+			task.assignedTo === args.callerOrchestrator ||
+			args.callerOrchestrator === "system";
+		if (!isAuthorized) {
+			throw new Error(
+				`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+			);
 		}
 
 		const now = Date.now();
@@ -296,12 +316,24 @@ export const complete = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const start = mutation({
-	args: { taskId: v.id("tasks") },
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: creatorValidator,
+	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new Error(`Task ${args.taskId} not found`);
+		}
+		const isAuthorized =
+			task.createdBy === args.callerOrchestrator ||
+			task.assignedTo === args.callerOrchestrator ||
+			args.callerOrchestrator === "system";
+		if (!isAuthorized) {
+			throw new Error(
+				`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+			);
 		}
 
 		const now = Date.now();

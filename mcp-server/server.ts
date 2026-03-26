@@ -798,6 +798,7 @@ server.tool(
 			.optional()
 			.describe("When work completed (Unix ms)"),
 		dueDate: z.number().optional().describe("New due date (Unix ms)"),
+		callerOrchestrator: creatorSchema.describe("Orchestrator making the change — must be creator or assignee"),
 	},
 	async ({
 		taskId,
@@ -815,6 +816,7 @@ server.tool(
 		startedAt,
 		completedAt,
 		dueDate,
+		callerOrchestrator,
 	}) => {
 		await convex.mutation(api.tasks.update, {
 			taskId: taskId as any,
@@ -832,6 +834,7 @@ server.tool(
 			startedAt,
 			completedAt,
 			dueDate,
+			callerOrchestrator,
 		});
 
 		return {
@@ -860,11 +863,13 @@ server.tool(
 			.string()
 			.optional()
 			.describe("What was actually done — summary of work completed (MANDATORY)"),
+		callerOrchestrator: creatorSchema.describe("Orchestrator completing — must be creator or assignee"),
 	},
-	async ({ taskId, completionNote }) => {
+	async ({ taskId, completionNote, callerOrchestrator }) => {
 		await convex.mutation(api.tasks.complete, {
 			taskId: taskId as any,
 			completionNote,
+			callerOrchestrator,
 		});
 
 		return {
@@ -888,10 +893,12 @@ server.tool(
 		"Use this when beginning work on a task to enable automatic duration tracking.",
 	{
 		taskId: z.string().describe("Convex document ID of the task to start"),
+		callerOrchestrator: creatorSchema.describe("Orchestrator starting — must be creator or assignee"),
 	},
-	async ({ taskId }) => {
+	async ({ taskId, callerOrchestrator }) => {
 		await convex.mutation(api.tasks.start, {
 			taskId: taskId as any,
+			callerOrchestrator,
 		});
 
 		return {
