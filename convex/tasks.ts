@@ -39,6 +39,7 @@ export const create = mutation({
 		project: v.optional(v.string()),
 		tags: v.optional(v.array(v.string())),
 		assignedTo: assigneeValidator,
+		assignedToInstance: v.optional(v.string()),
 		priority: priorityValidator,
 		status: statusValidator,
 		dependsOn: v.optional(v.array(v.id("tasks"))),
@@ -76,6 +77,7 @@ export const get = query({
 			priority: priorityValidator,
 			status: statusValidator,
 			completionNote: v.optional(v.string()),
+			assignedToInstance: v.optional(v.string()),
 			claimedByInstance: v.optional(v.string()),
 			dependsOn: v.optional(v.array(v.id("tasks"))),
 			missionId: v.optional(v.id("missions")),
@@ -102,6 +104,7 @@ export const get = query({
 export const list = query({
 	args: {
 		assignedTo: v.optional(assigneeValidator),
+		assignedToInstance: v.optional(v.string()),
 		status: v.optional(statusValidator),
 		project: v.optional(v.string()),
 		limit: v.optional(v.number()),
@@ -118,6 +121,7 @@ export const list = query({
 			priority: priorityValidator,
 			status: statusValidator,
 			completionNote: v.optional(v.string()),
+			assignedToInstance: v.optional(v.string()),
 			claimedByInstance: v.optional(v.string()),
 			dependsOn: v.optional(v.array(v.id("tasks"))),
 			missionId: v.optional(v.id("missions")),
@@ -133,6 +137,26 @@ export const list = query({
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+
+		// Filter by instance + status
+		if (args.assignedToInstance !== undefined && args.status !== undefined) {
+			return await ctx.db
+				.query("tasks")
+				.withIndex("by_instance", (q) =>
+					q.eq("assignedToInstance", args.assignedToInstance!).eq("status", args.status!),
+				)
+				.order("desc")
+				.take(limit);
+		}
+
+		// Filter by instance only
+		if (args.assignedToInstance !== undefined) {
+			return await ctx.db
+				.query("tasks")
+				.withIndex("by_instance", (q) => q.eq("assignedToInstance", args.assignedToInstance!))
+				.order("desc")
+				.take(limit);
+		}
 
 		// Filter by assignee + status
 		if (args.assignedTo !== undefined && args.status !== undefined) {
@@ -312,6 +336,7 @@ export const listByMission = query({
 			priority: priorityValidator,
 			status: statusValidator,
 			completionNote: v.optional(v.string()),
+			assignedToInstance: v.optional(v.string()),
 			claimedByInstance: v.optional(v.string()),
 			dependsOn: v.optional(v.array(v.id("tasks"))),
 			missionId: v.optional(v.id("missions")),

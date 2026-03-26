@@ -647,6 +647,10 @@ server.tool(
 		tags: flexArrayOptional
 			.describe("Optional tags for categorization"),
 		assignedTo: assigneeSchema,
+		assignedToInstance: z
+			.string()
+			.optional()
+			.describe("Instance-level assignment — e.g. 'pi-vps', 'tau-chromebook'. Optional."),
 		priority: prioritySchema,
 		status: taskStatusSchema.default("todo"),
 		dependsOn: z
@@ -673,6 +677,7 @@ server.tool(
 		project,
 		tags,
 		assignedTo,
+		assignedToInstance,
 		priority,
 		status,
 		dependsOn,
@@ -687,6 +692,7 @@ server.tool(
 			project,
 			tags: toArray(tags),
 			assignedTo,
+			assignedToInstance,
 			priority,
 			status,
 			dependsOn: toArray(dependsOn) as any,
@@ -718,9 +724,13 @@ server.tool(
 server.tool(
 	"list_tasks",
 	"List tasks from VantagePeers with optional filters. " +
-		"Filter by assignee, status, and/or project. Returns newest first.",
+		"Filter by assignee, instance, status, and/or project. Returns newest first.",
 	{
 		assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
+		assignedToInstance: z
+			.string()
+			.optional()
+			.describe("Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance."),
 		status: taskStatusSchema.optional().describe("Filter by status"),
 		project: z.string().optional().describe("Filter by project name"),
 		limit: z
@@ -732,9 +742,10 @@ server.tool(
 			.default(50)
 			.describe("Maximum number of tasks to return (default 50)"),
 	},
-	async ({ assignedTo, status, project, limit }) => {
+	async ({ assignedTo, assignedToInstance, status, project, limit }) => {
 		const tasks = await convex.query(api.tasks.list, {
 			assignedTo,
+			assignedToInstance,
 			status,
 			project,
 			limit: limit ?? 50,
