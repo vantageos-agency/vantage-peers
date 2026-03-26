@@ -175,6 +175,51 @@ export const markAsRead = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// deleteMessage — delete a message and cascade-delete its receipts
+// RBAC: only the sender or "system" may delete. Pass callerOrchestrator=undefined
+// to bypass the check (server-to-server / admin use).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const deleteMessage = mutation({
+	args: {
+		messageId: v.id("messages"),
+		callerOrchestrator: v.optional(creatorValidator),
+	},
+	returns: v.object({ deleted: v.boolean(), receiptsDeleted: v.number() }),
+	handler: async (ctx, args) => {
+		const message = await ctx.db.get(args.messageId);
+		if (!message) throw new Error("Message not found");
+
+		// RBAC: if callerOrchestrator provided, must match message.from
+		if (
+			args.callerOrchestrator !== undefined &&
+			args.callerOrchestrator !== "system"
+		) {
+			if (message.from !== args.callerOrchestrator) {
+				throw new Error(
+					`Unauthorized: only ${message.from} (sender) or system can delete this message`,
+				);
+			}
+		}
+
+		// Cascade: delete all receipts for this message
+		const receipts = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_message", (q) => q.eq("messageId", args.messageId))
+			.collect();
+
+		for (const receipt of receipts) {
+			await ctx.db.delete(receipt._id);
+		}
+
+		// Delete the message
+		await ctx.db.delete(args.messageId);
+
+		return { deleted: true, receiptsDeleted: receipts.length };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listMessages — get messages for a day or from a sender (history/replay)
 // ─────────────────────────────────────────────────────────────────────────────
 

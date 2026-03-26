@@ -515,6 +515,34 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_message
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"delete_message",
+	"Delete a message and all its receipts. Only the sender (or system) can delete a message.",
+	{
+		messageId: z.string().describe("Convex document ID of the message to delete"),
+		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be the sender or system"),
+	},
+	async ({ messageId, callerOrchestrator }) => {
+		const result = await convex.mutation(api.messages.deleteMessage, {
+			messageId: messageId as any,
+			callerOrchestrator,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(result, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: set_summary
 // ─────────────────────────────────────────────────────────────────────────────
 

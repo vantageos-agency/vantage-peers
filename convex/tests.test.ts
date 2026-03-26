@@ -587,6 +587,76 @@ describe("Messages", () => {
     expect(piMessages).toHaveLength(2);
     expect(piMessages.every((m) => m.from === "pi")).toBe(true);
   });
+
+  test("delete message cascades receipts", async () => {
+    const t = convexTest(schema, modules);
+
+    // Send a message from pi to tau — creates 1 message + 1 receipt
+    const messageId = await t.mutation(api.messages.sendMessage, {
+      from: "pi",
+      channel: "tau",
+      content: "This will be deleted",
+    });
+
+    // Verify receipt exists before deletion
+    const before = await t.query(api.messages.checkNewMessages, {
+      recipient: "tau",
+    });
+    expect(before).toHaveLength(1);
+    expect(before[0].messageId).toBe(messageId);
+
+    // Delete the message as the sender
+    const result = await t.mutation(api.messages.deleteMessage, {
+      messageId,
+      callerOrchestrator: "pi",
+    });
+
+    expect(result.deleted).toBe(true);
+    expect(result.receiptsDeleted).toBe(1);
+
+    // Message should no longer appear in tau's inbox
+    const after = await t.query(api.messages.checkNewMessages, {
+      recipient: "tau",
+    });
+    expect(after).toHaveLength(0);
+  });
+
+  test("delete message rejects non-sender caller", async () => {
+    const t = convexTest(schema, modules);
+
+    const messageId = await t.mutation(api.messages.sendMessage, {
+      from: "pi",
+      channel: "tau",
+      content: "Only pi can delete this",
+    });
+
+    // Phi tries to delete a message sent by pi — should be rejected
+    await expect(
+      t.mutation(api.messages.deleteMessage, {
+        messageId,
+        callerOrchestrator: "phi",
+      }),
+    ).rejects.toThrow("Unauthorized");
+  });
+
+  test("delete message throws on non-existent messageId", async () => {
+    const t = convexTest(schema, modules);
+
+    // Send one message so we have a valid-shape ID, then delete it to get a
+    // missing ID for the error path
+    const messageId = await t.mutation(api.messages.sendMessage, {
+      from: "pi",
+      channel: "tau",
+      content: "Temporary",
+    });
+
+    await t.mutation(api.messages.deleteMessage, { messageId });
+
+    // Deleting again should throw "Message not found"
+    await expect(
+      t.mutation(api.messages.deleteMessage, { messageId }),
+    ).rejects.toThrow("Message not found");
+  });
 });
 
 // =============================================================================
