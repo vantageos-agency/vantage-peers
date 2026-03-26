@@ -12,9 +12,12 @@ Check tasks assigned to you in VantagePeers, sorted by priority with dependency 
 
 ## WORKFLOW
 
-1. Detect your orchestrator role from CLAUDE.md (e.g., pi, tau, phi)
+1. Detect your orchestrator role from CLAUDE.md (e.g., pi, tau, phi) and instanceId from hostname or session hook (e.g., pi-vps-vm, pi-chromebook)
 2. Fetch ALL tasks in a single call:
    - `mcp__vantage-memory__list_tasks` with assignedTo={role}
+   - NOTE: If you know your instanceId, also check for instance-specific tasks:
+     `mcp__vantage-memory__list_tasks` with assignedToInstance={instanceId}
+     Merge both result sets, deduplicating by task _id
 3. From the results, filter out status="done"
 4. Sort by priority: urgent > high > medium > low, then by createdAt (oldest first)
 5. Check dependencies: for each task with `dependsOn`, check if all dependency tasks have status="done". If not, mark as BLOCKED regardless of its current status.
