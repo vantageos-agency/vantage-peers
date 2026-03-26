@@ -219,7 +219,7 @@ export const list = query({
 export const update = mutation({
 	args: {
 		taskId: v.id("tasks"),
-		callerOrchestrator: creatorValidator,
+		callerOrchestrator: v.optional(creatorValidator),
 		title: v.optional(v.string()),
 		description: v.optional(v.string()),
 		project: v.optional(v.string()),
@@ -241,14 +241,16 @@ export const update = mutation({
 		if (task === null) {
 			throw new Error(`Task ${taskId} not found`);
 		}
-		const isAuthorized =
-			task.createdBy === args.callerOrchestrator ||
-			task.assignedTo === args.callerOrchestrator ||
-			args.callerOrchestrator === "system";
-		if (!isAuthorized) {
-			throw new Error(
-				`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-			);
+		if (args.callerOrchestrator !== undefined) {
+			const isAuthorized =
+				task.createdBy === args.callerOrchestrator ||
+				task.assignedTo === args.callerOrchestrator ||
+				args.callerOrchestrator === "system";
+			if (!isAuthorized) {
+				throw new Error(
+					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+				);
+			}
 		}
 
 		// Build patch object with only provided fields
@@ -271,7 +273,7 @@ export const update = mutation({
 export const complete = mutation({
 	args: {
 		taskId: v.id("tasks"),
-		callerOrchestrator: creatorValidator,
+		callerOrchestrator: v.optional(creatorValidator),
 		completionNote: v.optional(v.string()),
 	},
 	returns: v.null(),
@@ -280,14 +282,16 @@ export const complete = mutation({
 		if (task === null) {
 			throw new Error(`Task ${args.taskId} not found`);
 		}
-		const isAuthorized =
-			task.createdBy === args.callerOrchestrator ||
-			task.assignedTo === args.callerOrchestrator ||
-			args.callerOrchestrator === "system";
-		if (!isAuthorized) {
-			throw new Error(
-				`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-			);
+		if (args.callerOrchestrator !== undefined) {
+			const isAuthorized =
+				task.createdBy === args.callerOrchestrator ||
+				task.assignedTo === args.callerOrchestrator ||
+				args.callerOrchestrator === "system";
+			if (!isAuthorized) {
+				throw new Error(
+					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+				);
+			}
 		}
 
 		const now = Date.now();
@@ -318,7 +322,7 @@ export const complete = mutation({
 export const start = mutation({
 	args: {
 		taskId: v.id("tasks"),
-		callerOrchestrator: creatorValidator,
+		callerOrchestrator: v.optional(creatorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -326,14 +330,16 @@ export const start = mutation({
 		if (task === null) {
 			throw new Error(`Task ${args.taskId} not found`);
 		}
-		const isAuthorized =
-			task.createdBy === args.callerOrchestrator ||
-			task.assignedTo === args.callerOrchestrator ||
-			args.callerOrchestrator === "system";
-		if (!isAuthorized) {
-			throw new Error(
-				`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-			);
+		if (args.callerOrchestrator !== undefined) {
+			const isAuthorized =
+				task.createdBy === args.callerOrchestrator ||
+				task.assignedTo === args.callerOrchestrator ||
+				args.callerOrchestrator === "system";
+			if (!isAuthorized) {
+				throw new Error(
+					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+				);
+			}
 		}
 
 		const now = Date.now();
