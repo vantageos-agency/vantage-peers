@@ -1,6 +1,53 @@
 import { internalMutation } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Migration: backfill startedAt + completedAt on tasks
+// Run: npx convex run migrations:backfillTaskTimes
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const backfillTaskTimes = internalMutation({
+	args: {},
+	handler: async (ctx) => {
+		const tasks = await ctx.db.query("tasks").collect();
+		let startedFixed = 0;
+		let completedFixed = 0;
+
+		for (const task of tasks) {
+			const patch: Record<string, any> = {};
+
+			// Backfill startedAt for in_progress/done/review tasks
+			if (
+				!task.startedAt &&
+				(task.status === "in_progress" || task.status === "done" || task.status === "review")
+			) {
+				patch.startedAt = task.createdAt;
+				startedFixed++;
+			}
+
+			// Backfill completedAt for done tasks
+			if (!task.completedAt && task.status === "done") {
+				patch.completedAt = task.updatedAt;
+				completedFixed++;
+			}
+
+			// Calculate actualMinutes if both timestamps exist
+			const startedAt = patch.startedAt ?? task.startedAt;
+			const completedAt = patch.completedAt ?? task.completedAt;
+			if (startedAt && completedAt && !task.actualMinutes) {
+				patch.actualMinutes = Math.round((completedAt - startedAt) / 60_000);
+			}
+
+			if (Object.keys(patch).length > 0) {
+				await ctx.db.patch(task._id, patch);
+			}
+		}
+
+		console.log(`Backfilled: ${startedFixed} startedAt, ${completedFixed} completedAt`);
+		return { startedFixed, completedFixed, total: tasks.length };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cleanup: delete test briefing notes (MCP Test Briefing entries)
 // Run: npx convex run migrations:deleteTestBriefings
 // ─────────────────────────────────────────────────────────────────────────────
