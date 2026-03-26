@@ -486,7 +486,19 @@ server.tool(
 			.describe("Receipt IDs to mark as read — array or single string"),
 	},
 	async ({ receiptIds }) => {
-		const receiptIdsArray = Array.isArray(receiptIds) ? receiptIds : [receiptIds];
+		// Handle all input forms: array, single string, or JSON-encoded string
+		let receiptIdsArray: string[];
+		if (Array.isArray(receiptIds)) {
+			receiptIdsArray = receiptIds;
+		} else if (typeof receiptIds === "string" && receiptIds.startsWith("[")) {
+			try {
+				receiptIdsArray = JSON.parse(receiptIds);
+			} catch {
+				receiptIdsArray = [receiptIds];
+			}
+		} else {
+			receiptIdsArray = [receiptIds as string];
+		}
 		const count = await convex.mutation(api.messages.markAsRead, {
 			receiptIds: receiptIdsArray as any,
 		});
