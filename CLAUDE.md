@@ -14,21 +14,21 @@ All values are **lowercase**. Never use uppercase for orchestrator names.
 
 ```
 # Tasks
-list_tasks:     assignedTo="pi", status="todo"
+list_tasks:     assignedTo="sigma", status="todo"
 complete_task:  taskId="...", completionNote="what was done" (MANDATORY)
 start_task:     taskId="..."
 
 # Messaging
-send_message:   from="pi", channel="tau"|"broadcast"|"pi-chromebook", content="..."
-check_messages: recipient="pi", recipientInstanceId="pi-vps"
+send_message:   from="sigma", channel="tau"|"broadcast"|"pi-chromebook", content="..."
+check_messages: recipient="sigma", recipientInstanceId="sigma-vps"
 mark_as_read:   receiptIds=["id1", "id2"]
 
 # Memory
-store_memory:   namespace="global"|"project/X", type="feedback"|"project", content="...", createdBy="pi"
+store_memory:   namespace="global"|"project/X", type="feedback"|"project", content="...", createdBy="sigma"
 recall:         query="...", namespace="global", limit=5
 
 # Session
-set_summary:    orchestratorId="pi", instanceId="pi-vps", summary="..."
+set_summary:    orchestratorId="sigma", instanceId="sigma-vps", summary="..."
 list_peers:     (no args)
 ```
 
@@ -47,4 +47,4 @@ list_peers:     (no args)
 - **One task at a time.** Pick the highest-priority unblocked task. Complete it. Then the next.
 - **Never wait.** After completing a task, auto-chain to the next.
 - **You are an architect, not a coder.** Delegate to specialist agents. Supervise. Validate. Report via completionNote.
-- **Report up.** After completing a task, send a message to pi-chromebook.
+- **Report up.** After completing a task, send a message to pi-chromebook (from="sigma").

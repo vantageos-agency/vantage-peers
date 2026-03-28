@@ -17,6 +17,7 @@ export const creatorValidator = v.union(
 	v.literal("pi"),
 	v.literal("tau"),
 	v.literal("phi"),
+	v.literal("sigma"),
 	v.literal("system"),
 );
 
@@ -205,6 +206,7 @@ export default defineSchema({
 			v.literal("pi"),
 			v.literal("tau"),
 			v.literal("phi"),
+			v.literal("sigma"),
 			v.literal("laurent"),
 		),
 		priority: v.union(
@@ -291,6 +293,72 @@ export default defineSchema({
 		.index("by_team", ["team", "type"])
 		.index("by_name_type", ["name", "type"]),
 
+	// ── mandates ──────────────────────────────────────────────────────────────
+	// Cross-orchestrator service requests. One orchestrator requests a service from another.
+	// Budget (token allocation) is agreed upfront; cost is recorded on settle.
+	mandates: defineTable({
+		requestedBy: creatorValidator, // who needs the service
+		fulfilledBy: creatorValidator, // who will provide the service
+		service: v.string(), // description of what is needed
+		budget: v.number(), // token budget allocated
+		status: v.union(
+			v.literal("requested"),
+			v.literal("accepted"),
+			v.literal("in_progress"),
+			v.literal("delivered"),
+			v.literal("settled"),
+		),
+		linkedTaskIds: v.optional(v.array(v.id("tasks"))), // tasks created to fulfill this mandate
+		tokensCost: v.optional(v.number()), // actual tokens consumed
+		createdAt: v.number(),
+		updatedAt: v.number(),
+		completedAt: v.optional(v.number()),
+	})
+		.index("by_requestedBy", ["requestedBy", "status"])
+		.index("by_fulfilledBy", ["fulfilledBy", "status"])
+		.index("by_status", ["status", "createdAt"]),
+
+	// ── businessUnits ─────────────────────────────────────────────────────────
+	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.
+	// managementFee: ElPi Corp takes this percentage of revenue (default 10%).
+	businessUnits: defineTable({
+		name: v.string(), // e.g. "VantagePeers", "VantageRegistry"
+		description: v.string(),
+		purpose: v.string(),
+		domain: v.optional(v.string()), // e.g. "vantagepeers.com"
+		orchestratorId: v.string(), // lead orchestrator — e.g. "sigma"
+		status: v.union(
+			v.literal("idea"),
+			v.literal("building"),
+			v.literal("live"),
+			v.literal("revenue"),
+		),
+		businessModel: v.string(), // how it makes money
+		targetCustomers: v.string(),
+		services: v.array(v.string()), // what it offers
+		pricing: v.string(),
+		revenueProjections: v.object({
+			y1: v.number(),
+			y2: v.number(),
+			y3: v.number(),
+		}),
+		coreTeam: v.object({
+			agents: v.array(v.string()),
+			skills: v.array(v.string()),
+			hooks: v.array(v.string()),
+			plugins: v.array(v.string()),
+		}),
+		coreProcesses: v.array(v.string()),
+		dependencies: v.array(v.string()), // which BUs it consumes
+		kpis: v.array(v.string()),
+		managementFee: v.number(), // ElPi Corp % cut (default 10)
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_orchestrator", ["orchestratorId"])
+		.index("by_status", ["status"])
+		.index("by_name", ["name"]),
+
 	// ── recurringTasks ────────────────────────────────────────────────────────
 	// Templates for tasks that auto-create on a schedule (daily standup, weekly scan, etc.)
 	// Convex cron checks every 15 min and creates tasks when nextRunAt <= now.
@@ -301,6 +369,7 @@ export default defineSchema({
 			v.literal("pi"),
 			v.literal("tau"),
 			v.literal("phi"),
+			v.literal("sigma"),
 			v.literal("laurent"),
 		),
 		priority: v.union(

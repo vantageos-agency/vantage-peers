@@ -9,10 +9,12 @@
  */
 
 import type * as briefingNotes from "../briefingNotes.js";
+import type * as businessUnits from "../businessUnits.js";
 import type * as components_ from "../components.js";
 import type * as crons from "../crons.js";
 import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
+import type * as mandates from "../mandates.js";
 import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
@@ -31,10 +33,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   briefingNotes: typeof briefingNotes;
+  businessUnits: typeof businessUnits;
   components: typeof components_;
   crons: typeof crons;
   diary: typeof diary;
   episodes: typeof episodes;
+  mandates: typeof mandates;
   memories: typeof memories;
   messages: typeof messages;
   migrations: typeof migrations;

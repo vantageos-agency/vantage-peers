@@ -59,7 +59,7 @@ const memoryTypeSchema = z
 	.describe("Memory classification type");
 
 const creatorSchema = z
-	.enum(["pi", "tau", "phi", "system"])
+	.enum(["pi", "tau", "phi", "sigma", "system"])
 	.describe("Which orchestrator is creating this memory");
 
 const severitySchema = z
@@ -271,7 +271,7 @@ server.tool(
 		"Returns null if the profile does not exist yet — call update_profile to create it.",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi"])
+			.enum(["pi", "tau", "phi", "sigma"])
 			.describe("Orchestrator identifier"),
 	},
 	async ({ orchestratorId }) => {
@@ -301,7 +301,7 @@ server.tool(
 		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi"])
+			.enum(["pi", "tau", "phi", "sigma"])
 			.describe("Orchestrator identifier"),
 		name: z.string().describe("Human-readable orchestrator name"),
 		static: z
@@ -553,7 +553,7 @@ server.tool(
 		"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi"])
+			.enum(["pi", "tau", "phi", "sigma"])
 			.describe("Orchestrator role"),
 		instanceId: z
 			.string()
@@ -662,7 +662,7 @@ server.tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const assigneeSchema = z
-	.enum(["pi", "tau", "phi", "laurent"])
+	.enum(["pi", "tau", "phi", "sigma", "laurent"])
 	.describe("Who the task is assigned to");
 
 const prioritySchema = z
@@ -1545,7 +1545,7 @@ server.tool(
 	{
 		title: z.string().describe("Task title — created each time the cron fires"),
 		description: z.string().optional().describe("Task description"),
-		assignedTo: z.enum(["pi", "tau", "phi", "laurent"]).describe("Who gets the created tasks"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "laurent"]).describe("Who gets the created tasks"),
 		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
 		project: z.string().optional().describe("Project name"),
 		tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1579,7 +1579,7 @@ server.tool(
 	"list_recurring_tasks",
 	"List recurring task templates. Filter by assignee or active status.",
 	{
-		assignedTo: z.enum(["pi", "tau", "phi", "laurent"]).optional().describe("Filter by assignee"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "laurent"]).optional().describe("Filter by assignee"),
 		active: z.boolean().optional().describe("Filter by active status"),
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},
@@ -1655,6 +1655,433 @@ server.tool(
 
 		return {
 			content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mandate tools
+// ─────────────────────────────────────────────────────────────────────────────
+
+const mandateStatusSchema = z
+	.enum(["requested", "accepted", "in_progress", "delivered", "settled"])
+	.describe("Mandate lifecycle status");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_mandate
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"create_mandate",
+	"Create a cross-orchestrator service mandate. One orchestrator requests a service from another " +
+		"with an agreed token budget. The mandate lifecycle: requested → accepted → in_progress → delivered → settled.",
+	{
+		requestedBy: creatorSchema.describe("Orchestrator who needs the service"),
+		fulfilledBy: creatorSchema.describe("Orchestrator who will provide the service"),
+		service: z.string().describe("Description of what service is needed"),
+		budget: z.number().describe("Token budget allocated for this mandate"),
+	},
+	async ({ requestedBy, fulfilledBy, service, budget }) => {
+		const mandateId = await convex.mutation(api.mandates.create, {
+			requestedBy,
+			fulfilledBy,
+			service,
+			budget,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ mandateId, requestedBy, fulfilledBy, service, budget }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: accept_mandate
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"accept_mandate",
+	"Accept a mandate — sets status to 'accepted'. Only the fulfilledBy orchestrator (or system) can accept.",
+	{
+		mandateId: z.string().describe("Convex document ID of the mandate to accept"),
+		callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
+	},
+	async ({ mandateId, callerOrchestrator }) => {
+		await convex.mutation(api.mandates.accept, {
+			mandateId: mandateId as any,
+			callerOrchestrator,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ mandateId, status: "accepted" }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_mandate
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_mandate",
+	"Update a mandate's status, tokensCost, or linkedTaskIds. " +
+		"Only the fulfilledBy orchestrator (or system) can update. Provide only fields you want to change.",
+	{
+		mandateId: z.string().describe("Convex document ID of the mandate to update"),
+		callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
+		status: mandateStatusSchema.optional().describe("New status"),
+		tokensCost: z.number().optional().describe("Tokens consumed so far"),
+		linkedTaskIds: z
+			.array(z.string())
+			.optional()
+			.describe("Task IDs created to fulfill this mandate"),
+	},
+	async ({ mandateId, callerOrchestrator, status, tokensCost, linkedTaskIds }) => {
+		await convex.mutation(api.mandates.update, {
+			mandateId: mandateId as any,
+			callerOrchestrator,
+			status,
+			tokensCost,
+			linkedTaskIds: linkedTaskIds as any,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ mandateId, updated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: settle_mandate
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"settle_mandate",
+	"Settle a mandate — confirms delivery and records the final token cost. " +
+		"Sets status to 'settled'. Only the requestedBy orchestrator (the payer) or system can settle.",
+	{
+		mandateId: z.string().describe("Convex document ID of the mandate to settle"),
+		callerOrchestrator: creatorSchema.describe("Must be the requestedBy orchestrator or system"),
+		finalCost: z.number().describe("Final actual token cost to record"),
+	},
+	async ({ mandateId, callerOrchestrator, finalCost }) => {
+		await convex.mutation(api.mandates.settle, {
+			mandateId: mandateId as any,
+			callerOrchestrator,
+			finalCost,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ mandateId, status: "settled", finalCost }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_mandates
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_mandates",
+	"List mandates with optional filters. Filter by requestedBy, fulfilledBy, and/or status. " +
+		"Returns newest first. Use to track service agreements between orchestrators.",
+	{
+		requestedBy: creatorSchema.optional().describe("Filter by the orchestrator who requested the service"),
+		fulfilledBy: creatorSchema.optional().describe("Filter by the orchestrator providing the service"),
+		status: mandateStatusSchema.optional().describe("Filter by mandate status"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum mandates to return (default 50)"),
+	},
+	async ({ requestedBy, fulfilledBy, status, limit }) => {
+		const mandates = await convex.query(api.mandates.list, {
+			requestedBy,
+			fulfilledBy,
+			status,
+			limit: limit ?? 50,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(mandates, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Business Unit tools
+// ─────────────────────────────────────────────────────────────────────────────
+
+const buStatusSchema = z
+	.enum(["idea", "building", "live", "revenue"])
+	.describe("Business unit lifecycle status");
+
+const revenueProjectionsSchema = z
+	.object({
+		y1: z.number().describe("Year 1 revenue projection"),
+		y2: z.number().describe("Year 2 revenue projection"),
+		y3: z.number().describe("Year 3 revenue projection"),
+	})
+	.describe("3-year revenue projections");
+
+const coreTeamSchema = z
+	.object({
+		agents: z.array(z.string()).describe("Agent names involved"),
+		skills: z.array(z.string()).describe("Skill names deployed"),
+		hooks: z.array(z.string()).describe("Hook names deployed"),
+		plugins: z.array(z.string()).describe("Plugin names deployed"),
+	})
+	.describe("Core team composition — agents, skills, hooks, plugins");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_bu
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"create_bu",
+	"Create a new ElPi Corp business unit. Captures strategy, business model, team, and KPIs. " +
+		"managementFee defaults to 10 (ElPi Corp takes 10% of revenue).",
+	{
+		name: z.string().describe("Business unit name — e.g. 'VantagePeers'"),
+		description: z.string().describe("Short description of the BU"),
+		purpose: z.string().describe("Why this BU exists — strategic purpose"),
+		domain: z.string().optional().describe("Primary domain — e.g. 'vantagepeers.com'"),
+		orchestratorId: z
+			.string()
+			.describe("Lead orchestrator managing this BU — e.g. 'sigma'"),
+		status: buStatusSchema,
+		businessModel: z.string().describe("How this BU makes money"),
+		targetCustomers: z.string().describe("Who the customers are"),
+		services: flexArray.describe("List of services offered"),
+		pricing: z.string().describe("Pricing model description"),
+		revenueProjections: revenueProjectionsSchema,
+		coreTeam: coreTeamSchema,
+		coreProcesses: flexArray.describe("Core operational processes"),
+		dependencies: flexArray.describe("Other BU names this BU depends on"),
+		kpis: flexArray.describe("Key performance indicators"),
+		managementFee: z
+			.number()
+			.optional()
+			.default(10)
+			.describe("ElPi Corp management fee % (default 10)"),
+	},
+	async ({
+		name,
+		description,
+		purpose,
+		domain,
+		orchestratorId,
+		status,
+		businessModel,
+		targetCustomers,
+		services,
+		pricing,
+		revenueProjections,
+		coreTeam,
+		coreProcesses,
+		dependencies,
+		kpis,
+		managementFee,
+	}) => {
+		const buId = await convex.mutation(api.businessUnits.create, {
+			name,
+			description,
+			purpose,
+			domain,
+			orchestratorId,
+			status,
+			businessModel,
+			targetCustomers,
+			services: toArray(services) as string[],
+			pricing,
+			revenueProjections,
+			coreTeam,
+			coreProcesses: toArray(coreProcesses) as string[],
+			dependencies: toArray(dependencies) as string[],
+			kpis: toArray(kpis) as string[],
+			managementFee: managementFee ?? 10,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ buId, name, orchestratorId, status }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_bu
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_bu",
+	"Update any mutable field on a business unit. Provide only the fields you want to change. " +
+		"updatedAt is set automatically.",
+	{
+		buId: z.string().describe("Convex document ID of the business unit to update"),
+		name: z.string().optional().describe("New name"),
+		description: z.string().optional().describe("New description"),
+		purpose: z.string().optional().describe("New purpose"),
+		domain: z.string().optional().describe("New domain"),
+		orchestratorId: z.string().optional().describe("New lead orchestrator"),
+		status: buStatusSchema.optional().describe("New status"),
+		businessModel: z.string().optional().describe("New business model"),
+		targetCustomers: z.string().optional().describe("New target customers"),
+		services: flexArrayOptional.describe("New services list"),
+		pricing: z.string().optional().describe("New pricing model"),
+		revenueProjections: revenueProjectionsSchema.optional().describe("Updated revenue projections"),
+		coreTeam: coreTeamSchema.optional().describe("Updated core team"),
+		coreProcesses: flexArrayOptional.describe("New core processes"),
+		dependencies: flexArrayOptional.describe("New dependencies"),
+		kpis: flexArrayOptional.describe("New KPIs"),
+		managementFee: z.number().optional().describe("New management fee %"),
+	},
+	async ({
+		buId,
+		name,
+		description,
+		purpose,
+		domain,
+		orchestratorId,
+		status,
+		businessModel,
+		targetCustomers,
+		services,
+		pricing,
+		revenueProjections,
+		coreTeam,
+		coreProcesses,
+		dependencies,
+		kpis,
+		managementFee,
+	}) => {
+		await convex.mutation(api.businessUnits.update, {
+			buId: buId as any,
+			name,
+			description,
+			purpose,
+			domain,
+			orchestratorId,
+			status,
+			businessModel,
+			targetCustomers,
+			services: toArray(services),
+			pricing,
+			revenueProjections,
+			coreTeam,
+			coreProcesses: toArray(coreProcesses),
+			dependencies: toArray(dependencies),
+			kpis: toArray(kpis),
+			managementFee,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ buId, updated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_bu
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_bu",
+	"Fetch a single business unit by its Convex document ID. Returns null if not found.",
+	{
+		buId: z.string().describe("Convex document ID of the business unit"),
+	},
+	async ({ buId }) => {
+		const bu = await convex.query(api.businessUnits.get, {
+			buId: buId as any,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(bu, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_bus
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_bus",
+	"List business units with optional filters. Filter by orchestratorId and/or status. " +
+		"Returns newest first.",
+	{
+		orchestratorId: z
+			.string()
+			.optional()
+			.describe("Filter by lead orchestrator — e.g. 'sigma'"),
+		status: buStatusSchema.optional().describe("Filter by status"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum BUs to return (default 50)"),
+	},
+	async ({ orchestratorId, status, limit }) => {
+		const bus = await convex.query(api.businessUnits.list, {
+			orchestratorId,
+			status,
+			limit: limit ?? 50,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(bus, null, 2),
+				},
+			],
 		};
 	},
 );

@@ -10,6 +10,7 @@ const assigneeValidator = v.union(
 	v.literal("pi"),
 	v.literal("tau"),
 	v.literal("phi"),
+	v.literal("sigma"),
 	v.literal("laurent"),
 );
 

@@ -1,19 +1,35 @@
 {
   "permissions": {
     "allow": [
-      "*"
+      "*",
+      "Read(//home/elpi/.claude/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/**)"
     ]
   },
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write(*.md) || Edit(*.md)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/check-french-diacritics.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/session-start-pi-vm.py"
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/session-start-sigma.py"
           }
         ]
       }
     ]
-  }
+  },
+  "additionalDirectories": [
+    "/root/coding/vantage-peers-site"
+  ]
 }
