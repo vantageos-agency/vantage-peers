@@ -72,7 +72,28 @@ const severitySchema = z
 
 function toArray(val: string | string[] | undefined): string[] | undefined {
 	if (val === undefined) return undefined;
-	return Array.isArray(val) ? val : [val];
+	if (Array.isArray(val)) {
+		// Unwrap double-encoded arrays: ["[\"a\",\"b\"]"] → ["a","b"]
+		if (val.length === 1 && typeof val[0] === "string") {
+			try {
+				const parsed = JSON.parse(val[0]);
+				if (Array.isArray(parsed)) return parsed;
+			} catch {
+				// not JSON — use as-is
+			}
+		}
+		return val;
+	}
+	// Single string — might be a JSON-encoded array like "[\"a\"]"
+	if (val.startsWith("[")) {
+		try {
+			const parsed = JSON.parse(val);
+			if (Array.isArray(parsed)) return parsed;
+		} catch {
+			// not valid JSON — wrap as single-element array
+		}
+	}
+	return [val];
 }
 
 // Schema helper: accepts string or array of strings
@@ -2080,6 +2101,32 @@ server.tool(
 				{
 					type: "text",
 					text: JSON.stringify(bus, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_bu
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"delete_bu",
+	"Delete a business unit by ID. This action is permanent.",
+	{
+		buId: z.string().describe("Convex document ID of the business unit to delete"),
+	},
+	async ({ buId }) => {
+		const result = await convex.mutation(api.businessUnits.remove, {
+			buId: buId as any,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(result, null, 2),
 				},
 			],
 		};

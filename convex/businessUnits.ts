@@ -145,6 +145,21 @@ export const update = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// remove — delete a business unit by ID
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const remove = mutation({
+	args: { buId: v.id("businessUnits") },
+	returns: v.object({ deleted: v.boolean() }),
+	handler: async (ctx, args) => {
+		const bu = await ctx.db.get(args.buId);
+		if (!bu) throw new Error("Business unit not found");
+		await ctx.db.delete(args.buId);
+		return { deleted: true };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // get — fetch a single BU by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
