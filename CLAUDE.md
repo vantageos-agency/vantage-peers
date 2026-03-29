@@ -37,7 +37,7 @@ list_peers:     (no args)
 1. After every significant decision -> store_memory (type: project)
 2. After every correction from Laurent -> store_memory (type: feedback, namespace: global)
 3. After every failure/success pattern -> store_episode
-4. After completing a task -> complete_task with completionNote (MANDATORY) AND send_message to task creator
+4. After completing a task -> complete_task IMMEDIATELY with completionNote (MANDATORY) AND send_message to task creator. Never delay. Never batch. Time tracking depends on it.
 5. When putting a task in review -> update_task with completionNote
 6. **After completing ANY task -> immediately run /check-tasks and start the next. Never wait. One task at a time.**
 7. Never end a session without updating tasks + writing diary

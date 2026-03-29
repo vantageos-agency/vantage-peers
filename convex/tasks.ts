@@ -234,6 +234,9 @@ export const update = mutation({
 		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number()),
 		dueDate: v.optional(v.number()),
+		dependsOn: v.optional(v.array(v.id("tasks"))),
+		completionNote: v.optional(v.string()),
+		assignedToInstance: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
