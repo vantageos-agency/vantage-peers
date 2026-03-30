@@ -357,6 +357,38 @@ export const start = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// checkout — atomically claim a task (only if status=todo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const checkout = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: creatorValidator,
+		callerInstance: v.optional(v.string()),
+	},
+	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
+	handler: async (ctx, args) => {
+		const task = await ctx.db.get(args.taskId);
+		if (!task) {
+			return { claimed: false, reason: "Task not found" };
+		}
+		if (task.status !== "todo") {
+			return {
+				claimed: false,
+				reason: `Task already ${task.status}${task.claimedByInstance ? ` by ${task.claimedByInstance}` : ""}`,
+			};
+		}
+		await ctx.db.patch(args.taskId, {
+			status: "in_progress",
+			claimedByInstance: args.callerInstance,
+			startedAt: Date.now(),
+			updatedAt: Date.now(),
+		});
+		return { claimed: true };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // deleteTask — hard delete, owner-only (createdBy must match caller)
 // ─────────────────────────────────────────────────────────────────────────────
 

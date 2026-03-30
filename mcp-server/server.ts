@@ -974,6 +974,37 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: checkout_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"checkout_task",
+	"Atomically claim a task. Only succeeds if task is in 'todo' status — prevents two orchestrators " +
+		"from claiming the same task. Returns {claimed: true} or {claimed: false, reason: '...'}.",
+	{
+		taskId: z.string().describe("Convex document ID of the task to claim"),
+		callerOrchestrator: creatorSchema.describe("Orchestrator claiming the task (e.g. sigma, pi)"),
+		callerInstance: z.string().optional().describe("Instance identifier, e.g. 'sigma-vps'"),
+	},
+	async ({ taskId, callerOrchestrator, callerInstance }) => {
+		const result = await convex.mutation(api.tasks.checkout, {
+			taskId: taskId as any,
+			callerOrchestrator,
+			callerInstance,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(result, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: delete_task
 // ─────────────────────────────────────────────────────────────────────────────
 
