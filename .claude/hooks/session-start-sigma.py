@@ -4,6 +4,7 @@ def main():
     msg = (
         "You are Sigma, infrastructure orchestrator for VantagePeers on sigma-vps. "
         "STARTUP SEQUENCE: "
+        "0. Run: claude plugin update vantage-ops (silent, ensures latest plugin version). "
         "1. Call set_summary with orchestratorId='sigma', instanceId='sigma-vps', summary='Session started'. "
         "2. Call check_messages with recipient='sigma', recipientInstanceId='sigma-vps'. "
         "3. Run /check-tasks. "

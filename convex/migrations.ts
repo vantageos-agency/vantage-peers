@@ -176,3 +176,64 @@ export const deleteTestMessages = internalMutation({
 		return { deleted };
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Migration: rename memory namespace "orchestrator/pi" → "orchestrator/sigma"
+// Run: npx convex run migrations:migrateMemoriesNamespace
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const migrateMemoriesNamespace = internalMutation({
+	args: {},
+	handler: async (ctx) => {
+		const memories = await ctx.db
+			.query("memories")
+			.withIndex("by_namespace", (q) => q.eq("namespace", "orchestrator/pi"))
+			.collect();
+		let migrated = 0;
+
+		for (const mem of memories) {
+			await ctx.db.patch(mem._id, { namespace: "orchestrator/sigma" });
+			migrated++;
+		}
+
+		console.log(`Migrated ${migrated} memories from orchestrator/pi to orchestrator/sigma`);
+		return { migrated };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Migration: change diary orchestrator "pi" → "sigma" for VPS entries
+// Run: npx convex run migrations:migrateDiaryOrchestrator
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const migrateDiaryOrchestrator = internalMutation({
+	args: {},
+	handler: async (ctx) => {
+		const entries = await ctx.db
+			.query("diary")
+			.withIndex("by_orchestrator_date", (q) => q.eq("orchestrator", "pi"))
+			.collect();
+		let migrated = 0;
+		let skipped = 0;
+
+		for (const entry of entries) {
+			const content = entry.content.toLowerCase();
+			const isVpsRelated =
+				content.includes("pi-vps") ||
+				content.includes("sigma") ||
+				content.includes("vps");
+
+			if (isVpsRelated) {
+				await ctx.db.patch(entry._id, { orchestrator: "sigma" });
+				migrated++;
+			} else {
+				skipped++;
+			}
+		}
+
+		console.log(
+			`Diary migration: ${migrated} migrated to sigma, ${skipped} kept as pi`
+		);
+		return { migrated, skipped };
+	},
+});
