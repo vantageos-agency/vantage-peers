@@ -1,0 +1,178 @@
+import { v } from "convex/values";
+import { query } from "./_generated/server";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getDashboardSummary — high-level operational stats for VantagePeers dashboard
+// Returns: tasks in progress, active orchestrator profiles, unread message count,
+// open mandate count, and the 20 most recent cross-entity activity events.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getDashboardSummary = query({
+	args: {},
+	returns: v.object({
+		tasksInProgress: v.number(),
+		activeOrchestrators: v.array(
+			v.object({
+				_id: v.id("profiles"),
+				_creationTime: v.number(),
+				orchestratorId: v.string(),
+				instanceId: v.optional(v.string()),
+				name: v.string(),
+				static: v.object({
+					role: v.string(),
+					workspace: v.string(),
+					capabilities: v.array(v.string()),
+				}),
+				dynamic: v.object({
+					currentTask: v.optional(v.string()),
+					lastSeen: v.number(),
+					sessionCount: v.number(),
+				}),
+			}),
+		),
+		unreadMessages: v.number(),
+		openMandates: v.number(),
+		recentActivity: v.array(
+			v.object({
+				type: v.union(
+					v.literal("task"),
+					v.literal("message"),
+					v.literal("mandate"),
+				),
+				id: v.string(),
+				actor: v.string(),
+				excerpt: v.string(),
+				status: v.optional(v.string()),
+				updatedAt: v.number(),
+			}),
+		),
+	}),
+	handler: async (ctx) => {
+		// Tasks in progress — uses index, bounded
+		const inProgressTasks = await ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", "in_progress"))
+			.take(500);
+
+		// Open mandates — filter in memory (small table)
+		const allMandates = await ctx.db.query("mandates").take(500);
+		const openMandates = allMandates.filter((m) => m.status !== "settled").length;
+
+		// All profiles (small table — one row per instance)
+		const profiles = await ctx.db.query("profiles").collect();
+
+		// Unread messages — full scan bounded at 1000 (receipts table is small)
+		// Index is composite [recipient, readAt] so we cannot filter by readAt alone.
+		const allReceipts = await ctx.db.query("messageReceipts").take(1000);
+		const unreadMessages = allReceipts.filter((r) => r.readAt === undefined).length;
+
+		// Recent activity — fetch bounded slices of each entity
+		const recentTasks = await ctx.db.query("tasks").order("desc").take(20);
+		const recentMessages = await ctx.db.query("messages").order("desc").take(20);
+		const recentMandates = await ctx.db.query("mandates").order("desc").take(20);
+
+		type ActivityEvent = {
+			type: "task" | "message" | "mandate";
+			id: string;
+			actor: string;
+			excerpt: string;
+			status?: string;
+			updatedAt: number;
+		};
+
+		const events: ActivityEvent[] = [
+			...recentTasks.map((t) => ({
+				type: "task" as const,
+				id: t._id as string,
+				actor: t.assignedTo,
+				excerpt: t.title,
+				status: t.status,
+				updatedAt: t.updatedAt,
+			})),
+			...recentMessages.map((m) => ({
+				type: "message" as const,
+				id: m._id as string,
+				actor: m.from,
+				excerpt: m.content.slice(0, 80),
+				updatedAt: m.createdAt,
+			})),
+			...recentMandates.map((m) => ({
+				type: "mandate" as const,
+				id: m._id as string,
+				actor: m.requestedBy,
+				excerpt: m.service.slice(0, 50),
+				status: m.status,
+				updatedAt: m.updatedAt,
+			})),
+		];
+
+		events.sort((a, b) => b.updatedAt - a.updatedAt);
+
+		return {
+			tasksInProgress: inProgressTasks.length,
+			activeOrchestrators: profiles,
+			unreadMessages,
+			openMandates,
+			recentActivity: events.slice(0, 20),
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getProjectSummary — per-project task breakdown + mission counts
+// Returns one entry per unique project name found across tasks and missions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getProjectSummary = query({
+	args: {},
+	returns: v.array(
+		v.object({
+			name: v.string(),
+			missionCount: v.number(),
+			tasksByStatus: v.object({
+				todo: v.number(),
+				in_progress: v.number(),
+				review: v.number(),
+				blocked: v.number(),
+				done: v.number(),
+			}),
+			activeOrchestrators: v.array(v.string()),
+		}),
+	),
+	handler: async (ctx) => {
+		const tasks = await ctx.db.query("tasks").take(1000);
+		const missions = await ctx.db.query("missions").take(1000);
+
+		const projectNames = new Set<string>();
+		for (const t of tasks) {
+			if (t.project !== undefined) projectNames.add(t.project);
+		}
+		for (const m of missions) {
+			if (m.project !== undefined) projectNames.add(m.project);
+		}
+
+		return Array.from(projectNames).map((project) => {
+			const projectTasks = tasks.filter((t) => t.project === project);
+			const projectMissions = missions.filter((m) => m.project === project);
+
+			return {
+				name: project,
+				missionCount: projectMissions.length,
+				tasksByStatus: {
+					todo: projectTasks.filter((t) => t.status === "todo").length,
+					in_progress: projectTasks.filter((t) => t.status === "in_progress").length,
+					review: projectTasks.filter((t) => t.status === "review").length,
+					blocked: projectTasks.filter((t) => t.status === "blocked").length,
+					done: projectTasks.filter((t) => t.status === "done").length,
+				},
+				activeOrchestrators: [
+					...new Set(
+						projectTasks
+							.filter((t) => t.status !== "done")
+							.map((t) => t.assignedTo),
+					),
+				],
+			};
+		});
+	},
+});

@@ -263,3 +263,56 @@ export const listMessages = query({
 		return await ctx.db.query("messages").order("desc").take(limit);
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getUnreadCount — count unread receipts for a recipient role
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getUnreadCount = query({
+	args: { orchestratorId: creatorValidator },
+	returns: v.number(),
+	handler: async (ctx, { orchestratorId }) => {
+		const receipts = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_recipient_unread", (q) =>
+				q.eq("recipient", orchestratorId),
+			)
+			.filter((q) => q.eq(q.field("readAt"), undefined))
+			.take(500);
+		return receipts.length;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listByChannel — list recent messages for a channel (or all if unspecified)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listByChannel = query({
+	args: {
+		channel: v.optional(v.string()),
+		limit: v.optional(v.number()),
+	},
+	returns: v.array(
+		v.object({
+			_id: v.id("messages"),
+			_creationTime: v.number(),
+			from: creatorValidator,
+			fromInstanceId: v.optional(v.string()),
+			channel: v.string(),
+			content: v.string(),
+			sessionDay: v.optional(v.number()),
+			createdAt: v.number(),
+		}),
+	),
+	handler: async (ctx, { channel, limit }) => {
+		const take = limit ?? 100;
+		if (channel !== undefined) {
+			return await ctx.db
+				.query("messages")
+				.withIndex("by_channel", (q) => q.eq("channel", channel))
+				.order("desc")
+				.take(take);
+		}
+		return await ctx.db.query("messages").order("desc").take(take);
+	},
+});

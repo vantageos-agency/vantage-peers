@@ -1,0 +1,26 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.3.13/schema.json",
+	"formatter": {
+		"enabled": true
+	},
+	"linter": {
+		"rules": {
+			"suspicious": {
+				"noUnknownAtRules": "off"
+			}
+		}
+	},
+	"files": {
+		"includes": [
+			"**/*.{js,jsx,ts,tsx,json,cjs,mjs,cts,mts,md,mdx}",
+			"!**/node_modules",
+			"!**/.pnpm-store",
+			"!**/tests/x-fade-effects-scripts",
+			"!**/archive",
+			"!**/temp",
+			"!**/.next",
+			"!**/dist",
+			"!**/build"
+		]
+	}
+}

@@ -1,0 +1,605 @@
+/* ============================================================================
+   VANTAGE STARTER DESIGN SYSTEM — OKLCH Color Space
+   Default preset: Monochrome Grayscale (zero chroma)
+   Loaded via @import before @tailwind base (SSR-safe static default)
+   Runtime preset switching: <link href> swap via PresetLoader component
+   Fonts: Geist (headings + body) + Geist Mono (code)
+   ============================================================================ */
+
+/* Default preset — v0 Base. Must be before @tailwind directives. */
+@import "../styles/presets/base.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* ============================================================================
+   BASE STYLES
+   ============================================================================ */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans), system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+
+  /* Heading font — Geist for all headings */
+  h1, h2, h3, h4 {
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  /* Typography scale per design system v2 */
+  h1 {
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+  }
+
+  h2 {
+    font-size: clamp(1.75rem, 3.5vw, 2.75rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    line-height: 1.3;
+  }
+
+  h4 {
+    letter-spacing: -0.015em;
+  }
+
+  /* Prevent iOS input zoom (non-negotiable mobile rule) */
+  input, select, textarea {
+    font-size: 16px;
+  }
+}
+
+/* ============================================================================
+   ANIMATIONS — Tailwind transitions for UI, Framer Motion for landing only
+   Durations: 150ms (micro), 200ms (panels), 300ms (landing entrance max)
+   Banned: bounce, elastic, anything > 500ms inside the app
+   ============================================================================ */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+/* Landing page: fade-in-up with subtle scale (litui.dev) */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.6s var(--ease-out-expo) forwards;
+}
+
+/* Landing page: scroll-reveal */
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-reveal-up {
+  animation: reveal-up 300ms ease-out forwards;
+}
+
+/* Stagger delays for sequential animations (litui.dev) */
+.stagger-1 { animation-delay: 0.1s; }
+.stagger-2 { animation-delay: 0.2s; }
+.stagger-3 { animation-delay: 0.3s; }
+.stagger-4 { animation-delay: 0.4s; }
+.stagger-5 { animation-delay: 0.5s; }
+.stagger-6 { animation-delay: 0.6s; }
+
+/* Floating animation for decorative elements (litui.dev) */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) translateX(0);
+  }
+  25% {
+    transform: translateY(-10px) translateX(5px);
+  }
+  50% {
+    transform: translateY(-5px) translateX(-5px);
+  }
+  75% {
+    transform: translateY(-15px) translateX(3px);
+  }
+}
+
+/* Subtle pulse for loading states */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 1.5s ease-in-out infinite;
+}
+
+/* ============================================================================
+   SKELETON LOADING
+   ============================================================================ */
+
+.skeleton {
+  * {
+    pointer-events: none;
+  }
+
+  *[class^="text-"] {
+    color: transparent;
+    @apply rounded-md select-none animate-pulse;
+    background-color: oklch(var(--foreground) / 0.15);
+  }
+
+  .skeleton-bg {
+    background-color: oklch(var(--foreground) / 0.08);
+  }
+
+  .skeleton-div {
+    @apply animate-pulse;
+    background-color: oklch(var(--foreground) / 0.15);
+  }
+}
+
+/* ============================================================================
+   NOISE TEXTURE — page-level analog warmth (ElevenLabs pattern)
+   Fixed overlay, pointer-events none, z-index above content but non-blocking
+   ============================================================================ */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Dark mode card borders — near-invisible (ElevenLabs pattern) */
+.dark .border-border {
+  border-color: oklch(0.94 0 0 / 0.07);
+}
+
+/* ============================================================================
+   HERO WORD ANIMATION — CSS-only, 3-word cycling with strikethrough
+   Each word is shown for 3s (9s total loop). No Framer Motion.
+   ============================================================================ */
+
+/*
+ * Word cycling: 9s loop, 3s per word, 0.3s crossfade
+ * Word 1 visible: 0%–28%, fades out 28%–33%
+ * Word 2 visible: 33%–61%, fades in 33%–38%, fades out 61%–66%
+ * Word 3 visible: 66%–95%, fades in 66%–71%, fades out 95%–100%
+ */
+@keyframes hero-word-cycle {
+  0%        { opacity: 1; }
+  28%       { opacity: 1; }
+  33%       { opacity: 0; }
+  100%      { opacity: 0; }
+}
+
+@keyframes hero-word-cycle-2 {
+  0%        { opacity: 0; }
+  33%       { opacity: 0; }
+  38%       { opacity: 1; }
+  61%       { opacity: 1; }
+  66%       { opacity: 0; }
+  100%      { opacity: 0; }
+}
+
+@keyframes hero-word-cycle-3 {
+  0%        { opacity: 0; }
+  66%       { opacity: 0; }
+  71%       { opacity: 1; }
+  95%       { opacity: 1; }
+  100%      { opacity: 0; }
+}
+
+.hero-animated-word {
+  display: inline-block;
+  position: relative;
+  /* strikethrough via text-decoration */
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  color: oklch(0.90 0 0); /* brighter than muted-foreground (0.65) but distinct from foreground (0.95) */
+  -webkit-text-fill-color: oklch(0.90 0 0); /* overrides parent .text-gradient transparent fill */
+}
+
+.hero-word-1 {
+  /* Starts visible, then cycles */
+  opacity: 1;
+  animation: hero-word-cycle 9s linear 1.2s infinite;
+}
+
+.hero-word-2 {
+  /* Starts hidden — becomes visible at 33% of cycle */
+  opacity: 0;
+  animation: hero-word-cycle-2 9s linear 1.2s infinite;
+}
+
+.hero-word-3 {
+  /* Starts hidden — becomes visible at 66% of cycle */
+  opacity: 0;
+  animation: hero-word-cycle-3 9s linear 1.2s infinite;
+}
+
+/* Entrance animations — CSS only, no Framer Motion */
+@keyframes hero-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-enter {
+  animation: hero-enter 600ms ease-out forwards;
+}
+
+.hero-enter-delay-1 {
+  opacity: 0;
+  animation: hero-enter 600ms ease-out 120ms forwards;
+}
+
+.hero-enter-delay-2 {
+  opacity: 0;
+  animation: hero-enter 600ms ease-out 240ms forwards;
+}
+
+.hero-enter-delay-3 {
+  opacity: 0;
+  animation: hero-enter 400ms ease-out 360ms forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-enter,
+  .hero-enter-delay-1,
+  .hero-enter-delay-2,
+  .hero-enter-delay-3 {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .hero-word-1,
+  .hero-word-2,
+  .hero-word-3 {
+    animation: none;
+  }
+
+  /* Show only the first word when motion is reduced */
+  .hero-word-1 { opacity: 1; }
+  .hero-word-2 { opacity: 0; }
+  .hero-word-3 { opacity: 0; }
+}
+
+/* ============================================================================
+   UTILITY CLASSES — Extracted from LitUI patterns
+   ============================================================================ */
+
+/* Card with shadow depth and hover lift — use when content is truly distinct and actionable */
+.card-elevated {
+  box-shadow:
+    0 1px 2px 0 oklch(0 0 0 / 0.03),
+    0 1px 3px 0 oklch(0 0 0 / 0.04),
+    0 2px 4px -1px oklch(0 0 0 / 0.03);
+  transition: all 0.4s var(--ease-out-expo);
+}
+
+.card-elevated:hover {
+  box-shadow:
+    0 4px 6px -1px oklch(0 0 0 / 0.05),
+    0 10px 15px -3px oklch(0 0 0 / 0.08),
+    0 20px 25px -5px oklch(0 0 0 / 0.06);
+  transform: translateY(-2px);
+}
+
+.dark .card-elevated {
+  box-shadow:
+    0 1px 3px 0 oklch(0 0 0 / 0.2),
+    0 1px 2px -1px oklch(0 0 0 / 0.2);
+}
+
+.dark .card-elevated:hover {
+  box-shadow:
+    0 4px 6px -1px oklch(0 0 0 / 0.2),
+    0 10px 15px -3px oklch(0 0 0 / 0.3),
+    0 20px 25px -5px oklch(0 0 0 / 0.3);
+}
+
+/* Button shadow — subtle depth for primary CTAs */
+.btn-shadow {
+  box-shadow:
+    0 1px 2px 0 oklch(0 0 0 / 0.05),
+    inset 0 1px 0 oklch(1 0 0 / 0.1);
+}
+
+.btn-shadow:hover {
+  box-shadow:
+    0 4px 6px -1px oklch(0 0 0 / 0.1),
+    0 2px 4px -2px oklch(0 0 0 / 0.1),
+    inset 0 1px 0 oklch(1 0 0 / 0.1);
+}
+
+/* CTA press feedback — add active:scale-[0.96] via Tailwind or use this class */
+.active-scale:active {
+  transform: scale(0.96);
+  transition: transform 100ms var(--ease-out-expo);
+}
+
+/* Focus ring — keyboard navigation indicator using OKLCH tokens */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--foreground);
+}
+
+/* Icon container — feature grid icons, size-10, no large icon above heading */
+.icon-container {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.5rem;
+  background-color: color-mix(in oklch, var(--muted) 50%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-elevated,
+  .card-elevated:hover,
+  .btn-shadow,
+  .btn-shadow:hover,
+  .active-scale:active {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}
+
+/* ============================================================================
+   TOUCH-FRIENDLY HELPERS
+   ============================================================================ */
+
+.min-h-touch {
+  min-height: 44px;
+}
+
+.h-input {
+  height: 48px;
+}
+
+/* ============================================================================
+   LANDING PAGE — BACKGROUND PATTERNS (from LitUI reference)
+   ============================================================================ */
+
+/* Subtle grid background */
+.grid-pattern {
+  background-image:
+    linear-gradient(to right, oklch(0.95 0 0) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.95 0 0) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.dark .grid-pattern {
+  background-image:
+    linear-gradient(to right, oklch(0.18 0 0) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.18 0 0) 1px, transparent 1px);
+}
+
+/* Radial gradient overlay for hero (litui.dev: light bloom in light mode, dark glow in dark) */
+.hero-gradient {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, oklch(0.92 0 0) 0%, transparent 70%);
+}
+
+.dark .hero-gradient {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, oklch(0.18 0 0) 0%, transparent 70%);
+}
+
+/* Bottom fade — bleeds section into the next */
+.bottom-fade {
+  background: linear-gradient(to bottom, transparent 0%, oklch(1 0 0) 100%);
+}
+
+.dark .bottom-fade {
+  background: linear-gradient(to bottom, transparent 0%, oklch(0.08 0 0) 100%);
+}
+
+/* Section-level fades for seamless transitions */
+.section-fade-top {
+  background: linear-gradient(to bottom, oklch(1 0 0) 0%, transparent 100%);
+}
+
+.dark .section-fade-top {
+  background: linear-gradient(to bottom, oklch(0.08 0 0) 0%, transparent 100%);
+}
+
+/* Terminal / code block — dark background with border */
+.code-block {
+  background: linear-gradient(
+    180deg,
+    oklch(0.12 0 0) 0%,
+    oklch(0.10 0 0) 100%
+  );
+  border: 1px solid oklch(0.22 0 0 / 0.8);
+  box-shadow:
+    0 0 0 1px oklch(0.15 0 0 / 0.1),
+    0 4px 6px -1px oklch(0 0 0 / 0.1),
+    0 2px 4px -2px oklch(0 0 0 / 0.1),
+    0 0 40px -10px oklch(0.20 0 0 / 0.3);
+}
+
+/* Terminal glow — pseudo-element halo on hover */
+.terminal-glow {
+  position: relative;
+}
+
+.terminal-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(135deg, oklch(0.25 0 0) 0%, oklch(0.12 0 0) 100%);
+  border-radius: inherit;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.terminal-glow:hover::before {
+  opacity: 1;
+}
+
+/* Subtle text gradient for emphasis headlines */
+.text-gradient {
+  background: linear-gradient(135deg, var(--foreground) 0%, var(--muted-foreground) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.section-fade-bottom {
+  background: linear-gradient(to top, oklch(1 0 0) 0%, transparent 100%);
+}
+
+.dark .section-fade-bottom {
+  background: linear-gradient(to top, oklch(0.08 0 0) 0%, transparent 100%);
+}
+
+/* ============================================================================
+   SCROLL REVEAL — IntersectionObserver driven
+   ============================================================================ */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s var(--ease-out-expo), transform 0.7s var(--ease-out-expo);
+}
+
+.reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Scale pulse for framework logos on reveal (litui.dev) */
+@keyframes scale-pulse {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.reveal-scale {
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.5s var(--ease-out-expo), transform 0.5s var(--ease-out-expo);
+}
+
+.reveal-scale.revealed {
+  animation: scale-pulse 0.6s var(--ease-out-expo) forwards;
+}
+
+/* Stagger delays for sequential reveal */
+.reveal-delay-1 { transition-delay: 0.06s; }
+.reveal-delay-2 { transition-delay: 0.12s; }
+.reveal-delay-3 { transition-delay: 0.18s; }
+.reveal-delay-4 { transition-delay: 0.24s; }
+.reveal-delay-5 { transition-delay: 0.35s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal.revealed {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ============================================================================
+   MOBILE MENU ENTRANCE
+   ============================================================================ */
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Sidebar hover-open overlay ──────────────────────────────────────────────
+   When the sidebar is hover-expanded from collapsed icon mode, keep the spacer
+   div pinned at icon width so the panel floats over content instead of pushing
+   it. Targets: the peer wrapper's first child (spacer div) via :has().
+   ──────────────────────────────────────────────────────────────────────────── */
+.peer:has([data-hover-open]) > div:first-child {
+  width: var(--sidebar-width-icon) !important;
+}
+
+.mobile-menu-enter {
+  animation: slide-down 0.25s var(--ease-out-expo) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-menu-enter {
+    animation: none;
+  }
+}
+

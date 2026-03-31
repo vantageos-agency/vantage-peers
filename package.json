@@ -21,6 +21,7 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "workspaces": ["apps/*"],
   "scripts": {
     "test": "vitest run",
     "test:mcp": "bun scripts/test-mcp.ts",
