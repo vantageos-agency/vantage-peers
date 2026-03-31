@@ -28,6 +28,13 @@ const mandateObject = v.object({
 	createdAt: v.number(),
 	updatedAt: v.number(),
 	completedAt: v.optional(v.number()),
+	spendingLimits: v.optional(v.object({
+		maxPerTransaction: v.number(),
+		maxPerPeriod: v.number(),
+		periodDays: v.optional(v.number()),
+	})),
+	approvedCategories: v.optional(v.array(v.string())),
+	mandateDocument: v.optional(v.string()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,6 +47,13 @@ export const create = mutation({
 		fulfilledBy: creatorValidator,
 		service: v.string(),
 		budget: v.number(),
+		spendingLimits: v.optional(v.object({
+			maxPerTransaction: v.number(),
+			maxPerPeriod: v.number(),
+			periodDays: v.optional(v.number()),
+		})),
+		approvedCategories: v.optional(v.array(v.string())),
+		mandateDocument: v.optional(v.string()),
 	},
 	returns: v.id("mandates"),
 	handler: async (ctx, args) => {
@@ -52,6 +66,9 @@ export const create = mutation({
 			status: "requested",
 			createdAt: now,
 			updatedAt: now,
+			...(args.spendingLimits !== undefined && { spendingLimits: args.spendingLimits }),
+			...(args.approvedCategories !== undefined && { approvedCategories: args.approvedCategories }),
+			...(args.mandateDocument !== undefined && { mandateDocument: args.mandateDocument }),
 		});
 	},
 });
@@ -233,5 +250,65 @@ export const get = query({
 	returns: v.union(mandateObject, v.null()),
 	handler: async (ctx, args) => {
 		return await ctx.db.get(args.mandateId);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// validateSpending — check if a proposed spend is within mandate limits
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const validateSpending = query({
+	args: {
+		mandateId: v.id("mandates"),
+		proposedAmount: v.number(),
+	},
+	returns: v.object({
+		withinLimits: v.boolean(),
+		reason: v.optional(v.string()),
+		currentSpend: v.number(),
+		remainingBudget: v.number(),
+		perTransactionLimit: v.optional(v.number()),
+		perPeriodLimit: v.optional(v.number()),
+	}),
+	handler: async (ctx, args) => {
+		const mandate = await ctx.db.get(args.mandateId);
+		if (!mandate) {
+			return { withinLimits: false, reason: "Mandate not found", currentSpend: 0, remainingBudget: 0 };
+		}
+
+		const currentSpend = mandate.tokensCost ?? 0;
+		const remainingBudget = mandate.budget - currentSpend;
+
+		// Check per-transaction limit first (more specific)
+		if (mandate.spendingLimits?.maxPerTransaction && args.proposedAmount > mandate.spendingLimits.maxPerTransaction) {
+			return {
+				withinLimits: false,
+				reason: `Exceeds per-transaction limit: ${args.proposedAmount} > ${mandate.spendingLimits.maxPerTransaction}`,
+				currentSpend,
+				remainingBudget,
+				perTransactionLimit: mandate.spendingLimits.maxPerTransaction,
+				perPeriodLimit: mandate.spendingLimits?.maxPerPeriod,
+			};
+		}
+
+		// Check overall budget
+		if (args.proposedAmount > remainingBudget) {
+			return {
+				withinLimits: false,
+				reason: `Exceeds remaining budget: ${args.proposedAmount} > ${remainingBudget} remaining`,
+				currentSpend,
+				remainingBudget,
+				perTransactionLimit: mandate.spendingLimits?.maxPerTransaction,
+				perPeriodLimit: mandate.spendingLimits?.maxPerPeriod,
+			};
+		}
+
+		return {
+			withinLimits: true,
+			currentSpend,
+			remainingBudget: remainingBudget - args.proposedAmount,
+			perTransactionLimit: mandate.spendingLimits?.maxPerTransaction,
+			perPeriodLimit: mandate.spendingLimits?.maxPerPeriod,
+		};
 	},
 });

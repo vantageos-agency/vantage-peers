@@ -1732,13 +1732,23 @@ server.tool(
 		fulfilledBy: creatorSchema.describe("Orchestrator who will provide the service"),
 		service: z.string().describe("Description of what service is needed"),
 		budget: z.number().describe("Token budget allocated for this mandate"),
+		spendingLimits: z.object({
+			maxPerTransaction: z.number(),
+			maxPerPeriod: z.number(),
+			periodDays: z.number().optional(),
+		}).optional().describe("AP2 spending limits"),
+		approvedCategories: z.array(z.string()).optional().describe("Approved service categories"),
+		mandateDocument: z.string().optional().describe("Signed authorization document or reference"),
 	},
-	async ({ requestedBy, fulfilledBy, service, budget }) => {
+	async ({ requestedBy, fulfilledBy, service, budget, spendingLimits, approvedCategories, mandateDocument }) => {
 		const mandateId = await convex.mutation(api.mandates.create, {
 			requestedBy,
 			fulfilledBy,
 			service,
 			budget,
+			spendingLimits,
+			approvedCategories,
+			mandateDocument,
 		});
 
 		return {
@@ -1846,6 +1856,26 @@ server.tool(
 				},
 			],
 		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: validate_mandate_spending
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"validate_mandate_spending",
+	"Check if a proposed spend is within a mandate's AP2 spending limits. Returns within/exceeded status with details.",
+	{
+		mandateId: z.string().describe("Mandate ID to validate against"),
+		proposedAmount: z.number().describe("Proposed token spend amount to validate"),
+	},
+	async ({ mandateId, proposedAmount }) => {
+		const result = await convex.query(api.mandates.validateSpending, {
+			mandateId: mandateId as any,
+			proposedAmount,
+		});
+		return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 	},
 );
 

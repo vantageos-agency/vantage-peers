@@ -313,6 +313,14 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number(),
 		completedAt: v.optional(v.number()),
+		// AP2 authorization fields
+		spendingLimits: v.optional(v.object({
+			maxPerTransaction: v.number(),
+			maxPerPeriod: v.number(),
+			periodDays: v.optional(v.number()), // default 30
+		})),
+		approvedCategories: v.optional(v.array(v.string())), // e.g. ["seo", "content", "development"]
+		mandateDocument: v.optional(v.string()), // signed authorization text or reference
 	})
 		.index("by_requestedBy", ["requestedBy", "status"])
 		.index("by_fulfilledBy", ["fulfilledBy", "status"])
