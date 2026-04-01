@@ -18,6 +18,7 @@ export const creatorValidator = v.union(
 	v.literal("tau"),
 	v.literal("phi"),
 	v.literal("sigma"),
+	v.literal("omega"),
 	v.literal("system"),
 );
 
@@ -207,6 +208,7 @@ export default defineSchema({
 			v.literal("tau"),
 			v.literal("phi"),
 			v.literal("sigma"),
+			v.literal("omega"),
 			v.literal("laurent"),
 		),
 		priority: v.union(
@@ -326,6 +328,16 @@ export default defineSchema({
 		.index("by_fulfilledBy", ["fulfilledBy", "status"])
 		.index("by_status", ["status", "createdAt"]),
 
+	// ── githubRepoMapping ─────────────────────────────────────────────────────
+	// Maps GitHub repos to orchestrators. Used by webhook handler to route events.
+	githubRepoMapping: defineTable({
+		repo: v.string(), // "myreeldream-ai/MyShortReel-beta"
+		orchestrator: v.string(), // "omega", "tau", "sigma", etc.
+		project: v.string(), // "myreeldream", "vantage-starter", etc.
+		active: v.boolean(),
+	})
+		.index("by_repo", ["repo"]),
+
 	// ── businessUnits ─────────────────────────────────────────────────────────
 	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.
 	// managementFee: ElPi Corp takes this percentage of revenue (default 10%).
@@ -378,6 +390,7 @@ export default defineSchema({
 			v.literal("tau"),
 			v.literal("phi"),
 			v.literal("sigma"),
+			v.literal("omega"),
 			v.literal("laurent"),
 		),
 		priority: v.union(

@@ -59,7 +59,7 @@ const memoryTypeSchema = z
 	.describe("Memory classification type");
 
 const creatorSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "system"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "system"])
 	.describe("Which orchestrator is creating this memory");
 
 const severitySchema = z
@@ -292,7 +292,7 @@ server.tool(
 		"Returns null if the profile does not exist yet — call update_profile to create it.",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma"])
+			.enum(["pi", "tau", "phi", "sigma", "omega"])
 			.describe("Orchestrator identifier"),
 	},
 	async ({ orchestratorId }) => {
@@ -322,7 +322,7 @@ server.tool(
 		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma"])
+			.enum(["pi", "tau", "phi", "sigma", "omega"])
 			.describe("Orchestrator identifier"),
 		name: z.string().describe("Human-readable orchestrator name"),
 		static: z
@@ -574,7 +574,7 @@ server.tool(
 		"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma"])
+			.enum(["pi", "tau", "phi", "sigma", "omega"])
 			.describe("Orchestrator role"),
 		instanceId: z
 			.string()
@@ -683,7 +683,7 @@ server.tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const assigneeSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "laurent"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"])
 	.describe("Who the task is assigned to");
 
 const prioritySchema = z
@@ -1597,7 +1597,7 @@ server.tool(
 	{
 		title: z.string().describe("Task title — created each time the cron fires"),
 		description: z.string().optional().describe("Task description"),
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "laurent"]).describe("Who gets the created tasks"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"]).describe("Who gets the created tasks"),
 		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
 		project: z.string().optional().describe("Project name"),
 		tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1631,7 +1631,7 @@ server.tool(
 	"list_recurring_tasks",
 	"List recurring task templates. Filter by assignee or active status.",
 	{
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "laurent"]).optional().describe("Filter by assignee"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"]).optional().describe("Filter by assignee"),
 		active: z.boolean().optional().describe("Filter by active status"),
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},
@@ -2188,6 +2188,98 @@ server.tool(
 				{
 					type: "text",
 					text: JSON.stringify(result, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_repo_mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_repo_mapping",
+	"Add or update a GitHub repo → orchestrator mapping. Used by the webhook pipeline to route GitHub events to the right orchestrator.",
+	{
+		repo: z
+			.string()
+			.describe("Full repo name — e.g. 'elpiarthera/vantage-memory'"),
+		orchestrator: z
+			.string()
+			.describe("Target orchestrator — e.g. 'sigma', 'omega', 'tau'"),
+		project: z
+			.string()
+			.describe("Project name — e.g. 'vantage-memory', 'myreeldream'"),
+		active: z
+			.boolean()
+			.optional()
+			.default(true)
+			.describe("Whether this mapping is active (default true)"),
+	},
+	async ({ repo, orchestrator, project, active }) => {
+		const id = await convex.mutation(api.githubRepoMapping.add, {
+			repo,
+			orchestrator,
+			project,
+			active,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ id, repo, orchestrator, project, active }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_repo_mappings
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_repo_mappings",
+	"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.",
+	{},
+	async () => {
+		const mappings = await convex.query(api.githubRepoMapping.list, {});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(mappings, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: remove_repo_mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"remove_repo_mapping",
+	"Remove a GitHub repo mapping by repo name. Stops routing webhook events for this repo.",
+	{
+		repo: z
+			.string()
+			.describe("Full repo name to remove — e.g. 'elpiarthera/vantage-memory'"),
+	},
+	async ({ repo }) => {
+		const result = await convex.mutation(api.githubRepoMapping.remove, {
+			repo,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, ...result }, null, 2),
 				},
 			],
 		};
