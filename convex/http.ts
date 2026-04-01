@@ -63,9 +63,26 @@ http.route({
 
 		// 5. Handle events
 
+		// Helper: extract issue fields for upsert
+		const extractIssueFields = (issue: any, status: "open" | "closed") => ({
+			repo: repoFullName,
+			issueNumber: issue.number as number,
+			title: issue.title as string,
+			body: (issue.body || "") as string,
+			htmlUrl: issue.html_url as string,
+			labels: (issue.labels || []).map((l: any) => l.name as string),
+			status,
+			githubCreatedAt: new Date(issue.created_at).getTime(),
+			githubUpdatedAt: new Date(issue.updated_at).getTime(),
+		});
+
 		// --- New issue opened ---
 		if (eventType === "issues" && action === "opened") {
 			const issue = payload.issue;
+
+			// Upsert issue BEFORE creating task
+			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
+
 			const isUrgent = issue.labels?.some(
 				(l: any) =>
 					l.name.toLowerCase().includes("urgent") ||
@@ -88,10 +105,54 @@ http.route({
 			});
 		}
 
+		// --- Issue edited ---
+		if (eventType === "issues" && action === "edited") {
+			const issue = payload.issue;
+			const status = issue.state === "closed" ? "closed" : "open";
+			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status as "open" | "closed"));
+		}
+
+		// --- Issue labeled ---
+		if (eventType === "issues" && action === "labeled") {
+			const issue = payload.issue;
+			const label = payload.label;
+			const status = issue.state === "closed" ? "closed" : "open";
+			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status as "open" | "closed"));
+
+			// Existing behavior: notify on urgent/p0 labels
+			if (
+				label?.name?.toLowerCase().includes("urgent") ||
+				label?.name?.toLowerCase().includes("p0")
+			) {
+				await ctx.runMutation(api.messages.sendMessage, {
+					from: "system",
+					channel: orchestrator,
+					content: `[GitHub] Issue #${issue.number} labeled ${label.name}: ${issue.title} — ${issue.html_url}`,
+				});
+			}
+		}
+
+		// --- Issue closed ---
+		if (eventType === "issues" && action === "closed") {
+			const issue = payload.issue;
+			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "closed"));
+		}
+
+		// --- Issue reopened ---
+		if (eventType === "issues" && action === "reopened") {
+			const issue = payload.issue;
+			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
+		}
+
 		// --- Issue comment with @elpiarthera mention ---
 		if (eventType === "issue_comment" && action === "created") {
 			const comment = payload.comment;
 			const issue = payload.issue;
+
+			// Update githubUpdatedAt on the issue
+			const status = issue.state === "closed" ? "closed" : "open";
+			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status as "open" | "closed"));
+
 			if (comment.body?.includes("@elpiarthera")) {
 				await ctx.runMutation(api.tasks.create, {
 					title: `[GitHub #${issue.number}] Mentioned: ${issue.title}`,
@@ -107,22 +168,6 @@ http.route({
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] @elpiarthera mentioned in #${issue.number}: ${issue.title} — ${comment.html_url}`,
-				});
-			}
-		}
-
-		// --- Issue labeled urgent/p0 ---
-		if (eventType === "issues" && action === "labeled") {
-			const issue = payload.issue;
-			const label = payload.label;
-			if (
-				label?.name?.toLowerCase().includes("urgent") ||
-				label?.name?.toLowerCase().includes("p0")
-			) {
-				await ctx.runMutation(api.messages.sendMessage, {
-					from: "system",
-					channel: orchestrator,
-					content: `[GitHub] Issue #${issue.number} labeled ${label.name}: ${issue.title} — ${issue.html_url}`,
 				});
 			}
 		}

@@ -316,6 +316,57 @@ export const complete = mutation({
 		}
 
 		await ctx.db.patch(args.taskId, patch);
+
+		// Auto-link: if task title contains #NNN, update the corresponding issue
+		const issueMatch = task.title.match(/#(\d+)/);
+		if (issueMatch) {
+			const issueNumber = parseInt(issueMatch[1], 10);
+			// Find repo from project via githubRepoMapping
+			if (task.project) {
+				const mappings = await ctx.db.query("githubRepoMapping").collect();
+				const mapping = mappings.find((m) => m.project === task.project);
+				if (mapping) {
+					// Find the issue
+					const issue = await ctx.db
+						.query("issues")
+						.withIndex("by_repo_number", (q) =>
+							q.eq("repo", mapping.repo).eq("issueNumber", issueNumber),
+						)
+						.unique();
+					if (issue) {
+						// Link the task
+						const existingTaskIds = issue.linkedTaskIds || [];
+						if (!existingTaskIds.includes(args.taskId as string)) {
+							await ctx.db.patch(issue._id, {
+								linkedTaskIds: [...existingTaskIds, args.taskId as string],
+							});
+						}
+						// Check if completionNote mentions fix/fixed/commit SHA
+						const note = args.completionNote || "";
+						const hasFix =
+							/\bfix(ed)?\b/i.test(note) || /\b[0-9a-f]{7,40}\b/.test(note);
+						if (hasFix) {
+							// Extract commit SHA if present
+							const shaMatch = note.match(/\b([0-9a-f]{7,40})\b/);
+							await ctx.db.patch(issue._id, {
+								status: "fixed",
+								fixedBy: task.assignedTo,
+								fixedAt: Date.now(),
+								...(shaMatch
+									? {
+											fixCommits: [
+												...(issue.fixCommits || []),
+												shaMatch[1],
+											],
+										}
+									: {}),
+							});
+						}
+					}
+				}
+			}
+		}
+
 		return null;
 	},
 });

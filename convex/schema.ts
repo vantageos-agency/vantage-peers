@@ -328,6 +328,44 @@ export default defineSchema({
 		.index("by_fulfilledBy", ["fulfilledBy", "status"])
 		.index("by_status", ["status", "createdAt"]),
 
+	// ── issues ────────────────────────────────────────────────────────────────
+	// GitHub issues tracked in VantagePeers. Synced via webhook.
+	issues: defineTable({
+		repo: v.string(), // "myreeldream-ai/MyShortReel-beta"
+		issueNumber: v.number(),
+		title: v.string(),
+		body: v.string(), // truncated to 2000 chars
+		htmlUrl: v.string(),
+		labels: v.array(v.string()),
+		status: v.union(
+			v.literal("open"),
+			v.literal("in_progress"),
+			v.literal("fixed"),
+			v.literal("verified"),
+			v.literal("closed"),
+		),
+		priority: v.union(
+			v.literal("urgent"),
+			v.literal("high"),
+			v.literal("medium"),
+			v.literal("low"),
+		),
+		assignedOrchestrator: v.string(),
+		project: v.string(),
+		fixCommits: v.optional(v.array(v.string())),
+		fixedBy: v.optional(v.string()),
+		fixedAt: v.optional(v.number()),
+		verifiedBy: v.optional(v.string()),
+		verifiedAt: v.optional(v.number()),
+		linkedTaskIds: v.optional(v.array(v.string())),
+		githubCreatedAt: v.number(),
+		githubUpdatedAt: v.number(),
+	})
+		.index("by_repo_number", ["repo", "issueNumber"])
+		.index("by_status", ["status"])
+		.index("by_project", ["project"])
+		.index("by_assigned", ["assignedOrchestrator", "status"]),
+
 	// ── githubRepoMapping ─────────────────────────────────────────────────────
 	// Maps GitHub repos to orchestrators. Used by webhook handler to route events.
 	githubRepoMapping: defineTable({

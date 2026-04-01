@@ -17,6 +17,7 @@ import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as http from "../http.js";
+import type * as issues from "../issues.js";
 import type * as mandates from "../mandates.js";
 import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   episodes: typeof episodes;
   githubRepoMapping: typeof githubRepoMapping;
   http: typeof http;
+  issues: typeof issues;
   mandates: typeof mandates;
   memories: typeof memories;
   messages: typeof messages;

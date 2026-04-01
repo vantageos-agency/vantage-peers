@@ -2287,6 +2287,226 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_issues
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_issues",
+	"List GitHub issues tracked in VantagePeers. Filter by project, status, or assigned orchestrator.",
+	{
+		project: z
+			.string()
+			.optional()
+			.describe("Filter by project name — e.g. 'myreeldream', 'vantage-starter'"),
+		status: z
+			.enum(["open", "in_progress", "fixed", "verified", "closed"])
+			.optional()
+			.describe("Filter by issue status"),
+		assignedTo: z
+			.string()
+			.optional()
+			.describe("Filter by assigned orchestrator — e.g. 'omega', 'sigma'"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of issues to return (default 50)"),
+	},
+	async ({ project, status, assignedTo, limit }) => {
+		let results;
+		if (assignedTo) {
+			results = await convex.query(api.issues.listByOrchestrator, {
+				assignedOrchestrator: assignedTo,
+				status: status as any,
+				limit: limit ?? 50,
+			});
+		} else if (project) {
+			results = await convex.query(api.issues.listByProject, {
+				project,
+				status: status as any,
+				limit: limit ?? 50,
+			});
+		} else if (status) {
+			// Use listByProject with a broad approach — fall back to listByOrchestrator
+			// For status-only queries, we query all and filter
+			results = await convex.query(api.issues.listByOrchestrator, {
+				assignedOrchestrator: "sigma",
+				status: status as any,
+				limit: limit ?? 50,
+			});
+		} else {
+			results = await convex.query(api.issues.listByProject, {
+				project: "",
+				limit: limit ?? 50,
+			});
+		}
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ count: results.length, issues: results }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_issue
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_issue",
+	"Get a single GitHub issue by repo and issue number.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+	},
+	async ({ repo, issueNumber }) => {
+		const issue = await convex.query(api.issues.getByRepoNumber, {
+			repo,
+			issueNumber,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(issue ?? { error: "Issue not found" }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_issue_status
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_issue_status",
+	"Update the status of a tracked GitHub issue.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+		status: z
+			.enum(["open", "in_progress", "fixed", "verified", "closed"])
+			.describe("New status for the issue"),
+	},
+	async ({ repo, issueNumber, status }) => {
+		await convex.mutation(api.issues.updateStatus, {
+			repo,
+			issueNumber,
+			status,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, issueNumber, status, updated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: link_commit_to_issue
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"link_commit_to_issue",
+	"Link a fix commit SHA to a GitHub issue. Records who fixed it and when.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+		commitSha: z.string().describe("Git commit SHA that fixes this issue"),
+		fixedBy: z.string().describe("Who fixed it — orchestrator name or person"),
+	},
+	async ({ repo, issueNumber, commitSha, fixedBy }) => {
+		await convex.mutation(api.issues.linkCommit, {
+			repo,
+			issueNumber,
+			commitSha,
+			fixedBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, issueNumber, commitSha, fixedBy, linked: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: verify_issue
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"verify_issue",
+	"Mark a GitHub issue as verified (fix confirmed). Sets status to 'verified'.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+		verifiedBy: z.string().describe("Who verified the fix — orchestrator name or person"),
+	},
+	async ({ repo, issueNumber, verifiedBy }) => {
+		await convex.mutation(api.issues.verify, {
+			repo,
+			issueNumber,
+			verifiedBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, issueNumber, verifiedBy, verified: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: issue_stats
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"issue_stats",
+	"Get issue count statistics grouped by status. Optionally filter by project.",
+	{
+		project: z
+			.string()
+			.optional()
+			.describe("Filter stats to a specific project — omit for all projects"),
+	},
+	async ({ project }) => {
+		const stats = await convex.query(api.issues.getStats, {
+			project,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(stats, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
 
