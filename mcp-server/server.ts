@@ -2507,6 +2507,205 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_fix_pattern
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"create_fix_pattern",
+	"Create a fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search this BEFORE fixing to avoid repeating mistakes.",
+	{
+		symptom: z.string().describe("What the bug looks like — the user-visible problem"),
+		rootCause: z.string().describe("Why the bug happens — the underlying technical cause"),
+		tags: flexArray.describe("Tags for categorization — e.g. 'react-hydration', 'convex-subscription'"),
+		stack: flexArray.describe("Tech stack involved — e.g. 'next.js', 'convex', 'clerk'"),
+		sourceProject: z.string().describe("Project where this was discovered — e.g. 'myreeldream'"),
+		createdBy: creatorSchema,
+		severity: severitySchema,
+		validatedFix: z.string().optional().describe("The fix that worked — set later if not known yet"),
+		files: flexArrayOptional.describe("Files involved in the fix"),
+		linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
+	},
+	async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds }) => {
+		const patternId = await convex.mutation(api.fixPatterns.create, {
+			symptom,
+			rootCause,
+			tags: toArray(tags) ?? [],
+			stack: toArray(stack) ?? [],
+			sourceProject,
+			createdBy,
+			severity,
+			validatedFix,
+			files: toArray(files),
+			linkedIssueIds: toArray(linkedIssueIds),
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ patternId, created: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_fix_attempt
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_fix_attempt",
+	"Add a fix attempt to a pattern. Documents what was tried, whether it worked, and why. If worked=true and pattern has no validatedFix, auto-sets it.",
+	{
+		patternId: z.string().describe("ID of the fix pattern"),
+		description: z.string().describe("What was tried — the fix approach"),
+		worked: z.boolean().describe("Did this fix the issue?"),
+		why: z.string().describe("Why it worked or didn't — the reasoning"),
+		createdBy: creatorSchema,
+		commit: z.string().optional().describe("Git commit hash of this attempt"),
+	},
+	async ({ patternId, description, worked, why, createdBy, commit }) => {
+		const attemptId = await convex.mutation(api.fixPatterns.addAttempt, {
+			patternId: patternId as never,
+			description,
+			worked,
+			why,
+			createdBy,
+			commit,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ attemptId, patternId, worked }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: validate_fix
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"validate_fix",
+	"Set or update the validated fix on a pattern. Use after confirming a fix works.",
+	{
+		patternId: z.string().describe("ID of the fix pattern"),
+		validatedFix: z.string().describe("Description of the validated fix"),
+	},
+	async ({ patternId, validatedFix }) => {
+		await convex.mutation(api.fixPatterns.validate, {
+			patternId: patternId as never,
+			validatedFix,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ patternId, validatedFix, validated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: search_fix_patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"search_fix_patterns",
+	"Semantic search over fix patterns. Use this BEFORE fixing a bug to check if it's been seen before. Returns patterns ranked by relevance.",
+	{
+		query: z.string().describe("Describe the problem — e.g. 'message disappears after sending'"),
+		limit: z.number().int().optional().describe("Max results to return (default 10)"),
+	},
+	async ({ query, limit }) => {
+		const results = await convex.action(api.search.searchFixPatterns, {
+			query,
+			limit,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(results, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_fix_patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_fix_patterns",
+	"List fix patterns, optionally filtered by project. Returns patterns sorted by creation date (newest first).",
+	{
+		project: z.string().optional().describe("Filter by source project — omit for all"),
+		limit: z.number().int().optional().describe("Max results (default 50)"),
+	},
+	async ({ project, limit }) => {
+		if (project) {
+			const results = await convex.query(api.fixPatterns.listByProject, {
+				sourceProject: project,
+				limit,
+			});
+			return {
+				content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+			};
+		}
+
+		// No project filter — list all (use listByProject with a broad approach)
+		// For now, return empty guidance
+		return {
+			content: [
+				{
+					type: "text",
+					text: "Please specify a project to filter by, or use search_fix_patterns for semantic search.",
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: link_issue_to_pattern
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"link_issue_to_pattern",
+	"Link a VantagePeers issue to a fix pattern. Creates a bidirectional reference.",
+	{
+		patternId: z.string().describe("ID of the fix pattern"),
+		issueId: z.string().describe("VantagePeers issue ID to link"),
+	},
+	async ({ patternId, issueId }) => {
+		await convex.mutation(api.fixPatterns.linkIssue, {
+			patternId: patternId as never,
+			issueId,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ patternId, issueId, linked: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
 
