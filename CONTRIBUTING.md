@@ -10,7 +10,7 @@ git clone https://github.com/vantageos/vantage-peers.git
 cd vantage-memory
 
 # Install dependencies
-npm install
+bun install
 
 # Set up Convex (creates a new dev deployment)
 npx convex dev
