@@ -449,4 +449,41 @@ export default defineSchema({
 	})
 		.index("by_active", ["active", "nextRunAt"])
 		.index("by_assignee", ["assignedTo"]),
+
+	// ── fixPatterns ──────────────────────────────────────────────────────────────
+	// Knowledge base of fix patterns. Documents bugs, root causes, fix attempts
+	// (including failures), and validated fixes. Agents search this BEFORE fixing
+	// to avoid repeating mistakes. Semantic search via RAG on symptom + rootCause.
+	fixPatterns: defineTable({
+		symptom: v.string(), // What the bug looks like (searchable via RAG)
+		rootCause: v.string(), // Why it happens
+		validatedFix: v.optional(v.string()), // The fix that actually worked
+		files: v.optional(v.array(v.string())), // Files involved
+		tags: v.array(v.string()), // e.g. "react-hydration", "convex-subscription"
+		stack: v.array(v.string()), // e.g. "next.js", "convex", "clerk"
+		sourceProject: v.string(), // Origin project
+		linkedIssueIds: v.optional(v.array(v.string())), // VantagePeers issue IDs
+		createdBy: creatorValidator,
+		severity: severityValidator,
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_project", ["sourceProject"])
+		.index("by_severity", ["severity"])
+		.index("by_creator", ["createdBy"]),
+
+	// ── fixAttempts ──────────────────────────────────────────────────────────────
+	// Individual fix attempts for a pattern. Separate table to avoid unbounded
+	// array growth in fixPatterns documents (per Convex guidelines).
+	fixAttempts: defineTable({
+		patternId: v.id("fixPatterns"),
+		description: v.string(), // What was tried
+		commit: v.optional(v.string()), // Commit hash
+		worked: v.boolean(), // Did it fix the issue?
+		why: v.string(), // Why it worked or didn't
+		createdBy: creatorValidator,
+		createdAt: v.number(),
+	})
+		.index("by_pattern", ["patternId"])
+		.index("by_worked", ["patternId", "worked"]),
 });
