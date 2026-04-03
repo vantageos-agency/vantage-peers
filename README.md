@@ -3,7 +3,7 @@
 **Shared memory, messaging, and task management MCP server for multi-agent Claude Code.**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE)
 
 ## What It Is
 
@@ -298,4 +298,4 @@ You have access to VantagePeers via MCP tools.
 
 ## License
 
-[MIT](LICENSE)
+[FSL-1.1-Apache-2.0](LICENSE) -- source-available, free to self-host, converts to Apache 2.0 after 2 years. You may not offer VantagePeers as a competing hosted service.

@@ -79,4 +79,4 @@ Open an issue on GitHub with:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the [FSL-1.1-Apache-2.0](LICENSE) license.
