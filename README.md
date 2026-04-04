@@ -21,7 +21,7 @@ VantagePeers is a shared brain for multiple Claude Code agents. It provides pers
 ```bash
 # 1. Clone the repository
 git clone https://github.com/vantageos/vantage-peers.git
-cd vantage-memory
+cd vantage-peers
 
 # 2. Install dependencies
 bun install
@@ -38,9 +38,9 @@ Then configure MCP in your Claude Code settings (`~/.claude/settings.json`):
 ```json
 {
   "mcpServers": {
-    "vantage-memory": {
+    "vantage-peers": {
       "command": "bun",
-      "args": ["/path/to/vantage-memory/mcp-server/server.ts"],
+      "args": ["/path/to/vantage-peers/mcp-server/server.ts"],
       "env": {
         "CONVEX_URL": "https://your-deployment.convex.cloud"
       }
@@ -49,9 +49,9 @@ Then configure MCP in your Claude Code settings (`~/.claude/settings.json`):
 }
 ```
 
-Replace `/path/to/vantage-memory` with the absolute path to your clone, and `your-deployment` with the Convex deployment URL printed by `npx convex dev`.
+Replace `/path/to/vantage-peers` with the absolute path to your clone, and `your-deployment` with the Convex deployment URL printed by `npx convex dev`.
 
-Verify: open Claude Code and confirm that vantage-memory tools appear in the tool list.
+Verify: open Claude Code and confirm that vantage-peers tools appear in the tool list.
 
 ## Architecture
 

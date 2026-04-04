@@ -7,7 +7,7 @@ Thanks for your interest in contributing to VantagePeers.
 ```bash
 # Clone the repo
 git clone https://github.com/vantageos/vantage-peers.git
-cd vantage-memory
+cd vantage-peers
 
 # Install dependencies
 bun install
