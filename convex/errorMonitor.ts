@@ -190,11 +190,15 @@ export const listDeployments = query({
 	returns: v.array(
 		v.object({
 			_id: v.id("monitoredDeployments"),
+			_creationTime: v.number(),
 			name: v.string(),
 			deploymentUrl: v.string(),
+			deployKeyEnvVar: v.string(),
 			githubRepo: v.string(),
 			orchestrator: v.string(),
 			active: v.boolean(),
+			lastCursor: v.optional(v.number()),
+			createdAt: v.number(),
 		}),
 	),
 	handler: async (ctx) => {
