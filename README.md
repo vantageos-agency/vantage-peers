@@ -1,13 +1,17 @@
 # VantagePeers
 
-**Shared memory, messaging, and task management MCP server for multi-agent Claude Code.**
+**The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
+
+Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
+[![Convex](https://img.shields.io/badge/Convex-Backend-orange.svg)](https://convex.dev)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/Docs-vantagepeers.com-green.svg)](https://vantagepeers.com/docs)
 
 ## What It Is
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 68 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 70 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Prerequisites
 
@@ -20,7 +24,7 @@ VantagePeers is a shared brain for multiple Claude Code agents. It provides pers
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/vantageos/vantage-peers.git
+git clone https://github.com/elpiarthera/vantage-peers.git
 cd vantage-peers
 
 # 2. Install dependencies
@@ -59,7 +63,7 @@ Verify: open Claude Code and confirm that vantage-peers tools appear in the tool
 Claude Code (Agent 1) ──┐
 Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
 Claude Code (Agent 3) ──┘        |
-                          68 MCP Tools
+                          70 MCP Tools
 ```
 
 One Convex deployment. One MCP server process per agent. All agents share the same database.
@@ -83,9 +87,9 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **Hybrid search** -- vector, full-text (BM25), and combined search via Reciprocal Rank Fusion
 - **Proactive error monitoring** -- detect errors across Convex deployments before users report them, auto-create GitHub issues
 
-## MCP Tools Reference (68 tools)
+## MCP Tools Reference (70 tools)
 
-### Memory and Search (6 tools)
+### Memory and Search (4 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -93,17 +97,17 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `recall` | Semantic vector search over memories, filtered by namespace/type |
 | `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
 | `list_memories` | List memories by namespace with optional type filter |
-| `get_profile` | Fetch an orchestrator's profile (static identity + dynamic session state) |
-| `update_profile` | Create or update an orchestrator profile |
 
-### Session and Peers (2 tools)
+### Profiles and Sessions (4 tools)
 
 | Tool | Description |
 |------|-------------|
+| `get_profile` | Fetch an orchestrator's profile (static identity + dynamic session state) |
+| `update_profile` | Create or update an orchestrator profile |
 | `set_summary` | Set a status summary visible to other agents via list_peers |
 | `list_peers` | List all registered agent instances and their current summaries |
 
-### Messaging (5 tools)
+### Messaging (6 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -209,6 +213,13 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_fix_patterns` | List fix patterns by project |
 | `link_issue_to_pattern` | Link a GitHub issue to a fix pattern |
 
+### Mission Templates (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `get_mission_template` | Fetch a configurable mission template by name |
+| `update_mission_template` | Update template steps and configuration |
+
 ### Error Monitoring (4 tools)
 
 | Tool | Description |
@@ -307,6 +318,19 @@ You have access to VantagePeers via MCP tools.
 - **Bun** -- TypeScript runtime for the MCP server process
 - **OpenAI text-embedding-3-small** -- 1536-dimension embeddings via AI Gateway
 - **TypeScript** -- end to end, both server and Convex functions
+
+## Documentation
+
+Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
+
+- [Getting Started](https://vantagepeers.com/docs/getting-started) -- install, deploy, configure
+- [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) -- two agents exchanging messages in 5 minutes
+- [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) -- orchestrators, instances, namespaces
+- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 70 MCP tools
+
+## Contributing
+
+Contributions welcome. Please open an issue first to discuss what you would like to change.
 
 ## License
 
