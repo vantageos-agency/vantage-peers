@@ -129,9 +129,8 @@ export const pollDeploymentLogs = internalAction({
 			return null;
 		}
 
-		const cursorParam =
-			args.lastCursor != null ? `&cursor=${args.lastCursor}` : "";
-		const url = `${args.deploymentUrl}/api/query_journal?status=failure${cursorParam}`;
+		const cursorParam = args.lastCursor != null ? args.lastCursor : 0;
+		const url = `${args.deploymentUrl}/api/stream_function_logs?cursor=${cursorParam}`;
 
 		try {
 			const resp = await fetch(url, {
@@ -150,30 +149,25 @@ export const pollDeploymentLogs = internalAction({
 
 			const data = (await resp.json()) as {
 				entries?: Array<{
+					kind?: string;
 					identifier?: string;
-					topic?: string;
+					success?: boolean;
 					error_message?: string;
-					log_lines?: string[];
-					output?: {
-						status?: string;
-						errorMessage?: string;
-						logLines?: string[];
-					};
+					logLines?: string[];
+					timestamp?: number;
 				}>;
 				newCursor?: number;
 			};
 
-			const entries = data.entries ?? [];
+			// Filter to only Completion entries that failed
+			const failures = (data.entries ?? []).filter(
+				(e) => e.kind === "Completion" && e.success === false,
+			);
 
-			for (const entry of entries) {
-				const functionName =
-					entry.identifier ?? entry.topic ?? "unknown";
-				const errorMessage =
-					entry.error_message ??
-					entry.output?.errorMessage ??
-					"Unknown error";
-				const logLines =
-					entry.log_lines ?? entry.output?.logLines ?? [];
+			for (const entry of failures) {
+				const functionName = entry.identifier ?? "unknown";
+				const errorMessage = entry.error_message ?? "Unknown error";
+				const logLines = entry.logLines ?? [];
 				const hash = simpleHash(`${functionName}:${errorMessage}`);
 
 				await ctx.runMutation(internal.errorMonitor.upsertError, {
