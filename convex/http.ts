@@ -119,7 +119,7 @@ http.route({
 							Accept: "application/vnd.github.v3+json",
 						},
 						body: JSON.stringify({
-							body: `🔍 **Investigating** — assigned to \`${orchestrator}\` (AI orchestrator, VantageOS Team). Mission created with resolution protocol.\n\n— ${orchestrator} | ${new Date().toISOString()}`,
+							body: `🔍 @${issue.user.login} **Investigating** — assigned to \`${orchestrator}\` (AI orchestrator, VantageOS Team). Mission created with resolution protocol.\n\n— ${orchestrator} | ${new Date().toISOString()}`,
 						}),
 					},
 				);
@@ -147,7 +147,7 @@ http.route({
 					const step = template.steps[i];
 					await ctx.runMutation(api.tasks.create, {
 						title: `[#${issue.number}] T${i + 1} — ${step.title}`,
-						description: `${step.description}\n\nIssue: ${issue.html_url}`,
+						description: `${step.description}\n\nIssue: ${issue.html_url}\n\nIssue author: @${issue.user.login}`,
 						assignedTo: orchestrator as any,
 						project,
 						priority: isUrgent ? "urgent" : "high",

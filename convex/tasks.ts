@@ -379,6 +379,11 @@ export const complete = mutation({
 			const irpIssueNumber = parseInt(irpStepMatch[1], 10);
 			const stepNumber = parseInt(irpStepMatch[2], 10);
 
+			// Extract issue author stored in task description by the webhook
+			const authorMatch = task.description?.match(/Issue author: @(\S+)/);
+			const author = authorMatch ? authorMatch[1] : null;
+			const authorMention = author ? `@${author} ` : "";
+
 			const allMappings = await ctx.db.query("githubRepoMapping").take(100);
 			const repoMapping = allMappings.find((m) => m.project === task.project);
 
@@ -388,11 +393,11 @@ export const complete = mutation({
 				let commentBody: string | null = null;
 
 				if (stepNumber === 6) {
-					commentBody = `Bug reproduced in test suite. Root cause identified. Fix in progress.\n\n— ${orch} | ${timestamp}`;
+					commentBody = `${authorMention}Bug reproduced in test suite. Root cause identified. Fix in progress.\n\n— ${orch} | ${timestamp}`;
 				} else if (stepNumber === 8) {
-					commentBody = `Fix ready. All tests pass (including new regression test). Awaiting review and deploy.\n\n— ${orch} | ${timestamp}`;
+					commentBody = `${authorMention}Fix ready. All tests pass (including new regression test). Awaiting review and deploy.\n\n— ${orch} | ${timestamp}`;
 				} else if (stepNumber === 11) {
-					commentBody = `Fixed and deployed to production. Regression test added to prevent recurrence. Closing.\n\n— ${orch} | ${timestamp}`;
+					commentBody = `${authorMention}Fixed and deployed to production. Regression test added to prevent recurrence. Closing.\n\n— ${orch} | ${timestamp}`;
 				}
 
 				if (commentBody !== null) {
@@ -401,6 +406,60 @@ export const complete = mutation({
 						issueNumber: irpIssueNumber,
 						body: commentBody,
 					});
+				}
+
+				// IRP auto-store fixPattern when the Fix step (T7) is completed
+				if (stepNumber === 7 && args.completionNote) {
+					const note = args.completionNote;
+
+					// Parse structured completionNote: "Root cause: ... Fix: ... Files: ..."
+					const rootCauseMatch = note.match(/Root cause:\s*(.+?)(?=\s*Fix:|$)/is);
+					const fixMatch = note.match(/Fix:\s*(.+?)(?=\s*Files:|$)/is);
+					const filesMatch = note.match(/Files:\s*(.+?)$/is);
+
+					if (rootCauseMatch) {
+						// Extract a clean symptom from the task title: "[#282] T7 — Fix" -> "Fix #282"
+						const issueTitle = `Issue #${irpIssueNumber}: ${task.title.replace(/^\[#\d+\] T\d+ — /, "")}`;
+						const rootCause = rootCauseMatch[1].trim();
+						const validatedFix = fixMatch ? fixMatch[1].trim() : undefined;
+
+						// creatorValidator does not include "laurent" — fall back to "system"
+						const fixPatternCreatedBy: "pi" | "tau" | "phi" | "sigma" | "omega" | "system" =
+							task.assignedTo === "laurent" ? "system" : task.assignedTo;
+
+						const patternId = await ctx.db.insert("fixPatterns", {
+							symptom: issueTitle,
+							rootCause,
+							validatedFix,
+							files: filesMatch
+								? filesMatch[1]
+										.trim()
+										.split(",")
+										.map((f) => f.trim())
+										.filter((f) => f.length > 0)
+								: undefined,
+							tags: task.tags ?? [],
+							stack: [],
+							sourceProject: task.project,
+							linkedIssueIds: [`#${irpIssueNumber}`],
+							createdBy: fixPatternCreatedBy,
+							severity: "major" as const,
+							createdAt: Date.now(),
+							updatedAt: Date.now(),
+						});
+
+						// Schedule RAG embedding — matches fixPatterns.create behaviour
+						const ragText = `Symptom: ${issueTitle}\nRoot cause: ${rootCause}${validatedFix ? `\nValidated fix: ${validatedFix}` : ""}`;
+						await ctx.scheduler.runAfter(
+							0,
+							internal.ragSync.addFixPatternRagEntry,
+							{
+								patternId,
+								content: ragText,
+								sourceProject: task.project,
+							},
+						);
+					}
 				}
 			}
 		}
