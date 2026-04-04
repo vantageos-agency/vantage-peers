@@ -8,3 +8,4 @@ mcp-server/package-lock.json
 *.tsbuildinfo
 **/convex.json
 .claude/agents/
+apps/
