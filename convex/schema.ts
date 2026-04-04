@@ -508,4 +508,38 @@ export default defineSchema({
 	})
 		.index("by_name", ["name"])
 		.index("by_default", ["isDefault"]),
+
+	// ── monitoredDeployments ─────────────────────────────────────────────────
+	// Registry of Convex deployments to poll for errors.
+	// deployKeyEnvVar: name of the env var holding the admin deploy key.
+	monitoredDeployments: defineTable({
+		name: v.string(),
+		deploymentUrl: v.string(),
+		deployKeyEnvVar: v.string(),
+		githubRepo: v.string(),
+		orchestrator: v.string(),
+		active: v.boolean(),
+		lastCursor: v.optional(v.number()),
+		createdAt: v.number(),
+	})
+		.index("by_active", ["active"])
+		.index("by_name", ["name"]),
+
+	// ── errorLogs ────────────────────────────────────────────────────────────
+	// Deduplicated log of detected function errors across monitored deployments.
+	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.
+	errorLogs: defineTable({
+		hash: v.string(),
+		deployment: v.string(),
+		functionName: v.string(),
+		errorMessage: v.string(),
+		stackTrace: v.optional(v.string()),
+		firstSeen: v.number(),
+		lastSeen: v.number(),
+		count: v.number(),
+		issueNumber: v.optional(v.number()),
+		githubRepo: v.optional(v.string()),
+	})
+		.index("by_hash", ["hash"])
+		.index("by_deployment", ["deployment"]),
 });

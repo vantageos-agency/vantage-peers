@@ -15,6 +15,8 @@ import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
+import type * as errorMonitor from "../errorMonitor.js";
+import type * as errorMonitorActions from "../errorMonitorActions.js";
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
@@ -46,6 +48,8 @@ declare const fullApi: ApiFromModules<{
   dashboard: typeof dashboard;
   diary: typeof diary;
   episodes: typeof episodes;
+  errorMonitor: typeof errorMonitor;
+  errorMonitorActions: typeof errorMonitorActions;
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;
   githubRepoMapping: typeof githubRepoMapping;

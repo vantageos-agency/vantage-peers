@@ -2775,6 +2775,157 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_deployment
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_deployment",
+	"Register a Convex deployment for proactive error monitoring. " +
+		"The deployKeyEnvVar must be the name of a Convex environment variable (not the key itself) " +
+		"holding the admin deploy key for that deployment. Once registered, the cron polls it every 5 minutes.",
+	{
+		name: z
+			.string()
+			.describe(
+				"Short unique name for this deployment — e.g. 'efficient-guineapig-356'",
+			),
+		deploymentUrl: z
+			.string()
+			.describe(
+				"Full Convex deployment URL — e.g. 'https://efficient-guineapig-356.convex.cloud'",
+			),
+		deployKeyEnvVar: z
+			.string()
+			.describe(
+				"Name of the Convex env var holding the admin deploy key — e.g. 'DEPLOY_KEY_GUINEAPIG'",
+			),
+		githubRepo: z
+			.string()
+			.describe(
+				"GitHub repo in 'owner/repo' format where issues will be created — e.g. 'ElPiCorp/vantage-peers'",
+			),
+		orchestrator: z
+			.string()
+			.describe(
+				"Orchestrator responsible for this deployment — e.g. 'sigma'",
+			),
+	},
+	async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
+		const id = await convex.mutation(api.errorMonitor.addDeployment, {
+			name,
+			deploymentUrl,
+			deployKeyEnvVar,
+			githubRepo,
+			orchestrator,
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{ id, name, deploymentUrl, githubRepo, orchestrator },
+						null,
+						2,
+					),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: remove_deployment
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"remove_deployment",
+	"Deactivate a monitored deployment. The deployment record is preserved but polling stops.",
+	{
+		name: z
+			.string()
+			.describe("Name of the deployment to deactivate — e.g. 'efficient-guineapig-356'"),
+	},
+	async ({ name }) => {
+		await convex.mutation(api.errorMonitor.removeDeployment, { name });
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ removed: name }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_errors
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_errors",
+	"List detected errors from monitored deployments, ordered newest first. " +
+		"Each entry includes deduplication count and the linked GitHub issue number if one was created.",
+	{
+		deployment: z
+			.string()
+			.optional()
+			.describe(
+				"Filter to a specific deployment name — omit to list errors across all deployments",
+			),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of errors to return (default 50)"),
+	},
+	async ({ deployment, limit }) => {
+		const errors = await convex.query(api.errorMonitor.listErrors, {
+			deployment,
+			limit: limit ?? 50,
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(errors, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_error
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_error",
+	"Fetch a single error log entry by its Convex document ID, including stack trace and issue linkage.",
+	{
+		errorId: z
+			.string()
+			.describe("Convex document ID of the errorLogs entry"),
+	},
+	async ({ errorId }) => {
+		const error = await convex.query(api.errorMonitor.getError, {
+			errorId: errorId as any,
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(error, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
 

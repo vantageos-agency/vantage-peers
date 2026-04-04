@@ -10,4 +10,12 @@ crons.interval(
 	internal.recurringTasks.processDueTasks,
 );
 
+// Poll monitored deployments for errors every 5 minutes
+crons.interval(
+	"error monitor",
+	{ minutes: 5 },
+	internal.errorMonitorActions.pollAllDeployments,
+	{},
+);
+
 export default crons;
