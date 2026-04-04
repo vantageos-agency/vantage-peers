@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
  * VantagePeers MCP Server
  * Exposes Convex memory functions as Claude Code tools via stdio transport.
@@ -18,7 +18,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { z } from "zod";
-import { api } from "../convex/_generated/api.js";
+import { api } from "./convex-api/api.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap: resolve CONVEX_URL from env or .env.local

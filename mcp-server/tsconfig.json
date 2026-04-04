@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false,
-    "noEmit": true,
+    "declaration": true,
     "outDir": "./dist"
   },
   "include": ["server.ts"],
