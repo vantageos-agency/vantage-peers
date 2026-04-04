@@ -157,7 +157,7 @@ export const seed = internalMutation({
 			{
 				title: "Deploy Dev + Push",
 				description:
-					"Run `npx convex dev --once` to verify Convex compilation. Push the branch to upstream (NOT origin/fork): `git push upstream fix/issue-{number}`. Create PR on the upstream repo. The fork is for backup only.",
+					"Run `npx convex dev --once` to verify Convex compilation. Push to upstream (NOT origin/fork): `git push upstream fix/issue-{number}`. Then IMMEDIATELY create a PR: `gh pr create --repo {repo} --base main --head fix/issue-{number} --title 'Fix #{number}: ...' --body '...'`. The PR is MANDATORY — never push without creating a PR in the same step.",
 				tags: ["deployment", "ci"],
 			},
 			{
