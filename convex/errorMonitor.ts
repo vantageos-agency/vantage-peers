@@ -219,14 +219,17 @@ export const listErrors = query({
 	returns: v.array(
 		v.object({
 			_id: v.id("errorLogs"),
+			_creationTime: v.number(),
 			hash: v.string(),
 			deployment: v.string(),
 			functionName: v.string(),
 			errorMessage: v.string(),
+			stackTrace: v.optional(v.string()),
 			firstSeen: v.number(),
 			lastSeen: v.number(),
 			count: v.number(),
 			issueNumber: v.optional(v.number()),
+			githubRepo: v.optional(v.string()),
 		}),
 	),
 	handler: async (ctx, args) => {
