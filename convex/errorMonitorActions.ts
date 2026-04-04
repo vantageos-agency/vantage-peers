@@ -151,7 +151,8 @@ export const pollDeploymentLogs = internalAction({
 				entries?: Array<{
 					kind?: string;
 					identifier?: string;
-					success?: boolean;
+					success?: boolean | null;
+					error?: string | null;
 					error_message?: string;
 					logLines?: string[];
 					timestamp?: number;
@@ -159,14 +160,14 @@ export const pollDeploymentLogs = internalAction({
 				newCursor?: number;
 			};
 
-			// Filter to only Completion entries that failed
+			// Filter to Completion entries with a non-null error field
 			const failures = (data.entries ?? []).filter(
-				(e) => e.kind === "Completion" && e.success === false,
+				(e) => e.kind === "Completion" && e.error != null,
 			);
 
 			for (const entry of failures) {
 				const functionName = entry.identifier ?? "unknown";
-				const errorMessage = entry.error_message ?? "Unknown error";
+				const errorMessage = entry.error ?? "Unknown error";
 				const logLines = entry.logLines ?? [];
 				const hash = simpleHash(`${functionName}:${errorMessage}`);
 
