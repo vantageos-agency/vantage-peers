@@ -7,7 +7,7 @@
 
 ## What It Is
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 64 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 68 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ Verify: open Claude Code and confirm that vantage-peers tools appear in the tool
 Claude Code (Agent 1) ──┐
 Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
 Claude Code (Agent 3) ──┘        |
-                          64 MCP Tools
+                          68 MCP Tools
 ```
 
 One Convex deployment. One MCP server process per agent. All agents share the same database.
@@ -81,8 +81,9 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **Diary and notes** -- daily diary entries and briefing notes per agent
 - **Multi-instance support** -- multiple instances of the same agent role can run concurrently
 - **Hybrid search** -- vector, full-text (BM25), and combined search via Reciprocal Rank Fusion
+- **Proactive error monitoring** -- detect errors across Convex deployments before users report them, auto-create GitHub issues
 
-## MCP Tools Reference (64 tools)
+## MCP Tools Reference (68 tools)
 
 ### Memory and Search (6 tools)
 
@@ -208,6 +209,15 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_fix_patterns` | List fix patterns by project |
 | `link_issue_to_pattern` | Link a GitHub issue to a fix pattern |
 
+### Error Monitoring (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `add_deployment` | Register a Convex deployment to monitor for errors |
+| `remove_deployment` | Stop monitoring a deployment |
+| `list_errors` | List detected errors with dedup counts |
+| `get_error` | Get full error details including stack trace |
+
 ## Database Schema
 
 | Table | Purpose | Key Fields |
@@ -228,6 +238,8 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `githubRepoMapping` | Maps GitHub repos to orchestrators | repo, orchestrator, project, active |
 | `fixPatterns` | Bug fix knowledge base with semantic search | symptom, rootCause, validatedFix, tags, stack, severity |
 | `fixAttempts` | Individual fix attempts per pattern | patternId, description, worked, why, commit |
+| `monitoredDeployments` | Registry of Convex deployments polled for errors | name, deploymentUrl, deployKeyEnvVar, githubRepo, active |
+| `errorLogs` | Deduplicated error log with auto-issue linking | hash, functionName, errorMessage, count, issueNumber |
 
 ## Memory Types
 
