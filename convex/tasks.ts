@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +300,10 @@ export const complete = mutation({
 			}
 		}
 
+		if (!args.completionNote || args.completionNote.trim() === "") {
+			throw new Error("completionNote is required. Describe what was actually done.");
+		}
+
 		const now = Date.now();
 		const patch: Record<string, any> = {
 			status: "done",
@@ -367,6 +372,39 @@ export const complete = mutation({
 			}
 		}
 
+		// IRP auto-comments: post a GitHub comment when key IRP steps are completed.
+		// IRP task titles follow the pattern "[#NNN] TN — <step name>".
+		const irpStepMatch = task.title.match(/\[#(\d+)\] T(\d+)/);
+		if (irpStepMatch && task.project) {
+			const irpIssueNumber = parseInt(irpStepMatch[1], 10);
+			const stepNumber = parseInt(irpStepMatch[2], 10);
+
+			const allMappings = await ctx.db.query("githubRepoMapping").take(100);
+			const repoMapping = allMappings.find((m) => m.project === task.project);
+
+			if (repoMapping) {
+				const timestamp = new Date().toISOString();
+				const orch = task.assignedTo;
+				let commentBody: string | null = null;
+
+				if (stepNumber === 6) {
+					commentBody = `Bug reproduced in test suite. Root cause identified. Fix in progress.\n\n— ${orch} | ${timestamp}`;
+				} else if (stepNumber === 8) {
+					commentBody = `Fix ready. All tests pass (including new regression test). Awaiting review and deploy.\n\n— ${orch} | ${timestamp}`;
+				} else if (stepNumber === 11) {
+					commentBody = `Fixed and deployed to production. Regression test added to prevent recurrence. Closing.\n\n— ${orch} | ${timestamp}`;
+				}
+
+				if (commentBody !== null) {
+					await ctx.scheduler.runAfter(0, internal.githubComments.postComment, {
+						repo: repoMapping.repo,
+						issueNumber: irpIssueNumber,
+						body: commentBody,
+					});
+				}
+			}
+		}
+
 		return null;
 	},
 });
@@ -394,6 +432,30 @@ export const start = mutation({
 			if (!isAuthorized) {
 				throw new Error(
 					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+				);
+			}
+		}
+
+		// Block if caller has a different unclosed in_progress task.
+		// Skip for "system" — it is never an assignee and has no task queue.
+		if (args.callerOrchestrator && args.callerOrchestrator !== "system") {
+			const assignee = args.callerOrchestrator as
+				| "pi"
+				| "tau"
+				| "phi"
+				| "sigma"
+				| "omega"
+				| "laurent";
+			const inProgressTasks = await ctx.db
+				.query("tasks")
+				.withIndex("by_assignee", (q) =>
+					q.eq("assignedTo", assignee).eq("status", "in_progress"),
+				)
+				.take(1);
+
+			if (inProgressTasks.length > 0 && inProgressTasks[0]._id !== args.taskId) {
+				throw new Error(
+					`Cannot start task: you have an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first.`,
 				);
 			}
 		}

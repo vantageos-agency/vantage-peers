@@ -1,35 +1,75 @@
 {
   "permissions": {
     "allow": [
-      "*",
-      "Read(//home/elpi/.claude/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/**)"
+      "Read(.claude/**)",
+      "Read(CLAUDE.md)",
+      "Read(CHANGELOG.md)",
+      "Read(package.json)",
+      "Read(convex/**)",
+      "Read(mcp-server/**)",
+      "Read(content/**)",
+      "Read(components/**)",
+      "Read(app/**)",
+      "Agent(*)",
+      "Skill(*)",
+      "mcp__vantage-memory__*",
+      "mcp__convex__*"
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/session-start-sigma.py"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/enforce-component-brief.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-memory__send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/enforce-task-before-instructions.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write(*.md) || Edit(*.md)",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/check-french-diacritics.py",
+            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/check-french-diacritics.py",
             "timeout": 10
           }
         ]
-      }
-    ],
-    "SessionStart": [
+      },
       {
+        "matcher": "Write || Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/session-start-sigma.py"
+            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/check-file-size.py",
+            "timeout": 5
           }
         ]
       }
     ]
-  },
-  "additionalDirectories": [
-    "/root/coding/vantage-peers-site"
-  ]
+  }
 }

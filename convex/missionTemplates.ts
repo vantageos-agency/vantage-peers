@@ -127,7 +127,7 @@ export const seed = internalMutation({
 			{
 				title: "Write Missing Tests",
 				description:
-					"Write a test that reproduces the bug. The test MUST fail against the current code before the fix is applied. Commit the failing test.",
+					"Write a test that reproduces the bug. The test MUST fail against the current code before the fix is applied. Commit the failing test. [Auto-comment: posted on GitHub when this step is completed]",
 				tags: ["testing", "tdd"],
 			},
 			{
@@ -139,7 +139,7 @@ export const seed = internalMutation({
 			{
 				title: "Run ALL Tests",
 				description:
-					"Run the full test suite. Zero regressions are acceptable. Document any failures and resolve them before proceeding.",
+					"Run the full test suite. Zero regressions are acceptable. Document any failures and resolve them before proceeding. [Auto-comment: posted on GitHub when this step is completed]",
 				tags: ["testing", "qa"],
 			},
 			{
@@ -157,7 +157,7 @@ export const seed = internalMutation({
 			{
 				title: "Verification Preview",
 				description:
-					"Test the fix on the preview deployment. Confirm the original issue is resolved. Request human confirmation before closing.",
+					"Test the fix on the preview deployment. Confirm the original issue is resolved. Request human confirmation before closing. [Auto-comment: posted on GitHub when this step is completed]",
 				tags: ["verification", "human-review"],
 			},
 			{

@@ -16,6 +16,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
 import type * as fixPatterns from "../fixPatterns.js";
+import type * as githubComments from "../githubComments.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as http from "../http.js";
 import type * as issues from "../issues.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   diary: typeof diary;
   episodes: typeof episodes;
   fixPatterns: typeof fixPatterns;
+  githubComments: typeof githubComments;
   githubRepoMapping: typeof githubRepoMapping;
   http: typeof http;
   issues: typeof issues;
