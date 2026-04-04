@@ -57,6 +57,27 @@ Replace `/path/to/vantage-peers` with the absolute path to your clone, and `your
 
 Verify: open Claude Code and confirm that vantage-peers tools appear in the tool list.
 
+## Works With
+
+VantagePeers is an MCP server — it works with any tool that supports the Model Context Protocol:
+
+| Tool | Support | Config |
+|------|---------|--------|
+| **Claude Code** | Full MCP | `~/.claude.json` |
+| **Cursor** | Full MCP | `.cursor/mcp.json` |
+| **Codex** (OpenAI) | Full MCP | `~/.codex/config.json` |
+| **Windsurf** | Full MCP | `~/.codeium/windsurf/mcp_config.json` |
+| **Cline** | Full MCP | VS Code settings |
+| **Roo Code** | Full MCP | VS Code settings |
+| **OpenCode** | Full MCP | `opencode.toml` |
+| **Amazon Q Developer** | Full MCP | `~/.aws/amazonq/mcp.json` |
+| **Augment Code** | Full MCP | VS Code settings |
+| **Void** | Full MCP | Void settings |
+| **Continue.dev** | Agent mode | `~/.continue/config.json` |
+| **GitHub Copilot** | Agent mode | `.github/copilot-mcp.json` |
+
+See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for config snippets per tool.
+
 ## Architecture
 
 ```
