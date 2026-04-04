@@ -12,7 +12,7 @@
       "Read(app/**)",
       "Agent(*)",
       "Skill(*)",
-      "mcp__vantage-memory__*",
+      "mcp__vantage-peers__*",
       "mcp__convex__*"
     ]
   },
@@ -39,7 +39,7 @@
         ]
       },
       {
-        "matcher": "mcp__vantage-memory__send_message",
+        "matcher": "mcp__vantage-peers__send_message",
         "hooks": [
           {
             "type": "command",

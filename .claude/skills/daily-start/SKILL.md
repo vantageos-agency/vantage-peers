@@ -23,9 +23,9 @@ The output: a prioritized task list written into `PROGRESS.md`.
 **Step 1 — Recall from VantageMemory + collect context (silent, no output)**
 
 First, recall from VantageMemory:
-- `mcp__vantage-memory__recall` query: "today priorities urgent pending" namespace: global
-- `mcp__vantage-memory__recall` query: "reference CLI commands tools" namespace: global
-- `mcp__vantage-memory__list_memories` namespace: global, type: project, limit: 10
+- `mcp__vantage-peers__recall` query: "today priorities urgent pending" namespace: global
+- `mcp__vantage-peers__recall` query: "reference CLI commands tools" namespace: global
+- `mcp__vantage-peers__list_memories` namespace: global, type: project, limit: 10
 
 Then read these files:
 - `context/routines.md` — identify which routines trigger today (check day of week, day of month, time of day)

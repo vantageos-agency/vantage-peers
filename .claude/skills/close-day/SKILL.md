@@ -36,14 +36,14 @@ Determine who you are:
 **Step 2 — Update tasks**
 
 Fetch tasks:
-- `mcp__vantage-memory__list_tasks` assignedTo={role}, status="in_progress"
-- `mcp__vantage-memory__list_tasks` assignedTo={role}, status="todo"
+- `mcp__vantage-peers__list_tasks` assignedTo={role}, status="in_progress"
+- `mcp__vantage-peers__list_tasks` assignedTo={role}, status="todo"
 
 For each in_progress task:
-- If completed today → `mcp__vantage-memory__complete_task`
+- If completed today → `mcp__vantage-peers__complete_task`
 - If partially done → leave as in_progress
-- If blocked → `mcp__vantage-memory__update_task` status="blocked"
-- If needs review → `mcp__vantage-memory__update_task` status="review"
+- If blocked → `mcp__vantage-peers__update_task` status="blocked"
+- If needs review → `mcp__vantage-peers__update_task` status="review"
 
 Show the user a summary:
 ```
@@ -60,7 +60,7 @@ TASK STATUS UPDATE:
 Ask the user: "Key moments today?" (ONE question. Wait for answer.)
 
 Then write the diary entry:
-- `mcp__vantage-memory__write_diary` with date={today}, orchestrator={role}
+- `mcp__vantage-peers__write_diary` with date={today}, orchestrator={role}
 - Content: what was done, decisions made, blockers encountered
 - highlights: list of key achievements
 - blockers: list of blockers (if any)
@@ -68,13 +68,13 @@ Then write the diary entry:
 **Step 4 — Store session summary**
 
 Store a project memory summarizing the session:
-- `mcp__vantage-memory__store_memory` namespace="orchestrator/{role}", type="project"
+- `mcp__vantage-peers__store_memory` namespace="orchestrator/{role}", type="project"
 - Content: 3-5 sentence summary of what happened, what's pending, what's next
 
 **Step 5 — Close**
 
 Set summary to closed:
-- `mcp__vantage-memory__set_summary` orchestratorId={role}, instanceId={instanceId}, summary="Session closed — {date}"
+- `mcp__vantage-peers__set_summary` orchestratorId={role}, instanceId={instanceId}, summary="Session closed — {date}"
 
 Say: "Day closed. {X} tasks updated, diary written, summary stored."
 

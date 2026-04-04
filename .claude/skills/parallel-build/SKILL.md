@@ -129,4 +129,4 @@ Unmerged:
 
 ## SELLABLE AS
 
-`vantage-memory` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.
+`vantage-peers` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.

@@ -2204,13 +2204,13 @@ server.tool(
 	{
 		repo: z
 			.string()
-			.describe("Full repo name — e.g. 'elpiarthera/vantage-memory'"),
+			.describe("Full repo name — e.g. 'elpiarthera/vantage-peers'"),
 		orchestrator: z
 			.string()
 			.describe("Target orchestrator — e.g. 'sigma', 'omega', 'tau'"),
 		project: z
 			.string()
-			.describe("Project name — e.g. 'vantage-memory', 'myreeldream'"),
+			.describe("Project name — e.g. 'vantage-peers', 'myreeldream'"),
 		active: z
 			.boolean()
 			.optional()
@@ -2268,7 +2268,7 @@ server.tool(
 	{
 		repo: z
 			.string()
-			.describe("Full repo name to remove — e.g. 'elpiarthera/vantage-memory'"),
+			.describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
 	},
 	async ({ repo }) => {
 		const result = await convex.mutation(api.githubRepoMapping.remove, {

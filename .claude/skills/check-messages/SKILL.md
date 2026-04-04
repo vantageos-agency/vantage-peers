@@ -14,12 +14,12 @@ Check for unread messages in VantageMemory.
 ## WORKFLOW
 
 1. Detect your orchestrator role and instanceId from CLAUDE.md / hostname
-2. Call `mcp__vantage-memory__check_messages` with recipient={role}, recipientInstanceId={instanceId}
+2. Call `mcp__vantage-peers__check_messages` with recipient={role}, recipientInstanceId={instanceId}
 3. If no messages: say "No new messages."
 4. If messages exist:
    - Display each message: `[from] ({fromInstanceId}): {content}`
-   - Call `mcp__vantage-memory__mark_as_read` with all receiptIds
-   - For each message that requires a response, respond via `mcp__vantage-memory__send_message`
+   - Call `mcp__vantage-peers__mark_as_read` with all receiptIds
+   - For each message that requires a response, respond via `mcp__vantage-peers__send_message`
 
 ## RULES
 
@@ -29,4 +29,4 @@ Check for unread messages in VantageMemory.
 
 ## SELLABLE AS
 
-`vantage-memory` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.
+`vantage-peers` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.
