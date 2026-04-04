@@ -103,8 +103,14 @@ export const seed = internalMutation({
 			{
 				title: "KB Search",
 				description:
-					"Search fixPatterns and episodes for similar issues. Check symptom, rootCause, and validatedFix fields. Document any matches found.",
+					'Search fixPatterns and episodes for similar issues using recall queries. Run: recall query="[issue keywords]" and recall query="[error message]". If match found: document which fix pattern applies in completionNote. If no match: document "No prior pattern found". completionNote is MANDATORY before proceeding.',
 				tags: ["research", "kb"],
+			},
+			{
+				title: "Verify Config",
+				description:
+					"Before touching code, verify: (1) Webhook URLs (Polar, Clerk, GitHub) point to correct endpoints. (2) Env vars in prod match expected values. (3) DNS/domains are correct (no stale domains). (4) Deploy keys are valid. If config is the root cause, fix it here — no code change needed.",
+				tags: ["config", "verification"],
 			},
 			{
 				title: "Identify Tests",
@@ -115,7 +121,7 @@ export const seed = internalMutation({
 			{
 				title: "Run Existing Tests",
 				description:
-					"Run the identified tests and document PASS/FAIL status for each. Record the full output for traceability.",
+					"Run identified tests and document PASS/FAIL. If the issue involves an external API (fal.ai, OpenAI, Polar, Clerk): run REAL integration tests with actual API calls, not just unit tests. Source-verification tests alone do NOT prove the bug exists or is fixed. For fal.ai: run node tests/quick-fal-test.js. For Polar: verify with webhook redeliver. For OpenAI: run integration test with real API call.",
 				tags: ["testing"],
 			},
 			{
@@ -127,13 +133,13 @@ export const seed = internalMutation({
 			{
 				title: "Write Missing Tests",
 				description:
-					"Write a test that reproduces the bug. The test MUST fail against the current code before the fix is applied. Commit the failing test. [Auto-comment: posted on GitHub when this step is completed]",
+					"Write a test that reproduces the bug. The test MUST FAIL against the current code (this proves the bug exists). If the test PASSES: you have NOT captured the bug — rewrite the test. Commit the failing test. completionNote MUST contain \"X tests FAIL\" as proof. After the fix (T7): this test must PASS.",
 				tags: ["testing", "tdd"],
 			},
 			{
 				title: "Fix",
 				description:
-					"Delegate the fix to the appropriate specialist agent. The test written in T6 must PASS after the fix is applied. No fix is accepted if T6 still fails.",
+					"Delegate the fix to the appropriate specialist agent. The test written in T6 MUST PASS after the fix is applied. No fix is accepted if the T6 test still fails. completionNote MUST contain \"X tests PASS (including regression test)\" as proof.",
 				tags: ["implementation"],
 			},
 			{
@@ -151,7 +157,7 @@ export const seed = internalMutation({
 			{
 				title: "Deploy Dev + Push",
 				description:
-					"Run `npx convex dev --once` to verify Convex compilation. Push the branch to GitHub. Confirm the CI pipeline passes.",
+					"Run `npx convex dev --once` to verify Convex compilation. Push the branch to upstream (NOT origin/fork): `git push upstream fix/issue-{number}`. Create PR on the upstream repo. The fork is for backup only.",
 				tags: ["deployment", "ci"],
 			},
 			{
@@ -177,7 +183,7 @@ export const seed = internalMutation({
 			await ctx.db.patch(existing._id, {
 				steps,
 				description:
-					"Issue Resolution Protocol v2 — 12-step structured process for investigating, fixing, and documenting GitHub issues.",
+					"Issue Resolution Protocol v2 — 13-step structured process for investigating, fixing, and documenting GitHub issues.",
 				isDefault: true,
 				updatedAt: now,
 			});
@@ -187,7 +193,7 @@ export const seed = internalMutation({
 		return await ctx.db.insert("missionTemplates", {
 			name,
 			description:
-				"Issue Resolution Protocol v2 — 12-step structured process for investigating, fixing, and documenting GitHub issues.",
+				"Issue Resolution Protocol v2 — 13-step structured process for investigating, fixing, and documenting GitHub issues.",
 			steps,
 			isDefault: true,
 			createdBy: "system",
