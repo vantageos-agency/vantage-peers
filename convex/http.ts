@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 
 const http = httpRouter();
 
@@ -103,6 +104,61 @@ http.route({
 				channel: orchestrator,
 				content: `[GitHub] New issue #${issue.number}: ${issue.title} — ${issue.html_url}`,
 			});
+
+			// Post acknowledgment comment on GitHub
+			const githubToken = process.env.GITHUB_TOKEN;
+			if (githubToken) {
+				const [owner, repo] = repoFullName.split("/");
+				await fetch(
+					`https://api.github.com/repos/${owner}/${repo}/issues/${issue.number}/comments`,
+					{
+						method: "POST",
+						headers: {
+							Authorization: `Bearer ${githubToken}`,
+							"Content-Type": "application/json",
+							Accept: "application/vnd.github.v3+json",
+						},
+						body: JSON.stringify({
+							body: `🔍 **Investigating** — assigned to \`${orchestrator}\` (AI orchestrator, VantageOS Team). Mission created with resolution protocol.\n\n— ${orchestrator} | ${new Date().toISOString()}`,
+						}),
+					},
+				);
+			}
+
+			// Create mission + 12 tasks from issue-resolution-v2 template
+			const template = await ctx.runQuery(api.missionTemplates.getByName, {
+				name: "issue-resolution-v2",
+			});
+			if (template !== null) {
+				const missionId: Id<"missions"> = await ctx.runMutation(
+					api.missions.create,
+					{
+						name: `Fix #${issue.number} — ${issue.title}`,
+						project,
+						pilot: orchestrator as any,
+						priority: isUrgent ? "urgent" : "high",
+						createdBy: "system",
+						agents: [orchestrator],
+						status: "execute",
+					},
+				);
+
+				for (let i = 0; i < template.steps.length; i++) {
+					const step = template.steps[i];
+					await ctx.runMutation(api.tasks.create, {
+						title: `[#${issue.number}] T${i + 1} — ${step.title}`,
+						description: `${step.description}\n\nIssue: ${issue.html_url}`,
+						assignedTo: orchestrator as any,
+						project,
+						priority: isUrgent ? "urgent" : "high",
+						// T1 (Acknowledge) is already done — the comment was posted above
+						status: i === 0 ? "done" : "todo",
+						createdBy: "system",
+						missionId,
+						tags: [...(step.tags ?? []), "github", "irp"],
+					});
+				}
+			}
 		}
 
 		// --- Issue edited ---

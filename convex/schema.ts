@@ -486,4 +486,26 @@ export default defineSchema({
 	})
 		.index("by_pattern", ["patternId"])
 		.index("by_worked", ["patternId", "worked"]),
+
+	// ── missionTemplates ──────────────────────────────────────────────────────
+	// Reusable mission templates. Each template contains an ordered list of
+	// steps that get instantiated as tasks when a triggering event occurs.
+	// The "issue-resolution-v2" template drives the IRP (Issue Resolution Protocol).
+	missionTemplates: defineTable({
+		name: v.string(),
+		description: v.optional(v.string()),
+		steps: v.array(
+			v.object({
+				title: v.string(),
+				description: v.string(),
+				tags: v.optional(v.array(v.string())),
+			}),
+		),
+		isDefault: v.boolean(),
+		createdBy: creatorValidator,
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_name", ["name"])
+		.index("by_default", ["isDefault"]),
 });

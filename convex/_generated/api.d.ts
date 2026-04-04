@@ -23,6 +23,7 @@ import type * as mandates from "../mandates.js";
 import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
+import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   memories: typeof memories;
   messages: typeof messages;
   migrations: typeof migrations;
+  missionTemplates: typeof missionTemplates;
   missions: typeof missions;
   profiles: typeof profiles;
   ragSync: typeof ragSync;

@@ -2706,6 +2706,75 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_mission_template
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_mission_template",
+	"Fetch a mission template by name. Returns the template with all steps, or null if not found. " +
+		"Use 'issue-resolution-v2' for the default Issue Resolution Protocol.",
+	{
+		name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
+	},
+	async ({ name }) => {
+		const template = await convex.query(api.missionTemplates.getByName, { name });
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(template, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_mission_template
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_mission_template",
+	"Create or update a mission template by name. " +
+		"Each step has a title, description, and optional tags. " +
+		"If the template already exists it is overwritten (upsert by name).",
+	{
+		name: z.string().describe("Template name — must be unique, e.g. 'issue-resolution-v2'"),
+		description: z.string().optional().describe("Human-readable description of the template"),
+		steps: z
+			.array(
+				z.object({
+					title: z.string().describe("Step title"),
+					description: z.string().describe("What to do in this step"),
+					tags: z.array(z.string()).optional().describe("Optional tags for the step"),
+				}),
+			)
+			.describe("Ordered list of steps — each becomes one task when instantiated"),
+		createdBy: creatorSchema.describe("Who is creating/updating the template"),
+		isDefault: z.boolean().optional().describe("Mark as the default template for its type"),
+	},
+	async ({ name, description, steps, createdBy, isDefault }) => {
+		const templateId = await convex.mutation(api.missionTemplates.upsert, {
+			name,
+			description,
+			steps,
+			createdBy,
+			isDefault,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ templateId, name, stepCount: steps.length }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
 
