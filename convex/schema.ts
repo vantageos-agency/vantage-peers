@@ -528,6 +528,28 @@ export default defineSchema({
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.
 	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.
+	issueStats: defineTable({
+		repo: v.string(),
+		date: v.string(), // YYYY-MM-DD
+		totalIssues: v.number(),
+		resolvedIssues: v.number(),
+		medianTimeToFirstResponse: v.optional(v.number()), // minutes
+		medianTimeToFix: v.optional(v.number()), // minutes
+		fastestResolution: v.optional(v.number()), // minutes
+		slowestResolution: v.optional(v.number()), // minutes
+		avgTimeToFix: v.optional(v.number()), // minutes
+		issueDetails: v.optional(v.array(v.object({
+			number: v.number(),
+			title: v.string(),
+			timeToFirstResponse: v.optional(v.number()),
+			timeToFix: v.optional(v.number()),
+			status: v.string(),
+		}))),
+		calculatedAt: v.number(),
+	})
+		.index("by_repo_date", ["repo", "date"])
+		.index("by_date", ["date"]),
+
 	errorLogs: defineTable({
 		hash: v.string(),
 		deployment: v.string(),

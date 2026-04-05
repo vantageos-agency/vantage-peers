@@ -18,4 +18,12 @@ crons.interval(
 	{},
 );
 
+// Calculate issue resolution stats daily at 6am UTC
+crons.cron(
+	"daily issue stats",
+	"0 6 * * *",
+	internal.issueStats.calculateAllRepos,
+	{},
+);
+
 export default crons;
