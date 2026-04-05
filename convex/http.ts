@@ -119,7 +119,7 @@ http.route({
 							Accept: "application/vnd.github.v3+json",
 						},
 						body: JSON.stringify({
-							body: `🔍 @${issue.user.login} **Investigating** — assigned to \`${orchestrator}\` (AI orchestrator, VantageOS Team). Mission created with resolution protocol.\n\n— ${orchestrator} | ${new Date().toISOString()}`,
+							body: `🔍 @${issue.user.login} **Investigating** — assigned to \`${orchestrator}\` (AI orchestrator). Mission created with resolution protocol.\n\nOrchestrator: ${orchestrator.charAt(0).toUpperCase() + orchestrator.slice(1)} — VantageOS Team | ${new Date().toISOString().split("T")[0]}`,
 						}),
 					},
 				);
@@ -200,7 +200,7 @@ http.route({
 			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
 		}
 
-		// --- Issue comment with @elpiarthera mention ---
+		// --- Issue comment created ---
 		if (eventType === "issue_comment" && action === "created") {
 			const comment = payload.comment;
 			const issue = payload.issue;
@@ -209,6 +209,23 @@ http.route({
 			const status = issue.state === "closed" ? "closed" : "open";
 			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status as "open" | "closed"));
 
+			// Ignore our own bot comments (prevent loops)
+			const isOwnBot =
+				comment.user?.login === "elpiarthera" ||
+				comment.user?.type === "Bot" ||
+				comment.body?.includes("VantageOS Team");
+			if (isOwnBot) {
+				return new Response("OK - own bot comment", { status: 200 });
+			}
+
+			// Notify orchestrator of every external comment
+			await ctx.runMutation(api.messages.sendMessage, {
+				from: "system",
+				channel: orchestrator,
+				content: `[GitHub] New comment on #${issue.number} by ${comment.user.login}: ${(comment.body || "").slice(0, 200)}${(comment.body || "").length > 200 ? "..." : ""} — ${comment.html_url}`,
+			});
+
+			// Create mention task if @elpiarthera mentioned
 			if (comment.body?.includes("@elpiarthera")) {
 				await ctx.runMutation(api.tasks.create, {
 					title: `[GitHub #${issue.number}] Mentioned: ${issue.title}`,
@@ -220,11 +237,57 @@ http.route({
 					createdBy: "system",
 					tags: ["github", "mention"],
 				});
-				await ctx.runMutation(api.messages.sendMessage, {
-					from: "system",
-					channel: orchestrator,
-					content: `[GitHub] @elpiarthera mentioned in #${issue.number}: ${issue.title} — ${comment.html_url}`,
+			}
+
+			// Create IRP mission if none exists for this issue
+			const template = await ctx.runQuery(api.missionTemplates.getByName, {
+				name: "issue-resolution-v2",
+			});
+			if (template !== null) {
+				// Check if mission already exists by searching for matching name pattern
+				const existingMissions = await ctx.runQuery(api.missions.list, {
+					project,
+					limit: 100,
 				});
+				const missionExists = existingMissions.some(
+					(m: any) => m.name?.includes(`#${issue.number}`)
+				);
+
+				if (!missionExists && issue.state !== "closed") {
+					const missionId: Id<"missions"> = await ctx.runMutation(
+						api.missions.create,
+						{
+							name: `Fix #${issue.number} — ${issue.title}`,
+							project,
+							pilot: orchestrator as any,
+							priority: "high",
+							createdBy: "system",
+							agents: [orchestrator],
+							status: "execute",
+						},
+					);
+
+					for (let i = 0; i < template.steps.length; i++) {
+						const step = template.steps[i];
+						await ctx.runMutation(api.tasks.create, {
+							title: `[#${issue.number}] T${i + 1} — ${step.title}`,
+							description: `${step.description}\n\nIssue: ${issue.html_url}\n\nIssue author: @${issue.user?.login || "unknown"}`,
+							assignedTo: orchestrator as any,
+							project,
+							priority: "high",
+							status: i === 0 ? "done" : "todo",
+							createdBy: "system",
+							missionId,
+							tags: [...(step.tags ?? []), "github", "irp"],
+						});
+					}
+
+					await ctx.runMutation(api.messages.sendMessage, {
+						from: "system",
+						channel: orchestrator,
+						content: `[GitHub] IRP mission created for #${issue.number} (triggered by new comment). ${template.steps.length} tasks assigned.`,
+					});
+				}
 			}
 		}
 

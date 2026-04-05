@@ -47,6 +47,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__send_message || mcp__vantage-peers__complete_task || mcp__vantage-peers__update_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/block-defer-issues.py",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

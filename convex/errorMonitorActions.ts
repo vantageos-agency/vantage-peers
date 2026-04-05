@@ -67,7 +67,7 @@ export const createGitHubIssue = internalAction({
 			"```",
 			"",
 			"---",
-			`*Auto-created by VantagePeers Error Monitor. Assigned to \`${args.orchestrator}\`.*`,
+			`*Auto-created by VantagePeers Error Monitor. Orchestrator: ${args.orchestrator.charAt(0).toUpperCase() + args.orchestrator.slice(1)} — VantageOS Team | ${new Date().toISOString().split("T")[0]}*`,
 		].join("\n");
 
 		const resp = await fetch(

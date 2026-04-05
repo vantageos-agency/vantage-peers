@@ -388,16 +388,26 @@ export const complete = mutation({
 			const repoMapping = allMappings.find((m) => m.project === task.project);
 
 			if (repoMapping) {
-				const timestamp = new Date().toISOString();
+				const dateStr = new Date().toISOString().split("T")[0];
 				const orch = task.assignedTo;
+				const orchCapitalized = orch.charAt(0).toUpperCase() + orch.slice(1);
+				const teamMap: Record<string, string> = {
+					omega: "VantageOS Team Dev",
+					sigma: "VantageOS Team Infra",
+					tau: "VantageOS Team Frontend",
+					phi: "VantageOS Team Product",
+					pi: "VantageOS Team Lead",
+				};
+				const team = teamMap[orch] ?? "VantageOS Team";
+				const signature = `Orchestrator: ${orchCapitalized} — ${team} | ${dateStr}`;
 				let commentBody: string | null = null;
 
 				if (stepNumber === 6) {
-					commentBody = `${authorMention}Bug reproduced in test suite. Root cause identified. Fix in progress.\n\n— ${orch} | ${timestamp}`;
+					commentBody = `${authorMention}Bug reproduced in test suite. Root cause identified. Fix in progress.\n\n${signature}`;
 				} else if (stepNumber === 8) {
-					commentBody = `${authorMention}Fix ready. All tests pass (including new regression test). Awaiting review and deploy.\n\n— ${orch} | ${timestamp}`;
+					commentBody = `${authorMention}Fix ready. All tests pass (including new regression test). Awaiting review and deploy.\n\n${signature}`;
 				} else if (stepNumber === 11) {
-					commentBody = `${authorMention}Fixed and deployed to production. Regression test added to prevent recurrence. Closing.\n\n— ${orch} | ${timestamp}`;
+					commentBody = `${authorMention}Fixed and deployed to production. Regression test added to prevent recurrence. Closing.\n\n${signature}`;
 				}
 
 				if (commentBody !== null) {
