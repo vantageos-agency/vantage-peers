@@ -165,11 +165,37 @@ export const pollDeploymentLogs = internalAction({
 				(e) => e.kind === "Completion" && e.error != null,
 			);
 
+			// Group errors by module (file) + error message within the batch
+			// e.g., audioTracks:processAudio and audioTracks:getInternal with same error → one issue
+			const grouped = new Map<string, { functionNames: string[]; errorMessage: string; logLines: string[] }>();
+
 			for (const entry of failures) {
 				const functionName = entry.identifier ?? "unknown";
 				const errorMessage = entry.error ?? "Unknown error";
 				const logLines = entry.logLines ?? [];
-				const hash = simpleHash(`${functionName}:${errorMessage}`);
+				// Extract module name (file) from "module:function" or "module/sub:function"
+				const moduleName = functionName.includes(":") ? functionName.split(":")[0] : functionName;
+				const groupKey = `${moduleName}:${errorMessage}`;
+
+				const existing = grouped.get(groupKey);
+				if (existing) {
+					if (!existing.functionNames.includes(functionName)) {
+						existing.functionNames.push(functionName);
+					}
+					// Keep the longest log lines
+					if (logLines.length > existing.logLines.length) {
+						existing.logLines = logLines;
+					}
+				} else {
+					grouped.set(groupKey, { functionNames: [functionName], errorMessage, logLines });
+				}
+			}
+
+			for (const [groupKey, group] of grouped) {
+				const functionName = group.functionNames.join(", ");
+				const errorMessage = group.errorMessage;
+				const logLines = group.logLines;
+				const hash = simpleHash(groupKey);
 
 				await ctx.runMutation(internal.errorMonitor.upsertError, {
 					hash,
