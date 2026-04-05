@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install the commit-msg hook on all VPS workspaces
-# Replaces Co-Authored-By, strips Claude Code attribution, adds MTTR
+# Replaces Co-Authored-By, strips Claude Code attribution
 
 HOOK_CONTENT='#!/bin/bash
 # VantageOS Team commit-msg hook
@@ -26,22 +26,6 @@ sed -i "s/Co-Authored-By:.*$/Orchestrator: $ORCH — $TEAM | $DATE $TIME/" "$COM
 sed -i "/🤖.*Generated with/d" "$COMMIT_MSG_FILE"
 sed -i "/Generated with \[Claude Code\]/d" "$COMMIT_MSG_FILE"
 sed -i "/Generated with Claude Code/d" "$COMMIT_MSG_FILE"
-
-# MTTR: if commit references an issue (#NNN), calculate fix time
-ISSUE_NUM=$(grep -oP '"'"'(?<=#)\d+'"'"' "$COMMIT_MSG_FILE" | head -1)
-if [ -n "$ISSUE_NUM" ] && command -v gh &>/dev/null; then
-  CREATED=$(gh issue view "$ISSUE_NUM" --json createdAt --jq '"'"'.createdAt'"'"' 2>/dev/null)
-  if [ -n "$CREATED" ] && [ "$CREATED" != "null" ]; then
-    CREATED_TS=$(date -d "$CREATED" +%s 2>/dev/null)
-    NOW_TS=$(date +%s)
-    if [ -n "$CREATED_TS" ]; then
-      DIFF_MIN=$(( (NOW_TS - CREATED_TS) / 60 ))
-      CREATED_SHORT=$(date -d "$CREATED" +"%H:%M" 2>/dev/null)
-      echo "" >> "$COMMIT_MSG_FILE"
-      echo "Fix pushed in: ${DIFF_MIN} min (issue #${ISSUE_NUM} opened ${CREATED_SHORT} → commit ${TIME})" >> "$COMMIT_MSG_FILE"
-    fi
-  fi
-fi
 '
 
 REPOS=(
