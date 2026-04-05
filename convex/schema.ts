@@ -19,6 +19,7 @@ export const creatorValidator = v.union(
 	v.literal("phi"),
 	v.literal("sigma"),
 	v.literal("omega"),
+	v.literal("zeta"),
 	v.literal("system"),
 );
 
@@ -209,6 +210,7 @@ export default defineSchema({
 			v.literal("phi"),
 			v.literal("sigma"),
 			v.literal("omega"),
+			v.literal("zeta"),
 			v.literal("laurent"),
 		),
 		priority: v.union(
@@ -429,6 +431,7 @@ export default defineSchema({
 			v.literal("phi"),
 			v.literal("sigma"),
 			v.literal("omega"),
+			v.literal("zeta"),
 			v.literal("laurent"),
 		),
 		priority: v.union(

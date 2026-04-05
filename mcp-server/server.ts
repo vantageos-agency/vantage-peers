@@ -59,7 +59,7 @@ const memoryTypeSchema = z
 	.describe("Memory classification type");
 
 const creatorSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "omega", "system"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "system"])
 	.describe("Which orchestrator is creating this memory");
 
 const severitySchema = z
@@ -292,7 +292,7 @@ server.tool(
 		"Returns null if the profile does not exist yet — call update_profile to create it.",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma", "omega"])
+			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta"])
 			.describe("Orchestrator identifier"),
 	},
 	async ({ orchestratorId }) => {
@@ -322,7 +322,7 @@ server.tool(
 		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma", "omega"])
+			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta"])
 			.describe("Orchestrator identifier"),
 		name: z.string().describe("Human-readable orchestrator name"),
 		static: z
@@ -574,7 +574,7 @@ server.tool(
 		"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma", "omega"])
+			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta"])
 			.describe("Orchestrator role"),
 		instanceId: z
 			.string()
@@ -683,7 +683,7 @@ server.tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const assigneeSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "laurent"])
 	.describe("Who the task is assigned to");
 
 const prioritySchema = z
@@ -1597,7 +1597,7 @@ server.tool(
 	{
 		title: z.string().describe("Task title — created each time the cron fires"),
 		description: z.string().optional().describe("Task description"),
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"]).describe("Who gets the created tasks"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "laurent"]).describe("Who gets the created tasks"),
 		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
 		project: z.string().optional().describe("Project name"),
 		tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1631,7 +1631,7 @@ server.tool(
 	"list_recurring_tasks",
 	"List recurring task templates. Filter by assignee or active status.",
 	{
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"]).optional().describe("Filter by assignee"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "laurent"]).optional().describe("Filter by assignee"),
 		active: z.boolean().optional().describe("Filter by active status"),
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},
