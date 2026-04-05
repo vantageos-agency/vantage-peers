@@ -20,6 +20,11 @@ esac
 
 # Replace Co-Authored-By line with VantageOS signature
 sed -i "s/Co-Authored-By:.*$/Orchestrator: $ORCH — $TEAM | $DATE/" "$COMMIT_MSG_FILE"
+
+# Remove "Generated with Claude Code" lines
+sed -i "/🤖.*Generated with/d" "$COMMIT_MSG_FILE"
+sed -i "/Generated with \[Claude Code\]/d" "$COMMIT_MSG_FILE"
+sed -i "/Generated with Claude Code/d" "$COMMIT_MSG_FILE"
 '
 
 REPOS=(
