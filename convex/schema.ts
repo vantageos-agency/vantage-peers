@@ -538,6 +538,19 @@ export default defineSchema({
 		fastestResolution: v.optional(v.number()), // minutes
 		slowestResolution: v.optional(v.number()), // minutes
 		avgTimeToFix: v.optional(v.number()), // minutes
+		// Before/after VantageOS Team (pivot: 2026-04-01)
+		beforeVantageOS: v.optional(v.object({
+			totalIssues: v.number(),
+			resolvedIssues: v.number(),
+			medianTimeToFix: v.optional(v.number()),
+			avgTimeToFix: v.optional(v.number()),
+		})),
+		afterVantageOS: v.optional(v.object({
+			totalIssues: v.number(),
+			resolvedIssues: v.number(),
+			medianTimeToFix: v.optional(v.number()),
+			avgTimeToFix: v.optional(v.number()),
+		})),
 		issueDetails: v.optional(v.array(v.object({
 			number: v.number(),
 			title: v.string(),

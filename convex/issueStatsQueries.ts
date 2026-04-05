@@ -16,6 +16,18 @@ export const upsertStats = internalMutation({
 		fastestResolution: v.optional(v.number()),
 		slowestResolution: v.optional(v.number()),
 		avgTimeToFix: v.optional(v.number()),
+		beforeVantageOS: v.optional(v.object({
+			totalIssues: v.number(),
+			resolvedIssues: v.number(),
+			medianTimeToFix: v.optional(v.number()),
+			avgTimeToFix: v.optional(v.number()),
+		})),
+		afterVantageOS: v.optional(v.object({
+			totalIssues: v.number(),
+			resolvedIssues: v.number(),
+			medianTimeToFix: v.optional(v.number()),
+			avgTimeToFix: v.optional(v.number()),
+		})),
 		issueDetails: v.optional(
 			v.array(
 				v.object({
@@ -97,6 +109,18 @@ export const getLatest = query({
 			fastestResolution: v.optional(v.number()),
 			slowestResolution: v.optional(v.number()),
 			avgTimeToFix: v.optional(v.number()),
+			beforeVantageOS: v.optional(v.object({
+				totalIssues: v.number(),
+				resolvedIssues: v.number(),
+				medianTimeToFix: v.optional(v.number()),
+				avgTimeToFix: v.optional(v.number()),
+			})),
+			afterVantageOS: v.optional(v.object({
+				totalIssues: v.number(),
+				resolvedIssues: v.number(),
+				medianTimeToFix: v.optional(v.number()),
+				avgTimeToFix: v.optional(v.number()),
+			})),
 			calculatedAt: v.number(),
 		}),
 	),

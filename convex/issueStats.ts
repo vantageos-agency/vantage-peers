@@ -130,6 +130,77 @@ export const calculateStats = internalAction({
 
 		const today = new Date().toISOString().split("T")[0];
 
+		// Split before/after VantageOS Team (pivot: 2026-04-01)
+		const PIVOT = new Date("2026-04-01T00:00:00Z").getTime();
+
+		const beforeIssues = realIssues.filter(
+			(i) => new Date(i.created_at).getTime() < PIVOT,
+		);
+		const afterIssues = realIssues.filter(
+			(i) => new Date(i.created_at).getTime() >= PIVOT,
+		);
+
+		const beforeFixTimes = beforeIssues
+			.filter((i) => i.closed_at)
+			.map((i) =>
+				Math.round(
+					(new Date(i.closed_at!).getTime() -
+						new Date(i.created_at).getTime()) /
+						60000,
+				),
+			);
+		const afterFixTimes = afterIssues
+			.filter((i) => i.closed_at)
+			.map((i) =>
+				Math.round(
+					(new Date(i.closed_at!).getTime() -
+						new Date(i.created_at).getTime()) /
+						60000,
+				),
+			);
+
+		const beforeStats =
+			beforeIssues.length > 0
+				? {
+						totalIssues: beforeIssues.length,
+						resolvedIssues: beforeIssues.filter(
+							(i) => i.state === "closed",
+						).length,
+						medianTimeToFix:
+							beforeFixTimes.length > 0
+								? Math.round(median(beforeFixTimes))
+								: undefined,
+						avgTimeToFix:
+							beforeFixTimes.length > 0
+								? Math.round(
+										beforeFixTimes.reduce((a, b) => a + b, 0) /
+											beforeFixTimes.length,
+									)
+								: undefined,
+					}
+				: undefined;
+
+		const afterStats =
+			afterIssues.length > 0
+				? {
+						totalIssues: afterIssues.length,
+						resolvedIssues: afterIssues.filter(
+							(i) => i.state === "closed",
+						).length,
+						medianTimeToFix:
+							afterFixTimes.length > 0
+								? Math.round(median(afterFixTimes))
+								: undefined,
+						avgTimeToFix:
+							afterFixTimes.length > 0
+								? Math.round(
+										afterFixTimes.reduce((a, b) => a + b, 0) /
+											afterFixTimes.length,
+									)
+								: undefined,
+					}
+				: undefined;
+
 		await ctx.runMutation(internal.issueStatsQueries.upsertStats, {
 			repo: args.repo,
 			date: today,
@@ -155,11 +226,13 @@ export const calculateStats = internalAction({
 								timesToFix.length,
 						)
 					: undefined,
+			beforeVantageOS: beforeStats,
+			afterVantageOS: afterStats,
 			issueDetails: details.slice(0, 50),
 		});
 
 		console.log(
-			`[IssueStats] ${args.repo}: ${realIssues.length} issues, ${timesToFix.length} resolved, median fix ${timesToFix.length > 0 ? Math.round(median(timesToFix)) : "N/A"} min`,
+			`[IssueStats] ${args.repo}: ${realIssues.length} issues (before: ${beforeIssues.length}, after: ${afterIssues.length}), median fix before=${beforeFixTimes.length > 0 ? Math.round(median(beforeFixTimes)) : "N/A"} min, after=${afterFixTimes.length > 0 ? Math.round(median(afterFixTimes)) : "N/A"} min`,
 		);
 
 		return null;
