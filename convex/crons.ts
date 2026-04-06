@@ -26,4 +26,12 @@ crons.cron(
 	{},
 );
 
+// Poll open PRs on external repos every hour
+crons.interval(
+	"pr monitor",
+	{ hours: 1 },
+	internal.prMonitor.pollOpenPRs,
+	{},
+);
+
 export default crons;
