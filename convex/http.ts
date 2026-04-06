@@ -314,6 +314,37 @@ http.route({
 			}
 		}
 
+		// --- Pull request opened or updated → review task for Eta ---
+		if (eventType === "pull_request" && (action === "opened" || action === "synchronize")) {
+			const pr = payload.pull_request;
+
+			// Ignore PRs by our own bots
+			if (pr?.user?.login === "elpiarthera" && pr?.head?.ref?.startsWith("eta/")) {
+				return new Response("OK - own bot PR", { status: 200 });
+			}
+
+			const actionLabel = action === "opened" ? "New PR" : "PR updated";
+
+			// Create review task for Eta
+			await ctx.runMutation(api.tasks.create, {
+				title: `[Review] ${repoFullName} PR #${pr.number}: ${pr.title}`,
+				description: `${actionLabel} by ${pr.user?.login ?? "unknown"}.\n\nBranch: ${pr.head?.ref}\nDiff: ${pr.html_url}/files\nURL: ${pr.html_url}\n\nReview required: check for bugs, conventions, test coverage, security.`,
+				assignedTo: "eta" as any,
+				project,
+				priority: "high",
+				status: "todo",
+				createdBy: "system",
+				tags: ["github", "pr-review", action],
+			});
+
+			// Notify Eta
+			await ctx.runMutation(api.messages.sendMessage, {
+				from: "system",
+				channel: "eta",
+				content: `[GitHub] ${actionLabel}: ${repoFullName} PR #${pr.number} by ${pr.user?.login ?? "unknown"}: ${pr.title} — ${pr.html_url}`,
+			});
+		}
+
 		// --- Pull request merged ---
 		if (eventType === "pull_request" && action === "closed") {
 			const pr = payload.pull_request;
