@@ -51,7 +51,7 @@ const memoryTypeSchema = z
     .enum(["user", "feedback", "project", "reference", "episode"])
     .describe("Memory classification type");
 const creatorSchema = z
-    .enum(["pi", "tau", "phi", "sigma", "omega", "system"])
+    .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "system"])
     .describe("Which orchestrator is creating this memory");
 const severitySchema = z
     .enum(["critical", "major", "minor"])
@@ -233,7 +233,7 @@ server.tool("store_episode", "Store an episodic memory with structured context/g
 server.tool("get_profile", "Fetch an orchestrator profile (static identity + dynamic session state). " +
     "Returns null if the profile does not exist yet — call update_profile to create it.", {
     orchestratorId: z
-        .enum(["pi", "tau", "phi", "sigma", "omega"])
+        .enum(["pi", "tau", "phi", "sigma", "omega", "zeta"])
         .describe("Orchestrator identifier"),
 }, async ({ orchestratorId }) => {
     const profile = await convex.query(api.profiles.getProfile, {
@@ -255,7 +255,7 @@ server.tool("update_profile", "Create or update an orchestrator profile. " +
     "static fields are stable identity facts (role, workspace, capabilities). " +
     "dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).", {
     orchestratorId: z
-        .enum(["pi", "tau", "phi", "sigma", "omega"])
+        .enum(["pi", "tau", "phi", "sigma", "omega", "zeta"])
         .describe("Orchestrator identifier"),
     name: z.string().describe("Human-readable orchestrator name"),
     static: z
@@ -457,7 +457,7 @@ server.tool("set_summary", "Set a brief summary of what you are currently workin
     "Visible to other orchestrators via list_peers. Uses the profiles table. " +
     "Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').", {
     orchestratorId: z
-        .enum(["pi", "tau", "phi", "sigma", "omega"])
+        .enum(["pi", "tau", "phi", "sigma", "omega", "zeta"])
         .describe("Orchestrator role"),
     instanceId: z
         .string()
@@ -544,7 +544,7 @@ server.tool("list_messages", "List message history. Filter by day or sender. For
 // Tool: create_task
 // ─────────────────────────────────────────────────────────────────────────────
 const assigneeSchema = z
-    .enum(["pi", "tau", "phi", "sigma", "omega", "laurent"])
+    .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "laurent"])
     .describe("Who the task is assigned to");
 const prioritySchema = z
     .enum(["urgent", "high", "medium", "low"])
@@ -1217,7 +1217,7 @@ server.tool("create_recurring_task", "Create a recurring task that auto-creates 
     "Uses cron expressions: '0 9 * * *' = daily 9am, '0 9 * * 1' = Monday 9am, '*/30 * * * *' = every 30min.", {
     title: z.string().describe("Task title — created each time the cron fires"),
     description: z.string().optional().describe("Task description"),
-    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"]).describe("Who gets the created tasks"),
+    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "laurent"]).describe("Who gets the created tasks"),
     priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
     project: z.string().optional().describe("Project name"),
     tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1243,7 +1243,7 @@ server.tool("create_recurring_task", "Create a recurring task that auto-creates 
 // Tool: list_recurring_tasks
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_recurring_tasks", "List recurring task templates. Filter by assignee or active status.", {
-    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "laurent"]).optional().describe("Filter by assignee"),
+    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "laurent"]).optional().describe("Filter by assignee"),
     active: z.boolean().optional().describe("Filter by active status"),
     limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 }, async ({ assignedTo, active, limit }) => {
