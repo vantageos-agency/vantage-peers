@@ -127,7 +127,7 @@ http.route({
 
 			// Create mission + 12 tasks from issue-resolution-v2 template
 			const template = await ctx.runQuery(api.missionTemplates.getByName, {
-				name: "issue-resolution-v2",
+				name: "issue-resolution-v3",
 			});
 			if (template !== null) {
 				const missionId: Id<"missions"> = await ctx.runMutation(
@@ -241,7 +241,7 @@ http.route({
 
 			// Create IRP mission if none exists for this issue
 			const template = await ctx.runQuery(api.missionTemplates.getByName, {
-				name: "issue-resolution-v2",
+				name: "issue-resolution-v3",
 			});
 			if (template !== null) {
 				// Check if mission already exists by searching for matching name pattern
