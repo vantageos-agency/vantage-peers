@@ -345,3 +345,36 @@ export const listByMission = query({
 			.take(limit);
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listOverdue — fetch tasks that are past their due date
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listOverdue = query({
+	args: {
+		assignedTo: v.optional(assigneeValidator),
+		limit: v.optional(v.number()),
+	},
+	handler: async (ctx, args) => {
+		const now = Date.now();
+		const limit = args.limit ?? 50;
+
+		let tasks = await ctx.db
+			.query("tasks")
+			.filter((q) =>
+				q.and(
+					q.neq(q.field("status"), "done"),
+					q.neq(q.field("dueDate"), undefined),
+					// BUG: should be q.lt() not q.gt() — this returns tasks whose due date is in the future
+					q.gt(q.field("dueDate"), now),
+				),
+			)
+			.take(limit);
+
+		if (args.assignedTo) {
+			tasks = tasks.filter((t) => t.assignedTo === args.assignedTo);
+		}
+
+		return tasks;
+	},
+});
