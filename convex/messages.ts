@@ -8,7 +8,7 @@ import { creatorValidator } from "./schema";
 // Creates one message row + one receipt per recipient.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ALL_ORCHESTRATORS = ["pi", "tau", "phi"] as const;
+const ALL_ORCHESTRATORS = ["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"] as const;
 
 function resolveRecipients(
 	from: string,
@@ -53,7 +53,7 @@ export const sendMessage = mutation({
 
 			await ctx.db.insert("messageReceipts", {
 				messageId,
-				recipient: role as "pi" | "tau" | "phi" | "system",
+				recipient: role as typeof ALL_ORCHESTRATORS[number] | "system",
 				recipientInstanceId: isInstance ? recipient : undefined,
 				readAt: undefined,
 			});
@@ -235,7 +235,8 @@ export const listMessages = query({
 			_creationTime: v.number(),
 			from: creatorValidator,
 			fromInstanceId: v.optional(v.string()),
-			channel: v.string(),
+			channel: v.optional(v.string()),
+			to: v.optional(creatorValidator),
 			content: v.string(),
 			sessionDay: v.optional(v.number()),
 			createdAt: v.number(),
@@ -280,6 +281,50 @@ export const getUnreadCount = query({
 			.filter((q) => q.eq(q.field("readAt"), undefined))
 			.take(500);
 		return receipts.length;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listBroadcastStatus — show who read a broadcast message and who didn't
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listBroadcastStatus = query({
+	args: { messageId: v.id("messages") },
+	returns: v.object({
+		messageId: v.id("messages"),
+		from: creatorValidator,
+		channel: v.optional(v.string()),
+		createdAt: v.number(),
+		receipts: v.array(
+			v.object({
+				recipient: v.string(),
+				recipientInstanceId: v.optional(v.string()),
+				read: v.boolean(),
+				readAt: v.optional(v.number()),
+			}),
+		),
+	}),
+	handler: async (ctx, { messageId }) => {
+		const message = await ctx.db.get(messageId);
+		if (!message) throw new Error("Message not found");
+
+		const receipts = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_message", (q) => q.eq("messageId", messageId))
+			.collect();
+
+		return {
+			messageId,
+			from: message.from,
+			channel: message.channel,
+			createdAt: message.createdAt,
+			receipts: receipts.map((r) => ({
+				recipient: r.recipient,
+				recipientInstanceId: r.recipientInstanceId,
+				read: r.readAt !== undefined,
+				readAt: r.readAt,
+			})),
+		};
 	},
 });
 

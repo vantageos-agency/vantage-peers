@@ -541,6 +541,24 @@ server.tool("list_messages", "List message history. Filter by day or sender. For
     };
 });
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_broadcast_status
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("list_broadcast_status", "Show who read a broadcast message and who didn't. Pass the messageId from send_message.", {
+    messageId: z.string().describe("Convex document ID of the broadcast message"),
+}, async ({ messageId }) => {
+    const status = await convex.query(api.messages.listBroadcastStatus, {
+        messageId,
+    });
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify(status, null, 2),
+            },
+        ],
+    };
+});
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_task
 // ─────────────────────────────────────────────────────────────────────────────
 const assigneeSchema = z

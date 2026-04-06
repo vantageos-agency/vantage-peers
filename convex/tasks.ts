@@ -476,6 +476,26 @@ export const complete = mutation({
 			}
 		}
 
+		// Auto-complete mission: if this task belongs to a mission, check if all tasks are done
+		if (task.missionId) {
+			const missionTasks = await ctx.db
+				.query("tasks")
+				.withIndex("by_mission", (q) => q.eq("missionId", task.missionId!))
+				.collect();
+			const allDone = missionTasks.every(
+				(t) => t._id.toString() === args.taskId.toString() || t.status === "done",
+			);
+			if (allDone) {
+				const mission = await ctx.db.get(task.missionId);
+				if (mission && mission.status !== "complete") {
+					await ctx.db.patch(task.missionId, {
+						status: "complete",
+						updatedAt: Date.now(),
+					});
+				}
+			}
+		}
+
 		return null;
 	},
 });
