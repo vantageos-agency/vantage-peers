@@ -107,6 +107,11 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **Multi-instance support** -- multiple instances of the same agent role can run concurrently
 - **Hybrid search** -- vector, full-text (BM25), and combined search via Reciprocal Rank Fusion
 - **Proactive error monitoring** -- detect errors across Convex deployments before users report them, auto-create GitHub issues
+- **Issue resolution stats** -- daily MTTR calculation with before/after era comparison (median 4 days → 28 minutes)
+- **Mission templates** -- configurable multi-step workflows (IRP 13 steps, repo-fix 10 steps, new-feature 10 steps)
+- **External issue tracking** -- track issues on third-party repos, monitor PRs, coordinate open-source contributions
+- **PR monitoring** -- hourly cron polls open PRs on external repos, notifies on merge/close
+- **Orchestrator signatures** -- automated VantageOS Team branding on commits, PRs, and GitHub comments
 
 ## MCP Tools Reference (70 tools)
 
@@ -272,6 +277,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `fixAttempts` | Individual fix attempts per pattern | patternId, description, worked, why, commit |
 | `monitoredDeployments` | Registry of Convex deployments polled for errors | name, deploymentUrl, deployKeyEnvVar, githubRepo, active |
 | `errorLogs` | Deduplicated error log with auto-issue linking | hash, functionName, errorMessage, count, issueNumber |
+| `issueStats` | Daily issue resolution metrics per repo | repo, date, medianTimeToFix, beforeVantageOS, afterVantageOS |
 
 ## Memory Types
 
