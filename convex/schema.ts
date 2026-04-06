@@ -362,11 +362,24 @@ export default defineSchema({
 		linkedTaskIds: v.optional(v.array(v.string())),
 		githubCreatedAt: v.number(),
 		githubUpdatedAt: v.number(),
+		// External repo tracking (for Zeta contributions to third-party repos)
+		externalRepo: v.optional(v.string()), // "get-convex/better-auth"
+		externalIssueNumber: v.optional(v.number()),
+		externalIssueUrl: v.optional(v.string()),
+		prUrl: v.optional(v.string()),
+		prStatus: v.optional(v.union(
+			v.literal("draft"),
+			v.literal("open"),
+			v.literal("merged"),
+			v.literal("closed"),
+		)),
+		forkRepo: v.optional(v.string()), // "elpiarthera/better-auth"
 	})
 		.index("by_repo_number", ["repo", "issueNumber"])
 		.index("by_status", ["status"])
 		.index("by_project", ["project"])
-		.index("by_assigned", ["assignedOrchestrator", "status"]),
+		.index("by_assigned", ["assignedOrchestrator", "status"])
+		.index("by_external_repo", ["externalRepo", "prStatus"]),
 
 	// ── githubRepoMapping ─────────────────────────────────────────────────────
 	// Maps GitHub repos to orchestrators. Used by webhook handler to route events.

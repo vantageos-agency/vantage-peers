@@ -340,3 +340,120 @@ export const getStats = query({
 		return stats;
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// External issue tracking (for Zeta contributions to third-party repos)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const createExternal = mutation({
+	args: {
+		externalRepo: v.string(),
+		externalIssueNumber: v.number(),
+		externalIssueUrl: v.string(),
+		title: v.string(),
+		body: v.string(),
+		assignedOrchestrator: v.string(),
+		project: v.optional(v.string()),
+		priority: v.optional(v.union(v.literal("urgent"), v.literal("high"), v.literal("medium"), v.literal("low"))),
+		forkRepo: v.optional(v.string()),
+	},
+	returns: v.id("issues"),
+	handler: async (ctx, args) => {
+		const now = Date.now();
+		return await ctx.db.insert("issues", {
+			repo: args.externalRepo,
+			issueNumber: args.externalIssueNumber,
+			title: args.title,
+			body: args.body.slice(0, 2000),
+			htmlUrl: args.externalIssueUrl,
+			labels: [],
+			status: "open",
+			priority: args.priority ?? "medium",
+			assignedOrchestrator: args.assignedOrchestrator,
+			project: args.project ?? "external",
+			githubCreatedAt: now,
+			githubUpdatedAt: now,
+			externalRepo: args.externalRepo,
+			externalIssueNumber: args.externalIssueNumber,
+			externalIssueUrl: args.externalIssueUrl,
+			forkRepo: args.forkRepo,
+		});
+	},
+});
+
+export const updatePrStatus = mutation({
+	args: {
+		repo: v.string(),
+		issueNumber: v.number(),
+		prUrl: v.string(),
+		prStatus: v.union(
+			v.literal("draft"),
+			v.literal("open"),
+			v.literal("merged"),
+			v.literal("closed"),
+		),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const issue = await ctx.db
+			.query("issues")
+			.withIndex("by_repo_number", (q) =>
+				q.eq("repo", args.repo).eq("issueNumber", args.issueNumber),
+			)
+			.unique();
+		if (!issue) return null;
+
+		await ctx.db.patch(issue._id, {
+			prUrl: args.prUrl,
+			prStatus: args.prStatus,
+			githubUpdatedAt: Date.now(),
+		});
+		return null;
+	},
+});
+
+export const listExternalOpen = query({
+	args: {
+		prStatus: v.optional(v.union(
+			v.literal("draft"),
+			v.literal("open"),
+			v.literal("merged"),
+			v.literal("closed"),
+		)),
+		limit: v.optional(v.number()),
+	},
+	returns: v.array(v.object({
+		_id: v.id("issues"),
+		_creationTime: v.number(),
+		repo: v.string(),
+		issueNumber: v.number(),
+		title: v.string(),
+		status: v.string(),
+		externalRepo: v.optional(v.string()),
+		externalIssueUrl: v.optional(v.string()),
+		prUrl: v.optional(v.string()),
+		prStatus: v.optional(v.string()),
+		assignedOrchestrator: v.string(),
+	})),
+	handler: async (ctx, args) => {
+		const limit = args.limit ?? 50;
+		const issues = await ctx.db
+			.query("issues")
+			.filter((q) => q.neq(q.field("externalRepo"), undefined))
+			.take(limit);
+
+		return issues.map((i) => ({
+			_id: i._id,
+			_creationTime: i._creationTime,
+			repo: i.repo,
+			issueNumber: i.issueNumber,
+			title: i.title,
+			status: i.status,
+			externalRepo: i.externalRepo,
+			externalIssueUrl: i.externalIssueUrl,
+			prUrl: i.prUrl,
+			prStatus: i.prStatus as string | undefined,
+			assignedOrchestrator: i.assignedOrchestrator,
+		}));
+	},
+});
