@@ -314,6 +314,31 @@ http.route({
 			}
 		}
 
+		// --- Pull request merged ---
+		if (eventType === "pull_request" && action === "closed") {
+			const pr = payload.pull_request;
+			if (pr?.merged) {
+				// Notify orchestrator
+				await ctx.runMutation(api.messages.sendMessage, {
+					from: "system",
+					channel: orchestrator,
+					content: `[GitHub] PR #${pr.number} MERGED on ${repoFullName}: ${pr.title}. Deploy to prod now: npx convex deploy --yes`,
+				});
+
+				// Create deploy task
+				await ctx.runMutation(api.tasks.create, {
+					title: `[Deploy] PR #${pr.number} merged — deploy ${project} to prod`,
+					description: `PR #${pr.number} "${pr.title}" was merged by ${pr.merged_by?.login ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url}`,
+					assignedTo: orchestrator as any,
+					project,
+					priority: "urgent",
+					status: "todo",
+					createdBy: "system",
+					tags: ["github", "deploy", "pr-merged"],
+				});
+			}
+		}
+
 		return new Response("OK", { status: 200 });
 	}),
 });
