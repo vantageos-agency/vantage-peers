@@ -32,7 +32,7 @@
   "license": "FSL-1.1-Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/elpiarthera/vantage-peers.git",
+    "url": "https://github.com/vantageos-agency/vantage-peers.git",
     "directory": "mcp-server"
   },
   "homepage": "https://vantagepeers.com/docs",

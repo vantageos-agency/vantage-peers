@@ -24,7 +24,7 @@ VantagePeers is a shared brain for multiple Claude Code agents. It provides pers
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/elpiarthera/vantage-peers.git
+git clone https://github.com/vantageos-agency/vantage-peers.git
 cd vantage-peers
 
 # 2. Install dependencies
