@@ -14,6 +14,7 @@ const assigneeValidator = v.union(
 	v.literal("sigma"),
 	v.literal("omega"),
 	v.literal("zeta"),
+	v.literal("eta"),
 	v.literal("laurent"),
 );
 
@@ -435,7 +436,7 @@ export const complete = mutation({
 						const validatedFix = fixMatch ? fixMatch[1].trim() : undefined;
 
 						// creatorValidator does not include "laurent" — fall back to "system"
-						const fixPatternCreatedBy: "pi" | "tau" | "phi" | "sigma" | "omega" | "zeta" | "system" =
+						const fixPatternCreatedBy: "pi" | "tau" | "phi" | "sigma" | "omega" | "zeta" | "eta" | "system" =
 							task.assignedTo === "laurent" ? "system" : task.assignedTo;
 
 						const patternId = await ctx.db.insert("fixPatterns", {
