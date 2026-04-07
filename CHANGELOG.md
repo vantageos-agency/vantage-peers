@@ -23,7 +23,8 @@
 - PR #95: Expanded MCP smoke test suite from 29 to 75 tests (all 75 tools covered, 75/75 pass)
 - PR #94: string-based API calls for all 75 tools
 - PR #90: enforce-signature hook (portable across machines)
-- PR #89: RAG integration tests
+- PR #89: RAG integration tests (6/6 pass)
+- PR #87: standalone MCP server, schema validators, soft_delete_memory
 
 ## v7 — Open Source Release (2026-03-25)
 
