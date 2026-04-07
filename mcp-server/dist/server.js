@@ -17,7 +17,6 @@ import { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { z } from "zod";
-import { api } from "./convex-api/api.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap: resolve CONVEX_URL from env or .env.local
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,7 +132,7 @@ server.tool("store_memory", "Store a typed memory entry in VantagePeers. Support
     const relations = relatesTo
         ? [{ targetId: relatesTo.targetId, type: relatesTo.type }]
         : [];
-    const memoryId = await convex.mutation(api.memories.storeMemory, {
+    const memoryId = await convex.mutation("memories:storeMemory", {
         namespace,
         type,
         content,
@@ -146,6 +145,25 @@ server.tool("store_memory", "Store a typed memory entry in VantagePeers. Support
             {
                 type: "text",
                 text: JSON.stringify({ memoryId, namespace, type, content }, null, 2),
+            },
+        ],
+    };
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: soft_delete_memory
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("soft_delete_memory", "Soft-delete a memory — marks it as no longer latest so it stops appearing in recall results. " +
+    "The memory is preserved for audit but excluded from search.", {
+    memoryId: z.string().describe("Convex document ID of the memory to soft-delete"),
+}, async ({ memoryId }) => {
+    await convex.mutation("memories:softDeleteMemory", {
+        memoryId,
+    });
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify({ deleted: true, memoryId }, null, 2),
             },
         ],
     };
@@ -174,7 +192,7 @@ server.tool("recall", "Semantic vector search over VantagePeers. Returns top K m
         .default(5)
         .describe("Maximum number of results to return (default 5)"),
 }, async ({ query, namespace, type, limit }) => {
-    const results = await convex.action(api.search.recall, {
+    const results = await convex.action("search:recall", {
         query,
         namespace,
         type,
@@ -208,7 +226,7 @@ server.tool("store_episode", "Store an episodic memory with structured context/g
         .describe("The lesson extracted — procedural memory, what to do differently"),
     severity: severitySchema,
 }, async ({ namespace, createdBy, context, goal, action, outcome, insight, severity, }) => {
-    const memoryId = await convex.mutation(api.episodes.storeEpisode, {
+    const memoryId = await convex.mutation("episodes:storeEpisode", {
         namespace,
         createdBy,
         context,
@@ -236,7 +254,7 @@ server.tool("get_profile", "Fetch an orchestrator profile (static identity + dyn
         .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
         .describe("Orchestrator identifier"),
 }, async ({ orchestratorId }) => {
-    const profile = await convex.query(api.profiles.getProfile, {
+    const profile = await convex.query("profiles:getProfile", {
         orchestratorId,
     });
     return {
@@ -280,7 +298,7 @@ server.tool("update_profile", "Create or update an orchestrator profile. " +
     })
         .describe("Mutable session state — updated each session"),
 }, async ({ orchestratorId, name, static: staticFields, dynamic }) => {
-    const profileId = await convex.mutation(api.profiles.upsertProfile, {
+    const profileId = await convex.mutation("profiles:upsertProfile", {
         orchestratorId,
         name,
         static: staticFields,
@@ -316,7 +334,7 @@ server.tool("list_memories", "List active memories for a namespace, ordered newe
         .default(20)
         .describe("Maximum number of memories to return (default 20)"),
 }, async ({ namespace, type, limit }) => {
-    const memories = await convex.query(api.memories.listMemories, {
+    const memories = await convex.query("memories:listMemories", {
         namespace,
         type,
         limit: limit ?? 20,
@@ -351,7 +369,7 @@ server.tool("send_message", "Send a message to one, many, or all orchestrators. 
         .optional()
         .describe("Day number (e.g. 19 for Day 19)"),
 }, async ({ from, fromInstanceId, channel, content, sessionDay }) => {
-    const messageId = await convex.mutation(api.messages.sendMessage, {
+    const messageId = await convex.mutation("messages:sendMessage", {
         from,
         fromInstanceId,
         channel,
@@ -379,7 +397,7 @@ server.tool("check_messages", "Check for unread messages. Returns messages with 
         .optional()
         .describe("Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages."),
 }, async ({ recipient, recipientInstanceId }) => {
-    const messages = await convex.query(api.messages.checkNewMessages, {
+    const messages = await convex.query("messages:checkNewMessages", {
         recipient,
         recipientInstanceId,
     });
@@ -418,7 +436,7 @@ server.tool("mark_as_read", "Mark one or more message receipts as read. Pass the
     else {
         receiptIdsArray = [receiptIds];
     }
-    const count = await convex.mutation(api.messages.markAsRead, {
+    const count = await convex.mutation("messages:markAsRead", {
         receiptIds: receiptIdsArray,
     });
     return {
@@ -437,7 +455,7 @@ server.tool("delete_message", "Delete a message and all its receipts. Only the s
     messageId: z.string().describe("Convex document ID of the message to delete"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be the sender or system"),
 }, async ({ messageId, callerOrchestrator }) => {
-    const result = await convex.mutation(api.messages.deleteMessage, {
+    const result = await convex.mutation("messages:deleteMessage", {
         messageId: messageId,
         callerOrchestrator,
     });
@@ -467,7 +485,7 @@ server.tool("set_summary", "Set a brief summary of what you are currently workin
         .string()
         .describe("1-2 sentence summary of current work"),
 }, async ({ orchestratorId, instanceId, summary }) => {
-    await convex.mutation(api.profiles.updateDynamic, {
+    await convex.mutation("profiles:updateDynamic", {
         orchestratorId,
         instanceId,
         currentTask: summary,
@@ -487,7 +505,7 @@ server.tool("set_summary", "Set a brief summary of what you are currently workin
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_peers", "List all orchestrator profiles with their current status and summary. " +
     "Replaces claude-peers list_peers.", {}, async () => {
-    const profiles = await convex.query(api.profiles.listProfiles, {});
+    const profiles = await convex.query("profiles:listProfiles", {});
     const peers = profiles.map((p) => ({
         id: p.orchestratorId,
         instanceId: p.instanceId ?? p.orchestratorId,
@@ -526,7 +544,7 @@ server.tool("list_messages", "List message history. Filter by day or sender. For
         .default(100)
         .describe("Max messages to return (default 100)"),
 }, async ({ sessionDay, from, limit }) => {
-    const messages = await convex.query(api.messages.listMessages, {
+    const messages = await convex.query("messages:listMessages", {
         sessionDay,
         from,
         limit: limit ?? 100,
@@ -546,7 +564,7 @@ server.tool("list_messages", "List message history. Filter by day or sender. For
 server.tool("list_broadcast_status", "Show who read a broadcast message and who didn't. Pass the messageId from send_message.", {
     messageId: z.string().describe("Convex document ID of the broadcast message"),
 }, async ({ messageId }) => {
-    const status = await convex.query(api.messages.listBroadcastStatus, {
+    const status = await convex.query("messages:listBroadcastStatus", {
         messageId,
     });
     return {
@@ -605,7 +623,7 @@ server.tool("create_task", "Create a task in VantagePeers. Tasks are assigned to
         .describe("Optional due date as Unix timestamp (ms)"),
     createdBy: creatorSchema,
 }, async ({ title, description, project, tags, assignedTo, assignedToInstance, priority, status, dependsOn, missionId, estimatedMinutes, dueDate, createdBy, }) => {
-    const taskId = await convex.mutation(api.tasks.create, {
+    const taskId = await convex.mutation("tasks:create", {
         title,
         description,
         project,
@@ -650,7 +668,7 @@ server.tool("list_tasks", "List tasks from VantagePeers with optional filters. "
         .default(50)
         .describe("Maximum number of tasks to return (default 50)"),
 }, async ({ assignedTo, assignedToInstance, status, project, limit }) => {
-    const tasks = await convex.query(api.tasks.list, {
+    const tasks = await convex.query("tasks:list", {
         assignedTo,
         assignedToInstance,
         status,
@@ -700,7 +718,7 @@ server.tool("update_task", "Update any mutable field on a task. Provide only the
     dueDate: z.number().optional().describe("New due date (Unix ms)"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 }, async ({ taskId, title, description, project, tags, assignedTo, priority, status, dependsOn, missionId, estimatedMinutes, actualMinutes, startedAt, completedAt, dueDate, callerOrchestrator, }) => {
-    await convex.mutation(api.tasks.update, {
+    await convex.mutation("tasks:update", {
         taskId: taskId,
         title,
         description,
@@ -740,7 +758,7 @@ server.tool("complete_task", "Mark a task as done. ALWAYS provide a completionNo
         .describe("What was actually done — summary of work completed (MANDATORY)"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 }, async ({ taskId, completionNote, callerOrchestrator }) => {
-    await convex.mutation(api.tasks.complete, {
+    await convex.mutation("tasks:complete", {
         taskId: taskId,
         completionNote,
         callerOrchestrator,
@@ -762,7 +780,7 @@ server.tool("start_task", "Start a task — sets status to in_progress and recor
     taskId: z.string().describe("Convex document ID of the task to start"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 }, async ({ taskId, callerOrchestrator }) => {
-    await convex.mutation(api.tasks.start, {
+    await convex.mutation("tasks:start", {
         taskId: taskId,
         callerOrchestrator,
     });
@@ -784,7 +802,7 @@ server.tool("checkout_task", "Atomically claim a task. Only succeeds if task is 
     callerOrchestrator: creatorSchema.describe("Orchestrator claiming the task (e.g. sigma, pi)"),
     callerInstance: z.string().optional().describe("Instance identifier, e.g. 'sigma-vps'"),
 }, async ({ taskId, callerOrchestrator, callerInstance }) => {
-    const result = await convex.mutation(api.tasks.checkout, {
+    const result = await convex.mutation("tasks:checkout", {
         taskId: taskId,
         callerOrchestrator,
         callerInstance,
@@ -805,7 +823,7 @@ server.tool("delete_task", "Permanently delete a task. Only the creator (or syst
     taskId: z.string().describe("Convex document ID of the task to delete"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or system"),
 }, async ({ taskId, callerOrchestrator }) => {
-    const result = await convex.mutation(api.tasks.deleteTask, {
+    const result = await convex.mutation("tasks:deleteTask", {
         taskId: taskId,
         callerOrchestrator,
     });
@@ -833,7 +851,7 @@ server.tool("list_tasks_by_mission", "List all tasks linked to a specific missio
         .default(50)
         .describe("Maximum number of tasks to return (default 50)"),
 }, async ({ missionId, status, limit }) => {
-    const tasks = await convex.query(api.tasks.listByMission, {
+    const tasks = await convex.query("tasks:listByMission", {
         missionId: missionId,
         status,
         limit: limit ?? 50,
@@ -876,7 +894,7 @@ server.tool("create_mission", "Create a mission in VantagePeers. Missions group 
     progress: z.number().optional().describe("Progress percentage (0-100)"),
     createdBy: creatorSchema,
 }, async ({ name, description, project, status, priority, pilot, agents, brief, startDate, targetDate, progress, createdBy, }) => {
-    const missionId = await convex.mutation(api.missions.create, {
+    const missionId = await convex.mutation("missions:create", {
         name,
         description,
         project,
@@ -916,7 +934,7 @@ server.tool("list_missions", "List missions from VantagePeers with optional filt
         .default(50)
         .describe("Maximum number of missions to return (default 50)"),
 }, async ({ project, pilot, status, limit }) => {
-    const missions = await convex.query(api.missions.list, {
+    const missions = await convex.query("missions:list", {
         project,
         pilot,
         status,
@@ -951,7 +969,7 @@ server.tool("update_mission", "Update any mutable field on a mission. Provide on
     targetDate: z.number().optional().describe("New target date (Unix ms)"),
     progress: z.number().optional().describe("New progress (0-100)"),
 }, async ({ missionId, name, description, project, status, priority, pilot, agents, brief, startDate, targetDate, progress, }) => {
-    await convex.mutation(api.missions.update, {
+    await convex.mutation("missions:update", {
         missionId: missionId,
         name,
         description,
@@ -981,7 +999,7 @@ server.tool("update_mission_status", "Change a mission's status. Shortcut for up
     missionId: z.string().describe("Convex document ID of the mission"),
     status: missionStatusSchema.describe("New status"),
 }, async ({ missionId, status }) => {
-    await convex.mutation(api.missions.updateStatus, {
+    await convex.mutation("missions:updateStatus", {
         missionId: missionId,
         status,
     });
@@ -1006,7 +1024,7 @@ server.tool("write_diary", "Write or update a diary entry for a specific date an
         .describe("Key highlights of the day"),
     blockers: flexArrayOptional.describe("Blockers encountered"),
 }, async ({ date, orchestrator, content, highlights, blockers }) => {
-    const diaryId = await convex.mutation(api.diary.write, {
+    const diaryId = await convex.mutation("diary:write", {
         date,
         orchestrator,
         content,
@@ -1029,7 +1047,7 @@ server.tool("get_diary", "Fetch a diary entry for a specific date and orchestrat
     date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
     orchestrator: creatorSchema.describe("Which orchestrator's diary to fetch"),
 }, async ({ date, orchestrator }) => {
-    const entry = await convex.query(api.diary.get, {
+    const entry = await convex.query("diary:get", {
         date,
         orchestrator,
     });
@@ -1058,7 +1076,7 @@ server.tool("list_diaries", "List diary entries, optionally filtered by orchestr
         .default(20)
         .describe("Maximum entries to return (default 20)"),
 }, async ({ orchestrator, limit }) => {
-    const entries = await convex.query(api.diary.list, {
+    const entries = await convex.query("diary:list", {
         orchestrator,
         limit: limit ?? 20,
     });
@@ -1090,7 +1108,7 @@ server.tool("create_briefing_note", "Create a briefing note — a structured rec
         .describe("Convex document IDs of related memories"),
     createdBy: creatorSchema,
 }, async ({ title, topic, participants, content, decisions, linkedMemoryIds, createdBy, }) => {
-    const noteId = await convex.mutation(api.briefingNotes.create, {
+    const noteId = await convex.mutation("briefingNotes:create", {
         title,
         topic,
         participants: toArray(participants),
@@ -1125,7 +1143,7 @@ server.tool("list_briefing_notes", "List briefing notes, optionally filtered by 
         .default(20)
         .describe("Maximum notes to return (default 20)"),
 }, async ({ topic, limit }) => {
-    const notes = await convex.query(api.briefingNotes.list, {
+    const notes = await convex.query("briefingNotes:list", {
         topic,
         limit: limit ?? 20,
     });
@@ -1156,7 +1174,7 @@ server.tool("register_component", "Register or update a component (agent, skill,
     project: z.string().optional().describe("Project this component belongs to"),
     createdBy: creatorSchema,
 }, async ({ name, type, team, content, version, project, createdBy }) => {
-    const result = await convex.mutation(api.components.register, {
+    const result = await convex.mutation("components:register", {
         name,
         type,
         team,
@@ -1192,7 +1210,7 @@ server.tool("list_components", "List registered components. Filter by type (agen
         .default(100)
         .describe("Maximum components to return (default 100)"),
 }, async ({ type, team, limit }) => {
-    const components = await convex.query(api.components.list, {
+    const components = await convex.query("components:list", {
         type,
         team,
         limit: limit ?? 100,
@@ -1215,7 +1233,7 @@ server.tool("get_component", "Fetch a single component by name and type. Returns
         .enum(["agent", "skill", "hook", "plugin"])
         .describe("Component type"),
 }, async ({ name, type }) => {
-    const component = await convex.query(api.components.get, {
+    const component = await convex.query("components:get", {
         name,
         type,
     });
@@ -1243,7 +1261,7 @@ server.tool("create_recurring_task", "Create a recurring task that auto-creates 
     createdBy: creatorSchema,
 }, async ({ title, description, assignedTo, priority, project, tags, cronExpression, createdBy }) => {
     const tagsArray = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
-    const taskId = await convex.mutation(api.recurringTasks.create, {
+    const taskId = await convex.mutation("recurringTasks:create", {
         title,
         description,
         assignedTo,
@@ -1265,7 +1283,7 @@ server.tool("list_recurring_tasks", "List recurring task templates. Filter by as
     active: z.boolean().optional().describe("Filter by active status"),
     limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 }, async ({ assignedTo, active, limit }) => {
-    const tasks = await convex.query(api.recurringTasks.list, {
+    const tasks = await convex.query("recurringTasks:list", {
         assignedTo,
         active,
         limit: limit ?? 50,
@@ -1280,7 +1298,7 @@ server.tool("list_recurring_tasks", "List recurring task templates. Filter by as
 server.tool("pause_recurring_task", "Pause a recurring task — stops auto-creating tasks until resumed.", {
     taskId: z.string().describe("Recurring task ID"),
 }, async ({ taskId }) => {
-    const result = await convex.mutation(api.recurringTasks.pause, {
+    const result = await convex.mutation("recurringTasks:pause", {
         taskId: taskId,
     });
     return {
@@ -1293,7 +1311,7 @@ server.tool("pause_recurring_task", "Pause a recurring task — stops auto-creat
 server.tool("resume_recurring_task", "Resume a paused recurring task — recalculates next run time.", {
     taskId: z.string().describe("Recurring task ID"),
 }, async ({ taskId }) => {
-    const result = await convex.mutation(api.recurringTasks.resume, {
+    const result = await convex.mutation("recurringTasks:resume", {
         taskId: taskId,
     });
     return {
@@ -1306,7 +1324,7 @@ server.tool("resume_recurring_task", "Resume a paused recurring task — recalcu
 server.tool("delete_recurring_task", "Permanently delete a recurring task template.", {
     taskId: z.string().describe("Recurring task ID"),
 }, async ({ taskId }) => {
-    const result = await convex.mutation(api.recurringTasks.remove, {
+    const result = await convex.mutation("recurringTasks:remove", {
         taskId: taskId,
     });
     return {
@@ -1336,7 +1354,7 @@ server.tool("create_mandate", "Create a cross-orchestrator service mandate. One 
     approvedCategories: z.array(z.string()).optional().describe("Approved service categories"),
     mandateDocument: z.string().optional().describe("Signed authorization document or reference"),
 }, async ({ requestedBy, fulfilledBy, service, budget, spendingLimits, approvedCategories, mandateDocument }) => {
-    const mandateId = await convex.mutation(api.mandates.create, {
+    const mandateId = await convex.mutation("mandates:create", {
         requestedBy,
         fulfilledBy,
         service,
@@ -1361,7 +1379,7 @@ server.tool("accept_mandate", "Accept a mandate — sets status to 'accepted'. O
     mandateId: z.string().describe("Convex document ID of the mandate to accept"),
     callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
 }, async ({ mandateId, callerOrchestrator }) => {
-    await convex.mutation(api.mandates.accept, {
+    await convex.mutation("mandates:accept", {
         mandateId: mandateId,
         callerOrchestrator,
     });
@@ -1388,7 +1406,7 @@ server.tool("update_mandate", "Update a mandate's status, tokensCost, or linkedT
         .optional()
         .describe("Task IDs created to fulfill this mandate"),
 }, async ({ mandateId, callerOrchestrator, status, tokensCost, linkedTaskIds }) => {
-    await convex.mutation(api.mandates.update, {
+    await convex.mutation("mandates:update", {
         mandateId: mandateId,
         callerOrchestrator,
         status,
@@ -1413,7 +1431,7 @@ server.tool("settle_mandate", "Settle a mandate — confirms delivery and record
     callerOrchestrator: creatorSchema.describe("Must be the requestedBy orchestrator or system"),
     finalCost: z.number().describe("Final actual token cost to record"),
 }, async ({ mandateId, callerOrchestrator, finalCost }) => {
-    await convex.mutation(api.mandates.settle, {
+    await convex.mutation("mandates:settle", {
         mandateId: mandateId,
         callerOrchestrator,
         finalCost,
@@ -1434,7 +1452,7 @@ server.tool("validate_mandate_spending", "Check if a proposed spend is within a 
     mandateId: z.string().describe("Mandate ID to validate against"),
     proposedAmount: z.number().describe("Proposed token spend amount to validate"),
 }, async ({ mandateId, proposedAmount }) => {
-    const result = await convex.query(api.mandates.validateSpending, {
+    const result = await convex.query("mandates:validateSpending", {
         mandateId: mandateId,
         proposedAmount,
     });
@@ -1457,7 +1475,7 @@ server.tool("list_mandates", "List mandates with optional filters. Filter by req
         .default(50)
         .describe("Maximum mandates to return (default 50)"),
 }, async ({ requestedBy, fulfilledBy, status, limit }) => {
-    const mandates = await convex.query(api.mandates.list, {
+    const mandates = await convex.query("mandates:list", {
         requestedBy,
         fulfilledBy,
         status,
@@ -1521,7 +1539,7 @@ server.tool("create_bu", "Create a new ElPi Corp business unit. Captures strateg
         .default(10)
         .describe("ElPi Corp management fee % (default 10)"),
 }, async ({ name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
-    const buId = await convex.mutation(api.businessUnits.create, {
+    const buId = await convex.mutation("businessUnits:create", {
         name,
         description,
         purpose,
@@ -1571,7 +1589,7 @@ server.tool("update_bu", "Update any mutable field on a business unit. Provide o
     kpis: flexArrayOptional.describe("New KPIs"),
     managementFee: z.number().optional().describe("New management fee %"),
 }, async ({ buId, name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
-    await convex.mutation(api.businessUnits.update, {
+    await convex.mutation("businessUnits:update", {
         buId: buId,
         name,
         description,
@@ -1605,7 +1623,7 @@ server.tool("update_bu", "Update any mutable field on a business unit. Provide o
 server.tool("get_bu", "Fetch a single business unit by its Convex document ID. Returns null if not found.", {
     buId: z.string().describe("Convex document ID of the business unit"),
 }, async ({ buId }) => {
-    const bu = await convex.query(api.businessUnits.get, {
+    const bu = await convex.query("businessUnits:get", {
         buId: buId,
     });
     return {
@@ -1636,7 +1654,7 @@ server.tool("list_bus", "List business units with optional filters. Filter by or
         .default(50)
         .describe("Maximum BUs to return (default 50)"),
 }, async ({ orchestratorId, status, limit }) => {
-    const bus = await convex.query(api.businessUnits.list, {
+    const bus = await convex.query("businessUnits:list", {
         orchestratorId,
         status,
         limit: limit ?? 50,
@@ -1656,7 +1674,7 @@ server.tool("list_bus", "List business units with optional filters. Filter by or
 server.tool("delete_bu", "Delete a business unit by ID. This action is permanent.", {
     buId: z.string().describe("Convex document ID of the business unit to delete"),
 }, async ({ buId }) => {
-    const result = await convex.mutation(api.businessUnits.remove, {
+    const result = await convex.mutation("businessUnits:remove", {
         buId: buId,
     });
     return {
@@ -1687,7 +1705,7 @@ server.tool("add_repo_mapping", "Add or update a GitHub repo → orchestrator ma
         .default(true)
         .describe("Whether this mapping is active (default true)"),
 }, async ({ repo, orchestrator, project, active }) => {
-    const id = await convex.mutation(api.githubRepoMapping.add, {
+    const id = await convex.mutation("githubRepoMapping:add", {
         repo,
         orchestrator,
         project,
@@ -1706,7 +1724,7 @@ server.tool("add_repo_mapping", "Add or update a GitHub repo → orchestrator ma
 // Tool: list_repo_mappings
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_repo_mappings", "List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.", {}, async () => {
-    const mappings = await convex.query(api.githubRepoMapping.list, {});
+    const mappings = await convex.query("githubRepoMapping:list", {});
     return {
         content: [
             {
@@ -1724,7 +1742,7 @@ server.tool("remove_repo_mapping", "Remove a GitHub repo mapping by repo name. S
         .string()
         .describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
 }, async ({ repo }) => {
-    const result = await convex.mutation(api.githubRepoMapping.remove, {
+    const result = await convex.mutation("githubRepoMapping:remove", {
         repo,
     });
     return {
@@ -1763,14 +1781,14 @@ server.tool("list_issues", "List GitHub issues tracked in VantagePeers. Filter b
 }, async ({ project, status, assignedTo, limit }) => {
     let results;
     if (assignedTo) {
-        results = await convex.query(api.issues.listByOrchestrator, {
+        results = await convex.query("issues:listByOrchestrator", {
             assignedOrchestrator: assignedTo,
             status: status,
             limit: limit ?? 50,
         });
     }
     else if (project) {
-        results = await convex.query(api.issues.listByProject, {
+        results = await convex.query("issues:listByProject", {
             project,
             status: status,
             limit: limit ?? 50,
@@ -1779,14 +1797,14 @@ server.tool("list_issues", "List GitHub issues tracked in VantagePeers. Filter b
     else if (status) {
         // Use listByProject with a broad approach — fall back to listByOrchestrator
         // For status-only queries, we query all and filter
-        results = await convex.query(api.issues.listByOrchestrator, {
+        results = await convex.query("issues:listByOrchestrator", {
             assignedOrchestrator: "sigma",
             status: status,
             limit: limit ?? 50,
         });
     }
     else {
-        results = await convex.query(api.issues.listByProject, {
+        results = await convex.query("issues:listByProject", {
             project: "",
             limit: limit ?? 50,
         });
@@ -1807,7 +1825,7 @@ server.tool("get_issue", "Get a single GitHub issue by repo and issue number.", 
     repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
     issueNumber: z.number().int().describe("GitHub issue number"),
 }, async ({ repo, issueNumber }) => {
-    const issue = await convex.query(api.issues.getByRepoNumber, {
+    const issue = await convex.query("issues:getByRepoNumber", {
         repo,
         issueNumber,
     });
@@ -1830,7 +1848,7 @@ server.tool("update_issue_status", "Update the status of a tracked GitHub issue.
         .enum(["open", "in_progress", "fixed", "verified", "closed"])
         .describe("New status for the issue"),
 }, async ({ repo, issueNumber, status }) => {
-    await convex.mutation(api.issues.updateStatus, {
+    await convex.mutation("issues:updateStatus", {
         repo,
         issueNumber,
         status,
@@ -1853,7 +1871,7 @@ server.tool("link_commit_to_issue", "Link a fix commit SHA to a GitHub issue. Re
     commitSha: z.string().describe("Git commit SHA that fixes this issue"),
     fixedBy: z.string().describe("Who fixed it — orchestrator name or person"),
 }, async ({ repo, issueNumber, commitSha, fixedBy }) => {
-    await convex.mutation(api.issues.linkCommit, {
+    await convex.mutation("issues:linkCommit", {
         repo,
         issueNumber,
         commitSha,
@@ -1876,7 +1894,7 @@ server.tool("verify_issue", "Mark a GitHub issue as verified (fix confirmed). Se
     issueNumber: z.number().int().describe("GitHub issue number"),
     verifiedBy: z.string().describe("Who verified the fix — orchestrator name or person"),
 }, async ({ repo, issueNumber, verifiedBy }) => {
-    await convex.mutation(api.issues.verify, {
+    await convex.mutation("issues:verify", {
         repo,
         issueNumber,
         verifiedBy,
@@ -1899,7 +1917,7 @@ server.tool("issue_stats", "Get issue count statistics grouped by status. Option
         .optional()
         .describe("Filter stats to a specific project — omit for all projects"),
 }, async ({ project }) => {
-    const stats = await convex.query(api.issues.getStats, {
+    const stats = await convex.query("issues:getStats", {
         project,
     });
     return {
@@ -1926,7 +1944,7 @@ server.tool("create_fix_pattern", "Create a fix pattern in the knowledge base. D
     files: flexArrayOptional.describe("Files involved in the fix"),
     linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
 }, async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds }) => {
-    const patternId = await convex.mutation(api.fixPatterns.create, {
+    const patternId = await convex.mutation("fixPatterns:create", {
         symptom,
         rootCause,
         tags: toArray(tags) ?? [],
@@ -1958,7 +1976,7 @@ server.tool("add_fix_attempt", "Add a fix attempt to a pattern. Documents what w
     createdBy: creatorSchema,
     commit: z.string().optional().describe("Git commit hash of this attempt"),
 }, async ({ patternId, description, worked, why, createdBy, commit }) => {
-    const attemptId = await convex.mutation(api.fixPatterns.addAttempt, {
+    const attemptId = await convex.mutation("fixPatterns:addAttempt", {
         patternId: patternId,
         description,
         worked,
@@ -1982,7 +2000,7 @@ server.tool("validate_fix", "Set or update the validated fix on a pattern. Use a
     patternId: z.string().describe("ID of the fix pattern"),
     validatedFix: z.string().describe("Description of the validated fix"),
 }, async ({ patternId, validatedFix }) => {
-    await convex.mutation(api.fixPatterns.validate, {
+    await convex.mutation("fixPatterns:validate", {
         patternId: patternId,
         validatedFix,
     });
@@ -2002,7 +2020,7 @@ server.tool("search_fix_patterns", "Semantic search over fix patterns. Use this 
     query: z.string().describe("Describe the problem — e.g. 'message disappears after sending'"),
     limit: z.number().int().optional().describe("Max results to return (default 10)"),
 }, async ({ query, limit }) => {
-    const results = await convex.action(api.search.searchFixPatterns, {
+    const results = await convex.action("search:searchFixPatterns", {
         query,
         limit,
     });
@@ -2023,7 +2041,7 @@ server.tool("list_fix_patterns", "List fix patterns, optionally filtered by proj
     limit: z.number().int().optional().describe("Max results (default 50)"),
 }, async ({ project, limit }) => {
     if (project) {
-        const results = await convex.query(api.fixPatterns.listByProject, {
+        const results = await convex.query("fixPatterns:listByProject", {
             sourceProject: project,
             limit,
         });
@@ -2049,7 +2067,7 @@ server.tool("link_issue_to_pattern", "Link a VantagePeers issue to a fix pattern
     patternId: z.string().describe("ID of the fix pattern"),
     issueId: z.string().describe("VantagePeers issue ID to link"),
 }, async ({ patternId, issueId }) => {
-    await convex.mutation(api.fixPatterns.linkIssue, {
+    await convex.mutation("fixPatterns:linkIssue", {
         patternId: patternId,
         issueId,
     });
@@ -2069,7 +2087,7 @@ server.tool("get_mission_template", "Fetch a mission template by name. Returns t
     "Use 'issue-resolution-v2' for the default Issue Resolution Protocol.", {
     name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
 }, async ({ name }) => {
-    const template = await convex.query(api.missionTemplates.getByName, { name });
+    const template = await convex.query("missionTemplates:getByName", { name });
     return {
         content: [
             {
@@ -2097,7 +2115,7 @@ server.tool("update_mission_template", "Create or update a mission template by n
     createdBy: creatorSchema.describe("Who is creating/updating the template"),
     isDefault: z.boolean().optional().describe("Mark as the default template for its type"),
 }, async ({ name, description, steps, createdBy, isDefault }) => {
-    const templateId = await convex.mutation(api.missionTemplates.upsert, {
+    const templateId = await convex.mutation("missionTemplates:upsert", {
         name,
         description,
         steps,
@@ -2135,7 +2153,7 @@ server.tool("add_deployment", "Register a Convex deployment for proactive error 
         .string()
         .describe("Orchestrator responsible for this deployment — e.g. 'sigma'"),
 }, async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
-    const id = await convex.mutation(api.errorMonitor.addDeployment, {
+    const id = await convex.mutation("errorMonitor:addDeployment", {
         name,
         deploymentUrl,
         deployKeyEnvVar,
@@ -2159,7 +2177,7 @@ server.tool("remove_deployment", "Deactivate a monitored deployment. The deploym
         .string()
         .describe("Name of the deployment to deactivate — e.g. 'efficient-guineapig-356'"),
 }, async ({ name }) => {
-    await convex.mutation(api.errorMonitor.removeDeployment, { name });
+    await convex.mutation("errorMonitor:removeDeployment", { name });
     return {
         content: [
             {
@@ -2187,7 +2205,7 @@ server.tool("list_errors", "List detected errors from monitored deployments, ord
         .default(50)
         .describe("Maximum number of errors to return (default 50)"),
 }, async ({ deployment, limit }) => {
-    const errors = await convex.query(api.errorMonitor.listErrors, {
+    const errors = await convex.query("errorMonitor:listErrors", {
         deployment,
         limit: limit ?? 50,
     });
@@ -2208,7 +2226,7 @@ server.tool("get_error", "Fetch a single error log entry by its Convex document 
         .string()
         .describe("Convex document ID of the errorLogs entry"),
 }, async ({ errorId }) => {
-    const error = await convex.query(api.errorMonitor.getError, {
+    const error = await convex.query("errorMonitor:getError", {
         errorId: errorId,
     });
     return {
