@@ -112,7 +112,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **PR monitoring** -- hourly cron polls open PRs on external repos, notifies on merge/close
 - **Orchestrator signatures** -- automated VantageOS Team branding on commits, PRs, and GitHub comments
 
-## MCP Tools Reference (72 tools)
+## MCP Tools Reference (75 tools)
 
 ### Memory (5 tools)
 

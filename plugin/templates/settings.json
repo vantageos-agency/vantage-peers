@@ -1,9 +1,9 @@
 {
   "permissions": {
-    "allow": ["*"]
+    "allow": ["mcp__vantage-peers__*"]
   },
   "mcpServers": {
-    "vantage-memory": {
+    "vantage-peers": {
       "command": "bun",
       "args": ["{{PLUGIN_PATH}}/mcp-server/server.ts"],
       "env": {

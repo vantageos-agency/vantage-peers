@@ -144,9 +144,9 @@ Where should the MCP server be registered?
 ```json
 {
   "mcpServers": {
-    "vantage-memory": {
+    "vantage-peers": {
       "command": "bun",
-      "args": ["<absolute-path-to>/vantage-memory/mcp-server/server.ts"],
+      "args": ["<absolute-path-to>/vantage-peers/mcp-server/server.ts"],
       "env": {
         "CONVEX_URL": "https://<deployment>.convex.cloud"
       }
@@ -160,20 +160,20 @@ The skill auto-fills:
 - `<deployment>` from the CONVEX_URL parsed in Step 2
 
 **Verification:**
-- Read the target settings.json and confirm `vantage-memory` key exists under `mcpServers`
+- Read the target settings.json and confirm `vantage-peers` key exists under `mcpServers`
 - Confirm the path in `args` points to an existing file
 - Confirm `CONVEX_URL` is a valid URL
 
 **Expected output:**
 ```
 MCP server configured in .claude/settings.json
-  Server: bun /home/user/vantage-memory/mcp-server/server.ts
+  Server: bun /home/user/vantage-peers/mcp-server/server.ts
   Convex: https://cool-animal-123.convex.cloud
 
 Restart Claude Code for the MCP server to become available.
 ```
 
-**If settings.json already has a `vantage-memory` entry:**
+**If settings.json already has a `vantage-peers` entry:**
 ```
 MCP server already configured. Updating CONVEX_URL to match current deployment.
 ```
@@ -397,7 +397,7 @@ Running final verification...
 | Check | Method | Pass criteria |
 |---|---|---|
 | Convex deployment reachable | HTTP HEAD to CONVEX_URL | 200 or valid response |
-| MCP config valid | Parse settings.json | `vantage-memory` key present with valid path and URL |
+| MCP config valid | Parse settings.json | `vantage-peers` key present with valid path and URL |
 | Embedding API key set | `npx convex env get AI_GATEWAY_API_KEY` | Non-empty value |
 | Memory round-trip | store_memory + recall | Recall returns stored content |
 | Hook registered | Parse settings.json hooks | SessionStart hook points to existing file |
@@ -410,7 +410,7 @@ Running final verification...
 ============================================
 
   Deployment:  https://cool-animal-123.convex.cloud
-  MCP Server:  /home/user/vantage-memory/mcp-server/server.ts
+  MCP Server:  /home/user/vantage-peers/mcp-server/server.ts
   Identity:    pi / pi-laptop (or: single-agent mode)
 
   Verified:
@@ -597,7 +597,7 @@ Messages can go to:
     - After completing a task: complete_task with completionNote
     - End of day: /close-day
 
-  Full tool reference: /root/coding/vantage-memory/README.md
+  Full tool reference: README.md
 ============================================
 ```
 
@@ -754,9 +754,9 @@ CONVEX_URL=https://your-deployment-name.convex.cloud
 ```json
 {
   "mcpServers": {
-    "vantage-memory": {
+    "vantage-peers": {
       "command": "bun",
-      "args": ["/absolute/path/to/vantage-memory/mcp-server/server.ts"],
+      "args": ["/absolute/path/to/vantage-peers/mcp-server/server.ts"],
       "env": {
         "CONVEX_URL": "https://your-deployment.convex.cloud"
       }

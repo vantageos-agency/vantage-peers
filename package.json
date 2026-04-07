@@ -16,7 +16,7 @@
   "license": "FSL-1.1-Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vantageos/vantage-peers.git"
+    "url": "https://github.com/vantageos-agency/vantage-peers.git"
   },
   "engines": {
     "node": ">=18.0.0"

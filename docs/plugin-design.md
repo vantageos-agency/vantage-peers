@@ -28,7 +28,7 @@ The goal: any Claude Code instance becomes a memory-aware, message-passing, task
 ## 2. Plugin Structure
 
 ```
-vantage-memory-plugin/
+vantage-peers-plugin/
 ├── agents/
 │   ├── memory-manager.md
 │   └── message-handler.md
@@ -58,7 +58,7 @@ vantage-memory-plugin/
 
 **File:** `agents/memory-manager.md`
 **Model:** sonnet
-**Tools:** `mcp__vantage-memory__*` (all memory tools), Read, Grep, Glob
+**Tools:** `mcp__vantage-peers__*` (all memory tools), Read, Grep, Glob
 
 **Purpose:** Handles the full memory lifecycle. The main agent delegates to memory-manager whenever structured memory operations are needed, rather than calling MCP tools directly for complex multi-step memory workflows.
 
@@ -106,7 +106,7 @@ tools: ["Read", "Grep", "Glob"]
 
 **File:** `agents/message-handler.md`
 **Model:** sonnet
-**Tools:** `mcp__vantage-memory__*` (messaging tools), Read
+**Tools:** `mcp__vantage-peers__*` (messaging tools), Read
 
 **Purpose:** Manages inter-agent communication. Checks the inbox, routes responses, handles broadcast messages, and creates tasks from message instructions.
 
@@ -328,7 +328,7 @@ Found {n} results:
   ```json
   {
     "mcpServers": {
-      "vantage-memory": {
+      "vantage-peers": {
         "command": "bun",
         "args": ["{path}/mcp-server/server.ts"],
         "env": {
@@ -503,7 +503,7 @@ if __name__ == "__main__":
     "allow": ["*"]
   },
   "mcpServers": {
-    "vantage-memory": {
+    "vantage-peers": {
       "command": "bun",
       "args": ["{{PLUGIN_PATH}}/mcp-server/server.ts"],
       "env": {
@@ -530,7 +530,7 @@ if __name__ == "__main__":
 
 | Placeholder | Description | Example |
 |-------------|-------------|---------|
-| `{{PLUGIN_PATH}}` | Absolute path to vantage-memory installation | `/home/user/vantage-memory` |
+| `{{PLUGIN_PATH}}` | Absolute path to vantage-peers installation | `/home/user/vantage-peers` |
 | `{{CONVEX_URL}}` | Convex deployment URL | `https://cool-panda-123.convex.cloud` |
 | `{{ROLE}}` | Agent role | `pi` |
 | `{{INSTANCE}}` | Agent instance | `pi-laptop` |
@@ -713,7 +713,7 @@ SESSION END
 
 | Key | Description |
 |-----|-------------|
-| `mcpServers.vantage-memory` | MCP server connection config |
+| `mcpServers.vantage-peers` | MCP server connection config |
 | `hooks.SessionStart` | Startup hook configuration |
 | `permissions.allow` | Tool permission allowlist |
 
