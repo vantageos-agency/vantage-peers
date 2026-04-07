@@ -1,6 +1,6 @@
 {
   "name": "vantage-peers-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for VantagePeers — shared memory, messaging, and task coordination for AI agent teams",
   "type": "module",
   "main": "./dist/server.js",
@@ -9,7 +9,6 @@
   },
   "files": [
     "dist/",
-    "convex-api/",
     "README.md"
   ],
   "scripts": {
@@ -17,6 +16,12 @@
     "prepublishOnly": "npm run build",
     "dev": "bun run server.ts"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vantageos-agency/vantage-peers.git",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://vantagepeers.com/docs",
   "keywords": [
     "mcp",
     "claude",
@@ -26,16 +31,11 @@
     "messaging",
     "tasks",
     "multi-agent",
-    "orchestration"
+    "orchestration",
+    "vantagepeers"
   ],
   "author": "ElPi Corp",
   "license": "FSL-1.1-Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/vantageos-agency/vantage-peers.git",
-    "directory": "mcp-server"
-  },
-  "homepage": "https://vantagepeers.com/docs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "convex": "^1.34.0",
@@ -47,6 +47,6 @@
     "@types/node": "^22.0.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18"
   }
 }

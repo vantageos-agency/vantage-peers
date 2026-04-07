@@ -33,6 +33,12 @@ export const addRagEntry = internalAction({
       namespace: args.namespace,
       key: args.memoryId,
       text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        namespace: args.namespace,
+        type: args.type,
+        memoryId: args.memoryId,
+      },
       filterValues: [
         { name: "namespace", value: args.namespace },
         { name: "type", value: args.type },
@@ -42,15 +48,6 @@ export const addRagEntry = internalAction({
     return null;
   },
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// markRagEntrySuperseded — update RAG entry filters to isLatest="false"
-// Called when a memory is soft-deleted or superseded by an "updates" relation.
-// Uses rag.add() with the same key to gracefully replace the entry's filters.
-// The old RAG entry becomes "replaced" status internally while the new one
-// (with isLatest="false") takes over — preventing it from appearing in searches
-// that filter on isLatest="true".
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // addFixPatternRagEntry — embed a fix pattern for semantic search
@@ -70,6 +67,11 @@ export const addFixPatternRagEntry = internalAction({
       namespace: FIX_PATTERNS_NAMESPACE,
       key: args.patternId,
       text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        sourceProject: args.sourceProject,
+        patternId: args.patternId,
+      },
       filterValues: [
         { name: "namespace", value: FIX_PATTERNS_NAMESPACE },
         { name: "type", value: "fixpattern" },
@@ -79,6 +81,10 @@ export const addFixPatternRagEntry = internalAction({
     return null;
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// markRagEntrySuperseded — re-index a memory with isLatest=false
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const markRagEntrySuperseded = internalAction({
   args: {
@@ -93,6 +99,12 @@ export const markRagEntrySuperseded = internalAction({
       namespace: args.namespace,
       key: args.memoryId,
       text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        namespace: args.namespace,
+        type: args.type,
+        memoryId: args.memoryId,
+      },
       filterValues: [
         { name: "namespace", value: args.namespace },
         { name: "type", value: args.type },

@@ -8,9 +8,11 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false,
-    "declaration": true,
-    "outDir": "./dist"
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "declaration": true
   },
   "include": ["server.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "dist"]
 }
