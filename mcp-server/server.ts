@@ -715,7 +715,7 @@ server.tool(
 		messageId: z.string().describe("Convex document ID of the broadcast message"),
 	},
 	async ({ messageId }) => {
-		const status = await convex.query(api.messages.listBroadcastStatus, {
+		const status = await convex.query("messages:listBroadcastStatus" as any, {
 			messageId,
 		});
 
@@ -2270,7 +2270,7 @@ server.tool(
 			.describe("Whether this mapping is active (default true)"),
 	},
 	async ({ repo, orchestrator, project, active }) => {
-		const id = await convex.mutation(api.githubRepoMapping.add, {
+		const id = await convex.mutation("githubRepoMapping:add" as any, {
 			repo,
 			orchestrator,
 			project,
@@ -2297,7 +2297,7 @@ server.tool(
 	"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.",
 	{},
 	async () => {
-		const mappings = await convex.query(api.githubRepoMapping.list, {});
+		const mappings = await convex.query("githubRepoMapping:list" as any, {});
 
 		return {
 			content: [
@@ -2323,7 +2323,7 @@ server.tool(
 			.describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
 	},
 	async ({ repo }) => {
-		const result = await convex.mutation(api.githubRepoMapping.remove, {
+		const result = await convex.mutation("githubRepoMapping:remove" as any, {
 			repo,
 		});
 
@@ -2370,13 +2370,13 @@ server.tool(
 	async ({ project, status, assignedTo, limit }) => {
 		let results;
 		if (assignedTo) {
-			results = await convex.query(api.issues.listByOrchestrator, {
+			results = await convex.query("issues:listByOrchestrator" as any, {
 				assignedOrchestrator: assignedTo,
 				status: status as any,
 				limit: limit ?? 50,
 			});
 		} else if (project) {
-			results = await convex.query(api.issues.listByProject, {
+			results = await convex.query("issues:listByProject" as any, {
 				project,
 				status: status as any,
 				limit: limit ?? 50,
@@ -2384,13 +2384,13 @@ server.tool(
 		} else if (status) {
 			// Use listByProject with a broad approach — fall back to listByOrchestrator
 			// For status-only queries, we query all and filter
-			results = await convex.query(api.issues.listByOrchestrator, {
+			results = await convex.query("issues:listByOrchestrator" as any, {
 				assignedOrchestrator: "sigma",
 				status: status as any,
 				limit: limit ?? 50,
 			});
 		} else {
-			results = await convex.query(api.issues.listByProject, {
+			results = await convex.query("issues:listByProject" as any, {
 				project: "",
 				limit: limit ?? 50,
 			});
@@ -2419,7 +2419,7 @@ server.tool(
 		issueNumber: z.number().int().describe("GitHub issue number"),
 	},
 	async ({ repo, issueNumber }) => {
-		const issue = await convex.query(api.issues.getByRepoNumber, {
+		const issue = await convex.query("issues:getByRepoNumber" as any, {
 			repo,
 			issueNumber,
 		});
@@ -2450,7 +2450,7 @@ server.tool(
 			.describe("New status for the issue"),
 	},
 	async ({ repo, issueNumber, status }) => {
-		await convex.mutation(api.issues.updateStatus, {
+		await convex.mutation("issues:updateStatus" as any, {
 			repo,
 			issueNumber,
 			status,
@@ -2481,7 +2481,7 @@ server.tool(
 		fixedBy: z.string().describe("Who fixed it — orchestrator name or person"),
 	},
 	async ({ repo, issueNumber, commitSha, fixedBy }) => {
-		await convex.mutation(api.issues.linkCommit, {
+		await convex.mutation("issues:linkCommit" as any, {
 			repo,
 			issueNumber,
 			commitSha,
@@ -2512,7 +2512,7 @@ server.tool(
 		verifiedBy: z.string().describe("Who verified the fix — orchestrator name or person"),
 	},
 	async ({ repo, issueNumber, verifiedBy }) => {
-		await convex.mutation(api.issues.verify, {
+		await convex.mutation("issues:verify" as any, {
 			repo,
 			issueNumber,
 			verifiedBy,
@@ -2543,7 +2543,7 @@ server.tool(
 			.describe("Filter stats to a specific project — omit for all projects"),
 	},
 	async ({ project }) => {
-		const stats = await convex.query(api.issues.getStats, {
+		const stats = await convex.query("issues:getStats" as any, {
 			project,
 		});
 
@@ -2578,7 +2578,7 @@ server.tool(
 		linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
 	},
 	async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds }) => {
-		const patternId = await convex.mutation(api.fixPatterns.create, {
+		const patternId = await convex.mutation("fixPatterns:create" as any, {
 			symptom,
 			rootCause,
 			tags: toArray(tags) ?? [],
@@ -2618,7 +2618,7 @@ server.tool(
 		commit: z.string().optional().describe("Git commit hash of this attempt"),
 	},
 	async ({ patternId, description, worked, why, createdBy, commit }) => {
-		const attemptId = await convex.mutation(api.fixPatterns.addAttempt, {
+		const attemptId = await convex.mutation("fixPatterns:addAttempt" as any, {
 			patternId: patternId as never,
 			description,
 			worked,
@@ -2650,7 +2650,7 @@ server.tool(
 		validatedFix: z.string().describe("Description of the validated fix"),
 	},
 	async ({ patternId, validatedFix }) => {
-		await convex.mutation(api.fixPatterns.validate, {
+		await convex.mutation("fixPatterns:validate" as any, {
 			patternId: patternId as never,
 			validatedFix,
 		});
@@ -2678,7 +2678,7 @@ server.tool(
 		limit: z.number().int().optional().describe("Max results to return (default 10)"),
 	},
 	async ({ query, limit }) => {
-		const results = await convex.action(api.search.searchFixPatterns, {
+		const results = await convex.action("search:searchFixPatterns" as any, {
 			query,
 			limit,
 		});
@@ -2707,7 +2707,7 @@ server.tool(
 	},
 	async ({ project, limit }) => {
 		if (project) {
-			const results = await convex.query(api.fixPatterns.listByProject, {
+			const results = await convex.query("fixPatterns:listByProject" as any, {
 				sourceProject: project,
 				limit,
 			});
@@ -2741,7 +2741,7 @@ server.tool(
 		issueId: z.string().describe("VantagePeers issue ID to link"),
 	},
 	async ({ patternId, issueId }) => {
-		await convex.mutation(api.fixPatterns.linkIssue, {
+		await convex.mutation("fixPatterns:linkIssue" as any, {
 			patternId: patternId as never,
 			issueId,
 		});
@@ -2769,7 +2769,7 @@ server.tool(
 		name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
 	},
 	async ({ name }) => {
-		const template = await convex.query(api.missionTemplates.getByName, { name });
+		const template = await convex.query("missionTemplates:getByName" as any, { name });
 
 		return {
 			content: [
@@ -2807,7 +2807,7 @@ server.tool(
 		isDefault: z.boolean().optional().describe("Mark as the default template for its type"),
 	},
 	async ({ name, description, steps, createdBy, isDefault }) => {
-		const templateId = await convex.mutation(api.missionTemplates.upsert, {
+		const templateId = await convex.mutation("missionTemplates:upsert" as any, {
 			name,
 			description,
 			steps,
@@ -2863,7 +2863,7 @@ server.tool(
 			),
 	},
 	async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
-		const id = await convex.mutation(api.errorMonitor.addDeployment, {
+		const id = await convex.mutation("errorMonitor:addDeployment" as any, {
 			name,
 			deploymentUrl,
 			deployKeyEnvVar,
@@ -2898,7 +2898,7 @@ server.tool(
 			.describe("Name of the deployment to deactivate — e.g. 'efficient-guineapig-356'"),
 	},
 	async ({ name }) => {
-		await convex.mutation(api.errorMonitor.removeDeployment, { name });
+		await convex.mutation("errorMonitor:removeDeployment" as any, { name });
 		return {
 			content: [
 				{
@@ -2935,7 +2935,7 @@ server.tool(
 			.describe("Maximum number of errors to return (default 50)"),
 	},
 	async ({ deployment, limit }) => {
-		const errors = await convex.query(api.errorMonitor.listErrors, {
+		const errors = await convex.query("errorMonitor:listErrors" as any, {
 			deployment,
 			limit: limit ?? 50,
 		});
@@ -2963,7 +2963,7 @@ server.tool(
 			.describe("Convex document ID of the errorLogs entry"),
 	},
 	async ({ errorId }) => {
-		const error = await convex.query(api.errorMonitor.getError, {
+		const error = await convex.query("errorMonitor:getError" as any, {
 			errorId: errorId as any,
 		});
 		return {
