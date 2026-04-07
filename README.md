@@ -11,7 +11,7 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## What It Is
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 72 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 75 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Prerequisites
 
@@ -83,7 +83,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 Claude Code (Agent 1) ──┐
 Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
 Claude Code (Agent 3) ──┘        |
-                          72 MCP Tools
+                          75 MCP Tools
 ```
 
 One Convex deployment. One MCP server process per agent. All agents share the same database.
@@ -369,7 +369,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) -- install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) -- two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) -- orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 72 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 75 MCP tools
 
 ## Contributing
 

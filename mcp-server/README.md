@@ -2,7 +2,7 @@
 
 MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
 
-72 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session.
+75 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session.
 
 ## Quick start
 
@@ -53,10 +53,10 @@ Add to `~/.claude.json` or project `.claude/settings.json`:
 
 The server also reads `CONVEX_URL` from `.env.local` in the parent directory if not set via environment.
 
-## Tools (72)
+## Tools (75)
 
-### Memory (5)
-`store_memory`, `recall`, `list_memories`, `soft_delete_memory`, `store_episode`
+### Memory (6)
+`store_memory`, `recall`, `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
 
 ### Profiles (3)
 `get_profile`, `update_profile`, `list_peers`
@@ -79,8 +79,8 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ### Briefing Notes (2)
 `create_briefing_note`, `list_briefing_notes`
 
-### Search / RAG (1)
-`search_fix_patterns`
+### Search / RAG (3)
+`search_fix_patterns`, `text_search`, `hybrid_search`
 
 ### Issues (6)
 `get_issue`, `list_issues`, `update_issue_status`, `verify_issue`, `issue_stats`, `link_commit_to_issue`
