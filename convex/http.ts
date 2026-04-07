@@ -138,8 +138,9 @@ http.route({
 				limit: 200,
 			});
 			const missionName = `Fix #${issue.number} — ${issue.title}`.slice(0, 100);
+			const issuePattern = new RegExp(`#${issue.number}\\b`);
 			const alreadyExists = existingMissions.some((m: any) =>
-				m.name?.includes(`#${issue.number}`)
+				m.name ? issuePattern.test(m.name) : false
 			);
 			if (alreadyExists) {
 				return new Response("OK - mission exists", { status: 200 });
@@ -275,8 +276,9 @@ http.route({
 					project,
 					limit: 100,
 				});
+				const commentIssuePattern = new RegExp(`#${issue.number}\\b`);
 				const missionExists = existingMissions.some(
-					(m: any) => m.name?.includes(`#${issue.number}`)
+					(m: any) => m.name ? commentIssuePattern.test(m.name) : false
 				);
 
 				if (!missionExists && issue.state !== "closed") {
