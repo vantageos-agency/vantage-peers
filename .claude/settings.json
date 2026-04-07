@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/session-start-sigma.py"
+            "command": "python3 .claude/hooks/session-start-sigma.py"
           }
         ]
       }
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/enforce-component-brief.py",
+            "command": "python3 .claude/hooks/enforce-component-brief.py",
             "timeout": 5
           }
         ]
@@ -43,7 +43,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/enforce-task-before-instructions.py",
+            "command": "python3 .claude/hooks/enforce-task-before-instructions.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/enforce-signature.py",
             "timeout": 5
           }
         ]
@@ -53,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/block-defer-issues.py",
+            "command": "python3 .claude/hooks/block-defer-issues.py",
             "timeout": 5
           }
         ]
@@ -65,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/check-french-diacritics.py",
+            "command": "python3 .claude/hooks/check-french-diacritics.py",
             "timeout": 10
           }
         ]
@@ -75,7 +85,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/elpi/coding/vantage-memory/.claude/hooks/check-file-size.py",
+            "command": "python3 .claude/hooks/check-file-size.py",
             "timeout": 5
           }
         ]
