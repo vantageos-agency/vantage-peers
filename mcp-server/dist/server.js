@@ -225,7 +225,7 @@ server.tool("recall", "Semantic vector search over VantagePeers. Returns top K m
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("text_search", "BM25 full-text keyword search over memories. Use for exact keyword matching when semantic recall isn't specific enough.", {
     query: z.string().describe("Search query text"),
-    namespace: z.string().optional().describe("Namespace filter (e.g. 'global', 'project/vantage-memory')"),
+    namespace: z.string().optional().describe("Namespace filter (e.g. 'global', 'project/my-project')"),
     type: memoryTypeSchema.optional().describe("Filter by memory type"),
     limit: z.number().int().min(1).max(50).optional().default(10).describe("Max results"),
 }, async ({ query, namespace, type, limit }) => {
