@@ -28,18 +28,17 @@ Checking prerequisites for VantagePeers...
 | Prerequisite | Check command | Minimum version | Fix instruction |
 |---|---|---|---|
 | Node.js | `node --version` | 18.0.0 | "Install Node.js 18+: https://nodejs.org" |
-| Bun | `bun --version` | 1.0.0 | "Install Bun: curl -fsSL https://bun.sh/install \| bash" |
 | Convex CLI | `npx convex --version` | 1.0.0 | "npx will download it automatically on first use" |
 
 **Success output:**
 ```
-Prerequisites OK: Node 22.x, Bun 1.1.x, Convex CLI 1.x
+Prerequisites OK: Node 22.x, Convex CLI 1.x
 ```
 
 **Failure output (example):**
 ```
-MISSING: Bun is not installed.
-Fix: curl -fsSL https://bun.sh/install | bash
+MISSING: Node.js is not installed or below v18.
+Fix: Install Node.js 18+: https://nodejs.org
 Then restart your terminal and re-run /setup-memory.
 ```
 
@@ -145,8 +144,8 @@ Where should the MCP server be registered?
 {
   "mcpServers": {
     "vantage-peers": {
-      "command": "bun",
-      "args": ["<absolute-path-to>/vantage-peers/mcp-server/server.ts"],
+      "command": "npx",
+      "args": ["-y", "vantage-peers-mcp"],
       "env": {
         "CONVEX_URL": "https://<deployment>.convex.cloud"
       }
@@ -156,7 +155,6 @@ Where should the MCP server be registered?
 ```
 
 The skill auto-fills:
-- `<absolute-path-to>` from `pwd`
 - `<deployment>` from the CONVEX_URL parsed in Step 2
 
 **Verification:**
@@ -167,7 +165,7 @@ The skill auto-fills:
 **Expected output:**
 ```
 MCP server configured in .claude/settings.json
-  Server: bun /home/user/vantage-peers/mcp-server/server.ts
+  Server: npx -y vantage-peers-mcp
   Convex: https://cool-animal-123.convex.cloud
 
 Restart Claude Code for the MCP server to become available.
@@ -410,7 +408,7 @@ Running final verification...
 ============================================
 
   Deployment:  https://cool-animal-123.convex.cloud
-  MCP Server:  /home/user/vantage-peers/mcp-server/server.ts
+  MCP Server:  npx -y vantage-peers-mcp
   Identity:    pi / pi-laptop (or: single-agent mode)
 
   Verified:
@@ -636,7 +634,7 @@ This means a user can run `/setup-memory` at any time to verify or fix their con
 | No Convex account | `npx convex dev` prompts for login, user doesn't complete | "Complete the Convex login at https://auth.convex.dev, then re-run /setup-memory" |
 | Invalid API key | `recall` returns embedding error in Convex logs | "Check your key at https://platform.openai.com/api-keys. Re-set with: npx convex env set AI_GATEWAY_API_KEY=sk-..." |
 | Wrong CONVEX_URL | MCP tools fail with connection errors | "Update CONVEX_URL in your settings.json to match: npx convex env get CONVEX_URL" |
-| Bun not in PATH | MCP server fails to start | "Add Bun to your PATH: export PATH=$HOME/.bun/bin:$PATH" |
+| npx not found | MCP server fails to start | "Ensure Node.js 18+ is installed and npx is in your PATH" |
 | Port conflict | `npx convex dev` fails | "Another Convex dev process may be running. Kill it with: pkill -f 'convex dev'" |
 | Stale embeddings | `recall` returns nothing after store | "Embeddings take 2-5s to generate. Wait and retry. If persistent, check npx convex logs" |
 | Permission denied on hook | Session hook doesn't run | "chmod +x .claude/hooks/session-start.py" |
@@ -755,8 +753,8 @@ CONVEX_URL=https://your-deployment-name.convex.cloud
 {
   "mcpServers": {
     "vantage-peers": {
-      "command": "bun",
-      "args": ["/absolute/path/to/vantage-peers/mcp-server/server.ts"],
+      "command": "npx",
+      "args": ["-y", "vantage-peers-mcp"],
       "env": {
         "CONVEX_URL": "https://your-deployment.convex.cloud"
       }

@@ -311,7 +311,6 @@ Found {n} results:
 **Workflow:**
 
 **Step 1 -- Environment check:**
-- Verify Bun is installed (`bun --version`)
 - Verify Node.js 18+ (`node --version`)
 - Check if `.claude/settings.json` exists
 - Check if `CONVEX_URL` is set anywhere
@@ -323,14 +322,13 @@ Found {n} results:
   - No: guide them through `npx convex dev` setup
 
 **Step 3 -- MCP server configuration:**
-- Determine the absolute path to `mcp-server/server.ts`
 - Write or update `.claude/settings.json` with the MCP server block:
   ```json
   {
     "mcpServers": {
       "vantage-peers": {
-        "command": "bun",
-        "args": ["{path}/mcp-server/server.ts"],
+        "command": "npx",
+        "args": ["-y", "vantage-peers-mcp"],
         "env": {
           "CONVEX_URL": "{url}"
         }
@@ -504,8 +502,8 @@ if __name__ == "__main__":
   },
   "mcpServers": {
     "vantage-peers": {
-      "command": "bun",
-      "args": ["{{PLUGIN_PATH}}/mcp-server/server.ts"],
+      "command": "npx",
+      "args": ["-y", "vantage-peers-mcp"],
       "env": {
         "CONVEX_URL": "{{CONVEX_URL}}"
       }
@@ -612,15 +610,17 @@ list_peers:     (no args)
 
 ## 7. Installation Flow
 
-### 7.1 Automated (recommended)
+### 7.1 Automated (planned)
 
 ```bash
 npx vantage-peers init
 ```
 
-The installer performs these steps:
+> **Note:** This installer command is planned but not yet implemented. Use the manual steps below or run `/setup-memory` inside Claude Code.
 
-1. **Detect environment** -- checks for Bun, Node.js, existing `.claude/` directory
+The installer will perform these steps:
+
+1. **Detect environment** -- checks for Node.js, existing `.claude/` directory
 2. **Prompt for config** -- asks for CONVEX_URL, role, instance name
 3. **Copy files:**
    - `agents/*.md` -> `.claude/agents/`
