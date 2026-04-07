@@ -201,6 +201,26 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_memory
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_memory",
+	"Fetch a single memory by its ID. Returns full memory content including relations and episode data.",
+	{
+		memoryId: z.string().describe("Memory document ID"),
+	},
+	async ({ memoryId }) => {
+		const memory = await convex.query("memories:getMemory" as any, {
+			memoryId,
+		});
+		return {
+			content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: recall
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -243,6 +263,62 @@ server.tool(
 					text: JSON.stringify(results, null, 2),
 				},
 			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: text_search
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"text_search",
+	"BM25 full-text keyword search over memories. Use for exact keyword matching when semantic recall isn't specific enough.",
+	{
+		query: z.string().describe("Search query text"),
+		namespace: z.string().optional().describe("Namespace filter (e.g. 'global', 'project/vantage-memory')"),
+		type: memoryTypeSchema.optional().describe("Filter by memory type"),
+		limit: z.number().int().min(1).max(50).optional().default(10).describe("Max results"),
+	},
+	async ({ query, namespace, type, limit }) => {
+		const results = await convex.action("search:textSearch" as any, {
+			query,
+			namespace,
+			type,
+			limit: limit ?? 10,
+		});
+		return {
+			content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: hybrid_search
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"hybrid_search",
+	"Combined vector + BM25 search using Reciprocal Rank Fusion (RRF). Best of both worlds: semantic understanding + keyword precision.",
+	{
+		query: z.string().describe("Search query text"),
+		namespace: z.string().optional().describe("Namespace filter"),
+		type: memoryTypeSchema.optional().describe("Filter by memory type"),
+		limit: z.number().int().min(1).max(50).optional().default(10).describe("Max results"),
+		vectorWeight: z.number().min(0).max(1).optional().describe("Weight for vector results in RRF (default: 0.5)"),
+		textWeight: z.number().min(0).max(1).optional().describe("Weight for text results in RRF (default: 0.5)"),
+	},
+	async ({ query, namespace, type, limit, vectorWeight, textWeight }) => {
+		const results = await convex.action("search:hybridSearch" as any, {
+			query,
+			namespace,
+			type,
+			limit: limit ?? 10,
+			vectorWeight,
+			textWeight,
+		});
+		return {
+			content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 		};
 	},
 );
