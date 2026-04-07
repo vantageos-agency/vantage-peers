@@ -86,31 +86,18 @@ http.route({
 		if (eventType === "issues" && action === "opened") {
 			const issue = payload.issue;
 
-			// Upsert issue BEFORE creating task
+			// 1. Upsert issue record
 			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
 
+			// 2. Determine priority from labels
 			const isUrgent = issue.labels?.some(
 				(l: any) =>
 					l.name.toLowerCase().includes("urgent") ||
 					l.name.toLowerCase().includes("p0"),
 			);
-			await ctx.runMutation(api.tasks.create, {
-				title: `[GitHub #${issue.number}] ${issue.title}`,
-				description: `${issue.body || "No description"}\n\nURL: ${issue.html_url}`,
-				assignedTo: orchestrator as any,
-				project,
-				priority: isUrgent ? "urgent" : "high",
-				status: "todo",
-				createdBy: "system",
-				tags: ["github", "issue"],
-			});
-			await ctx.runMutation(api.messages.sendMessage, {
-				from: "system",
-				channel: orchestrator,
-				content: `[GitHub] New issue #${issue.number}: ${issue.title} — ${issue.html_url}`,
-			});
+			const priority = isUrgent ? "urgent" : "high";
 
-			// Post acknowledgment comment on GitHub
+			// 3. Post GitHub acknowledgment comment (T0)
 			const githubToken = process.env.GITHUB_TOKEN;
 			if (githubToken) {
 				const [owner, repo] = repoFullName.split("/");
@@ -124,46 +111,80 @@ http.route({
 							Accept: "application/vnd.github.v3+json",
 						},
 						body: JSON.stringify({
-							body: `🔍 @${issue.user.login} **Investigating** — assigned to \`${orchestrator}\` (AI orchestrator). Mission created with resolution protocol.\n\nOrchestrator: ${orchestrator.charAt(0).toUpperCase() + orchestrator.slice(1)} — VantageOS Team | ${new Date().toISOString().split("T")[0]}`,
+							body: `Investigating — assigned to \`${orchestrator}\` (AI orchestrator). Mission created with resolution protocol.\n\nOrchestrator: ${orchestrator.charAt(0).toUpperCase() + orchestrator.slice(1)} — VantageOS Team | ${new Date().toISOString().split("T")[0]}`,
 						}),
 					},
 				);
 			}
 
-			// Create mission + 12 tasks from issue-resolution-v2 template
+			// 4. Load default mission template
 			const template = await ctx.runQuery(api.missionTemplates.getByName, {
 				name: "issue-resolution-v3",
 			});
-			if (template !== null) {
-				const missionId: Id<"missions"> = await ctx.runMutation(
-					api.missions.create,
-					{
-						name: `Fix #${issue.number} — ${issue.title}`,
-						project,
-						pilot: orchestrator as any,
-						priority: isUrgent ? "urgent" : "high",
-						createdBy: "system",
-						agents: [orchestrator],
-						status: "execute",
-					},
-				);
 
-				for (let i = 0; i < template.steps.length; i++) {
-					const step = template.steps[i];
-					await ctx.runMutation(api.tasks.create, {
-						title: `[#${issue.number}] T${i + 1} — ${step.title}`,
-						description: `${step.description}\n\nIssue: ${issue.html_url}\n\nIssue author: @${issue.user.login}`,
-						assignedTo: orchestrator as any,
-						project,
-						priority: isUrgent ? "urgent" : "high",
-						// T1 (Acknowledge) is already done — the comment was posted above
-						status: i === 0 ? "done" : "todo",
-						createdBy: "system",
-						missionId,
-						tags: [...(step.tags ?? []), "github", "irp"],
-					});
-				}
+			// 5. Guard: no template or empty steps — notify and exit
+			if (template === null || template.steps.length === 0) {
+				await ctx.runMutation(api.messages.sendMessage, {
+					from: "system",
+					channel: orchestrator,
+					content: `[GitHub] New issue #${issue.number}: ${issue.title} — template issue-resolution-v3 not found, no mission created. ${issue.html_url}`,
+				});
+				return new Response("OK - no template", { status: 200 });
 			}
+
+			// 6. Idempotency: skip if mission already exists for this issue
+			const existingMissions = await ctx.runQuery(api.missions.list, {
+				project,
+				limit: 200,
+			});
+			const missionName = `Fix #${issue.number} — ${issue.title}`.slice(0, 100);
+			const alreadyExists = existingMissions.some((m: any) =>
+				m.name?.includes(`#${issue.number}`)
+			);
+			if (alreadyExists) {
+				return new Response("OK - mission exists", { status: 200 });
+			}
+
+			// 7. Create mission
+			const missionId: Id<"missions"> = await ctx.runMutation(
+				api.missions.create,
+				{
+					name: missionName,
+					project,
+					pilot: orchestrator as any,
+					priority,
+					createdBy: "system",
+					agents: [orchestrator],
+					status: "execute",
+				},
+			);
+
+			// 8. Create tasks from template steps (T0-based numbering)
+			for (let i = 0; i < template.steps.length; i++) {
+				const step = template.steps[i];
+				const isLastStep = i === template.steps.length - 1;
+				const assignee = isLastStep ? "eta" : (orchestrator as any);
+
+				await ctx.runMutation(api.tasks.create, {
+					title: `[#${issue.number}] T${i} — ${step.title}`,
+					description: `${step.description}\n\nIssue: ${issue.html_url}\nIssue author: @${issue.user.login}\nRepo: ${repoFullName}`,
+					assignedTo: assignee,
+					project,
+					priority,
+					// T0 (Acknowledge) is already done — the comment was posted above
+					status: i === 0 ? "done" : "todo",
+					createdBy: "system",
+					missionId,
+					tags: [...(step.tags ?? []), "github", "irp"],
+				});
+			}
+
+			// 9. Notify orchestrator after mission is fully built
+			await ctx.runMutation(api.messages.sendMessage, {
+				from: "system",
+				channel: orchestrator,
+				content: `[GitHub] New issue #${issue.number}: ${issue.title}. Mission created with ${template.steps.length} IRP tasks (T0-T${template.steps.length - 1}). Last task assigned to Eta for review. ${issue.html_url}`,
+			});
 		}
 
 		// --- Issue edited ---
@@ -274,10 +295,13 @@ http.route({
 
 					for (let i = 0; i < template.steps.length; i++) {
 						const step = template.steps[i];
+						const isLastStep = i === template.steps.length - 1;
+						const stepAssignee = isLastStep ? "eta" : (orchestrator as any);
+
 						await ctx.runMutation(api.tasks.create, {
-							title: `[#${issue.number}] T${i + 1} — ${step.title}`,
-							description: `${step.description}\n\nIssue: ${issue.html_url}\n\nIssue author: @${issue.user?.login || "unknown"}`,
-							assignedTo: orchestrator as any,
+							title: `[#${issue.number}] T${i} — ${step.title}`,
+							description: `${step.description}\n\nIssue: ${issue.html_url}\nIssue author: @${issue.user?.login || "unknown"}\nRepo: ${repoFullName}`,
+							assignedTo: stepAssignee,
 							project,
 							priority: "high",
 							status: i === 0 ? "done" : "todo",

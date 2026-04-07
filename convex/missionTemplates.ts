@@ -91,7 +91,7 @@ export const seed = internalMutation({
 	returns: v.id("missionTemplates"),
 	handler: async (ctx) => {
 		const now = Date.now();
-		const name = "issue-resolution-v2";
+		const name = "issue-resolution-v3";
 
 		const steps = [
 			{
@@ -107,52 +107,28 @@ export const seed = internalMutation({
 				tags: ["research", "kb"],
 			},
 			{
-				title: "Verify Config",
+				title: "Identify & Run Tests",
 				description:
-					"Before touching code, verify: (1) Webhook URLs (Polar, Clerk, GitHub) point to correct endpoints. (2) Env vars in prod match expected values. (3) DNS/domains are correct (no stale domains). (4) Deploy keys are valid. If config is the root cause, fix it here — no code change needed.",
-				tags: ["config", "verification"],
-			},
-			{
-				title: "Identify Tests",
-				description:
-					"Grep test suites related to the affected component or feature. List all relevant test files and describe what they cover.",
-				tags: ["testing", "analysis"],
-			},
-			{
-				title: "Run Existing Tests",
-				description:
-					"Run identified tests and document PASS/FAIL. If the issue involves an external API (fal.ai, OpenAI, Polar, Clerk): run REAL integration tests with actual API calls, not just unit tests. Source-verification tests alone do NOT prove the bug exists or is fixed. For fal.ai: run node tests/quick-fal-test.js. For Polar: verify with webhook redeliver. For OpenAI: run integration test with real API call.",
-				tags: ["testing"],
-			},
-			{
-				title: "Evaluate Coverage",
-				description:
-					"Determine whether the existing tests cover the reported bug scenario. Identify any missing test scenarios that would catch the regression.",
+					"Grep test suites related to the affected component. Run identified tests and document PASS/FAIL. If the issue involves an external API: run REAL integration tests with actual API calls, not just unit tests.",
 				tags: ["testing", "analysis"],
 			},
 			{
 				title: "Write Missing Tests",
 				description:
-					"Write a test that reproduces the bug. The test MUST FAIL against the current code (this proves the bug exists). If the test PASSES: you have NOT captured the bug — rewrite the test. Commit the failing test. completionNote MUST contain \"X tests FAIL\" as proof. After the fix (T7): this test must PASS.",
+					"Write a test that reproduces the bug. The test MUST FAIL against the current code (this proves the bug exists). Commit the failing test. completionNote MUST contain \"X tests FAIL\" as proof.",
 				tags: ["testing", "tdd"],
 			},
 			{
 				title: "Fix",
 				description:
-					"Delegate the fix to the appropriate specialist agent. The test written in T6 MUST PASS after the fix is applied. No fix is accepted if the T6 test still fails. completionNote MUST contain \"X tests PASS (including regression test)\" as proof.",
+					"Delegate the fix to the appropriate specialist agent. The test written in T3 MUST PASS after the fix is applied. No fix is accepted if the T3 test still fails. completionNote MUST contain \"X tests PASS (including regression test)\" as proof.",
 				tags: ["implementation"],
 			},
 			{
 				title: "Run ALL Tests",
 				description:
-					"Run the full test suite. Zero regressions are acceptable. Document any failures and resolve them before proceeding. [Auto-comment: posted on GitHub when this step is completed]",
+					"Run the full test suite. Zero regressions are acceptable. Document any failures and resolve them before proceeding.",
 				tags: ["testing", "qa"],
-			},
-			{
-				title: "Code Review",
-				description:
-					"Run the code-reviewer agent on the diff. Address all blocking feedback. Document the review outcome and any changes made.",
-				tags: ["review", "quality"],
 			},
 			{
 				title: "Deploy Dev + Push",
@@ -163,14 +139,14 @@ export const seed = internalMutation({
 			{
 				title: "Verification Preview",
 				description:
-					"Test the fix on the preview deployment. Confirm the original issue is resolved. Request human confirmation before closing. [Auto-comment: posted on GitHub when this step is completed]",
+					"Test the fix on the preview deployment. Confirm the original issue is resolved. Request human confirmation before closing.",
 				tags: ["verification", "human-review"],
 			},
 			{
-				title: "Update KB",
+				title: "Code Review",
 				description:
-					"Store the fix pattern in VantagePeers fixPatterns table. Include symptom, rootCause, validatedFix, files, tags, and stack. Link to this issue.",
-				tags: ["kb", "documentation"],
+					"Run the code-reviewer agent on the diff. Address all blocking feedback. Document the review outcome and any changes made. Update KB: store the fix pattern in VantagePeers fixPatterns table.",
+				tags: ["review", "quality"],
 			},
 		];
 
@@ -183,7 +159,7 @@ export const seed = internalMutation({
 			await ctx.db.patch(existing._id, {
 				steps,
 				description:
-					"Issue Resolution Protocol v2 — 13-step structured process for investigating, fixing, and documenting GitHub issues.",
+					"Issue Resolution Protocol v3 — 9-step structured process (T0-T8) for investigating, fixing, and documenting GitHub issues.",
 				isDefault: true,
 				updatedAt: now,
 			});
@@ -193,7 +169,7 @@ export const seed = internalMutation({
 		return await ctx.db.insert("missionTemplates", {
 			name,
 			description:
-				"Issue Resolution Protocol v2 — 13-step structured process for investigating, fixing, and documenting GitHub issues.",
+				"Issue Resolution Protocol v3 — 9-step structured process (T0-T8) for investigating, fixing, and documenting GitHub issues.",
 			steps,
 			isDefault: true,
 			createdBy: "system",
