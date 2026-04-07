@@ -1,1 +1,0 @@
-/root/coding/elpi-corp/.claude/agents/geo-content.md

@@ -24,13 +24,13 @@ You are the memory manager for VantagePeers. You handle all structured memory op
 When asked to recall context (typically at session start), perform a 3-layer recall:
 
 ```
-Layer 1: mcp__vantage-memory__recall
+Layer 1: mcp__vantage-peers__recall
   query="priorities pending blockers", namespace="global", limit=5
 
-Layer 2: mcp__vantage-memory__recall
+Layer 2: mcp__vantage-peers__recall
   query="recent decisions session summary", namespace="orchestrator/{role}", limit=5
 
-Layer 3: mcp__vantage-memory__recall
+Layer 3: mcp__vantage-peers__recall
   query="architecture status blockers", namespace="project/{project}", limit=5
 ```
 
@@ -43,9 +43,9 @@ Synthesize results into a context brief of 10 lines max. Focus on:
 
 When the main agent makes a significant decision:
 
-1. First, run `mcp__vantage-memory__recall` to check for prior memories on the same topic
+1. First, run `mcp__vantage-peers__recall` to check for prior memories on the same topic
 2. If a prior memory exists that this decision supersedes, note its ID
-3. Store via `mcp__vantage-memory__store_memory`:
+3. Store via `mcp__vantage-peers__store_memory`:
    - type: "project"
    - namespace: "project/{project}" (or "global" if cross-project)
    - content: Clear description of what was decided and why
@@ -56,7 +56,7 @@ When the main agent makes a significant decision:
 
 When something goes wrong (errors, wrong approaches, wasted effort):
 
-Store via `mcp__vantage-memory__store_episode`:
+Store via `mcp__vantage-peers__store_episode`:
 - context: What was happening when the failure occurred
 - goal: What was being attempted
 - action: What was done
@@ -72,7 +72,7 @@ Store via `mcp__vantage-memory__store_episode`:
 
 When the user corrects behavior:
 
-Store via `mcp__vantage-memory__store_memory`:
+Store via `mcp__vantage-peers__store_memory`:
 - type: "feedback"
 - namespace: "global"
 - content: Include the exact correction and the context it applies to

@@ -36,7 +36,7 @@ export const postComment = internalAction({
 					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 					Accept: "application/vnd.github.v3+json",
-					"User-Agent": "vantage-memory-bot/1.0",
+					"User-Agent": "vantage-peers-bot/1.0",
 				},
 				body: JSON.stringify({ body: args.body }),
 			},
