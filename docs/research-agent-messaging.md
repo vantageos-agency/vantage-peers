@@ -228,7 +228,7 @@ LinkedIn extended its existing messaging infrastructure as an agent orchestratio
 
 ### 1.9 VantagePeers Messaging Layer (this project)
 
-**Source:** `/root/coding/vantage-memory/convex/messages.ts`, `/root/coding/vantage-memory/convex/schema.ts`
+**Source:** `convex/messages.ts`, `convex/schema.ts`
 
 **How it works:**
 Messages are stored in Convex cloud (`messages` table). Each send creates one `messages` row and one `messageReceipts` row per recipient. The receipt row carries: `recipient` (role), `recipientInstanceId` (specific machine instance), and `readAt` (timestamp, null until read).

@@ -393,15 +393,7 @@ export const complete = mutation({
 				const dateStr = new Date().toISOString().split("T")[0];
 				const orch = task.assignedTo;
 				const orchCapitalized = orch.charAt(0).toUpperCase() + orch.slice(1);
-				const teamMap: Record<string, string> = {
-					omega: "VantageOS Team Dev",
-					sigma: "VantageOS Team Infra",
-					tau: "VantageOS Team Frontend",
-					phi: "VantageOS Team Product",
-					pi: "VantageOS Team Lead",
-				};
-				const team = teamMap[orch] ?? "VantageOS Team";
-				const signature = `Orchestrator: ${orchCapitalized} — ${team} | ${dateStr}`;
+				const signature = `Orchestrator: ${orchCapitalized} | ${dateStr}`;
 				let commentBody: string | null = null;
 
 				if (stepNumber === 6) {

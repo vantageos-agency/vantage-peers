@@ -635,7 +635,7 @@ server.tool("list_broadcast_status", "Show who read a broadcast message and who 
 // Tool: create_task
 // ─────────────────────────────────────────────────────────────────────────────
 const assigneeSchema = z
-    .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"])
+    .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
     .describe("Who the task is assigned to");
 const prioritySchema = z
     .enum(["urgent", "high", "medium", "low"])
@@ -643,7 +643,7 @@ const prioritySchema = z
 const taskStatusSchema = z
     .enum(["todo", "in_progress", "review", "blocked", "done"])
     .describe("Task status");
-server.tool("create_task", "Create a task in VantagePeers. Tasks are assigned to an orchestrator or Laurent, " +
+server.tool("create_task", "Create a task in VantagePeers. Tasks are assigned to an orchestrator " +
     "with priority and status tracking. Optionally link to a project or mission.", {
     title: z.string().describe("Task title"),
     description: z.string().optional().describe("Detailed task description"),
@@ -1155,7 +1155,7 @@ server.tool("create_briefing_note", "Create a briefing note — a structured rec
         .describe("Topic category — e.g. 'architecture', 'revenue', 'product'"),
     participants: z
         .union([z.array(z.string()), z.string()])
-        .describe("Who participated — e.g. ['pi', 'laurent'] or 'pi'"),
+        .describe("Who participated — e.g. ['pi', 'sigma'] or 'pi'"),
     content: z.string().describe("Full briefing content"),
     decisions: flexArrayOptional
         .describe("Decisions made during the briefing"),
@@ -1308,7 +1308,7 @@ server.tool("create_recurring_task", "Create a recurring task that auto-creates 
     "Uses cron expressions: '0 9 * * *' = daily 9am, '0 9 * * 1' = Monday 9am, '*/30 * * * *' = every 30min.", {
     title: z.string().describe("Task title — created each time the cron fires"),
     description: z.string().optional().describe("Task description"),
-    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"]).describe("Who gets the created tasks"),
+    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).describe("Who gets the created tasks"),
     priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
     project: z.string().optional().describe("Project name"),
     tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1334,7 +1334,7 @@ server.tool("create_recurring_task", "Create a recurring task that auto-creates 
 // Tool: list_recurring_tasks
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_recurring_tasks", "List recurring task templates. Filter by assignee or active status.", {
-    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"]).optional().describe("Filter by assignee"),
+    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).optional().describe("Filter by assignee"),
     active: z.boolean().optional().describe("Filter by active status"),
     limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 }, async ({ assignedTo, active, limit }) => {
@@ -1569,8 +1569,8 @@ const coreTeamSchema = z
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_bu
 // ─────────────────────────────────────────────────────────────────────────────
-server.tool("create_bu", "Create a new ElPi Corp business unit. Captures strategy, business model, team, and KPIs. " +
-    "managementFee defaults to 10 (ElPi Corp takes 10% of revenue).", {
+server.tool("create_bu", "Create a new business unit. Captures strategy, business model, team, and KPIs. " +
+    "managementFee defaults to 10 (percentage of revenue).", {
     name: z.string().describe("Business unit name — e.g. 'VantagePeers'"),
     description: z.string().describe("Short description of the BU"),
     purpose: z.string().describe("Why this BU exists — strategic purpose"),
@@ -1592,7 +1592,7 @@ server.tool("create_bu", "Create a new ElPi Corp business unit. Captures strateg
         .number()
         .optional()
         .default(10)
-        .describe("ElPi Corp management fee % (default 10)"),
+        .describe("Management fee percentage (default 10)"),
 }, async ({ name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
     const buId = await convex.mutation("businessUnits:create", {
         name,
@@ -2194,10 +2194,10 @@ server.tool("add_deployment", "Register a Convex deployment for proactive error 
     "holding the admin deploy key for that deployment. Once registered, the cron polls it every 5 minutes.", {
     name: z
         .string()
-        .describe("Short unique name for this deployment — e.g. 'efficient-guineapig-356'"),
+        .describe("Short unique name for this deployment — e.g. 'your-deployment-123'"),
     deploymentUrl: z
         .string()
-        .describe("Full Convex deployment URL — e.g. 'https://efficient-guineapig-356.convex.cloud'"),
+        .describe("Full Convex deployment URL — e.g. 'https://your-deployment-123.convex.cloud'"),
     deployKeyEnvVar: z
         .string()
         .describe("Name of the Convex env var holding the admin deploy key — e.g. 'DEPLOY_KEY_GUINEAPIG'"),
@@ -2230,7 +2230,7 @@ server.tool("add_deployment", "Register a Convex deployment for proactive error 
 server.tool("remove_deployment", "Deactivate a monitored deployment. The deployment record is preserved but polling stops.", {
     name: z
         .string()
-        .describe("Name of the deployment to deactivate — e.g. 'efficient-guineapig-356'"),
+        .describe("Name of the deployment to deactivate — e.g. 'your-deployment-123'"),
 }, async ({ name }) => {
     await convex.mutation("errorMonitor:removeDeployment", { name });
     return {

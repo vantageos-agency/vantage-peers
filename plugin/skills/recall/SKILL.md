@@ -17,7 +17,7 @@ Quick semantic search across VantagePeers.
    - If the query mentions a project name -> namespace="project/{name}"
    - If the query mentions an agent/orchestrator -> namespace="orchestrator/{agent}"
    - Default -> namespace="global"
-3. Call `mcp__vantage-memory__recall` query={parsed}, namespace={determined}, limit=5
+3. Call `mcp__vantage-peers__recall` query={parsed}, namespace={determined}, limit=5
 4. Display results with metadata
 5. If results reference related memories, offer to fetch those too
 

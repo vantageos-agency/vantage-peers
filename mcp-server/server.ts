@@ -811,7 +811,7 @@ server.tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const assigneeSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
 	.describe("Who the task is assigned to");
 
 const prioritySchema = z
@@ -824,7 +824,7 @@ const taskStatusSchema = z
 
 server.tool(
 	"create_task",
-	"Create a task in VantagePeers. Tasks are assigned to an orchestrator or Laurent, " +
+	"Create a task in VantagePeers. Tasks are assigned to an orchestrator " +
 		"with priority and status tracking. Optionally link to a project or mission.",
 	{
 		title: z.string().describe("Task title"),
@@ -1524,7 +1524,7 @@ server.tool(
 			.describe("Topic category — e.g. 'architecture', 'revenue', 'product'"),
 		participants: z
 			.union([z.array(z.string()), z.string()])
-			.describe("Who participated — e.g. ['pi', 'laurent'] or 'pi'"),
+			.describe("Who participated — e.g. ['pi', 'sigma'] or 'pi'"),
 		content: z.string().describe("Full briefing content"),
 		decisions: flexArrayOptional
 			.describe("Decisions made during the briefing"),
@@ -1725,7 +1725,7 @@ server.tool(
 	{
 		title: z.string().describe("Task title — created each time the cron fires"),
 		description: z.string().optional().describe("Task description"),
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"]).describe("Who gets the created tasks"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).describe("Who gets the created tasks"),
 		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
 		project: z.string().optional().describe("Project name"),
 		tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1759,7 +1759,7 @@ server.tool(
 	"list_recurring_tasks",
 	"List recurring task templates. Filter by assignee or active status.",
 	{
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"]).optional().describe("Filter by assignee"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).optional().describe("Filter by assignee"),
 		active: z.boolean().optional().describe("Filter by active status"),
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},
@@ -2078,8 +2078,8 @@ const coreTeamSchema = z
 
 server.tool(
 	"create_bu",
-	"Create a new ElPi Corp business unit. Captures strategy, business model, team, and KPIs. " +
-		"managementFee defaults to 10 (ElPi Corp takes 10% of revenue).",
+	"Create a new business unit. Captures strategy, business model, team, and KPIs. " +
+		"managementFee defaults to 10 (percentage of revenue).",
 	{
 		name: z.string().describe("Business unit name — e.g. 'VantagePeers'"),
 		description: z.string().describe("Short description of the BU"),
@@ -2102,7 +2102,7 @@ server.tool(
 			.number()
 			.optional()
 			.default(10)
-			.describe("ElPi Corp management fee % (default 10)"),
+			.describe("Management fee percentage (default 10)"),
 	},
 	async ({
 		name,
@@ -2915,12 +2915,12 @@ server.tool(
 		name: z
 			.string()
 			.describe(
-				"Short unique name for this deployment — e.g. 'efficient-guineapig-356'",
+				"Short unique name for this deployment — e.g. 'your-deployment-123'",
 			),
 		deploymentUrl: z
 			.string()
 			.describe(
-				"Full Convex deployment URL — e.g. 'https://efficient-guineapig-356.convex.cloud'",
+				"Full Convex deployment URL — e.g. 'https://your-deployment-123.convex.cloud'",
 			),
 		deployKeyEnvVar: z
 			.string()
@@ -2971,7 +2971,7 @@ server.tool(
 	{
 		name: z
 			.string()
-			.describe("Name of the deployment to deactivate — e.g. 'efficient-guineapig-356'"),
+			.describe("Name of the deployment to deactivate — e.g. 'your-deployment-123'"),
 	},
 	async ({ name }) => {
 		await convex.mutation("errorMonitor:removeDeployment" as any, { name });

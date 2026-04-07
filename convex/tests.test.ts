@@ -349,7 +349,7 @@ describe("Profiles", () => {
 		name: "Pi VPS",
 		static: {
 			role: "architect",
-			workspace: "/root/coding",
+			workspace: "/tmp/test-workspace",
 			capabilities: ["code-review", "deployment", "testing"],
 		},
 		dynamic: {

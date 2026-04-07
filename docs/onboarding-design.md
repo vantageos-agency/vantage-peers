@@ -597,7 +597,7 @@ Messages can go to:
     - After completing a task: complete_task with completionNote
     - End of day: /close-day
 
-  Full tool reference: /root/coding/vantage-memory/README.md
+  Full tool reference: README.md
 ============================================
 ```
 
