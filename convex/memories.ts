@@ -22,6 +22,7 @@ export const storeMemory = mutation({
         type: relationTypeValidator,
       }),
     ),
+    isLatest: v.optional(v.boolean()),
     ttl: v.optional(v.string()),
     episode: v.optional(
       v.object({
