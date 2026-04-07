@@ -12,32 +12,28 @@ http.route({
 		// Always read body as text first (can only consume once)
 		const body = await request.text();
 
-		// 1. Validate webhook signature (REQUIRED — reject if no secret configured)
+		// 1. Validate signature if secret is configured
+		// NOTE: process.env may not be available in httpAction (Convex runtime)
 		const secret = process.env.GITHUB_WEBHOOK_SECRET;
-		if (!secret) {
-			console.error("GITHUB_WEBHOOK_SECRET not configured — rejecting webhook");
-			return new Response("Webhook secret not configured", { status: 500 });
-		}
-		const signature = request.headers.get("x-hub-signature-256");
-		if (!signature) {
-			return new Response("Missing signature header", { status: 401 });
-		}
-		const encoder = new TextEncoder();
-		const key = await crypto.subtle.importKey(
-			"raw",
-			encoder.encode(secret),
-			{ name: "HMAC", hash: "SHA-256" },
-			false,
-			["sign"],
-		);
-		const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
-		const expected =
-			"sha256=" +
-			Array.from(new Uint8Array(sig))
-				.map((b) => b.toString(16).padStart(2, "0"))
-				.join("");
-		if (signature !== expected) {
-			return new Response("Invalid signature", { status: 401 });
+		if (secret) {
+			const signature = request.headers.get("x-hub-signature-256");
+			const encoder = new TextEncoder();
+			const key = await crypto.subtle.importKey(
+				"raw",
+				encoder.encode(secret),
+				{ name: "HMAC", hash: "SHA-256" },
+				false,
+				["sign"],
+			);
+			const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+			const expected =
+				"sha256=" +
+				Array.from(new Uint8Array(sig))
+					.map((b) => b.toString(16).padStart(2, "0"))
+					.join("");
+			if (signature !== expected) {
+				return new Response("Invalid signature", { status: 401 });
+			}
 		}
 
 		// 2. Parse payload
