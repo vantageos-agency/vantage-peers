@@ -1,7 +1,7 @@
 {
   "name": "vantage-peers",
   "version": "1.0.0",
-  "description": "Turnkey memory, messaging, and task coordination plugin for Claude Code. Connects any Claude Code instance to a shared Convex-backed memory layer with two specialized agents, five skills, and two lifecycle hooks.",
+  "description": "Turnkey memory, messaging, and task coordination plugin for Claude Code. Connects any Claude Code instance to a shared Convex-backed memory layer with two specialized agents, eight skills, and four lifecycle hooks.",
   "author": "VantagePeers",
   "license": "FSL-1.1-Apache-2.0",
   "components": {
@@ -14,11 +14,16 @@
       "skills/check-messages/SKILL.md",
       "skills/close-day/SKILL.md",
       "skills/standup/SKILL.md",
-      "skills/recall/SKILL.md"
+      "skills/recall/SKILL.md",
+      "skills/daily-start/SKILL.md",
+      "skills/write-diary/SKILL.md",
+      "skills/triage-issue/SKILL.md"
     ],
     "hooks": [
       "hooks/session-start.py",
-      "hooks/session-end.py"
+      "hooks/session-end.py",
+      "hooks/block-orchestrator-code-edits.py",
+      "hooks/enforce-brief-template.py"
     ],
     "templates": [
       "templates/settings.json",
