@@ -3,7 +3,7 @@ node_modules/
 .env.local
 .env
 package-lock.json
-mcp-server/package-lock.json
+!mcp-server/package-lock.json
 .DS_Store
 *.tsbuildinfo
 **/convex.json
