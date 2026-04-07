@@ -365,8 +365,7 @@ export const listOverdue = query({
 				q.and(
 					q.neq(q.field("status"), "done"),
 					q.neq(q.field("dueDate"), undefined),
-					// BUG: should be q.lt() not q.gt() — this returns tasks whose due date is in the future
-					q.gt(q.field("dueDate"), now),
+					q.lt(q.field("dueDate"), now),
 				),
 			)
 			.take(limit);
