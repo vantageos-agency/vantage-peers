@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/laurentperello/coding/vantage-memory/.claude/hooks/enforce-signature.py",
+            "command": "python3 .claude/hooks/enforce-signature.py",
             "timeout": 5
           }
         ]
