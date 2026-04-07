@@ -2,18 +2,24 @@
 """VantagePeers session-start hook.
 
 Injects startup instructions into every new Claude Code session.
-The hook itself does not call MCP tools -- it outputs a JSON prompt
-that instructs the main agent to perform the startup sequence.
-
-Configuration via environment variables:
-  VM_ROLE       Agent role name (default: "agent")
-  VM_INSTANCE   Instance identifier (default: "{role}-default")
-  VM_PROJECT    Default project namespace for recall (default: "")
+Cleans up stale subagent flags from previous sessions.
 """
 
 import json
 import sys
 import os
+import time
+
+# Clean up stale subagent flag: remove if it exists and is older than 10 minutes.
+# A flag younger than 10 minutes may belong to an active subagent in the same session.
+SUBAGENT_FLAG = "/tmp/.claude-subagent-active"
+if os.path.exists(SUBAGENT_FLAG):
+    try:
+        flag_age = time.time() - os.path.getmtime(SUBAGENT_FLAG)
+        if flag_age > 600:  # 10 minutes in seconds
+            os.remove(SUBAGENT_FLAG)
+    except OSError:
+        pass
 
 
 def main():
