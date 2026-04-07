@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
  * VantagePeers MCP Server
  * Exposes Convex memory functions as Claude Code tools via stdio transport.
@@ -18,7 +18,6 @@ import { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { z } from "zod";
-import { api } from "../convex/_generated/api.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap: resolve CONVEX_URL from env or .env.local
@@ -154,7 +153,7 @@ server.tool(
 			? [{ targetId: relatesTo.targetId as any, type: relatesTo.type }]
 			: [];
 
-		const memoryId = await convex.mutation(api.memories.storeMemory, {
+		const memoryId = await convex.mutation("memories:storeMemory" as any, {
 			namespace,
 			type,
 			content,
@@ -168,6 +167,33 @@ server.tool(
 				{
 					type: "text",
 					text: JSON.stringify({ memoryId, namespace, type, content }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: soft_delete_memory
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"soft_delete_memory",
+	"Soft-delete a memory — marks it as no longer latest so it stops appearing in recall results. " +
+		"The memory is preserved for audit but excluded from search.",
+	{
+		memoryId: z.string().describe("Convex document ID of the memory to soft-delete"),
+	},
+	async ({ memoryId }) => {
+		await convex.mutation("memories:softDeleteMemory" as any, {
+			memoryId,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ deleted: true, memoryId }, null, 2),
 				},
 			],
 		};
@@ -203,7 +229,7 @@ server.tool(
 			.describe("Maximum number of results to return (default 5)"),
 	},
 	async ({ query, namespace, type, limit }) => {
-		const results = await convex.action(api.search.recall, {
+		const results = await convex.action("search:recall" as any, {
 			query,
 			namespace,
 			type,
@@ -256,7 +282,7 @@ server.tool(
 		insight,
 		severity,
 	}) => {
-		const memoryId = await convex.mutation(api.episodes.storeEpisode, {
+		const memoryId = await convex.mutation("episodes:storeEpisode" as any, {
 			namespace,
 			createdBy,
 			context,
@@ -296,7 +322,7 @@ server.tool(
 			.describe("Orchestrator identifier"),
 	},
 	async ({ orchestratorId }) => {
-		const profile = await convex.query(api.profiles.getProfile, {
+		const profile = await convex.query("profiles:getProfile" as any, {
 			orchestratorId,
 		});
 
@@ -348,7 +374,7 @@ server.tool(
 			.describe("Mutable session state — updated each session"),
 	},
 	async ({ orchestratorId, name, static: staticFields, dynamic }) => {
-		const profileId = await convex.mutation(api.profiles.upsertProfile, {
+		const profileId = await convex.mutation("profiles:upsertProfile" as any, {
 			orchestratorId,
 			name,
 			static: staticFields,
@@ -394,7 +420,7 @@ server.tool(
 			.describe("Maximum number of memories to return (default 20)"),
 	},
 	async ({ namespace, type, limit }) => {
-		const memories = await convex.query(api.memories.listMemories, {
+		const memories = await convex.query("memories:listMemories" as any, {
 			namespace,
 			type,
 			limit: limit ?? 20,
@@ -439,7 +465,7 @@ server.tool(
 			.describe("Day number (e.g. 19 for Day 19)"),
 	},
 	async ({ from, fromInstanceId, channel, content, sessionDay }) => {
-		const messageId = await convex.mutation(api.messages.sendMessage, {
+		const messageId = await convex.mutation("messages:sendMessage" as any, {
 			from,
 			fromInstanceId,
 			channel,
@@ -475,7 +501,7 @@ server.tool(
 			.describe("Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages."),
 	},
 	async ({ recipient, recipientInstanceId }) => {
-		const messages = await convex.query(api.messages.checkNewMessages, {
+		const messages = await convex.query("messages:checkNewMessages" as any, {
 			recipient,
 			recipientInstanceId,
 		});
@@ -520,7 +546,7 @@ server.tool(
 		} else {
 			receiptIdsArray = [receiptIds as string];
 		}
-		const count = await convex.mutation(api.messages.markAsRead, {
+		const count = await convex.mutation("messages:markAsRead" as any, {
 			receiptIds: receiptIdsArray as any,
 		});
 
@@ -547,7 +573,7 @@ server.tool(
 		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be the sender or system"),
 	},
 	async ({ messageId, callerOrchestrator }) => {
-		const result = await convex.mutation(api.messages.deleteMessage, {
+		const result = await convex.mutation("messages:deleteMessage" as any, {
 			messageId: messageId as any,
 			callerOrchestrator,
 		});
@@ -585,7 +611,7 @@ server.tool(
 			.describe("1-2 sentence summary of current work"),
 	},
 	async ({ orchestratorId, instanceId, summary }) => {
-		await convex.mutation(api.profiles.updateDynamic, {
+		await convex.mutation("profiles:updateDynamic" as any, {
 			orchestratorId,
 			instanceId,
 			currentTask: summary,
@@ -613,7 +639,7 @@ server.tool(
 		"Replaces claude-peers list_peers.",
 	{},
 	async () => {
-		const profiles = await convex.query(api.profiles.listProfiles, {});
+		const profiles = await convex.query("profiles:listProfiles" as any, {});
 
 		const peers = profiles.map((p: any) => ({
 			id: p.orchestratorId,
@@ -661,7 +687,7 @@ server.tool(
 			.describe("Max messages to return (default 100)"),
 	},
 	async ({ sessionDay, from, limit }) => {
-		const messages = await convex.query(api.messages.listMessages, {
+		const messages = await convex.query("messages:listMessages" as any, {
 			sessionDay,
 			from,
 			limit: limit ?? 100,
@@ -747,7 +773,7 @@ server.tool(
 		dueDate,
 		createdBy,
 	}) => {
-		const taskId = await convex.mutation(api.tasks.create, {
+		const taskId = await convex.mutation("tasks:create" as any, {
 			title,
 			description,
 			project,
@@ -804,7 +830,7 @@ server.tool(
 			.describe("Maximum number of tasks to return (default 50)"),
 	},
 	async ({ assignedTo, assignedToInstance, status, project, limit }) => {
-		const tasks = await convex.query(api.tasks.list, {
+		const tasks = await convex.query("tasks:list" as any, {
 			assignedTo,
 			assignedToInstance,
 			status,
@@ -879,7 +905,7 @@ server.tool(
 		dueDate,
 		callerOrchestrator,
 	}) => {
-		await convex.mutation(api.tasks.update, {
+		await convex.mutation("tasks:update" as any, {
 			taskId: taskId as any,
 			title,
 			description,
@@ -927,7 +953,7 @@ server.tool(
 		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 	},
 	async ({ taskId, completionNote, callerOrchestrator }) => {
-		await convex.mutation(api.tasks.complete, {
+		await convex.mutation("tasks:complete" as any, {
 			taskId: taskId as any,
 			completionNote,
 			callerOrchestrator,
@@ -957,7 +983,7 @@ server.tool(
 		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 	},
 	async ({ taskId, callerOrchestrator }) => {
-		await convex.mutation(api.tasks.start, {
+		await convex.mutation("tasks:start" as any, {
 			taskId: taskId as any,
 			callerOrchestrator,
 		});
@@ -987,7 +1013,7 @@ server.tool(
 		callerInstance: z.string().optional().describe("Instance identifier, e.g. 'sigma-vps'"),
 	},
 	async ({ taskId, callerOrchestrator, callerInstance }) => {
-		const result = await convex.mutation(api.tasks.checkout, {
+		const result = await convex.mutation("tasks:checkout" as any, {
 			taskId: taskId as any,
 			callerOrchestrator,
 			callerInstance,
@@ -1016,7 +1042,7 @@ server.tool(
 		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or system"),
 	},
 	async ({ taskId, callerOrchestrator }) => {
-		const result = await convex.mutation(api.tasks.deleteTask, {
+		const result = await convex.mutation("tasks:deleteTask" as any, {
 			taskId: taskId as any,
 			callerOrchestrator,
 		});
@@ -1052,7 +1078,7 @@ server.tool(
 			.describe("Maximum number of tasks to return (default 50)"),
 	},
 	async ({ missionId, status, limit }) => {
-		const tasks = await convex.query(api.tasks.listByMission, {
+		const tasks = await convex.query("tasks:listByMission" as any, {
 			missionId: missionId as any,
 			status,
 			limit: limit ?? 50,
@@ -1118,7 +1144,7 @@ server.tool(
 		progress,
 		createdBy,
 	}) => {
-		const missionId = await convex.mutation(api.missions.create, {
+		const missionId = await convex.mutation("missions:create" as any, {
 			name,
 			description,
 			project,
@@ -1170,7 +1196,7 @@ server.tool(
 			.describe("Maximum number of missions to return (default 50)"),
 	},
 	async ({ project, pilot, status, limit }) => {
-		const missions = await convex.query(api.missions.list, {
+		const missions = await convex.query("missions:list" as any, {
 			project,
 			pilot,
 			status,
@@ -1226,7 +1252,7 @@ server.tool(
 		targetDate,
 		progress,
 	}) => {
-		await convex.mutation(api.missions.update, {
+		await convex.mutation("missions:update" as any, {
 			missionId: missionId as any,
 			name,
 			description,
@@ -1264,7 +1290,7 @@ server.tool(
 		status: missionStatusSchema.describe("New status"),
 	},
 	async ({ missionId, status }) => {
-		await convex.mutation(api.missions.updateStatus, {
+		await convex.mutation("missions:updateStatus" as any, {
 			missionId: missionId as any,
 			status,
 		});
@@ -1297,7 +1323,7 @@ server.tool(
 		blockers: flexArrayOptional.describe("Blockers encountered"),
 	},
 	async ({ date, orchestrator, content, highlights, blockers }) => {
-		const diaryId = await convex.mutation(api.diary.write, {
+		const diaryId = await convex.mutation("diary:write" as any, {
 			date,
 			orchestrator,
 			content,
@@ -1328,7 +1354,7 @@ server.tool(
 		orchestrator: creatorSchema.describe("Which orchestrator's diary to fetch"),
 	},
 	async ({ date, orchestrator }) => {
-		const entry = await convex.query(api.diary.get, {
+		const entry = await convex.query("diary:get" as any, {
 			date,
 			orchestrator,
 		});
@@ -1365,7 +1391,7 @@ server.tool(
 			.describe("Maximum entries to return (default 20)"),
 	},
 	async ({ orchestrator, limit }) => {
-		const entries = await convex.query(api.diary.list, {
+		const entries = await convex.query("diary:list" as any, {
 			orchestrator,
 			limit: limit ?? 20,
 		});
@@ -1413,7 +1439,7 @@ server.tool(
 		linkedMemoryIds,
 		createdBy,
 	}) => {
-		const noteId = await convex.mutation(api.briefingNotes.create, {
+		const noteId = await convex.mutation("briefingNotes:create" as any, {
 			title,
 			topic,
 			participants: toArray(participants) as string[],
@@ -1456,7 +1482,7 @@ server.tool(
 			.describe("Maximum notes to return (default 20)"),
 	},
 	async ({ topic, limit }) => {
-		const notes = await convex.query(api.briefingNotes.list, {
+		const notes = await convex.query("briefingNotes:list" as any, {
 			topic,
 			limit: limit ?? 20,
 		});
@@ -1495,7 +1521,7 @@ server.tool(
 		createdBy: creatorSchema,
 	},
 	async ({ name, type, team, content, version, project, createdBy }) => {
-		const result = await convex.mutation(api.components.register, {
+		const result = await convex.mutation("components:register" as any, {
 			name,
 			type,
 			team,
@@ -1539,7 +1565,7 @@ server.tool(
 			.describe("Maximum components to return (default 100)"),
 	},
 	async ({ type, team, limit }) => {
-		const components = await convex.query(api.components.list, {
+		const components = await convex.query("components:list" as any, {
 			type,
 			team,
 			limit: limit ?? 100,
@@ -1570,7 +1596,7 @@ server.tool(
 			.describe("Component type"),
 	},
 	async ({ name, type }) => {
-		const component = await convex.query(api.components.get, {
+		const component = await convex.query("components:get" as any, {
 			name,
 			type,
 		});
@@ -1606,7 +1632,7 @@ server.tool(
 	},
 	async ({ title, description, assignedTo, priority, project, tags, cronExpression, createdBy }) => {
 		const tagsArray = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
-		const taskId = await convex.mutation(api.recurringTasks.create, {
+		const taskId = await convex.mutation("recurringTasks:create" as any, {
 			title,
 			description,
 			assignedTo,
@@ -1636,7 +1662,7 @@ server.tool(
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},
 	async ({ assignedTo, active, limit }) => {
-		const tasks = await convex.query(api.recurringTasks.list, {
+		const tasks = await convex.query("recurringTasks:list" as any, {
 			assignedTo,
 			active,
 			limit: limit ?? 50,
@@ -1659,7 +1685,7 @@ server.tool(
 		taskId: z.string().describe("Recurring task ID"),
 	},
 	async ({ taskId }) => {
-		const result = await convex.mutation(api.recurringTasks.pause, {
+		const result = await convex.mutation("recurringTasks:pause" as any, {
 			taskId: taskId as any,
 		});
 
@@ -1680,7 +1706,7 @@ server.tool(
 		taskId: z.string().describe("Recurring task ID"),
 	},
 	async ({ taskId }) => {
-		const result = await convex.mutation(api.recurringTasks.resume, {
+		const result = await convex.mutation("recurringTasks:resume" as any, {
 			taskId: taskId as any,
 		});
 
@@ -1701,7 +1727,7 @@ server.tool(
 		taskId: z.string().describe("Recurring task ID"),
 	},
 	async ({ taskId }) => {
-		const result = await convex.mutation(api.recurringTasks.remove, {
+		const result = await convex.mutation("recurringTasks:remove" as any, {
 			taskId: taskId as any,
 		});
 
@@ -1741,7 +1767,7 @@ server.tool(
 		mandateDocument: z.string().optional().describe("Signed authorization document or reference"),
 	},
 	async ({ requestedBy, fulfilledBy, service, budget, spendingLimits, approvedCategories, mandateDocument }) => {
-		const mandateId = await convex.mutation(api.mandates.create, {
+		const mandateId = await convex.mutation("mandates:create" as any, {
 			requestedBy,
 			fulfilledBy,
 			service,
@@ -1774,7 +1800,7 @@ server.tool(
 		callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
 	},
 	async ({ mandateId, callerOrchestrator }) => {
-		await convex.mutation(api.mandates.accept, {
+		await convex.mutation("mandates:accept" as any, {
 			mandateId: mandateId as any,
 			callerOrchestrator,
 		});
@@ -1809,7 +1835,7 @@ server.tool(
 			.describe("Task IDs created to fulfill this mandate"),
 	},
 	async ({ mandateId, callerOrchestrator, status, tokensCost, linkedTaskIds }) => {
-		await convex.mutation(api.mandates.update, {
+		await convex.mutation("mandates:update" as any, {
 			mandateId: mandateId as any,
 			callerOrchestrator,
 			status,
@@ -1842,7 +1868,7 @@ server.tool(
 		finalCost: z.number().describe("Final actual token cost to record"),
 	},
 	async ({ mandateId, callerOrchestrator, finalCost }) => {
-		await convex.mutation(api.mandates.settle, {
+		await convex.mutation("mandates:settle" as any, {
 			mandateId: mandateId as any,
 			callerOrchestrator,
 			finalCost,
@@ -1871,7 +1897,7 @@ server.tool(
 		proposedAmount: z.number().describe("Proposed token spend amount to validate"),
 	},
 	async ({ mandateId, proposedAmount }) => {
-		const result = await convex.query(api.mandates.validateSpending, {
+		const result = await convex.query("mandates:validateSpending" as any, {
 			mandateId: mandateId as any,
 			proposedAmount,
 		});
@@ -1901,7 +1927,7 @@ server.tool(
 			.describe("Maximum mandates to return (default 50)"),
 	},
 	async ({ requestedBy, fulfilledBy, status, limit }) => {
-		const mandates = await convex.query(api.mandates.list, {
+		const mandates = await convex.query("mandates:list" as any, {
 			requestedBy,
 			fulfilledBy,
 			status,
@@ -1994,7 +2020,7 @@ server.tool(
 		kpis,
 		managementFee,
 	}) => {
-		const buId = await convex.mutation(api.businessUnits.create, {
+		const buId = await convex.mutation("businessUnits:create" as any, {
 			name,
 			description,
 			purpose,
@@ -2070,7 +2096,7 @@ server.tool(
 		kpis,
 		managementFee,
 	}) => {
-		await convex.mutation(api.businessUnits.update, {
+		await convex.mutation("businessUnits:update" as any, {
 			buId: buId as any,
 			name,
 			description,
@@ -2112,7 +2138,7 @@ server.tool(
 		buId: z.string().describe("Convex document ID of the business unit"),
 	},
 	async ({ buId }) => {
-		const bu = await convex.query(api.businessUnits.get, {
+		const bu = await convex.query("businessUnits:get" as any, {
 			buId: buId as any,
 		});
 
@@ -2151,7 +2177,7 @@ server.tool(
 			.describe("Maximum BUs to return (default 50)"),
 	},
 	async ({ orchestratorId, status, limit }) => {
-		const bus = await convex.query(api.businessUnits.list, {
+		const bus = await convex.query("businessUnits:list" as any, {
 			orchestratorId,
 			status,
 			limit: limit ?? 50,
@@ -2179,7 +2205,7 @@ server.tool(
 		buId: z.string().describe("Convex document ID of the business unit to delete"),
 	},
 	async ({ buId }) => {
-		const result = await convex.mutation(api.businessUnits.remove, {
+		const result = await convex.mutation("businessUnits:remove" as any, {
 			buId: buId as any,
 		});
 

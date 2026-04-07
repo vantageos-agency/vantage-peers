@@ -4,18 +4,7 @@ import { internalAction } from "./_generated/server";
 import { rag } from "./search";
 import { memoryTypeValidator } from "./schema";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// addRagEntry — embed and index a memory into @convex-dev/rag
-// Called after storeMemory to make the memory searchable.
-//
-// Key strategy: use memoryId string as the RAG entry key.
-// This allows graceful replacement via rag.add() with the same key.
-//
-// Filter strategy (all stored as strings for RAG filter compatibility):
-//   "namespace" → memory.namespace
-//   "type"      → memory.type
-//   "isLatest"  → "true" | "false" — enables filtered search
-// ─────────────────────────────────────────────────────────────────────────────
+const FIX_PATTERNS_NAMESPACE = "fixpatterns";
 
 export const addRagEntry = internalAction({
   args: {
@@ -30,6 +19,12 @@ export const addRagEntry = internalAction({
       namespace: args.namespace,
       key: args.memoryId,
       text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        namespace: args.namespace,
+        type: args.type,
+        memoryId: args.memoryId,
+      },
       filterValues: [
         { name: "namespace", value: args.namespace },
         { name: "type", value: args.type },
@@ -40,14 +35,32 @@ export const addRagEntry = internalAction({
   },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// markRagEntrySuperseded — update RAG entry filters to isLatest="false"
-// Called when a memory is soft-deleted or superseded by an "updates" relation.
-// Uses rag.add() with the same key to gracefully replace the entry's filters.
-// The old RAG entry becomes "replaced" status internally while the new one
-// (with isLatest="false") takes over — preventing it from appearing in searches
-// that filter on isLatest="true".
-// ─────────────────────────────────────────────────────────────────────────────
+export const addFixPatternRagEntry = internalAction({
+  args: {
+    patternId: v.id("fixPatterns"),
+    content: v.string(),
+    sourceProject: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await rag.add(ctx, {
+      namespace: FIX_PATTERNS_NAMESPACE,
+      key: args.patternId,
+      text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        sourceProject: args.sourceProject,
+        patternId: args.patternId,
+      },
+      filterValues: [
+        { name: "namespace", value: FIX_PATTERNS_NAMESPACE },
+        { name: "type", value: "fixpattern" },
+        { name: "isLatest", value: "true" },
+      ],
+    });
+    return null;
+  },
+});
 
 export const markRagEntrySuperseded = internalAction({
   args: {
@@ -62,6 +75,12 @@ export const markRagEntrySuperseded = internalAction({
       namespace: args.namespace,
       key: args.memoryId,
       text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        namespace: args.namespace,
+        type: args.type,
+        memoryId: args.memoryId,
+      },
       filterValues: [
         { name: "namespace", value: args.namespace },
         { name: "type", value: args.type },

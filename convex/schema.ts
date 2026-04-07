@@ -18,6 +18,9 @@ export const creatorValidator = v.union(
 	v.literal("tau"),
 	v.literal("phi"),
 	v.literal("sigma"),
+	v.literal("omega"),
+	v.literal("zeta"),
+	v.literal("eta"),
 	v.literal("system"),
 );
 
@@ -207,6 +210,9 @@ export default defineSchema({
 			v.literal("tau"),
 			v.literal("phi"),
 			v.literal("sigma"),
+			v.literal("omega"),
+			v.literal("zeta"),
+			v.literal("eta"),
 			v.literal("laurent"),
 		),
 		priority: v.union(
@@ -378,6 +384,9 @@ export default defineSchema({
 			v.literal("tau"),
 			v.literal("phi"),
 			v.literal("sigma"),
+			v.literal("omega"),
+			v.literal("zeta"),
+			v.literal("eta"),
 			v.literal("laurent"),
 		),
 		priority: v.union(
