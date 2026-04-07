@@ -1,5 +1,30 @@
 # Changelog
 
+## v10 — Public Launch Cleanup (2026-04-07)
+
+- PR #100: Deep repo cleanup for public launch
+- Removed internal orchestrator instructions and person names from CLAUDE.md
+- Fixed plugin license mismatch (MIT → FSL-1.1-Apache-2.0)
+- Replaced `mcp__vantage-memory__*` with `mcp__vantage-peers__*` across all plugin files
+- Fixed wildcard permissions in plugin/templates/settings.json
+- Updated CONTRIBUTING.md and README.md with current tool and test counts
+- Removed absolute internal server paths from docs
+
+## v9 — README Rewrite + 3 New Tools (2026-04-07)
+
+- PR #96: README rewritten for public consumption
+- Added `get_memory` tool (fetch single memory by ID)
+- Added `text_search` tool (BM25 full-text search)
+- Added `hybrid_search` tool (RRF fusion of vector + BM25)
+- Total tool count: 75
+
+## v8 — MCP Smoke Tests Expanded to 75 (2026-04-07)
+
+- PR #95: Expanded MCP smoke test suite from 29 to 75 tests (all 75 tools covered, 75/75 pass)
+- PR #94: string-based API calls for all 75 tools
+- PR #90: enforce-signature hook (portable across machines)
+- PR #89: RAG integration tests
+
 ## v7 — Open Source Release (2026-03-25)
 
 - README rewritten for public consumption (27 MCP tools documented)

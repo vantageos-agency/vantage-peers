@@ -63,18 +63,24 @@ export const remove = mutation({
 	},
 });
 
-// Seed initial data
+// Seed initial data — accepts an array of repo mappings so callers supply their own repos.
+// Example usage:
+//   convex.mutation("githubRepoMapping:seed", {
+//     mappings: [{ repo: "your-org/your-repo", orchestrator: "sigma", project: "my-project" }]
+//   })
 export const seed = mutation({
-	args: {},
-	handler: async (ctx) => {
-		const mappings = [
-			{ repo: "myreeldream-ai/MyShortReel-beta", orchestrator: "omega", project: "myreeldream" },
-			{ repo: "elpiarthera/vantage-starter", orchestrator: "tau", project: "vantage-starter" },
-			{ repo: "elpiarthera/perfect-ai-agent", orchestrator: "phi", project: "perfect-ai-agent" },
-			{ repo: "elpiarthera/vantage-memory", orchestrator: "sigma", project: "vantage-memory" },
-		];
+	args: {
+		mappings: v.array(
+			v.object({
+				repo: v.string(),
+				orchestrator: v.string(),
+				project: v.string(),
+			}),
+		),
+	},
+	handler: async (ctx, args) => {
 		let count = 0;
-		for (const m of mappings) {
+		for (const m of args.mappings) {
 			const existing = await ctx.db
 				.query("githubRepoMapping")
 				.withIndex("by_repo", (q) => q.eq("repo", m.repo))

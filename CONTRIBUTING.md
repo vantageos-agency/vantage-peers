@@ -22,10 +22,10 @@ npx convex env set AI_GATEWAY_API_KEY=your-openai-api-key
 ## Running Tests
 
 ```bash
-# Convex unit tests (34 tests, no deployment needed)
+# Convex unit tests (no deployment needed)
 npx vitest run
 
-# MCP integration tests (29 tests, requires running Convex deployment)
+# MCP smoke tests (75 tests, requires running Convex deployment)
 bun scripts/test-mcp.ts
 ```
 
@@ -42,8 +42,8 @@ scripts/          # Test scripts and utilities
 1. Create a feature branch from `main`
 2. Make your changes
 3. Run `npx convex dev --once` to verify Convex functions compile
-4. Run `npx vitest run` to verify all 34 unit tests pass
-5. Run `bun scripts/test-mcp.ts` to verify all 29 integration tests pass
+4. Run `npx vitest run` to verify all unit tests pass
+5. Run `bun scripts/test-mcp.ts` to verify all 75 smoke tests pass
 6. Open a PR against `main`
 
 ## Commit Style
