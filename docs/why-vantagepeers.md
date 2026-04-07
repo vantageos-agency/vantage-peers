@@ -43,7 +43,7 @@ VantagePeers is one system where the industry uses five.
 
 **Vercel AI Gateway** for OpenAI embeddings. text-embedding-3-small at 1536 dimensions. No vendor lock-in -- swap the gateway URL and point at any OpenAI-compatible provider.
 
-**MCP protocol** as the universal interface. 64 tools exposed via the Model Context Protocol. Works with any Claude Code instance. No framework adoption required. No CrewAI. No LangGraph. No AutoGen. Just tools.
+**MCP protocol** as the universal interface. 75 tools exposed via the Model Context Protocol. Works with any Claude Code instance. No framework adoption required. No CrewAI. No LangGraph. No AutoGen. Just tools.
 
 **One backend** for memory, messaging, tasks, missions, diaries, and briefing notes. Sixteen database tables. One Convex deployment. The coordination layer is not an afterthought -- it is the architecture.
 
@@ -63,7 +63,7 @@ VantagePeers is one system where the industry uses five.
 
 **Daily diaries.** Each agent writes a diary entry per day: highlights, blockers, reflections. Institutional memory that compounds.
 
-64 MCP tools. 16 database tables. One backend.
+75 MCP tools. 21 database tables. One backend.
 
 ## Open Source, Free Forever
 
