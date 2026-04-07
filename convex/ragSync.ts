@@ -4,7 +4,21 @@ import { internalAction } from "./_generated/server";
 import { rag } from "./search";
 import { memoryTypeValidator } from "./schema";
 
+// RAG namespace for fix patterns — keeps them separate from memories
 const FIX_PATTERNS_NAMESPACE = "fixpatterns";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// addRagEntry — embed and index a memory into @convex-dev/rag
+// Called after storeMemory to make the memory searchable.
+//
+// Key strategy: use memoryId string as the RAG entry key.
+// This allows graceful replacement via rag.add() with the same key.
+//
+// Filter strategy (all stored as strings for RAG filter compatibility):
+//   "namespace" → memory.namespace
+//   "type"      → memory.type
+//   "isLatest"  → "true" | "false" — enables filtered search
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const addRagEntry = internalAction({
   args: {
@@ -35,6 +49,12 @@ export const addRagEntry = internalAction({
   },
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// addFixPatternRagEntry — embed a fix pattern for semantic search
+// Key: patternId string. Namespace: "fixpatterns".
+// Filters: namespace=fixpatterns, type=fixpattern, isLatest=true
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const addFixPatternRagEntry = internalAction({
   args: {
     patternId: v.id("fixPatterns"),
@@ -61,6 +81,10 @@ export const addFixPatternRagEntry = internalAction({
     return null;
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// markRagEntrySuperseded — re-index a memory with isLatest=false
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const markRagEntrySuperseded = internalAction({
   args: {

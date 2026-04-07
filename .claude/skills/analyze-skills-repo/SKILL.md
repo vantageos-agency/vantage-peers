@@ -66,7 +66,7 @@ If repo has 100+ items, process in batches of 10. Show progress: "Batch 3/12..."
 
 ### Step 3: Compare with Vantage Registry
 
-- Call `mcp__vantage-memory__list_components` to get our current registry
+- Call `mcp__vantage-peers__list_components` to get our current registry
 - For each analyzed item, determine status:
   - **HAVE_EQUIVALENT** — we have a skill/agent doing the same job
   - **HAVE_BETTER** — we have a more capable version
@@ -127,7 +127,7 @@ Then clean up: `rm -rf /tmp/analyze-skills-repo-{timestamp}`
 - Maximum report size: 500 lines — truncate Step 2 table if needed, keep Steps 3-4 complete
 - Use Agent tool with subagent_type="Explore" for deep file scanning
 - Always delete the /tmp clone after writing the report
-- If `mcp__vantage-memory__list_components` fails, note it and proceed — Step 3 becomes "manual review needed"
+- If `mcp__vantage-peers__list_components` fails, note it and proceed — Step 3 becomes "manual review needed"
 - If no GitHub URL or path provided, ask: "What repo URL or local path should I analyze?"
 - If `git clone` fails (private repo, bad URL, network error), report the error to the user and stop. Do not proceed with a partial clone.
 - If local path does not exist, report the error and stop.
@@ -135,4 +135,4 @@ Then clean up: `rm -rf /tmp/analyze-skills-repo-{timestamp}`
 
 ## SELLABLE AS
 
-`vantage-memory` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.
+`vantage-peers` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.

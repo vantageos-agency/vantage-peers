@@ -15,9 +15,9 @@ Check tasks assigned to you in VantageMemory, sorted by priority with dependency
 
 1. Detect your orchestrator role from CLAUDE.md (pi/tau/phi) and instanceId from the session hook or hostname (e.g. pi-vps-vm, pi-chromebook)
 2. Fetch ALL non-done tasks in a single call:
-   - `mcp__vantage-memory__list_tasks` with assignedTo={role}
+   - `mcp__vantage-peers__list_tasks` with assignedTo={role}
    - NOTE: If you know your instanceId, also check for instance-specific tasks:
-     `mcp__vantage-memory__list_tasks` with assignedToInstance={instanceId}
+     `mcp__vantage-peers__list_tasks` with assignedToInstance={instanceId}
      Merge both result sets, deduplicating by task _id
 3. From the results, filter out status="done"
 4. Sort by priority: urgent > high > medium > low, then by createdAt (oldest first)
@@ -53,4 +53,4 @@ If a task is blocked by dependencies, show:
 
 ## SELLABLE AS
 
-`vantage-memory` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.
+`vantage-peers` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP.

@@ -13,7 +13,7 @@
     "multi-agent"
   ],
   "author": "VantageOS",
-  "license": "MIT",
+  "license": "FSL-1.1-Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/vantageos/vantage-peers.git"
@@ -21,6 +21,9 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:mcp": "bun scripts/test-mcp.ts",
@@ -29,9 +32,11 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.37",
     "@convex-dev/rag": "^0.7.2",
+    "@convex-dev/workpool": "^0.4.6",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "ai": "^6.0.134",
     "convex": "^1.34.0",
+    "convex-helpers": "^0.1.114",
     "dotenv": "^17.3.1",
     "openai": "^6.32.0"
   },

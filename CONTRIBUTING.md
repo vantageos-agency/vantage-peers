@@ -7,10 +7,10 @@ Thanks for your interest in contributing to VantagePeers.
 ```bash
 # Clone the repo
 git clone https://github.com/vantageos/vantage-peers.git
-cd vantage-memory
+cd vantage-peers
 
 # Install dependencies
-npm install
+bun install
 
 # Set up Convex (creates a new dev deployment)
 npx convex dev
@@ -79,4 +79,4 @@ Open an issue on GitHub with:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the [FSL-1.1-Apache-2.0](LICENSE) license.

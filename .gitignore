@@ -6,4 +6,16 @@ package-lock.json
 mcp-server/package-lock.json
 .DS_Store
 *.tsbuildinfo
+**/convex.json
+apps/
+
+# Claude Code — never commit settings, hooks, or local state
+.claude/settings.json
+.claude/settings.local.json
+.claude/hooks/
 .claude/agents/
+.claude/agent-memory/
+.claude/skills/
+.claude/scheduled_tasks.lock
+.claude/*.lock
+.playwright-mcp/

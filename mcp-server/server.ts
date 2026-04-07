@@ -58,7 +58,7 @@ const memoryTypeSchema = z
 	.describe("Memory classification type");
 
 const creatorSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "system"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "eta", "system"])
 	.describe("Which orchestrator is creating this memory");
 
 const severitySchema = z
@@ -318,7 +318,7 @@ server.tool(
 		"Returns null if the profile does not exist yet — call update_profile to create it.",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma"])
+			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
 			.describe("Orchestrator identifier"),
 	},
 	async ({ orchestratorId }) => {
@@ -348,7 +348,7 @@ server.tool(
 		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma"])
+			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
 			.describe("Orchestrator identifier"),
 		name: z.string().describe("Human-readable orchestrator name"),
 		static: z
@@ -600,7 +600,7 @@ server.tool(
 		"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma"])
+			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
 			.describe("Orchestrator role"),
 		instanceId: z
 			.string()
@@ -705,11 +705,37 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_broadcast_status
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_broadcast_status",
+	"Show who read a broadcast message and who didn't. Pass the messageId from send_message.",
+	{
+		messageId: z.string().describe("Convex document ID of the broadcast message"),
+	},
+	async ({ messageId }) => {
+		const status = await convex.query(api.messages.listBroadcastStatus, {
+			messageId,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(status, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_task
 // ─────────────────────────────────────────────────────────────────────────────
 
 const assigneeSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "laurent"])
+	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"])
 	.describe("Who the task is assigned to");
 
 const prioritySchema = z
@@ -1623,7 +1649,7 @@ server.tool(
 	{
 		title: z.string().describe("Task title — created each time the cron fires"),
 		description: z.string().optional().describe("Task description"),
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "laurent"]).describe("Who gets the created tasks"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"]).describe("Who gets the created tasks"),
 		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
 		project: z.string().optional().describe("Project name"),
 		tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1657,7 +1683,7 @@ server.tool(
 	"list_recurring_tasks",
 	"List recurring task templates. Filter by assignee or active status.",
 	{
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "laurent"]).optional().describe("Filter by assignee"),
+		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "laurent"]).optional().describe("Filter by assignee"),
 		active: z.boolean().optional().describe("Filter by active status"),
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},
@@ -2214,6 +2240,737 @@ server.tool(
 				{
 					type: "text",
 					text: JSON.stringify(result, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_repo_mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_repo_mapping",
+	"Add or update a GitHub repo → orchestrator mapping. Used by the webhook pipeline to route GitHub events to the right orchestrator.",
+	{
+		repo: z
+			.string()
+			.describe("Full repo name — e.g. 'elpiarthera/vantage-peers'"),
+		orchestrator: z
+			.string()
+			.describe("Target orchestrator — e.g. 'sigma', 'omega', 'tau'"),
+		project: z
+			.string()
+			.describe("Project name — e.g. 'vantage-peers', 'myreeldream'"),
+		active: z
+			.boolean()
+			.optional()
+			.default(true)
+			.describe("Whether this mapping is active (default true)"),
+	},
+	async ({ repo, orchestrator, project, active }) => {
+		const id = await convex.mutation(api.githubRepoMapping.add, {
+			repo,
+			orchestrator,
+			project,
+			active,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ id, repo, orchestrator, project, active }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_repo_mappings
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_repo_mappings",
+	"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.",
+	{},
+	async () => {
+		const mappings = await convex.query(api.githubRepoMapping.list, {});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(mappings, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: remove_repo_mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"remove_repo_mapping",
+	"Remove a GitHub repo mapping by repo name. Stops routing webhook events for this repo.",
+	{
+		repo: z
+			.string()
+			.describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
+	},
+	async ({ repo }) => {
+		const result = await convex.mutation(api.githubRepoMapping.remove, {
+			repo,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, ...result }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_issues
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_issues",
+	"List GitHub issues tracked in VantagePeers. Filter by project, status, or assigned orchestrator.",
+	{
+		project: z
+			.string()
+			.optional()
+			.describe("Filter by project name — e.g. 'myreeldream', 'vantage-starter'"),
+		status: z
+			.enum(["open", "in_progress", "fixed", "verified", "closed"])
+			.optional()
+			.describe("Filter by issue status"),
+		assignedTo: z
+			.string()
+			.optional()
+			.describe("Filter by assigned orchestrator — e.g. 'omega', 'sigma'"),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of issues to return (default 50)"),
+	},
+	async ({ project, status, assignedTo, limit }) => {
+		let results;
+		if (assignedTo) {
+			results = await convex.query(api.issues.listByOrchestrator, {
+				assignedOrchestrator: assignedTo,
+				status: status as any,
+				limit: limit ?? 50,
+			});
+		} else if (project) {
+			results = await convex.query(api.issues.listByProject, {
+				project,
+				status: status as any,
+				limit: limit ?? 50,
+			});
+		} else if (status) {
+			// Use listByProject with a broad approach — fall back to listByOrchestrator
+			// For status-only queries, we query all and filter
+			results = await convex.query(api.issues.listByOrchestrator, {
+				assignedOrchestrator: "sigma",
+				status: status as any,
+				limit: limit ?? 50,
+			});
+		} else {
+			results = await convex.query(api.issues.listByProject, {
+				project: "",
+				limit: limit ?? 50,
+			});
+		}
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ count: results.length, issues: results }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_issue
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_issue",
+	"Get a single GitHub issue by repo and issue number.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+	},
+	async ({ repo, issueNumber }) => {
+		const issue = await convex.query(api.issues.getByRepoNumber, {
+			repo,
+			issueNumber,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(issue ?? { error: "Issue not found" }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_issue_status
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_issue_status",
+	"Update the status of a tracked GitHub issue.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+		status: z
+			.enum(["open", "in_progress", "fixed", "verified", "closed"])
+			.describe("New status for the issue"),
+	},
+	async ({ repo, issueNumber, status }) => {
+		await convex.mutation(api.issues.updateStatus, {
+			repo,
+			issueNumber,
+			status,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, issueNumber, status, updated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: link_commit_to_issue
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"link_commit_to_issue",
+	"Link a fix commit SHA to a GitHub issue. Records who fixed it and when.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+		commitSha: z.string().describe("Git commit SHA that fixes this issue"),
+		fixedBy: z.string().describe("Who fixed it — orchestrator name or person"),
+	},
+	async ({ repo, issueNumber, commitSha, fixedBy }) => {
+		await convex.mutation(api.issues.linkCommit, {
+			repo,
+			issueNumber,
+			commitSha,
+			fixedBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, issueNumber, commitSha, fixedBy, linked: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: verify_issue
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"verify_issue",
+	"Mark a GitHub issue as verified (fix confirmed). Sets status to 'verified'.",
+	{
+		repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+		issueNumber: z.number().int().describe("GitHub issue number"),
+		verifiedBy: z.string().describe("Who verified the fix — orchestrator name or person"),
+	},
+	async ({ repo, issueNumber, verifiedBy }) => {
+		await convex.mutation(api.issues.verify, {
+			repo,
+			issueNumber,
+			verifiedBy,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ repo, issueNumber, verifiedBy, verified: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: issue_stats
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"issue_stats",
+	"Get issue count statistics grouped by status. Optionally filter by project.",
+	{
+		project: z
+			.string()
+			.optional()
+			.describe("Filter stats to a specific project — omit for all projects"),
+	},
+	async ({ project }) => {
+		const stats = await convex.query(api.issues.getStats, {
+			project,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(stats, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: create_fix_pattern
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"create_fix_pattern",
+	"Create a fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search this BEFORE fixing to avoid repeating mistakes.",
+	{
+		symptom: z.string().describe("What the bug looks like — the user-visible problem"),
+		rootCause: z.string().describe("Why the bug happens — the underlying technical cause"),
+		tags: flexArray.describe("Tags for categorization — e.g. 'react-hydration', 'convex-subscription'"),
+		stack: flexArray.describe("Tech stack involved — e.g. 'next.js', 'convex', 'clerk'"),
+		sourceProject: z.string().describe("Project where this was discovered — e.g. 'myreeldream'"),
+		createdBy: creatorSchema,
+		severity: severitySchema,
+		validatedFix: z.string().optional().describe("The fix that worked — set later if not known yet"),
+		files: flexArrayOptional.describe("Files involved in the fix"),
+		linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
+	},
+	async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds }) => {
+		const patternId = await convex.mutation(api.fixPatterns.create, {
+			symptom,
+			rootCause,
+			tags: toArray(tags) ?? [],
+			stack: toArray(stack) ?? [],
+			sourceProject,
+			createdBy,
+			severity,
+			validatedFix,
+			files: toArray(files),
+			linkedIssueIds: toArray(linkedIssueIds),
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ patternId, created: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_fix_attempt
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_fix_attempt",
+	"Add a fix attempt to a pattern. Documents what was tried, whether it worked, and why. If worked=true and pattern has no validatedFix, auto-sets it.",
+	{
+		patternId: z.string().describe("ID of the fix pattern"),
+		description: z.string().describe("What was tried — the fix approach"),
+		worked: z.boolean().describe("Did this fix the issue?"),
+		why: z.string().describe("Why it worked or didn't — the reasoning"),
+		createdBy: creatorSchema,
+		commit: z.string().optional().describe("Git commit hash of this attempt"),
+	},
+	async ({ patternId, description, worked, why, createdBy, commit }) => {
+		const attemptId = await convex.mutation(api.fixPatterns.addAttempt, {
+			patternId: patternId as never,
+			description,
+			worked,
+			why,
+			createdBy,
+			commit,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ attemptId, patternId, worked }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: validate_fix
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"validate_fix",
+	"Set or update the validated fix on a pattern. Use after confirming a fix works.",
+	{
+		patternId: z.string().describe("ID of the fix pattern"),
+		validatedFix: z.string().describe("Description of the validated fix"),
+	},
+	async ({ patternId, validatedFix }) => {
+		await convex.mutation(api.fixPatterns.validate, {
+			patternId: patternId as never,
+			validatedFix,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ patternId, validatedFix, validated: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: search_fix_patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"search_fix_patterns",
+	"Semantic search over fix patterns. Use this BEFORE fixing a bug to check if it's been seen before. Returns patterns ranked by relevance.",
+	{
+		query: z.string().describe("Describe the problem — e.g. 'message disappears after sending'"),
+		limit: z.number().int().optional().describe("Max results to return (default 10)"),
+	},
+	async ({ query, limit }) => {
+		const results = await convex.action(api.search.searchFixPatterns, {
+			query,
+			limit,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(results, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_fix_patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_fix_patterns",
+	"List fix patterns, optionally filtered by project. Returns patterns sorted by creation date (newest first).",
+	{
+		project: z.string().optional().describe("Filter by source project — omit for all"),
+		limit: z.number().int().optional().describe("Max results (default 50)"),
+	},
+	async ({ project, limit }) => {
+		if (project) {
+			const results = await convex.query(api.fixPatterns.listByProject, {
+				sourceProject: project,
+				limit,
+			});
+			return {
+				content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+			};
+		}
+
+		// No project filter — list all (use listByProject with a broad approach)
+		// For now, return empty guidance
+		return {
+			content: [
+				{
+					type: "text",
+					text: "Please specify a project to filter by, or use search_fix_patterns for semantic search.",
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: link_issue_to_pattern
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"link_issue_to_pattern",
+	"Link a VantagePeers issue to a fix pattern. Creates a bidirectional reference.",
+	{
+		patternId: z.string().describe("ID of the fix pattern"),
+		issueId: z.string().describe("VantagePeers issue ID to link"),
+	},
+	async ({ patternId, issueId }) => {
+		await convex.mutation(api.fixPatterns.linkIssue, {
+			patternId: patternId as never,
+			issueId,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ patternId, issueId, linked: true }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_mission_template
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_mission_template",
+	"Fetch a mission template by name. Returns the template with all steps, or null if not found. " +
+		"Use 'issue-resolution-v2' for the default Issue Resolution Protocol.",
+	{
+		name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
+	},
+	async ({ name }) => {
+		const template = await convex.query(api.missionTemplates.getByName, { name });
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(template, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_mission_template
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_mission_template",
+	"Create or update a mission template by name. " +
+		"Each step has a title, description, and optional tags. " +
+		"If the template already exists it is overwritten (upsert by name).",
+	{
+		name: z.string().describe("Template name — must be unique, e.g. 'issue-resolution-v2'"),
+		description: z.string().optional().describe("Human-readable description of the template"),
+		steps: z
+			.array(
+				z.object({
+					title: z.string().describe("Step title"),
+					description: z.string().describe("What to do in this step"),
+					tags: z.array(z.string()).optional().describe("Optional tags for the step"),
+				}),
+			)
+			.describe("Ordered list of steps — each becomes one task when instantiated"),
+		createdBy: creatorSchema.describe("Who is creating/updating the template"),
+		isDefault: z.boolean().optional().describe("Mark as the default template for its type"),
+	},
+	async ({ name, description, steps, createdBy, isDefault }) => {
+		const templateId = await convex.mutation(api.missionTemplates.upsert, {
+			name,
+			description,
+			steps,
+			createdBy,
+			isDefault,
+		});
+
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ templateId, name, stepCount: steps.length }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_deployment
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_deployment",
+	"Register a Convex deployment for proactive error monitoring. " +
+		"The deployKeyEnvVar must be the name of a Convex environment variable (not the key itself) " +
+		"holding the admin deploy key for that deployment. Once registered, the cron polls it every 5 minutes.",
+	{
+		name: z
+			.string()
+			.describe(
+				"Short unique name for this deployment — e.g. 'efficient-guineapig-356'",
+			),
+		deploymentUrl: z
+			.string()
+			.describe(
+				"Full Convex deployment URL — e.g. 'https://efficient-guineapig-356.convex.cloud'",
+			),
+		deployKeyEnvVar: z
+			.string()
+			.describe(
+				"Name of the Convex env var holding the admin deploy key — e.g. 'DEPLOY_KEY_GUINEAPIG'",
+			),
+		githubRepo: z
+			.string()
+			.describe(
+				"GitHub repo in 'owner/repo' format where issues will be created — e.g. 'ElPiCorp/vantage-peers'",
+			),
+		orchestrator: z
+			.string()
+			.describe(
+				"Orchestrator responsible for this deployment — e.g. 'sigma'",
+			),
+	},
+	async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
+		const id = await convex.mutation(api.errorMonitor.addDeployment, {
+			name,
+			deploymentUrl,
+			deployKeyEnvVar,
+			githubRepo,
+			orchestrator,
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{ id, name, deploymentUrl, githubRepo, orchestrator },
+						null,
+						2,
+					),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: remove_deployment
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"remove_deployment",
+	"Deactivate a monitored deployment. The deployment record is preserved but polling stops.",
+	{
+		name: z
+			.string()
+			.describe("Name of the deployment to deactivate — e.g. 'efficient-guineapig-356'"),
+	},
+	async ({ name }) => {
+		await convex.mutation(api.errorMonitor.removeDeployment, { name });
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({ removed: name }, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: list_errors
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"list_errors",
+	"List detected errors from monitored deployments, ordered newest first. " +
+		"Each entry includes deduplication count and the linked GitHub issue number if one was created.",
+	{
+		deployment: z
+			.string()
+			.optional()
+			.describe(
+				"Filter to a specific deployment name — omit to list errors across all deployments",
+			),
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(200)
+			.optional()
+			.default(50)
+			.describe("Maximum number of errors to return (default 50)"),
+	},
+	async ({ deployment, limit }) => {
+		const errors = await convex.query(api.errorMonitor.listErrors, {
+			deployment,
+			limit: limit ?? 50,
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(errors, null, 2),
+				},
+			],
+		};
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_error
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_error",
+	"Fetch a single error log entry by its Convex document ID, including stack trace and issue linkage.",
+	{
+		errorId: z
+			.string()
+			.describe("Convex document ID of the errorLogs entry"),
+	},
+	async ({ errorId }) => {
+		const error = await convex.query(api.errorMonitor.getError, {
+			errorId: errorId as any,
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(error, null, 2),
 				},
 			],
 		};

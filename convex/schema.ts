@@ -332,6 +332,67 @@ export default defineSchema({
 		.index("by_fulfilledBy", ["fulfilledBy", "status"])
 		.index("by_status", ["status", "createdAt"]),
 
+	// ── issues ────────────────────────────────────────────────────────────────
+	// GitHub issues tracked in VantagePeers. Synced via webhook.
+	issues: defineTable({
+		repo: v.string(), // "myreeldream-ai/MyShortReel-beta"
+		issueNumber: v.number(),
+		title: v.string(),
+		body: v.string(), // truncated to 2000 chars
+		htmlUrl: v.string(),
+		labels: v.array(v.string()),
+		status: v.union(
+			v.literal("open"),
+			v.literal("in_progress"),
+			v.literal("fixed"),
+			v.literal("verified"),
+			v.literal("closed"),
+		),
+		priority: v.union(
+			v.literal("urgent"),
+			v.literal("high"),
+			v.literal("medium"),
+			v.literal("low"),
+		),
+		assignedOrchestrator: v.string(),
+		project: v.string(),
+		fixCommits: v.optional(v.array(v.string())),
+		fixedBy: v.optional(v.string()),
+		fixedAt: v.optional(v.number()),
+		verifiedBy: v.optional(v.string()),
+		verifiedAt: v.optional(v.number()),
+		linkedTaskIds: v.optional(v.array(v.string())),
+		githubCreatedAt: v.number(),
+		githubUpdatedAt: v.number(),
+		// External repo tracking (for Zeta contributions to third-party repos)
+		externalRepo: v.optional(v.string()), // "get-convex/better-auth"
+		externalIssueNumber: v.optional(v.number()),
+		externalIssueUrl: v.optional(v.string()),
+		prUrl: v.optional(v.string()),
+		prStatus: v.optional(v.union(
+			v.literal("draft"),
+			v.literal("open"),
+			v.literal("merged"),
+			v.literal("closed"),
+		)),
+		forkRepo: v.optional(v.string()), // "elpiarthera/better-auth"
+	})
+		.index("by_repo_number", ["repo", "issueNumber"])
+		.index("by_status", ["status"])
+		.index("by_project", ["project"])
+		.index("by_assigned", ["assignedOrchestrator", "status"])
+		.index("by_external_repo", ["externalRepo", "prStatus"]),
+
+	// ── githubRepoMapping ─────────────────────────────────────────────────────
+	// Maps GitHub repos to orchestrators. Used by webhook handler to route events.
+	githubRepoMapping: defineTable({
+		repo: v.string(), // "myreeldream-ai/MyShortReel-beta"
+		orchestrator: v.string(), // "omega", "tau", "sigma", etc.
+		project: v.string(), // "myreeldream", "vantage-starter", etc.
+		active: v.boolean(),
+	})
+		.index("by_repo", ["repo"]),
+
 	// ── businessUnits ─────────────────────────────────────────────────────────
 	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.
 	// managementFee: ElPi Corp takes this percentage of revenue (default 10%).
@@ -407,4 +468,132 @@ export default defineSchema({
 	})
 		.index("by_active", ["active", "nextRunAt"])
 		.index("by_assignee", ["assignedTo"]),
+
+	// ── fixPatterns ──────────────────────────────────────────────────────────────
+	// Knowledge base of fix patterns. Documents bugs, root causes, fix attempts
+	// (including failures), and validated fixes. Agents search this BEFORE fixing
+	// to avoid repeating mistakes. Semantic search via RAG on symptom + rootCause.
+	fixPatterns: defineTable({
+		symptom: v.string(), // What the bug looks like (searchable via RAG)
+		rootCause: v.string(), // Why it happens
+		validatedFix: v.optional(v.string()), // The fix that actually worked
+		files: v.optional(v.array(v.string())), // Files involved
+		tags: v.array(v.string()), // e.g. "react-hydration", "convex-subscription"
+		stack: v.array(v.string()), // e.g. "next.js", "convex", "clerk"
+		sourceProject: v.string(), // Origin project
+		linkedIssueIds: v.optional(v.array(v.string())), // VantagePeers issue IDs
+		createdBy: creatorValidator,
+		severity: severityValidator,
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_project", ["sourceProject"])
+		.index("by_severity", ["severity"])
+		.index("by_creator", ["createdBy"]),
+
+	// ── fixAttempts ──────────────────────────────────────────────────────────────
+	// Individual fix attempts for a pattern. Separate table to avoid unbounded
+	// array growth in fixPatterns documents (per Convex guidelines).
+	fixAttempts: defineTable({
+		patternId: v.id("fixPatterns"),
+		description: v.string(), // What was tried
+		commit: v.optional(v.string()), // Commit hash
+		worked: v.boolean(), // Did it fix the issue?
+		why: v.string(), // Why it worked or didn't
+		createdBy: creatorValidator,
+		createdAt: v.number(),
+	})
+		.index("by_pattern", ["patternId"])
+		.index("by_worked", ["patternId", "worked"]),
+
+	// ── missionTemplates ──────────────────────────────────────────────────────
+	// Reusable mission templates. Each template contains an ordered list of
+	// steps that get instantiated as tasks when a triggering event occurs.
+	// The "issue-resolution-v2" template drives the IRP (Issue Resolution Protocol).
+	missionTemplates: defineTable({
+		name: v.string(),
+		description: v.optional(v.string()),
+		steps: v.array(
+			v.object({
+				title: v.string(),
+				description: v.string(),
+				tags: v.optional(v.array(v.string())),
+			}),
+		),
+		isDefault: v.boolean(),
+		createdBy: creatorValidator,
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_name", ["name"])
+		.index("by_default", ["isDefault"]),
+
+	// ── monitoredDeployments ─────────────────────────────────────────────────
+	// Registry of Convex deployments to poll for errors.
+	// deployKeyEnvVar: name of the env var holding the admin deploy key.
+	monitoredDeployments: defineTable({
+		name: v.string(),
+		deploymentUrl: v.string(),
+		deployKeyEnvVar: v.string(),
+		githubRepo: v.string(),
+		orchestrator: v.string(),
+		active: v.boolean(),
+		lastCursor: v.optional(v.number()),
+		createdAt: v.number(),
+	})
+		.index("by_active", ["active"])
+		.index("by_name", ["name"]),
+
+	// ── errorLogs ────────────────────────────────────────────────────────────
+	// Deduplicated log of detected function errors across monitored deployments.
+	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.
+	issueStats: defineTable({
+		repo: v.string(),
+		date: v.string(), // YYYY-MM-DD
+		totalIssues: v.number(),
+		resolvedIssues: v.number(),
+		medianTimeToFirstResponse: v.optional(v.number()), // minutes
+		medianTimeToFix: v.optional(v.number()), // minutes
+		fastestResolution: v.optional(v.number()), // minutes
+		slowestResolution: v.optional(v.number()), // minutes
+		avgTimeToFix: v.optional(v.number()), // minutes
+		// Before/after VantageOS Team (pivot: 2026-04-01)
+		beforeVantageOS: v.optional(v.object({
+			totalIssues: v.number(),
+			resolvedIssues: v.number(),
+			medianTimeToFix: v.optional(v.number()),
+			avgTimeToFix: v.optional(v.number()),
+		})),
+		afterVantageOS: v.optional(v.object({
+			totalIssues: v.number(),
+			resolvedIssues: v.number(),
+			medianTimeToFix: v.optional(v.number()),
+			avgTimeToFix: v.optional(v.number()),
+		})),
+		issueDetails: v.optional(v.array(v.object({
+			number: v.number(),
+			title: v.string(),
+			timeToFirstResponse: v.optional(v.number()),
+			timeToFix: v.optional(v.number()),
+			status: v.string(),
+		}))),
+		calculatedAt: v.number(),
+	})
+		.index("by_repo_date", ["repo", "date"])
+		.index("by_date", ["date"]),
+
+	errorLogs: defineTable({
+		hash: v.string(),
+		deployment: v.string(),
+		functionName: v.string(),
+		errorMessage: v.string(),
+		stackTrace: v.optional(v.string()),
+		firstSeen: v.number(),
+		lastSeen: v.number(),
+		count: v.number(),
+		issueNumber: v.optional(v.number()),
+		githubRepo: v.optional(v.string()),
+	})
+		.index("by_hash", ["hash"])
+		.index("by_deployment", ["deployment"]),
 });

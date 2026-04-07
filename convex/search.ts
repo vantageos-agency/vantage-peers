@@ -1,10 +1,10 @@
 "use node";
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import { components } from "./_generated/api";
+import { api, components } from "./_generated/api";
 import { RAG } from "@convex-dev/rag";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { memoryTypeValidator } from "./schema";
+import { memoryTypeValidator, severityValidator, creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RAG instance — backed by Vercel AI Gateway (OpenAI-compatible endpoint)
@@ -237,5 +237,94 @@ export const hybridSearch = action({
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null && r.memoryId !== "") as never;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// searchFixPatterns — semantic search over fix patterns via RAG
+// Searches the "fixpatterns" namespace. Returns pattern IDs + scores,
+// then hydrates with full pattern data from the DB.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const searchFixPatterns = action({
+  args: {
+    query: v.string(),
+    limit: v.optional(v.number()),
+    scoreThreshold: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      patternId: v.string(),
+      score: v.number(),
+      symptom: v.string(),
+      rootCause: v.string(),
+      validatedFix: v.optional(v.string()),
+      tags: v.array(v.string()),
+      stack: v.array(v.string()),
+      sourceProject: v.string(),
+      severity: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 10;
+    const scoreThreshold = args.scoreThreshold ?? 0.15;
+
+    const { results, entries } = await rag.search(ctx, {
+      namespace: "fixpatterns",
+      query: args.query,
+      searchType: "vector",
+      limit,
+      vectorScoreThreshold: scoreThreshold,
+      filters: [
+        { name: "namespace", value: "fixpatterns" },
+        { name: "isLatest", value: "true" },
+      ],
+    });
+
+    const entryMap = new Map(entries.map((e) => [e.entryId, e]));
+
+    // Collect pattern IDs from results
+    const patternResults: Array<{ patternId: string; score: number }> = [];
+    for (const r of results) {
+      const entry = entryMap.get(r.entryId);
+      if (entry?.key) {
+        patternResults.push({ patternId: entry.key, score: r.score });
+      }
+    }
+
+    // Hydrate with full pattern data
+    const hydrated: Array<{
+      patternId: string;
+      score: number;
+      symptom: string;
+      rootCause: string;
+      validatedFix?: string;
+      tags: string[];
+      stack: string[];
+      sourceProject: string;
+      severity: string;
+    }> = [];
+
+    for (const { patternId, score } of patternResults) {
+      const pattern: Awaited<ReturnType<typeof ctx.runQuery>> = await ctx.runQuery(
+        api.fixPatterns.get,
+        { patternId: patternId as never },
+      );
+      if (pattern !== null) {
+        hydrated.push({
+          patternId,
+          score,
+          symptom: (pattern as Record<string, string>).symptom,
+          rootCause: (pattern as Record<string, string>).rootCause,
+          validatedFix: (pattern as Record<string, string | undefined>).validatedFix,
+          tags: (pattern as Record<string, string[]>).tags,
+          stack: (pattern as Record<string, string[]>).stack,
+          sourceProject: (pattern as Record<string, string>).sourceProject,
+          severity: (pattern as Record<string, string>).severity,
+        });
+      }
+    }
+
+    return hydrated;
   },
 });

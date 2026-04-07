@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,6 +302,10 @@ export const complete = mutation({
 			}
 		}
 
+		if (!args.completionNote || args.completionNote.trim() === "") {
+			throw new Error("completionNote is required. Describe what was actually done.");
+		}
+
 		const now = Date.now();
 		const patch: Record<string, any> = {
 			status: "done",
@@ -318,6 +323,179 @@ export const complete = mutation({
 		}
 
 		await ctx.db.patch(args.taskId, patch);
+
+		// Auto-link: if task title contains #NNN, update the corresponding issue
+		const issueMatch = task.title.match(/#(\d+)/);
+		if (issueMatch) {
+			const issueNumber = parseInt(issueMatch[1], 10);
+			// Find repo from project via githubRepoMapping
+			if (task.project) {
+				const mappings = await ctx.db.query("githubRepoMapping").collect();
+				const mapping = mappings.find((m) => m.project === task.project);
+				if (mapping) {
+					// Find the issue
+					const issue = await ctx.db
+						.query("issues")
+						.withIndex("by_repo_number", (q) =>
+							q.eq("repo", mapping.repo).eq("issueNumber", issueNumber),
+						)
+						.unique();
+					if (issue) {
+						// Link the task
+						const existingTaskIds = issue.linkedTaskIds || [];
+						if (!existingTaskIds.includes(args.taskId as string)) {
+							await ctx.db.patch(issue._id, {
+								linkedTaskIds: [...existingTaskIds, args.taskId as string],
+							});
+						}
+						// Check if completionNote mentions fix/fixed/commit SHA
+						const note = args.completionNote || "";
+						const hasFix =
+							/\bfix(ed)?\b/i.test(note) || /\b[0-9a-f]{7,40}\b/.test(note);
+						if (hasFix) {
+							// Extract commit SHA if present
+							const shaMatch = note.match(/\b([0-9a-f]{7,40})\b/);
+							await ctx.db.patch(issue._id, {
+								status: "fixed",
+								fixedBy: task.assignedTo,
+								fixedAt: Date.now(),
+								...(shaMatch
+									? {
+											fixCommits: [
+												...(issue.fixCommits || []),
+												shaMatch[1],
+											],
+										}
+									: {}),
+							});
+						}
+					}
+				}
+			}
+		}
+
+		// IRP auto-comments: post a GitHub comment when key IRP steps are completed.
+		// IRP task titles follow the pattern "[#NNN] TN — <step name>".
+		const irpStepMatch = task.title.match(/\[#(\d+)\] T(\d+)/);
+		if (irpStepMatch && task.project) {
+			const irpIssueNumber = parseInt(irpStepMatch[1], 10);
+			const stepNumber = parseInt(irpStepMatch[2], 10);
+
+			// Extract issue author stored in task description by the webhook
+			const authorMatch = task.description?.match(/Issue author: @(\S+)/);
+			const author = authorMatch ? authorMatch[1] : null;
+			const authorMention = author ? `@${author} ` : "";
+
+			const allMappings = await ctx.db.query("githubRepoMapping").take(100);
+			const repoMapping = allMappings.find((m) => m.project === task.project);
+
+			if (repoMapping) {
+				const dateStr = new Date().toISOString().split("T")[0];
+				const orch = task.assignedTo;
+				const orchCapitalized = orch.charAt(0).toUpperCase() + orch.slice(1);
+				const teamMap: Record<string, string> = {
+					omega: "VantageOS Team Dev",
+					sigma: "VantageOS Team Infra",
+					tau: "VantageOS Team Frontend",
+					phi: "VantageOS Team Product",
+					pi: "VantageOS Team Lead",
+				};
+				const team = teamMap[orch] ?? "VantageOS Team";
+				const signature = `Orchestrator: ${orchCapitalized} — ${team} | ${dateStr}`;
+				let commentBody: string | null = null;
+
+				if (stepNumber === 6) {
+					commentBody = `${authorMention}Bug reproduced in test suite. Root cause identified. Fix in progress.\n\n${signature}`;
+				} else if (stepNumber === 8) {
+					commentBody = `${authorMention}Fix ready. All tests pass (including new regression test). Awaiting review and deploy.\n\n${signature}`;
+				} else if (stepNumber === 11) {
+					commentBody = `${authorMention}Fixed and deployed to production. Regression test added to prevent recurrence. Closing.\n\n${signature}`;
+				}
+
+				if (commentBody !== null) {
+					await ctx.scheduler.runAfter(0, internal.githubComments.postComment, {
+						repo: repoMapping.repo,
+						issueNumber: irpIssueNumber,
+						body: commentBody,
+					});
+				}
+
+				// IRP auto-store fixPattern when the Fix step (T7) is completed
+				if (stepNumber === 7 && args.completionNote) {
+					const note = args.completionNote;
+
+					// Parse structured completionNote: "Root cause: ... Fix: ... Files: ..."
+					const rootCauseMatch = note.match(/Root cause:\s*(.+?)(?=\s*Fix:|$)/is);
+					const fixMatch = note.match(/Fix:\s*(.+?)(?=\s*Files:|$)/is);
+					const filesMatch = note.match(/Files:\s*(.+?)$/is);
+
+					if (rootCauseMatch) {
+						// Extract a clean symptom from the task title: "[#282] T7 — Fix" -> "Fix #282"
+						const issueTitle = `Issue #${irpIssueNumber}: ${task.title.replace(/^\[#\d+\] T\d+ — /, "")}`;
+						const rootCause = rootCauseMatch[1].trim();
+						const validatedFix = fixMatch ? fixMatch[1].trim() : undefined;
+
+						// creatorValidator does not include "laurent" — fall back to "system"
+						const fixPatternCreatedBy: "pi" | "tau" | "phi" | "sigma" | "omega" | "zeta" | "eta" | "system" =
+							task.assignedTo === "laurent" ? "system" : task.assignedTo;
+
+						const patternId = await ctx.db.insert("fixPatterns", {
+							symptom: issueTitle,
+							rootCause,
+							validatedFix,
+							files: filesMatch
+								? filesMatch[1]
+										.trim()
+										.split(",")
+										.map((f) => f.trim())
+										.filter((f) => f.length > 0)
+								: undefined,
+							tags: task.tags ?? [],
+							stack: [],
+							sourceProject: task.project,
+							linkedIssueIds: [`#${irpIssueNumber}`],
+							createdBy: fixPatternCreatedBy,
+							severity: "major" as const,
+							createdAt: Date.now(),
+							updatedAt: Date.now(),
+						});
+
+						// Schedule RAG embedding — matches fixPatterns.create behaviour
+						const ragText = `Symptom: ${issueTitle}\nRoot cause: ${rootCause}${validatedFix ? `\nValidated fix: ${validatedFix}` : ""}`;
+						await ctx.scheduler.runAfter(
+							0,
+							internal.ragSync.addFixPatternRagEntry,
+							{
+								patternId,
+								content: ragText,
+								sourceProject: task.project,
+							},
+						);
+					}
+				}
+			}
+		}
+
+		// Auto-complete mission: if this task belongs to a mission, check if all tasks are done
+		if (task.missionId) {
+			const missionTasks = await ctx.db
+				.query("tasks")
+				.withIndex("by_mission", (q) => q.eq("missionId", task.missionId!))
+				.collect();
+			const allDone = missionTasks.every(
+				(t) => t._id.toString() === args.taskId.toString() || t.status === "done",
+			);
+			if (allDone) {
+				const mission = await ctx.db.get(task.missionId);
+				if (mission && mission.status !== "complete") {
+					await ctx.db.patch(task.missionId, {
+						status: "complete",
+						updatedAt: Date.now(),
+					});
+				}
+			}
+		}
+
 		return null;
 	},
 });
@@ -345,6 +523,30 @@ export const start = mutation({
 			if (!isAuthorized) {
 				throw new Error(
 					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+				);
+			}
+		}
+
+		// Block if caller has a different unclosed in_progress task.
+		// Skip for "system" — it is never an assignee and has no task queue.
+		if (args.callerOrchestrator && args.callerOrchestrator !== "system") {
+			const assignee = args.callerOrchestrator as
+				| "pi"
+				| "tau"
+				| "phi"
+				| "sigma"
+				| "omega"
+				| "laurent";
+			const inProgressTasks = await ctx.db
+				.query("tasks")
+				.withIndex("by_assignee", (q) =>
+					q.eq("assignedTo", assignee).eq("status", "in_progress"),
+				)
+				.take(1);
+
+			if (inProgressTasks.length > 0 && inProgressTasks[0]._id !== args.taskId) {
+				throw new Error(
+					`Cannot start task: you have an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first.`,
 				);
 			}
 		}

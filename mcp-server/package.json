@@ -18,7 +18,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/vantageos-agency/vantage-peers.git"
+    "url": "https://github.com/vantageos-agency/vantage-peers.git",
+    "directory": "mcp-server"
   },
   "homepage": "https://vantagepeers.com/docs",
   "keywords": [
@@ -33,6 +34,7 @@
     "orchestration",
     "vantagepeers"
   ],
+  "author": "ElPi Corp",
   "license": "FSL-1.1-Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

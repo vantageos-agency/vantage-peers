@@ -8,7 +8,7 @@ import { creatorValidator } from "./schema";
 // Creates one message row + one receipt per recipient.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ALL_ORCHESTRATORS = ["pi", "tau", "phi"] as const;
+const ALL_ORCHESTRATORS = ["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"] as const;
 
 function resolveRecipients(
 	from: string,
@@ -53,7 +53,7 @@ export const sendMessage = mutation({
 
 			await ctx.db.insert("messageReceipts", {
 				messageId,
-				recipient: role as "pi" | "tau" | "phi" | "system",
+				recipient: role as typeof ALL_ORCHESTRATORS[number] | "system",
 				recipientInstanceId: isInstance ? recipient : undefined,
 				readAt: undefined,
 			});
@@ -235,7 +235,8 @@ export const listMessages = query({
 			_creationTime: v.number(),
 			from: creatorValidator,
 			fromInstanceId: v.optional(v.string()),
-			channel: v.string(),
+			channel: v.optional(v.string()),
+			to: v.optional(creatorValidator),
 			content: v.string(),
 			sessionDay: v.optional(v.number()),
 			createdAt: v.number(),
@@ -261,5 +262,102 @@ export const listMessages = query({
 		}
 
 		return await ctx.db.query("messages").order("desc").take(limit);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getUnreadCount — count unread receipts for a recipient role
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getUnreadCount = query({
+	args: { orchestratorId: creatorValidator },
+	returns: v.number(),
+	handler: async (ctx, { orchestratorId }) => {
+		const receipts = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_recipient_unread", (q) =>
+				q.eq("recipient", orchestratorId),
+			)
+			.filter((q) => q.eq(q.field("readAt"), undefined))
+			.take(500);
+		return receipts.length;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listBroadcastStatus — show who read a broadcast message and who didn't
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listBroadcastStatus = query({
+	args: { messageId: v.id("messages") },
+	returns: v.object({
+		messageId: v.id("messages"),
+		from: creatorValidator,
+		channel: v.optional(v.string()),
+		createdAt: v.number(),
+		receipts: v.array(
+			v.object({
+				recipient: v.string(),
+				recipientInstanceId: v.optional(v.string()),
+				read: v.boolean(),
+				readAt: v.optional(v.number()),
+			}),
+		),
+	}),
+	handler: async (ctx, { messageId }) => {
+		const message = await ctx.db.get(messageId);
+		if (!message) throw new Error("Message not found");
+
+		const receipts = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_message", (q) => q.eq("messageId", messageId))
+			.collect();
+
+		return {
+			messageId,
+			from: message.from,
+			channel: message.channel,
+			createdAt: message.createdAt,
+			receipts: receipts.map((r) => ({
+				recipient: r.recipient,
+				recipientInstanceId: r.recipientInstanceId,
+				read: r.readAt !== undefined,
+				readAt: r.readAt,
+			})),
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listByChannel — list recent messages for a channel (or all if unspecified)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listByChannel = query({
+	args: {
+		channel: v.optional(v.string()),
+		limit: v.optional(v.number()),
+	},
+	returns: v.array(
+		v.object({
+			_id: v.id("messages"),
+			_creationTime: v.number(),
+			from: creatorValidator,
+			fromInstanceId: v.optional(v.string()),
+			channel: v.string(),
+			content: v.string(),
+			sessionDay: v.optional(v.number()),
+			createdAt: v.number(),
+		}),
+	),
+	handler: async (ctx, { channel, limit }) => {
+		const take = limit ?? 100;
+		if (channel !== undefined) {
+			return await ctx.db
+				.query("messages")
+				.withIndex("by_channel", (q) => q.eq("channel", channel))
+				.order("desc")
+				.take(take);
+		}
+		return await ctx.db.query("messages").order("desc").take(take);
 	},
 });

@@ -43,9 +43,9 @@ VantagePeers is one system where the industry uses five.
 
 **Vercel AI Gateway** for OpenAI embeddings. text-embedding-3-small at 1536 dimensions. No vendor lock-in -- swap the gateway URL and point at any OpenAI-compatible provider.
 
-**MCP protocol** as the universal interface. 27 tools exposed via the Model Context Protocol. Works with any Claude Code instance. No framework adoption required. No CrewAI. No LangGraph. No AutoGen. Just tools.
+**MCP protocol** as the universal interface. 64 tools exposed via the Model Context Protocol. Works with any Claude Code instance. No framework adoption required. No CrewAI. No LangGraph. No AutoGen. Just tools.
 
-**One backend** for memory, messaging, tasks, missions, diaries, and briefing notes. Eight database tables. One Convex deployment. The coordination layer is not an afterthought -- it is the architecture.
+**One backend** for memory, messaging, tasks, missions, diaries, and briefing notes. Sixteen database tables. One Convex deployment. The coordination layer is not an afterthought -- it is the architecture.
 
 ## What Makes VantagePeers Different
 
@@ -63,11 +63,11 @@ VantagePeers is one system where the industry uses five.
 
 **Daily diaries.** Each agent writes a diary entry per day: highlights, blockers, reflections. Institutional memory that compounds.
 
-27 MCP tools. 8 database tables. One backend.
+64 MCP tools. 16 database tables. One backend.
 
 ## Open Source, Free Forever
 
-MIT license. The entire codebase. Not "open core" where the useful features live behind a paywall. Not "community edition" that gets deprecated when the Series A lands.
+FSL-1.1-Apache-2.0 license. The entire codebase. Source-available, free to self-host, converts to Apache 2.0 after 2 years. Not "open core" where the useful features live behind a paywall. Not "community edition" that gets deprecated when the Series A lands.
 
 Self-hosted on your own Convex deployment. Free tier works for small teams. No per-query pricing. No episode multipliers. No hidden LLM extraction costs baked into your subscription.
 
