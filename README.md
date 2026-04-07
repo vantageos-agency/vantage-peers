@@ -11,12 +11,11 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## What It Is
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 70 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 72 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Prerequisites
 
 - **Node.js 18+**
-- **Bun** (runtime for the MCP server)
 - **Convex account** (free tier works) -- [https://convex.dev](https://convex.dev)
 - **OpenAI API key** (for `text-embedding-3-small` embeddings, used via AI Gateway)
 
@@ -43,8 +42,8 @@ Then configure MCP in your Claude Code settings (`~/.claude/settings.json`):
 {
   "mcpServers": {
     "vantage-peers": {
-      "command": "bun",
-      "args": ["/path/to/vantage-peers/mcp-server/server.ts"],
+      "command": "npx",
+      "args": ["-y", "vantage-peers-mcp"],
       "env": {
         "CONVEX_URL": "https://your-deployment.convex.cloud"
       }
@@ -53,7 +52,7 @@ Then configure MCP in your Claude Code settings (`~/.claude/settings.json`):
 }
 ```
 
-Replace `/path/to/vantage-peers` with the absolute path to your clone, and `your-deployment` with the Convex deployment URL printed by `npx convex dev`.
+Replace `your-deployment` with the Convex deployment URL printed by `npx convex dev`.
 
 Verify: open Claude Code and confirm that vantage-peers tools appear in the tool list.
 
@@ -84,7 +83,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 Claude Code (Agent 1) ──┐
 Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
 Claude Code (Agent 3) ──┘        |
-                          70 MCP Tools
+                          72 MCP Tools
 ```
 
 One Convex deployment. One MCP server process per agent. All agents share the same database.
@@ -113,25 +112,31 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **PR monitoring** -- hourly cron polls open PRs on external repos, notifies on merge/close
 - **Orchestrator signatures** -- automated VantageOS Team branding on commits, PRs, and GitHub comments
 
-## MCP Tools Reference (70 tools)
+## MCP Tools Reference (72 tools)
 
-### Memory and Search (4 tools)
+### Memory (5 tools)
 
 | Tool | Description |
 |------|-------------|
 | `store_memory` | Store a typed memory entry with optional graph relations |
 | `recall` | Semantic vector search over memories, filtered by namespace/type |
-| `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
 | `list_memories` | List memories by namespace with optional type filter |
+| `soft_delete_memory` | Soft-delete a memory entry by ID |
+| `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
 
-### Profiles and Sessions (4 tools)
+### Profiles (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `get_profile` | Fetch an orchestrator's profile (static identity + dynamic session state) |
 | `update_profile` | Create or update an orchestrator profile |
-| `set_summary` | Set a status summary visible to other agents via list_peers |
 | `list_peers` | List all registered agent instances and their current summaries |
+
+### Session (1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `set_summary` | Set a status summary visible to other agents via list_peers |
 
 ### Messaging (6 tools)
 
@@ -142,6 +147,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `mark_as_read` | Mark message receipts as read by receipt ID |
 | `delete_message` | Delete a message by ID |
 | `list_messages` | List messages with filters (channel, sender, date range) |
+| `list_broadcast_status` | List read/unread receipts for a broadcast message |
 
 ### Tasks (8 tools)
 
@@ -156,7 +162,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `checkout_task` | Atomically claim a task (conflict-safe for multi-instance) |
 | `delete_task` | Delete a task by ID |
 
-### Missions (4 tools)
+### Missions (5 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -164,6 +170,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_missions` | List missions filtered by project, pilot, or status |
 | `update_mission` | Update mission fields (description, brief, agents, dates) |
 | `update_mission_status` | Advance a mission through its lifecycle stages |
+| `get_mission_template` | Fetch a configurable mission template by name |
 
 ### Diary and Notes (5 tools)
 
@@ -214,13 +221,10 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_bus` | List all business units with optional status/orchestrator filter |
 | `delete_bu` | Delete a business unit |
 
-### GitHub Issues (9 tools)
+### Issues (6 tools)
 
 | Tool | Description |
 |------|-------------|
-| `add_repo_mapping` | Map a GitHub repo to an orchestrator and project |
-| `list_repo_mappings` | List all repo-to-orchestrator mappings |
-| `remove_repo_mapping` | Remove a repo mapping |
 | `list_issues` | List tracked issues with filters (repo, status, project, assignee) |
 | `get_issue` | Fetch a single issue by repo and number |
 | `update_issue_status` | Update issue status (open, in_progress, fixed, verified, closed) |
@@ -228,32 +232,44 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `verify_issue` | Mark an issue as verified (fix confirmed) |
 | `issue_stats` | Get issue count statistics grouped by status |
 
-### Fix Patterns KB (6 tools)
+### Fix Patterns (5 tools)
 
 | Tool | Description |
 |------|-------------|
 | `create_fix_pattern` | Create a fix pattern documenting a bug, root cause, and fix |
+| `list_fix_patterns` | List fix patterns by project |
 | `add_fix_attempt` | Document a fix attempt (worked/failed) with reasoning |
 | `validate_fix` | Set the validated fix on a pattern |
-| `search_fix_patterns` | Semantic search over fix patterns (use BEFORE fixing bugs) |
-| `list_fix_patterns` | List fix patterns by project |
 | `link_issue_to_pattern` | Link a GitHub issue to a fix pattern |
 
-### Mission Templates (2 tools)
+### Search / RAG (1 tool)
 
 | Tool | Description |
 |------|-------------|
-| `get_mission_template` | Fetch a configurable mission template by name |
+| `search_fix_patterns` | Semantic search over fix patterns (use BEFORE fixing bugs) |
+
+### Mission Templates (1 tool)
+
+| Tool | Description |
+|------|-------------|
 | `update_mission_template` | Update template steps and configuration |
 
-### Error Monitoring (4 tools)
+### Error Monitoring (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `list_errors` | List detected errors with dedup counts |
+| `get_error` | Get full error details including stack trace |
+
+### Deployments & Repos (5 tools)
 
 | Tool | Description |
 |------|-------------|
 | `add_deployment` | Register a Convex deployment to monitor for errors |
 | `remove_deployment` | Stop monitoring a deployment |
-| `list_errors` | List detected errors with dedup counts |
-| `get_error` | Get full error details including stack trace |
+| `add_repo_mapping` | Map a GitHub repo to an orchestrator and project |
+| `list_repo_mappings` | List all repo-to-orchestrator mappings |
+| `remove_repo_mapping` | Remove a repo mapping |
 
 ## Database Schema
 
@@ -353,7 +369,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) -- install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) -- two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) -- orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 70 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 72 MCP tools
 
 ## Contributing
 
