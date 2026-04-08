@@ -421,6 +421,28 @@ http.route({
 			});
 		}
 
+		// --- Pull request review submitted → notify pilot ---
+		if (eventType === "pull_request_review" && action === "submitted") {
+			const review = payload.review as Record<string, unknown>;
+			const pr = payload.pull_request as Record<string, unknown>;
+			const reviewState = (review.state as string || "").toUpperCase();
+			const reviewer = (review.user as Record<string, unknown>)?.login as string ?? "unknown";
+
+			// Don't notify for our own reviews
+			if (reviewer === "elpiarthera") {
+				return new Response("OK - own review", { status: 200 });
+			}
+
+			const reviewBody = (review.body as string || "").slice(0, 200);
+			const bodySnippet = reviewBody ? ` — "${reviewBody}${(review.body as string || "").length > 200 ? "..." : ""}"` : "";
+
+			await ctx.runMutation(api.messages.sendMessage, {
+				from: "system",
+				channel: orchestrator,
+				content: `[GitHub] PR #${pr.number as number} review: ${reviewState} by ${reviewer}${bodySnippet}. ${pr.title as string} — ${pr.html_url as string}`,
+			});
+		}
+
 		// --- Pull request merged ---
 		if (eventType === "pull_request" && action === "closed") {
 			const pr = payload.pull_request as Record<string, unknown>;
