@@ -73,17 +73,17 @@ export const upsertProfile = mutation({
   args: {
     orchestratorId: v.string(),
     instanceId: v.optional(v.string()),
-    name: v.string(),
-    static: v.object({
+    name: v.optional(v.string()),
+    static: v.optional(v.object({
       role: v.string(),
       workspace: v.string(),
       capabilities: v.array(v.string()),
-    }),
-    dynamic: v.object({
+    })),
+    dynamic: v.optional(v.object({
       currentTask: v.optional(v.string()),
       lastSeen: v.number(),
       sessionCount: v.number(),
-    }),
+    })),
   },
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
@@ -109,21 +109,21 @@ export const upsertProfile = mutation({
     }
 
     if (existing !== null) {
-      await ctx.db.patch(existing._id, {
-        name: args.name,
-        instanceId: args.instanceId,
-        static: args.static,
-        dynamic: args.dynamic,
-      });
+      const patch: Record<string, unknown> = {};
+      if (args.instanceId !== undefined) patch.instanceId = args.instanceId;
+      if (args.name !== undefined) patch.name = args.name;
+      if (args.static !== undefined) patch.static = args.static;
+      if (args.dynamic !== undefined) patch.dynamic = args.dynamic;
+      await ctx.db.patch(existing._id, patch);
       return existing._id;
     }
 
     return await ctx.db.insert("profiles", {
       orchestratorId: args.orchestratorId,
       instanceId: args.instanceId,
-      name: args.name,
-      static: args.static,
-      dynamic: args.dynamic,
+      name: args.name ?? "Unknown",
+      static: args.static ?? { role: "", workspace: "", capabilities: [] },
+      dynamic: args.dynamic ?? { lastSeen: Date.now(), sessionCount: 0 },
     });
   },
 });

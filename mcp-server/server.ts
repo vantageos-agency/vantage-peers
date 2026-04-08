@@ -464,14 +464,14 @@ server.tool(
 
 server.tool(
 	"update_profile",
-	"Create or update an orchestrator profile. " +
+	"Create or update an orchestrator profile. Provide only the fields you want to change. " +
 		"static fields are stable identity facts (role, workspace, capabilities). " +
 		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 	{
 		orchestratorId: z
 			.string()
 			.describe("Orchestrator identifier"),
-		name: z.string().describe("Human-readable orchestrator name"),
+		name: z.string().optional().describe("Human-readable orchestrator name"),
 		static: z
 			.object({
 				role: z.string().describe("Orchestrator role description"),
@@ -480,6 +480,7 @@ server.tool(
 					.array(z.string())
 					.describe("List of capability keywords"),
 			})
+			.optional()
 			.describe("Stable identity facts — infrequently updated"),
 		dynamic: z
 			.object({
@@ -492,6 +493,7 @@ server.tool(
 					.describe("Unix timestamp (ms) of last session start"),
 				sessionCount: z.number().int().describe("Total sessions to date"),
 			})
+			.optional()
 			.describe("Mutable session state — updated each session"),
 	},
 	async ({ orchestratorId, name, static: staticFields, dynamic }) => {
