@@ -435,7 +435,7 @@ server.tool(
 		"Returns null if the profile does not exist yet — call update_profile to create it.",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
+			.string()
 			.describe("Orchestrator identifier"),
 	},
 	async ({ orchestratorId }) => {
@@ -469,7 +469,7 @@ server.tool(
 		"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
+			.string()
 			.describe("Orchestrator identifier"),
 		name: z.string().describe("Human-readable orchestrator name"),
 		static: z
@@ -745,7 +745,7 @@ server.tool(
 		"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 	{
 		orchestratorId: z
-			.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
+			.string()
 			.describe("Orchestrator role"),
 		instanceId: z
 			.string()
