@@ -337,7 +337,7 @@ Multiple instances of the same role can run concurrently. Messages can be routed
 bun scripts/test-mcp.ts
 
 # Unit tests
-npx vitest
+npx vitest run
 ```
 
 ## CLAUDE.md Integration
