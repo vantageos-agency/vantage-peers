@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * VantagePeers MCP Server
- * Exposes 76 Convex-backed tools to Claude Code agents via stdio transport.
+ * Exposes 79 Convex-backed tools to Claude Code agents via stdio transport.
  *
  * Tool categories: Memory, Profiles, Messages, Tasks, Missions, Diary,
  * Briefing Notes, Components, Recurring Tasks, Mandates, Business Units,
@@ -1896,6 +1896,88 @@ server.tool(
 						text: JSON.stringify(component, null, 2),
 					},
 				],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_component
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_component",
+	"Update a component's fields. Provide only the fields you want to change.",
+	{
+		componentId: z.string().describe("Convex document ID of the component"),
+		name: z.string().optional().describe("New component name"),
+		team: z.string().optional().describe("New team name"),
+		content: z.string().optional().describe("New content/source code"),
+		version: z.string().optional().describe("New version string"),
+		project: z.string().optional().describe("New project name"),
+	},
+	async ({ componentId, ...fields }) => {
+		try {
+			const result = await convex.mutation("components:update" as any, {
+				componentId: componentId as any,
+				...fields,
+			});
+			return {
+				content: [{ type: "text", text: JSON.stringify({ componentId: result, updated: true }, null, 2) }],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_component
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"delete_component",
+	"Delete a component from the registry by ID.",
+	{
+		componentId: z.string().describe("Convex document ID of the component to delete"),
+	},
+	async ({ componentId }) => {
+		try {
+			const result = await convex.mutation("components:remove" as any, {
+				componentId: componentId as any,
+			});
+			return {
+				content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: search_components
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"search_components",
+	"Search components by name or team substring. Optionally filter by type.",
+	{
+		query: z.string().describe("Search term to match against component name or team"),
+		type: componentTypeSchema.optional().describe("Filter by component type"),
+		limit: z.number().int().optional().describe("Max results (default 50)"),
+	},
+	async ({ query, type, limit }) => {
+		try {
+			const results = await convex.query("components:search" as any, {
+				query,
+				type,
+				limit,
+			});
+			return {
+				content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 			};
 		} catch (error: any) {
 			return mcpError(error.message ?? String(error));
