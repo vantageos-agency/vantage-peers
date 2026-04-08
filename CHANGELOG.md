@@ -1,5 +1,33 @@
 # Changelog
 
+## v11 — 2026-04-08
+
+### New Features
+- **Dynamic broadcast** — broadcast channel now queries profiles table instead of hardcoded list (#219)
+- **7 new MCP tools** — block_task, add_task_dependency, get_mission, update_component, delete_component, search_components, update_recurring_task (#121-#127)
+- **PR review webhook** — pull_request_review events auto-notify pilot via VantagePeers (#191)
+- **82 MCP tools total** (up from 75)
+
+### Bug Fixes
+- Inline orchestrator enums replaced with z.string() (#149)
+- McpServer version synced to 1.0.1 (#150)
+- completionNote made required in complete_task (#153)
+- update_profile fields made optional for partial updates (#154)
+- Deduplicated missionPrioritySchema and componentTypeSchema (#172, #173)
+- Schema comment corrected: errorLogs → issueStats (#217)
+
+### Documentation
+- README tool counts updated to 82, table count to 20
+- Orchestrator roles documented including system RBAC bypass (#174)
+- CONTRIBUTING.md org URL corrected (#160)
+- Settings path corrected to ~/.claude.json (#175)
+- Added convex/_generated/ to .gitignore (#179)
+
+### Testing
+- MCP smoke tests expanded from 75 to 82 tools
+- Broadcast unit test updated for dynamic profiles
+- Test reports committed to tests/
+
 ## v10 — Public Launch Cleanup (2026-04-07)
 
 - PR #100: Deep repo cleanup for public launch
