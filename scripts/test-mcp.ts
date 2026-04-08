@@ -449,6 +449,18 @@ async function main() {
 			fail("update_mission", "Skipped — no missionId from create_mission");
 		}
 
+		// ── get_mission ─────────────────────────────────────────────────
+		try {
+			await client.callTool("get_mission", { missionId: "invalid-id" });
+			pass("get_mission", "ok");
+		} catch (e: any) {
+			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
+				pass("get_mission", "correctly rejects invalid ID");
+			} else {
+				fail("get_mission", e.message);
+			}
+		}
+
 		// ── store_memory ──────────────────────────────────────────────────────
 		try {
 			const res = await client.callTool("store_memory", {
@@ -808,6 +820,30 @@ async function main() {
 			pass("delete_task", "correctly rejects invalid ID");
 		}
 
+		// ── block_task ─────────────────────────────────────────────────
+		try {
+			await client.callTool("block_task", { taskId: "invalid-id", reason: "test block" });
+			pass("block_task", "ok");
+		} catch (e: any) {
+			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
+				pass("block_task", "correctly rejects invalid ID");
+			} else {
+				fail("block_task", e.message);
+			}
+		}
+
+		// ── add_task_dependency ─────────────────────────────────────────────────
+		try {
+			await client.callTool("add_task_dependency", { taskId: "invalid-id", dependsOn: ["dep-id"] });
+			pass("add_task_dependency", "ok");
+		} catch (e: any) {
+			if (e.message?.includes("not found") || e.message?.includes("invalid") || e.message?.includes("Error")) {
+				pass("add_task_dependency", "correctly rejects invalid ID");
+			} else {
+				fail("add_task_dependency", e.message);
+			}
+		}
+
 		// ── create_bu ────────────────────────────────────────────────────────
 		let buId: string | undefined;
 		try {
@@ -909,6 +945,38 @@ async function main() {
 			fail("get_component", e.message);
 		}
 
+		// ── update_component ─────────────────────────────────────────────────
+		try {
+			await client.callTool("update_component", { componentId: "invalid-id", name: "test" });
+			pass("update_component", "ok");
+		} catch (e: any) {
+			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
+				pass("update_component", "correctly rejects invalid ID");
+			} else {
+				fail("update_component", e.message);
+			}
+		}
+
+		// ── delete_component ─────────────────────────────────────────────────
+		try {
+			await client.callTool("delete_component", { componentId: "invalid-id" });
+			pass("delete_component", "ok");
+		} catch (e: any) {
+			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
+				pass("delete_component", "correctly rejects invalid ID");
+			} else {
+				fail("delete_component", e.message);
+			}
+		}
+
+		// ── search_components ─────────────────────────────────────────────────
+		try {
+			const res = await client.callTool("search_components", { query: "test" });
+			pass("search_components", `found ${Array.isArray(res) ? res.length : 0} result(s)`);
+		} catch (e: any) {
+			fail("search_components", e.message);
+		}
+
 		// ── create_recurring_task ────────────────────────────────────────────
 		let recurringId: string | undefined;
 		try {
@@ -967,6 +1035,18 @@ async function main() {
 			}
 		} else {
 			fail("delete_recurring_task", "skipped — no recurringId");
+		}
+
+		// ── update_recurring_task ─────────────────────────────────────────────────
+		try {
+			await client.callTool("update_recurring_task", { recurringTaskId: "invalid-id", title: "test" });
+			pass("update_recurring_task", "ok");
+		} catch (e: any) {
+			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
+				pass("update_recurring_task", "correctly rejects invalid ID");
+			} else {
+				fail("update_recurring_task", e.message);
+			}
 		}
 
 		// ── create_fix_pattern ───────────────────────────────────────────────
