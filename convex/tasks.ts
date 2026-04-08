@@ -7,16 +7,8 @@ import { creatorValidator } from "./schema";
 // Shared validators
 // ─────────────────────────────────────────────────────────────────────────────
 
-const assigneeValidator = v.union(
-	v.literal("pi"),
-	v.literal("tau"),
-	v.literal("phi"),
-	v.literal("sigma"),
-	v.literal("omega"),
-	v.literal("zeta"),
-	v.literal("eta"),
-	v.literal("laurent"),
-);
+// Open string — any orchestrator name accepted (issue #132)
+const assigneeValidator = v.string();
 
 const priorityValidator = v.union(
 	v.literal("urgent"),
@@ -427,9 +419,8 @@ export const complete = mutation({
 						const rootCause = rootCauseMatch[1].trim();
 						const validatedFix = fixMatch ? fixMatch[1].trim() : undefined;
 
-						// creatorValidator does not include "laurent" — fall back to "system"
-						const fixPatternCreatedBy: "pi" | "tau" | "phi" | "sigma" | "omega" | "zeta" | "eta" | "system" =
-							task.assignedTo === "laurent" ? "system" : task.assignedTo;
+						// Use assignedTo directly — creatorValidator is now v.string() (issue #132)
+						const fixPatternCreatedBy: string = task.assignedTo;
 
 						const patternId = await ctx.db.insert("fixPatterns", {
 							symptom: issueTitle,
@@ -522,17 +513,11 @@ export const start = mutation({
 		// Block if caller has a different unclosed in_progress task.
 		// Skip for "system" — it is never an assignee and has no task queue.
 		if (args.callerOrchestrator && args.callerOrchestrator !== "system") {
-			const assignee = args.callerOrchestrator as
-				| "pi"
-				| "tau"
-				| "phi"
-				| "sigma"
-				| "omega"
-				| "laurent";
+			const callerOrc = args.callerOrchestrator;
 			const inProgressTasks = await ctx.db
 				.query("tasks")
 				.withIndex("by_assignee", (q) =>
-					q.eq("assignedTo", assignee).eq("status", "in_progress"),
+					q.eq("assignedTo", callerOrc).eq("status", "in_progress"),
 				)
 				.take(1);
 

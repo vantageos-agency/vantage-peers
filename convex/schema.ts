@@ -13,16 +13,10 @@ export const memoryTypeValidator = v.union(
 	v.literal("episode"),
 );
 
-export const creatorValidator = v.union(
-	v.literal("pi"),
-	v.literal("tau"),
-	v.literal("phi"),
-	v.literal("sigma"),
-	v.literal("omega"),
-	v.literal("zeta"),
-	v.literal("eta"),
-	v.literal("system"),
-);
+// Open validator — any orchestrator name is accepted.
+// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, system.
+// New orchestrators can be added without schema changes (see issue #132).
+export const creatorValidator = v.string();
 
 export const relationTypeValidator = v.union(
 	v.literal("updates"),
@@ -205,16 +199,8 @@ export default defineSchema({
 		description: v.optional(v.string()),
 		project: v.optional(v.string()), // "vantage-starter", "perfect-ai-agent", etc.
 		tags: v.optional(v.array(v.string())),
-		assignedTo: v.union(
-			v.literal("pi"),
-			v.literal("tau"),
-			v.literal("phi"),
-			v.literal("sigma"),
-			v.literal("omega"),
-			v.literal("zeta"),
-			v.literal("eta"),
-			v.literal("laurent"),
-		),
+		// Orchestrator or person assigned — open string (issue #132)
+		assignedTo: v.string(),
 		priority: v.union(
 			v.literal("urgent"),
 			v.literal("high"),
@@ -440,16 +426,8 @@ export default defineSchema({
 	recurringTasks: defineTable({
 		title: v.string(),
 		description: v.optional(v.string()),
-		assignedTo: v.union(
-			v.literal("pi"),
-			v.literal("tau"),
-			v.literal("phi"),
-			v.literal("sigma"),
-			v.literal("omega"),
-			v.literal("zeta"),
-			v.literal("eta"),
-			v.literal("laurent"),
-		),
+		// Orchestrator or person assigned — open string (issue #132)
+		assignedTo: v.string(),
 		priority: v.union(
 			v.literal("urgent"),
 			v.literal("high"),
