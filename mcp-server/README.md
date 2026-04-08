@@ -2,7 +2,7 @@
 
 MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
 
-75 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session.
+82 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session.
 
 ## Quick start
 
@@ -53,7 +53,7 @@ Add to `~/.claude.json` or project `.claude/settings.json`:
 
 The server also reads `CONVEX_URL` from `.env.local` in the parent directory if not set via environment.
 
-## Tools (75)
+## Tools (82)
 
 ### Memory (6)
 `store_memory`, `recall`, `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
@@ -61,11 +61,11 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ### Profiles (3)
 `get_profile`, `update_profile`, `list_peers`
 
-### Tasks (8)
-`create_task`, `list_tasks`, `list_tasks_by_mission`, `update_task`, `start_task`, `complete_task`, `checkout_task`, `delete_task`
+### Tasks (10)
+`create_task`, `list_tasks`, `list_tasks_by_mission`, `update_task`, `start_task`, `complete_task`, `checkout_task`, `delete_task`, `block_task`, `add_task_dependency`
 
-### Missions (5)
-`create_mission`, `list_missions`, `update_mission`, `update_mission_status`, `get_mission_template`
+### Missions (6)
+`create_mission`, `list_missions`, `update_mission`, `update_mission_status`, `get_mission_template`, `get_mission`
 
 ### Mission Templates (1)
 `update_mission_template`
@@ -97,14 +97,14 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ### Business Units (5)
 `create_bu`, `list_bus`, `get_bu`, `update_bu`, `delete_bu`
 
-### Components (3)
-`register_component`, `list_components`, `get_component`
+### Components (6)
+`register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components`
 
 ### Mandates (6)
 `create_mandate`, `list_mandates`, `accept_mandate`, `update_mandate`, `validate_mandate_spending`, `settle_mandate`
 
-### Recurring Tasks (5)
-`create_recurring_task`, `list_recurring_tasks`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`
+### Recurring Tasks (6)
+`create_recurring_task`, `list_recurring_tasks`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
 
 ### Session (1)
 `set_summary`
