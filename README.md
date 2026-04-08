@@ -360,14 +360,34 @@ VantagePeers distinguishes between **roles** and **instances**:
 
 Multiple instances of the same role can run concurrently. Messages can be routed to a role (all instances receive it) or to a specific instance. Each instance can set its own status summary and claim tasks independently. The `checkout_task` tool provides atomic task claiming to prevent conflicts between instances.
 
-## Running Tests
+## Testing
+
+### MCP Smoke Tests
+
+Runs all 82 MCP tools against a live Convex deployment:
 
 ```bash
-# Integration tests (requires a running Convex deployment)
 bun scripts/test-mcp.ts
+```
 
-# Unit tests
+Results are saved to `tests/mcp-smoke-report.md`.
+
+### Unit Tests
+
+Runs Convex function unit tests with vitest:
+
+```bash
 npx vitest run
+```
+
+Results are saved to `tests/unit-report.md`.
+
+### RAG Integration Tests
+
+Tests the store → embed → recall pipeline:
+
+```bash
+bun scripts/test-rag-integration.ts
 ```
 
 ## CLAUDE.md Integration
