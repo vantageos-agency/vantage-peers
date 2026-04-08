@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * VantagePeers MCP Server
- * Exposes 79 Convex-backed tools to Claude Code agents via stdio transport.
+ * Exposes 81 Convex-backed tools to Claude Code agents via stdio transport.
  *
  * Tool categories: Memory, Profiles, Messages, Tasks, Missions, Diary,
  * Briefing Notes, Components, Recurring Tasks, Mandates, Business Units,
@@ -1271,6 +1271,72 @@ server.tool(
 						text: JSON.stringify(result, null, 2),
 					},
 				],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: block_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"block_task",
+	"Mark a task as blocked with an optional reason. Sets status to 'blocked' and records the blocker description.",
+	{
+		taskId: z.string().describe("Convex document ID of the task to block"),
+		reason: z.string().optional().describe("Why the task is blocked"),
+		blockedBy: z.array(z.string()).optional().describe("Task IDs that are blocking this task"),
+		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or assignee"),
+	},
+	async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
+		try {
+			const updateArgs: Record<string, any> = {
+				taskId: taskId as any,
+				status: "blocked",
+			};
+			if (reason) updateArgs.completionNote = reason;
+			if (blockedBy) updateArgs.dependsOn = blockedBy.map((id: string) => id as any);
+			if (callerOrchestrator) updateArgs.callerOrchestrator = callerOrchestrator;
+
+			await convex.mutation("tasks:update" as any, updateArgs);
+
+			return {
+				content: [{ type: "text", text: JSON.stringify({ taskId, status: "blocked", reason }, null, 2) }],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_task_dependency
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"add_task_dependency",
+	"Add a dependency to a task. The task cannot start until all dependencies are complete. " +
+		"Pass the IDs of tasks that must complete before this one can begin.",
+	{
+		taskId: z.string().describe("Convex document ID of the task that depends on others"),
+		dependsOn: z.array(z.string()).describe("Task IDs that must complete first"),
+		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or assignee"),
+	},
+	async ({ taskId, dependsOn, callerOrchestrator }) => {
+		try {
+			const updateArgs: Record<string, any> = {
+				taskId: taskId as any,
+				dependsOn: dependsOn.map((id: string) => id as any),
+			};
+			if (callerOrchestrator) updateArgs.callerOrchestrator = callerOrchestrator;
+
+			await convex.mutation("tasks:update" as any, updateArgs);
+
+			return {
+				content: [{ type: "text", text: JSON.stringify({ taskId, dependsOn, updated: true }, null, 2) }],
 			};
 		} catch (error: any) {
 			return mcpError(error.message ?? String(error));
