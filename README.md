@@ -11,7 +11,7 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## What It Is
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 75 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 81 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Prerequisites
 
@@ -83,7 +83,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 Claude Code (Agent 1) ──┐
 Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
 Claude Code (Agent 3) ──┘        |
-                          75 MCP Tools
+                          81 MCP Tools
 ```
 
 One Convex deployment. One MCP server process per agent. All agents share the same database.
@@ -113,7 +113,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **PR monitoring** -- hourly cron polls open PRs on external repos, notifies on merge/close
 - **Orchestrator signatures** -- automated VantageOS Team branding on commits, PRs, and GitHub comments
 
-## MCP Tools Reference (75 tools)
+## MCP Tools Reference (81 tools)
 
 ### Memory (6 tools)
 
@@ -151,7 +151,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_messages` | List messages with filters (channel, sender, date range) |
 | `list_broadcast_status` | List read/unread receipts for a broadcast message |
 
-### Tasks (8 tools)
+### Tasks (10 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -163,8 +163,10 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `start_task` | Claim a task and set its status to in_progress |
 | `checkout_task` | Atomically claim a task (conflict-safe for multi-instance) |
 | `delete_task` | Delete a task by ID |
+| `block_task` | Mark a task as blocked with optional reason |
+| `add_task_dependency` | Add dependency tasks that must complete first |
 
-### Missions (5 tools)
+### Missions (6 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -173,6 +175,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `update_mission` | Update mission fields (description, brief, agents, dates) |
 | `update_mission_status` | Advance a mission through its lifecycle stages |
 | `get_mission_template` | Fetch a configurable mission template by name |
+| `get_mission` | Fetch a single mission by ID |
 
 ### Diary (3 tools)
 
@@ -189,15 +192,18 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `create_briefing_note` | Create a briefing note with topic, participants, and decisions |
 | `list_briefing_notes` | List briefing notes filtered by topic or creator |
 
-### Components (3 tools)
+### Components (6 tools)
 
 | Tool | Description |
 |------|-------------|
 | `register_component` | Register an agent, skill, hook, or plugin with full content backup |
 | `list_components` | List components filtered by type or team |
 | `get_component` | Fetch a single component by name and type |
+| `update_component` | Update a component's fields |
+| `delete_component` | Delete a component from the registry |
+| `search_components` | Search components by name or team |
 
-### Recurring Tasks (5 tools)
+### Recurring Tasks (6 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -206,6 +212,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `pause_recurring_task` | Pause a recurring task (stops auto-creation) |
 | `resume_recurring_task` | Resume a paused recurring task |
 | `delete_recurring_task` | Delete a recurring task template |
+| `update_recurring_task` | Update a recurring task's fields |
 
 ### Mandates (6 tools)
 
@@ -280,7 +287,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_repo_mappings` | List all repo-to-orchestrator mappings |
 | `remove_repo_mapping` | Remove a repo mapping |
 
-## Database Schema
+## Database Schema (20 tables)
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
@@ -379,7 +386,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) -- install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) -- two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) -- orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 75 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 81 MCP tools
 
 ## Contributing
 
