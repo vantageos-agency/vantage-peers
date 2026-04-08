@@ -25,7 +25,7 @@ npx convex env set AI_GATEWAY_API_KEY=your-openai-api-key
 # Convex unit tests (no deployment needed)
 npx vitest run
 
-# MCP smoke tests (75 tests, requires running Convex deployment)
+# MCP smoke tests (82 tests, requires running Convex deployment)
 bun scripts/test-mcp.ts
 ```
 
@@ -43,7 +43,7 @@ scripts/          # Test scripts and utilities
 2. Make your changes
 3. Run `npx convex dev --once` to verify Convex functions compile
 4. Run `npx vitest run` to verify all unit tests pass
-5. Run `bun scripts/test-mcp.ts` to verify all 75 smoke tests pass
+5. Run `bun scripts/test-mcp.ts` to verify all 82 smoke tests pass
 6. Open a PR against `main`
 
 ## Commit Style
