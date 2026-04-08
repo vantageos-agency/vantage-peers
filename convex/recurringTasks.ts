@@ -3,14 +3,8 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 
-const assigneeValidator = v.union(
-	v.literal("pi"),
-	v.literal("tau"),
-	v.literal("phi"),
-	v.literal("sigma"),
-	v.literal("omega"),
-	v.literal("laurent"),
-);
+// Open string — any orchestrator name accepted (issue #132)
+const assigneeValidator = v.string();
 
 const priorityValidator = v.union(
 	v.literal("urgent"),

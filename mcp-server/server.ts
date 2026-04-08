@@ -57,9 +57,11 @@ const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
 	.describe("Memory classification type");
 
+// Open string — validated at runtime by the backend (issue #132).
+// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, system.
 const creatorSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "eta", "system"])
-	.describe("Which orchestrator is creating this memory");
+	.string()
+	.describe("Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, system)");
 
 const severitySchema = z
 	.enum(["critical", "major", "minor"])
@@ -810,9 +812,10 @@ server.tool(
 // Tool: create_task
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Open string — validated at runtime by the backend (issue #132).
 const assigneeSchema = z
-	.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
-	.describe("Who the task is assigned to");
+	.string()
+	.describe("Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, laurent)");
 
 const prioritySchema = z
 	.enum(["urgent", "high", "medium", "low"])
@@ -1725,7 +1728,7 @@ server.tool(
 	{
 		title: z.string().describe("Task title — created each time the cron fires"),
 		description: z.string().optional().describe("Task description"),
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).describe("Who gets the created tasks"),
+		assignedTo: assigneeSchema.describe("Who gets the created tasks"),
 		priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
 		project: z.string().optional().describe("Project name"),
 		tags: flexArray.optional().describe("Tags for created tasks"),
@@ -1759,7 +1762,7 @@ server.tool(
 	"list_recurring_tasks",
 	"List recurring task templates. Filter by assignee or active status.",
 	{
-		assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).optional().describe("Filter by assignee"),
+		assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
 		active: z.boolean().optional().describe("Filter by active status"),
 		limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 	},

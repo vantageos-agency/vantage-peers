@@ -8,6 +8,10 @@ import { creatorValidator } from "./schema";
 // Creates one message row + one receipt per recipient.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Default orchestrators for broadcast resolution.
+// This list is NOT used for validation — creatorValidator is v.string() (issue #132).
+// New orchestrators must be added here to receive broadcast messages until a
+// dynamic orchestrators table is introduced (separate issue).
 const ALL_ORCHESTRATORS = ["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"] as const;
 
 function resolveRecipients(
@@ -53,7 +57,7 @@ export const sendMessage = mutation({
 
 			await ctx.db.insert("messageReceipts", {
 				messageId,
-				recipient: role as typeof ALL_ORCHESTRATORS[number] | "system",
+				recipient: role,
 				recipientInstanceId: isInstance ? recipient : undefined,
 				readAt: undefined,
 			});
