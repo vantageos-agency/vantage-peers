@@ -102,7 +102,8 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **Mandates** -- cross-agent service requests with budget tracking and spending limits
 - **Recurring tasks** -- cron-based task templates that auto-create on schedule
 - **Component registry** -- backup and inventory of agents, skills, hooks, and plugins
-- **Diary and notes** -- daily diary entries and briefing notes per agent
+- **Diary** -- daily diary entries per agent
+- **Briefing notes** -- shared briefing documents with topic, participants, and decisions
 - **Multi-instance support** -- multiple instances of the same agent role can run concurrently
 - **Hybrid search** -- vector, full-text (BM25), and combined search via Reciprocal Rank Fusion
 - **Proactive error monitoring** -- detect errors across Convex deployments before users report them, auto-create GitHub issues
@@ -173,13 +174,18 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `update_mission_status` | Advance a mission through its lifecycle stages |
 | `get_mission_template` | Fetch a configurable mission template by name |
 
-### Diary and Notes (5 tools)
+### Diary (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `write_diary` | Write a daily diary entry for an agent instance |
 | `get_diary` | Retrieve a diary entry by orchestrator and date |
 | `list_diaries` | List diary entries with optional date range and orchestrator filter |
+
+### Briefing Notes (2 tools)
+
+| Tool | Description |
+|------|-------------|
 | `create_briefing_note` | Create a briefing note with topic, participants, and decisions |
 | `list_briefing_notes` | List briefing notes filtered by topic or creator |
 
