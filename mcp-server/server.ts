@@ -1148,8 +1148,7 @@ server.tool(
 		taskId: z.string().describe("Convex document ID of the task to complete"),
 		completionNote: z
 			.string()
-			.optional()
-			.describe("What was actually done — summary of work completed (MANDATORY)"),
+			.describe("What was actually done — summary of work completed"),
 		callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 	},
 	async ({ taskId, completionNote, callerOrchestrator }) => {
