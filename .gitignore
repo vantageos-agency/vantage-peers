@@ -7,6 +7,7 @@ package-lock.json
 .DS_Store
 *.tsbuildinfo
 **/convex.json
+convex/_generated/
 apps/
 
 # Claude Code — never commit settings, hooks, or local state
