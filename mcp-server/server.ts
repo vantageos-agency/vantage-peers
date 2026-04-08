@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * VantagePeers MCP Server
- * Exposes 75 Convex-backed tools to Claude Code agents via stdio transport.
+ * Exposes 76 Convex-backed tools to Claude Code agents via stdio transport.
  *
  * Tool categories: Memory, Profiles, Messages, Tasks, Missions, Diary,
  * Briefing Notes, Components, Recurring Tasks, Mandates, Business Units,
@@ -1433,6 +1433,36 @@ server.tool(
 					{
 						type: "text",
 						text: JSON.stringify(missions, null, 2),
+					},
+				],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_mission
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"get_mission",
+	"Fetch a single mission by ID. Returns full mission details including status, pilot, agents, progress, and dates.",
+	{
+		missionId: z.string().describe("Convex document ID of the mission"),
+	},
+	async ({ missionId }) => {
+		try {
+			const mission = await convex.query("missions:get" as any, {
+				missionId: missionId as any,
+			});
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify(mission, null, 2),
 					},
 				],
 			};
