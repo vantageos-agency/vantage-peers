@@ -312,6 +312,26 @@ export const listByOrchestrator = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// listByStatus — list all issues matching a given status (no orchestrator filter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listByStatus = query({
+	args: {
+		status: issueStatusValidator,
+		limit: v.optional(v.number()),
+	},
+	returns: v.array(v.any()),
+	handler: async (ctx, args) => {
+		const limit = args.limit ?? 50;
+		return await ctx.db
+			.query("issues")
+			.withIndex("by_status", (q) => q.eq("status", args.status))
+			.order("desc")
+			.take(limit);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getStats — count issues per status, optionally filtered by project
 // ─────────────────────────────────────────────────────────────────────────────
 
