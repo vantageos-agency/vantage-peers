@@ -260,6 +260,40 @@ export const listByProject = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// listAll — list all patterns ordered by creation time (newest first)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listAll = query({
+	args: {
+		limit: v.optional(v.number()),
+	},
+	returns: v.array(
+		v.object({
+			_id: v.id("fixPatterns"),
+			_creationTime: v.number(),
+			symptom: v.string(),
+			rootCause: v.string(),
+			validatedFix: v.optional(v.string()),
+			files: v.optional(v.array(v.string())),
+			tags: v.array(v.string()),
+			stack: v.array(v.string()),
+			sourceProject: v.string(),
+			linkedIssueIds: v.optional(v.array(v.string())),
+			createdBy: creatorValidator,
+			severity: severityValidator,
+			createdAt: v.number(),
+			updatedAt: v.number(),
+		}),
+	),
+	handler: async (ctx, args) => {
+		return await ctx.db
+			.query("fixPatterns")
+			.order("desc")
+			.take(args.limit ?? 50);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listByStack — list patterns matching a stack technology
 // Uses full scan with filter (no array index in Convex)
 // ─────────────────────────────────────────────────────────────────────────────

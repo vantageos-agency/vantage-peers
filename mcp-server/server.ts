@@ -3072,15 +3072,12 @@ server.tool(
 				};
 			}
 
-			// No project filter — list all (use listByProject with a broad approach)
-			// For now, return empty guidance
+			// No project filter — list all patterns
+			const allResults = await convex.query("fixPatterns:listAll" as any, {
+				limit,
+			});
 			return {
-				content: [
-					{
-						type: "text",
-						text: "Please specify a project to filter by, or use search_fix_patterns for semantic search.",
-					},
-				],
+				content: [{ type: "text", text: JSON.stringify(allResults, null, 2) }],
 			};
 		} catch (error: any) {
 			return mcpError(error.message ?? String(error));
