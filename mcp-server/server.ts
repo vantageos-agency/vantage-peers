@@ -2702,10 +2702,7 @@ server.tool(
 					limit: limit ?? 50,
 				});
 			} else if (status) {
-				// Use listByProject with a broad approach — fall back to listByOrchestrator
-				// For status-only queries, we query all and filter
-				results = await convex.query("issues:listByOrchestrator" as any, {
-					assignedOrchestrator: "sigma",
+				results = await convex.query("issues:listByStatus" as any, {
 					status: status as any,
 					limit: limit ?? 50,
 				});
