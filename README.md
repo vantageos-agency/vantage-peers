@@ -312,6 +312,23 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `errorLogs` | Deduplicated error log with auto-issue linking | hash, functionName, errorMessage, count, issueNumber |
 | `issueStats` | Daily issue resolution metrics per repo | repo, date, medianTimeToFix, beforeVantageOS, afterVantageOS |
 
+## Orchestrator Roles
+
+All orchestrator names are open strings — any name is accepted. The following are conventions used by the VantageOS team:
+
+| Role | Purpose |
+|------|---------|
+| `pi` | Lead orchestrator — planning, delegation, strategy |
+| `tau` | Frontend specialist — UI, design systems, components |
+| `phi` | Backend specialist — APIs, database, infrastructure |
+| `sigma` | Infrastructure — deployments, CI/CD, monitoring |
+| `omega` | Project-specific specialist |
+| `zeta` | Project-specific specialist |
+| `eta` | Code reviewer — GitHub PR reviews |
+| `system` | Reserved for automated/webhook operations. Bypasses RBAC checks on delete_message, delete_task, and mandate operations. Not a real agent — used by webhooks and internal processes. |
+
+> **Note:** Since issue #132, all orchestrator validators accept any string. The names above are conventions, not enforced constraints. New orchestrators can use any name.
+
 ## Memory Types
 
 | Type | Purpose | Example |
