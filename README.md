@@ -114,7 +114,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 
 ## MCP Tools Reference (75 tools)
 
-### Memory (5 tools)
+### Memory (6 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -123,6 +123,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `list_memories` | List memories by namespace with optional type filter |
 | `soft_delete_memory` | Soft-delete a memory entry by ID |
 | `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
+| `get_memory` | Retrieve a single memory entry by ID |
 
 ### Profiles (3 tools)
 
@@ -242,11 +243,13 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `validate_fix` | Set the validated fix on a pattern |
 | `link_issue_to_pattern` | Link a GitHub issue to a fix pattern |
 
-### Search / RAG (1 tool)
+### Search / RAG (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `search_fix_patterns` | Semantic search over fix patterns (use BEFORE fixing bugs) |
+| `text_search` | BM25 full-text search over memories |
+| `hybrid_search` | Combined vector + BM25 search with RRF fusion |
 
 ### Mission Templates (1 tool)
 
