@@ -6,7 +6,7 @@ Thanks for your interest in contributing to VantagePeers.
 
 ```bash
 # Clone the repo
-git clone https://github.com/vantageos/vantage-peers.git
+git clone https://github.com/vantageos-agency/vantage-peers.git
 cd vantage-peers
 
 # Install dependencies
