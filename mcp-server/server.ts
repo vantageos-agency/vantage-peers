@@ -44,9 +44,8 @@ function loadConvexUrl(): string {
 		// .env.local not found — fall through to error
 	}
 
-	throw new Error(
-		"CONVEX_URL not found. Set it as an environment variable or add it to .env.local",
-	);
+	process.stderr.write("Error: CONVEX_URL not found.\n\nSet it via:\n  export CONVEX_URL=https://your-deployment.convex.cloud\n\nOr create a .env.local file with CONVEX_URL=...\n");
+	process.exit(1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
