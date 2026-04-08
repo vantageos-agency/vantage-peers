@@ -494,6 +494,26 @@ describe("Messages", () => {
 	test("send broadcast creates receipts for all other orchestrators", async () => {
 		const t = createTestConvex();
 
+		// Create profiles so broadcast can resolve recipients dynamically
+		await t.mutation(api.profiles.upsertProfile, {
+			orchestratorId: "pi",
+			name: "Pi",
+			static: { role: "lead", workspace: "/test", capabilities: [] },
+			dynamic: { currentTask: undefined, lastSeen: Date.now(), sessionCount: 1 },
+		});
+		await t.mutation(api.profiles.upsertProfile, {
+			orchestratorId: "tau",
+			name: "Tau",
+			static: { role: "frontend", workspace: "/test", capabilities: [] },
+			dynamic: { currentTask: undefined, lastSeen: Date.now(), sessionCount: 1 },
+		});
+		await t.mutation(api.profiles.upsertProfile, {
+			orchestratorId: "phi",
+			name: "Phi",
+			static: { role: "backend", workspace: "/test", capabilities: [] },
+			dynamic: { currentTask: undefined, lastSeen: Date.now(), sessionCount: 1 },
+		});
+
 		await t.mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "broadcast",
