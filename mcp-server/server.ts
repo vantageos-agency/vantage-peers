@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * VantagePeers MCP Server
- * Exposes 75 Convex-backed tools to Claude Code agents via stdio transport.
+ * Exposes 76 Convex-backed tools to Claude Code agents via stdio transport.
  *
  * Tool categories: Memory, Profiles, Messages, Tasks, Missions, Diary,
  * Briefing Notes, Components, Recurring Tasks, Mandates, Business Units,
@@ -2011,6 +2011,45 @@ server.tool(
 
 			return {
 				content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_recurring_task
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_recurring_task",
+	"Update a recurring task's fields. Provide only the fields you want to change. " +
+		"If cronExpression is updated, nextRunAt is automatically recalculated.",
+	{
+		recurringTaskId: z.string().describe("Convex document ID of the recurring task"),
+		title: z.string().optional().describe("New title"),
+		description: z.string().optional().describe("New description"),
+		assignedTo: creatorSchema.optional().describe("New assignee"),
+		priority: prioritySchema.optional().describe("New priority"),
+		project: z.string().optional().describe("New project name"),
+		tags: z.array(z.string()).optional().describe("New tags array"),
+		cronExpression: z.string().optional().describe("New cron expression (5-field)"),
+	},
+	async ({ recurringTaskId, ...fields }) => {
+		try {
+			const result = await convex.mutation("recurringTasks:update" as any, {
+				recurringTaskId: recurringTaskId as any,
+				...fields,
+			});
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({ recurringTaskId: result, updated: true }, null, 2),
+					},
+				],
 			};
 		} catch (error: any) {
 			return mcpError(error.message ?? String(error));
