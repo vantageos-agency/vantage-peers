@@ -36,7 +36,7 @@ npx convex dev
 npx convex env set AI_GATEWAY_API_KEY=your-openai-api-key
 ```
 
-Then configure MCP in your Claude Code settings (`~/.claude/settings.json`):
+Then configure MCP in your Claude Code settings (`~/.claude.json`):
 
 ```json
 {
