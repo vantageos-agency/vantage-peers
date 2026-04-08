@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * VantagePeers MCP Server
- * Exposes 81 Convex-backed tools to Claude Code agents via stdio transport.
+ * Exposes 82 Convex-backed tools to Claude Code agents via stdio transport.
  *
  * Tool categories: Memory, Profiles, Messages, Tasks, Missions, Diary,
  * Briefing Notes, Components, Recurring Tasks, Mandates, Business Units,
