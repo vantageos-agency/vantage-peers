@@ -906,6 +906,10 @@ const prioritySchema = z
 	.enum(["urgent", "high", "medium", "low"])
 	.describe("Task priority level");
 
+const componentTypeSchema = z
+	.enum(["agent", "skill", "hook", "plugin"])
+	.describe("Component type");
+
 const taskStatusSchema = z
 	.enum(["todo", "in_progress", "review", "blocked", "done"])
 	.describe("Task status");
@@ -1324,10 +1328,6 @@ const missionStatusSchema = z
 	.enum(["brainstorm", "plan", "execute", "validate", "complete"])
 	.describe("Mission lifecycle status");
 
-const missionPrioritySchema = z
-	.enum(["urgent", "high", "medium", "low"])
-	.describe("Mission priority level");
-
 server.tool(
 	"create_mission",
 	"Create a mission in VantagePeers. Missions group related tasks under a project, " +
@@ -1339,7 +1339,7 @@ server.tool(
 			.string()
 			.describe("Project name — e.g. 'my-project', 'shared'"),
 		status: missionStatusSchema.default("brainstorm"),
-		priority: missionPrioritySchema,
+		priority: prioritySchema,
 		pilot: creatorSchema.describe("Lead orchestrator for this mission"),
 		agents: flexArray.describe("List of agent names involved"),
 		brief: z.string().optional().describe("Mission brief / instructions"),
@@ -1459,7 +1459,7 @@ server.tool(
 		description: z.string().optional().describe("New description"),
 		project: z.string().optional().describe("New project"),
 		status: missionStatusSchema.optional().describe("New status"),
-		priority: missionPrioritySchema.optional().describe("New priority"),
+		priority: prioritySchema.optional().describe("New priority"),
 		pilot: creatorSchema.optional().describe("New pilot"),
 		agents: flexArrayOptional.describe("New agents list"),
 		brief: z.string().optional().describe("New brief"),
@@ -1765,9 +1765,7 @@ server.tool(
 		"Upserts by name+type — if a component with the same name and type exists, it updates the content.",
 	{
 		name: z.string().describe("Component name — e.g. 'copywriter', 'check-tasks'"),
-		type: z
-			.enum(["agent", "skill", "hook", "plugin"])
-			.describe("Component type"),
+		type: componentTypeSchema,
 		team: z
 			.string()
 			.optional()
@@ -1811,10 +1809,7 @@ server.tool(
 	"list_components",
 	"List registered components. Filter by type (agent/skill/hook/plugin) and/or team.",
 	{
-		type: z
-			.enum(["agent", "skill", "hook", "plugin"])
-			.optional()
-			.describe("Filter by component type"),
+		type: componentTypeSchema.optional().describe("Filter by component type"),
 		team: z.string().optional().describe("Filter by team"),
 		limit: z
 			.number()
@@ -1856,9 +1851,7 @@ server.tool(
 	"Fetch a single component by name and type. Returns the full content.",
 	{
 		name: z.string().describe("Component name"),
-		type: z
-			.enum(["agent", "skill", "hook", "plugin"])
-			.describe("Component type"),
+		type: componentTypeSchema,
 	},
 	async ({ name, type }) => {
 		try {
