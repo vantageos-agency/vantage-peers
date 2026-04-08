@@ -29,8 +29,8 @@ function loadConvexUrl(): string {
 		return process.env.CONVEX_URL;
 	}
 
-	// 2. Parse .env.local from the project root (one level up from mcp-server/)
-	const envPath = resolve(import.meta.dirname ?? __dirname, "../.env.local");
+	// 2. Parse .env.local from the user's project directory (where npx is run)
+	const envPath = resolve(process.cwd(), ".env.local");
 	try {
 		const raw = readFileSync(envPath, "utf-8");
 		for (const line of raw.split("\n")) {
