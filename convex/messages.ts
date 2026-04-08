@@ -8,24 +8,9 @@ import { creatorValidator } from "./schema";
 // Creates one message row + one receipt per recipient.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Default orchestrators for broadcast resolution.
-// This list is NOT used for validation — creatorValidator is v.string() (issue #132).
-// New orchestrators must be added here to receive broadcast messages until a
-// dynamic orchestrators table is introduced (separate issue).
-const ALL_ORCHESTRATORS = ["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"] as const;
-
-function resolveRecipients(
-	from: string,
-	channel: string,
-): string[] {
-	if (channel === "broadcast") {
-		return ALL_ORCHESTRATORS.filter((o) => o !== from);
-	}
-	return channel
-		.split(",")
-		.map((s) => s.trim())
-		.filter((s) => s.length > 0 && s !== from);
-}
+// Broadcast resolves dynamically from the profiles table.
+// Any orchestrator with a profile receives broadcasts.
+// No hardcoded list — new orchestrators are included automatically after calling update_profile.
 
 export const sendMessage = mutation({
 	args: {
@@ -48,7 +33,18 @@ export const sendMessage = mutation({
 
 		// Resolve recipients — channel can be a role or instanceId
 		// If channel contains "-" (e.g. "pi-vps"), treat as instance-level
-		const recipients = resolveRecipients(args.from, args.channel);
+		let recipients: string[];
+		if (args.channel === "broadcast") {
+			// Dynamic: get all registered orchestrators from profiles
+			const profiles = await ctx.db.query("profiles").collect();
+			const orchestratorIds = [...new Set(profiles.map((p) => p.orchestratorId))];
+			recipients = orchestratorIds.filter((o) => o !== args.from);
+		} else {
+			recipients = args.channel
+				.split(",")
+				.map((s) => s.trim())
+				.filter((s) => s.length > 0 && s !== args.from);
+		}
 
 		for (const recipient of recipients) {
 			// Determine if this is an instance target or role target
