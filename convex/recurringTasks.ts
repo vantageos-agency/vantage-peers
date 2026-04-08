@@ -152,6 +152,43 @@ export const list = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// update — update a recurring task's fields
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const update = mutation({
+	args: {
+		recurringTaskId: v.id("recurringTasks"),
+		title: v.optional(v.string()),
+		description: v.optional(v.string()),
+		assignedTo: v.optional(assigneeValidator),
+		priority: v.optional(priorityValidator),
+		project: v.optional(v.string()),
+		tags: v.optional(v.array(v.string())),
+		cronExpression: v.optional(v.string()),
+	},
+	returns: v.id("recurringTasks"),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db.get(args.recurringTaskId);
+		if (!existing) throw new Error("Recurring task not found");
+
+		const patch: Record<string, any> = { updatedAt: Date.now() };
+		if (args.title !== undefined) patch.title = args.title;
+		if (args.description !== undefined) patch.description = args.description;
+		if (args.assignedTo !== undefined) patch.assignedTo = args.assignedTo;
+		if (args.priority !== undefined) patch.priority = args.priority;
+		if (args.project !== undefined) patch.project = args.project;
+		if (args.tags !== undefined) patch.tags = args.tags;
+		if (args.cronExpression !== undefined) {
+			patch.cronExpression = args.cronExpression;
+			patch.nextRunAt = getNextRunTime(args.cronExpression, Date.now());
+		}
+
+		await ctx.db.patch(args.recurringTaskId, patch);
+		return args.recurringTaskId;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // pause — set active=false
 // ─────────────────────────────────────────────────────────────────────────────
 
