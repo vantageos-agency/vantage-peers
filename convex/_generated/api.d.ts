@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as backfillRagMetadata from "../backfillRagMetadata.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as components_ from "../components.js";
@@ -21,6 +22,8 @@ import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as http from "../http.js";
+import type * as issueStats from "../issueStats.js";
+import type * as issueStatsQueries from "../issueStatsQueries.js";
 import type * as issues from "../issues.js";
 import type * as mandates from "../mandates.js";
 import type * as memories from "../memories.js";
@@ -28,6 +31,7 @@ import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
+import type * as prMonitor from "../prMonitor.js";
 import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
 import type * as recurringTasks from "../recurringTasks.js";
@@ -41,6 +45,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  backfillRagMetadata: typeof backfillRagMetadata;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   components: typeof components_;
@@ -54,6 +59,8 @@ declare const fullApi: ApiFromModules<{
   githubComments: typeof githubComments;
   githubRepoMapping: typeof githubRepoMapping;
   http: typeof http;
+  issueStats: typeof issueStats;
+  issueStatsQueries: typeof issueStatsQueries;
   issues: typeof issues;
   mandates: typeof mandates;
   memories: typeof memories;
@@ -61,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
+  prMonitor: typeof prMonitor;
   profiles: typeof profiles;
   ragSync: typeof ragSync;
   recurringTasks: typeof recurringTasks;
