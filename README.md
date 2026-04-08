@@ -288,6 +288,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `briefingNotes` | Shared briefing documents | title, topic, participants, content, decisions |
 | `components` | Agent/skill/hook/plugin registry with content backup | name, type, team, content, version |
 | `recurringTasks` | Cron-based task templates | title, assignedTo, cronExpression, active, nextRunAt |
+| `missionTemplates` | Configurable multi-step workflow templates (IRP, repo-fix, etc.) | name, steps, isDefault, createdBy |
 | `mandates` | Cross-agent service requests with budgets | requestedBy, fulfilledBy, service, budget, spendingLimits |
 | `businessUnits` | ElPi Corp business units | name, status, businessModel, pricing, kpis, managementFee |
 | `issues` | GitHub issues synced via webhook | repo, issueNumber, status, priority, fixCommits |
