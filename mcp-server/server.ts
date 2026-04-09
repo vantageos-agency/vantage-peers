@@ -108,7 +108,7 @@ const convex = new ConvexHttpClient(convexUrl);
 
 const server = new McpServer({
 	name: "vantage-peers",
-	version: "1.0.1",
+	version: "2.0.0",
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
