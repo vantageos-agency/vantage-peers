@@ -179,8 +179,7 @@ http.route({
 						assignedTo: assignee,
 						project,
 						priority,
-						// T0 (Acknowledge) is already done — comment posted below
-						status: i === 0 ? "done" : "todo",
+						status: "todo",
 						createdBy: "system",
 						missionId,
 						tags: [...(step.tags ?? []), "github", "irp"],
@@ -344,7 +343,7 @@ http.route({
 								assignedTo: stepAssignee,
 								project,
 								priority: "high",
-								status: i === 0 ? "done" : "todo",
+								status: "todo",
 								createdBy: "system",
 								missionId,
 								tags: [...(step.tags ?? []), "github", "irp"],
