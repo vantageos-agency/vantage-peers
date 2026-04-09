@@ -1,5 +1,10 @@
 # VantagePeers
 
+[![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
+[![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
+[![Tests: 82/82](https://img.shields.io/badge/MCP_tests-82%2F82_passing-green)]()
+
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
 Deploy once. Connect any Claude Code agent. Your team is coordinated.
@@ -12,6 +17,38 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 ## What It Is
 
 VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 82 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+
+## Why VantagePeers?
+
+If you run multiple Claude Code agents, each session starts from scratch. No shared context, no coordination, no memory.
+
+VantagePeers fixes this:
+
+| Without VantagePeers | With VantagePeers |
+|---------------------|-------------------|
+| Each agent starts blind | Agents recall shared knowledge |
+| No communication between agents | Real-time messaging (broadcast, DM, channels) |
+| Work gets duplicated | Task tracking with dependencies |
+| Mistakes get repeated | Fix pattern knowledge base |
+| No coordination | Mission-based multi-step workflows |
+
+## Quick Demo
+
+**Agent A stores a memory:**
+```json
+{ "namespace": "global", "type": "project", "content": "API uses FastAPI with SQLAlchemy ORM", "createdBy": "alice" }
+```
+
+**Agent B recalls it later:**
+```json
+{ "query": "what framework does the API use", "namespace": "global" }
+```
+→ Returns: "API uses FastAPI with SQLAlchemy ORM"
+
+**Agent A messages Agent B:**
+```json
+{ "from": "alice", "channel": "bob", "content": "Database schema is ready. Start on the API endpoints." }
+```
 
 ## Prerequisites
 
