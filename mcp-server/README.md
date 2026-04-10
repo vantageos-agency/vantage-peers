@@ -109,6 +109,35 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ### Session (1)
 `set_summary`
 
+## Programmatic API (TypeScript)
+
+For external services that need type-safe access to VantagePeers functions:
+
+```bash
+npm install vantage-peers-mcp convex
+```
+
+```typescript
+import { fetchQuery, fetchMutation } from "convex/nextjs";
+import { api } from "vantage-peers-mcp/api";
+
+// Query memories with full type safety
+const memories = await fetchQuery(
+  api.memories.listMemories,
+  { namespace: "global", limit: 10 },
+  { url: process.env.CONVEX_URL }
+);
+
+// Send a message
+await fetchMutation(
+  api.messages.sendMessage,
+  { from: "pi", channel: "broadcast", content: "Hello from Studio" },
+  { url: process.env.CONVEX_URL }
+);
+```
+
+Requires `convex` as a peer dependency. Only public functions are exported.
+
 ## Requirements
 
 - Node.js >= 18
