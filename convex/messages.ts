@@ -19,6 +19,7 @@ export const sendMessage = mutation({
 		channel: v.string(),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
+		tenantId: v.optional(v.string()),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
@@ -28,6 +29,7 @@ export const sendMessage = mutation({
 			channel: args.channel,
 			content: args.content,
 			sessionDay: args.sessionDay,
+			tenantId: args.tenantId,
 			createdAt: Date.now(),
 		});
 
@@ -55,6 +57,7 @@ export const sendMessage = mutation({
 				messageId,
 				recipient: role,
 				recipientInstanceId: isInstance ? recipient : undefined,
+				tenantId: args.tenantId,
 				readAt: undefined,
 			});
 		}
@@ -72,6 +75,7 @@ export const checkNewMessages = query({
 	args: {
 		recipient: creatorValidator,
 		recipientInstanceId: v.optional(v.string()),
+		tenantId: v.optional(v.string()),
 	},
 	returns: v.array(
 		v.object({
@@ -120,6 +124,12 @@ export const checkNewMessages = query({
 					receipts.push(r);
 				}
 			}
+
+			if (args.tenantId !== undefined) {
+				receipts = receipts.filter(
+					(r) => r.tenantId === args.tenantId,
+				);
+			}
 		} else {
 			// Role-level: get all unread for this role
 			receipts = await ctx.db
@@ -129,6 +139,12 @@ export const checkNewMessages = query({
 				)
 				.filter((q) => q.eq(q.field("readAt"), undefined))
 				.take(100);
+
+			if (args.tenantId !== undefined) {
+				receipts = receipts.filter(
+					(r) => r.tenantId === args.tenantId,
+				);
+			}
 		}
 
 		const results = [];
