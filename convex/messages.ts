@@ -88,6 +88,9 @@ export const checkNewMessages = query({
 			createdAt: v.number(),
 		}),
 	),
+	// tenantId filtering: when provided, only returns messages for that tenant.
+	// When omitted, returns all messages (backward-compatible single-tenant mode).
+	// This is intentional — omitting tenantId = admin/legacy access, not a bypass.
 	handler: async (ctx, args) => {
 		let receipts;
 
@@ -125,6 +128,7 @@ export const checkNewMessages = query({
 				}
 			}
 
+			// No tenant+instance index — JS filter is acceptable for instance-targeted messages (low volume)
 			if (args.tenantId !== undefined) {
 				receipts = receipts.filter(
 					(r) => r.tenantId === args.tenantId,
@@ -132,18 +136,21 @@ export const checkNewMessages = query({
 			}
 		} else {
 			// Role-level: get all unread for this role
-			receipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", args.recipient),
-				)
-				.filter((q) => q.eq(q.field("readAt"), undefined))
-				.take(100);
-
 			if (args.tenantId !== undefined) {
-				receipts = receipts.filter(
-					(r) => r.tenantId === args.tenantId,
-				);
+				receipts = await ctx.db
+					.query("messageReceipts")
+					.withIndex("by_tenant_recipient_unread", (q) =>
+						q.eq("tenantId", args.tenantId).eq("recipient", args.recipient).eq("readAt", undefined),
+					)
+					.take(100);
+			} else {
+				receipts = await ctx.db
+					.query("messageReceipts")
+					.withIndex("by_recipient_unread", (q) =>
+						q.eq("recipient", args.recipient),
+					)
+					.filter((q) => q.eq(q.field("readAt"), undefined))
+					.take(100);
 			}
 		}
 
