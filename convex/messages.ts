@@ -19,6 +19,7 @@ export const sendMessage = mutation({
 		channel: v.string(),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
+		tenantId: v.optional(v.string()),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
@@ -28,6 +29,7 @@ export const sendMessage = mutation({
 			channel: args.channel,
 			content: args.content,
 			sessionDay: args.sessionDay,
+			tenantId: args.tenantId,
 			createdAt: Date.now(),
 		});
 
@@ -55,6 +57,7 @@ export const sendMessage = mutation({
 				messageId,
 				recipient: role,
 				recipientInstanceId: isInstance ? recipient : undefined,
+				tenantId: args.tenantId,
 				readAt: undefined,
 			});
 		}
@@ -72,6 +75,7 @@ export const checkNewMessages = query({
 	args: {
 		recipient: creatorValidator,
 		recipientInstanceId: v.optional(v.string()),
+		tenantId: v.optional(v.string()),
 	},
 	returns: v.array(
 		v.object({
@@ -84,6 +88,9 @@ export const checkNewMessages = query({
 			createdAt: v.number(),
 		}),
 	),
+	// tenantId filtering: when provided, only returns messages for that tenant.
+	// When omitted, returns all messages (backward-compatible single-tenant mode).
+	// This is intentional — omitting tenantId = admin/legacy access, not a bypass.
 	handler: async (ctx, args) => {
 		let receipts;
 
@@ -120,15 +127,31 @@ export const checkNewMessages = query({
 					receipts.push(r);
 				}
 			}
+
+			// No tenant+instance index — JS filter is acceptable for instance-targeted messages (low volume)
+			if (args.tenantId !== undefined) {
+				receipts = receipts.filter(
+					(r) => r.tenantId === args.tenantId,
+				);
+			}
 		} else {
 			// Role-level: get all unread for this role
-			receipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", args.recipient),
-				)
-				.filter((q) => q.eq(q.field("readAt"), undefined))
-				.take(100);
+			if (args.tenantId !== undefined) {
+				receipts = await ctx.db
+					.query("messageReceipts")
+					.withIndex("by_tenant_recipient_unread", (q) =>
+						q.eq("tenantId", args.tenantId).eq("recipient", args.recipient).eq("readAt", undefined),
+					)
+					.take(100);
+			} else {
+				receipts = await ctx.db
+					.query("messageReceipts")
+					.withIndex("by_recipient_unread", (q) =>
+						q.eq("recipient", args.recipient),
+					)
+					.filter((q) => q.eq(q.field("readAt"), undefined))
+					.take(100);
+			}
 		}
 
 		const results = [];
