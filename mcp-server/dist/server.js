@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 /**
  * VantagePeers MCP Server
- * Exposes Convex memory functions as Claude Code tools via stdio transport.
+ * Exposes 82 Convex-backed tools to Claude Code agents via stdio transport.
  *
- * Tools:
- *   store_memory    — create a typed memory entry
- *   recall          — semantic vector search over memories
- *   store_episode   — create an episodic memory with structured fields
- *   get_profile     — fetch an orchestrator profile
- *   update_profile  — upsert an orchestrator profile
- *   list_memories   — list memories by namespace with optional type filter
+ * Tool categories: Memory, Profiles, Messages, Tasks, Missions, Diary,
+ * Briefing Notes, Components, Recurring Tasks, Mandates, Business Units,
+ * Issues, Fix Patterns, Search/RAG, Mission Templates, Error Monitoring,
+ * Deployments, Repo Mappings.
+ *
+ * See README.md for the full tool reference.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -25,8 +24,8 @@ function loadConvexUrl() {
     if (process.env.CONVEX_URL) {
         return process.env.CONVEX_URL;
     }
-    // 2. Parse .env.local from the project root (one level up from mcp-server/)
-    const envPath = resolve(import.meta.dirname ?? __dirname, "../.env.local");
+    // 2. Parse .env.local from the user's project directory (where npx is run)
+    const envPath = resolve(process.cwd(), ".env.local");
     try {
         const raw = readFileSync(envPath, "utf-8");
         for (const line of raw.split("\n")) {
@@ -41,7 +40,8 @@ function loadConvexUrl() {
     catch {
         // .env.local not found — fall through to error
     }
-    throw new Error("CONVEX_URL not found. Set it as an environment variable or add it to .env.local");
+    process.stderr.write("Error: CONVEX_URL not found.\n\nSet it via:\n  export CONVEX_URL=https://your-deployment.convex.cloud\n\nOr create a .env.local file with CONVEX_URL=...\n");
+    process.exit(1);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared Zod schemas for validated params
@@ -49,9 +49,11 @@ function loadConvexUrl() {
 const memoryTypeSchema = z
     .enum(["user", "feedback", "project", "reference", "episode"])
     .describe("Memory classification type");
+// Open string — validated at runtime by the backend (issue #132).
+// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, system.
 const creatorSchema = z
-    .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta", "eta", "system"])
-    .describe("Which orchestrator is creating this memory");
+    .string()
+    .describe("Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, system)");
 const severitySchema = z
     .enum(["critical", "major", "minor"])
     .describe("Episode severity — critical = cross-orchestrator lesson");
@@ -98,8 +100,17 @@ const convexUrl = loadConvexUrl();
 const convex = new ConvexHttpClient(convexUrl);
 const server = new McpServer({
     name: "vantage-peers",
-    version: "1.0.0",
+    version: "2.0.0",
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: structured error response for MCP tool handlers
+// ─────────────────────────────────────────────────────────────────────────────
+function mcpError(message) {
+    return {
+        content: [{ type: "text", text: `Error: ${message}` }],
+        isError: true,
+    };
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: store_memory
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,25 +140,30 @@ server.tool("store_memory", "Store a typed memory entry in VantagePeers. Support
         .optional()
         .describe("Optional expiry ISO timestamp e.g. '2026-06-01T00:00:00Z'"),
 }, async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
-    const relations = relatesTo
-        ? [{ targetId: relatesTo.targetId, type: relatesTo.type }]
-        : [];
-    const memoryId = await convex.mutation("memories:storeMemory", {
-        namespace,
-        type,
-        content,
-        createdBy,
-        relations,
-        ttl,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ memoryId, namespace, type, content }, null, 2),
-            },
-        ],
-    };
+    try {
+        const relations = relatesTo
+            ? [{ targetId: relatesTo.targetId, type: relatesTo.type }]
+            : [];
+        const memoryId = await convex.mutation("memories:storeMemory", {
+            namespace,
+            type,
+            content,
+            createdBy,
+            relations,
+            ttl,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ memoryId, namespace, type, content }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: soft_delete_memory
@@ -156,17 +172,22 @@ server.tool("soft_delete_memory", "Soft-delete a memory — marks it as no longe
     "The memory is preserved for audit but excluded from search.", {
     memoryId: z.string().describe("Convex document ID of the memory to soft-delete"),
 }, async ({ memoryId }) => {
-    await convex.mutation("memories:softDeleteMemory", {
-        memoryId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ deleted: true, memoryId }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("memories:softDeleteMemory", {
+            memoryId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ deleted: true, memoryId }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_memory
@@ -174,12 +195,17 @@ server.tool("soft_delete_memory", "Soft-delete a memory — marks it as no longe
 server.tool("get_memory", "Fetch a single memory by its ID. Returns full memory content including relations and episode data.", {
     memoryId: z.string().describe("Memory document ID"),
 }, async ({ memoryId }) => {
-    const memory = await convex.query("memories:getMemory", {
-        memoryId,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
-    };
+    try {
+        const memory = await convex.query("memories:getMemory", {
+            memoryId,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: recall
@@ -205,20 +231,25 @@ server.tool("recall", "Semantic vector search over VantagePeers. Returns top K m
         .default(5)
         .describe("Maximum number of results to return (default 5)"),
 }, async ({ query, namespace, type, limit }) => {
-    const results = await convex.action("search:recall", {
-        query,
-        namespace,
-        type,
-        limit: limit ?? 5,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(results, null, 2),
-            },
-        ],
-    };
+    try {
+        const results = await convex.action("search:recall", {
+            query,
+            namespace,
+            type,
+            limit: limit ?? 5,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(results, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: text_search
@@ -229,15 +260,20 @@ server.tool("text_search", "BM25 full-text keyword search over memories. Use for
     type: memoryTypeSchema.optional().describe("Filter by memory type"),
     limit: z.number().int().min(1).max(50).optional().default(10).describe("Max results"),
 }, async ({ query, namespace, type, limit }) => {
-    const results = await convex.action("search:textSearch", {
-        query,
-        namespace,
-        type,
-        limit: limit ?? 10,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-    };
+    try {
+        const results = await convex.action("search:textSearch", {
+            query,
+            namespace,
+            type,
+            limit: limit ?? 10,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: hybrid_search
@@ -250,17 +286,22 @@ server.tool("hybrid_search", "Combined vector + BM25 search using Reciprocal Ran
     vectorWeight: z.number().min(0).max(1).optional().describe("Weight for vector results in RRF (default: 0.5)"),
     textWeight: z.number().min(0).max(1).optional().describe("Weight for text results in RRF (default: 0.5)"),
 }, async ({ query, namespace, type, limit, vectorWeight, textWeight }) => {
-    const results = await convex.action("search:hybridSearch", {
-        query,
-        namespace,
-        type,
-        limit: limit ?? 10,
-        vectorWeight,
-        textWeight,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-    };
+    try {
+        const results = await convex.action("search:hybridSearch", {
+            query,
+            namespace,
+            type,
+            limit: limit ?? 10,
+            vectorWeight,
+            textWeight,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: store_episode
@@ -281,24 +322,29 @@ server.tool("store_episode", "Store an episodic memory with structured context/g
         .describe("The lesson extracted — procedural memory, what to do differently"),
     severity: severitySchema,
 }, async ({ namespace, createdBy, context, goal, action, outcome, insight, severity, }) => {
-    const memoryId = await convex.mutation("episodes:storeEpisode", {
-        namespace,
-        createdBy,
-        context,
-        goal,
-        action,
-        outcome,
-        insight,
-        severity,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ memoryId, type: "episode", severity, namespace }, null, 2),
-            },
-        ],
-    };
+    try {
+        const memoryId = await convex.mutation("episodes:storeEpisode", {
+            namespace,
+            createdBy,
+            context,
+            goal,
+            action,
+            outcome,
+            insight,
+            severity,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ memoryId, type: "episode", severity, namespace }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_profile
@@ -306,31 +352,36 @@ server.tool("store_episode", "Store an episodic memory with structured context/g
 server.tool("get_profile", "Fetch an orchestrator profile (static identity + dynamic session state). " +
     "Returns null if the profile does not exist yet — call update_profile to create it.", {
     orchestratorId: z
-        .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
+        .string()
         .describe("Orchestrator identifier"),
 }, async ({ orchestratorId }) => {
-    const profile = await convex.query("profiles:getProfile", {
-        orchestratorId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(profile, null, 2),
-            },
-        ],
-    };
+    try {
+        const profile = await convex.query("profiles:getProfile", {
+            orchestratorId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(profile, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_profile
 // ─────────────────────────────────────────────────────────────────────────────
-server.tool("update_profile", "Create or update an orchestrator profile. " +
+server.tool("update_profile", "Create or update an orchestrator profile. Provide only the fields you want to change. " +
     "static fields are stable identity facts (role, workspace, capabilities). " +
     "dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).", {
     orchestratorId: z
-        .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
+        .string()
         .describe("Orchestrator identifier"),
-    name: z.string().describe("Human-readable orchestrator name"),
+    name: z.string().optional().describe("Human-readable orchestrator name"),
     static: z
         .object({
         role: z.string().describe("Orchestrator role description"),
@@ -339,6 +390,7 @@ server.tool("update_profile", "Create or update an orchestrator profile. " +
             .array(z.string())
             .describe("List of capability keywords"),
     })
+        .optional()
         .describe("Stable identity facts — infrequently updated"),
     dynamic: z
         .object({
@@ -351,22 +403,28 @@ server.tool("update_profile", "Create or update an orchestrator profile. " +
             .describe("Unix timestamp (ms) of last session start"),
         sessionCount: z.number().int().describe("Total sessions to date"),
     })
+        .optional()
         .describe("Mutable session state — updated each session"),
 }, async ({ orchestratorId, name, static: staticFields, dynamic }) => {
-    const profileId = await convex.mutation("profiles:upsertProfile", {
-        orchestratorId,
-        name,
-        static: staticFields,
-        dynamic,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ profileId, orchestratorId, name }, null, 2),
-            },
-        ],
-    };
+    try {
+        const profileId = await convex.mutation("profiles:upsertProfile", {
+            orchestratorId,
+            name,
+            static: staticFields,
+            dynamic,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ profileId, orchestratorId, name }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_memories
@@ -389,19 +447,24 @@ server.tool("list_memories", "List active memories for a namespace, ordered newe
         .default(20)
         .describe("Maximum number of memories to return (default 20)"),
 }, async ({ namespace, type, limit }) => {
-    const memories = await convex.query("memories:listMemories", {
-        namespace,
-        type,
-        limit: limit ?? 20,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(memories, null, 2),
-            },
-        ],
-    };
+    try {
+        const memories = await convex.query("memories:listMemories", {
+            namespace,
+            type,
+            limit: limit ?? 20,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(memories, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: send_message
@@ -423,22 +486,32 @@ server.tool("send_message", "Send a message to one, many, or all orchestrators. 
         .int()
         .optional()
         .describe("Day number (e.g. 19 for Day 19)"),
-}, async ({ from, fromInstanceId, channel, content, sessionDay }) => {
-    const messageId = await convex.mutation("messages:sendMessage", {
-        from,
-        fromInstanceId,
-        channel,
-        content,
-        sessionDay,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ messageId, from, channel }, null, 2),
-            },
-        ],
-    };
+    tenantId: z
+        .string()
+        .optional()
+        .describe("Tenant identifier for multi-tenant isolation"),
+}, async ({ from, fromInstanceId, channel, content, sessionDay, tenantId }) => {
+    try {
+        const messageId = await convex.mutation("messages:sendMessage", {
+            from,
+            fromInstanceId,
+            channel,
+            content,
+            sessionDay,
+            tenantId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ messageId, from, channel }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: check_messages
@@ -451,21 +524,31 @@ server.tool("check_messages", "Check for unread messages. Returns messages with 
         .string()
         .optional()
         .describe("Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages."),
-}, async ({ recipient, recipientInstanceId }) => {
-    const messages = await convex.query("messages:checkNewMessages", {
-        recipient,
-        recipientInstanceId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: messages.length === 0
-                    ? "No new messages."
-                    : JSON.stringify(messages, null, 2),
-            },
-        ],
-    };
+    tenantId: z
+        .string()
+        .optional()
+        .describe("Filter messages to this tenant only"),
+}, async ({ recipient, recipientInstanceId, tenantId }) => {
+    try {
+        const messages = await convex.query("messages:checkNewMessages", {
+            recipient,
+            recipientInstanceId,
+            tenantId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: messages.length === 0
+                        ? "No new messages."
+                        : JSON.stringify(messages, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: mark_as_read
@@ -475,33 +558,38 @@ server.tool("mark_as_read", "Mark one or more message receipts as read. Pass the
         .union([z.array(z.string()), z.string()])
         .describe("Receipt IDs to mark as read — array or single string"),
 }, async ({ receiptIds }) => {
-    // Handle all input forms: array, single string, or JSON-encoded string
-    let receiptIdsArray;
-    if (Array.isArray(receiptIds)) {
-        receiptIdsArray = receiptIds;
-    }
-    else if (typeof receiptIds === "string" && receiptIds.startsWith("[")) {
-        try {
-            receiptIdsArray = JSON.parse(receiptIds);
+    try {
+        // Handle all input forms: array, single string, or JSON-encoded string
+        let receiptIdsArray;
+        if (Array.isArray(receiptIds)) {
+            receiptIdsArray = receiptIds;
         }
-        catch {
+        else if (typeof receiptIds === "string" && receiptIds.startsWith("[")) {
+            try {
+                receiptIdsArray = JSON.parse(receiptIds);
+            }
+            catch {
+                receiptIdsArray = [receiptIds];
+            }
+        }
+        else {
             receiptIdsArray = [receiptIds];
         }
+        const count = await convex.mutation("messages:markAsRead", {
+            receiptIds: receiptIdsArray,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ markedAsRead: count }, null, 2),
+                },
+            ],
+        };
     }
-    else {
-        receiptIdsArray = [receiptIds];
+    catch (error) {
+        return mcpError(error.message ?? String(error));
     }
-    const count = await convex.mutation("messages:markAsRead", {
-        receiptIds: receiptIdsArray,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ markedAsRead: count }, null, 2),
-            },
-        ],
-    };
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: delete_message
@@ -510,18 +598,23 @@ server.tool("delete_message", "Delete a message and all its receipts. Only the s
     messageId: z.string().describe("Convex document ID of the message to delete"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be the sender or system"),
 }, async ({ messageId, callerOrchestrator }) => {
-    const result = await convex.mutation("messages:deleteMessage", {
-        messageId: messageId,
-        callerOrchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-            },
-        ],
-    };
+    try {
+        const result = await convex.mutation("messages:deleteMessage", {
+            messageId: messageId,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: set_summary
@@ -530,7 +623,7 @@ server.tool("set_summary", "Set a brief summary of what you are currently workin
     "Visible to other orchestrators via list_peers. Uses the profiles table. " +
     "Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').", {
     orchestratorId: z
-        .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
+        .string()
         .describe("Orchestrator role"),
     instanceId: z
         .string()
@@ -540,45 +633,55 @@ server.tool("set_summary", "Set a brief summary of what you are currently workin
         .string()
         .describe("1-2 sentence summary of current work"),
 }, async ({ orchestratorId, instanceId, summary }) => {
-    await convex.mutation("profiles:updateDynamic", {
-        orchestratorId,
-        instanceId,
-        currentTask: summary,
-        lastSeen: Date.now(),
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ orchestratorId, instanceId, summary }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("profiles:updateDynamic", {
+            orchestratorId,
+            instanceId,
+            currentTask: summary,
+            lastSeen: Date.now(),
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ orchestratorId, instanceId, summary }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_peers
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_peers", "List all orchestrator profiles with their current status and summary. " +
     "Replaces claude-peers list_peers.", {}, async () => {
-    const profiles = await convex.query("profiles:listProfiles", {});
-    const peers = profiles.map((p) => ({
-        id: p.orchestratorId,
-        instanceId: p.instanceId ?? p.orchestratorId,
-        name: p.name,
-        role: p.static.role,
-        workspace: p.static.workspace,
-        currentTask: p.dynamic.currentTask ?? "idle",
-        lastSeen: new Date(p.dynamic.lastSeen).toISOString(),
-        sessionCount: p.dynamic.sessionCount,
-    }));
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(peers, null, 2),
-            },
-        ],
-    };
+    try {
+        const profiles = await convex.query("profiles:listProfiles", {});
+        const peers = profiles.map((p) => ({
+            id: p.orchestratorId,
+            instanceId: p.instanceId ?? p.orchestratorId,
+            name: p.name,
+            role: p.static.role,
+            workspace: p.static.workspace,
+            currentTask: p.dynamic.currentTask ?? "idle",
+            lastSeen: new Date(p.dynamic.lastSeen).toISOString(),
+            sessionCount: p.dynamic.sessionCount,
+        }));
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(peers, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_messages
@@ -599,19 +702,24 @@ server.tool("list_messages", "List message history. Filter by day or sender. For
         .default(100)
         .describe("Max messages to return (default 100)"),
 }, async ({ sessionDay, from, limit }) => {
-    const messages = await convex.query("messages:listMessages", {
-        sessionDay,
-        from,
-        limit: limit ?? 100,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(messages, null, 2),
-            },
-        ],
-    };
+    try {
+        const messages = await convex.query("messages:listMessages", {
+            sessionDay,
+            from,
+            limit: limit ?? 100,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(messages, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_broadcast_status
@@ -619,27 +727,36 @@ server.tool("list_messages", "List message history. Filter by day or sender. For
 server.tool("list_broadcast_status", "Show who read a broadcast message and who didn't. Pass the messageId from send_message.", {
     messageId: z.string().describe("Convex document ID of the broadcast message"),
 }, async ({ messageId }) => {
-    const status = await convex.query("messages:listBroadcastStatus", {
-        messageId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(status, null, 2),
-            },
-        ],
-    };
+    try {
+        const status = await convex.query("messages:listBroadcastStatus", {
+            messageId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(status, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_task
 // ─────────────────────────────────────────────────────────────────────────────
+// Open string — validated at runtime by the backend (issue #132).
 const assigneeSchema = z
-    .enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"])
-    .describe("Who the task is assigned to");
+    .string()
+    .describe("Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, laurent)");
 const prioritySchema = z
     .enum(["urgent", "high", "medium", "low"])
     .describe("Task priority level");
+const componentTypeSchema = z
+    .enum(["agent", "skill", "hook", "plugin"])
+    .describe("Component type");
 const taskStatusSchema = z
     .enum(["todo", "in_progress", "review", "blocked", "done"])
     .describe("Task status");
@@ -678,29 +795,34 @@ server.tool("create_task", "Create a task in VantagePeers. Tasks are assigned to
         .describe("Optional due date as Unix timestamp (ms)"),
     createdBy: creatorSchema,
 }, async ({ title, description, project, tags, assignedTo, assignedToInstance, priority, status, dependsOn, missionId, estimatedMinutes, dueDate, createdBy, }) => {
-    const taskId = await convex.mutation("tasks:create", {
-        title,
-        description,
-        project,
-        tags: toArray(tags),
-        assignedTo,
-        assignedToInstance,
-        priority,
-        status,
-        dependsOn: toArray(dependsOn),
-        missionId: missionId,
-        estimatedMinutes,
-        dueDate,
-        createdBy,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ taskId, title, assignedTo, priority, status }, null, 2),
-            },
-        ],
-    };
+    try {
+        const taskId = await convex.mutation("tasks:create", {
+            title,
+            description,
+            project,
+            tags: toArray(tags),
+            assignedTo,
+            assignedToInstance,
+            priority,
+            status,
+            dependsOn: toArray(dependsOn),
+            missionId: missionId,
+            estimatedMinutes,
+            dueDate,
+            createdBy,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ taskId, title, assignedTo, priority, status }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_tasks
@@ -723,21 +845,26 @@ server.tool("list_tasks", "List tasks from VantagePeers with optional filters. "
         .default(50)
         .describe("Maximum number of tasks to return (default 50)"),
 }, async ({ assignedTo, assignedToInstance, status, project, limit }) => {
-    const tasks = await convex.query("tasks:list", {
-        assignedTo,
-        assignedToInstance,
-        status,
-        project,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(tasks, null, 2),
-            },
-        ],
-    };
+    try {
+        const tasks = await convex.query("tasks:list", {
+            assignedTo,
+            assignedToInstance,
+            status,
+            project,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(tasks, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_task
@@ -773,32 +900,37 @@ server.tool("update_task", "Update any mutable field on a task. Provide only the
     dueDate: z.number().optional().describe("New due date (Unix ms)"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 }, async ({ taskId, title, description, project, tags, assignedTo, priority, status, dependsOn, missionId, estimatedMinutes, actualMinutes, startedAt, completedAt, dueDate, callerOrchestrator, }) => {
-    await convex.mutation("tasks:update", {
-        taskId: taskId,
-        title,
-        description,
-        project,
-        tags: toArray(tags),
-        assignedTo,
-        priority,
-        status,
-        dependsOn: toArray(dependsOn),
-        missionId: missionId,
-        estimatedMinutes,
-        actualMinutes,
-        startedAt,
-        completedAt,
-        dueDate,
-        callerOrchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ taskId, updated: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("tasks:update", {
+            taskId: taskId,
+            title,
+            description,
+            project,
+            tags: toArray(tags),
+            assignedTo,
+            priority,
+            status,
+            dependsOn: toArray(dependsOn),
+            missionId: missionId,
+            estimatedMinutes,
+            actualMinutes,
+            startedAt,
+            completedAt,
+            dueDate,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ taskId, updated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: complete_task
@@ -809,23 +941,27 @@ server.tool("complete_task", "Mark a task as done. ALWAYS provide a completionNo
     taskId: z.string().describe("Convex document ID of the task to complete"),
     completionNote: z
         .string()
-        .optional()
-        .describe("What was actually done — summary of work completed (MANDATORY)"),
+        .describe("What was actually done — summary of work completed"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 }, async ({ taskId, completionNote, callerOrchestrator }) => {
-    await convex.mutation("tasks:complete", {
-        taskId: taskId,
-        completionNote,
-        callerOrchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ taskId, status: "done" }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("tasks:complete", {
+            taskId: taskId,
+            completionNote,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ taskId, status: "done" }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: start_task
@@ -835,18 +971,23 @@ server.tool("start_task", "Start a task — sets status to in_progress and recor
     taskId: z.string().describe("Convex document ID of the task to start"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
 }, async ({ taskId, callerOrchestrator }) => {
-    await convex.mutation("tasks:start", {
-        taskId: taskId,
-        callerOrchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ taskId, status: "in_progress" }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("tasks:start", {
+            taskId: taskId,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ taskId, status: "in_progress" }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: checkout_task
@@ -857,19 +998,24 @@ server.tool("checkout_task", "Atomically claim a task. Only succeeds if task is 
     callerOrchestrator: creatorSchema.describe("Orchestrator claiming the task (e.g. sigma, pi)"),
     callerInstance: z.string().optional().describe("Instance identifier, e.g. 'sigma-vps'"),
 }, async ({ taskId, callerOrchestrator, callerInstance }) => {
-    const result = await convex.mutation("tasks:checkout", {
-        taskId: taskId,
-        callerOrchestrator,
-        callerInstance,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-            },
-        ],
-    };
+    try {
+        const result = await convex.mutation("tasks:checkout", {
+            taskId: taskId,
+            callerOrchestrator,
+            callerInstance,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: delete_task
@@ -878,18 +1024,77 @@ server.tool("delete_task", "Permanently delete a task. Only the creator (or syst
     taskId: z.string().describe("Convex document ID of the task to delete"),
     callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or system"),
 }, async ({ taskId, callerOrchestrator }) => {
-    const result = await convex.mutation("tasks:deleteTask", {
-        taskId: taskId,
-        callerOrchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-            },
-        ],
-    };
+    try {
+        const result = await convex.mutation("tasks:deleteTask", {
+            taskId: taskId,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: block_task
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("block_task", "Mark a task as blocked with an optional reason. Sets status to 'blocked' and records the blocker description.", {
+    taskId: z.string().describe("Convex document ID of the task to block"),
+    reason: z.string().optional().describe("Why the task is blocked"),
+    blockedBy: z.array(z.string()).optional().describe("Task IDs that are blocking this task"),
+    callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or assignee"),
+}, async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
+    try {
+        const updateArgs = {
+            taskId: taskId,
+            status: "blocked",
+        };
+        if (reason)
+            updateArgs.completionNote = reason;
+        if (blockedBy)
+            updateArgs.dependsOn = blockedBy.map((id) => id);
+        if (callerOrchestrator)
+            updateArgs.callerOrchestrator = callerOrchestrator;
+        await convex.mutation("tasks:update", updateArgs);
+        return {
+            content: [{ type: "text", text: JSON.stringify({ taskId, status: "blocked", reason }, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: add_task_dependency
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("add_task_dependency", "Add a dependency to a task. The task cannot start until all dependencies are complete. " +
+    "Pass the IDs of tasks that must complete before this one can begin.", {
+    taskId: z.string().describe("Convex document ID of the task that depends on others"),
+    dependsOn: z.array(z.string()).describe("Task IDs that must complete first"),
+    callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or assignee"),
+}, async ({ taskId, dependsOn, callerOrchestrator }) => {
+    try {
+        const updateArgs = {
+            taskId: taskId,
+            dependsOn: dependsOn.map((id) => id),
+        };
+        if (callerOrchestrator)
+            updateArgs.callerOrchestrator = callerOrchestrator;
+        await convex.mutation("tasks:update", updateArgs);
+        return {
+            content: [{ type: "text", text: JSON.stringify({ taskId, dependsOn, updated: true }, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_tasks_by_mission
@@ -906,19 +1111,24 @@ server.tool("list_tasks_by_mission", "List all tasks linked to a specific missio
         .default(50)
         .describe("Maximum number of tasks to return (default 50)"),
 }, async ({ missionId, status, limit }) => {
-    const tasks = await convex.query("tasks:listByMission", {
-        missionId: missionId,
-        status,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(tasks, null, 2),
-            },
-        ],
-    };
+    try {
+        const tasks = await convex.query("tasks:listByMission", {
+            missionId: missionId,
+            status,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(tasks, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_mission
@@ -926,9 +1136,6 @@ server.tool("list_tasks_by_mission", "List all tasks linked to a specific missio
 const missionStatusSchema = z
     .enum(["brainstorm", "plan", "execute", "validate", "complete"])
     .describe("Mission lifecycle status");
-const missionPrioritySchema = z
-    .enum(["urgent", "high", "medium", "low"])
-    .describe("Mission priority level");
 server.tool("create_mission", "Create a mission in VantagePeers. Missions group related tasks under a project, " +
     "with a pilot orchestrator and assigned agents. Track progress through lifecycle statuses.", {
     name: z.string().describe("Mission name"),
@@ -937,7 +1144,7 @@ server.tool("create_mission", "Create a mission in VantagePeers. Missions group 
         .string()
         .describe("Project name — e.g. 'my-project', 'shared'"),
     status: missionStatusSchema.default("brainstorm"),
-    priority: missionPrioritySchema,
+    priority: prioritySchema,
     pilot: creatorSchema.describe("Lead orchestrator for this mission"),
     agents: flexArray.describe("List of agent names involved"),
     brief: z.string().optional().describe("Mission brief / instructions"),
@@ -949,28 +1156,33 @@ server.tool("create_mission", "Create a mission in VantagePeers. Missions group 
     progress: z.number().optional().describe("Progress percentage (0-100)"),
     createdBy: creatorSchema,
 }, async ({ name, description, project, status, priority, pilot, agents, brief, startDate, targetDate, progress, createdBy, }) => {
-    const missionId = await convex.mutation("missions:create", {
-        name,
-        description,
-        project,
-        status,
-        priority,
-        pilot,
-        agents: toArray(agents),
-        brief,
-        startDate,
-        targetDate,
-        progress,
-        createdBy,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ missionId, name, project, pilot, status }, null, 2),
-            },
-        ],
-    };
+    try {
+        const missionId = await convex.mutation("missions:create", {
+            name,
+            description,
+            project,
+            status,
+            priority,
+            pilot,
+            agents: toArray(agents),
+            brief,
+            startDate,
+            targetDate,
+            progress,
+            createdBy,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ missionId, name, project, pilot, status }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_missions
@@ -989,20 +1201,48 @@ server.tool("list_missions", "List missions from VantagePeers with optional filt
         .default(50)
         .describe("Maximum number of missions to return (default 50)"),
 }, async ({ project, pilot, status, limit }) => {
-    const missions = await convex.query("missions:list", {
-        project,
-        pilot,
-        status,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(missions, null, 2),
-            },
-        ],
-    };
+    try {
+        const missions = await convex.query("missions:list", {
+            project,
+            pilot,
+            status,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(missions, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: get_mission
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("get_mission", "Fetch a single mission by ID. Returns full mission details including status, pilot, agents, progress, and dates.", {
+    missionId: z.string().describe("Convex document ID of the mission"),
+}, async ({ missionId }) => {
+    try {
+        const mission = await convex.query("missions:get", {
+            missionId: missionId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(mission, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_mission
@@ -1016,7 +1256,7 @@ server.tool("update_mission", "Update any mutable field on a mission. Provide on
     description: z.string().optional().describe("New description"),
     project: z.string().optional().describe("New project"),
     status: missionStatusSchema.optional().describe("New status"),
-    priority: missionPrioritySchema.optional().describe("New priority"),
+    priority: prioritySchema.optional().describe("New priority"),
     pilot: creatorSchema.optional().describe("New pilot"),
     agents: flexArrayOptional.describe("New agents list"),
     brief: z.string().optional().describe("New brief"),
@@ -1024,28 +1264,33 @@ server.tool("update_mission", "Update any mutable field on a mission. Provide on
     targetDate: z.number().optional().describe("New target date (Unix ms)"),
     progress: z.number().optional().describe("New progress (0-100)"),
 }, async ({ missionId, name, description, project, status, priority, pilot, agents, brief, startDate, targetDate, progress, }) => {
-    await convex.mutation("missions:update", {
-        missionId: missionId,
-        name,
-        description,
-        project,
-        status,
-        priority,
-        pilot,
-        agents: toArray(agents),
-        brief,
-        startDate,
-        targetDate,
-        progress,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ missionId, updated: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("missions:update", {
+            missionId: missionId,
+            name,
+            description,
+            project,
+            status,
+            priority,
+            pilot,
+            agents: toArray(agents),
+            brief,
+            startDate,
+            targetDate,
+            progress,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ missionId, updated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_mission_status
@@ -1054,18 +1299,23 @@ server.tool("update_mission_status", "Change a mission's status. Shortcut for up
     missionId: z.string().describe("Convex document ID of the mission"),
     status: missionStatusSchema.describe("New status"),
 }, async ({ missionId, status }) => {
-    await convex.mutation("missions:updateStatus", {
-        missionId: missionId,
-        status,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ missionId, status }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("missions:updateStatus", {
+            missionId: missionId,
+            status,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ missionId, status }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: write_diary
@@ -1079,21 +1329,26 @@ server.tool("write_diary", "Write or update a diary entry for a specific date an
         .describe("Key highlights of the day"),
     blockers: flexArrayOptional.describe("Blockers encountered"),
 }, async ({ date, orchestrator, content, highlights, blockers }) => {
-    const diaryId = await convex.mutation("diary:write", {
-        date,
-        orchestrator,
-        content,
-        highlights: toArray(highlights),
-        blockers: toArray(blockers),
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ diaryId, date, orchestrator }, null, 2),
-            },
-        ],
-    };
+    try {
+        const diaryId = await convex.mutation("diary:write", {
+            date,
+            orchestrator,
+            content,
+            highlights: toArray(highlights),
+            blockers: toArray(blockers),
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ diaryId, date, orchestrator }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_diary
@@ -1102,18 +1357,23 @@ server.tool("get_diary", "Fetch a diary entry for a specific date and orchestrat
     date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
     orchestrator: creatorSchema.describe("Which orchestrator's diary to fetch"),
 }, async ({ date, orchestrator }) => {
-    const entry = await convex.query("diary:get", {
-        date,
-        orchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(entry, null, 2),
-            },
-        ],
-    };
+    try {
+        const entry = await convex.query("diary:get", {
+            date,
+            orchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(entry, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_diaries
@@ -1131,18 +1391,23 @@ server.tool("list_diaries", "List diary entries, optionally filtered by orchestr
         .default(20)
         .describe("Maximum entries to return (default 20)"),
 }, async ({ orchestrator, limit }) => {
-    const entries = await convex.query("diary:list", {
-        orchestrator,
-        limit: limit ?? 20,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(entries, null, 2),
-            },
-        ],
-    };
+    try {
+        const entries = await convex.query("diary:list", {
+            orchestrator,
+            limit: limit ?? 20,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(entries, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_briefing_note
@@ -1163,23 +1428,28 @@ server.tool("create_briefing_note", "Create a briefing note — a structured rec
         .describe("Convex document IDs of related memories"),
     createdBy: creatorSchema,
 }, async ({ title, topic, participants, content, decisions, linkedMemoryIds, createdBy, }) => {
-    const noteId = await convex.mutation("briefingNotes:create", {
-        title,
-        topic,
-        participants: toArray(participants),
-        content,
-        decisions: toArray(decisions),
-        linkedMemoryIds: toArray(linkedMemoryIds),
-        createdBy,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ noteId, title, topic, createdBy }, null, 2),
-            },
-        ],
-    };
+    try {
+        const noteId = await convex.mutation("briefingNotes:create", {
+            title,
+            topic,
+            participants: toArray(participants),
+            content,
+            decisions: toArray(decisions),
+            linkedMemoryIds: toArray(linkedMemoryIds),
+            createdBy,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ noteId, title, topic, createdBy }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_briefing_notes
@@ -1198,18 +1468,23 @@ server.tool("list_briefing_notes", "List briefing notes, optionally filtered by 
         .default(20)
         .describe("Maximum notes to return (default 20)"),
 }, async ({ topic, limit }) => {
-    const notes = await convex.query("briefingNotes:list", {
-        topic,
-        limit: limit ?? 20,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(notes, null, 2),
-            },
-        ],
-    };
+    try {
+        const notes = await convex.query("briefingNotes:list", {
+            topic,
+            limit: limit ?? 20,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(notes, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: register_component
@@ -1217,9 +1492,7 @@ server.tool("list_briefing_notes", "List briefing notes, optionally filtered by 
 server.tool("register_component", "Register or update a component (agent, skill, hook, or plugin) in the registry. " +
     "Upserts by name+type — if a component with the same name and type exists, it updates the content.", {
     name: z.string().describe("Component name — e.g. 'copywriter', 'check-tasks'"),
-    type: z
-        .enum(["agent", "skill", "hook", "plugin"])
-        .describe("Component type"),
+    type: componentTypeSchema,
     team: z
         .string()
         .optional()
@@ -1229,32 +1502,34 @@ server.tool("register_component", "Register or update a component (agent, skill,
     project: z.string().optional().describe("Project this component belongs to"),
     createdBy: creatorSchema,
 }, async ({ name, type, team, content, version, project, createdBy }) => {
-    const result = await convex.mutation("components:register", {
-        name,
-        type,
-        team,
-        content,
-        version,
-        project,
-        createdBy,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-            },
-        ],
-    };
+    try {
+        const result = await convex.mutation("components:register", {
+            name,
+            type,
+            team,
+            content,
+            version,
+            project,
+            createdBy,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_components
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_components", "List registered components. Filter by type (agent/skill/hook/plugin) and/or team.", {
-    type: z
-        .enum(["agent", "skill", "hook", "plugin"])
-        .optional()
-        .describe("Filter by component type"),
+    type: componentTypeSchema.optional().describe("Filter by component type"),
     team: z.string().optional().describe("Filter by team"),
     limit: z
         .number()
@@ -1265,41 +1540,113 @@ server.tool("list_components", "List registered components. Filter by type (agen
         .default(100)
         .describe("Maximum components to return (default 100)"),
 }, async ({ type, team, limit }) => {
-    const components = await convex.query("components:list", {
-        type,
-        team,
-        limit: limit ?? 100,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(components, null, 2),
-            },
-        ],
-    };
+    try {
+        const components = await convex.query("components:list", {
+            type,
+            team,
+            limit: limit ?? 100,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(components, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_component
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("get_component", "Fetch a single component by name and type. Returns the full content.", {
     name: z.string().describe("Component name"),
-    type: z
-        .enum(["agent", "skill", "hook", "plugin"])
-        .describe("Component type"),
+    type: componentTypeSchema,
 }, async ({ name, type }) => {
-    const component = await convex.query("components:get", {
-        name,
-        type,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(component, null, 2),
-            },
-        ],
-    };
+    try {
+        const component = await convex.query("components:get", {
+            name,
+            type,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(component, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_component
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("update_component", "Update a component's fields. Provide only the fields you want to change.", {
+    componentId: z.string().describe("Convex document ID of the component"),
+    name: z.string().optional().describe("New component name"),
+    team: z.string().optional().describe("New team name"),
+    content: z.string().optional().describe("New content/source code"),
+    version: z.string().optional().describe("New version string"),
+    project: z.string().optional().describe("New project name"),
+}, async ({ componentId, ...fields }) => {
+    try {
+        const result = await convex.mutation("components:update", {
+            componentId: componentId,
+            ...fields,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify({ componentId: result, updated: true }, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_component
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("delete_component", "Delete a component from the registry by ID.", {
+    componentId: z.string().describe("Convex document ID of the component to delete"),
+}, async ({ componentId }) => {
+    try {
+        const result = await convex.mutation("components:remove", {
+            componentId: componentId,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: search_components
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("search_components", "Search components by name or team substring. Optionally filter by type.", {
+    query: z.string().describe("Search term to match against component name or team"),
+    type: componentTypeSchema.optional().describe("Filter by component type"),
+    limit: z.number().int().optional().describe("Max results (default 50)"),
+}, async ({ query, type, limit }) => {
+    try {
+        const results = await convex.query("components:search", {
+            query,
+            type,
+            limit,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_recurring_task
@@ -1308,44 +1655,54 @@ server.tool("create_recurring_task", "Create a recurring task that auto-creates 
     "Uses cron expressions: '0 9 * * *' = daily 9am, '0 9 * * 1' = Monday 9am, '*/30 * * * *' = every 30min.", {
     title: z.string().describe("Task title — created each time the cron fires"),
     description: z.string().optional().describe("Task description"),
-    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).describe("Who gets the created tasks"),
+    assignedTo: assigneeSchema.describe("Who gets the created tasks"),
     priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
     project: z.string().optional().describe("Project name"),
     tags: flexArray.optional().describe("Tags for created tasks"),
     cronExpression: z.string().describe("5-field cron: minute hour day-of-month month day-of-week"),
     createdBy: creatorSchema,
 }, async ({ title, description, assignedTo, priority, project, tags, cronExpression, createdBy }) => {
-    const tagsArray = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
-    const taskId = await convex.mutation("recurringTasks:create", {
-        title,
-        description,
-        assignedTo,
-        priority,
-        project,
-        tags: tagsArray,
-        cronExpression,
-        createdBy,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify({ taskId, cronExpression }, null, 2) }],
-    };
+    try {
+        const tagsArray = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
+        const taskId = await convex.mutation("recurringTasks:create", {
+            title,
+            description,
+            assignedTo,
+            priority,
+            project,
+            tags: tagsArray,
+            cronExpression,
+            createdBy,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify({ taskId, cronExpression }, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_recurring_tasks
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_recurring_tasks", "List recurring task templates. Filter by assignee or active status.", {
-    assignedTo: z.enum(["pi", "tau", "phi", "sigma", "omega", "zeta", "eta"]).optional().describe("Filter by assignee"),
+    assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
     active: z.boolean().optional().describe("Filter by active status"),
     limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
 }, async ({ assignedTo, active, limit }) => {
-    const tasks = await convex.query("recurringTasks:list", {
-        assignedTo,
-        active,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(tasks, null, 2) }],
-    };
+    try {
+        const tasks = await convex.query("recurringTasks:list", {
+            assignedTo,
+            active,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(tasks, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: pause_recurring_task
@@ -1353,12 +1710,17 @@ server.tool("list_recurring_tasks", "List recurring task templates. Filter by as
 server.tool("pause_recurring_task", "Pause a recurring task — stops auto-creating tasks until resumed.", {
     taskId: z.string().describe("Recurring task ID"),
 }, async ({ taskId }) => {
-    const result = await convex.mutation("recurringTasks:pause", {
-        taskId: taskId,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    try {
+        const result = await convex.mutation("recurringTasks:pause", {
+            taskId: taskId,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: resume_recurring_task
@@ -1366,12 +1728,17 @@ server.tool("pause_recurring_task", "Pause a recurring task — stops auto-creat
 server.tool("resume_recurring_task", "Resume a paused recurring task — recalculates next run time.", {
     taskId: z.string().describe("Recurring task ID"),
 }, async ({ taskId }) => {
-    const result = await convex.mutation("recurringTasks:resume", {
-        taskId: taskId,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    try {
+        const result = await convex.mutation("recurringTasks:resume", {
+            taskId: taskId,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: delete_recurring_task
@@ -1379,12 +1746,49 @@ server.tool("resume_recurring_task", "Resume a paused recurring task — recalcu
 server.tool("delete_recurring_task", "Permanently delete a recurring task template.", {
     taskId: z.string().describe("Recurring task ID"),
 }, async ({ taskId }) => {
-    const result = await convex.mutation("recurringTasks:remove", {
-        taskId: taskId,
-    });
-    return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    try {
+        const result = await convex.mutation("recurringTasks:remove", {
+            taskId: taskId,
+        });
+        return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_recurring_task
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("update_recurring_task", "Update a recurring task's fields. Provide only the fields you want to change. " +
+    "If cronExpression is updated, nextRunAt is automatically recalculated.", {
+    recurringTaskId: z.string().describe("Convex document ID of the recurring task"),
+    title: z.string().optional().describe("New title"),
+    description: z.string().optional().describe("New description"),
+    assignedTo: creatorSchema.optional().describe("New assignee"),
+    priority: prioritySchema.optional().describe("New priority"),
+    project: z.string().optional().describe("New project name"),
+    tags: z.array(z.string()).optional().describe("New tags array"),
+    cronExpression: z.string().optional().describe("New cron expression (5-field)"),
+}, async ({ recurringTaskId, ...fields }) => {
+    try {
+        const result = await convex.mutation("recurringTasks:update", {
+            recurringTaskId: recurringTaskId,
+            ...fields,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ recurringTaskId: result, updated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Mandate tools
@@ -1409,23 +1813,28 @@ server.tool("create_mandate", "Create a cross-orchestrator service mandate. One 
     approvedCategories: z.array(z.string()).optional().describe("Approved service categories"),
     mandateDocument: z.string().optional().describe("Signed authorization document or reference"),
 }, async ({ requestedBy, fulfilledBy, service, budget, spendingLimits, approvedCategories, mandateDocument }) => {
-    const mandateId = await convex.mutation("mandates:create", {
-        requestedBy,
-        fulfilledBy,
-        service,
-        budget,
-        spendingLimits,
-        approvedCategories,
-        mandateDocument,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ mandateId, requestedBy, fulfilledBy, service, budget }, null, 2),
-            },
-        ],
-    };
+    try {
+        const mandateId = await convex.mutation("mandates:create", {
+            requestedBy,
+            fulfilledBy,
+            service,
+            budget,
+            spendingLimits,
+            approvedCategories,
+            mandateDocument,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ mandateId, requestedBy, fulfilledBy, service, budget }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: accept_mandate
@@ -1434,18 +1843,23 @@ server.tool("accept_mandate", "Accept a mandate — sets status to 'accepted'. O
     mandateId: z.string().describe("Convex document ID of the mandate to accept"),
     callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
 }, async ({ mandateId, callerOrchestrator }) => {
-    await convex.mutation("mandates:accept", {
-        mandateId: mandateId,
-        callerOrchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ mandateId, status: "accepted" }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("mandates:accept", {
+            mandateId: mandateId,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ mandateId, status: "accepted" }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_mandate
@@ -1461,21 +1875,26 @@ server.tool("update_mandate", "Update a mandate's status, tokensCost, or linkedT
         .optional()
         .describe("Task IDs created to fulfill this mandate"),
 }, async ({ mandateId, callerOrchestrator, status, tokensCost, linkedTaskIds }) => {
-    await convex.mutation("mandates:update", {
-        mandateId: mandateId,
-        callerOrchestrator,
-        status,
-        tokensCost,
-        linkedTaskIds: linkedTaskIds,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ mandateId, updated: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("mandates:update", {
+            mandateId: mandateId,
+            callerOrchestrator,
+            status,
+            tokensCost,
+            linkedTaskIds: linkedTaskIds,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ mandateId, updated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: settle_mandate
@@ -1486,19 +1905,24 @@ server.tool("settle_mandate", "Settle a mandate — confirms delivery and record
     callerOrchestrator: creatorSchema.describe("Must be the requestedBy orchestrator or system"),
     finalCost: z.number().describe("Final actual token cost to record"),
 }, async ({ mandateId, callerOrchestrator, finalCost }) => {
-    await convex.mutation("mandates:settle", {
-        mandateId: mandateId,
-        callerOrchestrator,
-        finalCost,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ mandateId, status: "settled", finalCost }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("mandates:settle", {
+            mandateId: mandateId,
+            callerOrchestrator,
+            finalCost,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ mandateId, status: "settled", finalCost }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: validate_mandate_spending
@@ -1507,11 +1931,16 @@ server.tool("validate_mandate_spending", "Check if a proposed spend is within a 
     mandateId: z.string().describe("Mandate ID to validate against"),
     proposedAmount: z.number().describe("Proposed token spend amount to validate"),
 }, async ({ mandateId, proposedAmount }) => {
-    const result = await convex.query("mandates:validateSpending", {
-        mandateId: mandateId,
-        proposedAmount,
-    });
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    try {
+        const result = await convex.query("mandates:validateSpending", {
+            mandateId: mandateId,
+            proposedAmount,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_mandates
@@ -1530,20 +1959,25 @@ server.tool("list_mandates", "List mandates with optional filters. Filter by req
         .default(50)
         .describe("Maximum mandates to return (default 50)"),
 }, async ({ requestedBy, fulfilledBy, status, limit }) => {
-    const mandates = await convex.query("mandates:list", {
-        requestedBy,
-        fulfilledBy,
-        status,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(mandates, null, 2),
-            },
-        ],
-    };
+    try {
+        const mandates = await convex.query("mandates:list", {
+            requestedBy,
+            fulfilledBy,
+            status,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(mandates, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Business Unit tools
@@ -1594,32 +2028,37 @@ server.tool("create_bu", "Create a new business unit. Captures strategy, busines
         .default(10)
         .describe("Management fee percentage (default 10)"),
 }, async ({ name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
-    const buId = await convex.mutation("businessUnits:create", {
-        name,
-        description,
-        purpose,
-        domain,
-        orchestratorId,
-        status,
-        businessModel,
-        targetCustomers,
-        services: toArray(services),
-        pricing,
-        revenueProjections,
-        coreTeam,
-        coreProcesses: toArray(coreProcesses),
-        dependencies: toArray(dependencies),
-        kpis: toArray(kpis),
-        managementFee: managementFee ?? 10,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ buId, name, orchestratorId, status }, null, 2),
-            },
-        ],
-    };
+    try {
+        const buId = await convex.mutation("businessUnits:create", {
+            name,
+            description,
+            purpose,
+            domain,
+            orchestratorId,
+            status,
+            businessModel,
+            targetCustomers,
+            services: toArray(services),
+            pricing,
+            revenueProjections,
+            coreTeam,
+            coreProcesses: toArray(coreProcesses),
+            dependencies: toArray(dependencies),
+            kpis: toArray(kpis),
+            managementFee: managementFee ?? 10,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ buId, name, orchestratorId, status }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_bu
@@ -1644,33 +2083,38 @@ server.tool("update_bu", "Update any mutable field on a business unit. Provide o
     kpis: flexArrayOptional.describe("New KPIs"),
     managementFee: z.number().optional().describe("New management fee %"),
 }, async ({ buId, name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
-    await convex.mutation("businessUnits:update", {
-        buId: buId,
-        name,
-        description,
-        purpose,
-        domain,
-        orchestratorId,
-        status,
-        businessModel,
-        targetCustomers,
-        services: toArray(services),
-        pricing,
-        revenueProjections,
-        coreTeam,
-        coreProcesses: toArray(coreProcesses),
-        dependencies: toArray(dependencies),
-        kpis: toArray(kpis),
-        managementFee,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ buId, updated: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("businessUnits:update", {
+            buId: buId,
+            name,
+            description,
+            purpose,
+            domain,
+            orchestratorId,
+            status,
+            businessModel,
+            targetCustomers,
+            services: toArray(services),
+            pricing,
+            revenueProjections,
+            coreTeam,
+            coreProcesses: toArray(coreProcesses),
+            dependencies: toArray(dependencies),
+            kpis: toArray(kpis),
+            managementFee,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ buId, updated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_bu
@@ -1678,17 +2122,22 @@ server.tool("update_bu", "Update any mutable field on a business unit. Provide o
 server.tool("get_bu", "Fetch a single business unit by its Convex document ID. Returns null if not found.", {
     buId: z.string().describe("Convex document ID of the business unit"),
 }, async ({ buId }) => {
-    const bu = await convex.query("businessUnits:get", {
-        buId: buId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(bu, null, 2),
-            },
-        ],
-    };
+    try {
+        const bu = await convex.query("businessUnits:get", {
+            buId: buId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(bu, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_bus
@@ -1709,19 +2158,24 @@ server.tool("list_bus", "List business units with optional filters. Filter by or
         .default(50)
         .describe("Maximum BUs to return (default 50)"),
 }, async ({ orchestratorId, status, limit }) => {
-    const bus = await convex.query("businessUnits:list", {
-        orchestratorId,
-        status,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(bus, null, 2),
-            },
-        ],
-    };
+    try {
+        const bus = await convex.query("businessUnits:list", {
+            orchestratorId,
+            status,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(bus, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: delete_bu
@@ -1729,17 +2183,22 @@ server.tool("list_bus", "List business units with optional filters. Filter by or
 server.tool("delete_bu", "Delete a business unit by ID. This action is permanent.", {
     buId: z.string().describe("Convex document ID of the business unit to delete"),
 }, async ({ buId }) => {
-    const result = await convex.mutation("businessUnits:remove", {
-        buId: buId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(result, null, 2),
-            },
-        ],
-    };
+    try {
+        const result = await convex.mutation("businessUnits:remove", {
+            buId: buId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: add_repo_mapping
@@ -1760,34 +2219,44 @@ server.tool("add_repo_mapping", "Add or update a GitHub repo → orchestrator ma
         .default(true)
         .describe("Whether this mapping is active (default true)"),
 }, async ({ repo, orchestrator, project, active }) => {
-    const id = await convex.mutation("githubRepoMapping:add", {
-        repo,
-        orchestrator,
-        project,
-        active,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ id, repo, orchestrator, project, active }, null, 2),
-            },
-        ],
-    };
+    try {
+        const id = await convex.mutation("githubRepoMapping:add", {
+            repo,
+            orchestrator,
+            project,
+            active,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ id, repo, orchestrator, project, active }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_repo_mappings
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_repo_mappings", "List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.", {}, async () => {
-    const mappings = await convex.query("githubRepoMapping:list", {});
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(mappings, null, 2),
-            },
-        ],
-    };
+    try {
+        const mappings = await convex.query("githubRepoMapping:list", {});
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(mappings, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: remove_repo_mapping
@@ -1797,17 +2266,22 @@ server.tool("remove_repo_mapping", "Remove a GitHub repo mapping by repo name. S
         .string()
         .describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
 }, async ({ repo }) => {
-    const result = await convex.mutation("githubRepoMapping:remove", {
-        repo,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ repo, ...result }, null, 2),
-            },
-        ],
-    };
+    try {
+        const result = await convex.mutation("githubRepoMapping:remove", {
+            repo,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ repo, ...result }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_issues
@@ -1834,44 +2308,46 @@ server.tool("list_issues", "List GitHub issues tracked in VantagePeers. Filter b
         .default(50)
         .describe("Maximum number of issues to return (default 50)"),
 }, async ({ project, status, assignedTo, limit }) => {
-    let results;
-    if (assignedTo) {
-        results = await convex.query("issues:listByOrchestrator", {
-            assignedOrchestrator: assignedTo,
-            status: status,
-            limit: limit ?? 50,
-        });
+    try {
+        let results;
+        if (assignedTo) {
+            results = await convex.query("issues:listByOrchestrator", {
+                assignedOrchestrator: assignedTo,
+                status: status,
+                limit: limit ?? 50,
+            });
+        }
+        else if (project) {
+            results = await convex.query("issues:listByProject", {
+                project,
+                status: status,
+                limit: limit ?? 50,
+            });
+        }
+        else if (status) {
+            results = await convex.query("issues:listByStatus", {
+                status: status,
+                limit: limit ?? 50,
+            });
+        }
+        else {
+            results = await convex.query("issues:listByProject", {
+                project: "",
+                limit: limit ?? 50,
+            });
+        }
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ count: results.length, issues: results }, null, 2),
+                },
+            ],
+        };
     }
-    else if (project) {
-        results = await convex.query("issues:listByProject", {
-            project,
-            status: status,
-            limit: limit ?? 50,
-        });
+    catch (error) {
+        return mcpError(error.message ?? String(error));
     }
-    else if (status) {
-        // Use listByProject with a broad approach — fall back to listByOrchestrator
-        // For status-only queries, we query all and filter
-        results = await convex.query("issues:listByOrchestrator", {
-            assignedOrchestrator: "sigma",
-            status: status,
-            limit: limit ?? 50,
-        });
-    }
-    else {
-        results = await convex.query("issues:listByProject", {
-            project: "",
-            limit: limit ?? 50,
-        });
-    }
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ count: results.length, issues: results }, null, 2),
-            },
-        ],
-    };
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_issue
@@ -1880,18 +2356,23 @@ server.tool("get_issue", "Get a single GitHub issue by repo and issue number.", 
     repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
     issueNumber: z.number().int().describe("GitHub issue number"),
 }, async ({ repo, issueNumber }) => {
-    const issue = await convex.query("issues:getByRepoNumber", {
-        repo,
-        issueNumber,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(issue ?? { error: "Issue not found" }, null, 2),
-            },
-        ],
-    };
+    try {
+        const issue = await convex.query("issues:getByRepoNumber", {
+            repo,
+            issueNumber,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(issue ?? { error: "Issue not found" }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_issue_status
@@ -1903,19 +2384,24 @@ server.tool("update_issue_status", "Update the status of a tracked GitHub issue.
         .enum(["open", "in_progress", "fixed", "verified", "closed"])
         .describe("New status for the issue"),
 }, async ({ repo, issueNumber, status }) => {
-    await convex.mutation("issues:updateStatus", {
-        repo,
-        issueNumber,
-        status,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ repo, issueNumber, status, updated: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("issues:updateStatus", {
+            repo,
+            issueNumber,
+            status,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ repo, issueNumber, status, updated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: link_commit_to_issue
@@ -1926,20 +2412,25 @@ server.tool("link_commit_to_issue", "Link a fix commit SHA to a GitHub issue. Re
     commitSha: z.string().describe("Git commit SHA that fixes this issue"),
     fixedBy: z.string().describe("Who fixed it — orchestrator name or person"),
 }, async ({ repo, issueNumber, commitSha, fixedBy }) => {
-    await convex.mutation("issues:linkCommit", {
-        repo,
-        issueNumber,
-        commitSha,
-        fixedBy,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ repo, issueNumber, commitSha, fixedBy, linked: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("issues:linkCommit", {
+            repo,
+            issueNumber,
+            commitSha,
+            fixedBy,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ repo, issueNumber, commitSha, fixedBy, linked: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: verify_issue
@@ -1949,19 +2440,24 @@ server.tool("verify_issue", "Mark a GitHub issue as verified (fix confirmed). Se
     issueNumber: z.number().int().describe("GitHub issue number"),
     verifiedBy: z.string().describe("Who verified the fix — orchestrator name or person"),
 }, async ({ repo, issueNumber, verifiedBy }) => {
-    await convex.mutation("issues:verify", {
-        repo,
-        issueNumber,
-        verifiedBy,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ repo, issueNumber, verifiedBy, verified: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("issues:verify", {
+            repo,
+            issueNumber,
+            verifiedBy,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ repo, issueNumber, verifiedBy, verified: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: issue_stats
@@ -1972,17 +2468,22 @@ server.tool("issue_stats", "Get issue count statistics grouped by status. Option
         .optional()
         .describe("Filter stats to a specific project — omit for all projects"),
 }, async ({ project }) => {
-    const stats = await convex.query("issues:getStats", {
-        project,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(stats, null, 2),
-            },
-        ],
-    };
+    try {
+        const stats = await convex.query("issues:getStats", {
+            project,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(stats, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_fix_pattern
@@ -1999,26 +2500,31 @@ server.tool("create_fix_pattern", "Create a fix pattern in the knowledge base. D
     files: flexArrayOptional.describe("Files involved in the fix"),
     linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
 }, async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds }) => {
-    const patternId = await convex.mutation("fixPatterns:create", {
-        symptom,
-        rootCause,
-        tags: toArray(tags) ?? [],
-        stack: toArray(stack) ?? [],
-        sourceProject,
-        createdBy,
-        severity,
-        validatedFix,
-        files: toArray(files),
-        linkedIssueIds: toArray(linkedIssueIds),
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ patternId, created: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        const patternId = await convex.mutation("fixPatterns:create", {
+            symptom,
+            rootCause,
+            tags: toArray(tags) ?? [],
+            stack: toArray(stack) ?? [],
+            sourceProject,
+            createdBy,
+            severity,
+            validatedFix,
+            files: toArray(files),
+            linkedIssueIds: toArray(linkedIssueIds),
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ patternId, created: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: add_fix_attempt
@@ -2031,22 +2537,27 @@ server.tool("add_fix_attempt", "Add a fix attempt to a pattern. Documents what w
     createdBy: creatorSchema,
     commit: z.string().optional().describe("Git commit hash of this attempt"),
 }, async ({ patternId, description, worked, why, createdBy, commit }) => {
-    const attemptId = await convex.mutation("fixPatterns:addAttempt", {
-        patternId: patternId,
-        description,
-        worked,
-        why,
-        createdBy,
-        commit,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ attemptId, patternId, worked }, null, 2),
-            },
-        ],
-    };
+    try {
+        const attemptId = await convex.mutation("fixPatterns:addAttempt", {
+            patternId: patternId,
+            description,
+            worked,
+            why,
+            createdBy,
+            commit,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ attemptId, patternId, worked }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: validate_fix
@@ -2055,18 +2566,23 @@ server.tool("validate_fix", "Set or update the validated fix on a pattern. Use a
     patternId: z.string().describe("ID of the fix pattern"),
     validatedFix: z.string().describe("Description of the validated fix"),
 }, async ({ patternId, validatedFix }) => {
-    await convex.mutation("fixPatterns:validate", {
-        patternId: patternId,
-        validatedFix,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ patternId, validatedFix, validated: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("fixPatterns:validate", {
+            patternId: patternId,
+            validatedFix,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ patternId, validatedFix, validated: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: search_fix_patterns
@@ -2075,18 +2591,23 @@ server.tool("search_fix_patterns", "Semantic search over fix patterns. Use this 
     query: z.string().describe("Describe the problem — e.g. 'message disappears after sending'"),
     limit: z.number().int().optional().describe("Max results to return (default 10)"),
 }, async ({ query, limit }) => {
-    const results = await convex.action("search:searchFixPatterns", {
-        query,
-        limit,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(results, null, 2),
-            },
-        ],
-    };
+    try {
+        const results = await convex.action("search:searchFixPatterns", {
+            query,
+            limit,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(results, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_fix_patterns
@@ -2095,25 +2616,27 @@ server.tool("list_fix_patterns", "List fix patterns, optionally filtered by proj
     project: z.string().optional().describe("Filter by source project — omit for all"),
     limit: z.number().int().optional().describe("Max results (default 50)"),
 }, async ({ project, limit }) => {
-    if (project) {
-        const results = await convex.query("fixPatterns:listByProject", {
-            sourceProject: project,
+    try {
+        if (project) {
+            const results = await convex.query("fixPatterns:listByProject", {
+                sourceProject: project,
+                limit,
+            });
+            return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+        }
+        // No project filter — list all patterns
+        const allResults = await convex.query("fixPatterns:listAll", {
             limit,
         });
         return {
-            content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            content: [{ type: "text", text: JSON.stringify(allResults, null, 2) }],
         };
     }
-    // No project filter — list all (use listByProject with a broad approach)
-    // For now, return empty guidance
-    return {
-        content: [
-            {
-                type: "text",
-                text: "Please specify a project to filter by, or use search_fix_patterns for semantic search.",
-            },
-        ],
-    };
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: link_issue_to_pattern
@@ -2122,18 +2645,23 @@ server.tool("link_issue_to_pattern", "Link a VantagePeers issue to a fix pattern
     patternId: z.string().describe("ID of the fix pattern"),
     issueId: z.string().describe("VantagePeers issue ID to link"),
 }, async ({ patternId, issueId }) => {
-    await convex.mutation("fixPatterns:linkIssue", {
-        patternId: patternId,
-        issueId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ patternId, issueId, linked: true }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("fixPatterns:linkIssue", {
+            patternId: patternId,
+            issueId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ patternId, issueId, linked: true }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_mission_template
@@ -2142,15 +2670,20 @@ server.tool("get_mission_template", "Fetch a mission template by name. Returns t
     "Use 'issue-resolution-v2' for the default Issue Resolution Protocol.", {
     name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
 }, async ({ name }) => {
-    const template = await convex.query("missionTemplates:getByName", { name });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(template, null, 2),
-            },
-        ],
-    };
+    try {
+        const template = await convex.query("missionTemplates:getByName", { name });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(template, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: update_mission_template
@@ -2170,21 +2703,26 @@ server.tool("update_mission_template", "Create or update a mission template by n
     createdBy: creatorSchema.describe("Who is creating/updating the template"),
     isDefault: z.boolean().optional().describe("Mark as the default template for its type"),
 }, async ({ name, description, steps, createdBy, isDefault }) => {
-    const templateId = await convex.mutation("missionTemplates:upsert", {
-        name,
-        description,
-        steps,
-        createdBy,
-        isDefault,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ templateId, name, stepCount: steps.length }, null, 2),
-            },
-        ],
-    };
+    try {
+        const templateId = await convex.mutation("missionTemplates:upsert", {
+            name,
+            description,
+            steps,
+            createdBy,
+            isDefault,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ templateId, name, stepCount: steps.length }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: add_deployment
@@ -2208,21 +2746,26 @@ server.tool("add_deployment", "Register a Convex deployment for proactive error 
         .string()
         .describe("Orchestrator responsible for this deployment — e.g. 'sigma'"),
 }, async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
-    const id = await convex.mutation("errorMonitor:addDeployment", {
-        name,
-        deploymentUrl,
-        deployKeyEnvVar,
-        githubRepo,
-        orchestrator,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ id, name, deploymentUrl, githubRepo, orchestrator }, null, 2),
-            },
-        ],
-    };
+    try {
+        const id = await convex.mutation("errorMonitor:addDeployment", {
+            name,
+            deploymentUrl,
+            deployKeyEnvVar,
+            githubRepo,
+            orchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ id, name, deploymentUrl, githubRepo, orchestrator }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: remove_deployment
@@ -2232,15 +2775,20 @@ server.tool("remove_deployment", "Deactivate a monitored deployment. The deploym
         .string()
         .describe("Name of the deployment to deactivate — e.g. 'your-deployment-123'"),
 }, async ({ name }) => {
-    await convex.mutation("errorMonitor:removeDeployment", { name });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify({ removed: name }, null, 2),
-            },
-        ],
-    };
+    try {
+        await convex.mutation("errorMonitor:removeDeployment", { name });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ removed: name }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_errors
@@ -2260,18 +2808,23 @@ server.tool("list_errors", "List detected errors from monitored deployments, ord
         .default(50)
         .describe("Maximum number of errors to return (default 50)"),
 }, async ({ deployment, limit }) => {
-    const errors = await convex.query("errorMonitor:listErrors", {
-        deployment,
-        limit: limit ?? 50,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(errors, null, 2),
-            },
-        ],
-    };
+    try {
+        const errors = await convex.query("errorMonitor:listErrors", {
+            deployment,
+            limit: limit ?? 50,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(errors, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: get_error
@@ -2281,17 +2834,22 @@ server.tool("get_error", "Fetch a single error log entry by its Convex document 
         .string()
         .describe("Convex document ID of the errorLogs entry"),
 }, async ({ errorId }) => {
-    const error = await convex.query("errorMonitor:getError", {
-        errorId: errorId,
-    });
-    return {
-        content: [
-            {
-                type: "text",
-                text: JSON.stringify(error, null, 2),
-            },
-        ],
-    };
+    try {
+        const error = await convex.query("errorMonitor:getError", {
+            errorId: errorId,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(error, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport

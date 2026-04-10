@@ -593,8 +593,12 @@ server.tool(
 			.int()
 			.optional()
 			.describe("Day number (e.g. 19 for Day 19)"),
+		tenantId: z
+			.string()
+			.optional()
+			.describe("Tenant identifier for multi-tenant isolation"),
 	},
-	async ({ from, fromInstanceId, channel, content, sessionDay }) => {
+	async ({ from, fromInstanceId, channel, content, sessionDay, tenantId }) => {
 		try {
 			const messageId = await convex.mutation("messages:sendMessage" as any, {
 				from,
@@ -602,6 +606,7 @@ server.tool(
 				channel,
 				content,
 				sessionDay,
+				tenantId,
 			});
 
 			return {
@@ -633,12 +638,17 @@ server.tool(
 			.string()
 			.optional()
 			.describe("Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages."),
+		tenantId: z
+			.string()
+			.optional()
+			.describe("Filter messages to this tenant only"),
 	},
-	async ({ recipient, recipientInstanceId }) => {
+	async ({ recipient, recipientInstanceId, tenantId }) => {
 		try {
 			const messages = await convex.query("messages:checkNewMessages" as any, {
 				recipient,
 				recipientInstanceId,
+				tenantId,
 			});
 
 			return {

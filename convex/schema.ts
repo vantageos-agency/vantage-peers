@@ -138,6 +138,7 @@ export default defineSchema({
 	messages: defineTable({
 		from: creatorValidator,
 		fromInstanceId: v.optional(v.string()), // "pi-chromebook", "tau-vps-1"
+		tenantId: v.optional(v.string()),
 		channel: v.string(),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
@@ -145,7 +146,8 @@ export default defineSchema({
 	})
 		.index("by_day", ["sessionDay"])
 		.index("by_from", ["from", "createdAt"])
-		.index("by_channel", ["channel", "createdAt"]),
+		.index("by_channel", ["channel", "createdAt"])
+		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"]),
 
 	// ── messageReceipts ──────────────────────────────────────────────────────
 	// One row per recipient per message. Tracks read status.
@@ -154,11 +156,13 @@ export default defineSchema({
 		messageId: v.id("messages"),
 		recipient: creatorValidator, // role-level: "pi" | "tau" | "phi"
 		recipientInstanceId: v.optional(v.string()), // instance-level: "pi-vps"
+		tenantId: v.optional(v.string()),
 		readAt: v.optional(v.number()), // undefined = unread, ms epoch = read
 	})
 		.index("by_recipient_unread", ["recipient", "readAt"])
 		.index("by_instance_unread", ["recipientInstanceId", "readAt"])
-		.index("by_message", ["messageId"]),
+		.index("by_message", ["messageId"])
+		.index("by_tenant_recipient_unread", ["tenantId", "recipient", "readAt"]),
 
 	// ── missions ──────────────────────────────────────────────────────────────
 	missions: defineTable({
