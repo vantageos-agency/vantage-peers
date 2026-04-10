@@ -138,6 +138,42 @@ await fetchMutation(
 
 Requires `convex` as a peer dependency. Only public functions are exported.
 
+### Authentication with Deploy Keys
+
+For server-to-server access, use a Convex deploy key:
+
+1. Go to your [Convex dashboard](https://dashboard.convex.dev) > Settings > Deploy Keys
+2. Generate a new deploy key for your deployment
+3. Set it as an environment variable:
+
+```bash
+CONVEX_DEPLOY_KEY=prod:your-deploy-key-here
+```
+
+4. Use it with the Convex client:
+
+```typescript
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "vantage-peers-mcp/api";
+
+const client = new ConvexHttpClient(process.env.CONVEX_URL!);
+
+// Query with type safety
+const memories = await client.query(api.memories.listMemories, {
+  namespace: "global",
+  limit: 10,
+});
+
+// Mutate with type safety
+await client.mutation(api.messages.sendMessage, {
+  from: "studio",
+  channel: "sigma",
+  content: "Task completed",
+});
+```
+
+**Security:** Never commit deploy keys to git. Use environment variables or a secrets manager.
+
 ## Requirements
 
 - Node.js >= 18
