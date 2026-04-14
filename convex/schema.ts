@@ -563,6 +563,22 @@ export default defineSchema({
 		.index("by_repo_date", ["repo", "date"])
 		.index("by_date", ["date"]),
 
+	// ── mcpTenants ────────────────────────────────────────────────────────────
+	// Registry of VIP tenants for HTTP MCP transport.
+	// Each tenant has a hashed bearer token and a target Convex deployment URL.
+	// The HTTP MCP server (Railway) looks up tenants by tokenHash on every request
+	// and proxies to the correct Convex deployment.
+	// tokenHash = SHA-256 hex of the raw bearer token (raw token never stored).
+	mcpTenants: defineTable({
+		tokenHash: v.string(), // SHA-256 hex of bearer token
+		tenantName: v.string(), // e.g. "perello-consulting-vip-1"
+		convexUrl: v.string(), // e.g. "https://xxxx.convex.cloud"
+		createdAt: v.number(),
+		enabledAt: v.optional(v.number()), // undefined = disabled
+		lastUsedAt: v.optional(v.number()),
+		revokedAt: v.optional(v.number()),
+	}).index("by_tokenHash", ["tokenHash"]),
+
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.
 	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.

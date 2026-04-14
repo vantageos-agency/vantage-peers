@@ -13,6 +13,6 @@
     "rootDir": ".",
     "declaration": true
   },
-  "include": ["server.ts", "api.ts"],
+  "include": ["server.ts", "server-http.ts", "api.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
