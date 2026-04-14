@@ -82,9 +82,3 @@ const server = Bun.serve({
 console.log(`[vantage-peers-mcp] HTTP transport listening on ${server.hostname}:${server.port}`);
 console.log(`[vantage-peers-mcp] Health: http://${server.hostname}:${server.port}/health`);
 console.log(`[vantage-peers-mcp] MCP:    http://${server.hostname}:${server.port}/mcp`);
-// Keep default export for backwards compatibility with auto-detection pattern.
-export default {
-    port: PORT,
-    hostname: HOSTNAME,
-    fetch: app.fetch,
-};
