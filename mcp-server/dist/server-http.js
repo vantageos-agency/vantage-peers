@@ -71,9 +71,18 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT ?? 3000);
 const HOSTNAME = "0.0.0.0";
-console.log(`[vantage-peers-mcp] HTTP transport starting on ${HOSTNAME}:${PORT}`);
-console.log(`[vantage-peers-mcp] Health: http://${HOSTNAME}:${PORT}/health`);
-console.log(`[vantage-peers-mcp] MCP:    http://${HOSTNAME}:${PORT}/mcp`);
+// Explicit Bun.serve() — does not rely on default-export auto-detection,
+// which can fail when started via `bun run <file>` (vs `bun <file>`).
+// @ts-expect-error — Bun global available at runtime on Railway
+const server = Bun.serve({
+    port: PORT,
+    hostname: HOSTNAME,
+    fetch: app.fetch,
+});
+console.log(`[vantage-peers-mcp] HTTP transport listening on ${server.hostname}:${server.port}`);
+console.log(`[vantage-peers-mcp] Health: http://${server.hostname}:${server.port}/health`);
+console.log(`[vantage-peers-mcp] MCP:    http://${server.hostname}:${server.port}/mcp`);
+// Keep default export for backwards compatibility with auto-detection pattern.
 export default {
     port: PORT,
     hostname: HOSTNAME,
