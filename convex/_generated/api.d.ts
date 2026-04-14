@@ -26,6 +26,7 @@ import type * as issueStats from "../issueStats.js";
 import type * as issueStatsQueries from "../issueStatsQueries.js";
 import type * as issues from "../issues.js";
 import type * as mandates from "../mandates.js";
+import type * as mcpTenants from "../mcpTenants.js";
 import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   issueStatsQueries: typeof issueStatsQueries;
   issues: typeof issues;
   mandates: typeof mandates;
+  mcpTenants: typeof mcpTenants;
   memories: typeof memories;
   messages: typeof messages;
   migrations: typeof migrations;
