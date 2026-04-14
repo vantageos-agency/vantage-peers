@@ -198,6 +198,25 @@ describe("Memories", () => {
 		expect(listed).toHaveLength(1);
 		expect(listed[0]._id).toBe(updatedId);
 	});
+
+	// Regression #262 — relations must be optional; defaults to [] server-side
+	test("storeMemory without relations defaults to empty array", async () => {
+		const t = createTestConvex();
+
+		const memoryId = await t.mutation(api.memories.storeMemory, {
+			namespace: "global",
+			type: "project",
+			content: "Memory stored without explicit relations",
+			createdBy: "sigma",
+			// relations intentionally omitted
+		});
+
+		const memory = await t.query(api.memories.getMemory, { memoryId });
+		expect(memory).not.toBeNull();
+		if (memory === null) throw new Error("memory must not be null");
+		expect(Array.isArray(memory.relations)).toBe(true);
+		expect(memory.relations).toHaveLength(0);
+	});
 });
 
 // =============================================================================
