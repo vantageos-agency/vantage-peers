@@ -138,11 +138,14 @@ export const updateDynamic = mutation({
     orchestratorId: v.string(),
     instanceId: v.optional(v.string()),
     currentTask: v.optional(v.string()),
-    lastSeen: v.number(),
+    // Optional: defaults to Date.now() server-side if omitted (fixes #261)
+    lastSeen: v.optional(v.number()),
     sessionCountDelta: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const lastSeen = args.lastSeen ?? Date.now();
+
     // Try instanceId first
     let profile = null;
     if (args.instanceId !== undefined) {
@@ -173,7 +176,7 @@ export const updateDynamic = mutation({
         },
         dynamic: {
           currentTask: args.currentTask,
-          lastSeen: args.lastSeen,
+          lastSeen,
           sessionCount: 1,
         },
       });
@@ -183,7 +186,7 @@ export const updateDynamic = mutation({
     await ctx.db.patch(profile._id, {
       dynamic: {
         currentTask: args.currentTask ?? profile.dynamic.currentTask,
-        lastSeen: args.lastSeen,
+        lastSeen,
         sessionCount:
           profile.dynamic.sessionCount + (args.sessionCountDelta ?? 0),
       },
