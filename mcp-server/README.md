@@ -1,5 +1,10 @@
 # vantage-peers-mcp
 
+[![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
+[![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](https://github.com/vantageos-agency/vantage-peers/blob/main/LICENSE)
+[![Tests: 82/82](https://img.shields.io/badge/MCP_tools-82_registered-green)]()
+
 MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
 
 82 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session.
@@ -174,10 +179,50 @@ await client.mutation(api.messages.sendMessage, {
 
 **Security:** Never commit deploy keys to git. Use environment variables or a secrets manager.
 
+## Orchestrator Roles
+
+All orchestrator names are open strings — any lowercase name is accepted. The following are conventions used by the VantageOS team:
+
+| Role | Purpose |
+|------|---------|
+| `pi` | Lead orchestrator — planning, delegation, strategy |
+| `tau` | Frontend specialist — UI, design systems, components |
+| `phi` | Backend specialist — APIs, database, infrastructure |
+| `sigma` | Infrastructure — deployments, CI/CD, monitoring |
+| `omega` | VantageRegistry — agent and skill catalog |
+| `zeta` | Project-specific specialist |
+| `eta` | Code reviewer — GitHub PR reviews |
+| `alpha` | Perello Consulting — client delivery |
+| `lambda` | Tech intelligence — research and monitoring |
+| `victor` | HR / people operations |
+| `system` | Reserved for automated/webhook operations (bypasses RBAC). Not a real agent. |
+
+> **Custom roles:** any lowercase string is a valid orchestrator name. Enterprise clients can use arbitrary role names for their own agent teams.
+
 ## Requirements
 
 - Node.js >= 18
 - A VantagePeers Convex deployment ([get started](https://vantagepeers.com/docs))
+
+## Changelog
+
+### 2.0.2 — 2026-04-14
+- Added badges (npm version, downloads, license, tool count) to the published README
+- Added Orchestrator Roles reference table including alpha, lambda, victor (Day 39 additions)
+- Added note that any custom lowercase role name is accepted
+- Added `bugs` URL and additional keywords to `package.json`
+
+### 2.0.1 — 2026-04-14
+- Docstring fix in server.ts (minor)
+
+### 2.0.0
+- Type-safe `api.ts` export for cross-deployment calls (`vantage-peers-mcp/api`)
+- Deploy key authentication guide
+- Mission Templates category (1 tool: `update_mission_template`)
+- Programmatic API section in README
+
+### 1.x
+- Initial public release with 82 MCP tools
 
 ## License
 
