@@ -16,11 +16,14 @@ export const storeMemory = mutation({
     type: memoryTypeValidator,
     content: v.string(),
     createdBy: creatorValidator,
-    relations: v.array(
-      v.object({
-        targetId: v.id("memories"),
-        type: relationTypeValidator,
-      }),
+    // Optional: defaults to [] server-side if omitted (fixes #262)
+    relations: v.optional(
+      v.array(
+        v.object({
+          targetId: v.id("memories"),
+          type: relationTypeValidator,
+        }),
+      ),
     ),
     isLatest: v.optional(v.boolean()),
     ttl: v.optional(v.string()),
@@ -38,6 +41,7 @@ export const storeMemory = mutation({
   returns: v.id("memories"),
   handler: async (ctx, args) => {
     const now = Date.now();
+    const relations = args.relations ?? [];
 
     // 1. Create the memory row
     const memoryId = await ctx.db.insert("memories", {
@@ -45,7 +49,7 @@ export const storeMemory = mutation({
       type: args.type,
       content: args.content,
       createdBy: args.createdBy,
-      relations: args.relations,
+      relations,
       isLatest: true,
       ttl: args.ttl,
       episode: args.episode,
@@ -56,7 +60,7 @@ export const storeMemory = mutation({
     // 2. Handle "updates" relations — supersede target memories
     // Re-add the RAG entry with isLatest="false" so it no longer appears in
     // searches filtered to isLatest="true".
-    for (const relation of args.relations) {
+    for (const relation of relations) {
       if (relation.type === "updates") {
         const target = await ctx.db.get(relation.targetId);
         if (target !== null) {
