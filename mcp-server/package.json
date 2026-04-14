@@ -22,7 +22,9 @@
     "generate:api": "cd .. && npx convex-helpers ts-api-spec --prod --output-file mcp-server/api.ts",
     "build": "tsc --project tsconfig.json",
     "prepublishOnly": "npm run build",
-    "dev": "bun run server.ts"
+    "dev": "bun run server.ts",
+    "start": "bun run dist/server-http.js",
+    "dev:http": "bun run server-http.ts"
   },
   "repository": {
     "type": "git",

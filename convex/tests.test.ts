@@ -1142,3 +1142,221 @@ describe("Briefing Notes", () => {
 		expect(allNotes).toHaveLength(3);
 	});
 });
+
+// =============================================================================
+// 10. MCP Tenants
+// =============================================================================
+
+// SHA-256 helper (mirrors what seed-mcp-tenant.ts does)
+async function sha256hex(input: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(input);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+	return Array.from(new Uint8Array(hashBuffer))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+const MASTER_TOKEN = "test-master-secret-32bytes-xyzabc";
+
+describe("MCP Tenants", () => {
+	beforeEach(() => {
+		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
+	});
+
+	test("createTenant returns an ID and tenant is disabled by default", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("raw-bearer-token-abc123");
+
+		const tenantId = await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash,
+			tenantName: "vip-client-1",
+			convexUrl: "https://clientabc.convex.cloud",
+		});
+
+		expect(tenantId).toBeDefined();
+
+		// getTenantByTokenHash returns the tenant but enabled=false
+		const result = await t.query(api.mcpTenants.getTenantByTokenHash, {
+			tokenHash,
+		});
+		expect(result).not.toBeNull();
+		if (!result) throw new Error("Expected tenant result to be non-null");
+		expect(result.convexUrl).toBe("https://clientabc.convex.cloud");
+		expect(result.tenantName).toBe("vip-client-1");
+		expect(result.enabled).toBe(false);
+	});
+
+	test("enableTenant sets enabled=true", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("raw-bearer-token-enable-test");
+
+		const tenantId = await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash,
+			tenantName: "vip-client-enable",
+			convexUrl: "https://clientenable.convex.cloud",
+		});
+
+		await t.mutation(api.mcpTenants.enableTenant, {
+			callerToken: MASTER_TOKEN,
+			tenantId,
+		});
+
+		const result = await t.query(api.mcpTenants.getTenantByTokenHash, {
+			tokenHash,
+		});
+		expect(result).not.toBeNull();
+		if (!result) throw new Error("Expected tenant result to be non-null");
+		expect(result.enabled).toBe(true);
+	});
+
+	test("disableTenant sets enabled=false", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("raw-bearer-token-disable-test");
+
+		const tenantId = await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash,
+			tenantName: "vip-client-disable",
+			convexUrl: "https://clientdisable.convex.cloud",
+		});
+
+		await t.mutation(api.mcpTenants.enableTenant, {
+			callerToken: MASTER_TOKEN,
+			tenantId,
+		});
+
+		// Verify enabled first
+		const enabled = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		expect(enabled!.enabled).toBe(true);
+
+		// Now disable
+		await t.mutation(api.mcpTenants.disableTenant, {
+			callerToken: MASTER_TOKEN,
+			tenantId,
+		});
+
+		const disabled = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		expect(disabled).not.toBeNull();
+		expect(disabled!.enabled).toBe(false);
+	});
+
+	test("revokeTenant causes getTenantByTokenHash to return null", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("raw-bearer-token-revoke-test");
+
+		const tenantId = await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash,
+			tenantName: "vip-client-revoke",
+			convexUrl: "https://clientrevoke.convex.cloud",
+		});
+
+		await t.mutation(api.mcpTenants.revokeTenant, {
+			callerToken: MASTER_TOKEN,
+			tenantId,
+		});
+
+		const result = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		expect(result).toBeNull();
+	});
+
+	test("revokeTenant is idempotent", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("raw-bearer-token-idempotent-test");
+
+		const tenantId = await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash,
+			tenantName: "vip-client-idempotent",
+			convexUrl: "https://clientidempotent.convex.cloud",
+		});
+
+		// Revoke twice — should not throw
+		await t.mutation(api.mcpTenants.revokeTenant, { callerToken: MASTER_TOKEN, tenantId });
+		await t.mutation(api.mcpTenants.revokeTenant, { callerToken: MASTER_TOKEN, tenantId });
+
+		const result = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		expect(result).toBeNull();
+	});
+
+	test("getTenantByTokenHash returns null for unknown token", async () => {
+		const t = createTestConvex();
+
+		const unknownHash = await sha256hex("does-not-exist-token");
+		const result = await t.query(api.mcpTenants.getTenantByTokenHash, {
+			tokenHash: unknownHash,
+		});
+		expect(result).toBeNull();
+	});
+
+	test("createTenant rejects invalid master token", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("raw-bearer-token-authfail");
+
+		await expect(
+			t.mutation(api.mcpTenants.createTenant, {
+				callerToken: "wrong-secret",
+				tokenHash,
+				tenantName: "vip-unauthorized",
+				convexUrl: "https://unauthorized.convex.cloud",
+			}),
+		).rejects.toThrow("Unauthorized");
+	});
+
+	test("listTenants returns all tenants with admin token", async () => {
+		const t = createTestConvex();
+
+		const hash1 = await sha256hex("list-test-token-1");
+		const hash2 = await sha256hex("list-test-token-2");
+
+		await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash: hash1,
+			tenantName: "tenant-a",
+			convexUrl: "https://tenant-a.convex.cloud",
+		});
+		await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash: hash2,
+			tenantName: "tenant-b",
+			convexUrl: "https://tenant-b.convex.cloud",
+		});
+
+		const tenants = await t.query(api.mcpTenants.listTenants, {
+			callerToken: MASTER_TOKEN,
+		});
+		expect(tenants).toHaveLength(2);
+		expect(tenants.map((t) => t.tenantName).sort()).toEqual(["tenant-a", "tenant-b"]);
+	});
+
+	test("createTenant rejects duplicate tokenHash", async () => {
+		const t = createTestConvex();
+
+		const tokenHash = await sha256hex("duplicate-token-test");
+
+		await t.mutation(api.mcpTenants.createTenant, {
+			callerToken: MASTER_TOKEN,
+			tokenHash,
+			tenantName: "first-tenant",
+			convexUrl: "https://first.convex.cloud",
+		});
+
+		await expect(
+			t.mutation(api.mcpTenants.createTenant, {
+				callerToken: MASTER_TOKEN,
+				tokenHash,
+				tenantName: "duplicate-tenant",
+				convexUrl: "https://duplicate.convex.cloud",
+			}),
+		).rejects.toThrow("already exists");
+	});
+});
