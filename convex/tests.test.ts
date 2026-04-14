@@ -464,6 +464,33 @@ describe("Profiles", () => {
 		expect(profile!.dynamic.currentTask).toBe("Writing documentation");
 		expect(profile!.dynamic.sessionCount).toBe(2); // original 1 + delta 1
 	});
+
+	// Regression #261 — lastSeen must be optional; defaults to Date.now() server-side
+	test("updateDynamic without lastSeen defaults to server Date.now()", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.profiles.upsertProfile, sampleProfile);
+
+		const before = Date.now();
+		await t.mutation(api.profiles.updateDynamic, {
+			orchestratorId: "pi",
+			instanceId: "pi-vps",
+			currentTask: "Auto-timestamp test",
+			// lastSeen intentionally omitted
+		});
+		const after = Date.now();
+
+		const profile = await t.query(api.profiles.getProfile, {
+			instanceId: "pi-vps",
+		});
+		expect(profile).not.toBeNull();
+		if (profile === null) throw new Error("profile must not be null");
+		expect(profile.dynamic.currentTask).toBe("Auto-timestamp test");
+		// lastSeen must be a number within ±2000ms of the call window
+		expect(typeof profile.dynamic.lastSeen).toBe("number");
+		expect(profile.dynamic.lastSeen).toBeGreaterThanOrEqual(before - 2000);
+		expect(profile.dynamic.lastSeen).toBeLessThanOrEqual(after + 2000);
+	});
 });
 
 // =============================================================================
