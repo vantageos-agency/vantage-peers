@@ -67,7 +67,7 @@ export function _setInternalClientForTest(client: ConvexHttpClient): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SHA-256 helper (Web Crypto API — available in Bun and Node 18+)
+// SHA-256 helpers (Web Crypto API — available in Bun and Node 18+)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function sha256Hex(input: string): Promise<string> {
@@ -78,15 +78,43 @@ export async function sha256Hex(input: string): Promise<string> {
 	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Computes base64url(SHA256(input)) per RFC 4648 §5 (no padding).
+ * Used for PKCE S256 code_challenge verification (RFC 7636).
+ */
+export async function sha256Base64Url(input: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(input);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+	const bytes = new Uint8Array(hashBuffer);
+	let binary = "";
+	for (let i = 0; i < bytes.length; i++) {
+		binary += String.fromCharCode(bytes[i]);
+	}
+	// base64url = base64 with +/= → -_ and stripped padding
+	return btoa(binary)
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth middleware
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function bearerAuthMiddleware(): MiddlewareHandler {
 	return async (c: Context, next: Next) => {
+		// RFC 6750 §3 — point clients at the protected-resource metadata so
+		// Claude.ai's OAuth connector can bootstrap discovery from any 401.
+		const publicBaseUrl =
+			process.env.PUBLIC_BASE_URL ??
+			"https://vantage-peers-production.up.railway.app";
+		const wwwAuthHeader = `Bearer resource="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
+
 		const authHeader = c.req.header("Authorization");
 
 		if (!authHeader?.startsWith("Bearer ")) {
+			c.header("WWW-Authenticate", wwwAuthHeader);
 			return c.json(
 				{ error: "Missing Authorization header. Expected: Bearer <token>" },
 				401,
@@ -96,6 +124,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		const token = authHeader.slice("Bearer ".length).trim();
 
 		if (!token) {
+			c.header("WWW-Authenticate", wwwAuthHeader);
 			return c.json({ error: "Empty bearer token" }, 401);
 		}
 
@@ -106,10 +135,13 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 
 		try {
 			// String-keyed Convex calls require any cast — consistent with codebase pattern
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			tenant = (await internalClient().query("mcpTenants:getTenantByTokenHash" as any, {
-				tokenHash,
-			})) as TenantLookupResult;
+			tenant = (await internalClient().query(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"mcpTenants:getTenantByTokenHash" as any,
+				{
+					tokenHash,
+				},
+			)) as TenantLookupResult;
 		} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : String(err);
 			console.error("[auth] Convex lookup failed:", message);
@@ -117,6 +149,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		}
 
 		if (!tenant) {
+			c.header("WWW-Authenticate", wwwAuthHeader);
 			return c.json({ error: "Invalid bearer token" }, 401);
 		}
 
