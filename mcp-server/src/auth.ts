@@ -128,6 +128,25 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return c.json({ error: "Empty bearer token" }, 401);
 		}
 
+		// Master-token bypass — admin / OAuth-issued tokens
+		// The OAuth `/token` endpoint issues `access_token = BEARER_SECRET_MASTER`.
+		// Accepting it directly avoids a round-trip to the tenant table and allows
+		// Claude.ai custom connector (OAuth 2.0) to authenticate seamlessly.
+		const masterToken = process.env.BEARER_SECRET_MASTER;
+		if (masterToken && token === masterToken) {
+			const internalUrl = process.env.CONVEX_URL_INTERNAL;
+			if (!internalUrl) {
+				console.error("[auth] CONVEX_URL_INTERNAL not set — cannot route master token");
+				return c.json({ error: "Server misconfigured: internal deployment URL missing" }, 500);
+			}
+			c.set("tenant", {
+				tenantName: "master",
+				convexUrl: internalUrl,
+			});
+			await next();
+			return;
+		}
+
 		// Hash client-side so raw token never hits Convex
 		const tokenHash = await sha256Hex(token);
 
