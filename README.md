@@ -182,7 +182,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | Tool | Description |
 |------|-------------|
 | `send_message` | Send a message to a channel, agent, or broadcast |
-| `check_messages` | Check for unread messages addressed to a recipient/instance |
+| `check_messages` | Check for unread messages addressed to a recipient/instance (supports optional `since` timestamp for incremental polling) |
 | `mark_as_read` | Mark message receipts as read by receipt ID |
 | `delete_message` | Delete a message by ID |
 | `list_messages` | List messages with filters (channel, sender, date range) |
