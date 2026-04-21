@@ -76,6 +76,7 @@ export const checkNewMessages = query({
 		recipient: creatorValidator,
 		recipientInstanceId: v.optional(v.string()),
 		tenantId: v.optional(v.string()),
+		since: v.optional(v.number()), // Unix ms — only return receipts with _creationTime > since
 	},
 	returns: v.array(
 		v.object({
@@ -102,7 +103,12 @@ export const checkNewMessages = query({
 				.withIndex("by_instance_unread", (q) =>
 					q.eq("recipientInstanceId", args.recipientInstanceId!),
 				)
-				.filter((q) => q.eq(q.field("readAt"), undefined))
+				.filter((q) => {
+					const base = q.eq(q.field("readAt"), undefined);
+					return args.since !== undefined
+						? q.and(base, q.gt(q.field("_creationTime"), args.since))
+						: base;
+				})
 				.take(100);
 
 			const roleReceipts = await ctx.db
@@ -110,12 +116,15 @@ export const checkNewMessages = query({
 				.withIndex("by_recipient_unread", (q) =>
 					q.eq("recipient", args.recipient),
 				)
-				.filter((q) =>
-					q.and(
+				.filter((q) => {
+					const base = q.and(
 						q.eq(q.field("readAt"), undefined),
 						q.eq(q.field("recipientInstanceId"), undefined),
-					),
-				)
+					);
+					return args.since !== undefined
+						? q.and(base, q.gt(q.field("_creationTime"), args.since))
+						: base;
+				})
 				.take(100);
 
 			// Merge and deduplicate by receiptId
@@ -142,6 +151,11 @@ export const checkNewMessages = query({
 					.withIndex("by_tenant_recipient_unread", (q) =>
 						q.eq("tenantId", args.tenantId).eq("recipient", args.recipient).eq("readAt", undefined),
 					)
+					.filter((q) =>
+						args.since !== undefined
+							? q.gt(q.field("_creationTime"), args.since)
+							: true,
+					)
 					.take(100);
 			} else {
 				receipts = await ctx.db
@@ -149,7 +163,12 @@ export const checkNewMessages = query({
 					.withIndex("by_recipient_unread", (q) =>
 						q.eq("recipient", args.recipient),
 					)
-					.filter((q) => q.eq(q.field("readAt"), undefined))
+					.filter((q) => {
+						const base = q.eq(q.field("readAt"), undefined);
+						return args.since !== undefined
+							? q.and(base, q.gt(q.field("_creationTime"), args.since))
+							: base;
+					})
 					.take(100);
 			}
 		}
