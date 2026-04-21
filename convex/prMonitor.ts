@@ -17,13 +17,15 @@ export const pollOpenPRs = internalAction({
 			return null;
 		}
 
-		// Get all external issues with open PRs
-		const issues = await ctx.runQuery(api.issues.listExternalOpen, {
-			limit: 50,
-		});
+		// Fetch only open/draft PRs in one go — relies on wired-up prStatus filter.
+		// Two separate calls because prStatus takes a single literal.
+		const [openResult, draftResult] = await Promise.all([
+			ctx.runQuery(api.issues.listExternalOpen, { limit: 50, prStatus: "open" }),
+			ctx.runQuery(api.issues.listExternalOpen, { limit: 50, prStatus: "draft" }),
+		]);
 
-		const openPRs = issues.filter(
-			(i) => i.prUrl && (i.prStatus === "open" || i.prStatus === "draft"),
+		const openPRs = [...openResult.issues, ...draftResult.issues].filter(
+			(i) => i.prUrl,
 		);
 
 		if (openPRs.length === 0) {
