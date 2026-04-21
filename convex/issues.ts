@@ -441,39 +441,53 @@ export const listExternalOpen = query({
 			v.literal("closed"),
 		)),
 		limit: v.optional(v.number()),
+		paginationToken: v.optional(v.union(v.string(), v.null())),
 	},
-	returns: v.array(v.object({
-		_id: v.id("issues"),
-		_creationTime: v.number(),
-		repo: v.string(),
-		issueNumber: v.number(),
-		title: v.string(),
-		status: v.string(),
-		externalRepo: v.optional(v.string()),
-		externalIssueUrl: v.optional(v.string()),
-		prUrl: v.optional(v.string()),
-		prStatus: v.optional(v.string()),
-		assignedOrchestrator: v.string(),
-	})),
+	returns: v.object({
+		issues: v.array(v.object({
+			_id: v.id("issues"),
+			_creationTime: v.number(),
+			repo: v.string(),
+			issueNumber: v.number(),
+			title: v.string(),
+			status: v.string(),
+			externalRepo: v.optional(v.string()),
+			externalIssueUrl: v.optional(v.string()),
+			prUrl: v.optional(v.string()),
+			prStatus: v.optional(v.string()),
+			assignedOrchestrator: v.string(),
+		})),
+		nextPageToken: v.union(v.string(), v.null()),
+	}),
 	handler: async (ctx, args) => {
-		const limit = args.limit ?? 50;
-		const issues = await ctx.db
-			.query("issues")
-			.filter((q) => q.neq(q.field("externalRepo"), undefined))
-			.take(limit);
+		const numItems = args.limit ?? 50;
 
-		return issues.map((i) => ({
-			_id: i._id,
-			_creationTime: i._creationTime,
-			repo: i.repo,
-			issueNumber: i.issueNumber,
-			title: i.title,
-			status: i.status,
-			externalRepo: i.externalRepo,
-			externalIssueUrl: i.externalIssueUrl,
-			prUrl: i.prUrl,
-			prStatus: i.prStatus as string | undefined,
-			assignedOrchestrator: i.assignedOrchestrator,
-		}));
+		const result = await ctx.db
+			.query("issues")
+			.filter((q) => {
+				let expr = q.neq(q.field("externalRepo"), undefined);
+				if (args.prStatus !== undefined) {
+					expr = q.and(expr, q.eq(q.field("prStatus"), args.prStatus));
+				}
+				return expr;
+			})
+			.paginate({ numItems, cursor: args.paginationToken ?? null });
+
+		return {
+			issues: result.page.map((i) => ({
+				_id: i._id,
+				_creationTime: i._creationTime,
+				repo: i.repo,
+				issueNumber: i.issueNumber,
+				title: i.title,
+				status: i.status,
+				externalRepo: i.externalRepo,
+				externalIssueUrl: i.externalIssueUrl,
+				prUrl: i.prUrl,
+				prStatus: i.prStatus as string | undefined,
+				assignedOrchestrator: i.assignedOrchestrator,
+			})),
+			nextPageToken: result.isDone ? null : result.continueCursor,
+		};
 	},
 });
