@@ -9,6 +9,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
@@ -18,6 +19,44 @@ import {
 	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-flight content size guard
+//
+// Convex has a 1 MiB HTTP body limit. When MCP tools forward oversized
+// `content` arguments, Convex returns an opaque "Server Error" that clients
+// cannot interpret. We enforce a conservative 900 KB ceiling client-side so
+// the caller receives an explicit InvalidParams error with byte-level detail
+// and the recommended remediation (deliverable .md file pattern).
+//
+// 900,000 bytes ≈ 130,000 French words — far beyond any realistic briefing
+// note, diary entry, memory snippet, or component source file. The 148 KB
+// of headroom absorbs the JSON framing and other argument overhead before
+// Convex's real 1,048,576-byte limit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const MAX_CONTENT_BYTES = 900_000;
+
+/**
+ * Measure a string's UTF-8 byte length and throw an McpError if it exceeds
+ * MAX_CONTENT_BYTES. Returns the byte count on success so callers can reuse
+ * it for observability in the catch path.
+ *
+ * @param content   The content string to measure.
+ * @param toolName  Caller tool name (used only in the error message).
+ */
+export function assertContentSize(content: string, toolName: string): number {
+	const contentBytes = new TextEncoder().encode(content).length;
+	if (contentBytes > MAX_CONTENT_BYTES) {
+		throw new McpError(
+			ErrorCode.InvalidParams,
+			`[${toolName}] Content too large: ${contentBytes} bytes, max ${MAX_CONTENT_BYTES} bytes (~${Math.floor(
+				MAX_CONTENT_BYTES / 6,
+			)} words). Use deliverable .md file pattern for large content (commit to repo + reference from ${toolName}).`,
+		);
+	}
+	return contentBytes;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared Zod schemas
@@ -201,7 +240,10 @@ export function registerTools(
 				.describe("Optional expiry ISO timestamp e.g. '2026-06-01T00:00:00Z'"),
 		},
 		async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
+			let contentBytes = 0;
 			try {
+				contentBytes = assertContentSize(content, "store_memory");
+
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
 				const nsDenied = guardWrite(namespace);
@@ -233,6 +275,14 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[store_memory] mutation failed", {
+					contentBytes,
+					namespace,
+					type,
+					createdBy,
+					errorMessage: error?.message ?? String(error),
+				});
 				return mcpError(error.message ?? String(error));
 			}
 		},
@@ -693,7 +743,10 @@ export function registerTools(
 			sessionDay,
 			tenantId,
 		}) => {
+			let contentBytes = 0;
 			try {
+				contentBytes = assertContentSize(content, "send_message");
+
 				const fromDenied = guardFrom(from);
 				if (fromDenied) return fromDenied;
 
@@ -715,6 +768,13 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[send_message] mutation failed", {
+					contentBytes,
+					from,
+					channel,
+					errorMessage: error?.message ?? String(error),
+				});
 				return mcpError(error.message ?? String(error));
 			}
 		},
@@ -1831,7 +1891,10 @@ export function registerTools(
 			blockers: flexArrayOptional.describe("Blockers encountered"),
 		},
 		async ({ date, orchestrator, content, highlights, blockers }) => {
+			let contentBytes = 0;
 			try {
+				contentBytes = assertContentSize(content, "write_diary");
+
 				const fromDenied = guardFrom(orchestrator);
 				if (fromDenied) return fromDenied;
 
@@ -1852,6 +1915,13 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[write_diary] mutation failed", {
+					contentBytes,
+					date,
+					orchestrator,
+					errorMessage: error?.message ?? String(error),
+				});
 				return mcpError(error.message ?? String(error));
 			}
 		},
@@ -1960,7 +2030,10 @@ export function registerTools(
 			linkedMemoryIds,
 			createdBy,
 		}) => {
+			let contentBytes = 0;
 			try {
+				contentBytes = assertContentSize(content, "create_briefing_note");
+
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
 
@@ -1987,6 +2060,14 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[create_briefing_note] mutation failed", {
+					contentBytes,
+					fromOrchestrator: createdBy,
+					topic,
+					title,
+					errorMessage: error?.message ?? String(error),
+				});
 				return mcpError(error.message ?? String(error));
 			}
 		},
@@ -2058,7 +2139,10 @@ export function registerTools(
 			createdBy: creatorSchema,
 		},
 		async ({ name, type, team, content, version, project, createdBy }) => {
+			let contentBytes = 0;
 			try {
+				contentBytes = assertContentSize(content, "register_component");
+
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
 
@@ -2081,6 +2165,14 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[register_component] mutation failed", {
+					contentBytes,
+					name,
+					type,
+					createdBy,
+					errorMessage: error?.message ?? String(error),
+				});
 				return mcpError(error.message ?? String(error));
 			}
 		},
@@ -2169,7 +2261,12 @@ export function registerTools(
 			project: z.string().optional().describe("New project name"),
 		},
 		async ({ componentId, ...fields }) => {
+			let contentBytes = 0;
 			try {
+				if (typeof fields.content === "string") {
+					contentBytes = assertContentSize(fields.content, "update_component");
+				}
+
 				const result = await convex.mutation("components:update" as any, {
 					componentId: componentId as any,
 					...fields,
@@ -2187,6 +2284,12 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[update_component] mutation failed", {
+					contentBytes,
+					componentId,
+					errorMessage: error?.message ?? String(error),
+				});
 				return mcpError(error.message ?? String(error));
 			}
 		},
