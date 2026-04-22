@@ -623,13 +623,19 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.string()
 				.optional()
 				.describe("Filter messages to this tenant only"),
+			since: z
+				.number()
+				.int()
+				.optional()
+				.describe("Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog."),
 		},
-		async ({ recipient, recipientInstanceId, tenantId }) => {
+		async ({ recipient, recipientInstanceId, tenantId, since }) => {
 			try {
 				const messages = await convex.query("messages:checkNewMessages" as any, {
 					recipient,
 					recipientInstanceId,
 					tenantId,
+					since,
 				});
 
 				return {
