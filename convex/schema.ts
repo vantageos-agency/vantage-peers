@@ -310,11 +310,13 @@ export default defineSchema({
 		updatedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		// AP2 authorization fields
-		spendingLimits: v.optional(v.object({
-			maxPerTransaction: v.number(),
-			maxPerPeriod: v.number(),
-			periodDays: v.optional(v.number()), // default 30
-		})),
+		spendingLimits: v.optional(
+			v.object({
+				maxPerTransaction: v.number(),
+				maxPerPeriod: v.number(),
+				periodDays: v.optional(v.number()), // default 30
+			}),
+		),
 		approvedCategories: v.optional(v.array(v.string())), // e.g. ["seo", "content", "development"]
 		mandateDocument: v.optional(v.string()), // signed authorization text or reference
 	})
@@ -359,12 +361,14 @@ export default defineSchema({
 		externalIssueNumber: v.optional(v.number()),
 		externalIssueUrl: v.optional(v.string()),
 		prUrl: v.optional(v.string()),
-		prStatus: v.optional(v.union(
-			v.literal("draft"),
-			v.literal("open"),
-			v.literal("merged"),
-			v.literal("closed"),
-		)),
+		prStatus: v.optional(
+			v.union(
+				v.literal("draft"),
+				v.literal("open"),
+				v.literal("merged"),
+				v.literal("closed"),
+			),
+		),
 		forkRepo: v.optional(v.string()), // "elpiarthera/better-auth"
 	})
 		.index("by_repo_number", ["repo", "issueNumber"])
@@ -380,8 +384,7 @@ export default defineSchema({
 		orchestrator: v.string(), // "omega", "tau", "sigma", etc.
 		project: v.string(), // "myreeldream", "vantage-starter", etc.
 		active: v.boolean(),
-	})
-		.index("by_repo", ["repo"]),
+	}).index("by_repo", ["repo"]),
 
 	// ── businessUnits ─────────────────────────────────────────────────────────
 	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.
@@ -539,29 +542,123 @@ export default defineSchema({
 		slowestResolution: v.optional(v.number()), // minutes
 		avgTimeToFix: v.optional(v.number()), // minutes
 		// Before/after VantageOS Team (pivot: 2026-04-01)
-		beforeVantageOS: v.optional(v.object({
-			totalIssues: v.number(),
-			resolvedIssues: v.number(),
-			medianTimeToFix: v.optional(v.number()),
-			avgTimeToFix: v.optional(v.number()),
-		})),
-		afterVantageOS: v.optional(v.object({
-			totalIssues: v.number(),
-			resolvedIssues: v.number(),
-			medianTimeToFix: v.optional(v.number()),
-			avgTimeToFix: v.optional(v.number()),
-		})),
-		issueDetails: v.optional(v.array(v.object({
-			number: v.number(),
-			title: v.string(),
-			timeToFirstResponse: v.optional(v.number()),
-			timeToFix: v.optional(v.number()),
-			status: v.string(),
-		}))),
+		beforeVantageOS: v.optional(
+			v.object({
+				totalIssues: v.number(),
+				resolvedIssues: v.number(),
+				medianTimeToFix: v.optional(v.number()),
+				avgTimeToFix: v.optional(v.number()),
+			}),
+		),
+		afterVantageOS: v.optional(
+			v.object({
+				totalIssues: v.number(),
+				resolvedIssues: v.number(),
+				medianTimeToFix: v.optional(v.number()),
+				avgTimeToFix: v.optional(v.number()),
+			}),
+		),
+		issueDetails: v.optional(
+			v.array(
+				v.object({
+					number: v.number(),
+					title: v.string(),
+					timeToFirstResponse: v.optional(v.number()),
+					timeToFix: v.optional(v.number()),
+					status: v.string(),
+				}),
+			),
+		),
 		calculatedAt: v.number(),
 	})
 		.index("by_repo_date", ["repo", "date"])
 		.index("by_date", ["date"]),
+
+	// ── oauth_clients ─────────────────────────────────────────────────────────
+	// OAuth 2.0 Dynamic Client Registration (RFC 7591).
+	// One row per registered OAuth client (Claude.ai custom connector, Marie,
+	// future Perello VIP clients). Each client is bound to a scopeProfile that
+	// limits the `from=` allowlist and namespace read/write prefixes.
+	//
+	// clientSecretHash = SHA-256 hex of the raw client secret (raw never stored).
+	// Admin onboarding returns the raw secret exactly ONCE to the provisioner.
+	oauth_clients: defineTable({
+		clientId: v.string(), // public identifier (UUID)
+		clientSecretHash: v.string(), // SHA-256 hex of raw secret
+		redirectUris: v.array(v.string()),
+		name: v.string(), // human label, e.g. "marie-iris-rh"
+		scopeProfile: v.string(), // FK to oauth_scope_profiles.profileId
+		createdAt: v.number(),
+		revokedAt: v.optional(v.number()),
+	})
+		.index("by_clientId", ["clientId"])
+		.index("by_scopeProfile", ["scopeProfile"]),
+
+	// ── oauth_authorization_codes ────────────────────────────────────────────
+	// Short-lived authorization codes (RFC 6749 §4.1). TTL ~10 min.
+	// Cleaned periodically by cron (processExpiredOauthCodes).
+	oauth_authorization_codes: defineTable({
+		code: v.string(), // opaque random value
+		clientId: v.string(),
+		redirectUri: v.string(),
+		codeChallenge: v.string(), // PKCE S256 (RFC 7636)
+		scope: v.string(),
+		userId: v.string(), // who the code was issued for (== scopeProfile owner by default)
+		expiresAt: v.number(),
+	}).index("by_code", ["code"]),
+
+	// ── oauth_access_tokens ──────────────────────────────────────────────────
+	// Issued access tokens. tokenHash = SHA-256 hex of the raw token (raw never
+	// stored). The HTTP bearer middleware hashes the incoming Authorization
+	// header and looks the token up by hash, then enforces fromAllowList +
+	// namespaceRead/Write prefixes on every MCP tool call.
+	oauth_access_tokens: defineTable({
+		tokenHash: v.string(),
+		clientId: v.string(),
+		userId: v.string(),
+		scopes: v.array(v.string()), // OAuth scopes (vantage:read, vantage:write)
+		scopeProfile: v.string(), // snapshot at issue time
+		fromAllowList: v.array(v.string()),
+		namespaceReadPrefixes: v.array(v.string()),
+		namespaceWritePrefixes: v.array(v.string()),
+		expiresAt: v.number(),
+		refreshTokenHash: v.optional(v.string()),
+		createdAt: v.number(),
+		revokedAt: v.optional(v.number()),
+	})
+		.index("by_tokenHash", ["tokenHash"])
+		.index("by_clientId", ["clientId"]),
+
+	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
+	// Refresh tokens for renewing expired access tokens. Same hashing rules.
+	oauth_refresh_tokens: defineTable({
+		tokenHash: v.string(),
+		clientId: v.string(),
+		userId: v.string(),
+		scopeProfile: v.string(),
+		expiresAt: v.number(),
+		createdAt: v.number(),
+		revokedAt: v.optional(v.number()),
+	})
+		.index("by_tokenHash", ["tokenHash"])
+		.index("by_clientId", ["clientId"]),
+
+	// ── oauth_scope_profiles ─────────────────────────────────────────────────
+	// Reusable scope templates. An OAuth client references a profile by
+	// profileId; the access_token materialises the profile into the token row
+	// so scope changes on the profile don't retroactively grant or revoke.
+	//
+	// Seeded on first deploy via oauth.seedDefaultProfiles: master, marie-iris-rh,
+	// client-generic (deny-by-default template).
+	oauth_scope_profiles: defineTable({
+		profileId: v.string(), // stable slug e.g. "marie-iris-rh"
+		description: v.string(),
+		fromAllowList: v.array(v.string()),
+		namespaceReadPrefixes: v.array(v.string()),
+		namespaceWritePrefixes: v.array(v.string()),
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	}).index("by_profileId", ["profileId"]),
 
 	// ── mcpTenants ────────────────────────────────────────────────────────────
 	// Registry of VIP tenants for HTTP MCP transport.

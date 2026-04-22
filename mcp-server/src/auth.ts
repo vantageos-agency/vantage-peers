@@ -1,23 +1,28 @@
 /**
  * Bearer token authentication middleware for VantagePeers HTTP MCP server.
  *
- * Flow:
- *   1. Extract "Authorization: Bearer <token>" header.
- *   2. Hash token with SHA-256 (client-side, token never leaves this process).
- *   3. Query the internal Convex deployment via mcpTenants:getTenantByTokenHash.
- *   4. If found and enabled, attach tenant context to the Hono request.
- *   5. Return 401 for missing/invalid token, 403 for disabled tenant.
+ * Two code paths, in order:
+ *   1. Master-token shortcut — BEARER_SECRET_MASTER matches raw token.
+ *      Used by Pi admin + Claude.ai connector during the MVP transition and
+ *      by the new /admin/* endpoints. Routes to the internal deployment with
+ *      scopeProfile="master" (full access, no scope enforcement).
+ *   2. OAuth scoped token — token hashed (SHA-256 hex), looked up in
+ *      oauth_access_tokens. If found and valid (non-revoked, non-expired),
+ *      the resolved OAuth context is attached to c.set("oauthContext"). The
+ *      middleware also sets the tenant to the internal deployment because
+ *      OAuth tokens always target the VantagePeers core deployment.
+ *   3. Legacy bearer — falls through to mcpTenants table lookup (Pi/Tau/Phi
+ *      internal orchestrators on their own Convex deployments).
  *
- * The internal Convex client is initialised once at module load from
- * CONVEX_URL_INTERNAL env var. This keeps auth lookups fast (~10ms) without
- * connection overhead per request.
+ * 401 is returned with a WWW-Authenticate header per RFC 6750 §3 so Claude.ai's
+ * OAuth connector can bootstrap discovery.
  */
 
 import { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tenant context type — attached to Hono's context variables
+// Context types attached to Hono request
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TenantContext = {
@@ -25,9 +30,23 @@ export type TenantContext = {
 	convexUrl: string;
 };
 
+export type OAuthContext = {
+	clientId: string;
+	userId: string;
+	scopes: string[];
+	scopeProfile: string;
+	fromAllowList: string[];
+	namespaceReadPrefixes: string[];
+	namespaceWritePrefixes: string[];
+	expiresAt: number;
+	/** True when this request came in on the master bearer token (admin path). */
+	isMaster: boolean;
+};
+
 declare module "hono" {
 	interface ContextVariableMap {
 		tenant: TenantContext;
+		oauthContext: OAuthContext;
 	}
 }
 
@@ -38,8 +57,20 @@ type TenantLookupResult = {
 	enabled: boolean;
 } | null;
 
+// Shape returned by oauth:getAccessTokenByHash
+type OAuthLookupResult = {
+	clientId: string;
+	userId: string;
+	scopes: string[];
+	scopeProfile: string;
+	fromAllowList: string[];
+	namespaceReadPrefixes: string[];
+	namespaceWritePrefixes: string[];
+	expiresAt: number;
+} | null;
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal Convex client (reads mcpTenants table)
+// Internal Convex client (reads mcpTenants + oauth_* tables)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildInternalClient(): ConvexHttpClient {
@@ -56,13 +87,15 @@ function buildInternalClient(): ConvexHttpClient {
 // Lazily instantiated so the module can be imported without env vars in tests
 let _internalClient: ConvexHttpClient | null = null;
 
-function internalClient(): ConvexHttpClient {
+export function internalClient(): ConvexHttpClient {
 	_internalClient ??= buildInternalClient();
 	return _internalClient;
 }
 
 // Allow injection for testing
-export function _setInternalClientForTest(client: ConvexHttpClient): void {
+export function _setInternalClientForTest(
+	client: ConvexHttpClient | null,
+): void {
 	_internalClient = client;
 }
 
@@ -91,11 +124,79 @@ export async function sha256Base64Url(input: string): Promise<string> {
 	for (let i = 0; i < bytes.length; i++) {
 		binary += String.fromCharCode(bytes[i]);
 	}
-	// base64url = base64 with +/= → -_ and stripped padding
 	return btoa(binary)
 		.replace(/\+/g, "-")
 		.replace(/\//g, "_")
 		.replace(/=+$/, "");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scope enforcement helpers — used by MCP tool guards
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true when the scope profile grants full, wildcard access. Master
+ * admin sessions skip every downstream enforcement check.
+ */
+export function isMasterScope(ctx: OAuthContext | undefined): boolean {
+	if (!ctx) return false;
+	if (ctx.isMaster) return true;
+	if (ctx.scopeProfile === "master") return true;
+	return ctx.fromAllowList.includes("*");
+}
+
+/**
+ * Checks that `from` is allowed by the current OAuth context.
+ * Returns null when allowed, an error message string otherwise.
+ *
+ * If no oauthContext is set (legacy bearer from mcpTenants), all `from` values
+ * are allowed — legacy path is unscoped.
+ */
+export function checkFromAllowed(
+	ctx: OAuthContext | undefined,
+	from: string,
+): string | null {
+	if (!ctx) return null; // legacy bearer — unscoped
+	if (isMasterScope(ctx)) return null;
+	if (ctx.fromAllowList.includes(from)) return null;
+	return `Forbidden: from='${from}' is not in this client's allowlist (scope_profile=${ctx.scopeProfile}).`;
+}
+
+/**
+ * Checks namespace against prefix list. A prefix of "*" means any namespace.
+ * Otherwise the target namespace must start with one of the prefixes.
+ */
+export function checkNamespacePrefix(
+	prefixes: string[],
+	namespace: string,
+): boolean {
+	if (prefixes.includes("*")) return true;
+	for (const p of prefixes) {
+		if (namespace === p) return true;
+		if (namespace.startsWith(`${p}/`)) return true;
+	}
+	return false;
+}
+
+export function checkNamespaceRead(
+	ctx: OAuthContext | undefined,
+	namespace: string | undefined,
+): string | null {
+	if (!ctx) return null;
+	if (isMasterScope(ctx)) return null;
+	if (!namespace) return null; // no namespace filter — list-across, which master-only in practice
+	if (checkNamespacePrefix(ctx.namespaceReadPrefixes, namespace)) return null;
+	return `Forbidden: namespace='${namespace}' is not readable by scope_profile=${ctx.scopeProfile}.`;
+}
+
+export function checkNamespaceWrite(
+	ctx: OAuthContext | undefined,
+	namespace: string,
+): string | null {
+	if (!ctx) return null;
+	if (isMasterScope(ctx)) return null;
+	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
+	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,20 +229,33 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return c.json({ error: "Empty bearer token" }, 401);
 		}
 
-		// Master-token bypass — admin / OAuth-issued tokens
-		// The OAuth `/token` endpoint issues `access_token = BEARER_SECRET_MASTER`.
-		// Accepting it directly avoids a round-trip to the tenant table and allows
-		// Claude.ai custom connector (OAuth 2.0) to authenticate seamlessly.
+		// ── (1) Master-token shortcut — admin / backward-compat path ────────────
 		const masterToken = process.env.BEARER_SECRET_MASTER;
 		if (masterToken && token === masterToken) {
 			const internalUrl = process.env.CONVEX_URL_INTERNAL;
 			if (!internalUrl) {
-				console.error("[auth] CONVEX_URL_INTERNAL not set — cannot route master token");
-				return c.json({ error: "Server misconfigured: internal deployment URL missing" }, 500);
+				console.error(
+					"[auth] CONVEX_URL_INTERNAL not set — cannot route master token",
+				);
+				return c.json(
+					{ error: "Server misconfigured: internal deployment URL missing" },
+					500,
+				);
 			}
 			c.set("tenant", {
 				tenantName: "master",
 				convexUrl: internalUrl,
+			});
+			c.set("oauthContext", {
+				clientId: "master",
+				userId: "master",
+				scopes: ["vantage:read", "vantage:write"],
+				scopeProfile: "master",
+				fromAllowList: ["*"],
+				namespaceReadPrefixes: ["*"],
+				namespaceWritePrefixes: ["*"],
+				expiresAt: Date.now() + 3600 * 1000,
+				isMaster: true,
 			});
 			await next();
 			return;
@@ -150,16 +264,52 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		// Hash client-side so raw token never hits Convex
 		const tokenHash = await sha256Hex(token);
 
+		// ── (2) OAuth scoped access token — check oauth_access_tokens ───────────
+		let oauth: OAuthLookupResult = null;
+		try {
+			oauth = (await internalClient().query(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauth:getAccessTokenByHash" as any,
+				{ tokenHash },
+			)) as OAuthLookupResult;
+		} catch (err: unknown) {
+			// If the oauth module is missing (pre-migration deploy), just fall
+			// through to the legacy path rather than hard-failing.
+			const message = err instanceof Error ? err.message : String(err);
+			console.warn("[auth] OAuth lookup skipped:", message);
+		}
+
+		if (oauth) {
+			const internalUrl = process.env.CONVEX_URL_INTERNAL;
+			if (!internalUrl) {
+				console.error(
+					"[auth] CONVEX_URL_INTERNAL not set — cannot route OAuth token",
+				);
+				return c.json(
+					{ error: "Server misconfigured: internal deployment URL missing" },
+					500,
+				);
+			}
+			c.set("tenant", {
+				tenantName: `oauth:${oauth.clientId}`,
+				convexUrl: internalUrl,
+			});
+			c.set("oauthContext", {
+				...oauth,
+				isMaster: false,
+			});
+			await next();
+			return;
+		}
+
+		// ── (3) Legacy internal bearer — mcpTenants table ───────────────────────
 		let tenant: TenantLookupResult;
 
 		try {
-			// String-keyed Convex calls require any cast — consistent with codebase pattern
 			tenant = (await internalClient().query(
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				"mcpTenants:getTenantByTokenHash" as any,
-				{
-					tokenHash,
-				},
+				{ tokenHash },
 			)) as TenantLookupResult;
 		} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : String(err);
@@ -182,7 +332,6 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			);
 		}
 
-		// Attach tenant context for downstream handlers
 		c.set("tenant", {
 			tenantName: tenant.tenantName,
 			convexUrl: tenant.convexUrl,
@@ -196,6 +345,35 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				// Not critical — ignore failures
 			});
 
+		await next();
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin-only middleware — master token ONLY
+// Used to gate /admin/oauth/* endpoints.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function masterOnlyMiddleware(): MiddlewareHandler {
+	return async (c: Context, next: Next) => {
+		const authHeader = c.req.header("Authorization");
+		const masterToken = process.env.BEARER_SECRET_MASTER;
+		if (!masterToken) {
+			return c.json(
+				{ error: "Server misconfigured: BEARER_SECRET_MASTER not set" },
+				500,
+			);
+		}
+		if (!authHeader?.startsWith("Bearer ")) {
+			return c.json({ error: "Missing Authorization header" }, 401);
+		}
+		const token = authHeader.slice("Bearer ".length).trim();
+		if (token !== masterToken) {
+			return c.json(
+				{ error: "Forbidden: admin endpoints require master token" },
+				403,
+			);
+		}
 		await next();
 	};
 }
