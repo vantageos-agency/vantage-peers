@@ -11,6 +11,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import {
+	checkFromAllowed,
+	checkNamespaceRead,
+	checkNamespaceWrite,
+	isMasterScope,
+	type OAuthContext,
+} from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared Zod schemas
@@ -128,7 +135,36 @@ function mcpError(message: string): {
 // Main export: register all tools against a server + convex client pair
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function registerTools(server: McpServer, convex: ConvexHttpClient): void {
+export function registerTools(
+	server: McpServer,
+	convex: ConvexHttpClient,
+	oauthCtx?: OAuthContext,
+): void {
+	// ── scope guards (no-op when oauthCtx is undefined — legacy bearer path) ────
+	const guardFrom = (from: string) => {
+		const err = checkFromAllowed(oauthCtx, from);
+		return err ? mcpError(err) : null;
+	};
+	const guardRead = (namespace: string | undefined) => {
+		const err = checkNamespaceRead(oauthCtx, namespace);
+		return err ? mcpError(err) : null;
+	};
+	const guardWrite = (namespace: string) => {
+		const err = checkNamespaceWrite(oauthCtx, namespace);
+		return err ? mcpError(err) : null;
+	};
+	// Some tools take no identity/namespace arg (e.g. soft_delete_memory only
+	// takes an ID). When the underlying mutation cannot enforce per-resource
+	// RBAC, we restrict the whole tool to master scope. Legacy bearer
+	// (oauthCtx=undefined) and master-scope both pass through.
+	const guardMasterOnly = (toolName: string) => {
+		if (!oauthCtx) return null;
+		if (isMasterScope(oauthCtx)) return null;
+		return mcpError(
+			`Forbidden: ${toolName} requires master scope (current: ${oauthCtx.scopeProfile}).`,
+		);
+	};
+
 	// ── store_memory ────────────────────────────────────────────────────────────
 
 	server.tool(
@@ -166,6 +202,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		},
 		async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const nsDenied = guardWrite(namespace);
+				if (nsDenied) return nsDenied;
+
 				const relations = relatesTo
 					? [{ targetId: relatesTo.targetId as any, type: relatesTo.type }]
 					: [];
@@ -183,7 +224,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ memoryId, namespace, type, content }, null, 2),
+							text: JSON.stringify(
+								{ memoryId, namespace, type, content },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -200,10 +245,15 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Soft-delete a memory — marks it as no longer latest so it stops appearing in recall results. " +
 			"The memory is preserved for audit but excluded from search.",
 		{
-			memoryId: z.string().describe("Convex document ID of the memory to soft-delete"),
+			memoryId: z
+				.string()
+				.describe("Convex document ID of the memory to soft-delete"),
 		},
 		async ({ memoryId }) => {
 			try {
+				const denied = guardMasterOnly("soft_delete_memory");
+				if (denied) return denied;
+
 				await convex.mutation("memories:softDeleteMemory" as any, {
 					memoryId,
 				});
@@ -272,6 +322,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		},
 		async ({ query, namespace, type, limit }) => {
 			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
 				const results = await convex.action("search:recall" as any, {
 					query,
 					namespace,
@@ -300,12 +353,25 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"BM25 full-text keyword search over memories. Use for exact keyword matching when semantic recall isn't specific enough.",
 		{
 			query: z.string().describe("Search query text"),
-			namespace: z.string().optional().describe("Namespace filter (e.g. 'global', 'project/my-project')"),
+			namespace: z
+				.string()
+				.optional()
+				.describe("Namespace filter (e.g. 'global', 'project/my-project')"),
 			type: memoryTypeSchema.optional().describe("Filter by memory type"),
-			limit: z.number().int().min(1).max(50).optional().default(10).describe("Max results"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(50)
+				.optional()
+				.default(10)
+				.describe("Max results"),
 		},
 		async ({ query, namespace, type, limit }) => {
 			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
 				const results = await convex.action("search:textSearch" as any, {
 					query,
 					namespace,
@@ -330,12 +396,32 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			query: z.string().describe("Search query text"),
 			namespace: z.string().optional().describe("Namespace filter"),
 			type: memoryTypeSchema.optional().describe("Filter by memory type"),
-			limit: z.number().int().min(1).max(50).optional().default(10).describe("Max results"),
-			vectorWeight: z.number().min(0).max(1).optional().describe("Weight for vector results in RRF (default: 0.5)"),
-			textWeight: z.number().min(0).max(1).optional().describe("Weight for text results in RRF (default: 0.5)"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(50)
+				.optional()
+				.default(10)
+				.describe("Max results"),
+			vectorWeight: z
+				.number()
+				.min(0)
+				.max(1)
+				.optional()
+				.describe("Weight for vector results in RRF (default: 0.5)"),
+			textWeight: z
+				.number()
+				.min(0)
+				.max(1)
+				.optional()
+				.describe("Weight for text results in RRF (default: 0.5)"),
 		},
 		async ({ query, namespace, type, limit, vectorWeight, textWeight }) => {
 			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
 				const results = await convex.action("search:hybridSearch" as any, {
 					query,
 					namespace,
@@ -361,7 +447,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"Episodes are the 'other half' of memory — not just facts, but what happened and what was learned. " +
 			"Use severity=critical for lessons that should be shared across all orchestrators.",
 		{
-			namespace: z.string().describe("Memory namespace — e.g. 'orchestrator/pi'"),
+			namespace: z
+				.string()
+				.describe("Memory namespace — e.g. 'orchestrator/pi'"),
 			createdBy: creatorSchema,
 			context: z
 				.string()
@@ -387,6 +475,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			severity,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const nsDenied = guardWrite(namespace);
+				if (nsDenied) return nsDenied;
+
 				const memoryId = await convex.mutation("episodes:storeEpisode" as any, {
 					namespace,
 					createdBy,
@@ -423,9 +516,7 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Fetch an orchestrator profile (static identity + dynamic session state). " +
 			"Returns null if the profile does not exist yet — call update_profile to create it.",
 		{
-			orchestratorId: z
-				.string()
-				.describe("Orchestrator identifier"),
+			orchestratorId: z.string().describe("Orchestrator identifier"),
 		},
 		async ({ orchestratorId }) => {
 			try {
@@ -454,9 +545,7 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"static fields are stable identity facts (role, workspace, capabilities). " +
 			"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
 		{
-			orchestratorId: z
-				.string()
-				.describe("Orchestrator identifier"),
+			orchestratorId: z.string().describe("Orchestrator identifier"),
 			name: z.string().optional().describe("Human-readable orchestrator name"),
 			static: z
 				.object({
@@ -484,18 +573,28 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		},
 		async ({ orchestratorId, name, static: staticFields, dynamic }) => {
 			try {
-				const profileId = await convex.mutation("profiles:upsertProfile" as any, {
-					orchestratorId,
-					name,
-					static: staticFields,
-					dynamic,
-				});
+				const fromDenied = guardFrom(orchestratorId);
+				if (fromDenied) return fromDenied;
+
+				const profileId = await convex.mutation(
+					"profiles:upsertProfile" as any,
+					{
+						orchestratorId,
+						name,
+						static: staticFields,
+						dynamic,
+					},
+				);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ profileId, orchestratorId, name }, null, 2),
+							text: JSON.stringify(
+								{ profileId, orchestratorId, name },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -532,6 +631,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		},
 		async ({ namespace, type, limit }) => {
 			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
 				const memories = await convex.query("memories:listMemories" as any, {
 					namespace,
 					type,
@@ -560,7 +662,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
 			"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
 		{
-			from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)"),
+			from: creatorSchema.describe(
+				"Sender role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)",
+			),
 			fromInstanceId: z
 				.string()
 				.optional()
@@ -581,8 +685,18 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.optional()
 				.describe("Tenant identifier for multi-tenant isolation"),
 		},
-		async ({ from, fromInstanceId, channel, content, sessionDay, tenantId }) => {
+		async ({
+			from,
+			fromInstanceId,
+			channel,
+			content,
+			sessionDay,
+			tenantId,
+		}) => {
 			try {
+				const fromDenied = guardFrom(from);
+				if (fromDenied) return fromDenied;
+
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from,
 					fromInstanceId,
@@ -614,11 +728,15 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
 			"Replaces claude-peers check_messages.",
 		{
-			recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)"),
+			recipient: creatorSchema.describe(
+				"Orchestrator role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)",
+			),
 			recipientInstanceId: z
 				.string()
 				.optional()
-				.describe("Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages."),
+				.describe(
+					"Instance ID — e.g. 'pi-chromebook'. Gets instance + role messages.",
+				),
 			tenantId: z
 				.string()
 				.optional()
@@ -627,16 +745,21 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.number()
 				.int()
 				.optional()
-				.describe("Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog."),
+				.describe(
+					"Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog.",
+				),
 		},
 		async ({ recipient, recipientInstanceId, tenantId, since }) => {
 			try {
-				const messages = await convex.query("messages:checkNewMessages" as any, {
-					recipient,
-					recipientInstanceId,
-					tenantId,
-					since,
-				});
+				const messages = await convex.query(
+					"messages:checkNewMessages" as any,
+					{
+						recipient,
+						recipientInstanceId,
+						tenantId,
+						since,
+					},
+				);
 
 				return {
 					content: [
@@ -670,7 +793,10 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				let receiptIdsArray: string[];
 				if (Array.isArray(receiptIds)) {
 					receiptIdsArray = receiptIds;
-				} else if (typeof receiptIds === "string" && receiptIds.startsWith("[")) {
+				} else if (
+					typeof receiptIds === "string" &&
+					receiptIds.startsWith("[")
+				) {
 					try {
 						receiptIdsArray = JSON.parse(receiptIds);
 					} catch {
@@ -703,11 +829,20 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"delete_message",
 		"Delete a message and all its receipts. Only the sender (or system) can delete a message.",
 		{
-			messageId: z.string().describe("Convex document ID of the message to delete"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be the sender or system"),
+			messageId: z
+				.string()
+				.describe("Convex document ID of the message to delete"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be the sender or system"),
 		},
 		async ({ messageId, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const result = await convex.mutation("messages:deleteMessage" as any, {
 					messageId: messageId as any,
 					callerOrchestrator,
@@ -735,19 +870,18 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"Visible to other orchestrators via list_peers. Uses the profiles table. " +
 			"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
 		{
-			orchestratorId: z
-				.string()
-				.describe("Orchestrator role"),
+			orchestratorId: z.string().describe("Orchestrator role"),
 			instanceId: z
 				.string()
 				.optional()
 				.describe("Instance ID — e.g. 'pi-chromebook', 'pi-vps', 'tau-vps-1'"),
-			summary: z
-				.string()
-				.describe("1-2 sentence summary of current work"),
+			summary: z.string().describe("1-2 sentence summary of current work"),
 		},
 		async ({ orchestratorId, instanceId, summary }) => {
 			try {
+				const fromDenied = guardFrom(orchestratorId);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("profiles:updateDynamic" as any, {
 					orchestratorId,
 					instanceId,
@@ -759,7 +893,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ orchestratorId, instanceId, summary }, null, 2),
+							text: JSON.stringify(
+								{ orchestratorId, instanceId, summary },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -854,13 +992,18 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"list_broadcast_status",
 		"Show who read a broadcast message and who didn't. Pass the messageId from send_message.",
 		{
-			messageId: z.string().describe("Convex document ID of the broadcast message"),
+			messageId: z
+				.string()
+				.describe("Convex document ID of the broadcast message"),
 		},
 		async ({ messageId }) => {
 			try {
-				const status = await convex.query("messages:listBroadcastStatus" as any, {
-					messageId,
-				});
+				const status = await convex.query(
+					"messages:listBroadcastStatus" as any,
+					{
+						messageId,
+					},
+				);
 
 				return {
 					content: [
@@ -889,13 +1032,14 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.string()
 				.optional()
 				.describe("Project name — e.g. 'vantage-starter', 'perfect-ai-agent'"),
-			tags: flexArrayOptional
-				.describe("Optional tags for categorization"),
+			tags: flexArrayOptional.describe("Optional tags for categorization"),
 			assignedTo: assigneeSchema,
 			assignedToInstance: z
 				.string()
 				.optional()
-				.describe("Instance-level assignment — e.g. 'pi-vps', 'tau-chromebook'. Optional."),
+				.describe(
+					"Instance-level assignment — e.g. 'pi-vps', 'tau-chromebook'. Optional.",
+				),
 			priority: prioritySchema,
 			status: taskStatusSchema.default("todo"),
 			dependsOn: z
@@ -932,6 +1076,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const assigneeDenied = guardFrom(assignedTo);
+				if (assigneeDenied) return assigneeDenied;
+
 				const taskId = await convex.mutation("tasks:create" as any, {
 					title,
 					description,
@@ -977,7 +1126,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			assignedToInstance: z
 				.string()
 				.optional()
-				.describe("Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance."),
+				.describe(
+					"Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance.",
+				),
 			status: taskStatusSchema.optional().describe("Filter by status"),
 			project: z.string().optional().describe("Filter by project name"),
 			limit: z
@@ -1040,14 +1191,19 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.number()
 				.optional()
 				.describe("Estimated duration in minutes"),
-			actualMinutes: z.number().optional().describe("Actual duration in minutes"),
+			actualMinutes: z
+				.number()
+				.optional()
+				.describe("Actual duration in minutes"),
 			startedAt: z.number().optional().describe("When work started (Unix ms)"),
 			completedAt: z
 				.number()
 				.optional()
 				.describe("When work completed (Unix ms)"),
 			dueDate: z.number().optional().describe("New due date (Unix ms)"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
 		async ({
 			taskId,
@@ -1068,6 +1224,15 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			callerOrchestrator,
 		}) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+				if (assignedTo) {
+					const assigneeDenied = guardFrom(assignedTo);
+					if (assigneeDenied) return assigneeDenied;
+				}
+
 				await convex.mutation("tasks:update" as any, {
 					taskId: taskId as any,
 					title,
@@ -1113,10 +1278,17 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			completionNote: z
 				.string()
 				.describe("What was actually done — summary of work completed"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
 		async ({ taskId, completionNote, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				await convex.mutation("tasks:complete" as any, {
 					taskId: taskId as any,
 					completionNote,
@@ -1145,10 +1317,17 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"Use this when beginning work on a task to enable automatic duration tracking.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to start"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — if provided, must be creator or assignee"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				await convex.mutation("tasks:start" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -1176,11 +1355,19 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"from claiming the same task. Returns {claimed: true} or {claimed: false, reason: '...'}.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to claim"),
-			callerOrchestrator: creatorSchema.describe("Orchestrator claiming the task (e.g. sigma, pi)"),
-			callerInstance: z.string().optional().describe("Instance identifier, e.g. 'sigma-vps'"),
+			callerOrchestrator: creatorSchema.describe(
+				"Orchestrator claiming the task (e.g. sigma, pi)",
+			),
+			callerInstance: z
+				.string()
+				.optional()
+				.describe("Instance identifier, e.g. 'sigma-vps'"),
 		},
 		async ({ taskId, callerOrchestrator, callerInstance }) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				const result = await convex.mutation("tasks:checkout" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -1208,10 +1395,17 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Permanently delete a task. Only the creator (or system) can delete.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to delete"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or system"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be creator or system"),
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const result = await convex.mutation("tasks:deleteTask" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -1239,23 +1433,44 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		{
 			taskId: z.string().describe("Convex document ID of the task to block"),
 			reason: z.string().optional().describe("Why the task is blocked"),
-			blockedBy: z.array(z.string()).optional().describe("Task IDs that are blocking this task"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or assignee"),
+			blockedBy: z
+				.array(z.string())
+				.optional()
+				.describe("Task IDs that are blocking this task"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be creator or assignee"),
 		},
 		async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					status: "blocked",
 				};
 				if (reason) updateArgs.completionNote = reason;
-				if (blockedBy) updateArgs.dependsOn = blockedBy.map((id: string) => id as any);
-				if (callerOrchestrator) updateArgs.callerOrchestrator = callerOrchestrator;
+				if (blockedBy)
+					updateArgs.dependsOn = blockedBy.map((id: string) => id as any);
+				if (callerOrchestrator)
+					updateArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:update" as any, updateArgs);
 
 				return {
-					content: [{ type: "text", text: JSON.stringify({ taskId, status: "blocked", reason }, null, 2) }],
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{ taskId, status: "blocked", reason },
+								null,
+								2,
+							),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -1270,22 +1485,43 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Add a dependency to a task. The task cannot start until all dependencies are complete. " +
 			"Pass the IDs of tasks that must complete before this one can begin.",
 		{
-			taskId: z.string().describe("Convex document ID of the task that depends on others"),
-			dependsOn: z.array(z.string()).describe("Task IDs that must complete first"),
-			callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or assignee"),
+			taskId: z
+				.string()
+				.describe("Convex document ID of the task that depends on others"),
+			dependsOn: z
+				.array(z.string())
+				.describe("Task IDs that must complete first"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be creator or assignee"),
 		},
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					dependsOn: dependsOn.map((id: string) => id as any),
 				};
-				if (callerOrchestrator) updateArgs.callerOrchestrator = callerOrchestrator;
+				if (callerOrchestrator)
+					updateArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:update" as any, updateArgs);
 
 				return {
-					content: [{ type: "text", text: JSON.stringify({ taskId, dependsOn, updated: true }, null, 2) }],
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{ taskId, dependsOn, updated: true },
+								null,
+								2,
+							),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -1372,6 +1608,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const pilotDenied = guardFrom(pilot);
+				if (pilotDenied) return pilotDenied;
+
 				const missionId = await convex.mutation("missions:create" as any, {
 					name,
 					description,
@@ -1512,6 +1753,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			progress,
 		}) => {
 			try {
+				if (pilot) {
+					const pilotDenied = guardFrom(pilot);
+					if (pilotDenied) return pilotDenied;
+				}
+
 				await convex.mutation("missions:update" as any, {
 					missionId: missionId as any,
 					name,
@@ -1581,12 +1827,14 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
 			orchestrator: creatorSchema.describe("Which orchestrator is writing"),
 			content: z.string().describe("Full diary entry content"),
-			highlights: flexArrayOptional
-				.describe("Key highlights of the day"),
+			highlights: flexArrayOptional.describe("Key highlights of the day"),
 			blockers: flexArrayOptional.describe("Blockers encountered"),
 		},
 		async ({ date, orchestrator, content, highlights, blockers }) => {
 			try {
+				const fromDenied = guardFrom(orchestrator);
+				if (fromDenied) return fromDenied;
+
 				const diaryId = await convex.mutation("diary:write" as any, {
 					date,
 					orchestrator,
@@ -1616,7 +1864,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Fetch a diary entry for a specific date and orchestrator. Returns null if no entry exists.",
 		{
 			date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
-			orchestrator: creatorSchema.describe("Which orchestrator's diary to fetch"),
+			orchestrator: creatorSchema.describe(
+				"Which orchestrator's diary to fetch",
+			),
 		},
 		async ({ date, orchestrator }) => {
 			try {
@@ -1693,10 +1943,12 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.union([z.array(z.string()), z.string()])
 				.describe("Who participated — e.g. ['pi', 'sigma'] or 'pi'"),
 			content: z.string().describe("Full briefing content"),
-			decisions: flexArrayOptional
-				.describe("Decisions made during the briefing"),
-			linkedMemoryIds: flexArrayOptional
-				.describe("Convex document IDs of related memories"),
+			decisions: flexArrayOptional.describe(
+				"Decisions made during the briefing",
+			),
+			linkedMemoryIds: flexArrayOptional.describe(
+				"Convex document IDs of related memories",
+			),
 			createdBy: creatorSchema,
 		},
 		async ({
@@ -1709,6 +1961,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const noteId = await convex.mutation("briefingNotes:create" as any, {
 					title,
 					topic,
@@ -1723,7 +1978,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ noteId, title, topic, createdBy }, null, 2),
+							text: JSON.stringify(
+								{ noteId, title, topic, createdBy },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -1780,19 +2039,29 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Register or update a component (agent, skill, hook, or plugin) in the registry. " +
 			"Upserts by name+type — if a component with the same name and type exists, it updates the content.",
 		{
-			name: z.string().describe("Component name — e.g. 'copywriter', 'check-tasks'"),
+			name: z
+				.string()
+				.describe("Component name — e.g. 'copywriter', 'check-tasks'"),
 			type: componentTypeSchema,
 			team: z
 				.string()
 				.optional()
-				.describe("Team this component belongs to — e.g. 'marketing', 'development'"),
+				.describe(
+					"Team this component belongs to — e.g. 'marketing', 'development'",
+				),
 			content: z.string().describe("Full file content of the component"),
 			version: z.string().optional().describe("Version string — e.g. '1.0.0'"),
-			project: z.string().optional().describe("Project this component belongs to"),
+			project: z
+				.string()
+				.optional()
+				.describe("Project this component belongs to"),
 			createdBy: creatorSchema,
 		},
 		async ({ name, type, team, content, version, project, createdBy }) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const result = await convex.mutation("components:register" as any, {
 					name,
 					type,
@@ -1906,7 +2175,16 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					...fields,
 				});
 				return {
-					content: [{ type: "text", text: JSON.stringify({ componentId: result, updated: true }, null, 2) }],
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{ componentId: result, updated: true },
+								null,
+								2,
+							),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -1920,7 +2198,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"delete_component",
 		"Delete a component from the registry by ID.",
 		{
-			componentId: z.string().describe("Convex document ID of the component to delete"),
+			componentId: z
+				.string()
+				.describe("Convex document ID of the component to delete"),
 		},
 		async ({ componentId }) => {
 			try {
@@ -1942,7 +2222,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"search_components",
 		"Search components by name or team substring. Optionally filter by type.",
 		{
-			query: z.string().describe("Search term to match against component name or team"),
+			query: z
+				.string()
+				.describe("Search term to match against component name or team"),
 			type: componentTypeSchema.optional().describe("Filter by component type"),
 			limit: z.number().int().optional().describe("Max results (default 50)"),
 		},
@@ -1969,18 +2251,42 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Create a recurring task that auto-creates tasks on a schedule. " +
 			"Uses cron expressions: '0 9 * * *' = daily 9am, '0 9 * * 1' = Monday 9am, '*/30 * * * *' = every 30min.",
 		{
-			title: z.string().describe("Task title — created each time the cron fires"),
+			title: z
+				.string()
+				.describe("Task title — created each time the cron fires"),
 			description: z.string().optional().describe("Task description"),
 			assignedTo: assigneeSchema.describe("Who gets the created tasks"),
-			priority: z.enum(["urgent", "high", "medium", "low"]).describe("Priority of created tasks"),
+			priority: z
+				.enum(["urgent", "high", "medium", "low"])
+				.describe("Priority of created tasks"),
 			project: z.string().optional().describe("Project name"),
 			tags: flexArray.optional().describe("Tags for created tasks"),
-			cronExpression: z.string().describe("5-field cron: minute hour day-of-month month day-of-week"),
+			cronExpression: z
+				.string()
+				.describe("5-field cron: minute hour day-of-month month day-of-week"),
 			createdBy: creatorSchema,
 		},
-		async ({ title, description, assignedTo, priority, project, tags, cronExpression, createdBy }) => {
+		async ({
+			title,
+			description,
+			assignedTo,
+			priority,
+			project,
+			tags,
+			cronExpression,
+			createdBy,
+		}) => {
 			try {
-				const tagsArray = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const assigneeDenied = guardFrom(assignedTo);
+				if (assigneeDenied) return assigneeDenied;
+
+				const tagsArray = tags
+					? Array.isArray(tags)
+						? tags
+						: [tags]
+					: undefined;
 				const taskId = await convex.mutation("recurringTasks:create" as any, {
 					title,
 					description,
@@ -1993,7 +2299,12 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				});
 
 				return {
-					content: [{ type: "text", text: JSON.stringify({ taskId, cronExpression }, null, 2) }],
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ taskId, cronExpression }, null, 2),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -2009,7 +2320,14 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		{
 			assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
 			active: z.boolean().optional().describe("Filter by active status"),
-			limit: z.number().int().min(1).max(200).optional().default(50).describe("Max results"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.default(50)
+				.describe("Max results"),
 		},
 		async ({ assignedTo, active, limit }) => {
 			try {
@@ -2104,17 +2422,27 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Update a recurring task's fields. Provide only the fields you want to change. " +
 			"If cronExpression is updated, nextRunAt is automatically recalculated.",
 		{
-			recurringTaskId: z.string().describe("Convex document ID of the recurring task"),
+			recurringTaskId: z
+				.string()
+				.describe("Convex document ID of the recurring task"),
 			title: z.string().optional().describe("New title"),
 			description: z.string().optional().describe("New description"),
 			assignedTo: creatorSchema.optional().describe("New assignee"),
 			priority: prioritySchema.optional().describe("New priority"),
 			project: z.string().optional().describe("New project name"),
 			tags: z.array(z.string()).optional().describe("New tags array"),
-			cronExpression: z.string().optional().describe("New cron expression (5-field)"),
+			cronExpression: z
+				.string()
+				.optional()
+				.describe("New cron expression (5-field)"),
 		},
 		async ({ recurringTaskId, ...fields }) => {
 			try {
+				if (fields.assignedTo) {
+					const assigneeDenied = guardFrom(fields.assignedTo);
+					if (assigneeDenied) return assigneeDenied;
+				}
+
 				const result = await convex.mutation("recurringTasks:update" as any, {
 					recurringTaskId: recurringTaskId as any,
 					...fields,
@@ -2124,7 +2452,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ recurringTaskId: result, updated: true }, null, 2),
+							text: JSON.stringify(
+								{ recurringTaskId: result, updated: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2142,19 +2474,43 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"with an agreed token budget. The mandate lifecycle: requested → accepted → in_progress → delivered → settled.",
 		{
 			requestedBy: creatorSchema.describe("Orchestrator who needs the service"),
-			fulfilledBy: creatorSchema.describe("Orchestrator who will provide the service"),
+			fulfilledBy: creatorSchema.describe(
+				"Orchestrator who will provide the service",
+			),
 			service: z.string().describe("Description of what service is needed"),
 			budget: z.number().describe("Token budget allocated for this mandate"),
-			spendingLimits: z.object({
-				maxPerTransaction: z.number(),
-				maxPerPeriod: z.number(),
-				periodDays: z.number().optional(),
-			}).optional().describe("AP2 spending limits"),
-			approvedCategories: z.array(z.string()).optional().describe("Approved service categories"),
-			mandateDocument: z.string().optional().describe("Signed authorization document or reference"),
+			spendingLimits: z
+				.object({
+					maxPerTransaction: z.number(),
+					maxPerPeriod: z.number(),
+					periodDays: z.number().optional(),
+				})
+				.optional()
+				.describe("AP2 spending limits"),
+			approvedCategories: z
+				.array(z.string())
+				.optional()
+				.describe("Approved service categories"),
+			mandateDocument: z
+				.string()
+				.optional()
+				.describe("Signed authorization document or reference"),
 		},
-		async ({ requestedBy, fulfilledBy, service, budget, spendingLimits, approvedCategories, mandateDocument }) => {
+		async ({
+			requestedBy,
+			fulfilledBy,
+			service,
+			budget,
+			spendingLimits,
+			approvedCategories,
+			mandateDocument,
+		}) => {
 			try {
+				const fromDenied = guardFrom(requestedBy);
+				if (fromDenied) return fromDenied;
+				const fulfillerDenied = guardFrom(fulfilledBy);
+				if (fulfillerDenied) return fulfillerDenied;
+
 				const mandateId = await convex.mutation("mandates:create" as any, {
 					requestedBy,
 					fulfilledBy,
@@ -2169,7 +2525,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ mandateId, requestedBy, fulfilledBy, service, budget }, null, 2),
+							text: JSON.stringify(
+								{ mandateId, requestedBy, fulfilledBy, service, budget },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2185,11 +2545,18 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"accept_mandate",
 		"Accept a mandate — sets status to 'accepted'. Only the fulfilledBy orchestrator (or system) can accept.",
 		{
-			mandateId: z.string().describe("Convex document ID of the mandate to accept"),
-			callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
+			mandateId: z
+				.string()
+				.describe("Convex document ID of the mandate to accept"),
+			callerOrchestrator: creatorSchema.describe(
+				"Must be the fulfilledBy orchestrator or system",
+			),
 		},
 		async ({ mandateId, callerOrchestrator }) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("mandates:accept" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -2216,8 +2583,12 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Update a mandate's status, tokensCost, or linkedTaskIds. " +
 			"Only the fulfilledBy orchestrator (or system) can update. Provide only fields you want to change.",
 		{
-			mandateId: z.string().describe("Convex document ID of the mandate to update"),
-			callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
+			mandateId: z
+				.string()
+				.describe("Convex document ID of the mandate to update"),
+			callerOrchestrator: creatorSchema.describe(
+				"Must be the fulfilledBy orchestrator or system",
+			),
 			status: mandateStatusSchema.optional().describe("New status"),
 			tokensCost: z.number().optional().describe("Tokens consumed so far"),
 			linkedTaskIds: z
@@ -2225,8 +2596,17 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 				.optional()
 				.describe("Task IDs created to fulfill this mandate"),
 		},
-		async ({ mandateId, callerOrchestrator, status, tokensCost, linkedTaskIds }) => {
+		async ({
+			mandateId,
+			callerOrchestrator,
+			status,
+			tokensCost,
+			linkedTaskIds,
+		}) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("mandates:update" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -2256,12 +2636,19 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Settle a mandate — confirms delivery and records the final token cost. " +
 			"Sets status to 'settled'. Only the requestedBy orchestrator (the payer) or system can settle.",
 		{
-			mandateId: z.string().describe("Convex document ID of the mandate to settle"),
-			callerOrchestrator: creatorSchema.describe("Must be the requestedBy orchestrator or system"),
+			mandateId: z
+				.string()
+				.describe("Convex document ID of the mandate to settle"),
+			callerOrchestrator: creatorSchema.describe(
+				"Must be the requestedBy orchestrator or system",
+			),
 			finalCost: z.number().describe("Final actual token cost to record"),
 		},
 		async ({ mandateId, callerOrchestrator, finalCost }) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("mandates:settle" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -2272,7 +2659,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ mandateId, status: "settled", finalCost }, null, 2),
+							text: JSON.stringify(
+								{ mandateId, status: "settled", finalCost },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2289,7 +2680,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Check if a proposed spend is within a mandate's AP2 spending limits. Returns within/exceeded status with details.",
 		{
 			mandateId: z.string().describe("Mandate ID to validate against"),
-			proposedAmount: z.number().describe("Proposed token spend amount to validate"),
+			proposedAmount: z
+				.number()
+				.describe("Proposed token spend amount to validate"),
 		},
 		async ({ mandateId, proposedAmount }) => {
 			try {
@@ -2297,7 +2690,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					mandateId: mandateId as any,
 					proposedAmount,
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
 			}
@@ -2311,9 +2706,15 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"List mandates with optional filters. Filter by requestedBy, fulfilledBy, and/or status. " +
 			"Returns newest first. Use to track service agreements between orchestrators.",
 		{
-			requestedBy: creatorSchema.optional().describe("Filter by the orchestrator who requested the service"),
-			fulfilledBy: creatorSchema.optional().describe("Filter by the orchestrator providing the service"),
-			status: mandateStatusSchema.optional().describe("Filter by mandate status"),
+			requestedBy: creatorSchema
+				.optional()
+				.describe("Filter by the orchestrator who requested the service"),
+			fulfilledBy: creatorSchema
+				.optional()
+				.describe("Filter by the orchestrator providing the service"),
+			status: mandateStatusSchema
+				.optional()
+				.describe("Filter by mandate status"),
 			limit: z
 				.number()
 				.int()
@@ -2356,7 +2757,10 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			name: z.string().describe("Business unit name — e.g. 'VantagePeers'"),
 			description: z.string().describe("Short description of the BU"),
 			purpose: z.string().describe("Why this BU exists — strategic purpose"),
-			domain: z.string().optional().describe("Primary domain — e.g. 'vantagepeers.com'"),
+			domain: z
+				.string()
+				.optional()
+				.describe("Primary domain — e.g. 'vantagepeers.com'"),
 			orchestratorId: z
 				.string()
 				.describe("Lead orchestrator managing this BU — e.g. 'sigma'"),
@@ -2395,6 +2799,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			managementFee,
 		}) => {
 			try {
+				const fromDenied = guardFrom(orchestratorId);
+				if (fromDenied) return fromDenied;
+
 				const buId = await convex.mutation("businessUnits:create" as any, {
 					name,
 					description,
@@ -2418,7 +2825,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ buId, name, orchestratorId, status }, null, 2),
+							text: JSON.stringify(
+								{ buId, name, orchestratorId, status },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2435,7 +2846,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"Update any mutable field on a business unit. Provide only the fields you want to change. " +
 			"updatedAt is set automatically.",
 		{
-			buId: z.string().describe("Convex document ID of the business unit to update"),
+			buId: z
+				.string()
+				.describe("Convex document ID of the business unit to update"),
 			name: z.string().optional().describe("New name"),
 			description: z.string().optional().describe("New description"),
 			purpose: z.string().optional().describe("New purpose"),
@@ -2446,7 +2859,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			targetCustomers: z.string().optional().describe("New target customers"),
 			services: flexArrayOptional.describe("New services list"),
 			pricing: z.string().optional().describe("New pricing model"),
-			revenueProjections: revenueProjectionsSchema.optional().describe("Updated revenue projections"),
+			revenueProjections: revenueProjectionsSchema
+				.optional()
+				.describe("Updated revenue projections"),
 			coreTeam: coreTeamSchema.optional().describe("Updated core team"),
 			coreProcesses: flexArrayOptional.describe("New core processes"),
 			dependencies: flexArrayOptional.describe("New dependencies"),
@@ -2473,6 +2888,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			managementFee,
 		}) => {
 			try {
+				if (orchestratorId) {
+					const fromDenied = guardFrom(orchestratorId);
+					if (fromDenied) return fromDenied;
+				}
+
 				await convex.mutation("businessUnits:update" as any, {
 					buId: buId as any,
 					name,
@@ -2584,7 +3004,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"delete_bu",
 		"Delete a business unit by ID. This action is permanent.",
 		{
-			buId: z.string().describe("Convex document ID of the business unit to delete"),
+			buId: z
+				.string()
+				.describe("Convex document ID of the business unit to delete"),
 		},
 		async ({ buId }) => {
 			try {
@@ -2640,7 +3062,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ id, repo, orchestrator, project, active }, null, 2),
+							text: JSON.stringify(
+								{ id, repo, orchestrator, project, active },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2658,7 +3084,10 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		{},
 		async () => {
 			try {
-				const mappings = await convex.query("githubRepoMapping:list" as any, {});
+				const mappings = await convex.query(
+					"githubRepoMapping:list" as any,
+					{},
+				);
 
 				return {
 					content: [
@@ -2682,13 +3111,18 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		{
 			repo: z
 				.string()
-				.describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
+				.describe(
+					"Full repo name to remove — e.g. 'elpiarthera/vantage-peers'",
+				),
 		},
 		async ({ repo }) => {
 			try {
-				const result = await convex.mutation("githubRepoMapping:remove" as any, {
-					repo,
-				});
+				const result = await convex.mutation(
+					"githubRepoMapping:remove" as any,
+					{
+						repo,
+					},
+				);
 
 				return {
 					content: [
@@ -2713,7 +3147,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			project: z
 				.string()
 				.optional()
-				.describe("Filter by project name — e.g. 'myreeldream', 'vantage-starter'"),
+				.describe(
+					"Filter by project name — e.g. 'myreeldream', 'vantage-starter'",
+				),
 			status: z
 				.enum(["open", "in_progress", "fixed", "verified", "closed"])
 				.optional()
@@ -2762,7 +3198,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ count: results.length, issues: results }, null, 2),
+							text: JSON.stringify(
+								{ count: results.length, issues: results },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2778,7 +3218,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"get_issue",
 		"Get a single GitHub issue by repo and issue number.",
 		{
-			repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+			repo: z
+				.string()
+				.describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
 			issueNumber: z.number().int().describe("GitHub issue number"),
 		},
 		async ({ repo, issueNumber }) => {
@@ -2792,7 +3234,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(issue ?? { error: "Issue not found" }, null, 2),
+							text: JSON.stringify(
+								issue ?? { error: "Issue not found" },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2808,7 +3254,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"update_issue_status",
 		"Update the status of a tracked GitHub issue.",
 		{
-			repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+			repo: z
+				.string()
+				.describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
 			issueNumber: z.number().int().describe("GitHub issue number"),
 			status: z
 				.enum(["open", "in_progress", "fixed", "verified", "closed"])
@@ -2826,7 +3274,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ repo, issueNumber, status, updated: true }, null, 2),
+							text: JSON.stringify(
+								{ repo, issueNumber, status, updated: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2842,10 +3294,14 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"link_commit_to_issue",
 		"Link a fix commit SHA to a GitHub issue. Records who fixed it and when.",
 		{
-			repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+			repo: z
+				.string()
+				.describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
 			issueNumber: z.number().int().describe("GitHub issue number"),
 			commitSha: z.string().describe("Git commit SHA that fixes this issue"),
-			fixedBy: z.string().describe("Who fixed it — orchestrator name or person"),
+			fixedBy: z
+				.string()
+				.describe("Who fixed it — orchestrator name or person"),
 		},
 		async ({ repo, issueNumber, commitSha, fixedBy }) => {
 			try {
@@ -2860,7 +3316,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ repo, issueNumber, commitSha, fixedBy, linked: true }, null, 2),
+							text: JSON.stringify(
+								{ repo, issueNumber, commitSha, fixedBy, linked: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2876,9 +3336,13 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"verify_issue",
 		"Mark a GitHub issue as verified (fix confirmed). Sets status to 'verified'.",
 		{
-			repo: z.string().describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
+			repo: z
+				.string()
+				.describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
 			issueNumber: z.number().int().describe("GitHub issue number"),
-			verifiedBy: z.string().describe("Who verified the fix — orchestrator name or person"),
+			verifiedBy: z
+				.string()
+				.describe("Who verified the fix — orchestrator name or person"),
 		},
 		async ({ repo, issueNumber, verifiedBy }) => {
 			try {
@@ -2892,7 +3356,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ repo, issueNumber, verifiedBy, verified: true }, null, 2),
+							text: JSON.stringify(
+								{ repo, issueNumber, verifiedBy, verified: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -2939,19 +3407,48 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"create_fix_pattern",
 		"Create a fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search this BEFORE fixing to avoid repeating mistakes.",
 		{
-			symptom: z.string().describe("What the bug looks like — the user-visible problem"),
-			rootCause: z.string().describe("Why the bug happens — the underlying technical cause"),
-			tags: flexArray.describe("Tags for categorization — e.g. 'react-hydration', 'convex-subscription'"),
-			stack: flexArray.describe("Tech stack involved — e.g. 'next.js', 'convex', 'clerk'"),
-			sourceProject: z.string().describe("Project where this was discovered — e.g. 'myreeldream'"),
+			symptom: z
+				.string()
+				.describe("What the bug looks like — the user-visible problem"),
+			rootCause: z
+				.string()
+				.describe("Why the bug happens — the underlying technical cause"),
+			tags: flexArray.describe(
+				"Tags for categorization — e.g. 'react-hydration', 'convex-subscription'",
+			),
+			stack: flexArray.describe(
+				"Tech stack involved — e.g. 'next.js', 'convex', 'clerk'",
+			),
+			sourceProject: z
+				.string()
+				.describe("Project where this was discovered — e.g. 'myreeldream'"),
 			createdBy: creatorSchema,
 			severity: severitySchema,
-			validatedFix: z.string().optional().describe("The fix that worked — set later if not known yet"),
+			validatedFix: z
+				.string()
+				.optional()
+				.describe("The fix that worked — set later if not known yet"),
 			files: flexArrayOptional.describe("Files involved in the fix"),
-			linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
+			linkedIssueIds: flexArrayOptional.describe(
+				"VantagePeers issue IDs linked to this pattern",
+			),
 		},
-		async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds }) => {
+		async ({
+			symptom,
+			rootCause,
+			tags,
+			stack,
+			sourceProject,
+			createdBy,
+			severity,
+			validatedFix,
+			files,
+			linkedIssueIds,
+		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const patternId = await convex.mutation("fixPatterns:create" as any, {
 					symptom,
 					rootCause,
@@ -2994,14 +3491,20 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		},
 		async ({ patternId, description, worked, why, createdBy, commit }) => {
 			try {
-				const attemptId = await convex.mutation("fixPatterns:addAttempt" as any, {
-					patternId: patternId as never,
-					description,
-					worked,
-					why,
-					createdBy,
-					commit,
-				});
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
+				const attemptId = await convex.mutation(
+					"fixPatterns:addAttempt" as any,
+					{
+						patternId: patternId as never,
+						description,
+						worked,
+						why,
+						createdBy,
+						commit,
+					},
+				);
 
 				return {
 					content: [
@@ -3037,7 +3540,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ patternId, validatedFix, validated: true }, null, 2),
+							text: JSON.stringify(
+								{ patternId, validatedFix, validated: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -3053,8 +3560,16 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"search_fix_patterns",
 		"Semantic search over fix patterns. Use this BEFORE fixing a bug to check if it's been seen before. Returns patterns ranked by relevance.",
 		{
-			query: z.string().describe("Describe the problem — e.g. 'message disappears after sending'"),
-			limit: z.number().int().optional().describe("Max results to return (default 10)"),
+			query: z
+				.string()
+				.describe(
+					"Describe the problem — e.g. 'message disappears after sending'",
+				),
+			limit: z
+				.number()
+				.int()
+				.optional()
+				.describe("Max results to return (default 10)"),
 		},
 		async ({ query, limit }) => {
 			try {
@@ -3083,16 +3598,22 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"list_fix_patterns",
 		"List fix patterns, optionally filtered by project. Returns patterns sorted by creation date (newest first).",
 		{
-			project: z.string().optional().describe("Filter by source project — omit for all"),
+			project: z
+				.string()
+				.optional()
+				.describe("Filter by source project — omit for all"),
 			limit: z.number().int().optional().describe("Max results (default 50)"),
 		},
 		async ({ project, limit }) => {
 			try {
 				if (project) {
-					const results = await convex.query("fixPatterns:listByProject" as any, {
-						sourceProject: project,
-						limit,
-					});
+					const results = await convex.query(
+						"fixPatterns:listByProject" as any,
+						{
+							sourceProject: project,
+							limit,
+						},
+					);
 					return {
 						content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 					};
@@ -3102,7 +3623,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					limit,
 				});
 				return {
-					content: [{ type: "text", text: JSON.stringify(allResults, null, 2) }],
+					content: [
+						{ type: "text", text: JSON.stringify(allResults, null, 2) },
+					],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -3130,7 +3653,11 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ patternId, issueId, linked: true }, null, 2),
+							text: JSON.stringify(
+								{ patternId, issueId, linked: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -3151,7 +3678,10 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		},
 		async ({ name }) => {
 			try {
-				const template = await convex.query("missionTemplates:getByName" as any, { name });
+				const template = await convex.query(
+					"missionTemplates:getByName" as any,
+					{ name },
+				);
 
 				return {
 					content: [
@@ -3175,35 +3705,60 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 			"Each step has a title, description, and optional tags. " +
 			"If the template already exists it is overwritten (upsert by name).",
 		{
-			name: z.string().describe("Template name — must be unique, e.g. 'issue-resolution-v2'"),
-			description: z.string().optional().describe("Human-readable description of the template"),
+			name: z
+				.string()
+				.describe("Template name — must be unique, e.g. 'issue-resolution-v2'"),
+			description: z
+				.string()
+				.optional()
+				.describe("Human-readable description of the template"),
 			steps: z
 				.array(
 					z.object({
 						title: z.string().describe("Step title"),
 						description: z.string().describe("What to do in this step"),
-						tags: z.array(z.string()).optional().describe("Optional tags for the step"),
+						tags: z
+							.array(z.string())
+							.optional()
+							.describe("Optional tags for the step"),
 					}),
 				)
-				.describe("Ordered list of steps — each becomes one task when instantiated"),
-			createdBy: creatorSchema.describe("Who is creating/updating the template"),
-			isDefault: z.boolean().optional().describe("Mark as the default template for its type"),
+				.describe(
+					"Ordered list of steps — each becomes one task when instantiated",
+				),
+			createdBy: creatorSchema.describe(
+				"Who is creating/updating the template",
+			),
+			isDefault: z
+				.boolean()
+				.optional()
+				.describe("Mark as the default template for its type"),
 		},
 		async ({ name, description, steps, createdBy, isDefault }) => {
 			try {
-				const templateId = await convex.mutation("missionTemplates:upsert" as any, {
-					name,
-					description,
-					steps,
-					createdBy,
-					isDefault,
-				});
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
+				const templateId = await convex.mutation(
+					"missionTemplates:upsert" as any,
+					{
+						name,
+						description,
+						steps,
+						createdBy,
+						isDefault,
+					},
+				);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ templateId, name, stepCount: steps.length }, null, 2),
+							text: JSON.stringify(
+								{ templateId, name, stepCount: steps.length },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -3247,7 +3802,13 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 					"Orchestrator responsible for this deployment — e.g. 'sigma'",
 				),
 		},
-		async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
+		async ({
+			name,
+			deploymentUrl,
+			deployKeyEnvVar,
+			githubRepo,
+			orchestrator,
+		}) => {
 			try {
 				const id = await convex.mutation("errorMonitor:addDeployment" as any, {
 					name,
@@ -3282,7 +3843,9 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		{
 			name: z
 				.string()
-				.describe("Name of the deployment to deactivate — e.g. 'your-deployment-123'"),
+				.describe(
+					"Name of the deployment to deactivate — e.g. 'your-deployment-123'",
+				),
 		},
 		async ({ name }) => {
 			try {
@@ -3349,9 +3912,7 @@ export function registerTools(server: McpServer, convex: ConvexHttpClient): void
 		"get_error",
 		"Fetch a single error log entry by its Convex document ID, including stack trace and issue linkage.",
 		{
-			errorId: z
-				.string()
-				.describe("Convex document ID of the errorLogs entry"),
+			errorId: z.string().describe("Convex document ID of the errorLogs entry"),
 		},
 		async ({ errorId }) => {
 			try {
