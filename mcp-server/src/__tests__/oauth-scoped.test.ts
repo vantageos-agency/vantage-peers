@@ -235,3 +235,61 @@ describe("Marie smoke flow (scope decisions)", () => {
 		expect(checkNamespaceWrite(masterCtx, "project/internal")).toBeNull();
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extended MCP-tool coverage (Eta high-severity non-blocker)
+// Verifies that the guard pattern applied in tools.ts will reject Marie-scope
+// attempts on the newly-guarded tools (tasks, missions, diaries, briefings,
+// mandates, BUs, profiles, recurring tasks, components, fix patterns).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Extended tool guard coverage (newly guarded tools)", () => {
+	it("create_task(assignedTo='pi', createdBy='marie') → 403 on assignee check", () => {
+		// createdBy=marie passes, but assignedTo=pi does not.
+		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	});
+
+	it("write_diary(orchestrator='tau') from Marie → 403", () => {
+		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+	});
+
+	it("update_profile(orchestratorId='victor') from Marie → 403", () => {
+		// Marie's allowlist is ['marie'] — she cannot write to Victor's profile
+		// identity even though she can read the victor namespace.
+		expect(checkFromAllowed(marieCtx, "victor")).toMatch(/Forbidden/);
+	});
+
+	it("set_summary(orchestratorId='marie') from Marie → OK", () => {
+		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	});
+
+	it("create_mandate(requestedBy='marie', fulfilledBy='pi') from Marie → 403 on fulfilledBy", () => {
+		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	});
+
+	it("create_bu(orchestratorId='sigma') from Marie → 403", () => {
+		expect(checkFromAllowed(marieCtx, "sigma")).toMatch(/Forbidden/);
+	});
+
+	it("register_component(createdBy='marie') from Marie → OK", () => {
+		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	});
+
+	it("accept_mandate(callerOrchestrator='pi') from Marie → 403", () => {
+		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	});
+
+	it("create_fix_pattern(createdBy='tau') from Marie → 403", () => {
+		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+	});
+
+	it("generic deny-by-default client: every tool-guard-relevant from rejected", () => {
+		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(genericCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(genericCtx, "anonymous-dcr-hijack")).toMatch(
+			/Forbidden/,
+		);
+	});
+});

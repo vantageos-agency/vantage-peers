@@ -161,17 +161,12 @@ app.post("/register", async (c) => {
 	const clientName =
 		typeof body.client_name === "string" ? body.client_name : "anonymous-dcr";
 
-	// Allow callers to hint a pre-configured profile. We only accept it if the
-	// profile exists; otherwise fall back to the deny-by-default template.
-	const requestedProfileRaw =
-		typeof (body as Record<string, unknown>).scope_profile === "string"
-			? ((body as Record<string, unknown>).scope_profile as string)
-			: null;
-	let scopeProfile = DEFAULT_PUBLIC_DCR_PROFILE;
-	if (requestedProfileRaw) {
-		const profile = await loadScopeProfile(requestedProfileRaw);
-		if (profile) scopeProfile = profile.profileId;
-	}
+	// SECURITY: public DCR is ALWAYS bound to the deny-by-default profile. Do
+	// NOT read body.scope_profile here — an attacker could register with
+	// {"scope_profile": "master"} and chain through /authorize + /token to
+	// obtain master-level access. Non-default profiles are provisioned only
+	// via POST /admin/oauth/clients (master-token gated).
+	const scopeProfile = DEFAULT_PUBLIC_DCR_PROFILE;
 
 	try {
 		await internalClient().mutation(
@@ -264,11 +259,19 @@ app.get("/authorize", async (c) => {
 		);
 	}
 
+	const masterTokenForAuthCode = process.env.BEARER_SECRET_MASTER;
+	if (!masterTokenForAuthCode) {
+		console.error(
+			"[oauth] BEARER_SECRET_MASTER not set — cannot mint authorization code",
+		);
+		return c.json({ error: "server_misconfigured" }, 500);
+	}
 	const code = randomOpaqueToken();
 	await internalClient().mutation(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:createAuthorizationCode" as any,
 		{
+			callerToken: masterTokenForAuthCode,
 			code,
 			clientId,
 			redirectUri,
@@ -401,6 +404,13 @@ app.post("/token", async (c) => {
 		}
 
 		// Issue access_token + refresh_token
+		const masterTokenForIssue = process.env.BEARER_SECRET_MASTER;
+		if (!masterTokenForIssue) {
+			console.error(
+				"[oauth] BEARER_SECRET_MASTER not set — cannot mint tokens",
+			);
+			return c.json({ error: "server_misconfigured" }, 500);
+		}
 		const accessToken = randomOpaqueToken();
 		const refreshToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
@@ -411,6 +421,7 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
+				callerToken: masterTokenForIssue,
 				tokenHash: accessTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
@@ -427,6 +438,7 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createRefreshToken" as any,
 			{
+				callerToken: masterTokenForIssue,
 				tokenHash: refreshTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
@@ -471,6 +483,13 @@ app.post("/token", async (c) => {
 			return c.json({ error: "server_error" }, 500);
 		}
 
+		const masterTokenForRefresh = process.env.BEARER_SECRET_MASTER;
+		if (!masterTokenForRefresh) {
+			console.error(
+				"[oauth] BEARER_SECRET_MASTER not set — cannot refresh token",
+			);
+			return c.json({ error: "server_misconfigured" }, 500);
+		}
 		const accessToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
 		const now = Date.now();
@@ -478,6 +497,7 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
+				callerToken: masterTokenForRefresh,
 				tokenHash: accessTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,

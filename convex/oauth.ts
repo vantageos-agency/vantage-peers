@@ -356,8 +356,12 @@ export const deleteClient = mutation({
 // AUTHORIZATION CODES
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Gated by master token — only the HTTP server (which knows BEARER_SECRET_MASTER)
+// may mint authorization codes. Closes the pre-Day-47 hole where any caller with
+// Convex HTTP access could forge a code row and chain it into a scoped token.
 export const createAuthorizationCode = mutation({
 	args: {
+		callerToken: v.string(),
 		code: v.string(),
 		clientId: v.string(),
 		redirectUri: v.string(),
@@ -368,6 +372,7 @@ export const createAuthorizationCode = mutation({
 	},
 	returns: v.id("oauth_authorization_codes"),
 	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
 		return await ctx.db.insert("oauth_authorization_codes", {
 			code: args.code,
 			clientId: args.clientId,
@@ -416,8 +421,12 @@ export const consumeAuthorizationCode = mutation({
 // ACCESS TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Gated by master token — only the HTTP server may issue access tokens. Without
+// this gate an attacker with Convex HTTP access could insert a row granting
+// master-scope access and present the raw bearer to the MCP server.
 export const createAccessToken = mutation({
 	args: {
+		callerToken: v.string(),
 		tokenHash: v.string(),
 		clientId: v.string(),
 		userId: v.string(),
@@ -431,6 +440,7 @@ export const createAccessToken = mutation({
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -487,8 +497,10 @@ export const getAccessTokenByHash = query({
 // REFRESH TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Gated by master token — only the HTTP server may issue refresh tokens.
 export const createRefreshToken = mutation({
 	args: {
+		callerToken: v.string(),
 		tokenHash: v.string(),
 		clientId: v.string(),
 		userId: v.string(),
@@ -497,6 +509,7 @@ export const createRefreshToken = mutation({
 	},
 	returns: v.id("oauth_refresh_tokens"),
 	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
 		return await ctx.db.insert("oauth_refresh_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,

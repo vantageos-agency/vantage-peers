@@ -159,6 +159,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 
 		// Seed an access token + refresh token against this client
 		await t.mutation(api.oauth.createAccessToken, {
+			callerToken: "test-master-token-deadbeef",
 			tokenHash: "b".repeat(64),
 			clientId,
 			userId: "marie",
@@ -171,6 +172,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			refreshTokenHash: "c".repeat(64),
 		});
 		await t.mutation(api.oauth.createRefreshToken, {
+			callerToken: "test-master-token-deadbeef",
 			tokenHash: "c".repeat(64),
 			clientId,
 			userId: "marie",
@@ -198,6 +200,7 @@ describe("oauth.createAuthorizationCode + consumeAuthorizationCode", () => {
 	test("code is single-use (consume deletes row)", async () => {
 		const t = createTestConvex();
 		await t.mutation(api.oauth.createAuthorizationCode, {
+			callerToken: "test-master-token-deadbeef",
 			code: "auth-code-123",
 			clientId: "test-client",
 			redirectUri: "https://claude.ai/cb",
@@ -221,11 +224,38 @@ describe("oauth.createAuthorizationCode + consumeAuthorizationCode", () => {
 	});
 });
 
+describe("oauth.registerPublicClient (DCR default-profile binding)", () => {
+	test("DCR client created with client-generic has no scope — Marie-style chain blocked (Blocker 2)", async () => {
+		// This reproduces the HTTP server's public /register behaviour: the
+		// handler hardcodes scopeProfile=client-generic regardless of body.
+		// An access_token minted off this client has fromAllowList=[] and
+		// namespaceWritePrefixes=[], so any write attempt fails scope checks.
+		const t = createTestConvex();
+		await t.mutation(api.oauth.seedDefaultProfiles, {
+			callerToken: "test-master-token-deadbeef",
+		});
+		const clientId = "anon-dcr-client";
+		await t.mutation(api.oauth.registerPublicClient, {
+			clientId,
+			clientSecretHash: "a".repeat(64),
+			name: "anonymous-dcr",
+			redirectUris: [],
+			scopeProfile: "client-generic", // hardcoded by server-http.ts
+		});
+		const profile = await t.query(api.oauth.getScopeProfile, {
+			profileId: "client-generic",
+		});
+		expect(profile?.fromAllowList).toEqual([]);
+		expect(profile?.namespaceWritePrefixes).toEqual([]);
+	});
+});
+
 describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 	test("token round-trips with scope context", async () => {
 		const t = createTestConvex();
 		const tokenHash = "deadbeef".repeat(8); // 64 hex chars
 		await t.mutation(api.oauth.createAccessToken, {
+			callerToken: "test-master-token-deadbeef",
 			tokenHash,
 			clientId: "marie-client",
 			userId: "marie",
@@ -243,10 +273,59 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 		expect(row?.fromAllowList).toEqual(["marie"]);
 	});
 
+	test("rejects createAccessToken without a valid callerToken (Blocker 1)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.mutation(api.oauth.createAccessToken, {
+				callerToken: "attacker-guess",
+				tokenHash: "deadbeef".repeat(8),
+				clientId: "forged",
+				userId: "forged",
+				scopes: ["vantage:read", "vantage:write"],
+				scopeProfile: "master",
+				fromAllowList: ["*"],
+				namespaceReadPrefixes: ["*"],
+				namespaceWritePrefixes: ["*"],
+				expiresAt: Date.now() + 3600_000,
+			}),
+		).rejects.toThrow(/Unauthorized/);
+	});
+
+	test("rejects createRefreshToken without a valid callerToken (Blocker 1)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.mutation(api.oauth.createRefreshToken, {
+				callerToken: "attacker-guess",
+				tokenHash: "cafebabe".repeat(8),
+				clientId: "forged",
+				userId: "forged",
+				scopeProfile: "master",
+				expiresAt: Date.now() + 3600_000,
+			}),
+		).rejects.toThrow(/Unauthorized/);
+	});
+
+	test("rejects createAuthorizationCode without a valid callerToken (Blocker 1)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.mutation(api.oauth.createAuthorizationCode, {
+				callerToken: "attacker-guess",
+				code: "forged-code",
+				clientId: "forged",
+				redirectUri: "https://evil.example/cb",
+				codeChallenge: "x",
+				scope: "vantage:read vantage:write",
+				userId: "forged",
+				expiresAt: Date.now() + 600_000,
+			}),
+		).rejects.toThrow(/Unauthorized/);
+	});
+
 	test("expired tokens are not returned", async () => {
 		const t = createTestConvex();
 		const tokenHash = "cafe".repeat(16); // 64 hex chars
 		await t.mutation(api.oauth.createAccessToken, {
+			callerToken: "test-master-token-deadbeef",
 			tokenHash,
 			clientId: "c",
 			userId: "u",

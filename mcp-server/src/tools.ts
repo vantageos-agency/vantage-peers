@@ -15,6 +15,7 @@ import {
 	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
+	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
 
@@ -152,6 +153,17 @@ export function registerTools(
 		const err = checkNamespaceWrite(oauthCtx, namespace);
 		return err ? mcpError(err) : null;
 	};
+	// Some tools take no identity/namespace arg (e.g. soft_delete_memory only
+	// takes an ID). When the underlying mutation cannot enforce per-resource
+	// RBAC, we restrict the whole tool to master scope. Legacy bearer
+	// (oauthCtx=undefined) and master-scope both pass through.
+	const guardMasterOnly = (toolName: string) => {
+		if (!oauthCtx) return null;
+		if (isMasterScope(oauthCtx)) return null;
+		return mcpError(
+			`Forbidden: ${toolName} requires master scope (current: ${oauthCtx.scopeProfile}).`,
+		);
+	};
 
 	// ── store_memory ────────────────────────────────────────────────────────────
 
@@ -239,6 +251,9 @@ export function registerTools(
 		},
 		async ({ memoryId }) => {
 			try {
+				const denied = guardMasterOnly("soft_delete_memory");
+				if (denied) return denied;
+
 				await convex.mutation("memories:softDeleteMemory" as any, {
 					memoryId,
 				});
@@ -558,6 +573,9 @@ export function registerTools(
 		},
 		async ({ orchestratorId, name, static: staticFields, dynamic }) => {
 			try {
+				const fromDenied = guardFrom(orchestratorId);
+				if (fromDenied) return fromDenied;
+
 				const profileId = await convex.mutation(
 					"profiles:upsertProfile" as any,
 					{
@@ -820,6 +838,11 @@ export function registerTools(
 		},
 		async ({ messageId, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const result = await convex.mutation("messages:deleteMessage" as any, {
 					messageId: messageId as any,
 					callerOrchestrator,
@@ -856,6 +879,9 @@ export function registerTools(
 		},
 		async ({ orchestratorId, instanceId, summary }) => {
 			try {
+				const fromDenied = guardFrom(orchestratorId);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("profiles:updateDynamic" as any, {
 					orchestratorId,
 					instanceId,
@@ -1050,6 +1076,11 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const assigneeDenied = guardFrom(assignedTo);
+				if (assigneeDenied) return assigneeDenied;
+
 				const taskId = await convex.mutation("tasks:create" as any, {
 					title,
 					description,
@@ -1193,6 +1224,15 @@ export function registerTools(
 			callerOrchestrator,
 		}) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+				if (assignedTo) {
+					const assigneeDenied = guardFrom(assignedTo);
+					if (assigneeDenied) return assigneeDenied;
+				}
+
 				await convex.mutation("tasks:update" as any, {
 					taskId: taskId as any,
 					title,
@@ -1244,6 +1284,11 @@ export function registerTools(
 		},
 		async ({ taskId, completionNote, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				await convex.mutation("tasks:complete" as any, {
 					taskId: taskId as any,
 					completionNote,
@@ -1278,6 +1323,11 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				await convex.mutation("tasks:start" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -1315,6 +1365,9 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator, callerInstance }) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				const result = await convex.mutation("tasks:checkout" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -1348,6 +1401,11 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const result = await convex.mutation("tasks:deleteTask" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -1385,6 +1443,11 @@ export function registerTools(
 		},
 		async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					status: "blocked",
@@ -1434,6 +1497,11 @@ export function registerTools(
 		},
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					dependsOn: dependsOn.map((id: string) => id as any),
@@ -1540,6 +1608,11 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const pilotDenied = guardFrom(pilot);
+				if (pilotDenied) return pilotDenied;
+
 				const missionId = await convex.mutation("missions:create" as any, {
 					name,
 					description,
@@ -1680,6 +1753,11 @@ export function registerTools(
 			progress,
 		}) => {
 			try {
+				if (pilot) {
+					const pilotDenied = guardFrom(pilot);
+					if (pilotDenied) return pilotDenied;
+				}
+
 				await convex.mutation("missions:update" as any, {
 					missionId: missionId as any,
 					name,
@@ -1754,6 +1832,9 @@ export function registerTools(
 		},
 		async ({ date, orchestrator, content, highlights, blockers }) => {
 			try {
+				const fromDenied = guardFrom(orchestrator);
+				if (fromDenied) return fromDenied;
+
 				const diaryId = await convex.mutation("diary:write" as any, {
 					date,
 					orchestrator,
@@ -1880,6 +1961,9 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const noteId = await convex.mutation("briefingNotes:create" as any, {
 					title,
 					topic,
@@ -1975,6 +2059,9 @@ export function registerTools(
 		},
 		async ({ name, type, team, content, version, project, createdBy }) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const result = await convex.mutation("components:register" as any, {
 					name,
 					type,
@@ -2190,6 +2277,11 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+				const assigneeDenied = guardFrom(assignedTo);
+				if (assigneeDenied) return assigneeDenied;
+
 				const tagsArray = tags
 					? Array.isArray(tags)
 						? tags
@@ -2346,6 +2438,11 @@ export function registerTools(
 		},
 		async ({ recurringTaskId, ...fields }) => {
 			try {
+				if (fields.assignedTo) {
+					const assigneeDenied = guardFrom(fields.assignedTo);
+					if (assigneeDenied) return assigneeDenied;
+				}
+
 				const result = await convex.mutation("recurringTasks:update" as any, {
 					recurringTaskId: recurringTaskId as any,
 					...fields,
@@ -2409,6 +2506,11 @@ export function registerTools(
 			mandateDocument,
 		}) => {
 			try {
+				const fromDenied = guardFrom(requestedBy);
+				if (fromDenied) return fromDenied;
+				const fulfillerDenied = guardFrom(fulfilledBy);
+				if (fulfillerDenied) return fulfillerDenied;
+
 				const mandateId = await convex.mutation("mandates:create" as any, {
 					requestedBy,
 					fulfilledBy,
@@ -2452,6 +2554,9 @@ export function registerTools(
 		},
 		async ({ mandateId, callerOrchestrator }) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("mandates:accept" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -2499,6 +2604,9 @@ export function registerTools(
 			linkedTaskIds,
 		}) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("mandates:update" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -2538,6 +2646,9 @@ export function registerTools(
 		},
 		async ({ mandateId, callerOrchestrator, finalCost }) => {
 			try {
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
 				await convex.mutation("mandates:settle" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -2688,6 +2799,9 @@ export function registerTools(
 			managementFee,
 		}) => {
 			try {
+				const fromDenied = guardFrom(orchestratorId);
+				if (fromDenied) return fromDenied;
+
 				const buId = await convex.mutation("businessUnits:create" as any, {
 					name,
 					description,
@@ -2774,6 +2888,11 @@ export function registerTools(
 			managementFee,
 		}) => {
 			try {
+				if (orchestratorId) {
+					const fromDenied = guardFrom(orchestratorId);
+					if (fromDenied) return fromDenied;
+				}
+
 				await convex.mutation("businessUnits:update" as any, {
 					buId: buId as any,
 					name,
@@ -3327,6 +3446,9 @@ export function registerTools(
 			linkedIssueIds,
 		}) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const patternId = await convex.mutation("fixPatterns:create" as any, {
 					symptom,
 					rootCause,
@@ -3369,6 +3491,9 @@ export function registerTools(
 		},
 		async ({ patternId, description, worked, why, createdBy, commit }) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const attemptId = await convex.mutation(
 					"fixPatterns:addAttempt" as any,
 					{
@@ -3611,6 +3736,9 @@ export function registerTools(
 		},
 		async ({ name, description, steps, createdBy, isDefault }) => {
 			try {
+				const fromDenied = guardFrom(createdBy);
+				if (fromDenied) return fromDenied;
+
 				const templateId = await convex.mutation(
 					"missionTemplates:upsert" as any,
 					{
