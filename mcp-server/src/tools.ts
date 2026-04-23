@@ -3922,6 +3922,9 @@ export function registerTools(
 		},
 		async ({ templateName, missionId, context, titlePrefix, callerOrchestrator }) => {
 			try {
+				const denied = guardMasterOnly("instantiate_template_into_mission");
+				if (denied) return denied;
+
 				const result = await convex.mutation(
 					"missionTemplates:instantiateTemplateIntoMission" as any,
 					{
