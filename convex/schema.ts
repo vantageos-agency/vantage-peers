@@ -503,6 +503,9 @@ export default defineSchema({
 				title: v.string(),
 				description: v.string(),
 				tags: v.optional(v.array(v.string())),
+				assignedTo: v.optional(v.string()), // orchestrator role, e.g. "proxima"
+				assignedToInstance: v.optional(v.string()), // instance, e.g. "proxima-vps"
+				dependsOn: v.optional(v.array(v.number())), // indexes of required steps (0-based)
 			}),
 		),
 		isDefault: v.boolean(),
