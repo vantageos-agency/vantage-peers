@@ -3824,6 +3824,24 @@ export function registerTools(
 							.array(z.string())
 							.optional()
 							.describe("Optional tags for the step"),
+						assignedTo: z
+							.string()
+							.optional()
+							.describe(
+								"Orchestrator role assigned to this step — e.g. 'proxima'. Falls back to mission.pilot when unset during instantiation.",
+							),
+						assignedToInstance: z
+							.string()
+							.optional()
+							.describe(
+								"Instance-level assignment for this step — e.g. 'proxima-vps'. Optional.",
+							),
+						dependsOn: z
+							.array(z.number())
+							.optional()
+							.describe(
+								"0-based indexes of steps that must complete before this step. Resolved to task IDs on instantiation.",
+							),
 					}),
 				)
 				.describe(
@@ -3862,6 +3880,67 @@ export function registerTools(
 								null,
 								2,
 							),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// ── instantiate_template_into_mission ───────────────────────────────────────
+
+	server.tool(
+		"instantiate_template_into_mission",
+		"Create N tasks from a mission template, one per step, each pre-assigned to the step's declared orchestrator (falling back to mission pilot when unset). Unblocks industrial cross-orchestrator workflows — replaces the fragile assign:X tag workaround.",
+		{
+			templateName: z
+				.string()
+				.describe("Name of the mission template to instantiate"),
+			missionId: z
+				.string()
+				.describe("Convex document ID of the target mission"),
+			context: z
+				.record(z.string(), z.string())
+				.optional()
+				.describe(
+					"Key-value map for {{key}} interpolation in step descriptions. Non-matching placeholders are left intact.",
+				),
+			titlePrefix: z
+				.string()
+				.optional()
+				.describe(
+					"String prepended to every task title — e.g. '[p25]'. Optional.",
+				),
+			callerOrchestrator: z
+				.string()
+				.optional()
+				.describe(
+					"Orchestrator making this call — used as createdBy on tasks. Defaults to 'system'.",
+				),
+		},
+		async ({ templateName, missionId, context, titlePrefix, callerOrchestrator }) => {
+			try {
+				const denied = guardMasterOnly("instantiate_template_into_mission");
+				if (denied) return denied;
+
+				const result = await convex.mutation(
+					"missionTemplates:instantiateTemplateIntoMission" as any,
+					{
+						templateName,
+						missionId: missionId as any,
+						context,
+						titlePrefix,
+						callerOrchestrator,
+					},
+				);
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(result, null, 2),
 						},
 					],
 				};
