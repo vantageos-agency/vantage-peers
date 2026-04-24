@@ -56,12 +56,12 @@ const memoryTypeSchema = z
 	.describe("Memory classification type");
 
 // Open string — validated at runtime by the backend (issue #132).
-// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, system.
+// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, system.
 // New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.
 const creatorSchema = z
 	.string()
 	.describe(
-		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
@@ -581,7 +581,7 @@ server.tool(
 		"channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
 		"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
 	{
-		from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)"),
+		from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
 		fromInstanceId: z
 			.string()
 			.optional()
@@ -637,7 +637,7 @@ server.tool(
 		"If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
 		"Replaces claude-peers check_messages.",
 	{
-		recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)"),
+		recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
 		recipientInstanceId: z
 			.string()
 			.optional()
@@ -914,7 +914,7 @@ server.tool(
 const assigneeSchema = z
 	.string()
 	.describe(
-		"Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+		"Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
