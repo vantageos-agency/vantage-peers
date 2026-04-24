@@ -62,6 +62,18 @@ export function assertContentSize(content: string, toolName: string): number {
 // Shared Zod schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Convex document IDs are 32 lowercase alphanumeric characters (a-z0-9).
+ * Exported so tests can validate the schema independently of the MCP server.
+ */
+export const convexIdPattern = /^[a-z0-9]{32}$/;
+export const receiptIdSchema = z
+	.string()
+	.regex(
+		convexIdPattern,
+		"receiptId must be a 32-char lowercase alphanumeric Convex ID",
+	);
+
 const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
 	.describe("Memory classification type");
@@ -821,14 +833,35 @@ export function registerTools(
 					},
 				);
 
+				if (messages.length === 0) {
+					return {
+						content: [{ type: "text", text: "No new messages." }],
+					};
+				}
+
+				const payload = messages.map(
+					(m: {
+						receiptId: string;
+						from: string;
+						fromInstanceId?: string;
+						channel?: string;
+						content: string;
+						createdAt: number;
+					}) => ({
+						receiptId: m.receiptId,
+						from: m.from,
+						fromInstanceId: m.fromInstanceId,
+						channel: m.channel,
+						content: m.content,
+						createdAt: m.createdAt,
+					}),
+				);
+
 				return {
 					content: [
 						{
 							type: "text",
-							text:
-								messages.length === 0
-									? "No new messages."
-									: JSON.stringify(messages, null, 2),
+							text: JSON.stringify(payload, null, 2),
 						},
 					],
 				};
@@ -845,7 +878,7 @@ export function registerTools(
 		"Mark one or more message receipts as read. Pass the receiptIds from check_messages.",
 		{
 			receiptIds: z
-				.union([z.array(z.string()), z.string()])
+				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
 				.describe("Receipt IDs to mark as read — array or single string"),
 		},
 		async ({ receiptIds }) => {
@@ -866,7 +899,7 @@ export function registerTools(
 					receiptIdsArray = [receiptIds as string];
 				}
 				const count = await convex.mutation("messages:markAsRead" as any, {
-					receiptIds: receiptIdsArray as any,
+					receiptIds: receiptIdsArray,
 				});
 
 				return {
