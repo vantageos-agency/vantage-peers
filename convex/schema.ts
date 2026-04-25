@@ -679,6 +679,34 @@ export default defineSchema({
 		revokedAt: v.optional(v.number()),
 	}).index("by_tokenHash", ["tokenHash"]),
 
+	// ── errorMonitorFilterRules ──────────────────────────────────────────────
+	// Runtime-configurable filter rules for the auto-IRP bot.
+	// Each rule matches (functionName, errorMessageRegex) and assigns a severity:
+	//   "skip"          → drop silently, no upsert / issue
+	//   "log-only"      → console.log only
+	//   "create-issue"  → normal flow (used to override a default skip)
+	//
+	// Defaults are seeded by errorMonitorFilters.seedDefaultRules. Sigma/Pi
+	// can add or disable rules without redeploying via addFilterRule /
+	// disableFilterRule public mutations.
+	//
+	// Linked: memory j573cwcs3znp0xsvtg34x435jh84b0eg, pattern m978zeg4b2e9nx67z2hg5rwgfs85hf7f.
+	errorMonitorFilterRules: defineTable({
+		functionName: v.string(), // exact match, e.g. "tasks:complete"
+		errorMessageRegex: v.string(), // RegExp source
+		regexFlags: v.optional(v.string()), // e.g. "i"
+		reason: v.string(), // human-readable why this is filtered
+		severity: v.union(
+			v.literal("skip"),
+			v.literal("log-only"),
+			v.literal("create-issue"),
+		),
+		active: v.boolean(),
+		createdAt: v.number(),
+	})
+		.index("by_active", ["active"])
+		.index("by_function", ["functionName", "active"]),
+
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.
 	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.
