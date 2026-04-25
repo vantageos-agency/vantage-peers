@@ -262,6 +262,8 @@ export default defineSchema({
 		linkedMemoryIds: v.optional(v.array(v.id("memories"))),
 		createdBy: creatorValidator,
 		createdAt: v.number(),
+		updatedAt: v.optional(v.number()), // set on first update
+		updatedBy: v.optional(creatorValidator), // orchestrator that last updated
 	})
 		.index("by_topic", ["topic"])
 		.index("by_creator", ["createdBy", "createdAt"]),

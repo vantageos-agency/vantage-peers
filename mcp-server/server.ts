@@ -1826,6 +1826,82 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_briefing_note
+// ─────────────────────────────────────────────────────────────────────────────
+
+server.tool(
+	"update_briefing_note",
+	"Update an existing briefing note. Partial-update — only provided fields are patched. " +
+		"Arrays (decisions, linkedMemoryIds, participants) are FULL REPLACE, not append. " +
+		"RBAC : caller must be createdBy or 'system'. " +
+		"Sets updatedAt + updatedBy automatically.",
+	{
+		noteId: z
+			.string()
+			.describe("Convex document ID of the briefing note to update"),
+		callerOrchestrator: creatorSchema.describe(
+			"Orchestrator role making the update — must match createdBy or be 'system' (RBAC deny-by-default)",
+		),
+		title: z.string().optional().describe("Optional new title — full replace"),
+		topic: z.string().optional().describe("Optional new topic — full replace"),
+		participants: z
+			.array(z.string())
+			.optional()
+			.describe(
+				"Optional new participants array — full replace, not append",
+			),
+		content: z
+			.string()
+			.optional()
+			.describe("Optional new content — full replace"),
+		decisions: z
+			.array(z.string())
+			.optional()
+			.describe("Optional new decisions array — full replace, not append"),
+		linkedMemoryIds: z
+			.array(z.string())
+			.optional()
+			.describe(
+				"Optional new linkedMemoryIds array — full replace, not append. Each ID must point to memories table.",
+			),
+	},
+	async ({
+		noteId,
+		callerOrchestrator,
+		title,
+		topic,
+		participants,
+		content,
+		decisions,
+		linkedMemoryIds,
+	}) => {
+		try {
+			await convex.mutation("briefingNotes:update" as any, {
+				noteId: noteId as any,
+				callerOrchestrator,
+				title,
+				topic,
+				participants,
+				content,
+				decisions,
+				linkedMemoryIds: linkedMemoryIds as any,
+			});
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({ noteId, updated: true }, null, 2),
+					},
+				],
+			};
+		} catch (error: any) {
+			return mcpError(error.message ?? String(error));
+		}
+	},
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_briefing_notes
 // ─────────────────────────────────────────────────────────────────────────────
 

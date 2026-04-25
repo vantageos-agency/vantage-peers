@@ -43,6 +43,8 @@ export const get = query({
 			linkedMemoryIds: v.optional(v.array(v.id("memories"))),
 			createdBy: creatorValidator,
 			createdAt: v.number(),
+			updatedAt: v.optional(v.number()),
+			updatedBy: v.optional(creatorValidator),
 		}),
 		v.null(),
 	),
@@ -72,6 +74,8 @@ export const list = query({
 			linkedMemoryIds: v.optional(v.array(v.id("memories"))),
 			createdBy: creatorValidator,
 			createdAt: v.number(),
+			updatedAt: v.optional(v.number()),
+			updatedBy: v.optional(creatorValidator),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -80,11 +84,55 @@ export const list = query({
 		if (args.topic !== undefined) {
 			return await ctx.db
 				.query("briefingNotes")
-				.withIndex("by_topic", (q) => q.eq("topic", args.topic!))
+				.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
 				.order("desc")
 				.take(limit);
 		}
 
 		return await ctx.db.query("briefingNotes").order("desc").take(limit);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// update — partial update of any mutable briefing note field
+// RBAC deny-by-default: callerOrchestrator MUST be createdBy or "system"
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const update = mutation({
+	args: {
+		noteId: v.id("briefingNotes"),
+		callerOrchestrator: creatorValidator, // REQUIRED — deny-by-default per memory j573cwcs3znp0xsvtg34x435jh84b0eg
+		title: v.optional(v.string()),
+		topic: v.optional(v.string()),
+		participants: v.optional(v.array(v.string())),
+		content: v.optional(v.string()),
+		decisions: v.optional(v.array(v.string())),
+		linkedMemoryIds: v.optional(v.array(v.id("memories"))),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const { noteId, callerOrchestrator, ...fields } = args;
+		const note = await ctx.db.get(noteId);
+		if (note === null) {
+			throw new Error(`BriefingNote ${noteId} not found`);
+		}
+		const isAuthorized =
+			note.createdBy === callerOrchestrator || callerOrchestrator === "system";
+		if (!isAuthorized) {
+			throw new Error(
+				`Unauthorized: ${callerOrchestrator} is not creator of this briefing note`,
+			);
+		}
+		const patch: Record<string, unknown> = {
+			updatedAt: Date.now(),
+			updatedBy: callerOrchestrator,
+		};
+		for (const [key, value] of Object.entries(fields)) {
+			if (value !== undefined) {
+				patch[key] = value;
+			}
+		}
+		await ctx.db.patch(noteId, patch);
+		return null;
 	},
 });
