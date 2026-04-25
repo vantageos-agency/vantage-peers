@@ -1,7 +1,12 @@
 "use node";
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { internalAction } from "./_generated/server";
+import {
+	deserializeRule,
+	evaluateFilter,
+	type FilterRule,
+} from "./errorMonitorFilters";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -11,7 +16,7 @@ function simpleHash(str: string): string {
 	let hash = 0;
 	for (let i = 0; i < str.length; i++) {
 		const char = str.charCodeAt(i);
-		hash = ((hash << 5) - hash) + char;
+		hash = (hash << 5) - hash + char;
 		hash |= 0;
 	}
 	return Math.abs(hash).toString(36);
@@ -165,16 +170,30 @@ export const pollDeploymentLogs = internalAction({
 				(e) => e.kind === "Completion" && e.error != null,
 			);
 
+			// Load runtime filter rules once per poll (skips false-positive
+			// classes like RBAC denies + truncated-id self-cascades). Falls back
+			// to DEFAULT_FILTER_RULES inside loadActiveRules if the table is empty.
+			const rawRules = await ctx.runQuery(
+				internal.errorMonitorFilters.loadActiveRules,
+				{},
+			);
+			const filterRules: FilterRule[] = rawRules.map(deserializeRule);
+
 			// Group errors by module (file) + error message within the batch
 			// e.g., audioTracks:processAudio and audioTracks:getInternal with same error → one issue
-			const grouped = new Map<string, { functionNames: string[]; errorMessage: string; logLines: string[] }>();
+			const grouped = new Map<
+				string,
+				{ functionNames: string[]; errorMessage: string; logLines: string[] }
+			>();
 
 			for (const entry of failures) {
 				const functionName = entry.identifier ?? "unknown";
 				const errorMessage = entry.error ?? "Unknown error";
 				const logLines = entry.logLines ?? [];
 				// Extract module name (file) from "module:function" or "module/sub:function"
-				const moduleName = functionName.includes(":") ? functionName.split(":")[0] : functionName;
+				const moduleName = functionName.includes(":")
+					? functionName.split(":")[0]
+					: functionName;
 				const groupKey = `${moduleName}:${errorMessage}`;
 
 				const existing = grouped.get(groupKey);
@@ -187,7 +206,11 @@ export const pollDeploymentLogs = internalAction({
 						existing.logLines = logLines;
 					}
 				} else {
-					grouped.set(groupKey, { functionNames: [functionName], errorMessage, logLines });
+					grouped.set(groupKey, {
+						functionNames: [functionName],
+						errorMessage,
+						logLines,
+					});
 				}
 			}
 
@@ -197,15 +220,44 @@ export const pollDeploymentLogs = internalAction({
 				const logLines = group.logLines;
 				const hash = simpleHash(groupKey);
 
+				// Evaluate against each individual function name in the group —
+				// the joined string would never match a single-function rule.
+				let decision = evaluateFilter(
+					{ functionName, errorMessage },
+					filterRules,
+				);
+				if (!decision.matchedRule) {
+					for (const single of group.functionNames) {
+						const d = evaluateFilter(
+							{ functionName: single, errorMessage },
+							filterRules,
+						);
+						if (d.matchedRule) {
+							decision = d;
+							break;
+						}
+					}
+				}
+
+				if (decision.severity === "skip") {
+					// Drop silently — false-positive class.
+					continue;
+				}
+				if (decision.severity === "log-only") {
+					console.log(
+						`[ErrorMonitor] log-only filter (${decision.matchedRule?.reason ?? "n/a"}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
+					);
+					continue;
+				}
+
 				await ctx.runMutation(internal.errorMonitor.upsertError, {
 					hash,
 					deployment: args.deploymentName,
 					functionName,
 					errorMessage: errorMessage.slice(0, 500),
-					stackTrace: (
-						Array.isArray(logLines)
-							? logLines.join("\n")
-							: String(logLines)
+					stackTrace: (Array.isArray(logLines)
+						? logLines.join("\n")
+						: String(logLines)
 					).slice(0, 2000),
 					githubRepo: args.githubRepo,
 					orchestrator: args.orchestrator,
@@ -252,17 +304,14 @@ export const pollAllDeployments = internalAction({
 		}>;
 
 		for (const dep of deployments) {
-			await ctx.runAction(
-				internal.errorMonitorActions.pollDeploymentLogs,
-				{
-					deploymentName: dep.name,
-					deploymentUrl: dep.deploymentUrl,
-					deployKeyEnvVar: dep.deployKeyEnvVar,
-					githubRepo: dep.githubRepo,
-					orchestrator: dep.orchestrator,
-					lastCursor: dep.lastCursor,
-				},
-			);
+			await ctx.runAction(internal.errorMonitorActions.pollDeploymentLogs, {
+				deploymentName: dep.name,
+				deploymentUrl: dep.deploymentUrl,
+				deployKeyEnvVar: dep.deployKeyEnvVar,
+				githubRepo: dep.githubRepo,
+				orchestrator: dep.orchestrator,
+				lastCursor: dep.lastCursor,
+			});
 		}
 
 		return null;
