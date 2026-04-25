@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orchestratorStats — server-side aggregation for the VantagePeers Dashboard
@@ -75,6 +76,15 @@ export const orchestratorStats = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// ── Beta multi-tenant scope gate ─────────────────────────────────────
+		// Master scope (Laurent / Alpha) returns all orchestrators unchanged.
+		// Client orgs with "view-stats-aggregated" see their own orchestrators.
+		// Client orgs with "cross-tenant-read" bypass orchestrator filtering.
+		const scope = await withOrgScope(ctx);
+		if (!scope.scopes.includes("view-stats-aggregated") && !scope.isMaster) {
+			requireScope(scope, "view-stats-aggregated");
+		}
+
 		// Performance instrumentation — visible in Convex dashboard logs.
 		// Remove once median < 500ms is confirmed in production.
 		console.time("orchestratorStats");
@@ -87,7 +97,9 @@ export const orchestratorStats = query({
 		// No index needed here since we aggregate across ALL orchestrators.
 		// The by_assignee index would require N separate index scans (one per
 		// orchestrator), which is worse than one linear pass when N > 2.
-		const tasks = await ctx.db.query("tasks").take(TASK_CAP);
+		const allTasks = await ctx.db.query("tasks").take(TASK_CAP);
+		// Apply org scope filter before aggregation
+		const tasks = filterByOrgScope(allTasks, scope);
 
 		// Group tasks by assignedTo
 		type TaskRow = (typeof tasks)[number];

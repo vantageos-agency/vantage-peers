@@ -191,11 +191,15 @@ export default defineSchema({
 		createdBy: creatorValidator,
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
+		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_project", ["project", "status"])
 		.index("by_pilot", ["pilot", "status"])
 		.index("by_status", ["status", "createdAt"])
-		.index("by_priority", ["priority", "status"]),
+		.index("by_priority", ["priority", "status"])
+		.index("by_orgId", ["orgId"]),
 
 	// ── tasks ──────────────────────────────────────────────────────────────────
 	tasks: defineTable({
@@ -231,13 +235,17 @@ export default defineSchema({
 		createdBy: creatorValidator,
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
+		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])
 		.index("by_priority", ["priority", "status"])
 		.index("by_status", ["status", "createdAt"])
 		.index("by_mission", ["missionId", "status"])
-		.index("by_instance", ["assignedToInstance", "status"]),
+		.index("by_instance", ["assignedToInstance", "status"])
+		.index("by_orgId", ["orgId"]),
 
 	// ── diary ──────────────────────────────────────────────────────────────────
 	diary: defineTable({
@@ -264,9 +272,13 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.optional(v.number()), // set on first update
 		updatedBy: v.optional(creatorValidator), // orchestrator that last updated
+		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
+		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_topic", ["topic"])
-		.index("by_creator", ["createdBy", "createdAt"]),
+		.index("by_creator", ["createdBy", "createdAt"])
+		.index("by_orgId", ["orgId"]),
 
 	// ── components ──────────────────────────────────────────────────────────
 	// Registry of agents, skills, hooks, plugins — backup + inventory.
@@ -736,4 +748,33 @@ export default defineSchema({
 	})
 		.index("by_hash", ["hash"])
 		.index("by_deployment", ["deployment"]),
+
+	// ── client_org_mapping ───────────────────────────────────────────────────
+	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
+	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex
+	// dashboard or npx convex run after merge.
+	//
+	// clerkOrgSlug: the Clerk organisation slug (e.g. "iris-rh", "novalayer").
+	//   Maps to `identity.organizationId ?? identity.organizationSlug` in Convex
+	//   auth helpers.
+	// allowedOrchestrators: which orchestrator pilots/assignees this org can see.
+	//   ["*"] = master sentinel = all orchestrators (Laurent / internal use).
+	// scopes: permission tokens granted to this org.
+	//   Known values: "view-own-tasks", "view-own-missions",
+	//   "view-orchestrator-summary", "view-stats-aggregated", "cross-tenant-read".
+	// isActive: false = org is disabled (returns Forbidden) without deleting the row.
+	//
+	// Seed rows (post-merge, Sigma runs npx convex run):
+	//   iris-rh   → allowedOrchestrators=["victor"], scopes=["view-own-tasks","view-own-missions","view-orchestrator-summary"]
+	//   novalayer → allowedOrchestrators=["phi"],    scopes=["view-own-tasks","view-own-missions"]
+	client_org_mapping: defineTable({
+		clerkOrgSlug: v.string(), // "iris-rh"
+		allowedOrchestrators: v.array(v.string()), // ["victor"] or ["*"] for master sentinel
+		scopes: v.array(v.string()), // ["view-own-tasks", "view-own-missions", ...]
+		displayName: v.string(), // "Iris RH"
+		isActive: v.boolean(),
+		createdAt: v.number(),
+	})
+		.index("by_clerk_slug", ["clerkOrgSlug"])
+		.index("by_isActive", ["isActive"]),
 });
