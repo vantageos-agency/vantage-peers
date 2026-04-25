@@ -703,6 +703,16 @@ export default defineSchema({
 		),
 		active: v.boolean(),
 		createdAt: v.number(),
+		// v1.0.1 observability — added in PR follow-up to PR #354 review.
+		// `lastMatchedAt` and `matchCount` are bumped from `pollDeploymentLogs`
+		// via a fire-and-forget mutation when a rule's severity is "skip" or
+		// "log-only" (the silenced classes), so operators can see which rules
+		// are actually firing in prod and which are dead weight.
+		lastMatchedAt: v.optional(v.number()), // Unix ms of last match
+		matchCount: v.optional(v.number()), // running counter, treat undefined as 0
+		// v1.0.1 precedence — higher `priority` = evaluated first. Stable sort
+		// by `_creationTime` for ties. Treat undefined as 0 (unprioritized).
+		priority: v.optional(v.number()),
 	})
 		.index("by_active", ["active"])
 		.index("by_function", ["functionName", "active"]),
