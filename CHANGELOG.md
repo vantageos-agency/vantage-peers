@@ -1,5 +1,15 @@
 # Changelog
 
+## [v2.1.0] - 2026-04-25
+
+### Added
+- update_briefing_note MCP tool — partial update for briefing notes with RBAC (createdBy or system only)
+- briefingNotes.updatedAt + briefingNotes.updatedBy schema columns (both v.optional, backward compatible)
+
+### Refs
+- Closes issue #333
+- Mission k5708d9xxwj81v92e0x3hwv36985g4d7
+
 ## v11 — 2026-04-08
 
 ### New Features
