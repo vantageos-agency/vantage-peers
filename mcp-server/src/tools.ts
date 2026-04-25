@@ -81,7 +81,7 @@ const memoryTypeSchema = z
 const creatorSchema = z
 	.string()
 	.describe(
-		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
@@ -95,7 +95,7 @@ const flexArrayOptional = flexArray.optional();
 const assigneeSchema = z
 	.string()
 	.describe(
-		"Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+		"Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
@@ -725,7 +725,7 @@ export function registerTools(
 			"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
 		{
 			from: creatorSchema.describe(
-				"Sender role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)",
+				"Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)",
 			),
 			fromInstanceId: z
 				.string()
@@ -801,7 +801,7 @@ export function registerTools(
 			"Replaces claude-peers check_messages.",
 		{
 			recipient: creatorSchema.describe(
-				"Orchestrator role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)",
+				"Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)",
 			),
 			recipientInstanceId: z
 				.string()
