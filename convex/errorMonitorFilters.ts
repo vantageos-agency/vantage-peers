@@ -52,6 +52,16 @@ export interface FilterRule {
 	errorMessageRegex: RegExp;
 	reason: string;
 	severity: FilterSeverity;
+	// v1.0.1 — higher = evaluated first. Treat undefined as 0.
+	priority?: number;
+	// v1.0.1 — stable tiebreak when two rules share the same priority. Lower
+	// `_creationTime` wins (older rule first). Optional because in-process
+	// DEFAULT_FILTER_RULES have no creation time; treat undefined as 0.
+	creationTime?: number;
+	// v1.0.1 — opaque ruleId so the action layer can fire-and-forget a
+	// `incrementRuleMatch` mutation when a skip/log-only rule fires. Optional
+	// because the in-process DEFAULT_FILTER_RULES fallback has no row.
+	ruleId?: string;
 }
 
 export interface FilterRuleSerialized {
@@ -60,6 +70,9 @@ export interface FilterRuleSerialized {
 	regexFlags?: string;
 	reason: string;
 	severity: FilterSeverity;
+	priority?: number;
+	creationTime?: number;
+	ruleId?: string;
 }
 
 export interface FilterDecision {
@@ -104,6 +117,10 @@ export const DEFAULT_FILTER_RULES: ReadonlyArray<FilterRule> = [
  * Rule match = (functionName === rule.functionName) AND
  *              rule.errorMessageRegex.test(errorMessage).
  *
+ * v1.0.1 — rules are evaluated in priority order: highest `priority` first,
+ * with `_creationTime` ascending as the stable tiebreaker. Treat undefined
+ * priority as 0 and undefined creationTime as 0. The first match wins.
+ *
  * On match : returns the rule's severity. "skip" / "log-only" → no issue.
  * No match : returns severity "create-issue", shouldCreateIssue = true.
  */
@@ -111,7 +128,16 @@ export function evaluateFilter(
 	candidate: { functionName: string; errorMessage: string },
 	rules: ReadonlyArray<FilterRule> = DEFAULT_FILTER_RULES,
 ): FilterDecision {
-	for (const rule of rules) {
+	// Sort copy — don't mutate the caller's array.
+	const sorted = [...rules].sort((a, b) => {
+		const pa = a.priority ?? 0;
+		const pb = b.priority ?? 0;
+		if (pa !== pb) return pb - pa; // higher priority first
+		const ca = a.creationTime ?? 0;
+		const cb = b.creationTime ?? 0;
+		return ca - cb; // older creation time first (stable tiebreak)
+	});
+	for (const rule of sorted) {
 		if (rule.functionName !== candidate.functionName) continue;
 		// Re-create RegExp per call to avoid stateful `lastIndex` if /g is used.
 		const re = new RegExp(
@@ -153,6 +179,9 @@ export function deserializeRule(raw: FilterRuleSerialized): FilterRule {
 		errorMessageRegex: new RegExp(raw.errorMessageRegex, raw.regexFlags ?? ""),
 		reason: raw.reason,
 		severity: raw.severity,
+		priority: raw.priority,
+		creationTime: raw.creationTime,
+		ruleId: raw.ruleId,
 	};
 }
 
@@ -163,6 +192,9 @@ export function serializeRule(rule: FilterRule): FilterRuleSerialized {
 		regexFlags: rule.errorMessageRegex.flags || undefined,
 		reason: rule.reason,
 		severity: rule.severity,
+		priority: rule.priority,
+		creationTime: rule.creationTime,
+		ruleId: rule.ruleId,
 	};
 }
 
@@ -190,6 +222,9 @@ export const loadActiveRules = internalQuery({
 			regexFlags: v.optional(v.string()),
 			reason: v.string(),
 			severity: severityValidator,
+			priority: v.optional(v.number()),
+			creationTime: v.optional(v.number()),
+			ruleId: v.optional(v.string()),
 		}),
 	),
 	handler: async (ctx) => {
@@ -206,6 +241,9 @@ export const loadActiveRules = internalQuery({
 			regexFlags: r.regexFlags,
 			reason: r.reason,
 			severity: r.severity,
+			priority: r.priority,
+			creationTime: r._creationTime,
+			ruleId: r._id as string,
 		}));
 	},
 });
@@ -247,6 +285,7 @@ export const addFilterRule = mutation({
 		regexFlags: v.optional(v.string()),
 		reason: v.string(),
 		severity: severityValidator,
+		priority: v.optional(v.number()),
 	},
 	returns: v.id("errorMonitorFilterRules"),
 	handler: async (ctx, args) => {
@@ -264,7 +303,26 @@ export const addFilterRule = mutation({
 			severity: args.severity,
 			active: true,
 			createdAt: Date.now(),
+			priority: args.priority,
 		});
+	},
+});
+
+// v1.0.1 — observability counter bump. Called fire-and-forget from
+// pollDeploymentLogs when a rule's severity is "skip" or "log-only" so
+// operators can see which filter rules are actually firing in prod and
+// which ones are dead weight.
+export const incrementRuleMatch = internalMutation({
+	args: { ruleId: v.id("errorMonitorFilterRules") },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const row = await ctx.db.get(args.ruleId);
+		if (!row) return null;
+		await ctx.db.patch(args.ruleId, {
+			matchCount: (row.matchCount ?? 0) + 1,
+			lastMatchedAt: Date.now(),
+		});
+		return null;
 	},
 });
 
@@ -293,6 +351,9 @@ export const listFilterRules = query({
 			severity: severityValidator,
 			active: v.boolean(),
 			createdAt: v.number(),
+			lastMatchedAt: v.optional(v.number()),
+			matchCount: v.optional(v.number()),
+			priority: v.optional(v.number()),
 		}),
 	),
 	handler: async (ctx) => {
