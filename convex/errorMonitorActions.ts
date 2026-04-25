@@ -1,6 +1,7 @@
 "use node";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import {
 	deserializeRule,
@@ -237,6 +238,22 @@ export const pollDeploymentLogs = internalAction({
 							break;
 						}
 					}
+				}
+
+				// v1.0.1 — observability bump for filter hits. The pure
+				// `evaluateFilter` returns the matched rule's `ruleId` (when the
+				// rule originated from the runtime table; in-process defaults
+				// have no ruleId). Schedule a fire-and-forget mutation so we
+				// don't block the poll loop on the patch.
+				const ruleId = decision.matchedRule?.ruleId;
+				if (
+					ruleId &&
+					(decision.severity === "skip" || decision.severity === "log-only")
+				) {
+					await ctx.runMutation(
+						internal.errorMonitorFilters.incrementRuleMatch,
+						{ ruleId: ruleId as Id<"errorMonitorFilterRules"> },
+					);
 				}
 
 				if (decision.severity === "skip") {

@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
 	DEFAULT_FILTER_RULES,
 	evaluateFilter,
+	type FilterRule,
 	shouldCreateIssue,
 } from "./errorMonitorFilters";
 
@@ -118,5 +119,161 @@ describe("DEFAULT_FILTER_RULES sanity", () => {
 		});
 		expect(decision.shouldCreateIssue).toBe(true);
 		expect(decision.matchedRule).toBeNull();
+	});
+});
+
+// =============================================================================
+// v1.0.1 — boundary tests for the truncated-id regex `[^"]{0,15}\.\.\.`
+// Locks the upper bound at exactly 15 chars before the ellipsis, so a 16+ char
+// "real" id won't get silently dropped if it happens to land in a Value: "…"
+// shape later.
+// =============================================================================
+describe("evaluateFilter — truncated-id boundary cases", () => {
+	test("EXACTLY 15 chars before '...' MUST match (upper inclusive boundary)", () => {
+		// 15 a's then "..."
+		const id = "a".repeat(15);
+		const decision = evaluateFilter({
+			functionName: "missions:update",
+			errorMessage: `ArgumentValidationError: Path: .missionId Value: "${id}..." Validator: v.id("missions")`,
+		});
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+		expect(decision.matchedRule?.reason).toMatch(/self-cascade/);
+	});
+
+	test("EXACTLY 16 chars before '...' MUST NOT match (just past boundary)", () => {
+		// 16 a's then "..." — the regex bound is {0,15} so this falls through.
+		// The OR-branch for empty string also doesn't match (Value is non-empty
+		// AND ends with `...`).
+		const id = "a".repeat(16);
+		const decision = evaluateFilter({
+			functionName: "missions:update",
+			errorMessage: `ArgumentValidationError: Path: .missionId Value: "${id}..." Validator: v.id("missions")`,
+		});
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.matchedRule).toBeNull();
+		expect(decision.severity).toBe("create-issue");
+	});
+
+	test("EXACTLY 0 chars before '...' MUST match (lower inclusive boundary)", () => {
+		// `Value: "..."` — degenerate truncation, all that's left is the ellipsis.
+		const decision = evaluateFilter({
+			functionName: "missions:update",
+			errorMessage:
+				'ArgumentValidationError: Path: .missionId Value: "..." Validator: v.id("missions")',
+		});
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+	});
+
+	test("empty Value string sanity — alternation branch still matches", () => {
+		// Already covered earlier in the file but pinned again here so the
+		// boundary block self-documents.
+		const decision = evaluateFilter({
+			functionName: "missions:update",
+			errorMessage:
+				'ArgumentValidationError: Path: .missionId Value: "" Validator: v.id("missions")',
+		});
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+	});
+});
+
+// =============================================================================
+// v1.0.1 — rule precedence: higher `priority` wins, stable by creationTime
+// =============================================================================
+describe("evaluateFilter — priority precedence", () => {
+	test("higher-priority rule wins over lower-priority rule on the same input", () => {
+		// Two rules, same functionName + both regexes match. The high-priority
+		// rule has severity "create-issue" and should beat the low-priority
+		// "skip" rule. Without priority sorting the "skip" would have shadowed.
+		const rules: FilterRule[] = [
+			{
+				functionName: "missions:update",
+				errorMessageRegex: /missionId/,
+				reason: "low-pri skip — generic",
+				severity: "skip",
+				priority: 1,
+				creationTime: 1_000,
+			},
+			{
+				functionName: "missions:update",
+				errorMessageRegex: /missionId/,
+				reason: "high-pri override — create issue anyway",
+				severity: "create-issue",
+				priority: 100,
+				creationTime: 2_000,
+			},
+		];
+		const decision = evaluateFilter(
+			{
+				functionName: "missions:update",
+				errorMessage:
+					'ArgumentValidationError: Path: .missionId Value: "x" Validator: v.id("missions")',
+			},
+			rules,
+		);
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.matchedRule?.reason).toMatch(/high-pri/);
+	});
+
+	test("priority tiebreak — older creationTime wins when priority is equal", () => {
+		const rules: FilterRule[] = [
+			{
+				functionName: "missions:update",
+				errorMessageRegex: /missionId/,
+				reason: "newer rule",
+				severity: "log-only",
+				priority: 5,
+				creationTime: 5_000,
+			},
+			{
+				functionName: "missions:update",
+				errorMessageRegex: /missionId/,
+				reason: "older rule",
+				severity: "skip",
+				priority: 5,
+				creationTime: 1_000,
+			},
+		];
+		const decision = evaluateFilter(
+			{
+				functionName: "missions:update",
+				errorMessage: "Path: .missionId Value: x",
+			},
+			rules,
+		);
+		// older creationTime first → "skip" rule wins
+		expect(decision.severity).toBe("skip");
+		expect(decision.matchedRule?.reason).toBe("older rule");
+	});
+
+	test("undefined priority is treated as 0 (lowest)", () => {
+		const rules: FilterRule[] = [
+			{
+				functionName: "missions:update",
+				errorMessageRegex: /missionId/,
+				reason: "no-pri rule",
+				severity: "skip",
+			},
+			{
+				functionName: "missions:update",
+				errorMessageRegex: /missionId/,
+				reason: "explicit pri 1",
+				severity: "create-issue",
+				priority: 1,
+			},
+		];
+		const decision = evaluateFilter(
+			{
+				functionName: "missions:update",
+				errorMessage: "Path: .missionId Value: x",
+			},
+			rules,
+		);
+		// priority 1 beats undefined-treated-as-0 → "create-issue" wins
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.matchedRule?.reason).toBe("explicit pri 1");
 	});
 });
