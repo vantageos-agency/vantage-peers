@@ -92,6 +92,53 @@ const severitySchema = z
 const flexArray = z.union([z.array(z.string()), z.string()]);
 const flexArrayOptional = flexArray.optional();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// update_briefing_note — Zod schema + description
+//
+// Mirrors `api.briefingNotes.update` Convex mutation. `noteId` is a permissive
+// `z.string()` because Convex `v.id("briefingNotes")` enforces the real shape
+// server-side (same pattern as `update_task`). `callerOrchestrator` is REQUIRED
+// (deny-by-default RBAC per memory j573cwcs3znp0xsvtg34x435jh84b0eg). Arrays
+// are FULL REPLACE — to clear, pass an empty array; to keep, omit entirely.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const updateBriefingNoteDescription =
+	"Update an existing briefing note. Partial-update — only provided fields are patched. " +
+	"Arrays (decisions, linkedMemoryIds, participants) are FULL REPLACE, not append. " +
+	"RBAC : caller must be createdBy or 'system'. " +
+	"Sets updatedAt + updatedBy automatically.";
+
+export const updateBriefingNoteSchema = z.object({
+	noteId: z
+		.string()
+		.describe("Convex document ID of the briefing note to update"),
+	callerOrchestrator: creatorSchema.describe(
+		"Orchestrator role making the update — must match createdBy or be 'system' (RBAC deny-by-default)",
+	),
+	title: z.string().optional().describe("Optional new title — full replace"),
+	topic: z.string().optional().describe("Optional new topic — full replace"),
+	participants: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"Optional new participants array — full replace, not append",
+		),
+	content: z
+		.string()
+		.optional()
+		.describe("Optional new content — full replace"),
+	decisions: z
+		.array(z.string())
+		.optional()
+		.describe("Optional new decisions array — full replace, not append"),
+	linkedMemoryIds: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"Optional new linkedMemoryIds array — full replace, not append. Each ID must point to memories table.",
+		),
+});
+
 const assigneeSchema = z
 	.string()
 	.describe(
@@ -2099,6 +2146,63 @@ export function registerTools(
 					fromOrchestrator: createdBy,
 					topic,
 					title,
+					errorMessage: error?.message ?? String(error),
+				});
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// ── update_briefing_note ────────────────────────────────────────────────────
+
+	server.tool(
+		"update_briefing_note",
+		updateBriefingNoteDescription,
+		updateBriefingNoteSchema.shape,
+		async ({
+			noteId,
+			callerOrchestrator,
+			title,
+			topic,
+			participants,
+			content,
+			decisions,
+			linkedMemoryIds,
+		}) => {
+			let contentBytes = 0;
+			try {
+				if (content !== undefined) {
+					contentBytes = assertContentSize(content, "update_briefing_note");
+				}
+
+				const fromDenied = guardFrom(callerOrchestrator);
+				if (fromDenied) return fromDenied;
+
+				await convex.mutation("briefingNotes:update" as any, {
+					noteId: noteId as any,
+					callerOrchestrator,
+					title,
+					topic,
+					participants,
+					content,
+					decisions,
+					linkedMemoryIds: linkedMemoryIds as any,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ noteId, updated: true }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				if (error instanceof McpError) throw error;
+				console.error("[update_briefing_note] mutation failed", {
+					contentBytes,
+					callerOrchestrator,
+					noteId,
 					errorMessage: error?.message ?? String(error),
 				});
 				return mcpError(error.message ?? String(error));
