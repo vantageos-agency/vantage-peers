@@ -15,7 +15,9 @@ const modules = Object.fromEntries(
 );
 
 function createTestConvex() {
-	return convexTest(schema, modules);
+	// orchestratorStats is gated by withOrgScope.
+	// All stats tests use master scope (no org attached → full access).
+	return convexTest(schema, modules).withIdentity({ subject: "user-test-master" });
 }
 
 // ── Seed helpers ─────────────────────────────────────────────────────────────

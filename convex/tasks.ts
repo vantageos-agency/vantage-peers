@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
+import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -133,79 +134,94 @@ export const list = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// ── Beta multi-tenant scope gate ─────────────────────────────────────
+		// withOrgScope returns isMaster=true for Laurent's no-org session →
+		// filterByOrgScope returns full data unchanged (Alpha backwards-compat).
+		// Client orgs are filtered to their allowedOrchestrators.
+		const scope = await withOrgScope(ctx);
+		requireScope(scope, "view-own-tasks");
+
 		const limit = args.limit ?? 50;
 
 		// Filter by instance + status
 		if (args.assignedToInstance !== undefined && args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_instance", (q) =>
 					q.eq("assignedToInstance", args.assignedToInstance!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by instance only
 		if (args.assignedToInstance !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_instance", (q) => q.eq("assignedToInstance", args.assignedToInstance!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by assignee + status
 		if (args.assignedTo !== undefined && args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_assignee", (q) =>
 					q.eq("assignedTo", args.assignedTo!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by assignee only
 		if (args.assignedTo !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_assignee", (q) => q.eq("assignedTo", args.assignedTo!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by project + status
 		if (args.project !== undefined && args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_project", (q) =>
 					q.eq("project", args.project!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by project only
 		if (args.project !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_project", (q) => q.eq("project", args.project!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by status only
 		if (args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_status", (q) => q.eq("status", args.status!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// No filters — return all, newest first
-		return await ctx.db.query("tasks").order("desc").take(limit);
+		const rows = await ctx.db.query("tasks").order("desc").take(limit);
+		return filterByOrgScope(rows, scope);
 	},
 });
 

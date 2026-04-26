@@ -848,7 +848,10 @@ describe("Tasks", () => {
 			title: "Deploy to prod",
 		});
 
-		const piTasks = await t.query(api.tasks.list, { assignedTo: "pi" });
+		// tasks.list is gated by withOrgScope — pass master identity (no org)
+		const piTasks = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { assignedTo: "pi" });
 		expect(piTasks).toHaveLength(2);
 		expect(piTasks.every((t) => t.assignedTo === "pi")).toBe(true);
 	});
@@ -961,9 +964,10 @@ describe("Missions", () => {
 			project: "perfect-ai-agent",
 		});
 
-		const vmMissions = await t.query(api.missions.list, {
-			project: "vantage-peers",
-		});
+		// missions.list is gated by withOrgScope — pass master identity (no org)
+		const vmMissions = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.missions.list, { project: "vantage-peers" });
 		expect(vmMissions).toHaveLength(2);
 		expect(vmMissions.every((m) => m.project === "vantage-peers")).toBe(true);
 	});

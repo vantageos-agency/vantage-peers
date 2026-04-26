@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getDashboardSummary — high-level operational stats for VantagePeers dashboard
@@ -48,11 +49,21 @@ export const getDashboardSummary = query({
 		),
 	}),
 	handler: async (ctx) => {
+		// ── Beta multi-tenant scope gate ─────────────────────────────────────
+		// Master scope (no org): full dashboard, all orchestrators.
+		// Client org: filtered to their allowedOrchestrators.
+		const scope = await withOrgScope(ctx);
+		// getDashboardSummary requires either master or aggregated stats scope.
+		if (!scope.isMaster) {
+			requireScope(scope, "view-stats-aggregated");
+		}
+
 		// Tasks in progress — uses index, bounded
-		const inProgressTasks = await ctx.db
+		const inProgressTasksAll = await ctx.db
 			.query("tasks")
 			.withIndex("by_status", (q) => q.eq("status", "in_progress"))
 			.take(500);
+		const inProgressTasks = filterByOrgScope(inProgressTasksAll, scope);
 
 		// Open mandates — filter in memory (small table)
 		const allMandates = await ctx.db.query("mandates").take(500);
@@ -67,7 +78,9 @@ export const getDashboardSummary = query({
 		const unreadMessages = allReceipts.filter((r) => r.readAt === undefined).length;
 
 		// Recent activity — fetch bounded slices of each entity
-		const recentTasks = await ctx.db.query("tasks").order("desc").take(20);
+		// Fetch more tasks before filtering so client-orgs still get 20 items.
+		const recentTasksAll = await ctx.db.query("tasks").order("desc").take(100);
+		const recentTasks = filterByOrgScope(recentTasksAll, scope).slice(0, 20);
 		const recentMessages = await ctx.db.query("messages").order("desc").take(20);
 		const recentMandates = await ctx.db.query("mandates").order("desc").take(20);
 
@@ -140,8 +153,16 @@ export const getProjectSummary = query({
 		}),
 	),
 	handler: async (ctx) => {
-		const tasks = await ctx.db.query("tasks").take(1000);
-		const missions = await ctx.db.query("missions").take(1000);
+		// ── Beta multi-tenant scope gate ─────────────────────────────────────
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			requireScope(scope, "view-stats-aggregated");
+		}
+
+		const allTasks = await ctx.db.query("tasks").take(1000);
+		const allMissions = await ctx.db.query("missions").take(1000);
+		const tasks = filterByOrgScope(allTasks, scope);
+		const missions = filterByOrgScope(allMissions, scope);
 
 		const projectNames = new Set<string>();
 		for (const t of tasks) {
