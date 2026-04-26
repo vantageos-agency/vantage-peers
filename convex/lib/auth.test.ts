@@ -61,14 +61,37 @@ async function seedOrgMapping(
 // helper functions (filterByOrgScope, requireScope) directly below.
 
 // =============================================================================
-// 1. No Clerk identity → throws Unauthorized
+// 1. No Clerk identity → master scope (MCP server / Convex CLI / internal callers)
 // =============================================================================
+//
+// MCP server callers authenticate via Convex deploy key (no Clerk JWT) and the
+// Convex CLI runs server-side without an identity. Both paths must retain full
+// Alpha behaviour (master scope, all data visible). Beta dashboard security is
+// preserved at the next branch (org mapping lookup) for Clerk-authenticated
+// callers — see test #3 (Forbidden when org missing) and #5 (inactive).
 
-describe("withOrgScope — no identity", () => {
-	test("tasks.list throws Unauthorized when no auth identity", async () => {
+describe("withOrgScope — no identity (MCP/CLI master)", () => {
+	test("tasks.list returns all tasks when no auth identity (MCP/CLI path)", async () => {
 		const t = createTestConvex();
-		// No .withIdentity() call → identity = null
-		await expect(t.query(api.tasks.list, {})).rejects.toThrow(/Unauthorized/);
+		// Seed two tasks assigned to different orchestrators
+		await t.mutation(api.tasks.create, {
+			title: "kappa task",
+			assignedTo: "kappa",
+			status: "todo",
+			priority: "medium",
+			createdBy: "kappa",
+		});
+		await t.mutation(api.tasks.create, {
+			title: "sigma task",
+			assignedTo: "sigma",
+			status: "todo",
+			priority: "medium",
+			createdBy: "sigma",
+		});
+
+		// No .withIdentity() call → identity = null → master scope
+		const result = await t.query(api.tasks.list, {});
+		expect(result).toHaveLength(2);
 	});
 });
 
