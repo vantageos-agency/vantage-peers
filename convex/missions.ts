@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
+import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -115,59 +116,69 @@ export const list = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// ── Beta multi-tenant scope gate ─────────────────────────────────────
+		const scope = await withOrgScope(ctx);
+		requireScope(scope, "view-own-missions");
+
 		const limit = args.limit ?? 50;
 
 		// Filter by project + status
 		if (args.project !== undefined && args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("missions")
 				.withIndex("by_project", (q) =>
 					q.eq("project", args.project!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by project only
 		if (args.project !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("missions")
 				.withIndex("by_project", (q) => q.eq("project", args.project!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by pilot + status
 		if (args.pilot !== undefined && args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("missions")
 				.withIndex("by_pilot", (q) =>
 					q.eq("pilot", args.pilot!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by pilot only
 		if (args.pilot !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("missions")
 				.withIndex("by_pilot", (q) => q.eq("pilot", args.pilot!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// Filter by status only
 		if (args.status !== undefined) {
-			return await ctx.db
+			const rows = await ctx.db
 				.query("missions")
 				.withIndex("by_status", (q) => q.eq("status", args.status!))
 				.order("desc")
 				.take(limit);
+			return filterByOrgScope(rows, scope);
 		}
 
 		// No filters — return all, newest first
-		return await ctx.db.query("missions").order("desc").take(limit);
+		const rows = await ctx.db.query("missions").order("desc").take(limit);
+		return filterByOrgScope(rows, scope);
 	},
 });
 

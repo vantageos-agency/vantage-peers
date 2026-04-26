@@ -8,7 +8,6 @@
  * @module
  */
 
-import type * as backfillRagMetadata from "../backfillRagMetadata.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as components_ from "../components.js";
@@ -39,6 +38,7 @@ import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
 import type * as recurringTasks from "../recurringTasks.js";
 import type * as search from "../search.js";
+import type * as stats from "../stats.js";
 import type * as tasks from "../tasks.js";
 
 import type {
@@ -48,7 +48,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  backfillRagMetadata: typeof backfillRagMetadata;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   components: typeof components_;
@@ -79,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   ragSync: typeof ragSync;
   recurringTasks: typeof recurringTasks;
   search: typeof search;
+  stats: typeof stats;
   tasks: typeof tasks;
 }>;
 
