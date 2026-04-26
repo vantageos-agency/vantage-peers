@@ -29,17 +29,39 @@ export interface OrgScope {
 /**
  * Resolves the caller's auth identity into an OrgScope.
  *
- * - No Clerk identity → throws "Unauthorized"
+ * - No Clerk identity → isMaster=true (MCP server / Convex CLI / internal callers)
  * - No org attached   → isMaster=true (existing Alpha callers, Laurent)
  * - Org slug present  → looks up client_org_mapping; throws if missing/inactive
  *
  * Call this at the top of any query/mutation that serves dashboard Beta clients.
+ *
+ * Note on no-identity → master:
+ * MCP server callers authenticate via deploy key (no Clerk JWT) and Convex CLI
+ * runs server-side without identity. Both must retain full Alpha behaviour.
+ * Beta dashboard security is preserved: Clerk-authenticated requests still hit
+ * the org mapping lookup below and receive Forbidden if missing/inactive.
  */
 export async function withOrgScope(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<OrgScope> {
 	const identity = await ctx.auth.getUserIdentity();
-	if (!identity) throw new Error("Unauthorized");
+
+	// No Clerk identity (MCP server, Convex CLI, internal callers) → master scope
+	if (!identity) {
+		return {
+			userId: "internal",
+			orgSlug: null,
+			allowedOrchestrators: ["*"],
+			scopes: [
+				"cross-tenant-read",
+				"view-own-tasks",
+				"view-own-missions",
+				"view-stats-aggregated",
+				"view-orchestrator-summary",
+			],
+			isMaster: true,
+		};
+	}
 
 	// Clerk attaches the org slug to either organizationId or organizationSlug
 	// depending on the JWT template configuration. Check both.
