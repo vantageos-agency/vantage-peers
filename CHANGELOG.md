@@ -1,5 +1,17 @@
 # Changelog
 
+## [v2.1.1] - 2026-05-04
+
+### Bug Fixes
+- Defense-in-depth memoryIdSchema for briefingNotes linkedMemoryIds (closes #386, #387)
+- Adds Zod regex validation at MCP boundary so wrong-table IDs get a clear error before reaching Convex validator
+- Applies to both create_briefing_note and update_briefing_note tools
+- 5 regression tests added in briefing-note-memory-id-validation.test.ts
+
+### Refs
+- Closes #386 (canonical), #387 (duplicate)
+- Pattern reuse: PR #328 mark_as_read fix (m97ewrrqczew67kc6at3a59e7985ea7h)
+
 ## [v2.1.0] - 2026-04-25
 
 ### Added

@@ -74,6 +74,13 @@ export const receiptIdSchema = z
 		"receiptId must be a 32-char lowercase alphanumeric Convex ID",
 	);
 
+export const memoryIdSchema = z
+	.string()
+	.regex(
+		convexIdPattern,
+		"Invalid memory ID format (expected 32-char Convex ID)",
+	);
+
 const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
 	.describe("Memory classification type");
@@ -132,10 +139,10 @@ export const updateBriefingNoteSchema = z.object({
 		.optional()
 		.describe("Optional new decisions array — full replace, not append"),
 	linkedMemoryIds: z
-		.array(z.string())
+		.array(memoryIdSchema)
 		.optional()
 		.describe(
-			"Optional new linkedMemoryIds array — full replace, not append. Each ID must point to memories table.",
+			"Optional new linkedMemoryIds array — full replace, not append. Each ID must point to memories table, NOT briefingNotes or any other table.",
 		),
 });
 
@@ -2083,7 +2090,8 @@ export function registerTools(
 	server.tool(
 		"create_briefing_note",
 		"Create a briefing note — a structured record of a topic discussion, with participants, " +
-			"content, optional decisions, and optional links to existing memories.",
+			"content, optional decisions, and optional links to existing memories. " +
+			"linkedMemoryIds MUST contain IDs from the memories table only — NOT briefingNotes IDs or IDs from any other table.",
 		{
 			title: z.string().describe("Briefing note title"),
 			topic: z
@@ -2096,9 +2104,12 @@ export function registerTools(
 			decisions: flexArrayOptional.describe(
 				"Decisions made during the briefing",
 			),
-			linkedMemoryIds: flexArrayOptional.describe(
-				"Convex document IDs of related memories",
-			),
+			linkedMemoryIds: z
+				.array(memoryIdSchema)
+				.optional()
+				.describe(
+					"Convex document IDs of related memories — each must be a 32-char ID from the memories table, NOT briefingNotes or any other table",
+				),
 			createdBy: creatorSchema,
 		},
 		async ({
@@ -2123,7 +2134,7 @@ export function registerTools(
 					participants: toArray(participants) as string[],
 					content,
 					decisions: toArray(decisions),
-					linkedMemoryIds: toArray(linkedMemoryIds) as any,
+					linkedMemoryIds: toArray(linkedMemoryIds) as string[],
 					createdBy,
 				});
 
