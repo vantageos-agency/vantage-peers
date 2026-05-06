@@ -749,6 +749,36 @@ export default defineSchema({
 		.index("by_hash", ["hash"])
 		.index("by_deployment", ["deployment"]),
 
+	// ── licenses ─────────────────────────────────────────────────────────────
+	// Open-core license registry. Raw license keys are NEVER stored — only the
+	// SHA-256 hex hash is persisted. The raw key is returned once on generate and
+	// is the customer's responsibility to store safely.
+	//
+	// Lifecycle: generated → activated (optional, sets activatedAt) → active until
+	// expiresAt, after which status moves to "expired" (handled by cron or on
+	// validate). Revocation sets status="revoked" immediately.
+	licenses: defineTable({
+		keyHash: v.string(), // sha256 hex of the raw license key
+		customerEmail: v.string(),
+		customerName: v.optional(v.string()),
+		productCode: v.string(), // e.g. "vantage-peers-self-host"
+		tier: v.string(), // e.g. "open-core-99-eur-yr"
+		purchasedAt: v.number(), // ms since epoch
+		activatedAt: v.optional(v.number()), // ms since epoch, set on first activation
+		expiresAt: v.number(), // purchasedAt + 365d (ms since epoch)
+		gumroadOrderId: v.optional(v.string()),
+		status: v.union(
+			v.literal("active"),
+			v.literal("revoked"),
+			v.literal("expired"),
+		),
+		githubRepos: v.optional(v.array(v.string())),
+		purchaseLocale: v.optional(v.union(v.literal("en"), v.literal("fr"))),
+	})
+		.index("by_keyHash", ["keyHash"])
+		.index("by_customerEmail", ["customerEmail"])
+		.index("by_gumroadOrderId", ["gumroadOrderId"]),
+
 	// ── client_org_mapping ───────────────────────────────────────────────────
 	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex
