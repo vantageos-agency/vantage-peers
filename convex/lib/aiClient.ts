@@ -15,6 +15,15 @@
 
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
+// Returns the correct embedding model name for the active path:
+//   AI_GATEWAY_API_KEY set → "openai/text-embedding-3-small" (Vercel Gateway prefix)
+//   AI_GATEWAY_API_KEY unset → "text-embedding-3-small" (bare OpenAI direct API name)
+export function getEmbeddingModelName(): string {
+	return process.env.AI_GATEWAY_API_KEY
+		? "openai/text-embedding-3-small"
+		: "text-embedding-3-small";
+}
+
 export function getAITextEmbeddingProvider(): ReturnType<
 	typeof createOpenAICompatible
 > {
