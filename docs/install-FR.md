@@ -101,8 +101,18 @@ npx convex env set BEARER_SECRET_MASTER "<votre-jeton-secret>"
 # Intégration GitHub — jeton d'accès personnel avec les scopes repo + read:org
 npx convex env set GITHUB_TOKEN "<votre-jeton-github>"
 
-# Embeddings — clé API compatible OpenAI pour text-embedding-3-small
-npx convex env set AI_GATEWAY_API_KEY "<votre-cle-api-openai>"
+# Embeddings — clé IA pour text-embedding-3-small (choisissez L'UNE des deux options ci-dessous)
+#
+# Option A (recommandée) — Vercel AI Gateway
+#   Nécessite un compte Vercel avec AI Gateway activé.
+npx convex env set AI_GATEWAY_API_KEY "<votre-cle-vercel-ai-gateway>"
+#
+# Option B — OpenAI direct (BYOK auto-hébergé, sans compte Vercel)
+#   Définissez cette variable à la place de AI_GATEWAY_API_KEY si vous n'utilisez pas Vercel.
+#   Le système utilise automatiquement api.openai.com lorsque seule cette clé est présente.
+npx convex env set OPENAI_API_KEY "<votre-cle-api-openai>"
+#
+# Remarque : si les deux clés sont définies, AI_GATEWAY_API_KEY est prioritaire.
 
 # Webhooks de licence Gumroad — secret fourni dans votre tableau de bord vendeur Gumroad
 npx convex env set GUMROAD_WEBHOOK_SECRET "<votre-secret-gumroad>"
@@ -112,7 +122,7 @@ npx convex env set GUMROAD_PRODUCT_ID_EN "<identifiant-produit-anglais>"
 npx convex env set GUMROAD_PRODUCT_ID_FR "<identifiant-produit-francais>"
 ```
 
-**Obligatoire vs. optionnel :** `BEARER_SECRET_MASTER` et `AI_GATEWAY_API_KEY` sont indispensables au fonctionnement du serveur MCP. Les variables Gumroad ne sont requises que si vous commercialisez ou validez des licences. `GITHUB_TOKEN` n'est nécessaire que si vous utilisez le suivi des issues GitHub ou les signatures d'orchestrateur.
+**Obligatoire vs. optionnel :** `BEARER_SECRET_MASTER` et l'une des variables `AI_GATEWAY_API_KEY` (passerelle Vercel) ou `OPENAI_API_KEY` (OpenAI direct) sont indispensables au fonctionnement du serveur MCP. Les variables Gumroad ne sont requises que si vous commercialisez ou validez des licences. `GITHUB_TOKEN` n'est nécessaire que si vous utilisez le suivi des issues GitHub ou les signatures d'orchestrateur.
 
 Pour vérifier que vos variables sont bien enregistrées, exécutez :
 
@@ -262,6 +272,24 @@ Pour enregistrer votre premier pair, appelez `mcp__vantage-peers__register_peer`
 ---
 
 ## 9. Résolution des problèmes courants
+
+### `recall` (ou tout outil basé sur les embeddings) retourne 500
+
+Le déploiement Convex ne peut pas atteindre un fournisseur d'embeddings IA car ni `AI_GATEWAY_API_KEY` ni `OPENAI_API_KEY` n'est défini.
+
+**Solution :** Définissez au moins l'une des deux clés dans votre déploiement Convex :
+
+```bash
+# Option A — Vercel AI Gateway (recommandé si vous avez un compte Vercel)
+npx convex env set AI_GATEWAY_API_KEY "<votre-cle-vercel-ai-gateway>"
+
+# Option B — OpenAI direct BYOK (sans compte Vercel)
+npx convex env set OPENAI_API_KEY "<votre-cle-api-openai>"
+```
+
+Ensuite, relancez `npx convex deploy --yes` pour pousser l'environnement mis à jour en production.
+
+---
 
 ### Erreur "Unauthorized" sur un appel MCP
 
