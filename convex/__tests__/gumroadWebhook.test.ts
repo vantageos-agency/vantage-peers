@@ -314,4 +314,171 @@ describe("handleGumroadWebhook", () => {
 
 		expect(rows).toHaveLength(1);
 	});
+
+	// ── Case 6 (M1): XSS in customerName → HTML-escaped in email body ────────────
+
+	test("6. customerName with XSS payload → HTML-escaped in email, raw tag not present", async () => {
+		const t = createTestConvex();
+
+		const xssName = "<script>alert('xss')</script>";
+		const body = buildGumroadBody({
+			product_id: PRODUCT_ID_EN,
+			sale_id: "sale_xss_001",
+			email: "xss@example.com",
+			full_name: xssName,
+		});
+		const signature = sign(body, WEBHOOK_SECRET);
+
+		// Capture the HTML body sent to Resend by inspecting the fetch mock
+		let capturedHtml = "";
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			async (_url, init?: RequestInit) => {
+				if (init?.body && typeof init.body === "string") {
+					const parsed = JSON.parse(init.body) as { html?: string };
+					capturedHtml = parsed.html ?? "";
+				}
+				return new Response(JSON.stringify({ id: "resend-xss-test" }), {
+					status: 200,
+				});
+			},
+		);
+		// Provide a dummy RESEND_API_KEY so the send path is triggered
+		process.env.RESEND_API_KEY = "re_test_key";
+
+		const result = await t.action(
+			internal.gumroadWebhook.handleGumroadWebhook,
+			{ body, signature },
+		);
+
+		expect(result.status).toBe(200);
+
+		// Raw <script> tag must NOT appear anywhere in the HTML output
+		expect(capturedHtml).not.toContain("<script>");
+		expect(capturedHtml).not.toContain("</script>");
+
+		// The escaped form must be present
+		expect(capturedHtml).toContain("&lt;script&gt;");
+		expect(capturedHtml).toContain("&lt;/script&gt;");
+
+		delete process.env.RESEND_API_KEY;
+	});
+
+	// ── Case 7 (M2): concurrent same gumroadOrderId → only 1 license row ─────────
+
+	test("7. two concurrent webhooks with same gumroadOrderId → exactly 1 license row (atomic findOrCreate)", async () => {
+		const t = createTestConvex();
+
+		const body = buildGumroadBody({
+			product_id: PRODUCT_ID_EN,
+			sale_id: "sale_concurrent_001",
+			email: "concurrent@example.com",
+			full_name: "Concurrent User",
+		});
+		const signature = sign(body, WEBHOOK_SECRET);
+
+		// Fire both concurrently — convex-test serialises mutations atomically
+		// so one will win the insert; the second will find the existing row.
+		const [r1, r2] = await Promise.all([
+			t.action(internal.gumroadWebhook.handleGumroadWebhook, {
+				body,
+				signature,
+			}),
+			t.action(internal.gumroadWebhook.handleGumroadWebhook, {
+				body,
+				signature,
+			}),
+		]);
+
+		expect(r1.status).toBe(200);
+		expect(r2.status).toBe(200);
+
+		const p1 = JSON.parse(r1.payload) as {
+			ok: boolean;
+			licenseId: string;
+			duplicate?: boolean;
+		};
+		const p2 = JSON.parse(r2.payload) as {
+			ok: boolean;
+			licenseId: string;
+			duplicate?: boolean;
+		};
+
+		// Both must succeed and return the same licenseId
+		expect(p1.ok).toBe(true);
+		expect(p2.ok).toBe(true);
+		expect(p1.licenseId).toBe(p2.licenseId);
+
+		// Exactly one row in the DB
+		const rows = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("licenses")
+				.withIndex("by_gumroadOrderId", (q) =>
+					q.eq("gumroadOrderId", "sale_concurrent_001"),
+				)
+				.collect();
+		});
+
+		expect(rows).toHaveLength(1);
+	});
+
+	// ── Case 8 (trial flow): pre-seeded trial → upgraded to active on purchase ──
+
+	test("8. trial license for email → webhook upgrades to active, keyHash unchanged, isUpgraded=true", async () => {
+		const t = createTestConvex();
+
+		const trialEmail = "cedric@example.com";
+
+		// Pre-seed a trial license for the same email
+		const trialId = await t.run(async (ctx) => {
+			return await ctx.db.insert("licenses", {
+				keyHash: "deadbeef-trial-hash",
+				customerEmail: trialEmail,
+				customerName: "Cédric Trial",
+				productCode: "vantage-peers-self-host",
+				tier: "open-core-trial",
+				purchasedAt: Date.now() - 7 * 24 * 60 * 60 * 1000, // 7 days ago
+				expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1000, // 14 days ahead
+				status: "trial",
+			});
+		});
+
+		const body = buildGumroadBody({
+			product_id: PRODUCT_ID_EN,
+			sale_id: "sale_trial_upgrade_001",
+			email: trialEmail,
+			full_name: "Cédric Trial",
+		});
+		const signature = sign(body, WEBHOOK_SECRET);
+
+		const result = await t.action(
+			internal.gumroadWebhook.handleGumroadWebhook,
+			{ body, signature },
+		);
+
+		expect(result.status).toBe(200);
+
+		const payload = JSON.parse(result.payload) as {
+			ok: boolean;
+			licenseId: string;
+			isUpgraded: boolean;
+			emailSent: boolean;
+		};
+		expect(payload.ok).toBe(true);
+		expect(payload.isUpgraded).toBe(true);
+		// The returned licenseId must be the original trial row's ID
+		expect(payload.licenseId).toBe(trialId);
+
+		// DB: only one row for this email, status=active, keyHash unchanged
+		const rows = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("licenses")
+				.withIndex("by_customerEmail", (q) => q.eq("customerEmail", trialEmail))
+				.collect();
+		});
+
+		expect(rows).toHaveLength(1);
+		expect(rows[0].status).toBe("active");
+		expect(rows[0].keyHash).toBe("deadbeef-trial-hash"); // unchanged
+		expect(rows[0].gumroadOrderId).toBe("sale_trial_upgrade_001"); // patched
+	});
 });

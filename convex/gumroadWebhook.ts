@@ -34,15 +34,25 @@ const DOC_URL_EN =
 const DOC_URL_FR =
 	"https://github.com/vantageos-agency/vantage-peers/blob/main/docs/install-FR.md";
 
-// TODO(pi/laurent): replace with Cédric's actual GitHub repos once known.
-// These can be populated via env vars or an admin tool.
-const PLACEHOLDER_REPOS = [
-	"https://github.com/placeholder/repo-1",
-	"https://github.com/placeholder/repo-2",
-	"https://github.com/placeholder/repo-3",
-	"https://github.com/placeholder/repo-4",
-	"https://github.com/placeholder/repo-5",
-];
+// GitHub repos for session 2. Read from CEDRIC_GITHUB_REPOS_CSV env var in prod
+// (comma-separated list of 5 GitHub URLs). Falls back to placeholder URLs for
+// first ship if the env var is not configured yet.
+function getGithubRepos(): [string, string, string, string, string] {
+	const csv = process.env.CEDRIC_GITHUB_REPOS_CSV;
+	if (csv) {
+		const parts = csv.split(",").map((s) => s.trim());
+		if (parts.length >= 5) {
+			return [parts[0], parts[1], parts[2], parts[3], parts[4]];
+		}
+	}
+	return [
+		"https://github.com/placeholder/repo-1",
+		"https://github.com/placeholder/repo-2",
+		"https://github.com/placeholder/repo-3",
+		"https://github.com/placeholder/repo-4",
+		"https://github.com/placeholder/repo-5",
+	];
+}
 
 const UNSUBSCRIBE_URL = "https://vantagepeers.com/unsubscribe";
 const PRIVACY_POLICY_URL = "https://vantagepeers.com/privacy";
@@ -443,14 +453,38 @@ const TEMPLATE_FR_HTML = `<!DOCTYPE html>
 </html>`;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Template substitution helper
+// Template substitution helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function fillTemplate(template: string, vars: Record<string, string>): string {
+/**
+ * Escape a string for safe interpolation into an HTML context.
+ * Applied to all attacker-controlled values (e.g. customerName from Gumroad)
+ * before substitution into HTML email templates. Not applied to plain-text
+ * templates (no parsing risk there).
+ */
+function escapeHtml(s: string): string {
+	return s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+/**
+ * Fill {{KEY}} placeholders in a template.
+ * When isHtml=true, all values are HTML-escaped before substitution to prevent
+ * injection from attacker-controlled fields (e.g. Gumroad full_name).
+ */
+function fillTemplate(
+	template: string,
+	vars: Record<string, string>,
+	isHtml: boolean,
+): string {
 	let result = template;
 	for (const [key, value] of Object.entries(vars)) {
-		// Replace all occurrences of {{KEY}}
-		result = result.split(`{{${key}}}`).join(value);
+		const safe = isHtml ? escapeHtml(value) : value;
+		result = result.split(`{{${key}}}`).join(safe);
 	}
 	return result;
 }
@@ -583,7 +617,7 @@ export const handleGumroadWebhook = internalAction({
 			};
 		}
 
-		const productId =
+		const incomingProductId =
 			params.get("product_id") ?? params.get("product_permalink") ?? "";
 		const gumroadOrderId =
 			params.get("sale_id") ?? params.get("order_id") ?? "";
@@ -599,17 +633,27 @@ export const handleGumroadWebhook = internalAction({
 		}
 
 		// ── 3. Whitelist product_id → derive locale ──────────────────────────────
-		const productIdEn = process.env.GUMROAD_PRODUCT_ID_EN ?? "";
-		const productIdFr = process.env.GUMROAD_PRODUCT_ID_FR ?? "";
+		const whitelistedEn = process.env.GUMROAD_PRODUCT_ID_EN;
+		const whitelistedFr = process.env.GUMROAD_PRODUCT_ID_FR;
+
+		if (!whitelistedEn || !whitelistedFr) {
+			console.error(
+				"[gumroad-webhook] GUMROAD_PRODUCT_ID_EN or GUMROAD_PRODUCT_ID_FR not configured — rejecting",
+			);
+			return {
+				status: 500,
+				payload: JSON.stringify({ error: "Server misconfiguration" }),
+			};
+		}
 
 		let purchaseLocale: "en" | "fr";
-		if (productId === productIdEn) {
+		if (incomingProductId === whitelistedEn) {
 			purchaseLocale = "en";
-		} else if (productId === productIdFr) {
+		} else if (incomingProductId === whitelistedFr) {
 			purchaseLocale = "fr";
 		} else {
 			console.error(
-				`[gumroad-webhook] Non-whitelisted product_id: "${productId}" — ALERT: possible misconfiguration or fraud`,
+				`[gumroad-webhook] Non-whitelisted product_id: "${incomingProductId}" — ALERT: possible misconfiguration or fraud`,
 			);
 			return {
 				status: 400,
@@ -617,57 +661,71 @@ export const handleGumroadWebhook = internalAction({
 			};
 		}
 
-		// ── 4. Idempotency: check if this order already has a license ─────────────
-		if (gumroadOrderId) {
-			const existing: {
-				licenseId: string;
-				customerEmail: string;
-				emailSent?: boolean;
-			} | null = await ctx.runMutation(internal.licenses.getByGumroadOrderId, {
-				gumroadOrderId,
-			});
-
-			if (existing !== null) {
-				console.log(
-					`[gumroad-webhook] Duplicate sale_id "${gumroadOrderId}" — returning existing license ${existing.licenseId}`,
-				);
-				return {
-					status: 200,
-					payload: JSON.stringify({
-						ok: true,
-						licenseId: existing.licenseId,
-						emailSent: existing.emailSent ?? false,
-						duplicate: true,
-					}),
-				};
-			}
+		// ── 4 + 5. Atomic findOrCreate (idempotency + trial upgrade + new insert) ──
+		// Single internalMutation to eliminate the race condition between a separate
+		// query and insert (M2 fix). Handles:
+		//   a) Duplicate gumroadOrderId → return existing (no new row)
+		//   b) Trial license for email → upgrade to active (keep keyHash)
+		//   c) Net-new → generate key + insert
+		if (!gumroadOrderId) {
+			return {
+				status: 400,
+				payload: JSON.stringify({ error: "Missing sale_id in payload" }),
+			};
 		}
 
-		// ── 5. Generate license (internal — no master token needed) ───────────────
-		let licenseKey: string;
-		let licenseId: string;
+		type FindOrCreateResult = {
+			licenseKey: string | null;
+			licenseId: string;
+			expiresAt: number;
+			isExisting: boolean;
+			isUpgraded: boolean;
+			customerEmail: string;
+			emailSent?: boolean;
+		};
+
+		let findOrCreateResult: FindOrCreateResult;
 		try {
-			const result: {
-				licenseKey: string;
-				licenseId: string;
-				expiresAt: number;
-			} = await ctx.runMutation(internal.licenses.generateInternal, {
-				customerEmail,
-				customerName: customerName ?? undefined,
-				productCode: "vantage-peers-self-host",
-				tier: "open-core-99-eur-yr",
-				purchaseLocale,
-				gumroadOrderId: gumroadOrderId || undefined,
-				expiresInDays: 365,
-			});
-			licenseKey = result.licenseKey;
-			licenseId = result.licenseId;
+			findOrCreateResult = (await ctx.runMutation(
+				internal.licenses.findOrCreateForGumroad,
+				{
+					customerEmail,
+					customerName,
+					productCode: "vantage-peers-self-host",
+					tier: "open-core-99-eur-yr",
+					purchaseLocale,
+					gumroadOrderId,
+					expiresInDays: 365,
+				},
+			)) as FindOrCreateResult;
 		} catch (err) {
-			console.error("[gumroad-webhook] License generation failed:", err);
+			console.error("[gumroad-webhook] findOrCreateForGumroad failed:", err);
 			return {
 				status: 500,
 				payload: JSON.stringify({
 					error: `License generation failed: ${err instanceof Error ? err.message : String(err)}`,
+				}),
+			};
+		}
+
+		const licenseId = findOrCreateResult.licenseId;
+		const licenseKey = findOrCreateResult.licenseKey;
+
+		// If this was a duplicate order (same gumroadOrderId seen before), return early.
+		if (findOrCreateResult.isExisting && !findOrCreateResult.isUpgraded) {
+			// Mask PII: log only first 3 chars + *** + domain
+			const emailParts = customerEmail.split("@");
+			const maskedEmail = `${emailParts[0].slice(0, 3)}***@${emailParts[1] ?? ""}`;
+			console.log(
+				`[gumroad-webhook] Duplicate sale_id "${gumroadOrderId}" for ${maskedEmail} — returning existing license ${licenseId}`,
+			);
+			return {
+				status: 200,
+				payload: JSON.stringify({
+					ok: true,
+					licenseId,
+					emailSent: findOrCreateResult.emailSent ?? false,
+					duplicate: true,
 				}),
 			};
 		}
@@ -680,18 +738,24 @@ export const handleGumroadWebhook = internalAction({
 			"https://calendar.app.google/PLACEHOLDER"; // Pi/Laurent: set CEDRIC_CALENDAR_URL in Convex dashboard
 
 		const displayName = customerName ?? customerEmail;
+		const repos = getGithubRepos();
+
+		// For trial→active upgrades, the customer keeps their existing key.
+		// We send the onboarding email regardless, but omit the license key block
+		// by using a placeholder note. For brand-new licenses, use the real key.
+		const licenseKeyDisplay = licenseKey ?? "(use your existing trial key)";
 
 		const templateVars: Record<string, string> = {
 			CUSTOMER_NAME: displayName,
-			LICENSE_KEY: licenseKey,
+			LICENSE_KEY: licenseKeyDisplay,
 			DOC_URL_EN,
 			DOC_URL_FR,
 			CALENDAR_URL: calendarUrl,
-			GITHUB_REPO_1: PLACEHOLDER_REPOS[0],
-			GITHUB_REPO_2: PLACEHOLDER_REPOS[1],
-			GITHUB_REPO_3: PLACEHOLDER_REPOS[2],
-			GITHUB_REPO_4: PLACEHOLDER_REPOS[3],
-			GITHUB_REPO_5: PLACEHOLDER_REPOS[4],
+			GITHUB_REPO_1: repos[0],
+			GITHUB_REPO_2: repos[1],
+			GITHUB_REPO_3: repos[2],
+			GITHUB_REPO_4: repos[3],
+			GITHUB_REPO_5: repos[4],
 			UNSUBSCRIBE_URL,
 			PRIVACY_POLICY_URL,
 			COMPANY_ADDRESS,
@@ -702,13 +766,17 @@ export const handleGumroadWebhook = internalAction({
 			? `Welcome to VantagePeers, ${displayName}`
 			: `Bienvenue chez VantagePeers, ${displayName}`;
 
+		// HTML template: escape all user-controlled substitution values (M1 fix).
+		// Plain-text template: no HTML parsing risk, no escaping needed.
 		const emailHtml = fillTemplate(
 			isEn ? TEMPLATE_EN_HTML : TEMPLATE_FR_HTML,
 			templateVars,
+			true, // isHtml — escape attacker-controlled fields
 		);
 		const emailText = fillTemplate(
 			isEn ? TEMPLATE_EN_TXT : TEMPLATE_FR_TXT,
 			templateVars,
+			false, // plain text — no escaping
 		);
 
 		const emailResult = await sendViaResend({
@@ -720,17 +788,17 @@ export const handleGumroadWebhook = internalAction({
 
 		// Flag email delivery on the license row regardless of outcome
 		await ctx.runMutation(internal.licenses.flagEmailSent, {
-			// licenseId is typed as Id<"licenses"> in the mutation; the string returned
-			// by generateInternal is that same branded type at runtime.
 			licenseId: licenseId as string & { __tableName: "licenses" },
 			emailSent: emailResult.ok,
 		});
 
 		if (!emailResult.ok) {
 			// Email failed → log error but DO NOT return 500 (license was generated).
-			// The emailSent=false flag on the license row enables a retry queue later.
+			// The emailSent=false flag on the license row enables an admin retry later.
+			const emailParts = customerEmail.split("@");
+			const maskedEmail = `${emailParts[0].slice(0, 3)}***@${emailParts[1] ?? ""}`;
 			console.error(
-				`[gumroad-webhook] Email send failed for ${customerEmail}: ${emailResult.error}. License ${licenseId} generated. Flag emailSent=false for retry.`,
+				`[gumroad-webhook] Email send failed for ${maskedEmail}: ${emailResult.error}. License ${licenseId} generated. emailSent=false set for retry.`,
 			);
 		}
 
@@ -740,6 +808,7 @@ export const handleGumroadWebhook = internalAction({
 				ok: true,
 				licenseId,
 				emailSent: emailResult.ok,
+				isUpgraded: findOrCreateResult.isUpgraded,
 			}),
 		};
 	},
