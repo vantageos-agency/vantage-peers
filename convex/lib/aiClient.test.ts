@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { getAITextEmbeddingProvider } from "./aiClient";
+import { getAITextEmbeddingProvider, getEmbeddingModelName } from "./aiClient";
 
 // Save original env before each test and restore after
 const ORIGINAL_ENV = { ...process.env };
@@ -56,5 +56,17 @@ describe("getAITextEmbeddingProvider", () => {
 		const provider = getAITextEmbeddingProvider();
 		expect(provider).toBeTruthy();
 		expect(typeof provider.textEmbeddingModel).toBe("function");
+	});
+});
+
+describe("getEmbeddingModelName", () => {
+	test("AI_GATEWAY_API_KEY set → returns prefixed model name for Vercel Gateway", () => {
+		process.env.AI_GATEWAY_API_KEY = "gw-key";
+		expect(getEmbeddingModelName()).toBe("openai/text-embedding-3-small");
+	});
+
+	test("AI_GATEWAY_API_KEY unset → returns bare model name for direct OpenAI", () => {
+		// AI_GATEWAY_API_KEY already cleared in beforeEach
+		expect(getEmbeddingModelName()).toBe("text-embedding-3-small");
 	});
 });
