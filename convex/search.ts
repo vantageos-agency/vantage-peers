@@ -3,7 +3,10 @@ import { RAG } from "@convex-dev/rag";
 import { v } from "convex/values";
 import { api, components } from "./_generated/api";
 import { action } from "./_generated/server";
-import { getAITextEmbeddingProvider } from "./lib/aiClient";
+import {
+	getAITextEmbeddingProvider,
+	getEmbeddingModelName,
+} from "./lib/aiClient";
 import { memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,9 +32,7 @@ import { memoryTypeValidator } from "./schema";
 const gateway = getAITextEmbeddingProvider();
 
 export const rag = new RAG(components.rag, {
-	textEmbeddingModel: gateway.textEmbeddingModel(
-		"openai/text-embedding-3-small",
-	),
+	textEmbeddingModel: gateway.textEmbeddingModel(getEmbeddingModelName()),
 	embeddingDimension: 1536,
 	filterNames: ["namespace", "type", "isLatest"],
 });
