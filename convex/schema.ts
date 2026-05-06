@@ -769,11 +769,27 @@ export default defineSchema({
 		gumroadOrderId: v.optional(v.string()),
 		status: v.union(
 			v.literal("active"),
+			v.literal("trial"),
 			v.literal("revoked"),
 			v.literal("expired"),
 		),
 		githubRepos: v.optional(v.array(v.string())),
 		purchaseLocale: v.optional(v.union(v.literal("en"), v.literal("fr"))),
+		// Onboarding email delivery tracking (set by gumroadWebhook handler)
+		emailSent: v.optional(v.boolean()),
+		// Customer segmentation — set at purchase time or enriched later.
+		// Unset = unknown / backwards-compat for rows created before W3.
+		customerType: v.optional(
+			v.union(
+				v.literal("early-dev-voie-3"),
+				v.literal("smb-voie-2"),
+				v.literal("pro-voie-3"),
+				v.literal("partner-reseller"),
+				v.literal("standard"),
+			),
+		),
+		// True if the customer has expressed interest in reselling VantagePeers.
+		resellerCandidate: v.optional(v.boolean()),
 	})
 		.index("by_keyHash", ["keyHash"])
 		.index("by_customerEmail", ["customerEmail"])
