@@ -774,6 +774,8 @@ export default defineSchema({
 		),
 		githubRepos: v.optional(v.array(v.string())),
 		purchaseLocale: v.optional(v.union(v.literal("en"), v.literal("fr"))),
+		// Onboarding email delivery tracking (set by gumroadWebhook handler)
+		emailSent: v.optional(v.boolean()),
 	})
 		.index("by_keyHash", ["keyHash"])
 		.index("by_customerEmail", ["customerEmail"])

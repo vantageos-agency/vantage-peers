@@ -12,7 +12,7 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crypto helpers (Convex V8 runtime — SubtleCrypto + getRandomValues available)
@@ -219,6 +219,105 @@ export const validate = query({
 			status: license.status,
 			expiresAt: license.expiresAt,
 			customerEmail: license.customerEmail,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateInternal — server-only: generate a license without master token
+// Called by gumroadWebhook action (which has already verified the Gumroad
+// HMAC signature before reaching this point).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const generateInternal = internalMutation({
+	args: {
+		customerEmail: v.string(),
+		customerName: v.optional(v.string()),
+		productCode: v.string(),
+		tier: v.string(),
+		purchaseLocale: v.optional(v.union(v.literal("en"), v.literal("fr"))),
+		githubRepos: v.optional(v.array(v.string())),
+		gumroadOrderId: v.optional(v.string()),
+		expiresInDays: v.optional(v.number()),
+	},
+	returns: v.object({
+		licenseKey: v.string(),
+		licenseId: v.id("licenses"),
+		expiresAt: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		const rawKey = generateRawKey();
+		const keyHash = await sha256Hex(rawKey);
+
+		const now = Date.now();
+		const expiresInDays = args.expiresInDays ?? 365;
+		const expiresAt = now + expiresInDays * 24 * 60 * 60 * 1000;
+
+		const licenseId = await ctx.db.insert("licenses", {
+			keyHash,
+			customerEmail: args.customerEmail,
+			customerName: args.customerName,
+			productCode: args.productCode,
+			tier: args.tier,
+			purchasedAt: now,
+			expiresAt,
+			gumroadOrderId: args.gumroadOrderId,
+			status: "active",
+			githubRepos: args.githubRepos,
+			purchaseLocale: args.purchaseLocale,
+		});
+
+		return { licenseKey: rawKey, licenseId, expiresAt };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// flagEmailSent — internal: mark email delivery status on a license row
+// Called by gumroadWebhook after attempting email send.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const flagEmailSent = internalMutation({
+	args: {
+		licenseId: v.id("licenses"),
+		emailSent: v.boolean(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await ctx.db.patch(args.licenseId, { emailSent: args.emailSent });
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getByGumroadOrderId — internal: idempotency check for webhook handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getByGumroadOrderId = internalMutation({
+	args: {
+		gumroadOrderId: v.string(),
+	},
+	returns: v.union(
+		v.object({
+			licenseId: v.id("licenses"),
+			customerEmail: v.string(),
+			emailSent: v.optional(v.boolean()),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("licenses")
+			.withIndex("by_gumroadOrderId", (q) =>
+				q.eq("gumroadOrderId", args.gumroadOrderId),
+			)
+			.unique();
+
+		if (!existing) return null;
+
+		return {
+			licenseId: existing._id,
+			customerEmail: existing.customerEmail,
+			emailSent: existing.emailSent,
 		};
 	},
 });

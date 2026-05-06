@@ -1,7 +1,7 @@
 import { httpRouter } from "convex/server";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
-import { api } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -468,6 +468,30 @@ http.route({
 		}
 
 		return new Response("OK", { status: 200 });
+	}),
+});
+
+// ── Gumroad webhook — VantagePeers self-host pack auto-delivery ───────────────
+// POST /api/gumroad-webhook
+// Gumroad sends application/x-www-form-urlencoded with X-Gumroad-Signature.
+// Delegates to an internal action (Node runtime) for HMAC verification,
+// license generation, and Resend email delivery.
+http.route({
+	path: "/api/gumroad-webhook",
+	method: "POST",
+	handler: httpAction(async (ctx, request) => {
+		const body = await request.text();
+		const signature = request.headers.get("X-Gumroad-Signature");
+
+		const result = await ctx.runAction(internal.gumroadWebhook.handleGumroadWebhook, {
+			body,
+			signature,
+		});
+
+		return new Response(result.payload, {
+			status: result.status,
+			headers: { "Content-Type": "application/json" },
+		});
 	}),
 });
 
