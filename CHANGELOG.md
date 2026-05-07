@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0] - 2026-05-07
+
+### Added
+- 4 fix-pattern MCP tools wrapping existing Convex backend functions:
+  - `create_fix_pattern` — create a new validated fix pattern in the KB
+  - `add_fix_attempt` — log a fix attempt against an existing pattern
+  - `validate_fix` — promote a candidate fix to validated status
+  - `link_issue_to_pattern` — link a GitHub issue to a fix pattern
+- Schema exports for testing: `creatorSchema`, `severitySchema`, `flexArray` are now exported from `tools.ts`
+- 41 new Zod input-validation unit tests (`mcp-server/src/__tests__/fix-pattern-tools-validation.test.ts`)
+
+### Why
+Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, Psi, Victor, Phi) can now capitalize learnings via MCP rather than shelling out to `npx convex run fixPatterns:*`. Powers the `/capitalize-fix` skill and the `inject-fix-patterns` hook.
+
 ## [v2.1.1] - 2026-05-04
 
 ### Bug Fixes
