@@ -6,13 +6,21 @@
  * serves them over Streamable HTTP for Claude web clients.
  *
  * Architecture:
- *   - One Railway instance, many tenants
- *   - Each request authenticated via bearer token → Convex mcpTenants lookup
- *   - Per-request ConvexHttpClient pointed at the tenant's own deployment
+ *   - One Railway instance, many tenants / OAuth clients
+ *   - Each /mcp request authenticated via bearer token → either:
+ *       · master bearer (admin shortcut, scopeProfile=master)
+ *       · OAuth access_token (scoped, persisted in oauth_access_tokens)
+ *       · legacy mcpTenants bearer (internal orchestrators on their own deployment)
+ *   - Per-request ConvexHttpClient pointed at the resolved deployment
  *   - Stateless mode: fresh McpServer + transport per request (no session state)
  *
+ * OAuth state (clients, codes, access/refresh tokens, scope profiles) is
+ * persisted in Convex (see convex/oauth.ts) — no more in-memory Maps.
+ *
  * ENV VARS (see README.md "HTTP deploy" section):
- *   CONVEX_URL_INTERNAL   — internal VantagePeers Convex URL (tenant auth)
+ *   CONVEX_URL_INTERNAL   — internal VantagePeers Convex URL
+ *   BEARER_SECRET_MASTER  — master admin token
+ *   PUBLIC_BASE_URL       — public URL of this server (for OAuth discovery)
  *   PORT                  — HTTP port (default 3000)
  *   NODE_ENV              — set to "production" on Railway
  */
@@ -21,8 +29,32 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { bearerAuthMiddleware } from "./src/auth.js";
+import { bearerAuthMiddleware, internalClient, masterOnlyMiddleware, sha256Base64Url, sha256Hex, } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ??
+    "https://vantage-peers-production.up.railway.app";
+const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
+const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600; // 30 days
+const AUTH_CODE_TTL_SECONDS = 600; // 10 minutes
+// Default profile for anonymous DCR (Claude.ai connector without pre-provisioning).
+// Deny-by-default; Pi must manually elevate a client post-registration via the
+// admin endpoints if they intend to grant real scopes.
+const DEFAULT_PUBLIC_DCR_PROFILE = "client-generic";
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function randomOpaqueToken() {
+    // 2× UUID → ~256 bits of entropy. Strip dashes for compactness.
+    return `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+}
+async function loadScopeProfile(profileId) {
+    return (await internalClient().query(
+    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+    "oauth:getScopeProfile", { profileId }));
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // App
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,27 +73,426 @@ app.use("*", cors({
     exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
 }));
 // ─────────────────────────────────────────────────────────────────────────────
+// OAuth 2.0 discovery (unauthenticated)
+// ─────────────────────────────────────────────────────────────────────────────
+// RFC 9728 — OAuth 2.0 Protected Resource Metadata
+app.get("/.well-known/oauth-protected-resource", (c) => c.json({
+    resource: `${PUBLIC_BASE_URL}/mcp`,
+    authorization_servers: [PUBLIC_BASE_URL],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["vantage:read", "vantage:write"],
+}));
+// RFC 8414 — OAuth 2.0 Authorization Server Metadata
+app.get("/.well-known/oauth-authorization-server", (c) => c.json({
+    issuer: PUBLIC_BASE_URL,
+    authorization_endpoint: `${PUBLIC_BASE_URL}/authorize`,
+    token_endpoint: `${PUBLIC_BASE_URL}/token`,
+    registration_endpoint: `${PUBLIC_BASE_URL}/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: [
+        "client_secret_post",
+        "client_secret_basic",
+        "none",
+    ],
+    scopes_supported: ["vantage:read", "vantage:write"],
+}));
+// ─────────────────────────────────────────────────────────────────────────────
+// RFC 7591 — Dynamic Client Registration
+// Anonymous registrations get DEFAULT_PUBLIC_DCR_PROFILE ("client-generic").
+// Pi must elevate the client via admin endpoint before real scopes are granted.
+// ─────────────────────────────────────────────────────────────────────────────
+app.post("/register", async (c) => {
+    let body = {};
+    try {
+        body = await c.req.json();
+    }
+    catch {
+        // allow empty body — Claude sometimes posts nothing
+    }
+    const redirectUris = Array.isArray(body.redirect_uris)
+        ? body.redirect_uris
+        : [];
+    const clientId = crypto.randomUUID();
+    const clientSecret = randomOpaqueToken();
+    const clientSecretHash = await sha256Hex(clientSecret);
+    const clientName = typeof body.client_name === "string" ? body.client_name : "anonymous-dcr";
+    // SECURITY: public DCR is ALWAYS bound to the deny-by-default profile. Do
+    // NOT read body.scope_profile here — an attacker could register with
+    // {"scope_profile": "master"} and chain through /authorize + /token to
+    // obtain master-level access. Non-default profiles are provisioned only
+    // via POST /admin/oauth/clients (master-token gated).
+    const scopeProfile = DEFAULT_PUBLIC_DCR_PROFILE;
+    try {
+        await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:registerPublicClient", {
+            clientId,
+            clientSecretHash,
+            name: clientName,
+            redirectUris,
+            scopeProfile,
+        });
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[oauth] /register failed:", message);
+        return c.json({ error: "server_error", error_description: "failed to persist client" }, 500);
+    }
+    return c.json({
+        client_id: clientId,
+        client_secret: clientSecret,
+        client_id_issued_at: Math.floor(Date.now() / 1000),
+        client_secret_expires_at: 0, // never expires
+        redirect_uris: redirectUris,
+        client_name: clientName,
+        token_endpoint_auth_method: "client_secret_post",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        scope: "vantage:read vantage:write",
+        scope_profile: scopeProfile,
+    }, 201);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /authorize — auto-approve, no user consent UI (MVP, scoped)
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/authorize", async (c) => {
+    const q = c.req.query();
+    const clientId = q.client_id;
+    const redirectUri = q.redirect_uri;
+    const codeChallenge = q.code_challenge;
+    const codeChallengeMethod = q.code_challenge_method ?? "S256";
+    const state = q.state;
+    const scope = q.scope ?? "vantage:read vantage:write";
+    const responseType = q.response_type;
+    if (!clientId || !redirectUri || !codeChallenge) {
+        return c.json({
+            error: "invalid_request",
+            error_description: "missing client_id, redirect_uri, or code_challenge",
+        }, 400);
+    }
+    if (responseType && responseType !== "code") {
+        return c.json({ error: "unsupported_response_type" }, 400);
+    }
+    if (codeChallengeMethod !== "S256") {
+        return c.json({ error: "invalid_request", error_description: "only S256 supported" }, 400);
+    }
+    // Verify the client exists and is not revoked
+    const client = (await internalClient().query(
+    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+    "oauth:getClientByClientId", { clientId }));
+    if (!client) {
+        return c.json({ error: "invalid_client", error_description: "unknown client_id" }, 400);
+    }
+    if (client.revokedAt !== undefined) {
+        return c.json({ error: "invalid_client", error_description: "client revoked" }, 400);
+    }
+    const masterTokenForAuthCode = process.env.BEARER_SECRET_MASTER;
+    if (!masterTokenForAuthCode) {
+        console.error("[oauth] BEARER_SECRET_MASTER not set — cannot mint authorization code");
+        return c.json({ error: "server_misconfigured" }, 500);
+    }
+    const code = randomOpaqueToken();
+    await internalClient().mutation(
+    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+    "oauth:createAuthorizationCode", {
+        callerToken: masterTokenForAuthCode,
+        code,
+        clientId,
+        redirectUri,
+        codeChallenge,
+        scope,
+        // userId defaults to the scope profile (1:1 with the client by default).
+        // When future multi-user consent UI ships, this resolves to the Clerk user.
+        userId: client.scopeProfile,
+        expiresAt: Date.now() + AUTH_CODE_TTL_SECONDS * 1000,
+    });
+    const redirect = new URL(redirectUri);
+    redirect.searchParams.set("code", code);
+    if (state)
+        redirect.searchParams.set("state", state);
+    return c.redirect(redirect.toString(), 302);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /token — authorization_code + refresh_token grants
+// ─────────────────────────────────────────────────────────────────────────────
+app.post("/token", async (c) => {
+    const contentType = c.req.header("Content-Type") ?? "";
+    let body = {};
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+        const text = await c.req.text();
+        body = Object.fromEntries(new URLSearchParams(text));
+    }
+    else {
+        try {
+            body = (await c.req.json());
+        }
+        catch {
+            return c.json({ error: "invalid_request", error_description: "unreadable body" }, 400);
+        }
+    }
+    const grantType = body.grant_type;
+    // ── authorization_code grant ────────────────────────────────────────────
+    if (grantType === "authorization_code") {
+        const { code, code_verifier: codeVerifier, redirect_uri: redirectUri, client_id: clientId, } = body;
+        if (!code || !codeVerifier) {
+            return c.json({
+                error: "invalid_request",
+                error_description: "missing code or code_verifier",
+            }, 400);
+        }
+        // Consume code (atomic: delete + return)
+        const record = (await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:consumeAuthorizationCode", { code }));
+        if (!record) {
+            return c.json({ error: "invalid_grant", error_description: "unknown code" }, 400);
+        }
+        if (Date.now() > record.expiresAt) {
+            return c.json({ error: "invalid_grant", error_description: "code expired" }, 400);
+        }
+        if (redirectUri && redirectUri !== record.redirectUri) {
+            return c.json({
+                error: "invalid_grant",
+                error_description: "redirect_uri mismatch",
+            }, 400);
+        }
+        if (clientId && clientId !== record.clientId) {
+            return c.json({ error: "invalid_grant", error_description: "client_id mismatch" }, 400);
+        }
+        // PKCE: base64url(SHA256(code_verifier)) === code_challenge
+        const challengeCheck = await sha256Base64Url(codeVerifier);
+        if (challengeCheck !== record.codeChallenge) {
+            return c.json({
+                error: "invalid_grant",
+                error_description: "PKCE verification failed",
+            }, 400);
+        }
+        // Resolve the client's scope profile (materialised into the token row)
+        const client = (await internalClient().query(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:getClientByClientId", { clientId: record.clientId }));
+        if (!client || client.revokedAt !== undefined) {
+            return c.json({ error: "invalid_client" }, 400);
+        }
+        const profile = await loadScopeProfile(client.scopeProfile);
+        if (!profile) {
+            console.error("[oauth] scope_profile not found during token issue:", client.scopeProfile);
+            return c.json({ error: "server_error" }, 500);
+        }
+        // Issue access_token + refresh_token
+        const masterTokenForIssue = process.env.BEARER_SECRET_MASTER;
+        if (!masterTokenForIssue) {
+            console.error("[oauth] BEARER_SECRET_MASTER not set — cannot mint tokens");
+            return c.json({ error: "server_misconfigured" }, 500);
+        }
+        const accessToken = randomOpaqueToken();
+        const refreshToken = randomOpaqueToken();
+        const accessTokenHash = await sha256Hex(accessToken);
+        const refreshTokenHash = await sha256Hex(refreshToken);
+        const now = Date.now();
+        await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:createAccessToken", {
+            callerToken: masterTokenForIssue,
+            tokenHash: accessTokenHash,
+            clientId: record.clientId,
+            userId: record.userId,
+            scopes: record.scope.split(/\s+/).filter(Boolean),
+            scopeProfile: profile.profileId,
+            fromAllowList: profile.fromAllowList,
+            namespaceReadPrefixes: profile.namespaceReadPrefixes,
+            namespaceWritePrefixes: profile.namespaceWritePrefixes,
+            expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
+            refreshTokenHash,
+        });
+        await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:createRefreshToken", {
+            callerToken: masterTokenForIssue,
+            tokenHash: refreshTokenHash,
+            clientId: record.clientId,
+            userId: record.userId,
+            scopeProfile: profile.profileId,
+            expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
+        });
+        return c.json({
+            access_token: accessToken,
+            token_type: "Bearer",
+            expires_in: ACCESS_TOKEN_TTL_SECONDS,
+            refresh_token: refreshToken,
+            scope: record.scope,
+        });
+    }
+    // ── refresh_token grant ─────────────────────────────────────────────────
+    if (grantType === "refresh_token") {
+        const refreshTokenRaw = body.refresh_token;
+        if (!refreshTokenRaw) {
+            return c.json({ error: "invalid_request" }, 400);
+        }
+        const refreshTokenHash = await sha256Hex(refreshTokenRaw);
+        const record = (await internalClient().query(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:getRefreshTokenByHash", { tokenHash: refreshTokenHash }));
+        if (!record) {
+            return c.json({ error: "invalid_grant" }, 400);
+        }
+        const profile = await loadScopeProfile(record.scopeProfile);
+        if (!profile) {
+            return c.json({ error: "server_error" }, 500);
+        }
+        const masterTokenForRefresh = process.env.BEARER_SECRET_MASTER;
+        if (!masterTokenForRefresh) {
+            console.error("[oauth] BEARER_SECRET_MASTER not set — cannot refresh token");
+            return c.json({ error: "server_misconfigured" }, 500);
+        }
+        const accessToken = randomOpaqueToken();
+        const accessTokenHash = await sha256Hex(accessToken);
+        const now = Date.now();
+        await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:createAccessToken", {
+            callerToken: masterTokenForRefresh,
+            tokenHash: accessTokenHash,
+            clientId: record.clientId,
+            userId: record.userId,
+            scopes: ["vantage:read", "vantage:write"],
+            scopeProfile: profile.profileId,
+            fromAllowList: profile.fromAllowList,
+            namespaceReadPrefixes: profile.namespaceReadPrefixes,
+            namespaceWritePrefixes: profile.namespaceWritePrefixes,
+            expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
+            refreshTokenHash,
+        });
+        return c.json({
+            access_token: accessToken,
+            token_type: "Bearer",
+            expires_in: ACCESS_TOKEN_TTL_SECONDS,
+            refresh_token: refreshTokenRaw, // reused
+            scope: "vantage:read vantage:write",
+        });
+    }
+    return c.json({ error: "unsupported_grant_type" }, 400);
+});
+// ─────────────────────────────────────────────────────────────────────────────
 // Health check — unauthenticated, used by Railway health probes
 // ─────────────────────────────────────────────────────────────────────────────
 app.get("/health", (c) => c.json({
     status: "ok",
     service: "vantage-peers-mcp-http",
-    version: "2.0.0",
+    version: "2.1.0",
     transport: "streamable-http",
+    oauth: "scoped-tokens",
 }));
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin endpoints — master token only
+// Used by Pi to provision OAuth clients for external users (Marie, VIP).
+// ─────────────────────────────────────────────────────────────────────────────
+const admin = new Hono();
+admin.use("*", masterOnlyMiddleware());
+// POST /admin/oauth/clients  — create client, returns raw secret ONCE
+admin.post("/oauth/clients", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken) {
+        return c.json({ error: "server_misconfigured" }, 500);
+    }
+    let body = {};
+    try {
+        body = await c.req.json();
+    }
+    catch {
+        return c.json({ error: "invalid_request" }, 400);
+    }
+    const name = typeof body.name === "string" ? body.name : null;
+    const scopeProfile = typeof body.scope_profile === "string" ? body.scope_profile : null;
+    const redirectUris = Array.isArray(body.redirect_uris)
+        ? body.redirect_uris
+        : [];
+    if (!name || !scopeProfile) {
+        return c.json({
+            error: "invalid_request",
+            error_description: "name and scope_profile are required",
+        }, 400);
+    }
+    const profile = await loadScopeProfile(scopeProfile);
+    if (!profile) {
+        return c.json({ error: "invalid_scope_profile", scopeProfile }, 400);
+    }
+    const clientId = crypto.randomUUID();
+    const clientSecret = randomOpaqueToken();
+    const clientSecretHash = await sha256Hex(clientSecret);
+    try {
+        await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:createClient", {
+            callerToken: masterToken,
+            clientId,
+            clientSecretHash,
+            name,
+            redirectUris,
+            scopeProfile,
+        });
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[admin] createClient failed:", message);
+        return c.json({ error: "server_error", detail: message }, 500);
+    }
+    return c.json({
+        client_id: clientId,
+        client_secret: clientSecret, // RAW — returned once, never again
+        name,
+        scope_profile: scopeProfile,
+        redirect_uris: redirectUris,
+    }, 201);
+});
+// GET /admin/oauth/clients  — list (no secrets)
+admin.get("/oauth/clients", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    const rows = await internalClient().query(
+    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+    "oauth:listClients", { callerToken: masterToken });
+    return c.json({ clients: rows });
+});
+// DELETE /admin/oauth/clients/:clientId  — revoke client + all its tokens
+admin.delete("/oauth/clients/:clientId", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    const clientId = c.req.param("clientId");
+    const result = await internalClient().mutation(
+    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+    "oauth:deleteClient", { callerToken: masterToken, clientId });
+    return c.json(result);
+});
+// POST /admin/oauth/seed-profiles — idempotent; safe to re-run after deploy
+admin.post("/oauth/seed-profiles", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    const created = await internalClient().mutation(
+    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+    "oauth:seedDefaultProfiles", { callerToken: masterToken });
+    return c.json({ created });
+});
+app.route("/admin", admin);
 // ─────────────────────────────────────────────────────────────────────────────
 // MCP endpoint — authenticated, stateless per-request server
 // ─────────────────────────────────────────────────────────────────────────────
 app.all("/mcp", bearerAuthMiddleware(), async (c) => {
     const tenant = c.get("tenant");
-    // Per-request Convex client bound to the tenant's own deployment
+    const oauthCtx = c.get("oauthContext");
+    // Per-request Convex client bound to the resolved deployment
     const convex = new ConvexHttpClient(tenant.convexUrl);
     // Fresh McpServer per request — stateless mode, no session leakage
     const server = new McpServer({
         name: "vantage-peers",
-        version: "2.0.0",
+        version: "2.1.0",
     });
-    registerTools(server, convex);
+    registerTools(server, convex, oauthCtx);
     const transport = new WebStandardStreamableHTTPServerTransport();
     await server.connect(transport);
     return transport.handleRequest(c.req.raw);
