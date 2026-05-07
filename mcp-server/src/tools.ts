@@ -85,18 +85,18 @@ const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
 	.describe("Memory classification type");
 
-const creatorSchema = z
+export const creatorSchema = z
 	.string()
 	.describe(
 		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
-const severitySchema = z
+export const severitySchema = z
 	.enum(["critical", "major", "minor"])
 	.describe("Episode severity — critical = cross-orchestrator lesson");
 
-const flexArray = z.union([z.array(z.string()), z.string()]);
+export const flexArray = z.union([z.array(z.string()), z.string()]);
 const flexArrayOptional = flexArray.optional();
 
 // ─────────────────────────────────────────────────────────────────────────────

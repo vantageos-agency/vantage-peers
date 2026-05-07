@@ -50,11 +50,11 @@ const memoryTypeSchema = z
     .enum(["user", "feedback", "project", "reference", "episode"])
     .describe("Memory classification type");
 // Open string — validated at runtime by the backend (issue #132).
-// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, system.
+// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, system.
 // New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.
 const creatorSchema = z
     .string()
-    .describe("Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+    .describe("Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
     "New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.");
 const severitySchema = z
     .enum(["critical", "major", "minor"])
@@ -474,7 +474,7 @@ server.tool("list_memories", "List active memories for a namespace, ordered newe
 server.tool("send_message", "Send a message to one, many, or all orchestrators. " +
     "channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
     "Creates message + one receipt per recipient. Replaces claude-peers send_message.", {
-    from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)"),
+    from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
     fromInstanceId: z
         .string()
         .optional()
@@ -521,7 +521,7 @@ server.tool("send_message", "Send a message to one, many, or all orchestrators. 
 server.tool("check_messages", "Check for unread messages. Returns messages with receiptIds for marking as read. " +
     "If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
     "Replaces claude-peers check_messages.", {
-    recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, alpha, lambda, victor, or any custom role)"),
+    recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
     recipientInstanceId: z
         .string()
         .optional()
@@ -752,7 +752,7 @@ server.tool("list_broadcast_status", "Show who read a broadcast message and who 
 // Open string — validated at runtime by the backend (issue #132).
 const assigneeSchema = z
     .string()
-    .describe("Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+    .describe("Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
     "New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.");
 const prioritySchema = z
     .enum(["urgent", "high", "medium", "low"])
@@ -1446,6 +1446,60 @@ server.tool("create_briefing_note", "Create a briefing note — a structured rec
                 {
                     type: "text",
                     text: JSON.stringify({ noteId, title, topic, createdBy }, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: update_briefing_note
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("update_briefing_note", "Update an existing briefing note. Partial-update — only provided fields are patched. " +
+    "Arrays (decisions, linkedMemoryIds, participants) are FULL REPLACE, not append. " +
+    "RBAC : caller must be createdBy or 'system'. " +
+    "Sets updatedAt + updatedBy automatically.", {
+    noteId: z
+        .string()
+        .describe("Convex document ID of the briefing note to update"),
+    callerOrchestrator: creatorSchema.describe("Orchestrator role making the update — must match createdBy or be 'system' (RBAC deny-by-default)"),
+    title: z.string().optional().describe("Optional new title — full replace"),
+    topic: z.string().optional().describe("Optional new topic — full replace"),
+    participants: z
+        .array(z.string())
+        .optional()
+        .describe("Optional new participants array — full replace, not append"),
+    content: z
+        .string()
+        .optional()
+        .describe("Optional new content — full replace"),
+    decisions: z
+        .array(z.string())
+        .optional()
+        .describe("Optional new decisions array — full replace, not append"),
+    linkedMemoryIds: z
+        .array(z.string())
+        .optional()
+        .describe("Optional new linkedMemoryIds array — full replace, not append. Each ID must point to memories table."),
+}, async ({ noteId, callerOrchestrator, title, topic, participants, content, decisions, linkedMemoryIds, }) => {
+    try {
+        await convex.mutation("briefingNotes:update", {
+            noteId: noteId,
+            callerOrchestrator,
+            title,
+            topic,
+            participants,
+            content,
+            decisions,
+            linkedMemoryIds: linkedMemoryIds,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ noteId, updated: true }, null, 2),
                 },
             ],
         };
