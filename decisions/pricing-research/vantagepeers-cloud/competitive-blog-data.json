@@ -1,0 +1,926 @@
+{
+  "meta": {
+    "mission": "D62-Sigma-Pricing-Research-VP-Cloud",
+    "phase": "B2",
+    "lastScraped": "2026-05-07",
+    "analyst": "Sigma — VantageOS Team Infra",
+    "vantagePeersProduct": "VantagePeers Cloud",
+    "vantagePeersTiers": [
+      {
+        "name": "Solo",
+        "priceAnnual": 49,
+        "currency": "EUR",
+        "seats": 1,
+        "launchPrice": true,
+        "lifetime": { "price": 99, "currency": "EUR", "cap": 100 }
+      },
+      {
+        "name": "Team",
+        "priceAnnual": 290,
+        "currency": "EUR",
+        "seats": 5,
+        "launchPrice": true,
+        "lifetime": { "price": 590, "currency": "EUR", "cap": 25 }
+      },
+      {
+        "name": "Enterprise",
+        "priceAnnual": null,
+        "contactSales": true,
+        "currency": "EUR"
+      }
+    ]
+  },
+  "competitors": [
+    {
+      "name": "mem0",
+      "url": "https://mem0.ai",
+      "pricingUrl": "https://mem0.ai/pricing",
+      "lastScraped": "2026-05-07",
+      "tagline": "AI memory that persists across sessions and agents",
+      "category": "managed memory API",
+      "architecture": "Vector database + Knowledge Graph (graph gated at Pro tier)",
+      "backing": "Y Combinator, $24M Series A",
+      "tiers": [
+        {
+          "name": "Hobby",
+          "price": 0,
+          "currency": "USD",
+          "period": "monthly",
+          "addRequestsPerMonth": 10000,
+          "retrievalRequestsPerMonth": 1000,
+          "endUsers": "unlimited",
+          "support": "community",
+          "knowledgeGraph": false
+        },
+        {
+          "name": "Starter",
+          "price": 19,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 228,
+          "annualEquivEUR": 210,
+          "addRequestsPerMonth": 50000,
+          "retrievalRequestsPerMonth": 5000,
+          "endUsers": "unlimited",
+          "support": "community",
+          "knowledgeGraph": false
+        },
+        {
+          "name": "Pro",
+          "price": 249,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 2988,
+          "annualEquivEUR": 2749,
+          "addRequestsPerMonth": 500000,
+          "retrievalRequestsPerMonth": 50000,
+          "endUsers": "unlimited",
+          "support": "private Slack",
+          "knowledgeGraph": true,
+          "advancedAnalytics": true,
+          "multiProject": true
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "currency": "USD",
+          "period": "custom",
+          "contactSales": true,
+          "addRequestsPerMonth": "unlimited",
+          "retrievalRequestsPerMonth": "unlimited",
+          "onPrem": true,
+          "sso": true,
+          "auditLogs": true,
+          "sla": true
+        }
+      ],
+      "freeTier": {
+        "exists": true,
+        "perpetual": true,
+        "limits": "10K add requests/mo, 1K retrieval/mo",
+        "creditCardRequired": false,
+        "claudeCodePlugin": true,
+        "conversionPath": "Starter $19/mo on volume exhaustion"
+      },
+      "annualBilling": false,
+      "mcpSupport": true,
+      "selfHostable": true,
+      "openMemoryMCP": "Free local self-hosted MCP memory server (competing with VantagePeers Self-Hosted)",
+      "compliance": ["SOC 2", "HIPAA"],
+      "dataResidency": "Not specified — US-primary assumed",
+      "uniqueAdvantages": [
+        "Largest GitHub community (~48K stars) in agent memory space",
+        "Y Combinator backed with $24M Series A",
+        "80% prompt token reduction through compression",
+        "OpenMemory MCP: free local self-hosted alternative to cloud",
+        "Startup program: 3 months Pro free for <$5M-funded startups"
+      ],
+      "uniqueGaps": [
+        "Knowledge graph locked behind $249/mo Pro tier",
+        "No annual billing — monthly-only creates cost unpredictability",
+        "No temporal fact invalidation (Zep differentiates here)",
+        "No EUR-primary pricing or EU data residency guarantee",
+        "Usage-based pricing (requests/mo) creates bill anxiety for unpredictable workloads"
+      ],
+      "vantagePeersDifferentiators": [
+        "MCP-native protocol (mem0 has MCP server but is not MCP-first)",
+        "Annual flat pricing €49/yr vs $228/yr ($19/mo) — 79% cheaper for same user persona",
+        "EUR-primary pricing for European buyers",
+        "No usage quotas — flat access model",
+        "Zero-ops cloud with no infrastructure decisions"
+      ],
+      "blogAngles": [
+        "mem0 vs VantagePeers: pricing per add request vs flat annual — which is cheaper for solo devs?",
+        "mem0 knowledge graph costs $249/mo — VantagePeers includes memory management at €49/yr",
+        "MCP-native vs SDK wrapper: why architecture matters for Claude Code workflows",
+        "OpenMemory MCP (mem0 self-hosted) vs VantagePeers Self-Hosted — which is easier to run?",
+        "mem0 $2,988/year Pro vs VantagePeers €49/year — the 60× price gap explained"
+      ],
+      "sourceUrls": [
+        "https://mem0.ai/pricing",
+        "https://mem0.ai",
+        "https://mem0.ai/blog/introducing-openmemory-mcp",
+        "https://vectorize.io/articles/mem0-vs-zep",
+        "https://dev.to/anajuliabit/mem0-vs-zep-vs-langmem-vs-memoclaw-ai-agent-memory-comparison-2026-1l1k"
+      ]
+    },
+    {
+      "name": "Zep",
+      "url": "https://www.getzep.com",
+      "pricingUrl": "https://www.getzep.com/pricing/",
+      "lastScraped": "2026-05-07",
+      "tagline": "Agents fail without the right context. Getting it right is hard. We fixed it.",
+      "category": "context engineering & agent memory platform",
+      "architecture": "Temporal knowledge graph (Graphiti engine) — GraphRAG with fact invalidation",
+      "benchmark": "63.8% LongMemEval accuracy (GPT-4o) vs mem0 49.0%",
+      "tiers": [
+        {
+          "name": "Free",
+          "price": 0,
+          "currency": "USD",
+          "period": "monthly",
+          "creditsPerMonth": 1000,
+          "creditRollover": false,
+          "projects": 2,
+          "customEntityTypes": 5,
+          "rateLimits": "variable (low priority)",
+          "support": "community"
+        },
+        {
+          "name": "Flex",
+          "price": 125,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 1500,
+          "annualEquivEUR": 1380,
+          "creditsPerMonth": 50000,
+          "overageRate": "$25 per 10,000 credits",
+          "rateLimit": "600 req/min",
+          "projects": 5,
+          "customEntityTypes": 10,
+          "apiLogsRetention": "1 day",
+          "autoTopup": true,
+          "creditRolloverDays": 30
+        },
+        {
+          "name": "Flex Plus",
+          "price": 375,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 4500,
+          "annualEquivEUR": 4140,
+          "creditsPerMonth": 200000,
+          "overageRate": "$75 per 40,000 credits",
+          "rateLimit": "1,000 req/min",
+          "projects": 10,
+          "customEntityTypes": 20,
+          "customExtractionInstructions": true,
+          "webhooks": true,
+          "analytics": true,
+          "apiLogsRetention": "7 days",
+          "creditRolloverDays": 60
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "currency": "USD",
+          "period": "custom",
+          "contactSales": true,
+          "creditsPerMonth": "custom",
+          "projects": "unlimited",
+          "customEntityTypes": "unlimited",
+          "soc2": true,
+          "hipaaBAA": true,
+          "deploymentOptions": ["Managed", "BYOK", "BYOM", "BYOC"],
+          "auditLogs": "30+ days",
+          "guaranteedSLA": true
+        }
+      ],
+      "freeTier": {
+        "exists": true,
+        "perpetual": true,
+        "limits": "1,000 credits/month — very limited",
+        "creditCardRequired": false,
+        "creditModel": "Episodes ≤350 bytes = 1 credit; each +350 bytes = +1 credit; webhooks = 0.125 credits",
+        "conversionPath": "Flex $125/mo after credit exhaustion"
+      },
+      "annualBilling": false,
+      "mcpSupport": true,
+      "selfHostable": "Graphiti OSS only (Zep CE deprecated — cloud forced)",
+      "compliance": ["SOC 2 Type II", "HIPAA BAA (Enterprise)"],
+      "dataResidency": "Enterprise BYOC supports custom cloud/region",
+      "uniqueAdvantages": [
+        "Best-in-class LongMemEval benchmark accuracy (63.8%)",
+        "Temporal knowledge graph with fact validity windows (unique in class)",
+        "Full feature access at all paid tiers — no feature gating below Enterprise",
+        "Framework agnostic — works with any agent framework",
+        "Sub-200ms P95 retrieval latency"
+      ],
+      "uniqueGaps": [
+        "Most expensive entry point: Flex $125/mo = $1,500/year",
+        "Deprecated self-hosted CE — community backlash, forced cloud adoption",
+        "Credit system complexity makes cost prediction difficult",
+        "No annual billing discount",
+        "No EUR pricing or EU-primary data residency marketing",
+        "Free tier (1K credits) is functionally insufficient for real workloads"
+      ],
+      "vantagePeersDifferentiators": [
+        "€49/year vs $1,500/year Flex — 97% cheaper for solo dev use case",
+        "Annual flat pricing vs complex credit model",
+        "MCP-native vs API-first with MCP server addon",
+        "EUR-primary for European buyers",
+        "Self-Hosted free tier with no cloud lock-in vs Zep deprecated self-host"
+      ],
+      "blogAngles": [
+        "Zep $1,500/year vs VantagePeers €49/year — what you get at each price point",
+        "Zep deprecated self-hosted CE: why lock-in matters for developer trust",
+        "Credit-based vs flat pricing: predicting your AI memory bill in 2026",
+        "Temporal knowledge graphs: when you need Zep's power vs when VantagePeers is enough",
+        "Context engineering platforms in 2026: complexity vs simplicity tradeoffs"
+      ],
+      "sourceUrls": [
+        "https://www.getzep.com/pricing/",
+        "https://www.getzep.com",
+        "https://vectorize.io/articles/mem0-vs-zep",
+        "https://atlan.com/know/zep-vs-mem0/"
+      ]
+    },
+    {
+      "name": "supermemory.ai",
+      "url": "https://supermemory.ai",
+      "pricingUrl": "https://supermemory.ai/pricing/",
+      "lastScraped": "2026-05-07",
+      "tagline": "The memory layer for AI agents",
+      "category": "managed memory API + MCP server + developer plugins",
+      "architecture": "Memory graph with custom vector engine + hybrid retrieval (vector + BM25, sub-300ms)",
+      "tiers": [
+        {
+          "name": "FREE",
+          "price": 0,
+          "currency": "USD",
+          "period": "monthly",
+          "tokensPerMonth": 1000000,
+          "searchQueriesPerMonth": 10000,
+          "storage": "unlimited",
+          "users": "unlimited",
+          "multiModalExtraction": true,
+          "claudeCodePlugin": false,
+          "plugins": ["Codex"]
+        },
+        {
+          "name": "PRO",
+          "price": 19,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 228,
+          "annualEquivEUR": 210,
+          "tokensPerMonth": 3000000,
+          "searchQueriesPerMonth": 100000,
+          "storage": "unlimited",
+          "users": "unlimited",
+          "multiModalExtraction": true,
+          "claudeCodePlugin": true,
+          "overageTokens": "$0.01 per 1,000 tokens",
+          "overageQueries": "$0.10 per 1,000 queries",
+          "plugins": ["Claude Code", "Cursor", "OpenCode", "OpenClaw", "Codex"],
+          "support": "priority"
+        },
+        {
+          "name": "SCALE",
+          "price": 399,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 4788,
+          "annualEquivEUR": 4405,
+          "tokensPerMonth": 80000000,
+          "searchQueriesPerMonth": 20000000,
+          "storage": "unlimited",
+          "users": "unlimited",
+          "multiModalExtraction": true,
+          "claudeCodePlugin": true,
+          "connectors": ["Gmail", "S3", "Web Crawler"],
+          "support": "dedicated"
+        },
+        {
+          "name": "ENTERPRISE",
+          "price": null,
+          "currency": "USD",
+          "period": "custom",
+          "contactSales": true,
+          "tokens": "unlimited",
+          "queries": "unlimited",
+          "forwardDeployedEngineer": true,
+          "customIntegrations": true,
+          "sso": true
+        }
+      ],
+      "freeTier": {
+        "exists": true,
+        "perpetual": true,
+        "limits": "1M tokens/mo, 10K queries/mo, unlimited storage/users",
+        "creditCardRequired": false,
+        "claudeCodePluginIncluded": false,
+        "note": "Claude Code plugin locked behind Pro $19/mo — key friction for target persona",
+        "conversionPath": "Pro $19/mo to unlock Claude Code + Cursor plugins"
+      },
+      "annualBilling": false,
+      "mcpSupport": true,
+      "selfHostable": false,
+      "compliance": ["GDPR (policy)", "CCPA"],
+      "dataResidency": "Not specified — no EU-only hosting option confirmed",
+      "uniqueAdvantages": [
+        "Explicit Claude Code + Cursor MCP plugin at Pro tier",
+        "Generous free tier (1M tokens/mo) with no seat cap",
+        "Multi-modal extraction (PDFs, images, audio) at all tiers",
+        "Sub-300ms hybrid retrieval (vector + BM25)",
+        "Startup program: $1,000 credits / 6 months with dedicated support"
+      ],
+      "uniqueGaps": [
+        "Claude Code plugin gated behind $19/mo (not free)",
+        "No annual billing option",
+        "No EU data residency guarantee",
+        "No temporal fact modeling",
+        "Usage-based overage creates unpredictable bills"
+      ],
+      "vantagePeersDifferentiators": [
+        "€49/year vs $228/year ($19/mo Pro) — 79% cheaper annually",
+        "MCP-native protocol vs MCP server add-on",
+        "EUR-primary + EU-first trust signal",
+        "Annual flat pricing — no overage risk",
+        "Claude Code support included at no additional fee (not gated behind paid tier)"
+      ],
+      "blogAngles": [
+        "supermemory.ai vs VantagePeers: $228/year vs €49/year for Claude Code memory",
+        "Why gating the Claude Code plugin behind a paid tier is a mistake (and what VantagePeers does differently)",
+        "MCP memory for Claude Code: supermemory.ai vs VantagePeers Cloud feature comparison",
+        "Annual flat vs monthly overage: which memory pricing model survives agent scale?",
+        "EU devs using AI tools: why EUR pricing and GDPR-native hosting matters in 2026"
+      ],
+      "sourceUrls": [
+        "https://supermemory.ai/pricing/",
+        "https://supermemory.ai",
+        "https://supermemory.ai/privacy-policy",
+        "https://betterstack.com/community/guides/ai/memory-with-supermemory/"
+      ]
+    },
+    {
+      "name": "Letta",
+      "url": "https://www.letta.com",
+      "pricingUrl": "https://www.letta.com/pricing",
+      "docsPricingUrl": "https://docs.letta.com/guides/cloud/plans/",
+      "lastScraped": "2026-05-07",
+      "tagline": "Memory-first agents that continually learn",
+      "category": "stateful agent framework + cloud hosting",
+      "origin": "MemGPT research project, UC Berkeley; $10M Series A",
+      "architecture": "Stateful agents with persistent memory palace, dream agents (background learning), model portability",
+      "tiers": [
+        {
+          "name": "Pro (Personal)",
+          "price": 20,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 240,
+          "annualEquivEUR": 221,
+          "agentsMax": 20,
+          "modelAccess": "open-weights + PAYG frontier",
+          "lettaAutoLimit": "base",
+          "personalUseOnly": true
+        },
+        {
+          "name": "Max Lite (Personal)",
+          "price": 100,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 1200,
+          "annualEquivEUR": 1104,
+          "agentsMax": 50,
+          "modelAccess": "all frontier models (quota)",
+          "lettaAutoLimit": "5×",
+          "personalUseOnly": true
+        },
+        {
+          "name": "Max (Personal)",
+          "price": 200,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 2400,
+          "annualEquivEUR": 2208,
+          "agentsMax": 50,
+          "modelAccess": "frontier models (increased quota)",
+          "lettaAutoLimit": "20×",
+          "earlyAccess": true,
+          "personalUseOnly": true
+        },
+        {
+          "name": "API Plan (Teams / Orgs)",
+          "price": 20,
+          "currency": "USD",
+          "period": "monthly",
+          "baseMonthly": 20,
+          "perActiveAgentPerMonth": 0.10,
+          "toolExecutionPerSecond": 0.00015,
+          "llmUsage": "PAYG at provider token rates",
+          "agentsMax": "unlimited",
+          "teamSupport": true,
+          "byokSupported": true,
+          "builtInToolsFree": true,
+          "remoteMCPFree": true
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "currency": "USD",
+          "period": "custom",
+          "contactSales": true,
+          "rbac": true,
+          "samlSSO": true,
+          "dedicatedSupport": true,
+          "volumeDiscounts": true
+        }
+      ],
+      "freeTier": {
+        "exists": false,
+        "selfHostFree": true,
+        "note": "No free cloud tier. Self-hosted open source is the free entry path.",
+        "conversionPath": "Self-host → operational friction → API Plan $20/mo"
+      },
+      "annualBilling": false,
+      "mcpSupport": true,
+      "remoteMCPFree": true,
+      "selfHostable": true,
+      "compliance": ["RBAC", "SAML/OIDC SSO (Enterprise)"],
+      "dataResidency": "On-premises + cloud hybrid supported; no explicit EU-primary",
+      "uniqueAdvantages": [
+        "Model portability: transfer agent memory/context across LLM providers",
+        "Dream agents: background self-improvement during idle time (sleep-time compute)",
+        "Memory palace visualization for debugging agent memory state",
+        "Framework origin: MemGPT (UC Berkeley) — strong research credibility",
+        "Remote MCP tool execution is free at all tiers"
+      ],
+      "uniqueGaps": [
+        "No free cloud tier — self-host only for free access",
+        "Personal plans restricted — teams must use API Plan with unpredictable billing",
+        "API Plan billing complexity: $20 base + $0.10/active agent + $0.00015/sec tool + LLM PAYG",
+        "No annual billing option",
+        "Framework-level tool (stateful agents), not a simple memory layer"
+      ],
+      "vantagePeersDifferentiators": [
+        "€49/year flat vs $240/year Pro minimum (+ variable LLM costs on API Plan)",
+        "MCP-native protocol — Letta supports remote MCP but is not MCP-first",
+        "Simpler memory model (persistent context/tasks) vs Letta's full agent framework",
+        "EUR-primary pricing for EU buyers",
+        "No per-agent or per-second billing surprises"
+      ],
+      "blogAngles": [
+        "Letta vs VantagePeers: agent framework vs memory layer — choosing the right abstraction",
+        "MemGPT heritage vs MCP-native: two philosophies of agent memory in 2026",
+        "Letta's dream agents and VantagePeers' persistent context — complementary or competing?",
+        "Predictable vs usage-based billing for AI agent infrastructure in 2026",
+        "Free cloud tier vs free self-host: Letta and VantagePeers compared for solo devs"
+      ],
+      "sourceUrls": [
+        "https://www.letta.com/pricing",
+        "https://docs.letta.com/guides/cloud/plans/",
+        "https://docs.letta.com/guides/build-with-letta/pricing/",
+        "https://www.letta.com"
+      ]
+    },
+    {
+      "name": "Pinecone",
+      "url": "https://www.pinecone.io",
+      "pricingUrl": "https://www.pinecone.io/pricing/",
+      "lastScraped": "2026-05-07",
+      "tagline": "Build Knowledgeable AI",
+      "category": "managed vector database (serverless)",
+      "architecture": "Serverless vector search; namespace isolation; inline metadata filtering; 12ms P50 latency",
+      "tiers": [
+        {
+          "name": "Starter",
+          "price": 0,
+          "currency": "USD",
+          "period": "monthly",
+          "storage": "2 GB",
+          "writeUnitsPerMonth": 2000000,
+          "readUnitsPerMonth": 1000000,
+          "support": "Discord community",
+          "multipleProjects": false
+        },
+        {
+          "name": "Builder",
+          "price": 20,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 240,
+          "annualEquivEUR": 221,
+          "storage": "10 GB",
+          "writeUnitsPerMonth": 5000000,
+          "readUnitsPerMonth": 2000000,
+          "multipleProjects": true,
+          "monitoring": ["Prometheus", "Datadog"],
+          "support": "included"
+        },
+        {
+          "name": "Standard",
+          "price": 50,
+          "currency": "USD",
+          "period": "monthly",
+          "minimumSpend": 50,
+          "annualEquivUSD": 600,
+          "trialCredits": "$300 for 3 weeks",
+          "storage": "unlimited ($0.33/GB/mo)",
+          "writeUnitsPricePerMillion": "$4–$4.50",
+          "readUnitsPricePerMillion": "$16–$18",
+          "backupCostPerGB": 0.10,
+          "hipaaCost": "$190/mo add-on",
+          "dedicatedReadNodes": "optional"
+        },
+        {
+          "name": "Enterprise",
+          "price": 500,
+          "currency": "USD",
+          "period": "monthly",
+          "minimumSpend": 500,
+          "writeUnitsPricePerMillion": "$6–$6.75",
+          "readUnitsPricePerMillion": "$24–$27",
+          "uptimeSLA": "99.95%",
+          "privateNetworking": true,
+          "customerManagedEncryption": true,
+          "auditLogs": true,
+          "hipaaBuiltIn": true,
+          "proSupport": true,
+          "byoc": true
+        }
+      ],
+      "freeTier": {
+        "exists": true,
+        "perpetual": true,
+        "limits": "2GB storage, 2M writes/mo, 1M reads/mo",
+        "claudeCodePlugin": true,
+        "pluginInstall": "claude plugin install pinecone",
+        "conversionPath": "Standard $50/mo minimum on storage or unit exhaustion"
+      },
+      "annualBilling": false,
+      "mcpSupport": true,
+      "selfHostable": false,
+      "compliance": ["SOC 2 Type II", "HIPAA", "GDPR", "ISO 27001"],
+      "dataResidency": "AWS, GCP, Azure — multiple regions including EU",
+      "uniqueAdvantages": [
+        "Industry-leading vector search performance (12ms P50, 150ms P90 at 2.8B vectors)",
+        "1.7M namespaces at 400 QPS — massive multi-tenancy",
+        "Claude Code plugin: `claude plugin install pinecone`",
+        "Available on AWS Marketplace, GCP, Azure",
+        "ISO 27001 certified"
+      ],
+      "uniqueGaps": [
+        "Infrastructure-only: no memory management layer, session context, or task tracking",
+        "Developers must build their own memory abstraction on top",
+        "No annual billing option",
+        "HIPAA requires $190/mo add-on on Standard tier",
+        "Minimum spend model ($50/$500) not indie-dev friendly"
+      ],
+      "vantagePeersDifferentiators": [
+        "Complete memory-layer solution vs raw vector infrastructure",
+        "€49/year flat vs $600/year Standard minimum",
+        "MCP-native with built-in session/task/message semantics",
+        "No infrastructure decisions — zero-ops cloud",
+        "EUR-primary for European devs"
+      ],
+      "blogAngles": [
+        "Pinecone vs VantagePeers: building your own memory vs using a memory layer",
+        "Vector database vs memory platform: which layer do you actually need?",
+        "Claude plugin install pinecone vs VantagePeers MCP: two different integration models",
+        "When to use Pinecone and when to use VantagePeers (they're not the same thing)",
+        "AI infrastructure costs in 2026: vector DB vs managed memory — cost comparison"
+      ],
+      "sourceUrls": [
+        "https://www.pinecone.io/pricing/",
+        "https://www.pinecone.io"
+      ]
+    },
+    {
+      "name": "Weaviate Cloud",
+      "url": "https://weaviate.io",
+      "pricingUrl": "https://weaviate.io/pricing",
+      "lastScraped": "2026-05-07",
+      "tagline": "The AI database developers love",
+      "category": "AI-native vector database (managed cloud)",
+      "architecture": "Hybrid search (dense vector + BM25); multi-tenancy; Database Agents built-in",
+      "community": "50,000+ AI builders",
+      "tiers": [
+        {
+          "name": "Free Trial",
+          "price": 0,
+          "currency": "USD",
+          "period": "14-day trial",
+          "perpetualFree": false,
+          "deployment": "shared cloud sandbox",
+          "queryAgentRequestsPerMonth": 250,
+          "support": "forum only",
+          "note": "Converts to PAYG Flex after 14 days"
+        },
+        {
+          "name": "Flex",
+          "price": 45,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 540,
+          "annualEquivEUR": 497,
+          "payAsYouGo": true,
+          "commitment": false,
+          "deployment": "shared cloud",
+          "uptimeSLA": "99.5%",
+          "queryAgentRequestsPerMonth": 30000,
+          "support": "email (next business day)",
+          "usageRates": {
+            "vectorDimensionsPerMillion": 0.0139,
+            "storagePerGiB": 0.255,
+            "backupPerGiB": 0.0264,
+            "dataTransfer": "free (promotional)"
+          }
+        },
+        {
+          "name": "Premium",
+          "price": 400,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 4800,
+          "prepaidContract": true,
+          "deployment": "shared or dedicated",
+          "uptimeSLA": "99.5–99.95%",
+          "queryAgentRequests": "unlimited",
+          "support": "1-hour Severity 1 response, TAM, phone, Slack",
+          "features": ["SSO/SAML", "PrivateLink", "HIPAA", "encrypted volumes"],
+          "usageRates": {
+            "vectorDimensionsPerMillion": 0.00975,
+            "storagePerGiB": 0.31875,
+            "backupPerGiB": 0.033
+          }
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "currency": "USD",
+          "period": "custom",
+          "contactSales": true,
+          "deployment": "dedicated + BYOC",
+          "cloudProviders": ["GCP", "AWS", "Azure"]
+        }
+      ],
+      "addOns": {
+        "queryAgentStandalone": "$30/month for 4,000 requests",
+        "embeddingsServices": {
+          "arcticEmbedMV15": "$0.025/1M tokens",
+          "arcticEmbedMV20": "$0.040/1M tokens",
+          "modernVBERT": "$0.065/1M tokens"
+        }
+      },
+      "freeTier": {
+        "exists": false,
+        "trial": true,
+        "trialDays": 14,
+        "conversionPath": "Flex $45/mo after trial (no perpetual free tier)"
+      },
+      "annualBilling": false,
+      "mcpSupport": false,
+      "selfHostable": true,
+      "compliance": ["SOC 2", "HIPAA (Premium+)", "GDPR"],
+      "dataResidency": "GCP (Flex), GCP + AWS + Azure (Premium) — EU regions available",
+      "uniqueAdvantages": [
+        "Built-in Database Agents (Query, Transformation, Personalization Agent types)",
+        "Billion-scale architecture with proven multi-tenancy",
+        "Built-in embedding services (no external embedding API needed)",
+        "EU data residency available on Premium tier",
+        "Strong open-source community (50K+ builders)"
+      ],
+      "uniqueGaps": [
+        "No perpetual free tier (trial only) — high entry friction",
+        "Infrastructure-only: no memory management semantics",
+        "Flex minimum $45/mo — not affordable for indie devs",
+        "No MCP support explicitly mentioned",
+        "Complex usage-based billing (per dimension, per GiB, per backup)"
+      ],
+      "vantagePeersDifferentiators": [
+        "€49/year vs $540/year Flex minimum — 91% cheaper for dev use case",
+        "MCP-native protocol — Weaviate has no MCP integration confirmed",
+        "Application-layer memory semantics (sessions, tasks, messages) not available in Weaviate",
+        "Perpetual free tier via Self-Hosted edition vs Weaviate's 14-day trial",
+        "EUR-primary for European buyers"
+      ],
+      "blogAngles": [
+        "Weaviate vs VantagePeers: when a vector database becomes overkill for agent memory",
+        "Database Agents vs MCP agents: two approaches to AI-native data in 2026",
+        "EU data residency in AI tools: Weaviate Premium vs VantagePeers Cloud",
+        "AI database infrastructure costs: $540/year minimum vs €49/year flat",
+        "Hybrid search everywhere: what Weaviate and VantagePeers share (and what they don't)"
+      ],
+      "sourceUrls": [
+        "https://weaviate.io/pricing",
+        "https://weaviate.io"
+      ]
+    },
+    {
+      "name": "Smithery.ai",
+      "url": "https://smithery.ai",
+      "pricingUrl": "https://smithery.ai/pricing",
+      "lastScraped": "2026-05-07",
+      "tagline": "Turn scattered context into skills for AI",
+      "category": "MCP server marketplace + managed hosting",
+      "scale": "7,000+ MCP servers; integrations with Amplitude, Asana, Box, Salesforce",
+      "pricingStatus": "NOT_FULLY_PUBLIC",
+      "pricingNote": "Pricing page returned 429/403 errors during scrape. Confirmed freemium model from third-party sources. Hosted pricing rates not publicly disclosed.",
+      "tiers": [
+        {
+          "name": "Discovery / Browse",
+          "price": 0,
+          "currency": "USD",
+          "period": "free",
+          "features": ["Browse 7,000+ servers", "Install locally", "Basic analytics"],
+          "source": "Third-party (mcpize.com, toolradar.com)"
+        },
+        {
+          "name": "Hosted Execution",
+          "price": null,
+          "currency": "USD",
+          "period": "usage-based",
+          "pricingPublic": false,
+          "note": "Usage-based pricing for remote server execution — rates not disclosed publicly",
+          "source": "Third-party (toolradar.com)"
+        },
+        {
+          "name": "Vendor Tiers (Hobby / Pro / Custom)",
+          "price": null,
+          "currency": "USD",
+          "period": "unknown",
+          "pricingPublic": false,
+          "note": "Vendor listing tiers exist (Hobby/Pro/Custom) but pricing not confirmed from public sources",
+          "source": "Search result snippet (smithery.ai/pricing)"
+        }
+      ],
+      "freeTier": {
+        "exists": true,
+        "perpetual": true,
+        "limits": "Free server listing + browse + local install",
+        "hostedExecutionFree": false,
+        "creatorRevenue": false,
+        "note": "Developers earn no revenue from server listings — no revenue share model"
+      },
+      "annualBilling": "Unknown",
+      "mcpSupport": true,
+      "selfHostable": "N/A — marketplace/distribution layer",
+      "uniqueAdvantages": [
+        "Largest MCP server marketplace (7,000+ servers)",
+        "Official integrations with enterprise tools (Salesforce, Asana, Box)",
+        "Zero-install hosted MCP execution (cloud-run servers)",
+        "Potential distribution channel for VantagePeers (listing, not competition)"
+      ],
+      "uniqueGaps": [
+        "No confirmed public pricing for any paid tier",
+        "No creator revenue share (developers can't monetize their servers)",
+        "Not a memory/context management tool — different job-to-be-done",
+        "Pricing page inaccessible (429/403) — transparency concern"
+      ],
+      "vantagePeersDifferentiators": [
+        "VantagePeers is a memory tool, not a marketplace — different category",
+        "VantagePeers could list on Smithery as a distribution channel",
+        "EUR-primary and annual flat vs opaque usage-based hosting",
+        "MCP-native protocol (VantagePeers is the MCP server, not a marketplace)"
+      ],
+      "blogAngles": [
+        "MCP marketplaces vs MCP memory tools: Smithery.ai and VantagePeers play different roles",
+        "Distributing your MCP server on Smithery.ai — a guide for VantagePeers users",
+        "The MCP ecosystem in 2026: marketplaces, memory tools, and integration hubs",
+        "Should you build or buy MCP memory? Smithery catalog vs VantagePeers Cloud"
+      ],
+      "sourceUrls": [
+        "https://smithery.ai",
+        "https://mcpize.com/alternatives/smithery",
+        "https://toolradar.com/blog/mcp-gateway",
+        "https://workos.com/blog/smithery-ai",
+        "https://smithery.ai/pricing"
+      ]
+    },
+    {
+      "name": "Composio",
+      "url": "https://composio.dev",
+      "pricingUrl": "https://composio.dev/pricing",
+      "lastScraped": "2026-05-07",
+      "tagline": "Your agent decides what to do. We handle the rest.",
+      "category": "agent integration platform / MCP action layer",
+      "backing": "$29M raised",
+      "architecture": "Managed OAuth + sandboxed execution + smart tool resolution; 500+ app integrations",
+      "tiers": [
+        {
+          "name": "Free",
+          "price": 0,
+          "currency": "USD",
+          "period": "monthly",
+          "toolCallsPerMonth": 20000,
+          "support": "community",
+          "mcpSupport": true
+        },
+        {
+          "name": "Starter",
+          "price": 29,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 348,
+          "annualEquivEUR": 320,
+          "toolCallsPerMonth": 200000,
+          "overageRate": "$0.299 per 1,000 calls",
+          "support": "email",
+          "mcpSupport": true
+        },
+        {
+          "name": "Professional",
+          "price": 229,
+          "currency": "USD",
+          "period": "monthly",
+          "annualEquivUSD": 2748,
+          "annualEquivEUR": 2528,
+          "toolCallsPerMonth": 2000000,
+          "overageRate": "$0.249 per 1,000 calls",
+          "support": "Slack (1K+ users)",
+          "mcpSupport": true
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "currency": "USD",
+          "period": "custom",
+          "contactSales": true,
+          "soc2": true,
+          "vpc": true,
+          "customUserAccounts": true,
+          "dedicatedSLA": true
+        }
+      ],
+      "freeTier": {
+        "exists": true,
+        "perpetual": true,
+        "limits": "20K tool calls/month",
+        "creditCardRequired": false,
+        "mcpSupport": true,
+        "conversionPath": "Starter $29/mo on tool call volume exhaustion"
+      },
+      "annualBilling": false,
+      "mcpSupport": true,
+      "selfHostable": false,
+      "compliance": ["SOC-2 (Enterprise only)"],
+      "dataResidency": "VPC/on-prem option for Enterprise only",
+      "uniqueAdvantages": [
+        "500+ app integrations with managed OAuth (GitHub, Gmail, Slack, Notion, etc.)",
+        "Sandboxed execution environment for secure parallel agent workflows",
+        "Smart tool resolution driven by agent intent",
+        "MCP supported at all tiers including free",
+        "Well-funded ($29M) with enterprise sales motion"
+      ],
+      "uniqueGaps": [
+        "Not a memory/context tool — action/integration layer only",
+        "No annual billing option",
+        "SOC-2 and VPC behind Enterprise contact-only",
+        "No EUR pricing",
+        "Tool call overage pricing creates unpredictable bills"
+      ],
+      "vantagePeersDifferentiators": [
+        "Complementary tools — VantagePeers (memory) + Composio (actions) = full agent stack",
+        "€49/year vs $348/year Starter — different products but same dev wallet",
+        "MCP-native memory protocol vs managed integration bus",
+        "EUR-primary vs USD-only",
+        "Annual flat vs monthly overage"
+      ],
+      "blogAngles": [
+        "Composio vs VantagePeers: action layer vs memory layer — building a complete agent stack",
+        "The MCP agent toolkit in 2026: memory + actions + tools — which services to combine",
+        "Composio $29/mo + VantagePeers €49/year: the complete indie agent stack under €100/year",
+        "Why you need both memory and integration tools for production AI agents",
+        "MCP ecosystem spending: how much should a solo AI dev budget for tools in 2026?"
+      ],
+      "sourceUrls": [
+        "https://composio.dev/pricing",
+        "https://composio.dev",
+        "https://toolradar.com/blog/mcp-gateway",
+        "https://composio.dev/blog/smithery-alternative"
+      ]
+    }
+  ]
+}
