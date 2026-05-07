@@ -93,6 +93,104 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ### Fix Patterns (5)
 `create_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
 
+#### `create_fix_pattern`
+Create a new fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search the KB before fixing to avoid repeating known mistakes.
+
+| Arg | Type | Required | Description |
+|-----|------|----------|-------------|
+| `symptom` | string | yes | What the bug looks like — the user-visible problem |
+| `rootCause` | string | yes | Why the bug happens — the underlying technical cause |
+| `tags` | string or string[] | yes | Tags for categorization (e.g. `"react-hydration"`) |
+| `stack` | string or string[] | yes | Tech stack involved (e.g. `"next.js"`, `"convex"`) |
+| `sourceProject` | string | yes | Project where this was discovered |
+| `createdBy` | string | yes | Orchestrator name (e.g. `"sigma"`) |
+| `severity` | string | yes | `"critical"`, `"major"`, or `"minor"` |
+| `validatedFix` | string | no | The fix that worked — set later if not yet known |
+| `files` | string or string[] | no | Files involved in the fix |
+| `linkedIssueIds` | string or string[] | no | VantagePeers issue IDs linked to this pattern |
+
+Example:
+```json
+{
+  "tool": "create_fix_pattern",
+  "arguments": {
+    "symptom": "Convex subscription silently drops after 60s of inactivity",
+    "rootCause": "Missing keepAlive ping in useConvexQuery wrapper",
+    "tags": ["convex-subscription", "silent-failure"],
+    "stack": ["next.js", "convex"],
+    "sourceProject": "myreeldream",
+    "createdBy": "sigma",
+    "severity": "major",
+    "validatedFix": "Add 30s ping interval to the subscription hook"
+  }
+}
+```
+
+#### `add_fix_attempt`
+Log a fix attempt against an existing pattern. Documents what was tried, whether it worked, and why. If `worked: true` and the pattern has no `validatedFix`, auto-sets it.
+
+| Arg | Type | Required | Description |
+|-----|------|----------|-------------|
+| `patternId` | string | yes | ID of the fix pattern |
+| `description` | string | yes | What was tried — the fix approach |
+| `worked` | boolean | yes | Whether this fix resolved the issue |
+| `why` | string | yes | Why it worked or did not — the reasoning |
+| `createdBy` | string | yes | Orchestrator name |
+| `commit` | string | no | Git commit hash of this attempt |
+
+Example:
+```json
+{
+  "tool": "add_fix_attempt",
+  "arguments": {
+    "patternId": "k5708d9xxwj81v92e0x3hwv36985g4d7",
+    "description": "Added 30s ping interval to useConvexQuery",
+    "worked": true,
+    "why": "Keeps the WebSocket connection alive past the server idle timeout",
+    "createdBy": "sigma",
+    "commit": "e866274"
+  }
+}
+```
+
+#### `validate_fix`
+Promote a candidate fix to validated status on an existing pattern. Use after independently confirming the fix holds in production.
+
+| Arg | Type | Required | Description |
+|-----|------|----------|-------------|
+| `patternId` | string | yes | ID of the fix pattern |
+| `validatedFix` | string | yes | Description of the validated fix |
+
+Example:
+```json
+{
+  "tool": "validate_fix",
+  "arguments": {
+    "patternId": "k5708d9xxwj81v92e0x3hwv36985g4d7",
+    "validatedFix": "30s ping interval in subscription hook — verified stable over 48h in production"
+  }
+}
+```
+
+#### `link_issue_to_pattern`
+Link a VantagePeers issue to a fix pattern. Creates a bidirectional reference so the issue and pattern are discoverable from each other.
+
+| Arg | Type | Required | Description |
+|-----|------|----------|-------------|
+| `patternId` | string | yes | ID of the fix pattern |
+| `issueId` | string | yes | VantagePeers issue ID to link |
+
+Example:
+```json
+{
+  "tool": "link_issue_to_pattern",
+  "arguments": {
+    "patternId": "k5708d9xxwj81v92e0x3hwv36985g4d7",
+    "issueId": "m97ewrrqczew67kc6at3a59e7985ea7h"
+  }
+}
+```
+
 ### Error Monitoring (2)
 `list_errors`, `get_error`
 
@@ -113,6 +211,22 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 
 ### Session (1)
 `set_summary`
+
+## Fix patterns cycle
+
+A fix pattern is a validated learning extracted from a resolved bug — symptom, root cause, and the fix that worked — stored in the VantagePeers knowledge base. Patterns accumulate across projects and agents so that the same bug is never debugged twice from scratch.
+
+The cycle runs as follows:
+
+1. **Agent encounters a bug.** Before touching any code, call `search_fix_patterns` with a plain-language description of the symptom. The KB returns ranked matches using semantic vector search.
+2. **KB hit.** If a validated pattern is returned, apply the known fix directly. Log the reuse via `add_fix_attempt` (`worked: true`) so confidence scores stay current.
+3. **KB miss.** If no pattern matches, the agent fixes the bug manually using standard debugging. Once resolved, the learning is captured immediately via `create_fix_pattern` — symptom, root cause, severity, stack, and the working fix.
+4. **Validation.** After the fix holds in production (or after a second independent confirmation), call `validate_fix` to promote the pattern to validated status. This is the signal that downstream agents can trust the pattern without verification.
+5. **Issue linkage.** Call `link_issue_to_pattern` to attach the VantagePeers issue ID to the pattern. This creates a bidirectional reference: the issue record points to the pattern, and the pattern's `linkedIssueIds` list points back.
+
+The four tools that power this cycle are: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, and `link_issue_to_pattern`. The fifth tool, `search_fix_patterns`, is in the Search / RAG category and is the entry point agents should call first.
+
+On the agent side, the `/capitalize-fix` skill and the `inject-fix-patterns` hook automate steps 3-5: the hook fires on task completion events and prompts the orchestrator to capture the learning before closing the task. The cycle is designed to be low-friction — one tool call per step, all via MCP, no `npx convex run` required.
 
 ## Programmatic API (TypeScript)
 
@@ -205,6 +319,18 @@ All orchestrator names are open strings — any lowercase name is accepted. The 
 - A VantagePeers Convex deployment ([get started](https://vantagepeers.com/docs))
 
 ## Changelog
+
+### 2.2.0 — 2026-05-07
+- 4 new fix-pattern tools: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
+- Detailed per-tool docs with arg tables and example calls in README
+- New "Fix patterns cycle" section documenting the KB learning loop
+- 41 new Zod input-validation unit tests for fix-pattern tools
+
+### 2.1.1 — 2026-05-04
+- Defense-in-depth `memoryIdSchema` validation for `create_briefing_note` and `update_briefing_note`
+
+### 2.1.0 — 2026-04-25
+- `update_briefing_note` MCP tool with RBAC
 
 ### 2.0.2 — 2026-04-14
 - Added badges (npm version, downloads, license, tool count) to the published README
