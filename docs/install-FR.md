@@ -271,6 +271,23 @@ Pour enregistrer votre premier pair, appelez `mcp__vantage-peers__register_peer`
 
 ---
 
+## 8b. Outils MCP disponibles — Fix Patterns (nouveautés v2.2.0)
+
+La version 2.2.0 de `vantage-peers-mcp` embarque quatre nouveaux outils qui alimentent le cycle d'apprentissage de la base de connaissances. Ils sont disponibles immédiatement après une vérification réussie à l'étape 7 — aucune configuration supplémentaire n'est requise.
+
+| Outil | Description |
+|---|---|
+| `create_fix_pattern` | Documente un symptôme de bug, sa cause racine et la correction appliquée dans la KB partagée, afin que le même bug ne soit jamais débogué deux fois. |
+| `add_fix_attempt` | Enregistre une tentative de correction sur un pattern existant — en précisant si elle a fonctionné et pourquoi. Si elle a fonctionné et qu'aucun correctif validé n'existe encore, le pattern est mis à jour automatiquement. |
+| `validate_fix` | Promeut un correctif candidat au statut validé après confirmation indépendante en production. |
+| `link_issue_to_pattern` | Crée un lien bidirectionnel entre une issue VantagePeers et un fix pattern. |
+
+Le point d'entrée recommandé avant toute modification de code est `search_fix_patterns` (catégorie Search / RAG), qui interroge la KB via recherche sémantique vectorielle.
+
+Pour le cycle complet des fix patterns — notamment quand appeler chaque outil et comment ils s'enchaînent — consultez la section [Fix patterns cycle](../mcp-server/README.md#fix-patterns-cycle) dans le README du serveur MCP.
+
+---
+
 ## 9. Résolution des problèmes courants
 
 ### `recall` (ou tout outil basé sur les embeddings) retourne 500

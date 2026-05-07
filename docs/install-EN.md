@@ -271,6 +271,23 @@ To register your first peer, call `mcp__vantage-peers__register_peer` with your 
 
 ---
 
+## 8b. Available MCP Tools — Fix Patterns (new in v2.2.0)
+
+Version 2.2.0 of `vantage-peers-mcp` ships four new tools that power the knowledge-base learning cycle. They are available immediately after a successful Step 7 verification — no additional configuration required.
+
+| Tool | Description |
+|---|---|
+| `create_fix_pattern` | Document a bug symptom, root cause, and fix in the shared KB so the same bug is never debugged twice. |
+| `add_fix_attempt` | Log a fix attempt against an existing pattern — whether it worked and why. If it worked and no validated fix exists yet, the pattern is auto-updated. |
+| `validate_fix` | Promote a candidate fix to validated status after independent production confirmation. |
+| `link_issue_to_pattern` | Create a bidirectional link between a VantagePeers issue and a fix pattern. |
+
+The recommended entry point before touching any code is `search_fix_patterns` (Search / RAG category), which queries the KB using semantic vector search.
+
+For the full fix-pattern cycle — including when to call each tool and how they chain together — see the [Fix patterns cycle](../mcp-server/README.md#fix-patterns-cycle) section in the MCP server README.
+
+---
+
 ## 9. Troubleshooting
 
 ### `recall` (or any embedding-based tool) returns 500
