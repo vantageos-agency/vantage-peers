@@ -766,7 +766,8 @@ export default defineSchema({
 	})
 		.index("by_accessToken", ["accessToken"])
 		.index("by_authCode", ["authCode"])
-		.index("by_clientId", ["clientId"]),
+		.index("by_clientId", ["clientId"])
+		.index("by_refreshToken", ["refreshToken"]),
 
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.

@@ -27,10 +27,13 @@ crons.cron(
 );
 
 // Poll open PRs on external repos every hour
+crons.interval("pr monitor", { hours: 1 }, internal.prMonitor.pollOpenPRs, {});
+
+// Purge expired OAuth auth codes + tokens every hour (B2)
 crons.interval(
-	"pr monitor",
+	"cleanup expired oauth",
 	{ hours: 1 },
-	internal.prMonitor.pollOpenPRs,
+	internal.oauthDcr.cleanupExpiredOAuth,
 	{},
 );
 

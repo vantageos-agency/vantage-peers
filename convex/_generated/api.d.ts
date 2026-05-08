@@ -38,6 +38,7 @@ import type * as migrations_populateOrgIds from "../migrations/populateOrgIds.js
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as oauth from "../oauth.js";
+import type * as oauthDcr from "../oauthDcr.js";
 import type * as prMonitor from "../prMonitor.js";
 import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
   oauth: typeof oauth;
+  oauthDcr: typeof oauthDcr;
   prMonitor: typeof prMonitor;
   profiles: typeof profiles;
   ragSync: typeof ragSync;
