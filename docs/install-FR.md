@@ -206,10 +206,8 @@ Dans ce mode, le serveur MCP est déployé en tant que service HTTP persistant. 
 Cliquez sur le bouton ci-dessous (ou visitez directement l'URL) pour ouvrir l'assistant de déploiement Railway :
 
 ```
-https://railway.app/template/vantage-peers-mcp
+https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic
 ```
-
-> **A vérifier par Sigma :** Confirmez l'URL exacte du modèle Railway avec Pi avant de la partager avec les clients. La valeur ci-dessus est provisoire.
 
 **Étape 6-B-2.** Dans l'assistant Railway, renseignez les variables d'environnement suivantes :
 
