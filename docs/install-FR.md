@@ -55,6 +55,7 @@ curl -fsSL https://bun.sh/install | bash
 
 - **Compte GitHub** — pour cloner le dépôt et, le cas échéant, activer le suivi des issues GitHub.
 - **Compte Convex** — le backend qui stocke l'ensemble de la mémoire et des données de coordination des agents. Le forfait gratuit est suffisant. Inscription disponible sur [https://convex.dev](https://convex.dev).
+- **Compte Railway** *(Mode B uniquement)* — requis si vous déployez le serveur MCP en tant que service HTTP. Le forfait gratuit est suffisant pour la plupart des équipes. Inscription sur [https://railway.com?referralCode=vantagepeers](https://railway.com?referralCode=vantagepeers).
 - **Compte Claude Code ou Claude Web** — indispensable pour connecter les agents via MCP. [Claude Code](https://claude.ai/code) est recommandé pour un usage local ; Claude Web convient aux agents fonctionnant dans un navigateur.
 
 ---

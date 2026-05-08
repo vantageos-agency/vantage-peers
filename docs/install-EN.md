@@ -55,6 +55,7 @@ curl -fsSL https://bun.sh/install | bash
 
 - **GitHub account** — used to clone the repository and (optionally) connect GitHub issue tracking.
 - **Convex account** — the backend that stores all agent memory and coordination data. Free tier is sufficient. Sign up at [https://convex.dev](https://convex.dev).
+- **Railway account** *(Mode B only)* — required if you deploy the MCP server as an HTTP service. Free plan is sufficient for most teams. Sign up at [https://railway.com?referralCode=vantagepeers](https://railway.com?referralCode=vantagepeers).
 - **Claude Code or Claude Web account** — required to connect agents via MCP. [Claude Code](https://claude.ai/code) is recommended for local development; Claude Web works for browser-based agents.
 
 ---

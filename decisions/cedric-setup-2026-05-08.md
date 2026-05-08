@@ -19,6 +19,8 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 ### 1. Click the Railway template
 
+If you don't have a Railway account yet, create one first: [https://railway.com?referralCode=vantagepeers](https://railway.com?referralCode=vantagepeers) (free plan is sufficient).
+
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
 
 Direct link: <https://railway.com/deploy/vantagepeers-mcp>
