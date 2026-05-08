@@ -15,14 +15,16 @@ Bugfixes, internal refactors, documentation corrections, dependency bumps with n
 - **Self-host impact**: zero-touch. Railway cron redeploys at 03:00 UTC, auto-migration runs (no-op for PATCH), new version served.
 - **Migration guide**: not required.
 - **Release notes**: auto-generated from commit messages via `gh release create --generate-notes`.
+- **Schema change rule**: `convex/schema.ts` MUST NOT be modified in a PATCH release. The `schema-vs-version-guard` CI step fails the PR build if a schema diff against `main` is detected. Rationale: self-host clients auto-upgrade via cron without re-running `convex deploy`; a schema change on the published package without a matching deployment causes silent runtime errors. Promote to MAJOR instead.
 
 ### MINOR — `X.Y+1.0`
 
 New MCP tools, new Convex tables/fields (additive only), new optional parameters. No removals. No breaking changes to existing tool signatures.
 
-- **Self-host impact**: zero-touch. Same Railway cron path as PATCH. Additive schema changes are safe.
+- **Self-host impact**: zero-touch. Same Railway cron path as PATCH. Additive schema changes are safe **only if** the Convex deployment is updated independently.
 - **Migration guide**: not required. Release notes MUST document new tools and changed defaults.
 - **Release notes**: auto-generated + manually reviewed before tagging.
+- **Schema change rule**: `convex/schema.ts` MUST NOT be modified in a MINOR release. Same rationale as PATCH — even additive schema changes (new tables, new fields) require `convex deploy` on the self-host instance, which the auto-upgrade cron does not perform. Promote to MAJOR and include `docs/migrations/v<N>.md` with the required `convex deploy` step.
 
 ### MAJOR — `X+1.0.0`
 
@@ -60,10 +62,10 @@ For urgent PATCH releases (security, data-loss bugs):
 
 ## Versioning enforcement
 
-The `.github/workflows/semver-check.yml` workflow runs on every PR that touches `mcp-server/package.json`:
+The `.github/workflows/semver-check.yml` workflow runs on every PR that touches `mcp-server/package.json` or `convex/schema.ts`:
 
-- Detects the version bump type (PATCH / MINOR / MAJOR) by comparing HEAD vs base branch.
-- For MAJOR bumps: fails CI if `docs/migrations/v<N>.md` does not exist.
-- Does not block PATCH or MINOR merges.
+- Detects the version bump type (PATCH / MINOR / MAJOR / NONE) by comparing HEAD vs base branch.
+- **`schema-vs-version-guard` step**: if bump type is PATCH or MINOR and `convex/schema.ts` has changed vs `main`, the build fails with a clear error. MAJOR bumps pass through (migration guide check applies instead). No-bump PRs pass through.
+- **MAJOR migration guide check**: fails CI if `docs/migrations/v<N>.md` does not exist.
 
-This is a hard gate — MAJOR PRs without a migration guide will not pass CI.
+Both gates are hard — PRs that violate either rule will not pass CI.
