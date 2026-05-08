@@ -83,7 +83,7 @@ VantagePeers exposes 82 MCP tools across 14 categories. Every tool accepts and r
 
 ---
 
-## Deployment Links
+### Deployment Dependencies
 
 - **Documentation:** [vantagepeers.com/docs](https://vantagepeers.com/docs)
 - **Convex (required backend):** [convex.dev — referral LAUREN7583](https://convex.dev/?utm_source=railway&utm_medium=referral&utm_campaign=LAUREN7583)
