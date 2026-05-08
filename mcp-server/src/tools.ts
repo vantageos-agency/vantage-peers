@@ -3287,7 +3287,7 @@ export function registerTools(
 		{
 			repo: z
 				.string()
-				.describe("Full repo name — e.g. 'elpiarthera/vantage-peers'"),
+				.describe("Full repo name — e.g. 'vantageos-agency/vantage-peers'"),
 			orchestrator: z
 				.string()
 				.describe("Target orchestrator — e.g. 'sigma', 'omega', 'tau'"),
@@ -3363,7 +3363,7 @@ export function registerTools(
 			repo: z
 				.string()
 				.describe(
-					"Full repo name to remove — e.g. 'elpiarthera/vantage-peers'",
+					"Full repo name to remove — e.g. 'vantageos-agency/vantage-peers'",
 				),
 		},
 		async ({ repo }) => {

@@ -2536,7 +2536,7 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("add_repo_mapping", "Add or update a GitHub repo → orchestrator mapping. Used by the webhook pipeline to route GitHub events to the right orchestrator.", {
         repo: z
             .string()
-            .describe("Full repo name — e.g. 'elpiarthera/vantage-peers'"),
+            .describe("Full repo name — e.g. 'vantageos-agency/vantage-peers'"),
         orchestrator: z
             .string()
             .describe("Target orchestrator — e.g. 'sigma', 'omega', 'tau'"),
@@ -2590,7 +2590,7 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("remove_repo_mapping", "Remove a GitHub repo mapping by repo name. Stops routing webhook events for this repo.", {
         repo: z
             .string()
-            .describe("Full repo name to remove — e.g. 'elpiarthera/vantage-peers'"),
+            .describe("Full repo name to remove — e.g. 'vantageos-agency/vantage-peers'"),
     }, async ({ repo }) => {
         try {
             const result = await convex.mutation("githubRepoMapping:remove", {
