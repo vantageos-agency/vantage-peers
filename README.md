@@ -14,6 +14,12 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-vantagepeers.com-green.svg)](https://vantagepeers.com/docs)
 
+## Deploy on Railway
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
+Self-host VantagePeers MCP in under 10 minutes. Free Convex tier sufficient for solo + small-team deployments. See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full quick-start guide.
+
 ## What It Is
 
 VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 83 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
