@@ -460,6 +460,52 @@ export const refreshAccessToken = internalMutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Admin tooling — window-based inspection and purge
+// Used for: purging plaintext-secret clients registered between PR #418 (OAuth
+// init) and PR #419 (hardening). Kept as permanent admin tooling.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listClientsInWindow = internalQuery({
+	args: { startMs: v.number(), endMs: v.number() },
+	returns: v.array(
+		v.object({
+			_id: v.id("oauthClients"),
+			_creationTime: v.number(),
+			clientId: v.string(),
+			clientName: v.string(),
+		}),
+	),
+	handler: async (ctx, { startMs, endMs }) => {
+		const rows = await ctx.db.query("oauthClients").collect();
+		return rows
+			.filter((r) => r._creationTime >= startMs && r._creationTime <= endMs)
+			.map((r) => ({
+				_id: r._id,
+				_creationTime: r._creationTime,
+				clientId: r.clientId,
+				clientName: r.clientName,
+			}));
+	},
+});
+
+export const purgeClientsInWindow = internalMutation({
+	args: { startMs: v.number(), endMs: v.number() },
+	returns: v.object({ deleted: v.number(), ids: v.array(v.string()) }),
+	handler: async (ctx, { startMs, endMs }) => {
+		const rows = await ctx.db.query("oauthClients").collect();
+		const matches = rows.filter(
+			(r) => r._creationTime >= startMs && r._creationTime <= endMs,
+		);
+		const ids: string[] = [];
+		for (const row of matches) {
+			ids.push(row._id);
+			await ctx.db.delete(row._id);
+		}
+		return { deleted: matches.length, ids };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // cleanupExpiredOAuth (B2)
 // Purges expired auth codes (>10min) and expired access/refresh tokens.
 // Called by the hourly cron registered in convex/crons.ts.
