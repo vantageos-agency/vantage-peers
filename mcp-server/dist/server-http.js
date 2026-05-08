@@ -32,7 +32,15 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bearerAuthMiddleware, internalClient, masterOnlyMiddleware, sha256Base64Url, sha256Hex, } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
-const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf-8"));
+let pkg;
+try {
+    // Source mode: server-http.ts → ./package.json = mcp-server/package.json
+    pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf-8"));
+}
+catch {
+    // Dist mode: dist/server-http.js → ../package.json = mcp-server/package.json
+    pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────

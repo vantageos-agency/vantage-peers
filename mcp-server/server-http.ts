@@ -40,9 +40,18 @@ import {
 } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
 
-const pkg = JSON.parse(
-	readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
-) as { version: string };
+let pkg: { version: string };
+try {
+	// Source mode: server-http.ts → ./package.json = mcp-server/package.json
+	pkg = JSON.parse(
+		readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
+	) as { version: string };
+} catch {
+	// Dist mode: dist/server-http.js → ../package.json = mcp-server/package.json
+	pkg = JSON.parse(
+		readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+	) as { version: string };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
