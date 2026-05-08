@@ -29,13 +29,42 @@ import { internalMutation, internalQuery } from "./_generated/server";
 // Crypto helpers (Web Crypto — available in default Convex V8 runtime)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Generate a cryptographically random 64-char hex string (32 bytes). */
-async function randomHex64(): Promise<string> {
+/**
+ * Generate a cryptographically random opaque token (256-bit entropy).
+ * Returns a 64-char lowercase hex string (32 random bytes).
+ */
+function randomOpaqueToken(): string {
 	const bytes = new Uint8Array(32);
 	crypto.getRandomValues(bytes);
 	return Array.from(bytes)
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
+}
+
+/**
+ * Hash a secret value with SHA-256 and return a lowercase hex digest.
+ * Used for storing clientSecret and for constant-time comparison.
+ */
+async function sha256Hex(input: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(input);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+	const hashArray = Array.from(new Uint8Array(hashBuffer));
+	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Constant-time string comparison to prevent timing side-channel attacks.
+ * Both strings are compared byte-by-byte; result is accumulated via XOR.
+ * Always iterates the full length of `a`.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+	if (a.length !== b.length) return false;
+	let diff = 0;
+	for (let i = 0; i < a.length; i++) {
+		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+	return diff === 0;
 }
 
 /**
@@ -78,18 +107,25 @@ export const registerClient = internalMutation({
 			throw new Error("at least one redirectUri is required");
 		}
 
-		const clientId = crypto.randomUUID();
-		const clientSecret = await randomHex64();
+		// S3: 256-bit entropy token (not UUID v4)
+		const clientId = randomOpaqueToken();
+		const clientSecret = randomOpaqueToken();
+
+		// S1: store SHA-256 hash of clientSecret, never plaintext
+		const clientSecretHash = await sha256Hex(clientSecret);
 
 		await ctx.db.insert("oauthClients", {
 			clientId,
-			clientSecret,
+			// SC: store hash; comment documents scope standardization
+			clientSecret: clientSecretHash,
 			clientName: args.clientName.trim(),
 			redirectUris: args.redirectUris,
-			scope: args.scope ?? "mcp:full",
+			// SC: standardize on mcp:full — ignore any caller-supplied scope
+			scope: "mcp:full",
 			createdAt: Date.now(),
 		});
 
+		// Return the raw secret ONCE — caller stores it; we only keep the hash
 		return { clientId, clientSecret };
 	},
 });
@@ -132,13 +168,15 @@ export const issueAuthCode = internalMutation({
 			);
 		}
 
-		const authCode = crypto.randomUUID();
+		// S3: 256-bit entropy auth code
+		const authCode = randomOpaqueToken();
 		const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
 		await ctx.db.insert("oauthTokens", {
 			clientId: args.clientId,
 			accessToken: "", // placeholder — replaced on code exchange, not a valid bearer
-			scope: args.scope ?? client.scope ?? "mcp:full",
+			// SC: always use mcp:full regardless of requested scope
+			scope: "mcp:full",
 			expiresAt: 0, // not yet a valid token — set on exchange
 			authCode,
 			codeChallenge: args.codeChallenge,
@@ -180,7 +218,10 @@ export const exchangeCodeForToken = internalMutation({
 		if (!client) {
 			throw new Error("invalid_client");
 		}
-		if (client.clientSecret !== args.clientSecret) {
+
+		// S1: hash the incoming secret and constant-time compare against stored hash
+		const incomingHash = await sha256Hex(args.clientSecret);
+		if (!constantTimeEqual(client.clientSecret, incomingHash)) {
 			throw new Error("invalid_client");
 		}
 
@@ -219,13 +260,14 @@ export const exchangeCodeForToken = internalMutation({
 		// Mark code as used
 		await ctx.db.patch(tokenRow._id, { used: true });
 
-		// Issue tokens
-		const accessToken = crypto.randomUUID();
-		const refreshToken = crypto.randomUUID();
+		// S3: 256-bit entropy tokens
+		const accessToken = randomOpaqueToken();
+		const refreshToken = randomOpaqueToken();
 		const expiresIn = 3600; // 1 hour in seconds
 		const expiresAt = Date.now() + expiresIn * 1000;
 		const refreshExpiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
-		const scope = tokenRow.scope;
+		// SC: always issue mcp:full scope
+		const scope = "mcp:full";
 
 		// Update the existing row to become the access token record
 		await ctx.db.patch(tokenRow._id, {
@@ -279,9 +321,7 @@ export const validateAccessToken = internalQuery({
 
 		const row = await ctx.db
 			.query("oauthTokens")
-			.withIndex("by_accessToken", (q) =>
-				q.eq("accessToken", args.accessToken),
-			)
+			.withIndex("by_accessToken", (q) => q.eq("accessToken", args.accessToken))
 			.unique();
 
 		if (!row) {
@@ -333,15 +373,21 @@ export const refreshAccessToken = internalMutation({
 		if (!client) {
 			throw new Error("invalid_client");
 		}
-		if (client.clientSecret !== args.clientSecret) {
+
+		// S1: hash the incoming secret and constant-time compare against stored hash
+		const incomingHash = await sha256Hex(args.clientSecret);
+		if (!constantTimeEqual(client.clientSecret, incomingHash)) {
 			throw new Error("invalid_client");
 		}
 
-		// Find the refresh token row
+		// B1: use by_refreshToken index to uniquely identify the specific token being
+		// rotated — avoids .first() matching a wrong sibling row and killing valid sessions.
 		const refreshRow = await ctx.db
 			.query("oauthTokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.filter((q) => q.eq(q.field("refreshToken"), args.refreshToken))
+			.withIndex("by_refreshToken", (q) =>
+				q.eq("refreshToken", args.refreshToken),
+			)
+			.filter((q) => q.eq(q.field("clientId"), args.clientId))
 			.unique();
 
 		if (!refreshRow) {
@@ -353,27 +399,31 @@ export const refreshAccessToken = internalMutation({
 
 		const scope = refreshRow.scope;
 
-		// Rotate: invalidate old refresh token row
+		// B1: Rotate — only delete this specific refresh token row, identified by
+		// the by_refreshToken index. No sibling sessions are touched.
 		await ctx.db.delete(refreshRow._id);
 
-		// Find and revoke the old access token row for this client+scope if any
+		// Find and revoke the old access token row that references this same
+		// refresh token value (matched by refreshToken field, not .first()).
 		const oldAccess = await ctx.db
 			.query("oauthTokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.withIndex("by_refreshToken", (q) =>
+				q.eq("refreshToken", args.refreshToken),
+			)
 			.filter((q) =>
 				q.and(
+					q.eq(q.field("clientId"), args.clientId),
 					q.neq(q.field("accessToken"), ""),
-					q.neq(q.field("used"), true),
 				),
 			)
-			.first();
+			.unique();
 		if (oldAccess) {
 			await ctx.db.delete(oldAccess._id);
 		}
 
-		// Issue new tokens
-		const newAccessToken = crypto.randomUUID();
-		const newRefreshToken = crypto.randomUUID();
+		// S3: 256-bit entropy tokens
+		const newAccessToken = randomOpaqueToken();
+		const newRefreshToken = randomOpaqueToken();
 		const expiresIn = 3600;
 		const expiresAt = Date.now() + expiresIn * 1000;
 		const refreshExpiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
@@ -406,5 +456,57 @@ export const refreshAccessToken = internalMutation({
 			tokenType: "Bearer",
 			scope,
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// cleanupExpiredOAuth (B2)
+// Purges expired auth codes (>10min) and expired access/refresh tokens.
+// Called by the hourly cron registered in convex/crons.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const cleanupExpiredOAuth = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const now = Date.now();
+		const authCodeCutoff = now - 10 * 60 * 1000; // auth codes older than 10min
+		let deletedCodes = 0;
+		let deletedTokens = 0;
+
+		// Delete expired/used auth codes (rows where authCode is set and old)
+		// Process in batches to stay within Convex mutation limits.
+		const expiredCodes = await ctx.db
+			.query("oauthTokens")
+			.withIndex("by_authCode")
+			.filter((q) =>
+				q.and(
+					q.neq(q.field("authCode"), undefined),
+					q.lt(q.field("createdAt"), authCodeCutoff),
+				),
+			)
+			.take(100);
+		for (const row of expiredCodes) {
+			await ctx.db.delete(row._id);
+			deletedCodes++;
+		}
+
+		// Delete expired access/refresh tokens (expiresAt in the past, non-zero)
+		const expiredTokens = await ctx.db
+			.query("oauthTokens")
+			.withIndex("by_accessToken")
+			.filter((q) =>
+				q.and(q.neq(q.field("expiresAt"), 0), q.lt(q.field("expiresAt"), now)),
+			)
+			.take(100);
+		for (const row of expiredTokens) {
+			await ctx.db.delete(row._id);
+			deletedTokens++;
+		}
+
+		console.log(
+			`[cleanupExpiredOAuth] deleted ${deletedCodes} expired auth codes, ${deletedTokens} expired tokens`,
+		);
+		return null;
 	},
 });

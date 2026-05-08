@@ -44,7 +44,7 @@ catch {
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ??
+const PUBLIC_BASE_URL_FALLBACK = process.env.PUBLIC_BASE_URL ??
     "https://vantage-peers-production.up.railway.app";
 const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600; // 30 days
@@ -56,9 +56,34 @@ const DEFAULT_PUBLIC_DCR_PROFILE = "client-generic";
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Compute the issuer/base URL dynamically from the incoming request's Host
+ * header + protocol. Falls back to PUBLIC_BASE_URL env var when Host is absent
+ * (e.g., in curl smoke tests without a Host header).
+ *
+ * RFC 8414 §2: the issuer MUST be the URL the client uses to reach the server,
+ * so deriving it from the request is more correct than a hard-coded constant,
+ * especially when deployed behind a Railway/Cloudflare proxy that rewrites Host.
+ */
+function resolveIssuer(req) {
+    const host = req.headers.get("host");
+    if (host) {
+        // Use x-forwarded-proto when behind a reverse proxy; fall back to https.
+        const proto = req.headers.get("x-forwarded-proto") ??
+            (host.startsWith("localhost") || host.startsWith("127.")
+                ? "http"
+                : "https");
+        return `${proto}://${host}`;
+    }
+    return PUBLIC_BASE_URL_FALLBACK;
+}
 function randomOpaqueToken() {
-    // 2× UUID → ~256 bits of entropy. Strip dashes for compactness.
-    return `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+    // 256-bit entropy via getRandomValues (32 bytes → 64 hex chars).
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
 }
 async function loadScopeProfile(profileId) {
     return (await internalClient().query(
@@ -86,34 +111,65 @@ app.use("*", cors({
 // OAuth 2.0 discovery (unauthenticated)
 // ─────────────────────────────────────────────────────────────────────────────
 // RFC 9728 — OAuth 2.0 Protected Resource Metadata
-app.get("/.well-known/oauth-protected-resource", (c) => c.json({
-    resource: `${PUBLIC_BASE_URL}/mcp`,
-    authorization_servers: [PUBLIC_BASE_URL],
-    bearer_methods_supported: ["header"],
-    scopes_supported: ["vantage:read", "vantage:write"],
-}));
+app.get("/.well-known/oauth-protected-resource", (c) => {
+    const issuer = resolveIssuer(c.req.raw);
+    return c.json({
+        resource: issuer,
+        authorization_servers: [issuer],
+        scopes_supported: ["mcp:full"],
+    });
+});
 // RFC 8414 — OAuth 2.0 Authorization Server Metadata
-app.get("/.well-known/oauth-authorization-server", (c) => c.json({
-    issuer: PUBLIC_BASE_URL,
-    authorization_endpoint: `${PUBLIC_BASE_URL}/authorize`,
-    token_endpoint: `${PUBLIC_BASE_URL}/token`,
-    registration_endpoint: `${PUBLIC_BASE_URL}/register`,
-    response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: [
-        "client_secret_post",
-        "client_secret_basic",
-        "none",
-    ],
-    scopes_supported: ["vantage:read", "vantage:write"],
-}));
+app.get("/.well-known/oauth-authorization-server", (c) => {
+    const issuer = resolveIssuer(c.req.raw);
+    return c.json({
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        registration_endpoint: `${issuer}/register`,
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: [
+            "client_secret_basic",
+            "client_secret_post",
+        ],
+        scopes_supported: ["mcp:full"],
+    });
+});
+const registerRateBuckets = new Map();
+const REGISTER_RATE_LIMIT = 5;
+const REGISTER_RATE_WINDOW_MS = 60_000;
+function checkRegisterRateLimit(ip) {
+    const now = Date.now();
+    const bucket = registerRateBuckets.get(ip);
+    if (!bucket || now - bucket.windowStart >= REGISTER_RATE_WINDOW_MS) {
+        registerRateBuckets.set(ip, { count: 1, windowStart: now });
+        return true;
+    }
+    if (bucket.count < REGISTER_RATE_LIMIT) {
+        bucket.count++;
+        return true;
+    }
+    return false;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // RFC 7591 — Dynamic Client Registration
 // Anonymous registrations get DEFAULT_PUBLIC_DCR_PROFILE ("client-generic").
 // Pi must elevate the client via admin endpoint before real scopes are granted.
 // ─────────────────────────────────────────────────────────────────────────────
 app.post("/register", async (c) => {
+    // S2: rate limit by IP — 5 req/min
+    const clientIp = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+        c.req.header("x-real-ip") ??
+        "unknown";
+    if (!checkRegisterRateLimit(clientIp)) {
+        c.header("Retry-After", "60");
+        return c.json({
+            error: "too_many_requests",
+            error_description: "Rate limit exceeded. Max 5 registrations per minute per IP.",
+        }, 429);
+    }
     let body = {};
     try {
         body = await c.req.json();
@@ -160,8 +216,8 @@ app.post("/register", async (c) => {
         token_endpoint_auth_method: "client_secret_post",
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
-        scope: "vantage:read vantage:write",
-        scope_profile: scopeProfile,
+        // SC: standardized on mcp:full — consistent with well-known metadata
+        scope: "mcp:full",
     }, 201);
 });
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +230,8 @@ app.get("/authorize", async (c) => {
     const codeChallenge = q.code_challenge;
     const codeChallengeMethod = q.code_challenge_method ?? "S256";
     const state = q.state;
-    const scope = q.scope ?? "vantage:read vantage:write";
+    // SC: standardize scope — always mcp:full regardless of requested value
+    const scope = "mcp:full";
     const responseType = q.response_type;
     if (!clientId || !redirectUri || !codeChallenge) {
         return c.json({
@@ -367,7 +424,8 @@ app.post("/token", async (c) => {
             tokenHash: accessTokenHash,
             clientId: record.clientId,
             userId: record.userId,
-            scopes: ["vantage:read", "vantage:write"],
+            // SC: standardized on mcp:full
+            scopes: ["mcp:full"],
             scopeProfile: profile.profileId,
             fromAllowList: profile.fromAllowList,
             namespaceReadPrefixes: profile.namespaceReadPrefixes,
@@ -380,7 +438,8 @@ app.post("/token", async (c) => {
             token_type: "Bearer",
             expires_in: ACCESS_TOKEN_TTL_SECONDS,
             refresh_token: refreshTokenRaw, // reused
-            scope: "vantage:read vantage:write",
+            // SC: standardized on mcp:full
+            scope: "mcp:full",
         });
     }
     return c.json({ error: "unsupported_grant_type" }, 400);
@@ -393,7 +452,8 @@ app.get("/health", (c) => c.json({
     service: "vantage-peers-mcp-http",
     version: pkg.version,
     transport: "streamable-http",
-    oauth: "scoped-tokens",
+    oauth: "supported",
+    scopes: ["mcp:full"],
 }));
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin endpoints — master token only

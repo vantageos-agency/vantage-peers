@@ -89,15 +89,21 @@ function resolveIssuer(req: Request): string {
 		// Use x-forwarded-proto when behind a reverse proxy; fall back to https.
 		const proto =
 			req.headers.get("x-forwarded-proto") ??
-			(host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https");
+			(host.startsWith("localhost") || host.startsWith("127.")
+				? "http"
+				: "https");
 		return `${proto}://${host}`;
 	}
 	return PUBLIC_BASE_URL_FALLBACK;
 }
 
 function randomOpaqueToken(): string {
-	// 2× UUID → ~256 bits of entropy. Strip dashes for compactness.
-	return `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+	// 256-bit entropy via getRandomValues (32 bytes → 64 hex chars).
+	const bytes = new Uint8Array(32);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes)
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
 }
 
 type ScopeProfile = {
@@ -175,12 +181,51 @@ app.get("/.well-known/oauth-authorization-server", (c) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// S2: In-memory rate limiter for POST /register (5 req/min/IP, DoS mitigation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type RateBucket = { count: number; windowStart: number };
+const registerRateBuckets = new Map<string, RateBucket>();
+const REGISTER_RATE_LIMIT = 5;
+const REGISTER_RATE_WINDOW_MS = 60_000;
+
+function checkRegisterRateLimit(ip: string): boolean {
+	const now = Date.now();
+	const bucket = registerRateBuckets.get(ip);
+	if (!bucket || now - bucket.windowStart >= REGISTER_RATE_WINDOW_MS) {
+		registerRateBuckets.set(ip, { count: 1, windowStart: now });
+		return true;
+	}
+	if (bucket.count < REGISTER_RATE_LIMIT) {
+		bucket.count++;
+		return true;
+	}
+	return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RFC 7591 — Dynamic Client Registration
 // Anonymous registrations get DEFAULT_PUBLIC_DCR_PROFILE ("client-generic").
 // Pi must elevate the client via admin endpoint before real scopes are granted.
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.post("/register", async (c) => {
+	// S2: rate limit by IP — 5 req/min
+	const clientIp =
+		c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+		c.req.header("x-real-ip") ??
+		"unknown";
+	if (!checkRegisterRateLimit(clientIp)) {
+		c.header("Retry-After", "60");
+		return c.json(
+			{
+				error: "too_many_requests",
+				error_description:
+					"Rate limit exceeded. Max 5 registrations per minute per IP.",
+			},
+			429,
+		);
+	}
 	let body: Record<string, unknown> = {};
 	try {
 		body = await c.req.json();
@@ -235,8 +280,8 @@ app.post("/register", async (c) => {
 			token_endpoint_auth_method: "client_secret_post",
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
-			scope: "vantage:read vantage:write",
-			scope_profile: scopeProfile,
+			// SC: standardized on mcp:full — consistent with well-known metadata
+			scope: "mcp:full",
 		},
 		201,
 	);
@@ -253,7 +298,8 @@ app.get("/authorize", async (c) => {
 	const codeChallenge = q.code_challenge;
 	const codeChallengeMethod = q.code_challenge_method ?? "S256";
 	const state = q.state;
-	const scope = q.scope ?? "vantage:read vantage:write";
+	// SC: standardize scope — always mcp:full regardless of requested value
+	const scope = "mcp:full";
 	const responseType = q.response_type;
 
 	if (!clientId || !redirectUri || !codeChallenge) {
@@ -536,7 +582,8 @@ app.post("/token", async (c) => {
 				tokenHash: accessTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
-				scopes: ["vantage:read", "vantage:write"],
+				// SC: standardized on mcp:full
+				scopes: ["mcp:full"],
 				scopeProfile: profile.profileId,
 				fromAllowList: profile.fromAllowList,
 				namespaceReadPrefixes: profile.namespaceReadPrefixes,
@@ -550,7 +597,8 @@ app.post("/token", async (c) => {
 			token_type: "Bearer",
 			expires_in: ACCESS_TOKEN_TTL_SECONDS,
 			refresh_token: refreshTokenRaw, // reused
-			scope: "vantage:read vantage:write",
+			// SC: standardized on mcp:full
+			scope: "mcp:full",
 		});
 	}
 
