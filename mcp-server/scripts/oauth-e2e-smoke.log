@@ -1,0 +1,58 @@
+
+[0;36m══════════════════════════════════════════════════════[0m
+[0;36m OAuth 2.1 DCR E2E Smoke Test — VantagePeers Railway[0m
+[0;36m Target: https://vantage-peers-production.up.railway.app[0m
+[0;36m══════════════════════════════════════════════════════[0m
+
+[1;33mStep 1: POST /register[0m
+  HTTP: 201
+  Body: {"client_id":"6eeb0453-8ed6-4a10-ac28-804b523e4f12","client_secret":"aeee065069eed2e8def2fea7a63d0cd4f357e680abaa911301b35bae258a3e67","client_id_issued_at":1778253362,"client_secret_expires_at":0,"redirect_uris":["https://claude.ai/api/mcp/auth/callback"],"client_name":"smoke-test-1778253362","token_endpoint_auth_method":"client_secret_post","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"scope":"mcp:full"}
+[0;32m[PASS][0m Step 1: POST /register (client_id=6eeb0453-8ed6-4a10-ac28-804b523e4f12, scope=mcp:full)
+
+[1;33mStep 2: PKCE generation[0m
+  code_verifier length: 64
+  code_challenge: VA3DxOygX8ZR8JRJ8eIYKVGDjKSAkd4pS1CbT7yFfQg
+[0;32m[PASS][0m Step 2: PKCE generation (verifier=64 chars, challenge=43 chars)
+
+[1;33mStep 3: GET /authorize[0m
+  URL: https://vantage-peers-production.up.railway.app/authorize?response_type=code&client_id=6eeb0453-8ed6-4a10-ac28-804b523e4f12&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth%2Fcallback&code_challenge=VA3DxOygX8ZR8JRJ8eIYKVGDjKSAkd4pS1CbT7yFfQg&code_challenge_method=S256&scope=mcp:full&state=test-state-1778253362
+  HTTP: 302
+  Location: https://claude.ai/api/mcp/auth/callback?code=084ae06d29e73588045004791e56ed7cb6b6a208e51856d4ed6332808bb8b776&state=test-state-1778253362
+[0;32m[PASS][0m Step 3: GET /authorize (auth_code=084ae06d29e7...)
+
+[1;33mStep 4: POST /token (authorization_code grant)[0m
+  HTTP: 200
+  Body: {"access_token":"8f5ec37485529032bc31c8ccb37dff8836a47187efe47d38832f69145ca416f6","token_type":"Bearer","expires_in":3600,"refresh_token":"d1315fb2e59889687d6a85eacb501ac9fedb5dd92fe77a9ed0b9953c150dee85","scope":"mcp:full"}
+[0;32m[PASS][0m Step 4: POST /token auth_code (access_token=8f5ec3748552..., expires_in=3600s, scope=mcp:full)
+
+[1;33mStep 5: POST /mcp — initialize + tools/list[0m
+  5a: MCP initialize...
+  HTTP: 200
+  Body (first 300 chars): event: message
+data: {"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"vantage-peers","version":"2.2.0"}},"jsonrpc":"2.0","id":0}
+  5b: MCP tools/list...
+  HTTP: 200
+  Body (first 500 chars): event: message
+data: {"result":{"tools":[{"name":"store_memory","description":"Store a typed memory entry in VantagePeers. Supports user, feedback, project, and reference types. Optional relatesTo creates a graph relation (updates supersedes the target, extends adds detail, derives is an inference).","inputSchema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"namespace":{"type":"string","description":"Memory namespace — e.g. 'global', 'orchestrator/pi', 'pro
+[0;32m[PASS][0m Step 5: POST /mcp tools/list (HTTP 200, tools count: 84)
+
+[1;33mStep 6: POST /token (refresh_token grant)[0m
+  HTTP: 200
+  Body: {"access_token":"d831953a49a4949d35da2d5eeebc929f126dfdaa1e4ac624de286dd1e2b0358a","token_type":"Bearer","expires_in":3600,"refresh_token":"d1315fb2e59889687d6a85eacb501ac9fedb5dd92fe77a9ed0b9953c150dee85","scope":"mcp:full"}
+[0;32m[PASS][0m Step 6: POST /token refresh (new access_token=d831953a49a4..., refresh_token=same (server reuses))
+
+[0;36m══════════════════════════════════════════════════════[0m
+[0;36m                     SUMMARY                         [0m
+[0;36m══════════════════════════════════════════════════════[0m
+  [0;32mPASS  Step 1: POST /register (client_id=6eeb0453-8ed6-4a10-ac28-804b523e4f12, scope=mcp:full)[0m
+  [0;32mPASS  Step 2: PKCE generation (verifier=64 chars, challenge=43 chars)[0m
+  [0;32mPASS  Step 3: GET /authorize (auth_code=084ae06d29e7...)[0m
+  [0;32mPASS  Step 4: POST /token auth_code (access_token=8f5ec3748552..., expires_in=3600s, scope=mcp:full)[0m
+  [0;32mPASS  Step 5: POST /mcp tools/list (HTTP 200, tools count: 84)[0m
+  [0;32mPASS  Step 6: POST /token refresh (new access_token=d831953a49a4..., refresh_token=same (server reuses))[0m
+
+  Total runtime: 4s
+
+[0;32m  ALL STEPS PASSED — Railway prod OAuth 2.1 DCR flow validated.[0m
+[0;32m  Cedric session 2 can proceed with confidence.[0m
+[0;36m══════════════════════════════════════════════════════[0m
