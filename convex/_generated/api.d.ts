@@ -26,6 +26,7 @@ import type * as http from "../http.js";
 import type * as issueStats from "../issueStats.js";
 import type * as issueStatsQueries from "../issueStatsQueries.js";
 import type * as issues from "../issues.js";
+import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_license from "../lib/license.js";
 import type * as licenses from "../licenses.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   issueStats: typeof issueStats;
   issueStatsQueries: typeof issueStatsQueries;
   issues: typeof issues;
+  "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;
   "lib/license": typeof lib_license;
   licenses: typeof licenses;
