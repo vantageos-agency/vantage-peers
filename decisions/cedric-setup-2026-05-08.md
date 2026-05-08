@@ -161,6 +161,25 @@ No bearer token, no JSON to edit. Claude.ai uses OAuth 2.1 under the hood, which
 
 ---
 
+## Zero-touch auto-updates (one-time setup required)
+
+Your Railway deployment needs one manual setting to receive automatic daily updates. Once set, every PATCH and MINOR release of `vantage-peers-mcp` reaches you overnight with no action on your part.
+
+**ONE-TIME action** — do this once, then forget it:
+
+1. Open your Railway project.
+2. Click the **vantage-peers-mcp** service card.
+3. Go to the **Settings** tab.
+4. Scroll to **Cron Schedule**.
+5. Enter `0 3 * * *`
+6. Click **Save**.
+
+Railway will restart your service at 03:00 UTC each night, pull the latest `vantage-peers-mcp` from npm, and run any pending schema migrations automatically. No data is lost on restart — all state lives in Convex.
+
+MAJOR version upgrades (breaking changes) will always come with advance notice and a migration guide at [vantagepeers.com/docs/migrations](https://vantagepeers.com/docs/migrations). The cron covers PATCH and MINOR updates only.
+
+---
+
 ## What's included in Pro Support (1 year)
 
 - Email support for setup issues, env var debugging, plugin installation
