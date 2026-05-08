@@ -767,39 +767,6 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 const PORT = Number(process.env.PORT ?? 3000);
 const HOSTNAME = "0.0.0.0";
 
-// ── Auto-migration: run before accepting requests ────────────────────────────
-// Calls applyPendingMigrations on the internal Convex deployment. Fail-fast:
-// if migrations fail, the process exits rather than serving broken state.
-try {
-	console.log(
-		`[vantage-peers-mcp] Running auto-migrations for v${pkg.version}…`,
-	);
-	const migrationResult = await internalClient().mutation(
-		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		"migrationRunner:applyPendingMigrations" as any,
-		{ callerVersion: pkg.version },
-	);
-	const result = migrationResult as {
-		applied: number;
-		current: string;
-		appliedVersions: string[];
-		alreadyApplied: string[];
-	};
-	if (result.applied > 0) {
-		console.log(
-			`[vantage-peers-mcp] Migrations applied: ${result.appliedVersions.join(", ")}`,
-		);
-	} else {
-		console.log(
-			`[vantage-peers-mcp] Migrations: already up-to-date (${result.alreadyApplied.length} applied previously)`,
-		);
-	}
-} catch (err: unknown) {
-	const message = err instanceof Error ? err.message : String(err);
-	console.error(`[vantage-peers-mcp] FATAL: migration failed — ${message}`);
-	process.exit(1);
-}
-
 // Explicit Bun.serve() — does not rely on default-export auto-detection,
 // which can fail when started via `bun run <file>` (vs `bun <file>`).
 // @ts-expect-error — Bun global available at runtime on Railway

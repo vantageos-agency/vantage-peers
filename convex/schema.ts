@@ -833,17 +833,6 @@ export default defineSchema({
 		.index("by_customerEmail", ["customerEmail"])
 		.index("by_gumroadOrderId", ["gumroadOrderId"]),
 
-	// ── vp_migrations ────────────────────────────────────────────────────────
-	// Auto-migration tracking table. One row per applied migration version.
-	// Used by applyPendingMigrations (convex/migrationRunner.ts) to ensure each
-	// migration step runs exactly once — idempotent across server restarts.
-	// PATCH/MINOR versions insert a row; MAJOR versions include a migration step.
-	vp_migrations: defineTable({
-		version: v.string(), // e.g. "2.3.0"
-		appliedAt: v.number(), // ms since epoch
-		description: v.string(), // human-readable summary of what was applied
-	}).index("by_version", ["version"]),
-
 	// ── client_org_mapping ───────────────────────────────────────────────────
 	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex

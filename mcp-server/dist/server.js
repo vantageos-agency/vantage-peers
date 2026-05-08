@@ -10,31 +10,12 @@
  *
  * See README.md for the full tool reference.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ConvexHttpClient } from "convex/browser";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { z } from "zod";
-// ─────────────────────────────────────────────────────────────────────────────
-// Package version — read from package.json to stay in sync with npm releases
-// ─────────────────────────────────────────────────────────────────────────────
-let _serverPkg;
-try {
-    // Dist mode: dist/server.js → ../package.json = mcp-server/package.json
-    _serverPkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
-}
-catch {
-    try {
-        // Source mode: server.ts → ./package.json
-        _serverPkg = JSON.parse(readFileSync(resolve(fileURLToPath(import.meta.url), "../package.json"), "utf-8"));
-    }
-    catch {
-        _serverPkg = { version: "2.2.0" }; // fallback
-    }
-}
-const SERVER_VERSION = _serverPkg.version;
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap: resolve CONVEX_URL from env or .env.local
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +102,7 @@ const convexUrl = loadConvexUrl();
 const convex = new ConvexHttpClient(convexUrl);
 const server = new McpServer({
     name: "vantage-peers",
-    version: SERVER_VERSION,
+    version: "2.0.0",
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: structured error response for MCP tool handlers
@@ -2927,30 +2908,6 @@ server.tool("get_error", "Fetch a single error log entry by its Convex document 
         return mcpError(error.message ?? String(error));
     }
 });
-// ─────────────────────────────────────────────────────────────────────────────
-// Auto-migration: run before registering tools
-// Fail-fast: exit rather than serve broken state if migrations fail.
-// For stdio servers (npx vantage-peers-mcp), CONVEX_URL is the single
-// deployment the client configured — migrations run against that same URL.
-// ─────────────────────────────────────────────────────────────────────────────
-try {
-    process.stderr.write(`[vantage-peers-mcp] Running auto-migrations…\n`);
-    const migrationResult = await convex.mutation(
-    // biome-ignore lint/suspicious/noExplicitAny: Convex string API
-    "migrationRunner:applyPendingMigrations", { callerVersion: SERVER_VERSION });
-    const result = migrationResult;
-    if (result.applied > 0) {
-        process.stderr.write(`[vantage-peers-mcp] Migrations applied: ${result.appliedVersions.join(", ")}\n`);
-    }
-    else {
-        process.stderr.write(`[vantage-peers-mcp] Migrations: already up-to-date (${result.alreadyApplied.length} applied previously)\n`);
-    }
-}
-catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[vantage-peers-mcp] FATAL: migration failed — ${message}\n`);
-    process.exit(1);
-}
 // ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport
 // ─────────────────────────────────────────────────────────────────────────────
