@@ -10,7 +10,7 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 - **Self-hosted MCP server** — your own deployment of `vantage-peers-mcp` v2.2.0 (npm), running on Railway, backed by your Convex project. No quotas. No per-seat fees.
 - **82 MCP tools** — memory, tasks, missions, messaging, fix patterns, briefing notes, diary, more. Full reference at [vantagepeers.com/docs/tools](https://vantagepeers.com/docs/tools).
-- **Plug-and-play plugin** — `/plugin marketplace add vantageos-agency/plugins` then `/plugin install vantage-peers@vantageos-plugins` adds an expert agent + 5 skills + CLAUDE.md template to any Claude Code workspace.
+- **Plug-and-play plugin** — `/plugin marketplace add vantageos-agency/vantage-peers-plugin` then `/plugin install vantage-peers@vantage-peers-plugin` adds an expert agent + 5 skills + CLAUDE.md template to any Claude Code workspace.
 - **License key** — your `VP_LICENSE_KEY` (sent separately by email).
 
 ---
@@ -90,8 +90,8 @@ If `version` is anything other than `2.2.0`, ping us — that's a deploy issue.
 In any Claude Code workspace:
 
 ```
-/plugin marketplace add vantageos-agency/plugins
-/plugin install vantage-peers@vantageos-plugins
+/plugin marketplace add vantageos-agency/vantage-peers-plugin
+/plugin install vantage-peers@vantage-peers-plugin
 ```
 
 The plugin pulls down: an expert agent (purple, knows all 82 tools + namespacing + memory protocol), five skills (`/check-messages`, `/pre-compact`, `/daily-start`, `/close-day`, `/vantage-peers-init`), and templates for your CLAUDE.md and `.mcp.json`.
@@ -152,7 +152,7 @@ Or just talk to your AI: *"store a memory that we use Convex on the EU region"* 
 - **Source repo**: <https://github.com/vantageos-agency/vantage-peers>
 - **npm package**: <https://www.npmjs.com/package/vantage-peers-mcp>
 - **Convex (provision)**: <https://convex.dev/referral/LAUREN7583>
-- **Plugin marketplace entry**: <https://github.com/vantageos-agency/plugins/tree/main/vantage-peers>
+- **Plugin marketplace entry**: <https://github.com/vantageos-agency/vantage-peers-plugin>
 - **Support**: <hello@vantageos.agency>
 
 Welcome to the VantagePeers ecosystem.
