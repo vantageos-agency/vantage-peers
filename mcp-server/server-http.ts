@@ -25,6 +25,7 @@
  *   NODE_ENV              — set to "production" on Railway
  */
 
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { ConvexHttpClient } from "convex/browser";
@@ -38,6 +39,10 @@ import {
 	sha256Hex,
 } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
+
+const pkg = JSON.parse(
+	readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
+) as { version: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -530,7 +535,7 @@ app.get("/health", (c) =>
 	c.json({
 		status: "ok",
 		service: "vantage-peers-mcp-http",
-		version: "2.1.0",
+		version: pkg.version,
 		transport: "streamable-http",
 		oauth: "scoped-tokens",
 	}),
@@ -665,7 +670,7 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	// Fresh McpServer per request — stateless mode, no session leakage
 	const server = new McpServer({
 		name: "vantage-peers",
-		version: "2.1.0",
+		version: pkg.version,
 	});
 
 	registerTools(server, convex, oauthCtx);

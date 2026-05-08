@@ -28,6 +28,13 @@ export declare function assertContentSize(content: string, toolName: string): nu
 export declare const convexIdPattern: RegExp;
 export declare const receiptIdSchema: z.ZodString;
 export declare const memoryIdSchema: z.ZodString;
+export declare const creatorSchema: z.ZodString;
+export declare const severitySchema: z.ZodEnum<{
+    critical: "critical";
+    major: "major";
+    minor: "minor";
+}>;
+export declare const flexArray: z.ZodUnion<readonly [z.ZodArray<z.ZodString>, z.ZodString]>;
 export declare const updateBriefingNoteDescription: string;
 export declare const updateBriefingNoteSchema: z.ZodObject<{
     noteId: z.ZodString;
