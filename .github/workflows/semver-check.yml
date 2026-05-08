@@ -1,0 +1,113 @@
+name: Semver check
+
+on:
+  pull_request:
+    paths:
+      - "mcp-server/package.json"
+      - "convex/schema.ts"
+
+jobs:
+  semver-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version bump type
+        id: bump
+        run: |
+          BASE_REF="${{ github.base_ref }}"
+          git fetch origin "$BASE_REF" --depth=1
+
+          BASE_VERSION=$(git show "origin/$BASE_REF:mcp-server/package.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])")
+          HEAD_VERSION=$(python3 -c "import json; print(json.load(open('mcp-server/package.json'))['version'])")
+
+          echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "head_version=$HEAD_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Parse semver components
+          IFS='.' read -r BASE_MAJOR BASE_MINOR BASE_PATCH <<< "$BASE_VERSION"
+          IFS='.' read -r HEAD_MAJOR HEAD_MINOR HEAD_PATCH <<< "$HEAD_VERSION"
+
+          if [ "$HEAD_MAJOR" -gt "$BASE_MAJOR" ]; then
+            echo "bump_type=MAJOR" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD_MINOR" -gt "$BASE_MINOR" ]; then
+            echo "bump_type=MINOR" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD_PATCH" -gt "$BASE_PATCH" ]; then
+            echo "bump_type=PATCH" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump_type=NONE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Print version info
+        run: |
+          echo "Base: ${{ steps.bump.outputs.base_version }}"
+          echo "Head: ${{ steps.bump.outputs.head_version }}"
+          echo "Bump type: ${{ steps.bump.outputs.bump_type }}"
+
+      - name: Check MAJOR migration guide exists
+        if: steps.bump.outputs.bump_type == 'MAJOR'
+        run: |
+          HEAD_VERSION="${{ steps.bump.outputs.head_version }}"
+          IFS='.' read -r MAJOR _ _ <<< "$HEAD_VERSION"
+          MIGRATION_FILE="docs/migrations/v${MAJOR}.md"
+
+          echo "Checking for required migration guide: $MIGRATION_FILE"
+
+          if [ ! -f "$MIGRATION_FILE" ]; then
+            echo ""
+            echo "ERROR: MAJOR version bump detected (${{ steps.bump.outputs.base_version }} → $HEAD_VERSION)"
+            echo "A migration guide is REQUIRED at: $MIGRATION_FILE"
+            echo ""
+            echo "Create the file with:"
+            echo "  - Breaking changes list"
+            echo "  - Step-by-step upgrade instructions for self-hosted clients"
+            echo "  - Schema changes (if any)"
+            echo "  - Rollback procedure"
+            echo ""
+            echo "See RELEASE.md for the full release policy."
+            exit 1
+          fi
+
+          echo "Migration guide found at $MIGRATION_FILE — MAJOR bump approved."
+
+      - name: schema-vs-version-guard
+        run: |
+          BUMP_TYPE="${{ steps.bump.outputs.bump_type }}"
+          BASE_REF="${{ github.base_ref }}"
+
+          if [ "$BUMP_TYPE" = "MAJOR" ]; then
+            echo "MAJOR bump detected — schema changes allowed (ensure migration guide in docs/migrations/v$(echo "${{ steps.bump.outputs.head_version }}" | cut -d. -f1).md)."
+            exit 0
+          fi
+
+          if [ "$BUMP_TYPE" = "NONE" ]; then
+            echo "No version bump — schema change is intra-major dev work, passing."
+            exit 0
+          fi
+
+          # PATCH or MINOR: check whether convex/schema.ts was modified
+          SCHEMA_DIFF=$(git diff --name-only "origin/$BASE_REF" HEAD -- convex/schema.ts)
+
+          if [ -n "$SCHEMA_DIFF" ]; then
+            echo ""
+            echo "ERROR: Schema change requires MAJOR version bump or stay on existing version."
+            echo "PATCH/MINOR cannot include schema modifications (would silently break self-host deployments)."
+            echo ""
+            echo "Bump type detected : $BUMP_TYPE (${{ steps.bump.outputs.base_version }} → ${{ steps.bump.outputs.head_version }})"
+            echo "Changed file       : convex/schema.ts"
+            echo ""
+            echo "Options:"
+            echo "  1. Bump to MAJOR ($(echo "${{ steps.bump.outputs.base_version }}" | cut -d. -f1 | awk '{print $1+1}').0.0) and add docs/migrations/v<N>.md"
+            echo "  2. Revert the convex/schema.ts change and ship it in a separate MAJOR release"
+            echo ""
+            echo "See RELEASE.md § Schema change rule for details."
+            exit 1
+          fi
+
+          echo "$BUMP_TYPE bump with no schema changes — guard passed."
