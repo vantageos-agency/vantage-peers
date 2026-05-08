@@ -731,6 +731,43 @@ export default defineSchema({
 		.index("by_active", ["active"])
 		.index("by_function", ["functionName", "active"]),
 
+	// ── oauthClients ─────────────────────────────────────────────────────────
+	// OAuth 2.1 Dynamic Client Registration (RFC 7591) clients.
+	// Issued by the DCR /register endpoint without admin gating.
+	// clientSecret = 64-char hex (raw value — returned once on registration,
+	// stored here for PKCE / client_secret_post auth on the token endpoint).
+	oauthClients: defineTable({
+		clientId: v.string(), // crypto.randomUUID()
+		clientSecret: v.string(), // 64-char hex (raw — transmitted once)
+		clientName: v.string(),
+		redirectUris: v.array(v.string()),
+		createdAt: v.number(),
+		scope: v.optional(v.string()), // default "mcp:full"
+	}).index("by_clientId", ["clientId"]),
+
+	// ── oauthTokens ──────────────────────────────────────────────────────────
+	// Auth codes and access/refresh tokens for the DCR OAuth 2.1 flow.
+	// A single row covers both the auth-code phase (authCode set, accessToken
+	// absent) and the token phase (accessToken set, authCode consumed).
+	// Index on authCode supports code exchange; index on accessToken supports
+	// bearer validation; index on clientId supports revocation/listing.
+	oauthTokens: defineTable({
+		clientId: v.string(),
+		accessToken: v.string(), // crypto.randomUUID()
+		refreshToken: v.optional(v.string()),
+		scope: v.string(),
+		expiresAt: v.number(), // ms since epoch
+		authCode: v.optional(v.string()), // PKCE authorization code
+		codeChallenge: v.optional(v.string()),
+		codeChallengeMethod: v.optional(v.string()),
+		redirectUri: v.optional(v.string()),
+		used: v.optional(v.boolean()), // auth code single-use flag
+		createdAt: v.number(),
+	})
+		.index("by_accessToken", ["accessToken"])
+		.index("by_authCode", ["authCode"])
+		.index("by_clientId", ["clientId"]),
+
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.
 	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.

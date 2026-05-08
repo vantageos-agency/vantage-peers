@@ -50,6 +50,22 @@ Add to `~/.claude.json` or project `.claude/settings.json`:
 }
 ```
 
+## OAuth 2.1 DCR endpoints
+
+VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web can connect via "Add custom integration" without any extra configuration.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/.well-known/oauth-authorization-server` | Authorization Server Metadata (RFC 8414) — advertises supported grant types, endpoints, and capabilities |
+| `GET` | `/.well-known/oauth-protected-resource` | Protected Resource Metadata (RFC 9728) — links back to the authorization server |
+| `POST` | `/register` | Dynamic Client Registration (RFC 7591) — Claude.ai registers itself automatically on first connect |
+| `GET` | `/authorize` | Authorization endpoint — redirects the user to grant access |
+| `POST` | `/token` | Token endpoint — issues access tokens per OAuth 2.1 |
+
+**RFCs implemented:** RFC 8414 (AS Metadata), RFC 9728 (Protected Resource Metadata), RFC 7591 (Dynamic Client Registration), OAuth 2.1 draft.
+
+**Backward compatibility:** the `BEARER_SECRET_MASTER` env var still works unchanged. Claude Code and Claude Desktop users do not need to change anything — static bearer auth remains the default for those clients. OAuth 2.1 DCR is used exclusively when a client initiates the discovery flow (e.g. Claude.ai web).
+
 ## Environment variables
 
 | Variable | Required | Description |

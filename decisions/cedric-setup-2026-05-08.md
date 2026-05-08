@@ -6,11 +6,23 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 ---
 
+## How to connect — three options
+
+| Client            | Auth method            | Setup                                    |
+|-------------------|------------------------|------------------------------------------|
+| Claude Code       | BEARER token           | `.mcp.json` with `Authorization` header  |
+| Claude Desktop    | BEARER token           | `claude_desktop_config.json` same pattern|
+| Claude.ai (web)   | OAuth 2.1 DCR          | Add custom MCP integration → enter URL   |
+
+Claude.ai web is the simplest: you just paste your Railway URL and click Authorize. No tokens, no config files.
+
+---
+
 ## What you get
 
 - **Self-hosted MCP server** — your own deployment of `vantage-peers-mcp` v2.2.0 (npm), running on Railway, backed by your Convex project. No quotas. No per-seat fees.
 - **82 MCP tools** — memory, tasks, missions, messaging, fix patterns, briefing notes, diary, more. Full reference at [vantagepeers.com/docs/tools](https://vantagepeers.com/docs/tools).
-- **Plug-and-play plugin** — `/plugin marketplace add vantageos-agency/plugins` then `/plugin install vantage-peers@vantageos-plugins` adds an expert agent + 5 skills + CLAUDE.md template to any Claude Code workspace.
+- **Plug-and-play plugin** — `/plugin marketplace add vantageos-agency/vantage-peers-plugin` then `/plugin install vantage-peers@vantage-peers-plugin` adds an expert agent + 5 skills + CLAUDE.md template to any Claude Code workspace.
 - **License key** — your `VP_LICENSE_KEY` (sent separately by email).
 
 ---
@@ -90,8 +102,8 @@ If `version` is anything other than `2.2.0`, ping us — that's a deploy issue.
 In any Claude Code workspace:
 
 ```
-/plugin marketplace add vantageos-agency/plugins
-/plugin install vantage-peers@vantageos-plugins
+/plugin marketplace add vantageos-agency/vantage-peers-plugin
+/plugin install vantage-peers@vantage-peers-plugin
 ```
 
 The plugin pulls down: an expert agent (purple, knows all 82 tools + namespacing + memory protocol), five skills (`/check-messages`, `/pre-compact`, `/daily-start`, `/close-day`, `/vantage-peers-init`), and templates for your CLAUDE.md and `.mcp.json`.
@@ -134,6 +146,21 @@ Or just talk to your AI: *"store a memory that we use Convex on the EU region"* 
 
 ---
 
+## Add to Claude.ai web (optional — no config file needed)
+
+If you want to use VantagePeers directly from your browser at claude.ai, here's all you do:
+
+1. Open [https://claude.ai](https://claude.ai) and sign in.
+2. Go to **Settings → Integrations → Custom MCP servers**.
+3. Click **"Add custom integration"**.
+4. Paste your Railway URL: `https://<your-deployment>.up.railway.app`
+5. Claude.ai will handle authentication automatically — it opens a quick authorization screen, you click Allow, and you're done.
+6. All 82 tools are live in your Claude.ai web sessions immediately.
+
+No bearer token, no JSON to edit. Claude.ai uses OAuth 2.1 under the hood, which means it generates and manages its own credentials automatically.
+
+---
+
 ## What's included in Pro Support (1 year)
 
 - Email support for setup issues, env var debugging, plugin installation
@@ -152,7 +179,7 @@ Or just talk to your AI: *"store a memory that we use Convex on the EU region"* 
 - **Source repo**: <https://github.com/vantageos-agency/vantage-peers>
 - **npm package**: <https://www.npmjs.com/package/vantage-peers-mcp>
 - **Convex (provision)**: <https://convex.dev/referral/LAUREN7583>
-- **Plugin marketplace entry**: <https://github.com/vantageos-agency/plugins/tree/main/vantage-peers>
+- **Plugin marketplace entry**: <https://github.com/vantageos-agency/vantage-peers-plugin>
 - **Support**: <hello@vantageos.agency>
 
 Welcome to the VantagePeers ecosystem.

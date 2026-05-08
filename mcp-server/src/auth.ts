@@ -69,6 +69,16 @@ type OAuthLookupResult = {
 	expiresAt: number;
 } | null;
 
+// Shape returned by oauthDcr:validateAccessToken (DCR simple token table)
+type DcrValidResult = {
+	valid: true;
+	clientId: string;
+	scope: string;
+	expiresAt: number;
+};
+
+type DcrLookupResult = DcrValidResult | { valid: false } | null;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Convex client (reads mcpTenants + oauth_* tables)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,7 +312,56 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return;
 		}
 
-		// ── (3) Legacy internal bearer — mcpTenants table ───────────────────────
+		// ── (3) DCR OAuth token — check oauthTokens via oauthDcr:validateAccessToken
+		// Uses raw token (not hashed) — the DCR table stores tokens in plaintext.
+		// This path handles Claude.ai clients registered via POST /register.
+		let dcrResult: DcrLookupResult = null;
+		try {
+			dcrResult = (await internalClient().query(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauthDcr:validateAccessToken" as any,
+				{ accessToken: token },
+			)) as DcrLookupResult;
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.warn("[auth] DCR OAuth lookup skipped:", message);
+		}
+
+		if (dcrResult?.valid === true) {
+			const internalUrl = process.env.CONVEX_URL_INTERNAL;
+			if (!internalUrl) {
+				console.error(
+					"[auth] CONVEX_URL_INTERNAL not set — cannot route DCR OAuth token",
+				);
+				return c.json(
+					{ error: "Server misconfigured: internal deployment URL missing" },
+					500,
+				);
+			}
+			// Map DCR single-scope string → OAuthContext fields.
+			// DCR tokens always carry "mcp:full" which maps to full access.
+			const scopes = dcrResult.scope.split(/\s+/).filter(Boolean);
+			const isFull = scopes.includes("mcp:full");
+			c.set("tenant", {
+				tenantName: `dcr:${dcrResult.clientId}`,
+				convexUrl: internalUrl,
+			});
+			c.set("oauthContext", {
+				clientId: dcrResult.clientId,
+				userId: dcrResult.clientId,
+				scopes,
+				scopeProfile: isFull ? "master" : "client-generic",
+				fromAllowList: isFull ? ["*"] : [],
+				namespaceReadPrefixes: isFull ? ["*"] : [],
+				namespaceWritePrefixes: isFull ? ["*"] : [],
+				expiresAt: dcrResult.expiresAt,
+				isMaster: false,
+			});
+			await next();
+			return;
+		}
+
+		// ── (4) Legacy internal bearer — mcpTenants table ───────────────────────
 		let tenant: TenantLookupResult;
 
 		try {

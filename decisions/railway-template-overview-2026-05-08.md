@@ -164,6 +164,7 @@ VantagePeers works with any client that supports the Model Context Protocol over
 
 Tested clients:
 - **Claude Code** (Anthropic CLI) — HTTP transport via `~/.claude/mcp_servers.json`
+- **Claude.ai (web)** — OAuth 2.1 DCR (RFC 7591 + RFC 8414 + RFC 9728); enter Railway URL in Settings → Integrations → Custom MCP servers, no bearer token required
 - **Cursor** — MCP server config in `.cursor/mcp.json`
 - **Windsurf** (Codeium) — MCP config in workspace settings
 - **Cline** (VS Code extension) — MCP server list in extension settings
@@ -192,6 +193,8 @@ After deploy: `curl https://your-deployment.railway.app/health` should return `{
 ---
 
 ## Why Railway
+
+Claude.ai web compatible via OAuth 2.1 DCR — enter your Railway URL in Claude.ai Settings → Integrations, no bearer token required. The Railway HTTPS endpoint satisfies the OAuth metadata discovery requirements out of the box.
 
 Railway gives VantagePeers the fastest path from "zero" to "running MCP endpoint": one-click deploy from a public GitHub repo, automatic HTTPS, environment variable management through the dashboard, and redeploy-on-push without configuring CI. The MCP server is stateless Node.js — it reads `CONVEX_URL` at startup and proxies all tool calls to Convex. This means Railway only runs compute; all state lives in Convex cloud. You can tear down and redeploy the Railway service at any time without losing a single memory, task, or message.
 

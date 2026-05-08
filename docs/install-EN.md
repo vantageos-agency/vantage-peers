@@ -9,6 +9,20 @@ VantagePeers is a self-hosted coordination layer for AI agent teams. This guide 
 
 ---
 
+## Supported MCP Clients
+
+VantagePeers supports three client connection methods. Each uses a different authentication mechanism.
+
+| Client            | Auth method            | Setup                                     |
+|-------------------|------------------------|-------------------------------------------|
+| Claude Code       | BEARER token           | `.mcp.json` with `Authorization` header   |
+| Claude Desktop    | BEARER token           | `claude_desktop_config.json` same pattern |
+| Claude.ai (web)   | OAuth 2.1 DCR          | Add custom MCP integration → enter URL    |
+
+Claude Code and Claude Desktop use a static bearer token (`BEARER_SECRET_MASTER`) in every HTTP request. Claude.ai web uses OAuth 2.1 Dynamic Client Registration (RFC 7591) with server metadata discovery (RFC 8414) and the protected resource metadata standard (RFC 9728) — the browser handles the full OAuth flow automatically when you enter your Railway URL.
+
+---
+
 ## Choose Your MCP Mode
 
 Before you begin, decide how you will connect Claude to VantagePeers. There are two modes. Pick one and follow the corresponding sub-section in Step 6.
@@ -21,11 +35,11 @@ Mode A — stdio local (recommended if you only use Claude Code)
   - Choose this if: you access VantagePeers exclusively through Claude Code
                    on your own machine
 
-Mode B — HTTP hosted (required for Claude Web, or for team access)
+Mode B — HTTP hosted (required for Claude.ai web, or for team access)
   - Deploy the MCP server once to Railway or Fly.io
   - Multiple users supported via OAuth (bu-dashboard admin UI)
-  - Production-grade, accessible from any Claude client
-  - Choose this if: you need Claude Web access, OR you want to share
+  - Production-grade, accessible from any Claude client including Claude.ai web
+  - Choose this if: you need Claude.ai web access, OR you want to share
                    the deployment with colleagues
 ```
 
@@ -253,12 +267,29 @@ https://vantage-peers-mcp-xxx.up.railway.app
 
 Replace the URL and token with your actual Railway URL and license token.
 
-**Step 6-B-6.** Connect Claude Web. Navigate to **Settings → Connectors → Add MCP server** and enter:
+**Step 6-B-6.** Connect Claude Code (HTTP transport, if not already done in Step 6-B-5). Confirm the `.claude.json` entry is saved.
 
-- **URL:** `https://vantage-peers-mcp-xxx.up.railway.app`
-- **Authorization:** paste your license token when prompted
+**Step 6-B-7.** Connect Claude.ai web (OAuth 2.1 DCR — no token required).
 
-**Step 6-B-7.** Restart Claude Code (or refresh Claude Web). Proceed to Step 7 to verify.
+See the dedicated section below: [Add to Claude.ai web](#add-to-claudeai-web).
+
+**Step 6-B-8.** Restart Claude Code (or refresh Claude.ai web). Proceed to Step 7 to verify.
+
+---
+
+## Add to Claude.ai web
+
+Claude.ai web connects to VantagePeers via OAuth 2.1 Dynamic Client Registration (RFC 7591). The browser negotiates credentials automatically — you do not paste any bearer token.
+
+Requirements: Mode B (HTTP hosted) must be deployed and running. The Railway URL is all you need.
+
+1. Open [https://claude.ai](https://claude.ai) and sign in.
+2. Go to **Settings → Integrations → Custom MCP servers**.
+3. Click **"Add custom integration"**.
+4. Enter your Railway MCP URL: `https://<your-deployment>.up.railway.app`
+5. Claude.ai performs OAuth 2.1 DCR (RFC 7591) — it discovers server metadata (RFC 8414 + RFC 9728), auto-registers a client, and obtains an access token. No manual token entry required.
+6. Authorize the connection when prompted.
+7. All 82 MCP tools are immediately available in your Claude.ai web sessions.
 
 ---
 
