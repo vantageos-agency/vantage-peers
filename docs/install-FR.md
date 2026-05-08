@@ -55,6 +55,7 @@ curl -fsSL https://bun.sh/install | bash
 
 - **Compte GitHub** — pour cloner le dépôt et, le cas échéant, activer le suivi des issues GitHub.
 - **Compte Convex** — le backend qui stocke l'ensemble de la mémoire et des données de coordination des agents. Le forfait gratuit est suffisant. Inscription disponible sur [https://convex.dev](https://convex.dev).
+- **Compte Railway** *(Mode B uniquement)* — requis si vous déployez le serveur MCP en tant que service HTTP. Le forfait gratuit est suffisant pour la plupart des équipes. Inscription sur [https://railway.com?referralCode=vantagepeers](https://railway.com?referralCode=vantagepeers).
 - **Compte Claude Code ou Claude Web** — indispensable pour connecter les agents via MCP. [Claude Code](https://claude.ai/code) est recommandé pour un usage local ; Claude Web convient aux agents fonctionnant dans un navigateur.
 
 ---
@@ -206,7 +207,7 @@ Dans ce mode, le serveur MCP est déployé en tant que service HTTP persistant. 
 Cliquez sur le bouton ci-dessous (ou visitez directement l'URL) pour ouvrir l'assistant de déploiement Railway :
 
 ```
-https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic
+https://railway.com/deploy/vantagepeers-mcp
 ```
 
 **Étape 6-B-2.** Dans l'assistant Railway, renseignez les variables d'environnement suivantes :

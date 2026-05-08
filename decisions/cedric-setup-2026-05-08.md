@@ -10,7 +10,7 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 - **Self-hosted MCP server** — your own deployment of `vantage-peers-mcp` v2.2.0 (npm), running on Railway, backed by your Convex project. No quotas. No per-seat fees.
 - **82 MCP tools** — memory, tasks, missions, messaging, fix patterns, briefing notes, diary, more. Full reference at [vantagepeers.com/docs/tools](https://vantagepeers.com/docs/tools).
-- **Plug-and-play plugin** — `/plugin install vantage-peers` adds an expert agent + 5 skills + CLAUDE.md template to any Claude Code workspace.
+- **Plug-and-play plugin** — `/plugin marketplace add vantageos-agency/plugins` then `/plugin install vantage-peers@vantageos-plugins` adds an expert agent + 5 skills + CLAUDE.md template to any Claude Code workspace.
 - **License key** — your `VP_LICENSE_KEY` (sent separately by email).
 
 ---
@@ -19,9 +19,11 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 ### 1. Click the Railway template
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic)
+If you don't have a Railway account yet, create one first: [https://railway.com?referralCode=vantagepeers](https://railway.com?referralCode=vantagepeers) (free plan is sufficient).
 
-Direct link: <https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic>
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
+
+Direct link: <https://railway.com/deploy/vantagepeers-mcp>
 
 This forks `vantageos-agency/vantage-peers` into your Railway project and starts the build. Don't set env vars yet — we'll do that in step 5.
 
@@ -79,7 +81,8 @@ If `version` is anything other than `2.2.0`, ping us — that's a deploy issue.
 In any Claude Code workspace:
 
 ```
-/plugin install vantage-peers
+/plugin marketplace add vantageos-agency/plugins
+/plugin install vantage-peers@vantageos-plugins
 ```
 
 The plugin pulls down: an expert agent (purple, knows all 82 tools + namespacing + memory protocol), five skills (`/check-messages`, `/pre-compact`, `/daily-start`, `/close-day`, `/vantage-peers-init`), and templates for your CLAUDE.md and `.mcp.json`.
