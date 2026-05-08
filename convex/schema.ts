@@ -833,12 +833,12 @@ export default defineSchema({
 		.index("by_customerEmail", ["customerEmail"])
 		.index("by_gumroadOrderId", ["gumroadOrderId"]),
 
-	// ── _migrations ──────────────────────────────────────────────────────────
+	// ── vp_migrations ────────────────────────────────────────────────────────
 	// Auto-migration tracking table. One row per applied migration version.
 	// Used by applyPendingMigrations (convex/migrationRunner.ts) to ensure each
 	// migration step runs exactly once — idempotent across server restarts.
 	// PATCH/MINOR versions insert a row; MAJOR versions include a migration step.
-	_migrations: defineTable({
+	vp_migrations: defineTable({
 		version: v.string(), // e.g. "2.3.0"
 		appliedAt: v.number(), // ms since epoch
 		description: v.string(), // human-readable summary of what was applied

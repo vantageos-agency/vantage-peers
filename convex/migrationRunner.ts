@@ -23,12 +23,12 @@ type MigrationStep = {
 
 const MIGRATION_STEPS: MigrationStep[] = [
 	// v2.2.0: baseline — no data migration required.
-	// This entry bootstraps the _migrations table on first deploy.
+	// This entry bootstraps the vp_migrations table on first deploy.
 	{
 		version: "2.2.0",
-		description: "baseline: _migrations table bootstrapped, no data changes",
+		description: "baseline: vp_migrations table bootstrapped, no data changes",
 		run: async (_ctx) => {
-			// No-op: schema already ships with `_migrations` table.
+			// No-op: schema already ships with `vp_migrations` table.
 		},
 	},
 ];
@@ -37,7 +37,7 @@ const MIGRATION_STEPS: MigrationStep[] = [
 // applyPendingMigrations — internalMutation, idempotent
 //
 // Called by the MCP server at startup (server-http.ts and server.ts) before
-// serving any requests. Reads the _migrations table, compares applied versions
+// serving any requests. Reads the vp_migrations table, compares applied versions
 // against MIGRATION_STEPS, and runs any pending steps in order.
 //
 // Fail-fast: if a migration step throws, the error propagates to the caller.
@@ -53,7 +53,7 @@ export const applyPendingMigrations = internalMutation({
 	},
 	handler: async (ctx, args) => {
 		// Load already-applied migration versions from DB
-		const appliedRows = await ctx.db.query("_migrations").collect();
+		const appliedRows = await ctx.db.query("vp_migrations").collect();
 		const appliedVersions = new Set(appliedRows.map((r) => r.version));
 
 		// Determine which steps still need to run (in order)
@@ -68,7 +68,7 @@ export const applyPendingMigrations = internalMutation({
 				`[migrations] applying v${step.version}: ${step.description}`,
 			);
 			await step.run(ctx);
-			await ctx.db.insert("_migrations", {
+			await ctx.db.insert("vp_migrations", {
 				version: step.version,
 				appliedAt: Date.now(),
 				description: step.description,
