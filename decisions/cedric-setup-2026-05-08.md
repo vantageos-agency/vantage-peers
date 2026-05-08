@@ -6,6 +6,18 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 ---
 
+## How to connect — three options
+
+| Client            | Auth method            | Setup                                    |
+|-------------------|------------------------|------------------------------------------|
+| Claude Code       | BEARER token           | `.mcp.json` with `Authorization` header  |
+| Claude Desktop    | BEARER token           | `claude_desktop_config.json` same pattern|
+| Claude.ai (web)   | OAuth 2.1 DCR          | Add custom MCP integration → enter URL   |
+
+Claude.ai web is the simplest: you just paste your Railway URL and click Authorize. No tokens, no config files.
+
+---
+
 ## What you get
 
 - **Self-hosted MCP server** — your own deployment of `vantage-peers-mcp` v2.2.0 (npm), running on Railway, backed by your Convex project. No quotas. No per-seat fees.
@@ -131,6 +143,21 @@ It runs three checks: config registered, `/health` returns 2.2.0, smoke `recall 
 ```
 
 Or just talk to your AI: *"store a memory that we use Convex on the EU region"* — the expert agent picks the right tool automatically.
+
+---
+
+## Add to Claude.ai web (optional — no config file needed)
+
+If you want to use VantagePeers directly from your browser at claude.ai, here's all you do:
+
+1. Open [https://claude.ai](https://claude.ai) and sign in.
+2. Go to **Settings → Integrations → Custom MCP servers**.
+3. Click **"Add custom integration"**.
+4. Paste your Railway URL: `https://<your-deployment>.up.railway.app`
+5. Claude.ai will handle authentication automatically — it opens a quick authorization screen, you click Allow, and you're done.
+6. All 82 tools are live in your Claude.ai web sessions immediately.
+
+No bearer token, no JSON to edit. Claude.ai uses OAuth 2.1 under the hood, which means it generates and manages its own credentials automatically.
 
 ---
 

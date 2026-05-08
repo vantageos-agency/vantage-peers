@@ -9,6 +9,20 @@ VantagePeers est une couche de coordination auto-hébergée pour les équipes d'
 
 ---
 
+## Clients MCP supportés
+
+VantagePeers supporte trois méthodes de connexion cliente. Chacune utilise un mécanisme d'authentification distinct.
+
+| Client            | Méthode d'auth         | Configuration                                    |
+|-------------------|------------------------|--------------------------------------------------|
+| Claude Code       | Jeton BEARER           | `.mcp.json` avec en-tête `Authorization`         |
+| Claude Desktop    | Jeton BEARER           | `claude_desktop_config.json` — même approche     |
+| Claude.ai (web)   | OAuth 2.1 DCR          | Ajouter une intégration MCP → saisir l'URL       |
+
+Claude Code et Claude Desktop utilisent un jeton porteur statique (`BEARER_SECRET_MASTER`) dans chaque requête HTTP. Claude.ai web utilise OAuth 2.1 Dynamic Client Registration (RFC 7591) avec découverte des métadonnées serveur (RFC 8414) et le standard de métadonnées de ressource protégée (RFC 9728) — le navigateur gère l'intégralité du flux OAuth automatiquement lorsque vous saisissez votre URL Railway.
+
+---
+
 ## Choisissez votre mode MCP
 
 Avant de commencer, déterminez comment vous souhaitez connecter Claude à VantagePeers. Deux modes sont disponibles. Choisissez-en un et suivez la sous-section correspondante à l'étape 6.
@@ -21,11 +35,11 @@ Mode A — stdio local (recommandé si vous n'utilisez que Claude Code)
   - Choisissez ce mode si : vous accédez à VantagePeers exclusivement
                              via Claude Code sur votre propre machine
 
-Mode B — HTTP hébergé (requis pour Claude Web ou pour un accès partagé)
+Mode B — HTTP hébergé (requis pour Claude.ai web ou pour un accès partagé)
   - Déploiement unique du serveur MCP sur Railway ou Fly.io
   - Plusieurs utilisateurs supportés via OAuth (interface admin bu-dashboard)
-  - Grade production, accessible depuis n'importe quel client Claude
-  - Choisissez ce mode si : vous avez besoin de Claude Web, OU vous souhaitez
+  - Grade production, accessible depuis n'importe quel client Claude, y compris Claude.ai web
+  - Choisissez ce mode si : vous avez besoin de Claude.ai web, OU vous souhaitez
                              partager le déploiement avec des collaborateurs
 ```
 
@@ -253,12 +267,29 @@ https://vantage-peers-mcp-xxx.up.railway.app
 
 Remplacez l'URL et le jeton par votre URL Railway réelle et votre jeton de licence.
 
-**Étape 6-B-6.** Connectez Claude Web. Accédez à **Paramètres → Connecteurs → Ajouter un serveur MCP** et renseignez :
+**Étape 6-B-6.** Confirmez que l'entrée `.claude.json` de Claude Code (étape 6-B-5) est bien enregistrée.
 
-- **URL :** `https://vantage-peers-mcp-xxx.up.railway.app`
-- **Autorisation :** collez votre jeton de licence lorsqu'il vous est demandé
+**Étape 6-B-7.** Connectez Claude.ai web (OAuth 2.1 DCR — aucun jeton à saisir).
 
-**Étape 6-B-7.** Redémarrez Claude Code (ou actualisez Claude Web). Passez à l'étape 7 pour vérifier.
+Consultez la section dédiée ci-dessous : [Ajouter à Claude.ai web](#ajouter-à-claudeai-web).
+
+**Étape 6-B-8.** Redémarrez Claude Code (ou actualisez Claude.ai web). Passez à l'étape 7 pour vérifier.
+
+---
+
+## Ajouter à Claude.ai web
+
+Claude.ai web se connecte à VantagePeers via OAuth 2.1 Dynamic Client Registration (RFC 7591). Le navigateur négocie les identifiants automatiquement — vous n'avez aucun jeton porteur à saisir.
+
+Prérequis : le Mode B (HTTP hébergé) doit être déployé et actif. L'URL Railway est tout ce dont vous avez besoin.
+
+1. Ouvrez [https://claude.ai](https://claude.ai) et connectez-vous.
+2. Accédez à **Paramètres → Intégrations → Serveurs MCP personnalisés**.
+3. Cliquez sur **« Ajouter une intégration personnalisée »**.
+4. Saisissez votre URL MCP Railway : `https://<votre-déploiement>.up.railway.app`
+5. Claude.ai effectue l'enregistrement dynamique de client OAuth 2.1 (RFC 7591) — il découvre les métadonnées du serveur (RFC 8414 + RFC 9728), enregistre automatiquement un client et obtient un jeton d'accès. Aucune saisie manuelle de jeton n'est requise.
+6. Autorisez la connexion lorsque vous y êtes invité.
+7. Les 82 outils MCP sont immédiatement disponibles dans vos sessions Claude.ai web.
 
 ---
 
