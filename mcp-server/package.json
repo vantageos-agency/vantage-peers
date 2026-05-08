@@ -56,7 +56,7 @@
   "author": "ElPi Corp",
   "license": "FSL-1.1-Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "convex": "^1.34.0",
     "dotenv": "^17.4.2",
     "zod": "^4.3.6"
@@ -67,6 +67,9 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "@types/node": "^24.12.2"
+  },
+  "overrides": {
+    "path-to-regexp": "^8.4.0"
   },
   "engines": {
     "node": ">=18"
