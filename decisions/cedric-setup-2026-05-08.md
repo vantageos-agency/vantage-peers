@@ -19,9 +19,9 @@ Welcome aboard. This kit walks you from zero to a running VantagePeers MCP deplo
 
 ### 1. Click the Railway template
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
 
-Direct link: <https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic>
+Direct link: <https://railway.com/deploy/vantagepeers-mcp>
 
 This forks `vantageos-agency/vantage-peers` into your Railway project and starts the build. Don't set env vars yet — we'll do that in step 5.
 

@@ -206,7 +206,7 @@ This mode deploys the MCP server as a persistent HTTP service. Both Claude Code 
 Click the button below (or visit the URL directly) to open the Railway deployment wizard:
 
 ```
-https://railway.com/deploy/MBoPtr?referralCode=vantagepeers&utm_medium=integration&utm_source=template&utm_campaign=generic
+https://railway.com/deploy/vantagepeers-mcp
 ```
 
 **Step 6-B-2.** In the Railway wizard, set the following environment variables:
