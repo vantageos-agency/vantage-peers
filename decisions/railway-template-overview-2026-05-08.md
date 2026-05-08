@@ -17,8 +17,8 @@ Replaces Redis-backed task queues, per-session memory files, and ad-hoc agent st
 ### What You Bring
 
 - **Convex deployment** — create one free at [convex.dev](https://convex.dev/?utm_source=railway&utm_medium=referral&utm_campaign=LAUREN7583) (referral LAUREN7583). Holds all persistent data across 20 tables with vector indexes.
-- **OpenAI-compatible API key** (`AI_GATEWAY_API_KEY`) — for `text-embedding-3-small` embeddings (1536 dimensions) via `@convex-dev/rag`. Any OpenAI-compatible gateway works.
-- **`BEARER_SECRET_MASTER`** — a secret string you choose. Every MCP HTTP request must carry this as a Bearer token. Keep it out of version control.
+- **OpenAI-compatible API key** — for `text-embedding-3-small` embeddings (1536 dimensions) via `@convex-dev/rag`. Set as `AI_GATEWAY_API_KEY` in Convex (Vercel AI Gateway mode) or as `OPENAI_API_KEY` in Convex (BYOK direct mode). This key goes in Convex, not Railway.
+- **`BEARER_SECRET_MASTER`** — a secret string you choose. Set it in both Railway (service env) and Convex (backend env) with the same value. Every MCP HTTP request must carry this as a Bearer token. Keep it out of version control.
 - **Optional: Clerk** — for scoped OAuth tokens, create an application at [clerk.com/dashboard](https://dashboard.clerk.com). Clerk enables per-namespace access control so client agents cannot read each other's data. Without Clerk, the master bearer covers all namespaces.
 
 ### What Railway Provides
@@ -31,7 +31,9 @@ Replaces Redis-backed task queues, per-session memory files, and ad-hoc agent st
 ### Setup Walkthrough (3 Steps)
 
 1. **One-click deploy** — use the Railway template button. Railway clones the repo, builds the Node.js MCP server (`npm run build` → `dist/server.js`), and starts the HTTP transport.
-2. **Add environment variables** — set `CONVEX_URL`, `AI_GATEWAY_API_KEY`, and `BEARER_SECRET_MASTER` in Railway's Variables tab. Optionally add `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY`.
+2. **Add environment variables** — two layers, each with its own set:
+   - **In Railway** (Variables tab): `NODE_ENV=production`, `CONVEX_URL_INTERNAL` (your `https://…convex.cloud` URL), `BEARER_SECRET_MASTER`. Optionally add `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY`.
+   - **In Convex** (dashboard → Settings → Environment Variables, or `npx convex env set`): `BEARER_SECRET_MASTER` (same value as Railway — required for auth consistency), `AI_GATEWAY_API_KEY` (Vercel Gateway mode) or `OPENAI_API_KEY` (BYOK direct mode), `VP_LICENSE_KEY`.
 3. **Connect your MCP client** — point Claude Code, Cursor, or any MCP HTTP client at `https://your-deployment.railway.app/mcp` with `Authorization: Bearer <your-secret>`. All 82 tools are immediately available.
 
 ---

@@ -210,12 +210,22 @@ Click the button below (or visit the URL directly) to open the Railway deploymen
 https://railway.com/deploy/vantagepeers-mcp
 ```
 
-**Step 6-B-2.** In the Railway wizard, set the following environment variables:
+**Step 6-B-2.** In the Railway wizard, set the environment variables for each layer:
+
+**In Railway** (Variables tab — 3 service vars):
 
 | Variable | Value |
 |---|---|
-| `CONVEX_URL` | `https://<your-project>.convex.cloud` |
+| `NODE_ENV` | `production` |
+| `CONVEX_URL_INTERNAL` | `https://<your-project>.convex.cloud` |
 | `BEARER_SECRET_MASTER` | The same value you set in Step 3 |
+
+**In Convex** (`npx convex env set <KEY> <VALUE>` or Convex dashboard → Settings → Environment Variables — 3 backend vars):
+
+| Variable | Value |
+|---|---|
+| `BEARER_SECRET_MASTER` | The same value as Railway above (consistency required for auth) |
+| `AI_GATEWAY_API_KEY` | Your Vercel AI Gateway key — OR use `OPENAI_API_KEY` for direct OpenAI (BYOK). If both are set, `AI_GATEWAY_API_KEY` takes priority. |
 | `VP_LICENSE_KEY` | The license key from Step 5 |
 
 **Step 6-B-3.** Confirm the deployment. Railway will build and start the MCP server — this typically takes around two minutes.
