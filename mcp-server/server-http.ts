@@ -57,7 +57,7 @@ try {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PUBLIC_BASE_URL =
+const PUBLIC_BASE_URL_FALLBACK =
 	process.env.PUBLIC_BASE_URL ??
 	"https://vantage-peers-production.up.railway.app";
 
@@ -73,6 +73,27 @@ const DEFAULT_PUBLIC_DCR_PROFILE = "client-generic";
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compute the issuer/base URL dynamically from the incoming request's Host
+ * header + protocol. Falls back to PUBLIC_BASE_URL env var when Host is absent
+ * (e.g., in curl smoke tests without a Host header).
+ *
+ * RFC 8414 §2: the issuer MUST be the URL the client uses to reach the server,
+ * so deriving it from the request is more correct than a hard-coded constant,
+ * especially when deployed behind a Railway/Cloudflare proxy that rewrites Host.
+ */
+function resolveIssuer(req: Request): string {
+	const host = req.headers.get("host");
+	if (host) {
+		// Use x-forwarded-proto when behind a reverse proxy; fall back to https.
+		const proto =
+			req.headers.get("x-forwarded-proto") ??
+			(host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https");
+		return `${proto}://${host}`;
+	}
+	return PUBLIC_BASE_URL_FALLBACK;
+}
 
 function randomOpaqueToken(): string {
 	// 2× UUID → ~256 bits of entropy. Strip dashes for compactness.
@@ -125,33 +146,33 @@ app.use(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RFC 9728 — OAuth 2.0 Protected Resource Metadata
-app.get("/.well-known/oauth-protected-resource", (c) =>
-	c.json({
-		resource: `${PUBLIC_BASE_URL}/mcp`,
-		authorization_servers: [PUBLIC_BASE_URL],
-		bearer_methods_supported: ["header"],
-		scopes_supported: ["vantage:read", "vantage:write"],
-	}),
-);
+app.get("/.well-known/oauth-protected-resource", (c) => {
+	const issuer = resolveIssuer(c.req.raw);
+	return c.json({
+		resource: issuer,
+		authorization_servers: [issuer],
+		scopes_supported: ["mcp:full"],
+	});
+});
 
 // RFC 8414 — OAuth 2.0 Authorization Server Metadata
-app.get("/.well-known/oauth-authorization-server", (c) =>
-	c.json({
-		issuer: PUBLIC_BASE_URL,
-		authorization_endpoint: `${PUBLIC_BASE_URL}/authorize`,
-		token_endpoint: `${PUBLIC_BASE_URL}/token`,
-		registration_endpoint: `${PUBLIC_BASE_URL}/register`,
+app.get("/.well-known/oauth-authorization-server", (c) => {
+	const issuer = resolveIssuer(c.req.raw);
+	return c.json({
+		issuer,
+		authorization_endpoint: `${issuer}/authorize`,
+		token_endpoint: `${issuer}/token`,
+		registration_endpoint: `${issuer}/register`,
 		response_types_supported: ["code"],
 		grant_types_supported: ["authorization_code", "refresh_token"],
 		code_challenge_methods_supported: ["S256"],
 		token_endpoint_auth_methods_supported: [
-			"client_secret_post",
 			"client_secret_basic",
-			"none",
+			"client_secret_post",
 		],
-		scopes_supported: ["vantage:read", "vantage:write"],
-	}),
-);
+		scopes_supported: ["mcp:full"],
+	});
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RFC 7591 — Dynamic Client Registration
@@ -546,7 +567,8 @@ app.get("/health", (c) =>
 		service: "vantage-peers-mcp-http",
 		version: pkg.version,
 		transport: "streamable-http",
-		oauth: "scoped-tokens",
+		oauth: "supported",
+		scopes: ["mcp:full"],
 	}),
 );
 
