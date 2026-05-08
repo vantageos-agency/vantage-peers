@@ -47,18 +47,27 @@ Copy the output (a 64-character string). You'll paste it in step 5 and reuse it 
 
 Pi sends `VP_LICENSE_KEY` via email after order confirmation. If you don't see it in your inbox, reply to the order email or write to <hello@vantageos.agency>.
 
-### 5. Fill environment variables in Railway
+### 5. Fill environment variables
 
-In your Railway service → **Variables** tab, add:
+Environment variables are split across two systems — Railway runs the MCP server, Convex holds the data. Each layer gets its own set.
+
+**In Railway** (your service → **Variables** tab — 3 service vars):
 
 | Variable | Value |
 |---|---|
-| `CONVEX_URL` | `https://<your-deployment>.convex.cloud` (from step 2) |
-| `AI_GATEWAY_API_KEY` | your OpenAI-compatible key (any gateway with `text-embedding-3-small`) |
+| `NODE_ENV` | `production` |
+| `CONVEX_URL_INTERNAL` | `https://<your-deployment>.convex.cloud` (from step 2) |
 | `BEARER_SECRET_MASTER` | the 64-char hex from step 3 |
-| `VP_LICENSE_KEY` | from step 4 |
 
 Save. Railway redeploys automatically.
+
+**In Convex** (`npx convex env set <KEY> <VALUE>` or Convex dashboard → Settings → Environment Variables — 3 backend vars):
+
+| Variable | Value |
+|---|---|
+| `BEARER_SECRET_MASTER` | same 64-char hex as Railway above (must match for auth to work) |
+| `AI_GATEWAY_API_KEY` | your OpenAI-compatible key via Vercel AI Gateway — OR set `OPENAI_API_KEY` instead for direct OpenAI BYOK (no Vercel account required). If both are set, `AI_GATEWAY_API_KEY` takes priority. |
+| `VP_LICENSE_KEY` | from step 4 |
 
 ### 6. Smoke test the deployment
 
