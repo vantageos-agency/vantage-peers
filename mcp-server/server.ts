@@ -530,7 +530,10 @@ server.tool(
 	"list_memories",
 	"List active memories for a namespace, ordered newest first. " +
 		"Only returns isLatest=true memories (superseded memories are excluded by default). " +
-		"Use type to filter to a specific memory category.",
+		"Use type to filter to a specific memory category. " +
+		"Returns { value: Memory[], continueCursor: string|null, isDone: boolean }. " +
+		"Pass paginationOpts.cursor from a previous response to fetch the next page. " +
+		"Without paginationOpts, returns ≤50 rows with continueCursor=null and isDone=true.",
 	{
 		namespace: z
 			.string()
@@ -547,21 +550,40 @@ server.tool(
 			.max(200)
 			.optional()
 			.default(20)
-			.describe("Maximum number of memories to return (default 20)"),
+			.describe("Maximum number of memories to return when paginationOpts is not provided (default 20, max 200)"),
+		paginationOpts: z
+			.object({
+				numItems: z
+					.number()
+					.int()
+					.min(1)
+					.max(200)
+					.describe("Number of items per page (max 200)"),
+				cursor: z
+					.union([z.string(), z.null()])
+					.describe("Cursor from a previous response continueCursor field, or null for the first page"),
+			})
+			.optional()
+			.describe(
+				"Optional cursor-based pagination. Pass { numItems, cursor: null } for the first page, " +
+				"then { numItems, cursor: <continueCursor from response> } for subsequent pages. " +
+				"When provided, isDone=false means more pages exist.",
+			),
 	},
-	async ({ namespace, type, limit }) => {
+	async ({ namespace, type, limit, paginationOpts }) => {
 		try {
-			const memories = await convex.query("memories:listMemories" as any, {
+			const result = await convex.query("memories:listMemories" as any, {
 				namespace,
 				type,
 				limit: limit ?? 20,
+				paginationOpts,
 			});
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: JSON.stringify(memories, null, 2),
+						text: JSON.stringify(result, null, 2),
 					},
 				],
 			};
