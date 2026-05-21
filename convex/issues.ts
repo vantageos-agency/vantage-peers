@@ -432,6 +432,103 @@ export const updatePrStatus = mutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// notifyTaskComplete — API 5 (inversed boundary: agent-protocol → VP-core)
+// Called by agent-protocol tasks.complete handler when a linked issue exists.
+// Marks the taskId as done in issue.linkedTaskIds metadata. If all linked tasks
+// are done, auto-sets issue status to "verified" (does NOT close GitHub issue —
+// T11 of the IRP protocol handles that separately).
+// Idempotent: if taskId already marked done in this issue → returns patched: false.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const notifyTaskComplete = mutation({
+	args: {
+		issueId: v.string(),
+		taskId: v.string(),
+		completionNote: v.string(),
+		completedBy: v.string(),
+	},
+	returns: v.object({
+		patched: v.boolean(),
+		issueStatus: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		// Resolve issue: try as Convex ID first, fall back to numeric GitHub issue number.
+		// issueId may be a Convex _id string or a stringified GitHub issue number.
+		let issue = await ctx.db
+			.query("issues")
+			.filter((q) => q.eq(q.field("_id"), args.issueId))
+			.unique()
+			.catch(() => null);
+
+		if (!issue) {
+			// Attempt to parse as GitHub issue number — scan by issueNumber.
+			const asNumber = parseInt(args.issueId, 10);
+			if (!isNaN(asNumber)) {
+				issue = await ctx.db
+					.query("issues")
+					.filter((q) => q.eq(q.field("issueNumber"), asNumber))
+					.first();
+			}
+		}
+
+		if (!issue) {
+			// Issue not found — task may be orphaned. Log warning, return patched: false.
+			console.warn(
+				`notifyTaskComplete: issue not found for issueId=${args.issueId}, taskId=${args.taskId}`,
+			);
+			return { patched: false, issueStatus: "unknown" };
+		}
+
+		const linkedTaskIds: string[] = issue.linkedTaskIds ?? [];
+
+		// Check if taskId is actually linked to this issue.
+		if (!linkedTaskIds.includes(args.taskId)) {
+			console.warn(
+				`notifyTaskComplete: taskId=${args.taskId} not in issue ${issue._id}.linkedTaskIds — orphaned task, skipping`,
+			);
+			return { patched: false, issueStatus: issue.status };
+		}
+
+		// Track per-task completion using a "~done~{taskId}" marker stored
+		// alongside the original entry in linkedTaskIds. This avoids a schema
+		// change for Phase D.1 (Phase D.2 will introduce a dedicated
+		// completedTaskIds column).
+		// Idempotency: if the marker already exists, return patched: false.
+		const doneMarker = `~done~${args.taskId}`;
+		if (linkedTaskIds.includes(doneMarker)) {
+			return { patched: false, issueStatus: issue.status };
+		}
+
+		// Append the done marker alongside the original taskId entry.
+		const updatedLinkedTaskIds = [...linkedTaskIds, doneMarker];
+
+		// Determine if ALL linked tasks are now done.
+		// A plain taskId (no prefix) is "done" if its done marker is in the updated list.
+		const allDone = linkedTaskIds
+			.filter((id) => !id.startsWith("~done~"))
+			.every((id) => updatedLinkedTaskIds.includes(`~done~${id}`));
+
+		const shouldVerify =
+			allDone && issue.status !== "verified" && issue.status !== "closed";
+
+		// Write linkedTaskIds update.
+		await ctx.db.patch(issue._id, { linkedTaskIds: updatedLinkedTaskIds });
+
+		// If all tasks done, promote status to verified.
+		if (shouldVerify) {
+			await ctx.db.patch(issue._id, {
+				status: "verified",
+				verifiedBy: args.completedBy,
+				verifiedAt: Date.now(),
+			});
+		}
+
+		const newStatus = shouldVerify ? "verified" : issue.status;
+		return { patched: true, issueStatus: newStatus };
+	},
+});
+
 export const listExternalOpen = query({
 	args: {
 		prStatus: v.optional(v.union(
