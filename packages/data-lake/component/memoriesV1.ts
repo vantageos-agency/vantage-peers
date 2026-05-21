@@ -317,6 +317,53 @@ export const softDeleteMemory = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// validateIds — boundary query for cross-Component ID validation
+// Accepts up to 100 memory IDs (opaque strings from agent-protocol) and
+// categorises them as valid (exists + isLatest=true), archived (isLatest=false),
+// or invalid (not found).  Throws on caps > 100 — no silent truncation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const validateIds = query({
+  args: {
+    ids: v.array(v.string()),
+    workspaceId: v.optional(v.string()),
+  },
+  returns: v.object({
+    valid: v.array(v.string()),
+    invalid: v.array(v.string()),
+    archived: v.array(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    if (args.ids.length > 100) {
+      throw new Error(`too_many_ids: cap=100, got=${args.ids.length}`);
+    }
+
+    const valid: string[] = [];
+    const invalid: string[] = [];
+    const archived: string[] = [];
+
+    for (const id of args.ids) {
+      // normalizeId returns null for malformed IDs — treat as invalid.
+      const typedId = ctx.db.normalizeId("memories", id);
+      if (typedId === null) {
+        invalid.push(id);
+        continue;
+      }
+      const doc = await ctx.db.get(typedId);
+      if (doc === null) {
+        invalid.push(id);
+      } else if (!doc.isLatest) {
+        archived.push(id);
+      } else {
+        valid.push(id);
+      }
+    }
+
+    return { valid, invalid, archived };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // expireMemoriesByTtl (internal — called by cron)
 // ─────────────────────────────────────────────────────────────────────────────
 

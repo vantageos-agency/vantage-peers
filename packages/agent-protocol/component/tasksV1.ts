@@ -674,6 +674,66 @@ export const listByMission = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// validateIds — boundary query for VP-core mandates.linkedTaskIds validation.
+// Accepts up to 200 task IDs (opaque strings) and categorises them as valid
+// (exists) or invalid (not found), plus a breakdown by current status.
+// Throws on caps > 200 — no silent truncation (Q1 Eta doctrine).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const validateIds = query({
+	args: {
+		ids: v.array(v.string()),
+		workspaceId: v.optional(v.string()),
+	},
+	returns: v.object({
+		valid: v.array(v.string()),
+		invalid: v.array(v.string()),
+		byStatus: v.object({
+			todo: v.array(v.string()),
+			in_progress: v.array(v.string()),
+			done: v.array(v.string()),
+			blocked: v.array(v.string()),
+			review: v.array(v.string()),
+		}),
+	}),
+	handler: async (ctx, args) => {
+		if (args.ids.length > 200) {
+			throw new Error(`too_many_ids: cap=200, got=${args.ids.length}`);
+		}
+
+		const valid: string[] = [];
+		const invalid: string[] = [];
+		const byStatus = {
+			todo: [] as string[],
+			in_progress: [] as string[],
+			done: [] as string[],
+			blocked: [] as string[],
+			review: [] as string[],
+		};
+
+		for (const id of args.ids) {
+			// normalizeId validates format; returns null for malformed IDs.
+			const typedId = ctx.db.normalizeId("tasks", id);
+			if (typedId === null) {
+				invalid.push(id);
+				continue;
+			}
+			const doc = await ctx.db.get(typedId);
+			if (doc === null) {
+				invalid.push(id);
+			} else {
+				valid.push(id);
+				// doc is Doc<"tasks"> here — status is the union literal type
+				const s = doc.status as keyof typeof byStatus;
+				byStatus[s].push(id);
+			}
+		}
+
+		return { valid, invalid, byStatus };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listOverdue — fetch tasks that are past their due date
 // ─────────────────────────────────────────────────────────────────────────────
 
