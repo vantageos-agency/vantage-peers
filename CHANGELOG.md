@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.3.0] - 2026-05-21
+
+### Bug Fix — recall()/hybrid_search() returning [] for self-host with direct OpenAI key
+
+**Root cause (Cédric Delport incident, 2026-05-18):** When a self-host operator placed
+a direct OpenAI key (`sk-*`) into the `AI_GATEWAY_API_KEY` environment variable, the
+embedding provider was routed to `https://ai-gateway.vercel.sh/v1` (the Vercel gateway
+base URL). The gateway rejected the direct key with 401 → embeddings silently returned
+empty vectors → `recall()` and `hybrid_search()` returned `[]` even after reindexing.
+`text_search` (BM25) was unaffected because it does not call the embedding endpoint.
+
+**Fix (`convex/lib/aiClient.ts`):**
+- New `isDirectOpenAIKey(key: string): boolean` — detects `sk-*` prefix.
+- New `resolveEmbeddingPath()` — explicit routing function with three outcomes:
+  `openai-direct` (OPENAI_API_KEY or sk-* in AI_GATEWAY_API_KEY),
+  `gateway` (non-sk-* AI_GATEWAY_API_KEY),
+  `missing` (neither set).
+- `getAITextEmbeddingProvider()` and `getEmbeddingModelName()` now delegate to
+  `resolveEmbeddingPath()` — sk-* key in AI_GATEWAY_API_KEY routes to `api.openai.com/v1`
+  with the bare model name `text-embedding-3-small` (not the `openai/` prefixed name).
+
+**Backward compatibility:** existing Vercel AI Gateway keys (non-sk-* tokens) and
+`OPENAI_API_KEY` behavior are fully preserved.
+
+**Tests:** 19 unit tests in `convex/lib/aiClient.test.ts` covering all routing branches
+including the Cédric regression case (sk-* in AI_GATEWAY_API_KEY → direct path).
+
+**Remediation for affected self-host clients:** see
+`docs/self-host/recall-empty-troubleshooting.md` — set `OPENAI_API_KEY`, redeploy,
+run reindex mutation.
+
+**References:** Cédric Delport support ticket 2026-05-18, Day 76 reindex PR #483,
+Sigma task k17defa52nzyp7z03198ne9ay186ygss.
+
 ## [2.2.0] - 2026-05-07
 
 ### Added
