@@ -1,0 +1,38 @@
+{
+  "name": "@vantage/agent-protocol",
+  "version": "0.1.0",
+  "description": "Convex Component — agent coordination protocol (tasks, missions, messages, briefing notes, diary, profiles, peers, recurring tasks, mission templates) — substrate for multi-agent orchestration across VantagePeers, Vantage Immo, and downstream BUs",
+  "keywords": [
+    "convex-component",
+    "agent-protocol",
+    "tasks",
+    "missions",
+    "messaging",
+    "vantage"
+  ],
+  "author": "VantageOS",
+  "license": "FSL-1.1-Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vantageos-agency/vantage-peers.git",
+    "directory": "packages/agent-protocol"
+  },
+  "type": "module",
+  "main": "./convex.config.ts",
+  "exports": {
+    ".": "./convex.config.ts",
+    "./convex.config.js": "./convex.config.ts"
+  },
+  "files": [
+    "convex.config.ts",
+    "component/**/*.ts",
+    "component/**/*.md",
+    "!component/**/*.test.ts",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "peerDependencies": {
+    "convex": "^1.34.1"
+  },
+  "private": true
+}
