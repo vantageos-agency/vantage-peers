@@ -9,10 +9,43 @@
   from host `convex/` folder.
 - Convention reference: `decisions/c1-namespacing-convention-2026-05-21.md`.
 
-## Pending (Phase B+)
+## 0.2.0 — 2026-05-21 (Phase B.1)
 
-- Move `memories` + `episodes` tables.
-- Move `aiClient.ts` (embedding provider with PR #505 discriminated union).
-- Expose `memoriesV1.{store,recall,validateIds,softDelete,get}`,
-  `searchV1.{text,hybrid}`, `episodesV1.store`.
+Files moved (copied) from host `convex/` into `component/`:
+
+| File | Source lines | Destination |
+|------|-------------|-------------|
+| `memoriesV1.ts` | 353 | `component/memoriesV1.ts` |
+| `episodesV1.ts` | 187 | `component/episodesV1.ts` |
+| `searchV1.ts` | 342 | `component/searchV1.ts` |
+| `aiClient.ts` | 107 | `component/aiClient.ts` |
+
+Schema changes:
+- `component/schema.ts` — `memories` table defined inside Component (exact
+  mirror of host `convex/schema.ts` memories definition, shared validators
+  `memoryTypeValidator`, `creatorValidator`, `relationTypeValidator`,
+  `severityValidator` co-located).
+
+Generated stubs:
+- `component/_generated/server.ts` — binds `queryGeneric`, `mutationGeneric`,
+  `actionGeneric` (and internal variants) to component `DataModel`.
+- `component/_generated/api.ts` — stubs `api.fixPatterns.get`,
+  `internal.ragSync.{addRagEntry,markRagEntrySuperseded}`, `components` for tsc.
+- `component/_generated/dataModel.ts` — derives `DataModel`, `Doc`, `Id` from
+  component schema.
+
+Adaptations from host:
+- `searchV1.ts`: import path for `aiClient` changed from `./lib/aiClient` to
+  `./aiClient` (flat component layout).
+- All other imports unchanged (same relative `_generated/` paths, same schema
+  validator imports).
+
+Host `convex/` folder: zero modifications (D2 zero-regression verified).
+Host tests: 295/295 green before and after.
+tsc: 0 errors (`npx tsc --noEmit -p packages/data-lake/tsconfig.json`).
+
+## Pending (Phase C+)
+
 - Contract tests Suite 1 (per `decisions/c1-contract-tests-spec-2026-05-21.md`).
+- Phase D cutover: `app.use(dataLake)` in host `convex/convex.config.ts`,
+  remove duplicate host functions.
