@@ -1,7 +1,7 @@
 # Troubleshooting: recall() / hybrid_search() return []
 
 *Applies to: VantagePeers self-host v2.2.0 and earlier*
-*Fixed in: v2.3.0 (PR #484)*
+*Fixed in: v2.3.0 (PR #505)*
 
 ---
 
@@ -160,7 +160,7 @@ query prints `approxCostUSD` so you can confirm the number before paying. As a r
 - `convex/migrations/reindexMemoriesByPeriod.ts` — batch reindex mutation
 - `projects/cedric-delport/inbox-2026-05-19/batch-reindex-procedure.md` — full runbook
 - CHANGELOG v2.3.0 — root cause analysis and fix description
-- PR #484 — code fix + tests
+- PR #505 — code fix + tests
 - PR #483 — batch reindex mutation (Day 76)
 
 ## Support
