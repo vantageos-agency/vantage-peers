@@ -1,6 +1,34 @@
+import type { FunctionReference } from "convex/server";
 import { v } from "convex/values";
+import { components } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
+
+// ── C1 D.2: Component API reference for tasks.validateIds ────────────────────
+// Typed reference to the agentProtocol Component's tasksV1.validateIds query.
+// The generated api.d.ts does not yet include agentProtocol (requires
+// `npx convex dev` post Phase-E deploy). Cast is intentional — runtime mount
+// is correct in convex.config.ts.
+type ValidateIdsArgs = { ids: string[]; workspaceId?: string };
+type ValidateIdsResult = {
+	valid: string[];
+	invalid: string[];
+	byStatus: {
+		todo: string[];
+		in_progress: string[];
+		done: string[];
+		blocked: string[];
+		review: string[];
+	};
+};
+
+const agentProtocolComponents = components as unknown as {
+	agentProtocol: {
+		tasksV1: {
+			validateIds: FunctionReference<"query", "internal", ValidateIdsArgs, ValidateIdsResult>;
+		};
+	};
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -123,6 +151,19 @@ export const update = mutation({
 			throw new Error(
 				`Unauthorized: only ${mandate.fulfilledBy} (fulfilledBy) or system can update this mandate`,
 			);
+		}
+
+		// C1 D.2: validate linkedTaskIds against Component before patching
+		if (args.linkedTaskIds !== undefined && args.linkedTaskIds.length > 0) {
+			const validation = await ctx.runQuery(
+				agentProtocolComponents.agentProtocol.tasksV1.validateIds,
+				{ ids: args.linkedTaskIds as string[] },
+			);
+			if (validation.invalid.length > 0) {
+				throw new Error(
+					`mandates.linkedTaskIds contain unknown tasks: ${validation.invalid.join(", ")}`,
+				);
+			}
 		}
 
 		const { mandateId, callerOrchestrator, ...fields } = args;

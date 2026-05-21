@@ -353,6 +353,23 @@ export const resolveStaleIrpMission = internalMutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// markAutoResolved — C1 D.2: set autoResolved=true on a host errorLog row.
+// Extracted from resolveStaleIrpMission so that the cascade-close can be
+// delegated to the agentProtocol Component while host-table writes stay here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const markAutoResolved = internalMutation({
+	args: {
+		errorLogId: v.id("errorLogs"),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await ctx.db.patch(args.errorLogId, { autoResolved: true });
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Public mutations (MCP tools)
 // ─────────────────────────────────────────────────────────────────────────────
 

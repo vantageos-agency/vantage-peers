@@ -1,7 +1,57 @@
+import type { FunctionReference } from "convex/server";
 import { httpRouter } from "convex/server";
-import { api, internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
+
+// ── C1 D.2: Component API references ──────────────────────────────────────────
+// The generated api.d.ts does not yet include agentProtocol (requires
+// `npx convex dev` after first deploy). Cast components to access the mounted
+// Component APIs until the generated types are regenerated in Phase E.
+// This is intentional — the runtime mounts are correct (convex.config.ts).
+type CreateFromTemplateArgs = {
+	templateName: string;
+	callerOrchestrator: string;
+	workspaceId?: string;
+	params: {
+		title: string;
+		description?: string;
+		assignedTo?: string;
+		priority?: "urgent" | "high" | "medium" | "low";
+		tags?: string[];
+		sourceUrl?: string;
+		sourcePayload?: {
+			type: "github_webhook";
+			payload: {
+				action: string;
+				issueNumber?: number;
+				issueUrl?: string;
+				issueTitle?: string;
+				issueBody?: string;
+				repository?: string;
+				sender?: string;
+			};
+		};
+	};
+};
+type CreateFromTemplateResult = {
+	missionId: string;
+	taskIds: string[];
+	template: { name: string; version: string };
+};
+
+const agentProtocolComponents = components as unknown as {
+	agentProtocol: {
+		missionsV1: {
+			createFromTemplate: FunctionReference<
+				"mutation",
+				"internal",
+				CreateFromTemplateArgs,
+				CreateFromTemplateResult
+			>;
+		};
+	};
+};
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -120,22 +170,12 @@ http.route({
 			);
 			const priority = isUrgent ? ("urgent" as const) : ("high" as const);
 
-			// 3. Load default mission template
-			const template = await ctx.runQuery(api.missionTemplates.getByName, {
-				name: "issue-resolution-v3",
-			});
+			// 3. (C1 D.2) Template guard removed — createFromTemplate Component
+			// resolves the "irp-bug-fix" template atomically and throws before any
+			// write if it is absent. No pre-check needed against the legacy
+			// "issue-resolution-v3" host template (different template name).
 
-			// 4. Guard: no template or empty steps — notify and exit
-			if (template === null || template.steps.length === 0) {
-				await ctx.runMutation(api.messages.sendMessage, {
-					from: "system",
-					channel: orchestrator,
-					content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string} — template issue-resolution-v3 not found, no mission created. ${issue.html_url as string}`,
-				});
-				return new Response("OK - no template", { status: 200 });
-			}
-
-			// 5. Idempotency: skip if mission already exists for this issue
+			// 4. Idempotency: skip if mission already exists for this issue
 			const existingMissions = await ctx.runQuery(api.missions.list, {
 				project,
 				limit: 200,
@@ -149,42 +189,43 @@ http.route({
 				return new Response("OK - mission exists", { status: 200 });
 			}
 
-			// 6. Create mission + tasks (must succeed before any notifications)
+			// 6. Create mission + tasks via Component API (C1 D.2 cutover)
+			// createFromTemplate is atomic: template lookup + mission + all tasks
+			// in one mutation. Throws before any write if template is not found.
 			let missionId: Id<"missions">;
+			let taskCount = 0;
 			try {
 				console.log(`Creating mission for issue #${issue.number as number}`);
-				missionId = await ctx.runMutation(
-					api.missions.create,
+				const webhookPayload = {
+					type: "github_webhook" as const,
+					payload: {
+						action: action as string,
+						issueNumber: issue.number as number,
+						issueUrl: issue.html_url as string,
+						issueTitle: issue.title as string,
+						// issueBody omitted — may contain PII; caller scrub per ADR §API2
+						repository: repoFullName,
+						sender: (issue.user as Record<string, unknown>).login as string,
+					},
+				};
+				const componentResult = await ctx.runMutation(
+					agentProtocolComponents.agentProtocol.missionsV1.createFromTemplate,
 					{
-						name: missionName,
-						project,
-						pilot: orchestrator,
-						priority,
-						createdBy: "system",
-						agents: [mapping.orchestrator],
-						status: "execute",
+						templateName: "irp-bug-fix",
+						callerOrchestrator: "system",
+						params: {
+							title: missionName,
+							sourceUrl: issue.html_url as string,
+							sourcePayload: webhookPayload,
+							assignedTo: orchestratorAssignee,
+							priority,
+						},
 					},
 				);
-				console.log("Mission created:", missionId);
-
-				// 7. Create tasks from template steps (T0-based numbering)
-				for (let i = 0; i < template.steps.length; i++) {
-					const step = template.steps[i];
-					const isLastStep = i === template.steps.length - 1;
-					const assignee: AssigneeLiteral = isLastStep ? "eta" : orchestratorAssignee;
-
-					await ctx.runMutation(api.tasks.create, {
-						title: `[#${issue.number as number}] T${i} — ${step.title}`,
-						description: `${step.description}\n\nIssue: ${issue.html_url as string}\nIssue author: @${(issue.user as Record<string, unknown>).login as string}\nRepo: ${repoFullName}`,
-						assignedTo: assignee,
-						project,
-						priority,
-						status: "todo",
-						createdBy: "system",
-						missionId,
-						tags: [...(step.tags ?? []), "github", "irp"],
-					});
-				}
+				// Component returns string IDs — cast to host typed ID for downstream calls
+				missionId = componentResult.missionId as Id<"missions">;
+				taskCount = componentResult.taskIds.length;
+				console.log("Mission created:", missionId, "tasks:", taskCount);
 
 				// 7b. If this issue was auto-created by the error monitor ([Auto] prefix),
 				//     link the IRP mission back to the errorLog so the auto-resolver can
@@ -231,7 +272,7 @@ http.route({
 			await ctx.runMutation(api.messages.sendMessage, {
 				from: "system",
 				channel: orchestrator,
-				content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string}. Mission created with ${template.steps.length} IRP tasks (T0-T${template.steps.length - 1}). Last task assigned to Eta for review. ${issue.html_url as string}`,
+				content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string}. Mission created with ${taskCount} IRP tasks (T0-T${taskCount - 1}). Last task assigned to Eta for review. ${issue.html_url as string}`,
 			});
 		}
 
