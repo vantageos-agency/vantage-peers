@@ -1,4 +1,4 @@
-# @vantage/data-lake
+# @vantageos/data-lake
 
 Convex Component: RAG + embeddings + intake générique substrate for VantagePeers,
 Vantage Immo, and downstream BUs.
@@ -6,7 +6,7 @@ Vantage Immo, and downstream BUs.
 ## Install
 
 ```bash
-pnpm add @vantage/data-lake
+pnpm add @vantageos/data-lake
 ```
 
 ## Usage
@@ -15,7 +15,7 @@ In your consumer's `convex/convex.config.ts`:
 
 ```ts
 import { defineApp } from "convex/server";
-import dataLake from "@vantage/data-lake/convex.config.js";
+import dataLake from "@vantageos/data-lake/convex.config.js";
 
 const app = defineApp();
 app.use(dataLake, { name: "dataLake" });

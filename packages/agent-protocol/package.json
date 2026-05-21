@@ -1,5 +1,5 @@
 {
-  "name": "@vantage/agent-protocol",
+  "name": "@vantageos/agent-protocol",
   "version": "0.1.0",
   "description": "Convex Component — agent coordination protocol (tasks, missions, messages, briefing notes, diary, profiles, peers, recurring tasks, mission templates) — substrate for multi-agent orchestration across VantagePeers, Vantage Immo, and downstream BUs",
   "keywords": [
@@ -34,5 +34,5 @@
   "peerDependencies": {
     "convex": "^1.34.1"
   },
-  "private": true
+  "private": false
 }

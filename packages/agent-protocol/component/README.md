@@ -1,4 +1,4 @@
-# @vantage/agent-protocol — component sources
+# @vantageos/agent-protocol — component sources
 
 Convex Component implementation. Tables, queries, mutations, and the protocol
 helpers for multi-agent coordination will live here after Phase B move.

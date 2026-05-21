@@ -1,4 +1,4 @@
-# @vantage/agent-protocol
+# @vantageos/agent-protocol
 
 Convex Component: multi-agent coordination protocol (tasks, missions, messages,
 briefing notes, diary, profiles, peers, recurring tasks, mission templates).
@@ -9,7 +9,7 @@ downstream BUs.
 ## Install
 
 ```bash
-pnpm add @vantage/agent-protocol
+pnpm add @vantageos/agent-protocol
 ```
 
 ## Usage
@@ -18,7 +18,7 @@ In your consumer's `convex/convex.config.ts`:
 
 ```ts
 import { defineApp } from "convex/server";
-import agentProtocol from "@vantage/agent-protocol/convex.config.js";
+import agentProtocol from "@vantageos/agent-protocol/convex.config.js";
 
 const app = defineApp();
 app.use(agentProtocol, { name: "agentProtocol" });

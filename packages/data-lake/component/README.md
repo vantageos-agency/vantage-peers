@@ -1,4 +1,4 @@
-# @vantage/data-lake — component sources
+# @vantageos/data-lake — component sources
 
 Convex Component implementation. Tables, queries, mutations, actions, and the
 embedding provider (`aiClient.ts`) will live here after Phase B move.

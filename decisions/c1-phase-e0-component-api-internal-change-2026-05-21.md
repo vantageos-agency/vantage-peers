@@ -8,7 +8,7 @@ status: documents commit 067e26a — internal Component API change post Phase E.
 upstream: c1-phase-d1-bilan + commit 067e26a fix "use node" blocker
 ---
 
-# Phase E.0 — Changement de signatures internes Component @vantage/data-lake
+# Phase E.0 — Changement de signatures internes Component @vantageos/data-lake
 
 Commit 067e26a a résolu le blocker `"use node"` (Convex CLI 1.39.1 refuse les directives `"use node"` dans un bundle Component, découvert Xi msg jn70qs563c0qj7np3fw7ze0rx5875vjq, position Pi msg jn7fkx5x25he6hfqkwx5x2xazx874k51).
 
@@ -64,7 +64,7 @@ Pour `hybridSearch` : caller passe `queryEmbedding` (vector) ET `queryText` (BM2
 
 > "Vantage Immo et VantagePeers fournissent chacun leur aiClient host-side. Cohérent doctrine modularisation."
 
-L'embedding provider est un credential cross-cutting (OpenAI API key, Vercel Gateway key) qui appartient à chaque tenant. Le Component partagé `@vantage/data-lake` ne doit PAS porter de credential — il expose storage + search comme primitives, le tenant câble son provider. C'est l'application directe du fix Cédric PR #505 à l'échelle Component : aiClient resolveEmbeddingPath() reste HOST-side, le Component est neutre.
+L'embedding provider est un credential cross-cutting (OpenAI API key, Vercel Gateway key) qui appartient à chaque tenant. Le Component partagé `@vantageos/data-lake` ne doit PAS porter de credential — il expose storage + search comme primitives, le tenant câble son provider. C'est l'application directe du fix Cédric PR #505 à l'échelle Component : aiClient resolveEmbeddingPath() reste HOST-side, le Component est neutre.
 
 ## 4. Implications pour callers existants
 
@@ -81,7 +81,7 @@ L'embedding provider est un credential cross-cutting (OpenAI API key, Vercel Gat
 | Xi vantage-immo | Créer convex/lib/aiClient.ts + convex/memories.ts host action wrapper avant `app.use(dataLake)` | TODO Xi avant re-mount |
 | Theta vantage-crm | Aucune | N/A |
 
-## 6. Lien CHANGELOG @vantage/data-lake
+## 6. Lien CHANGELOG @vantageos/data-lake
 
 Voir `packages/data-lake/CHANGELOG.md` v0.3.0 (commit 067e26a) — note architecturale complète + référence msg Xi/Pi.
 

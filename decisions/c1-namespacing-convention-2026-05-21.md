@@ -18,10 +18,10 @@ Dans le `convex.config.ts` du consommateur (vantage-memory, vantage-immo, vantag
 
 ```ts
 import { defineApp } from "convex/server";
-import dataLake from "@vantage/data-lake/convex.config.js";
-import agentProtocol from "@vantage/agent-protocol/convex.config.js";
-import crmCore from "@vantage/crm-core/convex.config.js";
-import integrationKit from "@vantage/integration-kit/convex.config.js"; // si applicable
+import dataLake from "@vantageos/data-lake/convex.config.js";
+import agentProtocol from "@vantageos/agent-protocol/convex.config.js";
+import crmCore from "@vantageos/crm-core/convex.config.js";
+import integrationKit from "@vantageos/integration-kit/convex.config.js"; // si applicable
 
 const app = defineApp();
 app.use(dataLake, { name: "dataLake" });
@@ -38,16 +38,16 @@ Le paramètre `name` est le préfixe namespace de toutes les tables du Component
 
 | npm package | mount name | scope |
 |---|---|---|
-| `@vantage/data-lake` | `dataLake` | RAG + embeddings + intake générique (Sigma) |
-| `@vantage/agent-protocol` | `agentProtocol` | tasks/missions/messages/briefingNotes/diary/profiles/peers/recurringTasks/taskDependencies/missionTemplates (Sigma) |
-| `@vantage/crm-core` | `crmCore` | workspaces/members/customObjects/customFields/auditLog (Theta) |
-| `@vantage/integration-kit` | `integrationKit` | IIntegrationAdapter + ISigningAdapter + IPropertyManagementAdapter + IReviewAdapter (Xi/futur) |
+| `@vantageos/data-lake` | `dataLake` | RAG + embeddings + intake générique (Sigma) |
+| `@vantageos/agent-protocol` | `agentProtocol` | tasks/missions/messages/briefingNotes/diary/profiles/peers/recurringTasks/taskDependencies/missionTemplates (Sigma) |
+| `@vantageos/crm-core` | `crmCore` | workspaces/members/customObjects/customFields/auditLog (Theta) |
+| `@vantageos/integration-kit` | `integrationKit` | IIntegrationAdapter + ISigningAdapter + IPropertyManagementAdapter + IReviewAdapter (Xi/futur) |
 
 ## 3. Public API exposition (chaque Component)
 
 Pattern : `<componentMountName>.api.<entity>.<verb>`. Pas d'accès direct aux tables internes du Component depuis le consommateur — toujours via `api.*`. Internal mutations en `internal.*` (non exposées au consommateur).
 
-### Surface @vantage/data-lake
+### Surface @vantageos/data-lake
 - `dataLake.api.memoriesV1.validateIds`
 - `dataLake.api.memoriesV1.store` (alias public de store_memory)
 - `dataLake.api.memoriesV1.recall`
@@ -57,7 +57,7 @@ Pattern : `<componentMountName>.api.<entity>.<verb>`. Pas d'accès direct aux ta
 - `dataLake.api.searchV1.text`
 - `dataLake.api.episodesV1.store`
 
-### Surface @vantage/agent-protocol
+### Surface @vantageos/agent-protocol
 - `agentProtocol.api.tasksV1.{create,start,complete,block,checkout,update,list,addDependency,delete,validateIds}`
 - `agentProtocol.api.missionsV1.{create,createFromTemplate,closeWithCascade,list,update,get,listTasks}`
 - `agentProtocol.api.messagesV1.{send,check,markAsRead,list,delete}`
@@ -68,7 +68,7 @@ Pattern : `<componentMountName>.api.<entity>.<verb>`. Pas d'accès direct aux ta
 - `agentProtocol.api.recurringTasksV1.{create,update,pause,resume,delete}`
 - `agentProtocol.api.summaryV1.set`
 
-### Surface @vantage/crm-core (per Theta msg jn75m7t2nacnp2c58c5exa0z3h875amf)
+### Surface @vantageos/crm-core (per Theta msg jn75m7t2nacnp2c58c5exa0z3h875amf)
 - `crmCore.api.workspaces.{assertAccess,loadOrThrow,getOwnerForStdio}`
 - `crmCore.api.members.{list,assertMembership}`
 - `crmCore.api.customObjectDefinitions.{create,update,list,get}`
@@ -113,7 +113,7 @@ Référence : R8 strategy projects/vantage-immo/integration-test-strategy-2026-0
 4. **Phase D (Sigma)** : refacto VP-core convex/ pour appeler les Components via `components.dataLake.api.*` et `components.agentProtocol.api.*`.
 5. **Phase E (Sigma)** : suite tests + smoke prod + gate Eta → PR.
 6. **Phase 3 Xi (parallèle)** : intégration `app.use(dataLake) + app.use(agentProtocol)` dans vantage-immo + tests cohabitation.
-7. **Theta C1 sub-tasks (parallèle)** : extraction `@vantage/crm-core` per plan C1.1-C1.8 + PR #21.
+7. **Theta C1 sub-tasks (parallèle)** : extraction `@vantageos/crm-core` per plan C1.1-C1.8 + PR #21.
 
 ## 8. Doctrine non-négociable
 

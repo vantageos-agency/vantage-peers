@@ -14,7 +14,7 @@ upstream: ADR c1-package-boundary-audit-2026-05-21.md (audit) + Pi arbitrage msg
 Sigma owner du substrat VantagePeers. Pi a confirmé (msg jn7ehgb9) :
 - Option A : mutation publique pour le blocker http.ts (pas d'event bus).
 - Ordre : data-lake d'abord (1 boundary), puis agent-protocol (4 boundaries).
-- Sigma : design des 5 APIs + refacto VP-core. Xi : scaffold @vantage/* Components.
+- Sigma : design des 5 APIs + refacto VP-core. Xi : scaffold @vantageos/* Components.
 
 Ce doc fixe les signatures qui doivent figer **avant** le scaffold Xi. C'est le contrat sur lequel Xi génère les Components et que VP-core consomme.
 
@@ -34,7 +34,7 @@ Ce doc fixe les signatures qui doivent figer **avant** le scaffold Xi. C'est le 
 
 ### Signature
 ```ts
-// @vantage/data-lake/component/memoriesV1.ts
+// @vantageos/data-lake/component/memoriesV1.ts
 export const validateIds = query({
   args: {
     ids: v.array(v.string()),  // memory IDs, opaque côté agent-protocol
@@ -77,7 +77,7 @@ if (args.linkedMemoryIds && args.linkedMemoryIds.length > 0) {
 
 ### Signature
 ```ts
-// @vantage/agent-protocol/component/missionsV1.ts
+// @vantageos/agent-protocol/component/missionsV1.ts
 export const createFromTemplate = mutation({
   args: {
     templateName: v.string(),     // ex. "irp-bug-fix", "feature-build"
@@ -174,7 +174,7 @@ const result = await ctx.runMutation(components.agentProtocol.missionsV1.createF
 
 ### Signature
 ```ts
-// @vantage/agent-protocol/component/missionsV1.ts
+// @vantageos/agent-protocol/component/missionsV1.ts
 export const closeWithCascade = mutation({
   args: {
     missionId: v.string(),
@@ -220,7 +220,7 @@ const result = await ctx.runMutation(components.agentProtocol.missionsV1.closeWi
 
 ### Signature
 ```ts
-// @vantage/agent-protocol/component/tasksV1.ts
+// @vantageos/agent-protocol/component/tasksV1.ts
 export const validateIds = query({
   args: {
     ids: v.array(v.string()),
@@ -340,7 +340,7 @@ Plan :
 - `templateVersion` pin pour `createFromTemplate` (v1 prend toujours la version active).
 - `force` flag sur `closeWithCascade` pour outrepasser tasks blocked (cas hors workflow normal).
 - Batch APIs (validateIds batch > 200) — pas de cas légitime identifié pour l'instant.
-- **F2 (flag Eta msg jn7df9dze5kxb715qap110ahhn8748xr)** : API 5 `issues.notifyTaskComplete` reste un appel typé direct (agent-protocol → VP-core) en v1. Pour v2, considérer un `@vantage/event-schemas` Component avec event versionné `task-complete-event-v1` (couplage event-driven plutôt que typed-mutation, R4 du briefing Eta js76t2n147jy8t7af725yc698d875mnt). Couplage inversé moins fragile aux drifts shape côté VP-core.
+- **F2 (flag Eta msg jn7df9dze5kxb715qap110ahhn8748xr)** : API 5 `issues.notifyTaskComplete` reste un appel typé direct (agent-protocol → VP-core) en v1. Pour v2, considérer un `@vantageos/event-schemas` Component avec event versionné `task-complete-event-v1` (couplage event-driven plutôt que typed-mutation, R4 du briefing Eta js76t2n147jy8t7af725yc698d875mnt). Couplage inversé moins fragile aux drifts shape côté VP-core.
 
 ---
 

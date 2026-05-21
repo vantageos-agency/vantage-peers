@@ -1,4 +1,4 @@
-# @vantage/agent-protocol — Changelog
+# @vantageos/agent-protocol — Changelog
 
 ## 0.2.0 — 2026-05-21 (Phase B.2)
 

@@ -1,7 +1,7 @@
 ---
 type: ADR-audit
 project: vantage-memory
-ticket: k176zmpqvz4vgjbbas5gj2kdqd875c1y (C1 — Extraire @vantage/data-lake + @vantage/agent-protocol)
+ticket: k176zmpqvz4vgjbbas5gj2kdqd875c1y (C1 — Extraire @vantageos/data-lake + @vantageos/agent-protocol)
 mission: k5715137sdn52b5dgm8s5tpzhx8751en (vantage-immo-fondations-v1)
 date: 2026-05-21 (Day 77)
 author: sigma
@@ -16,12 +16,12 @@ Inventaire read-only sur `convex/schema.ts` (881 lignes, 32 tables) + handlers +
 
 ## 1. Mapping tables → buckets (32 tables)
 
-### @vantage/data-lake (Component cible)
+### @vantageos/data-lake (Component cible)
 - `memories`
 
 (L'embedding storage natif vit dans le Component `@convex-dev/rag` — déjà isolé, pas concerné par C1.)
 
-### @vantage/agent-protocol (Component cible)
+### @vantageos/agent-protocol (Component cible)
 - `tasks`
 - `missions`
 - `messages`

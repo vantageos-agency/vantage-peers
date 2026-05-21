@@ -10,7 +10,7 @@ upstream: c1-public-apis-design-2026-05-21.md (final commit 70b387b)
 
 # C1 — Contract tests spec pour les 5 APIs publiques
 
-Ce doc codifie les assertions que les Components @vantage/data-lake et @vantage/agent-protocol doivent satisfaire. Niveau 2 de la R8 strategy (Eta briefing js7as5cxgzx2rrbzjrphpgt489875e27). Format : structure exécutable que Xi convertit en vitest pendant le scaffold.
+Ce doc codifie les assertions que les Components @vantageos/data-lake et @vantageos/agent-protocol doivent satisfaire. Niveau 2 de la R8 strategy (Eta briefing js7as5cxgzx2rrbzjrphpgt489875e27). Format : structure exécutable que Xi convertit en vitest pendant le scaffold.
 
 ## Convention
 

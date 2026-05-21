@@ -1,4 +1,4 @@
-# @vantage/data-lake — Changelog
+# @vantageos/data-lake — Changelog
 
 ## 0.3.0 — 2026-05-21 (Phase E.0)
 
