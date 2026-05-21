@@ -21,3 +21,10 @@ apps/
 .claude/scheduled_tasks.lock
 .claude/*.lock
 .playwright-mcp/
+
+# C1 — Component publish artifacts (npm pack tarballs)
+packages/*/*.tgz
+
+# Untracked binary/screenshot dirs (not for git)
+_archive/
+qa/screenshots/
