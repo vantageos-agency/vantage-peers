@@ -52,8 +52,8 @@ export const validateIds = query({
 ```
 
 ### Comportement
-- Aucun throw. Retourne les 3 buckets, le caller (agent-protocol.briefingNotes) décide si invalid/archived est une erreur ou une lifecycle expected (memory soft-deleted post-briefing → OK, ne casse pas l'historique).
-- Pas de pagination (cap 100 IDs par appel — sinon l'appelant est suspect).
+- Aucun throw sur catégorisation. Retourne les 3 buckets, le caller (agent-protocol.briefingNotes) décide si invalid/archived est une erreur ou une lifecycle expected (memory soft-deleted post-briefing → OK, ne casse pas l'historique).
+- Cap **strict** 100 IDs par appel : si `ids.length > 100` → throw `too_many_ids: cap=100, got=${len}`. Pas de truncate silencieux (Q1 Eta résolu : throw, jamais truncate — un appelant qui dépasse est suspect, mieux faire échouer haut que produire un résultat partiel inattendu).
 
 ### Caller (agent-protocol)
 ```ts
@@ -90,7 +90,13 @@ export const createFromTemplate = mutation({
       priority: v.optional(v.union(v.literal("urgent"), v.literal("high"), v.literal("medium"), v.literal("low"))),
       tags: v.optional(v.array(v.string())),
       sourceUrl: v.optional(v.string()),  // GitHub issue URL ex.
-      sourcePayload: v.optional(v.any()), // raw webhook payload pour audit
+      sourcePayload: v.optional(v.string()), // raw webhook payload JSON-serialized (cap 64 KB, PII-redacted upstream by caller)
+      sourcePayloadType: v.optional(v.union(
+        v.literal("github_webhook"),
+        v.literal("manual_dispatch"),
+        v.literal("cron_trigger"),
+        v.literal("error_log"),
+      )),  // discriminator for downstream typed parsing
     }),
   },
   returns: v.object({
@@ -110,7 +116,8 @@ export const createFromTemplate = mutation({
 ### Comportement
 - Atomique : si template introuvable → throw avant toute écriture. Sinon mission + N tasks créés en une mutation Convex (transactional).
 - `templateName` est versionné implicitement : le template lookup prend la version active. Pour épingler une version : passer `templateVersion` (futur, hors v1).
-- `sourcePayload` stocké en blob audit dans la mission pour debuggability — ne JAMAIS le re-exposer en query publique (PII potentiel).
+- `sourcePayload` : caller-side responsibility — JSON-stringify le payload upstream + redact PII avant l'appel. Cap 64 KB enforced côté handler (throw `payload_too_large` si > 65536 chars). Component stocke en blob audit, ne JAMAIS le re-exposer en query publique. Contract test obligatoire (R8 niveau 2) : size cap + redaction PII présente.
+- F1 résolu (msg Eta jn7df9dze5kxb715qap110ahhn8748xr) : `v.string()` au lieu de `v.any()` — pas de typage perdu cross-boundary, audit explicite.
 
 ### Caller (VP-core, http.ts)
 ```ts
@@ -205,7 +212,7 @@ export const validateIds = query({
 
 ### Comportement
 - Comme API 1 mais retourne aussi un breakdown par status pour permettre au caller (mandates) de raisonner sur le mix.
-- Cap 200 IDs par appel.
+- Cap **strict** 200 IDs par appel : si `ids.length > 200` → throw `too_many_ids: cap=200, got=${len}`. Pas de truncate silencieux (Q1 Eta — cohérent avec API 1).
 
 ### Caller (VP-core, mandates.ts)
 ```ts
@@ -302,6 +309,7 @@ Plan :
 - `templateVersion` pin pour `createFromTemplate` (v1 prend toujours la version active).
 - `force` flag sur `closeWithCascade` pour outrepasser tasks blocked (cas hors workflow normal).
 - Batch APIs (validateIds batch > 200) — pas de cas légitime identifié pour l'instant.
+- **F2 (flag Eta msg jn7df9dze5kxb715qap110ahhn8748xr)** : API 5 `issues.notifyTaskComplete` reste un appel typé direct (agent-protocol → VP-core) en v1. Pour v2, considérer un `@vantage/event-schemas` Component avec event versionné `task-complete-event-v1` (couplage event-driven plutôt que typed-mutation, R4 du briefing Eta js76t2n147jy8t7af725yc698d875mnt). Couplage inversé moins fragile aux drifts shape côté VP-core.
 
 ---
 
