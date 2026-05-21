@@ -140,6 +140,8 @@ cleanup_ids: dict[str, list] = {
     "tasks": [],
     "missions": [],
     "memories": [],
+    "diaries": [],
+    "briefing_notes": [],
 }
 
 
@@ -370,6 +372,7 @@ def run_tests(client: McpClient, orch: str):
 
     # ── 11. write_diary + get_diary ──────────────────────────────────────
     print("\n[8/12] Diary...")
+    diary_id = None
     try:
         res = client.call_tool("write_diary", {
             "date": "2099-12-31",
@@ -377,6 +380,9 @@ def run_tests(client: McpClient, orch: str):
             "content": "[VALIDATOR] Test diary entry — safe to delete",
             "highlights": ["Validator ran successfully"],
         })
+        diary_id = res.get("diaryId")
+        if diary_id:
+            cleanup_ids["diaries"].append(diary_id)
         ok("write_diary", f"diaryId={res.get('diaryId', '?')[:20]}...")
     except Exception as e:
         fail("write_diary", str(e))
@@ -477,6 +483,7 @@ def run_tests(client: McpClient, orch: str):
 
     # ── 12. Briefing notes ───────────────────────────────────────────────
     print("\n[12/12] Briefing notes...")
+    briefing_note_id = None
     try:
         res = client.call_tool("create_briefing_note", {
             "title": f"[VALIDATOR] Test briefing for {orch}",
@@ -485,11 +492,12 @@ def run_tests(client: McpClient, orch: str):
             "content": "Validator test briefing — safe to delete",
             "createdBy": orch,
         })
-        note_id = res.get("briefingId") or res.get("noteId")
-        if note_id:
-            ok("create_briefing_note", f"noteId={note_id[:20]}...")
+        briefing_note_id = res.get("noteId") or res.get("briefingId")
+        if briefing_note_id:
+            cleanup_ids["briefing_notes"].append(briefing_note_id)
+            ok("create_briefing_note", f"noteId={briefing_note_id[:20]}...")
         else:
-            fail("create_briefing_note", f"No briefingId: {res}")
+            fail("create_briefing_note", f"No noteId: {res}")
     except Exception as e:
         fail("create_briefing_note", str(e))
 
@@ -507,6 +515,20 @@ def run_tests(client: McpClient, orch: str):
     if recurring_id:
         try:
             client.call_tool("delete_recurring_task", {"recurringTaskId": recurring_id})
+            cleaned += 1
+        except Exception:
+            pass
+
+    for did in cleanup_ids["diaries"]:
+        try:
+            client.call_tool("delete_diary", {"diaryId": did, "callerOrchestrator": orch})
+            cleaned += 1
+        except Exception:
+            pass
+
+    for nid in cleanup_ids["briefing_notes"]:
+        try:
+            client.call_tool("delete_briefing_note", {"noteId": nid, "callerOrchestrator": orch})
             cleaned += 1
         except Exception:
             pass

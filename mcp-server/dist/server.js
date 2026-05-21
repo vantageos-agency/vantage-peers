@@ -1413,6 +1413,31 @@ server.tool("list_diaries", "List diary entries, optionally filtered by orchestr
     }
 });
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_diary
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("delete_diary", "Permanently delete a diary entry by ID. Only the owner (or system) can delete.", {
+    diaryId: z.string().describe("Convex document ID of the diary entry to delete"),
+    callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be the owner or system"),
+}, async ({ diaryId, callerOrchestrator }) => {
+    try {
+        const result = await convex.mutation("diary:deleteDiary", {
+            diaryId: diaryId,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool: create_briefing_note
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("create_briefing_note", "Create a briefing note — a structured record of a topic discussion, with participants, " +
@@ -1535,6 +1560,31 @@ server.tool("list_briefing_notes", "List briefing notes, optionally filtered by 
                 {
                     type: "text",
                     text: JSON.stringify(notes, null, 2),
+                },
+            ],
+        };
+    }
+    catch (error) {
+        return mcpError(error.message ?? String(error));
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool: delete_briefing_note
+// ─────────────────────────────────────────────────────────────────────────────
+server.tool("delete_briefing_note", "Permanently delete a briefing note by ID. Only the creator (or system) can delete.", {
+    noteId: z.string().describe("Convex document ID of the briefing note to delete"),
+    callerOrchestrator: creatorSchema.optional().describe("Optional RBAC — must be creator or system"),
+}, async ({ noteId, callerOrchestrator }) => {
+    try {
+        const result = await convex.mutation("briefingNotes:deleteBriefingNote", {
+            noteId: noteId,
+            callerOrchestrator,
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
                 },
             ],
         };
