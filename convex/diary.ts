@@ -119,6 +119,35 @@ export const list = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// deleteDiary — hard delete a diary entry by ID
+// RBAC: callerOrchestrator must match entry.orchestrator or be "system"
+// Pass callerOrchestrator=undefined to bypass (server-to-server / admin use).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const deleteDiary = mutation({
+	args: {
+		diaryId: v.id("diary"),
+		callerOrchestrator: v.optional(creatorValidator),
+	},
+	returns: v.object({ deleted: v.boolean() }),
+	handler: async (ctx, args) => {
+		const entry = await ctx.db.get(args.diaryId);
+		if (!entry) throw new Error("Diary entry not found");
+
+		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
+			if (entry.orchestrator !== args.callerOrchestrator) {
+				throw new Error(
+					`Unauthorized: only ${entry.orchestrator} (owner) or system can delete this diary entry`,
+				);
+			}
+		}
+
+		await ctx.db.delete(args.diaryId);
+		return { deleted: true };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listByDateRange — list diary entries between from and to dates (inclusive)
 // ─────────────────────────────────────────────────────────────────────────────
 

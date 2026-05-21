@@ -94,6 +94,35 @@ export const list = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// deleteBriefingNote — hard delete a briefing note by ID
+// RBAC: callerOrchestrator must match note.createdBy or be "system"
+// Pass callerOrchestrator=undefined to bypass (server-to-server / admin use).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const deleteBriefingNote = mutation({
+	args: {
+		noteId: v.id("briefingNotes"),
+		callerOrchestrator: v.optional(creatorValidator),
+	},
+	returns: v.object({ deleted: v.boolean() }),
+	handler: async (ctx, args) => {
+		const note = await ctx.db.get(args.noteId);
+		if (!note) throw new Error("Briefing note not found");
+
+		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
+			if (note.createdBy !== args.callerOrchestrator) {
+				throw new Error(
+					`Unauthorized: only ${note.createdBy} (creator) or system can delete this briefing note`,
+				);
+			}
+		}
+
+		await ctx.db.delete(args.noteId);
+		return { deleted: true };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // update — partial update of any mutable briefing note field
 // RBAC deny-by-default: callerOrchestrator MUST be createdBy or "system"
 // ─────────────────────────────────────────────────────────────────────────────
