@@ -167,56 +167,124 @@ const memoryDocValidator = v.object({
   updatedAt: v.number(),
 });
 
+// Paginated return shape — compat-first: existing callers reading `.value` work unchanged.
+const listMemoriesResultValidator = v.object({
+  value: v.array(memoryDocValidator),
+  continueCursor: v.union(v.string(), v.null()),
+  isDone: v.boolean(),
+});
+
 export const listMemories = query({
   args: {
     namespace: v.string(),
     type: v.optional(memoryTypeValidator),
     includeSuperseded: v.optional(v.boolean()),
     limit: v.optional(v.number()),
+    // Optional Convex pagination — when passed, uses .paginate() for cursor-based pagination.
+    // Shape: { numItems: number; cursor: string | null }
+    paginationOpts: v.optional(
+      v.object({
+        numItems: v.number(),
+        cursor: v.union(v.string(), v.null()),
+      }),
+    ),
   },
-  returns: v.array(memoryDocValidator),
+  returns: listMemoriesResultValidator,
   handler: async (ctx, args) => {
     const isLatest = args.includeSuperseded === true ? undefined : true;
-    const limit = args.limit ?? 50;
+    const numItems = args.paginationOpts?.numItems ?? args.limit ?? 50;
+    const cursor = args.paginationOpts?.cursor ?? null;
 
-    if (args.type !== undefined && isLatest !== undefined) {
-      return await ctx.db
+    // ── Paginated path (paginationOpts provided) ──────────────────────────────
+    if (args.paginationOpts !== undefined) {
+      const opts = { numItems, cursor };
+      const type = args.type;
+
+      if (type !== undefined && isLatest !== undefined) {
+        const r = await ctx.db
+          .query("memories")
+          .withIndex("by_namespace_type", (q) =>
+            q.eq("namespace", args.namespace).eq("type", type).eq("isLatest", true),
+          )
+          .order("desc")
+          .paginate(opts);
+        return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+      }
+
+      if (type !== undefined) {
+        const r = await ctx.db
+          .query("memories")
+          .withIndex("by_namespace_type", (q) =>
+            q.eq("namespace", args.namespace).eq("type", type),
+          )
+          .order("desc")
+          .paginate(opts);
+        return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+      }
+
+      if (isLatest !== undefined) {
+        const r = await ctx.db
+          .query("memories")
+          .withIndex("by_namespace", (q) =>
+            q.eq("namespace", args.namespace).eq("isLatest", true),
+          )
+          .order("desc")
+          .paginate(opts);
+        return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+      }
+
+      const r = await ctx.db
         .query("memories")
-        .withIndex("by_namespace_type", (q) =>
-          q
-            .eq("namespace", args.namespace)
-            .eq("type", args.type!)
-            .eq("isLatest", true),
-        )
+        .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
         .order("desc")
-        .take(limit);
+        .paginate(opts);
+      return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
     }
 
-    if (args.type !== undefined) {
-      return await ctx.db
+    // ── Bounded default path (no paginationOpts) — compat with existing callers ──
+    // Returns value + continueCursor=null + isDone=true so new callers don't crash.
+    const limit = numItems;
+    const type = args.type;
+
+    if (type !== undefined && isLatest !== undefined) {
+      const page = await ctx.db
         .query("memories")
         .withIndex("by_namespace_type", (q) =>
-          q.eq("namespace", args.namespace).eq("type", args.type!),
+          q.eq("namespace", args.namespace).eq("type", type).eq("isLatest", true),
         )
         .order("desc")
         .take(limit);
+      return { value: page, continueCursor: null, isDone: true };
+    }
+
+    if (type !== undefined) {
+      const page = await ctx.db
+        .query("memories")
+        .withIndex("by_namespace_type", (q) =>
+          q.eq("namespace", args.namespace).eq("type", type),
+        )
+        .order("desc")
+        .take(limit);
+      return { value: page, continueCursor: null, isDone: true };
     }
 
     if (isLatest !== undefined) {
-      return await ctx.db
+      const page = await ctx.db
         .query("memories")
         .withIndex("by_namespace", (q) =>
           q.eq("namespace", args.namespace).eq("isLatest", true),
         )
         .order("desc")
         .take(limit);
+      return { value: page, continueCursor: null, isDone: true };
     }
 
-    return await ctx.db
+    const page = await ctx.db
       .query("memories")
       .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
       .order("desc")
       .take(limit);
+    return { value: page, continueCursor: null, isDone: true };
   },
 });
 

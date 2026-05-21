@@ -88,12 +88,12 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const alphaMemories = await t.query(api.memories.listMemories, {
+		const alphaResult = await t.query(api.memories.listMemories, {
 			namespace: "project/alpha",
 		});
 
-		expect(alphaMemories).toHaveLength(2);
-		expect(alphaMemories.every((m) => m.namespace === "project/alpha")).toBe(
+		expect(alphaResult.value).toHaveLength(2);
+		expect(alphaResult.value.every((m) => m.namespace === "project/alpha")).toBe(
 			true,
 		);
 	});
@@ -125,13 +125,13 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const projectMemories = await t.query(api.memories.listMemories, {
+		const projectResult = await t.query(api.memories.listMemories, {
 			namespace: "global",
 			type: "project",
 		});
 
-		expect(projectMemories).toHaveLength(2);
-		expect(projectMemories.every((m) => m.type === "project")).toBe(true);
+		expect(projectResult.value).toHaveLength(2);
+		expect(projectResult.value.every((m) => m.type === "project")).toBe(true);
 	});
 
 	test("soft delete marks isLatest=false", async () => {
@@ -152,10 +152,10 @@ describe("Memories", () => {
 		expect(memory!.isLatest).toBe(false);
 
 		// Should not appear in default (isLatest=true) listing
-		const listed = await t.query(api.memories.listMemories, {
+		const listedResult = await t.query(api.memories.listMemories, {
 			namespace: "global",
 		});
-		expect(listed.find((m) => m._id === memoryId)).toBeUndefined();
+		expect(listedResult.value.find((m) => m._id === memoryId)).toBeUndefined();
 	});
 
 	test("store memory with 'updates' relation supersedes target", async () => {
@@ -193,11 +193,11 @@ describe("Memories", () => {
 		expect(updated!.isLatest).toBe(true);
 
 		// Default listing should only show the updated version
-		const listed = await t.query(api.memories.listMemories, {
+		const listedResult = await t.query(api.memories.listMemories, {
 			namespace: "global",
 		});
-		expect(listed).toHaveLength(1);
-		expect(listed[0]._id).toBe(updatedId);
+		expect(listedResult.value).toHaveLength(1);
+		expect(listedResult.value[0]._id).toBe(updatedId);
 	});
 
 	// Regression #262 — relations must be optional; defaults to [] server-side
