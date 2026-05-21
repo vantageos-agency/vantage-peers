@@ -1,5 +1,27 @@
 # @vantage/data-lake — Changelog
 
+## 0.3.0 — 2026-05-21 (Phase E.0)
+
+Architectural correction discovered via Xi deploy attempt to dev astute-turtle-213
+(msg jn70qs563c0qj7np3fw7ze0rx5875vjq): Convex CLI 1.39.1 rejects "use node"
+directives in Convex Component packages.
+
+Refactor per Pi+Xi consensus option (b):
+- DELETED: packages/data-lake/component/aiClient.ts (host-only now)
+- searchV1.ts: removed "use node", refactored to accept pre-computed
+  queryEmbedding from caller instead of inline embedding compute
+- memoriesV1.ts: refactored store to accept optional embedding arg from
+  caller (host action wraps with embedding compute)
+
+Host convex/ unchanged. Embedding computation remains a host responsibility
+via convex/lib/aiClient.ts. The Component is now pure DB ops + RAG storage,
+no external API calls.
+
+Phase D.2 host handlers (commit 0644cc7) already route via agent-protocol,
+not data-lake, so unaffected by this refactor. Phase E PR #509 updates
+required: description note that "use node" issue was resolved by this
+architectural correction.
+
 ## 0.1.0 — 2026-05-21
 
 - Initial scaffold (Phase A of C1 modularization).

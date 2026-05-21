@@ -1,24 +1,20 @@
-"use node";
-import { RAG } from "@convex-dev/rag";
+import { RAG, hybridRank } from "@convex-dev/rag";
 import { v } from "convex/values";
 import { api, components } from "./_generated/api";
 import { action } from "./_generated/server";
-import {
-	getAITextEmbeddingProvider,
-	getEmbeddingModelName,
-} from "./aiClient";
 import { memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RAG instance — backed by an OpenAI-compatible embedding endpoint.
-// Model: text-embedding-3-small → 1536 dimensions
+// RAG instance — embedding computation is the HOST's responsibility.
 //
-// AI key selection (checked at module load time inside RAG):
-//   AI_GATEWAY_API_KEY set → Vercel AI Gateway (recommended, existing prod path)
-//   OPENAI_API_KEY set     → api.openai.com direct (BYOK self-host, no Vercel)
-//   Neither set            → throws a clear error at runtime
+// The Component accepts pre-computed embeddings from the host action caller.
+// "text-embedding-3-small" must match the modelId used when namespaces were
+// originally created by the host (getModelId("text-embedding-3-small") →
+// "text-embedding-3-small", same as getModelId(gateway.textEmbeddingModel(...))).
 //
-// Optional: set AI_GATEWAY_BASE_URL to override the Vercel gateway endpoint.
+// The embedding model string is only used for namespace keying (modelId) and
+// the RAG constructor requires it — the model object itself is never invoked
+// inside this Component because all callers pass Array<number> as query.
 //
 // Filter strategy:
 //   "namespace" → the memory's namespace (e.g. "global", "orchestrator/pi")
@@ -29,10 +25,8 @@ import { memoryTypeValidator } from "./schema";
 //            is superseded via storeMemory with an "updates" relation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const gateway = getAITextEmbeddingProvider();
-
 export const rag = new RAG(components.rag, {
-	textEmbeddingModel: gateway.textEmbeddingModel(getEmbeddingModelName()),
+	textEmbeddingModel: "text-embedding-3-small",
 	embeddingDimension: 1536,
 	filterNames: ["namespace", "type", "isLatest"],
 });
@@ -74,11 +68,13 @@ const recallResultValidator = v.object({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // recall — semantic vector search via @convex-dev/rag
+// Accepts pre-computed queryEmbedding from host (embedding computation is
+// host-side via convex/lib/aiClient.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const recall = action({
 	args: {
-		query: v.string(),
+		queryEmbedding: v.array(v.float64()),
 		namespace: v.optional(v.string()),
 		type: v.optional(memoryTypeValidator),
 		limit: v.optional(v.number()),
@@ -91,7 +87,7 @@ export const recall = action({
 
 		const { results, entries } = await rag.search(ctx, {
 			namespace: args.namespace ?? "global",
-			query: args.query,
+			query: args.queryEmbedding,
 			searchType: "vector",
 			limit,
 			vectorScoreThreshold: scoreThreshold,
@@ -133,6 +129,7 @@ export const recall = action({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // textSearch — BM25 full-text search via @convex-dev/rag
+// No embedding computation required — query is text-only.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const textSearch = action({
@@ -186,12 +183,17 @@ export const textSearch = action({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// hybridSearch — vector + BM25, merged via RRF inside @convex-dev/rag
+// hybridSearch — vector + BM25, merged via RRF
+//
+// The host passes a pre-computed queryEmbedding for the vector half and the
+// original query string for the BM25 half. The Component runs both searches
+// independently then merges with hybridRank (RRF fusion).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const hybridSearch = action({
 	args: {
 		query: v.string(),
+		queryEmbedding: v.array(v.float64()),
 		namespace: v.optional(v.string()),
 		type: v.optional(memoryTypeValidator),
 		limit: v.optional(v.number()),
@@ -209,38 +211,67 @@ export const hybridSearch = action({
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 10;
+		const vectorWeight = args.vectorWeight ?? 1;
+		const textWeight = args.textWeight ?? 1;
+		const filters = buildFilters({ namespace: args.namespace, type: args.type });
+		const namespace = args.namespace ?? "global";
 
-		const searchArgs: Parameters<typeof rag.search>[1] = {
-			namespace: args.namespace ?? "global",
-			query: args.query,
-			searchType: "hybrid",
-			limit,
-			filters: buildFilters({ namespace: args.namespace, type: args.type }),
-		};
-		if (args.vectorWeight !== undefined) {
-			(searchArgs as Record<string, unknown>).vectorWeight = args.vectorWeight;
-		}
-		if (args.textWeight !== undefined) {
-			(searchArgs as Record<string, unknown>).textWeight = args.textWeight;
-		}
+		// Run vector search and text search in parallel
+		const [vectorRes, textRes] = await Promise.all([
+			rag.search(ctx, {
+				namespace,
+				query: args.queryEmbedding,
+				searchType: "vector",
+				limit,
+				filters,
+			}),
+			rag.search(ctx, {
+				namespace,
+				query: args.query,
+				searchType: "text",
+				limit,
+				filters,
+			}),
+		]);
 
-		const { results, entries } = await rag.search(ctx, searchArgs);
+		// Collect all entry data
+		const allEntries = new Map(
+			[...vectorRes.entries, ...textRes.entries].map((e) => [e.entryId, e]),
+		);
 
-		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
+		// RRF merge using hybridRank
+		const vectorIds = vectorRes.results.map((r) => r.entryId);
+		const textIds = textRes.results.map((r) => r.entryId);
+		const rankedIds = hybridRank([vectorIds, textIds], {
+			k: 60,
+			weights: [vectorWeight, textWeight],
+		});
 
-		return results
-			.map((r) => {
-				const entry = entryMap.get(r.entryId);
+		// Build result with RRF position-based score and hydrated metadata
+		return rankedIds
+			.slice(0, limit)
+			.map((entryId, i) => {
+				const entry = allEntries.get(entryId);
 				if (entry === undefined) return null;
 
 				const nsFilter = entry.filterValues.find((f) => f.name === "namespace");
 				const typeFilter = entry.filterValues.find((f) => f.name === "type");
-				const text = r.content.map((c) => c.text).join(" ");
+
+				// Collect content from whichever search had results for this entry
+				const vectorResult = vectorRes.results.find((r) => r.entryId === entryId);
+				const textResult = textRes.results.find((r) => r.entryId === entryId);
+				const resultContent = vectorResult ?? textResult;
+				const text = resultContent
+					? resultContent.content.map((c) => c.text).join(" ")
+					: "";
+
+				// Position-based RRF score (1.0 for first, decreasing)
+				const rrfScore = 1 - i / Math.max(rankedIds.length, 1);
 
 				return {
 					memoryId: (entry.key ?? "") as unknown as string,
-					rrfScore: r.score,
-					namespace: (nsFilter?.value as string) ?? args.namespace ?? "global",
+					rrfScore,
+					namespace: (nsFilter?.value as string) ?? namespace,
 					type: (typeFilter?.value as string) ?? "user",
 					content: text,
 				};
@@ -255,11 +286,12 @@ export const hybridSearch = action({
 // searchFixPatterns — semantic search over fix patterns via RAG
 // Searches the "fixpatterns" namespace. Returns pattern IDs + scores,
 // then hydrates with full pattern data from the DB.
+// Accepts pre-computed queryEmbedding from host caller.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const searchFixPatterns = action({
 	args: {
-		query: v.string(),
+		queryEmbedding: v.array(v.float64()),
 		limit: v.optional(v.number()),
 		scoreThreshold: v.optional(v.number()),
 	},
@@ -282,7 +314,7 @@ export const searchFixPatterns = action({
 
 		const { results, entries } = await rag.search(ctx, {
 			namespace: "fixpatterns",
-			query: args.query,
+			query: args.queryEmbedding,
 			searchType: "vector",
 			limit,
 			vectorScoreThreshold: scoreThreshold,
