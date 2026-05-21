@@ -772,6 +772,16 @@ export default defineSchema({
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.
 	// hash = simpleHash(functionName + ":" + errorMessage) for deduplication.
+	//
+	// Anti-flood additions (Day 76):
+	//   issueCreated   — true once the GH issue + IRP mission have been created.
+	//                    Prevents re-triggering if the errorLog is touched again.
+	//   irpMissionId   — ID of the auto-IRP mission spawned for this error, so
+	//                    the auto-resolver can cascade-close it.
+	//   autoResolved   — true once the auto-resolver has closed the mission.
+	//                    Prevents the resolver from double-processing.
+	//   recurrenceThreshold — overrides the deployment-level default; the GH issue
+	//                    is NOT created until count >= this value.
 	errorLogs: defineTable({
 		hash: v.string(),
 		deployment: v.string(),
@@ -783,9 +793,16 @@ export default defineSchema({
 		count: v.number(),
 		issueNumber: v.optional(v.number()),
 		githubRepo: v.optional(v.string()),
+		// Day 76 anti-flood fields
+		issueCreated: v.optional(v.boolean()),
+		irpMissionId: v.optional(v.id("missions")),
+		autoResolved: v.optional(v.boolean()),
+		recurrenceThreshold: v.optional(v.number()),
 	})
 		.index("by_hash", ["hash"])
-		.index("by_deployment", ["deployment"]),
+		.index("by_deployment", ["deployment"])
+		.index("by_issue_created", ["issueCreated", "lastSeen"])
+		.index("by_issue_number", ["issueNumber"]),
 
 	// ── licenses ─────────────────────────────────────────────────────────────
 	// Open-core license registry. Raw license keys are NEVER stored — only the

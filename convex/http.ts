@@ -185,6 +185,20 @@ http.route({
 						tags: [...(step.tags ?? []), "github", "irp"],
 					});
 				}
+
+				// 7b. If this issue was auto-created by the error monitor ([Auto] prefix),
+				//     link the IRP mission back to the errorLog so the auto-resolver can
+				//     cascade-close it when the error goes quiet.
+				if ((issue.title as string).startsWith("[Auto]")) {
+					await ctx.runMutation(
+						internal.errorMonitor.linkIrpMissionByIssueNumber,
+						{
+							issueNumber: issue.number as number,
+							githubRepo: repoFullName,
+							missionId,
+						},
+					);
+				}
 			} catch (error) {
 				console.error("Mission creation failed:", error);
 				return new Response(

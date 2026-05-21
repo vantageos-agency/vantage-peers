@@ -37,4 +37,14 @@ crons.interval(
 	{},
 );
 
+// Auto-resolve stale false-positive IRP missions.
+// Day 76 doctrine mechanism 3: "any automation that creates work must resolve it."
+// Closes missions + tasks + GH issues for errors that stopped recurring (>24h quiet).
+crons.interval( // allow-time-estimate: polling interval — cron config
+	"auto-resolve stale irp",
+	{ hours: 6 },
+	internal.errorMonitorAutoResolver.autoResolveStaleIrp,
+	{},
+);
+
 export default crons;

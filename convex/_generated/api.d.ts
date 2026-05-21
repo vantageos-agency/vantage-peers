@@ -17,6 +17,7 @@ import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
 import type * as errorMonitor from "../errorMonitor.js";
 import type * as errorMonitorActions from "../errorMonitorActions.js";
+import type * as errorMonitorAutoResolver from "../errorMonitorAutoResolver.js";
 import type * as errorMonitorFilters from "../errorMonitorFilters.js";
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   episodes: typeof episodes;
   errorMonitor: typeof errorMonitor;
   errorMonitorActions: typeof errorMonitorActions;
+  errorMonitorAutoResolver: typeof errorMonitorAutoResolver;
   errorMonitorFilters: typeof errorMonitorFilters;
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;

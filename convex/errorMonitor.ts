@@ -1,11 +1,35 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import {
 	internalMutation,
 	internalQuery,
 	mutation,
 	query,
 } from "./_generated/server";
-import { internal } from "./_generated/api";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default number of recurrences required before a GitHub issue + IRP mission
+ * is created for a detected error. This prevents transient one-shot errors
+ * (schema migrations, brief network blips, warmup spikes) from flooding the
+ * fleet queue.
+ *
+ * Day 76 doctrine mechanism 3: "any automation that creates work must resolve it."
+ * Raising this threshold is the primary lever against false-positive cascades.
+ * Per-deployment or per-errorLog overrides are supported via the
+ * `recurrenceThreshold` field on the respective rows.
+ */
+export const DEFAULT_RECURRENCE_THRESHOLD = 3;
+
+/**
+ * Sliding window (ms) used by the auto-resolver to decide whether an error
+ * has "stopped recurring". If `lastSeen` is older than NOW - this value,
+ * the error is considered quiescent and its IRP mission can be auto-closed.
+ */
+export const AUTO_RESOLVE_QUIET_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal mutations (called from actions)
@@ -20,6 +44,9 @@ export const upsertError = internalMutation({
 		stackTrace: v.optional(v.string()),
 		githubRepo: v.string(),
 		orchestrator: v.string(),
+		// Optional per-call threshold override. Falls back to
+		// DEFAULT_RECURRENCE_THRESHOLD when absent.
+		recurrenceThreshold: v.optional(v.number()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -29,18 +56,44 @@ export const upsertError = internalMutation({
 			.unique();
 
 		const now = Date.now();
+		const threshold =
+			args.recurrenceThreshold ?? DEFAULT_RECURRENCE_THRESHOLD;
 
 		if (existing) {
-			// Dedup: update count + lastSeen, skip issue creation
+			const newCount = existing.count + 1;
 			await ctx.db.patch(existing._id, {
 				lastSeen: now,
-				count: existing.count + 1,
+				count: newCount,
 			});
+
+			// Threshold check: if the GH issue has NOT been created yet and we
+			// have now crossed the recurrence threshold, schedule creation now.
+			// Guard `issueCreated` so we never double-fire even if the cron races.
+			const effectiveThreshold =
+				existing.recurrenceThreshold ?? threshold;
+			if (!existing.issueCreated && newCount >= effectiveThreshold) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.errorMonitorActions.createGitHubIssue,
+					{
+						errorId: existing._id,
+						githubRepo: args.githubRepo,
+						functionName: args.functionName,
+						errorMessage: args.errorMessage,
+						stackTrace: args.stackTrace ?? "",
+						deployment: args.deployment,
+						orchestrator: args.orchestrator,
+					},
+				);
+			}
 			return null;
 		}
 
-		// New error — insert and schedule GitHub issue creation
-		const errorId = await ctx.db.insert("errorLogs", {
+		// New error — insert WITHOUT scheduling issue creation yet.
+		// Issue creation is deferred until count >= threshold (handled above on
+		// subsequent upserts). This is the primary anti-flood gate: a single
+		// transient error never produces a GitHub issue or IRP mission.
+		await ctx.db.insert("errorLogs", {
 			hash: args.hash,
 			deployment: args.deployment,
 			functionName: args.functionName,
@@ -50,21 +103,9 @@ export const upsertError = internalMutation({
 			lastSeen: now,
 			count: 1,
 			githubRepo: args.githubRepo,
+			recurrenceThreshold: args.recurrenceThreshold,
+			issueCreated: false,
 		});
-
-		await ctx.scheduler.runAfter(
-			0,
-			internal.errorMonitorActions.createGitHubIssue,
-			{
-				errorId,
-				githubRepo: args.githubRepo,
-				functionName: args.functionName,
-				errorMessage: args.errorMessage,
-				stackTrace: args.stackTrace ?? "",
-				deployment: args.deployment,
-				orchestrator: args.orchestrator,
-			},
-		);
 
 		return null;
 	},
@@ -99,7 +140,61 @@ export const linkIssue = internalMutation({
 		await ctx.db.patch(args.errorId, {
 			issueNumber: args.issueNumber,
 			githubRepo: args.githubRepo,
+			issueCreated: true,
 		});
+		return null;
+	},
+});
+
+/**
+ * Called from the GitHub webhook handler (http.ts) after it creates the
+ * auto-IRP mission. Stores the mission ID on the errorLog so the auto-resolver
+ * can cascade-close it when the error stops recurring.
+ */
+export const linkIrpMission = internalMutation({
+	args: {
+		errorId: v.id("errorLogs"),
+		missionId: v.id("missions"),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await ctx.db.patch(args.errorId, {
+			irpMissionId: args.missionId,
+		});
+		return null;
+	},
+});
+
+/**
+ * Variant used from http.ts webhook handler: looks up the errorLog by
+ * (githubRepo, issueNumber) instead of by ID. Called after the webhook
+ * creates an IRP mission for an [Auto]-prefixed issue.
+ */
+export const linkIrpMissionByIssueNumber = internalMutation({
+	args: {
+		issueNumber: v.number(),
+		githubRepo: v.string(),
+		missionId: v.id("missions"),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		// Find the errorLog that was linked to this GH issue number + repo.
+		// Multiple rows could theoretically share an issueNumber if two errorLogs
+		// from different deployments happened to produce the same GH issue number —
+		// unlikely but we take the first match that has the correct repo.
+		const candidates = await ctx.db
+			.query("errorLogs")
+			.withIndex("by_issue_number", (q) =>
+				q.eq("issueNumber", args.issueNumber),
+			)
+			.take(10);
+
+		const matching = candidates.find((r) => r.githubRepo === args.githubRepo);
+		if (matching) {
+			await ctx.db.patch(matching._id, {
+				irpMissionId: args.missionId,
+			});
+		}
 		return null;
 	},
 });
@@ -129,6 +224,131 @@ export const listActiveDeployments = internalQuery({
 			.query("monitoredDeployments")
 			.withIndex("by_active", (q) => q.eq("active", true))
 			.take(50);
+	},
+});
+
+/**
+ * Returns errorLog rows that have had a GH issue + IRP mission created but
+ * whose error has gone quiet (lastSeen older than quietWindowMs) and whose
+ * mission has NOT yet been auto-resolved. The auto-resolver cron iterates
+ * these and closes the mission + tasks + GH issue.
+ *
+ * Uses the by_issue_created index to avoid a full table scan.
+ */
+export const listStaleAutoIrp = internalQuery({
+	args: {
+		quietWindowMs: v.number(),
+		limit: v.optional(v.number()),
+	},
+	returns: v.array(
+		v.object({
+			_id: v.id("errorLogs"),
+			_creationTime: v.number(),
+			hash: v.string(),
+			deployment: v.string(),
+			functionName: v.string(),
+			errorMessage: v.string(),
+			firstSeen: v.number(),
+			lastSeen: v.number(),
+			count: v.number(),
+			issueNumber: v.optional(v.number()),
+			githubRepo: v.optional(v.string()),
+			issueCreated: v.optional(v.boolean()),
+			irpMissionId: v.optional(v.id("missions")),
+			autoResolved: v.optional(v.boolean()),
+			recurrenceThreshold: v.optional(v.number()),
+			stackTrace: v.optional(v.string()),
+		}),
+	),
+	handler: async (ctx, args) => {
+		const cutoff = Date.now() - args.quietWindowMs;
+		const limit = args.limit ?? 50;
+		// Query rows where issueCreated = true, ordered by lastSeen ascending
+		// so the oldest (most likely to be quiet) come first.
+		const candidates = await ctx.db
+			.query("errorLogs")
+			.withIndex("by_issue_created", (q) => q.eq("issueCreated", true))
+			.order("asc")
+			.take(limit * 3); // over-fetch; we filter by lastSeen and autoResolved
+
+		return candidates
+			.filter(
+				(row) =>
+					row.lastSeen <= cutoff &&
+					!row.autoResolved &&
+					row.irpMissionId != null,
+			)
+			.slice(0, limit);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveStaleIrpMission — cascade-close one mission + its tasks
+// ─────────────────────────────────────────────────────────────────────────────
+// Lives in this file (not in errorMonitorAutoResolver.ts which is "use node")
+// so it can be called from both the action and from unit tests without loading
+// the Node.js runtime.
+
+const AUTO_RESOLVE_NOTE =
+	"Auto-resolved — error stopped recurring (no occurrences in 24h, no PR opened). " +
+	"Closing to keep queues clean. Re-open if it returns.";
+
+export const resolveStaleIrpMission = internalMutation({
+	args: {
+		errorLogId: v.id("errorLogs"),
+		missionId: v.id("missions"),
+	},
+	returns: v.object({
+		tasksClosedCount: v.number(),
+		missionClosed: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		// 1. Cascade-close all open tasks for this mission
+		const todoTasks = await ctx.db
+			.query("tasks")
+			.withIndex("by_mission", (q) =>
+				q.eq("missionId", args.missionId).eq("status", "todo"),
+			)
+			.take(100);
+
+		const inProgressTasks = await ctx.db
+			.query("tasks")
+			.withIndex("by_mission", (q) =>
+				q.eq("missionId", args.missionId).eq("status", "in_progress"),
+			)
+			.take(100);
+
+		const allOpenTasks = [...todoTasks, ...inProgressTasks];
+		const now = Date.now();
+
+		for (const task of allOpenTasks) {
+			await ctx.db.patch(task._id, {
+				status: "done",
+				completionNote: AUTO_RESOLVE_NOTE,
+				completedAt: now,
+				updatedAt: now,
+			});
+		}
+
+		// 2. Close the mission
+		const mission = await ctx.db.get(args.missionId);
+		const wasOpen = mission != null && mission.status !== "complete";
+		if (wasOpen) {
+			await ctx.db.patch(args.missionId, {
+				status: "complete",
+				updatedAt: now,
+			});
+		}
+
+		// 3. Mark errorLog as auto-resolved
+		await ctx.db.patch(args.errorLogId, {
+			autoResolved: true,
+		});
+
+		return {
+			tasksClosedCount: allOpenTasks.length,
+			missionClosed: wasOpen,
+		};
 	},
 });
 
@@ -230,16 +450,19 @@ export const listErrors = query({
 			count: v.number(),
 			issueNumber: v.optional(v.number()),
 			githubRepo: v.optional(v.string()),
+			issueCreated: v.optional(v.boolean()),
+			irpMissionId: v.optional(v.id("missions")),
+			autoResolved: v.optional(v.boolean()),
+			recurrenceThreshold: v.optional(v.number()),
 		}),
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
-		if (args.deployment) {
+		const deployment = args.deployment;
+		if (deployment) {
 			return await ctx.db
 				.query("errorLogs")
-				.withIndex("by_deployment", (q) =>
-					q.eq("deployment", args.deployment!),
-				)
+				.withIndex("by_deployment", (q) => q.eq("deployment", deployment))
 				.order("desc")
 				.take(limit);
 		}
@@ -263,6 +486,10 @@ export const getError = query({
 			count: v.number(),
 			issueNumber: v.optional(v.number()),
 			githubRepo: v.optional(v.string()),
+			issueCreated: v.optional(v.boolean()),
+			irpMissionId: v.optional(v.id("missions")),
+			autoResolved: v.optional(v.boolean()),
+			recurrenceThreshold: v.optional(v.number()),
 		}),
 		v.null(),
 	),
