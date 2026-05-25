@@ -14,7 +14,8 @@ export const memoryTypeValidator = v.union(
 );
 
 // Open validator — any orchestrator name is accepted.
-// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, kappa, system.
+// Known defaults: pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda,
+// victor, proxima, theta, xi, epsilon, omicron, upsilon, system.
 // New orchestrators can be added without schema changes (see issue #132).
 export const creatorValidator = v.string();
 
