@@ -851,6 +851,21 @@ export default defineSchema({
 		.index("by_customerEmail", ["customerEmail"])
 		.index("by_gumroadOrderId", ["gumroadOrderId"]),
 
+	// ── errorMonitorConfig ───────────────────────────────────────────────────
+	// Singleton-ish dynamic configuration for the error-monitor subsystem.
+	// Key-value store where `key` is a stable slug (e.g. "pendingAliasReleases")
+	// and `value` is a string array.
+	//
+	// pendingAliasReleases — list of status aliases introduced in an in-flight
+	// release that are not yet deployed to prod. The auto-IRP bot synthesises
+	// ArgumentValidationError filter rules for each alias so that pre-deploy
+	// smoke-test noise doesn't spawn GitHub issues. Remove aliases post-deploy.
+	errorMonitorConfig: defineTable({
+		key: v.string(), // e.g. "pendingAliasReleases"
+		value: v.array(v.string()),
+		updatedAt: v.number(),
+	}).index("by_key", ["key"]),
+
 	// ── client_org_mapping ───────────────────────────────────────────────────
 	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex

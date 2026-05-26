@@ -1,11 +1,16 @@
 /// <reference types="vite/client" />
+import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { api } from "./_generated/api";
 import {
 	DEFAULT_FILTER_RULES,
 	evaluateFilter,
+	isPendingAliasError,
 	type FilterRule,
 	shouldCreateIssue,
+	synthesizePendingAliasRules,
 } from "./errorMonitorFilters";
+import schema from "./schema";
 
 // =============================================================================
 // Auto-IRP false-positive filter — sigma-D50-cleanup
@@ -275,5 +280,232 @@ describe("evaluateFilter — priority precedence", () => {
 		// priority 1 beats undefined-treated-as-0 → "create-issue" wins
 		expect(decision.severity).toBe("create-issue");
 		expect(decision.matchedRule?.reason).toBe("explicit pri 1");
+	});
+});
+
+// =============================================================================
+// synthesizePendingAliasRules — pure unit tests
+// =============================================================================
+describe("synthesizePendingAliasRules", () => {
+	test("produces 4 rules for a single alias (one per covered function name)", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		expect(rules).toHaveLength(4);
+		const fns = rules.map((r) => r.functionName).sort();
+		expect(fns).toEqual([
+			"briefingNotes:list",
+			"missions:list",
+			"tasks:list",
+			"tasks:listByMission",
+		]);
+	});
+
+	test("every synthesized rule has severity 'skip' and correct reason", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		for (const rule of rules) {
+			expect(rule.severity).toBe("skip");
+			expect(rule.reason).toBe("Pending alias release: open not yet deployed");
+		}
+	});
+
+	test("regex matches ArgumentValidationError with .status path and alias value", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		const tasksListRule = rules.find((r) => r.functionName === "tasks:list");
+		expect(tasksListRule).toBeDefined();
+		expect(
+			tasksListRule?.errorMessageRegex.test(
+				'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+			),
+		).toBe(true);
+	});
+
+	test("regex does NOT match a different alias value", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		const tasksListRule = rules.find((r) => r.functionName === "tasks:list");
+		expect(tasksListRule).toBeDefined();
+		expect(
+			tasksListRule?.errorMessageRegex.test(
+				'ArgumentValidationError: Path: .status Value: "active" Validator: v.union(...)',
+			),
+		).toBe(false);
+	});
+
+	test("produces 8 rules for two aliases", () => {
+		const rules = synthesizePendingAliasRules(["open", "active"]);
+		expect(rules).toHaveLength(8);
+	});
+
+	test("produces empty array for empty alias list", () => {
+		expect(synthesizePendingAliasRules([])).toHaveLength(0);
+	});
+});
+
+// =============================================================================
+// evaluateFilter with synthesized pending-alias rules
+// =============================================================================
+describe("evaluateFilter — synthesized pending-alias rules", () => {
+	test("ArgumentValidationError on tasks:list with status 'open' is skipped when alias is pending", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		const decision = evaluateFilter(
+			{
+				functionName: "tasks:list",
+				errorMessage:
+					'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+			},
+			rules,
+		);
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+		expect(decision.matchedRule?.reason).toBe(
+			"Pending alias release: open not yet deployed",
+		);
+	});
+
+	test("same error passes through (issue created) when alias list is empty (post-deploy state)", () => {
+		const rules = synthesizePendingAliasRules([]);
+		const decision = evaluateFilter(
+			{
+				functionName: "tasks:list",
+				errorMessage:
+					'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+			},
+			rules,
+		);
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.matchedRule).toBeNull();
+	});
+
+	test("tasks:create does NOT match even when alias is pending (function name mismatch)", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		const decision = evaluateFilter(
+			{
+				functionName: "tasks:create",
+				errorMessage:
+					'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+			},
+			rules,
+		);
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.matchedRule).toBeNull();
+	});
+
+	test("missions:list is covered by synthesized rules", () => {
+		const rules = synthesizePendingAliasRules(["active"]);
+		const decision = evaluateFilter(
+			{
+				functionName: "missions:list",
+				errorMessage:
+					'ArgumentValidationError: Path: .status Value: "active" Validator: v.union(...)',
+			},
+			rules,
+		);
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+	});
+
+	test("tasks:listByMission is covered by synthesized rules", () => {
+		const rules = synthesizePendingAliasRules(["all"]);
+		const decision = evaluateFilter(
+			{
+				functionName: "tasks:listByMission",
+				errorMessage:
+					'ArgumentValidationError: Path: .status Value: "all" Validator: v.union(...)',
+			},
+			rules,
+		);
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+	});
+
+	test("briefingNotes:list is covered by synthesized rules", () => {
+		const rules = synthesizePendingAliasRules(["open"]);
+		const decision = evaluateFilter(
+			{
+				functionName: "briefingNotes:list",
+				errorMessage:
+					'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+			},
+			rules,
+		);
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.severity).toBe("skip");
+	});
+});
+
+// =============================================================================
+// isPendingAliasError convenience wrapper
+// =============================================================================
+describe("isPendingAliasError", () => {
+	test("returns true when alias is pending and error matches", () => {
+		expect(
+			isPendingAliasError(
+				{
+					functionName: "tasks:list",
+					errorMessage:
+						'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+				},
+				["open"],
+			),
+		).toBe(true);
+	});
+
+	test("returns false when pending list is empty", () => {
+		expect(
+			isPendingAliasError(
+				{
+					functionName: "tasks:list",
+					errorMessage:
+						'ArgumentValidationError: Path: .status Value: "open" Validator: v.union(...)',
+				},
+				[],
+			),
+		).toBe(false);
+	});
+});
+
+// =============================================================================
+// Convex integration tests — getPendingAliasReleases + setPendingAliasReleases
+// =============================================================================
+describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () => {
+	const modules = import.meta.glob("./**/*.ts");
+
+	test("returns [] when no config row exists", async () => {
+		const t = convexTest(schema, modules);
+		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		expect(aliases).toEqual([]);
+	});
+
+	test("setPendingAliasReleases upserts and getPendingAliasReleases reads back", async () => {
+		const t = convexTest(schema, modules);
+		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+			aliases: ["open", "active"],
+		});
+		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		expect(aliases).toEqual(["open", "active"]);
+	});
+
+	test("calling setPendingAliasReleases again overwrites (upsert behaviour)", async () => {
+		const t = convexTest(schema, modules);
+		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+			aliases: ["open"],
+		});
+		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+			aliases: ["active"],
+		});
+		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		expect(aliases).toEqual(["active"]);
+	});
+
+	test("clearing with [] reflects post-deploy empty state", async () => {
+		const t = convexTest(schema, modules);
+		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+			aliases: ["open"],
+		});
+		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+			aliases: [],
+		});
+		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		expect(aliases).toEqual([]);
 	});
 });
