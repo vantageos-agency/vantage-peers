@@ -33,6 +33,41 @@ npm run build
 CONVEX_URL=https://your-deployment.convex.cloud node dist/server.js
 ```
 
+## NPM PUBLISH PROTOCOL (fleet packages: @vantageos/*, @elpiarthera/*, vantage-*)
+
+Day 82 doctrine v1.1.0: Eta APPROVED verdict MUST cite the reviewed commit SHA.
+Orchestrator MUST publish with HEAD == reviewed SHA.
+New commits post-APPROVED REQUIRE new Eta review.
+
+**Required tokens (both must be set):**
+- `ETA_APPROVED_TASK_ID=k<taskId>` — VP task closed by Eta with [ETA-APPROVED] marker
+- `ETA_APPROVED_COMMIT_SHA=<sha>` — git HEAD at the time Eta issued the APPROVED verdict
+
+**Required order:**
+1. PR created on feature branch
+2. Eta review dispatched: `create_task assignedTo=eta` with brief + current HEAD SHA in the brief
+3. Eta closes task with APPROVED verdict citing the SHA reviewed
+4. **No new commits after APPROVED** — any commit post-APPROVED invalidates the token
+5. Merge + npm publish with both env vars set (one-shot, then unset)
+6. Smoke test
+
+**Publish command:**
+```bash
+ETA_APPROVED_TASK_ID=k<task-id> ETA_APPROVED_COMMIT_SHA=<sha> npm publish
+```
+
+**Hook enforcement:** `.claude/hooks/enforce-eta-approval-before-npm-publish.py` v1.1.0
+- Validates task exists in VantageMemory (assignedTo=eta, [ETA-APPROVED] marker, age ≤60 min)
+- Validates `git rev-parse HEAD` == ETA_APPROVED_COMMIT_SHA
+- Both checks must pass — blocks on any failure
+
+**Emergency bypass (Laurent-only, rare):** append `# laurent-direct-publish` to command.
+
+**Reference:** postmortem `/root/coding/vantage-registry/analysis/eta-approval-hook-postmortem-2026-05-26.md`
+— Day 82 v2.3.0 incident: 2 commits added post-APPROVED slipped through hook v1.0.1.
+
+---
+
 ## Doctrine — Evidence-Bound Done (Day 76, non-négociable)
 
 Aucune tâche n'est `done` sans preuve attachée. Chaque `complete_task` / `update_task` vers `review`|`done` doit avoir un `completionNote` ≥ 40 caractères contenant au moins un **jeton de preuve vérifiable** :
