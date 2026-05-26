@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.1 — 2026-05-26
+
+### Fixed (Eta PR #530 delta-review)
+- `status="all"` now actually returns every row (no filter applied). Previously advertised in 2.3.0 docs but the Convex `expandTaskStatuses` / `expandMissionStatuses` helpers rejected it as invalid.
+- `status=["all"]` (alias inside an array) now correctly throws `ConvexError` — same conservative-rejection rule as `"open"` / `"active"`.
+- `setPendingAliasReleases` on the Convex backend converted from `mutation` to `internalMutation`. It was a public DoS surface against the auto-IRP pipeline; it is a lifecycle operation only and must not be reachable via MCP.
+
 ## 2.3.0 — 2026-05-26
 
 ### Added

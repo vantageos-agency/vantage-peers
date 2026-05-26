@@ -464,8 +464,12 @@ export const getPendingAliasReleases = query({
 /**
  * Upsert the list of status aliases that are pending deployment.
  * Pass an empty array to clear (post-deploy state).
+ *
+ * v1.0.1 — converted to internalMutation per Eta delta-review PR #530 :
+ * public mutation was a DoS surface against the auto-IRP pipeline. Lifecycle
+ * operation only — invoke via internal action / script, never from MCP.
  */
-export const setPendingAliasReleases = mutation({
+export const setPendingAliasReleases = internalMutation({
 	args: { aliases: v.array(v.string()) },
 	returns: v.null(),
 	handler: async (ctx, args) => {

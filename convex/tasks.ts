@@ -52,11 +52,12 @@ function expandTaskStatuses(
 	status: string | string[] | undefined,
 ): TaskStatus[] | undefined {
 	if (status === undefined) return undefined;
+	if (status === "all") return undefined;
 
 	if (Array.isArray(status)) {
 		const result: TaskStatus[] = [];
 		for (const s of status) {
-			if (s === "open" || s === "active") {
+			if (s === "open" || s === "active" || s === "all") {
 				throw new ConvexError(
 					`invalid status: alias "${s}" is not allowed inside an array — use a direct string instead`,
 				);

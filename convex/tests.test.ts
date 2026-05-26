@@ -1639,6 +1639,42 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		).rejects.toThrow(/alias "open" is not allowed inside an array/);
 	});
 
+	// ── 6b. status alias "all" (tasks) — Eta PR #530 delta-review fix ─────────────
+	test("tasks.list status='all' returns every status (no filter)", async () => {
+		const t = createTestConvex();
+
+		const statuses = ["todo", "in_progress", "review", "blocked", "done"] as const;
+		for (const s of statuses) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `All test ${s}`,
+				status: s,
+			});
+		}
+
+		const allRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: "all" });
+
+		const unfilteredRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, {});
+
+		expect(allRows).toHaveLength(5);
+		expect(allRows.map((r: { _id: string }) => r._id).sort()).toEqual(
+			unfilteredRows.map((r: { _id: string }) => r._id).sort(),
+		);
+	});
+
+	test("tasks.list status=['all'] throws ConvexError about alias in array", async () => {
+		const t = createTestConvex();
+		await expect(
+			t
+				.withIdentity({ subject: "user-pi" })
+				.query(api.tasks.list, { status: ["all"] }),
+		).rejects.toThrow(/alias "all" is not allowed inside an array/);
+	});
+
 	// ── 7. status invalid value (tasks) ─────────────────────────────────────────
 	test("tasks.list status='bogus' throws ConvexError about invalid status", async () => {
 		const t = createTestConvex();
@@ -1726,6 +1762,44 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		expect(activeRows).toHaveLength(2);
 		expect(activeRows.every((m: { status: string }) => ["plan", "execute"].includes(m.status))).toBe(true);
+	});
+
+	// ── 8b. missions: status alias "all" — Eta PR #530 delta-review fix ──────────
+	test("missions.list status='all' returns every status (no filter)", async () => {
+		const t = createTestConvex();
+
+		const baseMission = {
+			name: "Mission",
+			project: "vp-test",
+			priority: "medium" as const,
+			pilot: "pi" as const,
+			agents: ["pi"],
+			createdBy: "pi" as const,
+		};
+
+		const statuses = ["brainstorm", "plan", "execute", "validate", "complete"] as const;
+		for (const s of statuses) {
+			await t.mutation(api.missions.create, {
+				...baseMission,
+				name: `All mission ${s}`,
+				status: s,
+			});
+		}
+
+		const allRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.missions.list, { status: "all" });
+
+		expect(allRows).toHaveLength(5);
+	});
+
+	test("missions.list status=['all'] throws ConvexError about alias in array", async () => {
+		const t = createTestConvex();
+		await expect(
+			t
+				.withIdentity({ subject: "user-pi" })
+				.query(api.missions.list, { status: ["all"] }),
+		).rejects.toThrow(/alias "all" is not allowed inside an array/);
 	});
 
 	// ── 9. missions: fields=lite projection ─────────────────────────────────────

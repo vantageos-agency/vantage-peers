@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import {
 	DEFAULT_FILTER_RULES,
 	evaluateFilter,
@@ -478,7 +478,7 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 
 	test("setPendingAliasReleases upserts and getPendingAliasReleases reads back", async () => {
 		const t = convexTest(schema, modules);
-		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: ["open", "active"],
 		});
 		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
@@ -487,10 +487,10 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 
 	test("calling setPendingAliasReleases again overwrites (upsert behaviour)", async () => {
 		const t = convexTest(schema, modules);
-		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: ["open"],
 		});
-		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: ["active"],
 		});
 		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
@@ -499,10 +499,10 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 
 	test("clearing with [] reflects post-deploy empty state", async () => {
 		const t = convexTest(schema, modules);
-		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: ["open"],
 		});
-		await t.mutation(api.errorMonitorFilters.setPendingAliasReleases, {
+		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: [],
 		});
 		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
