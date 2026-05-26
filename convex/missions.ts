@@ -1,5 +1,7 @@
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
@@ -14,6 +16,83 @@ const missionStatusValidator = v.union(
 	v.literal("validate"),
 	v.literal("complete"),
 );
+
+// Valid mission status values for runtime validation
+const MISSION_STATUSES = ["brainstorm", "plan", "execute", "validate", "complete"] as const;
+type MissionStatus = (typeof MISSION_STATUSES)[number];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status alias expansion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Expand a status arg (string | string[] | undefined) into a concrete array
+ * of MissionStatus values. Handles aliases "open" and "active".
+ *
+ * - "open"   → ["brainstorm","plan","execute","validate"] (everything except complete)
+ * - "active" → ["plan","execute"]
+ * - array    → validated element by element; no alias mixing
+ * - single   → validated enum value wrapped in array
+ * - undefined → undefined (no filter)
+ *
+ * Throws ConvexError on unknown status values.
+ */
+function expandMissionStatuses(
+	status: string | string[] | undefined,
+): MissionStatus[] | undefined {
+	if (status === undefined) return undefined;
+	if (status === "all") return undefined;
+
+	if (Array.isArray(status)) {
+		const result: MissionStatus[] = [];
+		for (const s of status) {
+			if (s === "open" || s === "active" || s === "all") {
+				throw new ConvexError(
+					`invalid status: alias "${s}" is not allowed inside an array — use a direct string instead`,
+				);
+			}
+			if (!MISSION_STATUSES.includes(s as MissionStatus)) {
+				throw new ConvexError(`invalid status: "${s}"`);
+			}
+			result.push(s as MissionStatus);
+		}
+		return result;
+	}
+
+	// Single string
+	if (status === "open") return ["brainstorm", "plan", "execute", "validate"];
+	if (status === "active") return ["plan", "execute"];
+	if (!MISSION_STATUSES.includes(status as MissionStatus)) {
+		throw new ConvexError(`invalid status: "${status}"`);
+	}
+	return [status as MissionStatus];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lite projection helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+type MissionLite = {
+	_id: string;
+	_creationTime: number;
+	name: string;
+	status: MissionStatus;
+	pilot: string;
+	priority: "urgent" | "high" | "medium" | "low";
+	project: string;
+};
+
+function projectMissionLite(doc: Record<string, unknown>): MissionLite {
+	return {
+		_id: doc._id as string,
+		_creationTime: doc._creationTime as number,
+		name: doc.name as string,
+		status: doc.status as MissionStatus,
+		pilot: doc.pilot as string,
+		priority: doc.priority as "urgent" | "high" | "medium" | "low",
+		project: doc.project as string,
+	};
+}
 
 const priorityValidator = v.union(
 	v.literal("urgent"),
@@ -86,99 +165,103 @@ export const get = query({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // list — list missions with optional filters (project, pilot, status)
+//
+// New in v1.1:
+//   fields="lite" — compact projection: {_id,_creationTime,name,status,pilot,priority,project}
+//   fields="full" (default) — full doc (backward-compatible)
+//   status="open"    — expands to ["brainstorm","plan","execute","validate"]
+//   status="active"  — expands to ["plan","execute"]
+//   status=["plan","execute"] — multi-value array (no alias mixing)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const list = query({
 	args: {
 		project: v.optional(v.string()),
 		pilot: v.optional(creatorValidator),
-		status: v.optional(missionStatusValidator),
+		status: v.optional(v.union(v.string(), v.array(v.string()))),
 		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("missions"),
-			_creationTime: v.number(),
-			name: v.string(),
-			description: v.optional(v.string()),
-			project: v.string(),
-			status: missionStatusValidator,
-			priority: priorityValidator,
-			pilot: creatorValidator,
-			agents: v.array(v.string()),
-			brief: v.optional(v.string()),
-			startDate: v.optional(v.number()),
-			targetDate: v.optional(v.number()),
-			progress: v.optional(v.number()),
-			createdBy: creatorValidator,
-			createdAt: v.number(),
-			updatedAt: v.number(),
-		}),
-	),
+	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-missions");
 
 		const limit = args.limit ?? 50;
+		const statuses = expandMissionStatuses(args.status);
+		const lite = args.fields === "lite";
+		const project = args.project;
+		const pilot = args.pilot;
 
-		// Filter by project + status
-		if (args.project !== undefined && args.status !== undefined) {
-			const rows = await ctx.db
+		type MissionRow = Doc<"missions">;
+		const applyStatusFilter = (rows: MissionRow[]) => {
+			if (statuses === undefined) return rows;
+			if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
+			return rows.filter((r) => statuses.includes(r.status as MissionStatus));
+		};
+
+		let allRows: MissionRow[];
+
+		// Filter by project + single status — use compound index
+		if (project !== undefined && statuses !== undefined && statuses.length === 1) {
+			allRows = await ctx.db
 				.query("missions")
 				.withIndex("by_project", (q) =>
-					q.eq("project", args.project!).eq("status", args.status!),
+					q.eq("project", project).eq("status", statuses[0]),
 				)
 				.order("desc")
 				.take(limit);
-			return filterByOrgScope(rows, scope);
 		}
-
-		// Filter by project only
-		if (args.project !== undefined) {
-			const rows = await ctx.db
+		// Filter by project only (or project + multi-status filtered in-memory)
+		else if (project !== undefined) {
+			const base = await ctx.db
 				.query("missions")
-				.withIndex("by_project", (q) => q.eq("project", args.project!))
+				.withIndex("by_project", (q) => q.eq("project", project))
 				.order("desc")
 				.take(limit);
-			return filterByOrgScope(rows, scope);
+			allRows = applyStatusFilter(base);
 		}
-
-		// Filter by pilot + status
-		if (args.pilot !== undefined && args.status !== undefined) {
-			const rows = await ctx.db
+		// Filter by pilot + single status — use compound index
+		else if (pilot !== undefined && statuses !== undefined && statuses.length === 1) {
+			allRows = await ctx.db
 				.query("missions")
 				.withIndex("by_pilot", (q) =>
-					q.eq("pilot", args.pilot!).eq("status", args.status!),
+					q.eq("pilot", pilot).eq("status", statuses[0]),
 				)
 				.order("desc")
 				.take(limit);
-			return filterByOrgScope(rows, scope);
 		}
-
-		// Filter by pilot only
-		if (args.pilot !== undefined) {
-			const rows = await ctx.db
+		// Filter by pilot only (or pilot + multi-status filtered in-memory)
+		else if (pilot !== undefined) {
+			const base = await ctx.db
 				.query("missions")
-				.withIndex("by_pilot", (q) => q.eq("pilot", args.pilot!))
+				.withIndex("by_pilot", (q) => q.eq("pilot", pilot))
 				.order("desc")
 				.take(limit);
-			return filterByOrgScope(rows, scope);
+			allRows = applyStatusFilter(base);
 		}
-
 		// Filter by status only
-		if (args.status !== undefined) {
-			const rows = await ctx.db
-				.query("missions")
-				.withIndex("by_status", (q) => q.eq("status", args.status!))
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
+		else if (statuses !== undefined) {
+			if (statuses.length === 1) {
+				allRows = await ctx.db
+					.query("missions")
+					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
+					.order("desc")
+					.take(limit);
+			} else {
+				const base = await ctx.db.query("missions").order("desc").take(limit);
+				allRows = applyStatusFilter(base);
+			}
+		}
+		// No filters — return all, newest first
+		else {
+			allRows = await ctx.db.query("missions").order("desc").take(limit);
 		}
 
-		// No filters — return all, newest first
-		const rows = await ctx.db.query("missions").order("desc").take(limit);
-		return filterByOrgScope(rows, scope);
+		const scoped = filterByOrgScope(allRows, scope);
+		if (lite) return scoped.map(projectMissionLite);
+		return scoped;
 	},
 });
 

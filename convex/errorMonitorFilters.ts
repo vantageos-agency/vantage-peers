@@ -159,6 +159,62 @@ export function evaluateFilter(
 	};
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Pending-alias release helpers — pure, no Convex deps
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The set of Convex function names that accept a `status` field which may
+ * carry a new status alias during the pre-deploy smoke window.
+ */
+const ALIAS_FUNCTION_NAMES = [
+	"tasks:list",
+	"missions:list",
+	"tasks:listByMission",
+	"briefingNotes:list",
+] as const;
+
+/**
+ * Synthesise transient FilterRules for status aliases that are part of an
+ * in-flight release but have not yet reached prod. For each alias, one rule
+ * per function name is produced so ArgumentValidationError noise during
+ * pre-deploy smoke does not spawn GitHub issues.
+ *
+ * Call `setPendingAliasReleases` BEFORE the pre-deploy smoke run; call it
+ * again with an empty array once the deploy is live in prod.
+ */
+export function synthesizePendingAliasRules(
+	pendingAliases: string[],
+): FilterRule[] {
+	const rules: FilterRule[] = [];
+	for (const alias of pendingAliases) {
+		for (const functionName of ALIAS_FUNCTION_NAMES) {
+			rules.push({
+				functionName,
+				// Matches: ArgumentValidationError … Path: .status … Value: "<alias>"
+				errorMessageRegex: new RegExp(
+					`ArgumentValidationError.*Path: \\.status.*Value: "${alias}"`,
+				),
+				reason: `Pending alias release: ${alias} not yet deployed`,
+				severity: "skip",
+			});
+		}
+	}
+	return rules;
+}
+
+/**
+ * Convenience boolean: is this candidate error suppressed because `alias` is
+ * in the pending-alias list?
+ */
+export function isPendingAliasError(
+	candidate: { functionName: string; errorMessage: string },
+	pendingAliases: string[],
+): boolean {
+	const rules = synthesizePendingAliasRules(pendingAliases);
+	return !evaluateFilter(candidate, rules).shouldCreateIssue;
+}
+
 /**
  * Convenience boolean wrapper used by hot-path callers.
  */
@@ -209,9 +265,13 @@ const severityValidator = v.union(
 );
 
 /**
- * Internal: load active rules from `errorMonitorFilterRules`. If the table is
- * empty (cold start), returns the in-process DEFAULT_FILTER_RULES (serialized
- * shape) so the caller still gets noise filtering on day-one.
+ * Internal: load active rules from `errorMonitorFilterRules`, plus any
+ * synthesized rules for pending alias releases from `errorMonitorConfig`.
+ * If the errorMonitorFilterRules table is empty (cold start), uses the
+ * in-process DEFAULT_FILTER_RULES so noise filtering works on day-one.
+ *
+ * Synthesized pending-alias rules are appended AFTER DB rules — they have
+ * no persistent ruleId so `incrementRuleMatch` is never called for them.
  */
 export const loadActiveRules = internalQuery({
 	args: {},
@@ -232,19 +292,33 @@ export const loadActiveRules = internalQuery({
 			.query("errorMonitorFilterRules")
 			.withIndex("by_active", (q) => q.eq("active", true))
 			.take(200);
-		if (rows.length === 0) {
-			return DEFAULT_FILTER_RULES.map(serializeRule);
-		}
-		return rows.map((r) => ({
-			functionName: r.functionName,
-			errorMessageRegex: r.errorMessageRegex,
-			regexFlags: r.regexFlags,
-			reason: r.reason,
-			severity: r.severity,
-			priority: r.priority,
-			creationTime: r._creationTime,
-			ruleId: r._id as string,
-		}));
+
+		const dbRules: FilterRuleSerialized[] =
+			rows.length === 0
+				? DEFAULT_FILTER_RULES.map(serializeRule)
+				: rows.map((r) => ({
+						functionName: r.functionName,
+						errorMessageRegex: r.errorMessageRegex,
+						regexFlags: r.regexFlags,
+						reason: r.reason,
+						severity: r.severity,
+						priority: r.priority,
+						creationTime: r._creationTime,
+						ruleId: r._id as string,
+					}));
+
+		// Load pending alias list from config table (key = "pendingAliasReleases").
+		const configRow = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) => q.eq("key", "pendingAliasReleases"))
+			.unique();
+		const pendingAliases: string[] = configRow?.value ?? [];
+
+		const synthesized = synthesizePendingAliasRules(pendingAliases).map(
+			serializeRule,
+		);
+
+		return [...dbRules, ...synthesized];
 	},
 });
 
@@ -361,5 +435,60 @@ export const listFilterRules = query({
 			.query("errorMonitorFilterRules")
 			.order("desc")
 			.take(200);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pending-alias release config — dynamic filter management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the current list of status aliases that are pending deployment.
+ * Returns an empty array when no aliases are pending (the normal state after
+ * a successful prod deploy).
+ *
+ * Doctrine: add aliases BEFORE pre-deploy smoke; remove (set []) once deployed.
+ */
+export const getPendingAliasReleases = query({
+	args: {},
+	returns: v.array(v.string()),
+	handler: async (ctx) => {
+		const row = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) => q.eq("key", "pendingAliasReleases"))
+			.unique();
+		return row?.value ?? [];
+	},
+});
+
+/**
+ * Upsert the list of status aliases that are pending deployment.
+ * Pass an empty array to clear (post-deploy state).
+ *
+ * v1.0.1 — converted to internalMutation per Eta delta-review PR #530 :
+ * public mutation was a DoS surface against the auto-IRP pipeline. Lifecycle
+ * operation only — invoke via internal action / script, never from MCP.
+ */
+export const setPendingAliasReleases = internalMutation({
+	args: { aliases: v.array(v.string()) },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) => q.eq("key", "pendingAliasReleases"))
+			.unique();
+		if (existing) {
+			await ctx.db.patch(existing._id, {
+				value: args.aliases,
+				updatedAt: Date.now(),
+			});
+		} else {
+			await ctx.db.insert("errorMonitorConfig", {
+				key: "pendingAliasReleases",
+				value: args.aliases,
+				updatedAt: Date.now(),
+			});
+		}
+		return null;
 	},
 });

@@ -851,14 +851,25 @@ server.tool("create_task", "Create a task in VantagePeers. Tasks are assigned to
 // Tool: list_tasks
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_tasks", "List tasks from VantagePeers with optional filters. " +
-    "Filter by assignee, instance, status, and/or project. Returns newest first.", {
+    "Filter by assignee, instance, status, and/or project. Returns newest first. " +
+    "status accepts a single value or an array, plus aliases: " +
+    "'open' (todo+in_progress+review+blocked), 'active' (todo+in_progress), 'all' (no filter). " +
+    "fields='lite' returns compact payloads ({_id,title,status,priority,assignedTo,missionId}) — fewer tokens.", {
     assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
     assignedToInstance: z
         .string()
         .optional()
         .describe("Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance."),
-    status: taskStatusSchema.optional().describe("Filter by status"),
+    status: z
+        .union([taskStatusSchema, z.array(z.string()), z.string()])
+        .optional()
+        .describe("Filter by status. Single value, array, or alias: " +
+        "'open' (non-terminal), 'active' (in_progress only), 'all' (no filter)."),
     project: z.string().optional().describe("Filter by project name"),
+    fields: z
+        .enum(["lite", "full"])
+        .optional()
+        .describe("'lite' = compact payload (less tokens), 'full' = default with all fields"),
     limit: z
         .number()
         .int()
@@ -867,13 +878,14 @@ server.tool("list_tasks", "List tasks from VantagePeers with optional filters. "
         .optional()
         .default(50)
         .describe("Maximum number of tasks to return (default 50)"),
-}, async ({ assignedTo, assignedToInstance, status, project, limit }) => {
+}, async ({ assignedTo, assignedToInstance, status, project, fields, limit }) => {
     try {
         const tasks = await convex.query("tasks:list", {
             assignedTo,
             assignedToInstance,
             status,
             project,
+            fields,
             limit: limit ?? 50,
         });
         return {
@@ -1122,9 +1134,20 @@ server.tool("add_task_dependency", "Add a dependency to a task. The task cannot 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_tasks_by_mission
 // ─────────────────────────────────────────────────────────────────────────────
-server.tool("list_tasks_by_mission", "List all tasks linked to a specific mission. Optionally filter by status.", {
+server.tool("list_tasks_by_mission", "List all tasks linked to a specific mission. Optionally filter by status. " +
+    "status accepts a single value or an array, plus aliases: " +
+    "'open' (todo+in_progress+review+blocked), 'active' (todo+in_progress), 'all' (no filter). " +
+    "fields='lite' returns compact payloads ({_id,title,status,priority,assignedTo,missionId}) — fewer tokens.", {
     missionId: z.string().describe("Convex document ID of the mission"),
-    status: taskStatusSchema.optional().describe("Filter by task status"),
+    status: z
+        .union([taskStatusSchema, z.array(z.string()), z.string()])
+        .optional()
+        .describe("Filter by task status. Single value, array, or alias: " +
+        "'open' (non-terminal), 'active' (in_progress only), 'all' (no filter)."),
+    fields: z
+        .enum(["lite", "full"])
+        .optional()
+        .describe("'lite' = compact payload (less tokens), 'full' = default with all fields"),
     limit: z
         .number()
         .int()
@@ -1133,11 +1156,12 @@ server.tool("list_tasks_by_mission", "List all tasks linked to a specific missio
         .optional()
         .default(50)
         .describe("Maximum number of tasks to return (default 50)"),
-}, async ({ missionId, status, limit }) => {
+}, async ({ missionId, status, fields, limit }) => {
     try {
         const tasks = await convex.query("tasks:listByMission", {
             missionId: missionId,
             status,
+            fields,
             limit: limit ?? 50,
         });
         return {
@@ -1211,10 +1235,21 @@ server.tool("create_mission", "Create a mission in VantagePeers. Missions group 
 // Tool: list_missions
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_missions", "List missions from VantagePeers with optional filters. " +
-    "Filter by project, pilot, and/or status. Returns newest first.", {
+    "Filter by project, pilot, and/or status. Returns newest first. " +
+    "status accepts a single value or an array, plus aliases: " +
+    "'open' (brainstorm+plan+execute+validate), 'active' (plan+execute), 'all' (no filter). " +
+    "fields='lite' returns compact payloads ({_id,name,status,pilot,priority,project}) — fewer tokens.", {
     project: z.string().optional().describe("Filter by project name"),
     pilot: creatorSchema.optional().describe("Filter by pilot orchestrator"),
-    status: missionStatusSchema.optional().describe("Filter by status"),
+    status: z
+        .union([missionStatusSchema, z.array(z.string()), z.string()])
+        .optional()
+        .describe("Filter by status. Single value, array, or alias: " +
+        "'open' (non-terminal), 'active' (plan+execute), 'all' (no filter)."),
+    fields: z
+        .enum(["lite", "full"])
+        .optional()
+        .describe("'lite' = compact payload (less tokens), 'full' = default with all fields"),
     limit: z
         .number()
         .int()
@@ -1223,12 +1258,13 @@ server.tool("list_missions", "List missions from VantagePeers with optional filt
         .optional()
         .default(50)
         .describe("Maximum number of missions to return (default 50)"),
-}, async ({ project, pilot, status, limit }) => {
+}, async ({ project, pilot, status, fields, limit }) => {
     try {
         const missions = await convex.query("missions:list", {
             project,
             pilot,
             status,
+            fields,
             limit: limit ?? 50,
         });
         return {
@@ -1556,11 +1592,16 @@ server.tool("update_briefing_note", "Update an existing briefing note. Partial-u
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool: list_briefing_notes
 // ─────────────────────────────────────────────────────────────────────────────
-server.tool("list_briefing_notes", "List briefing notes, optionally filtered by topic. Returns newest first.", {
+server.tool("list_briefing_notes", "List briefing notes, optionally filtered by topic. Returns newest first. " +
+    "fields='lite' returns compact payloads ({_id,topic,title,participants,createdBy}) — fewer tokens.", {
     topic: z
         .string()
         .optional()
         .describe("Filter to a specific topic — omit for all"),
+    fields: z
+        .enum(["lite", "full"])
+        .optional()
+        .describe("'lite' = compact payload (less tokens), 'full' = default with all fields"),
     limit: z
         .number()
         .int()
@@ -1569,10 +1610,11 @@ server.tool("list_briefing_notes", "List briefing notes, optionally filtered by 
         .optional()
         .default(20)
         .describe("Maximum notes to return (default 20)"),
-}, async ({ topic, limit }) => {
+}, async ({ topic, fields, limit }) => {
     try {
         const notes = await convex.query("briefingNotes:list", {
             topic,
+            fields,
             limit: limit ?? 20,
         });
         return {

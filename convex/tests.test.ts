@@ -853,7 +853,7 @@ describe("Tasks", () => {
 			.withIdentity({ subject: "user-pi" })
 			.query(api.tasks.list, { assignedTo: "pi" });
 		expect(piTasks).toHaveLength(2);
-		expect(piTasks.every((t) => t.assignedTo === "pi")).toBe(true);
+		expect(piTasks.every((t: { assignedTo: string }) => t.assignedTo === "pi")).toBe(true);
 	});
 
 	test("update task fields", async () => {
@@ -1415,5 +1415,525 @@ describe("MCP Tenants", () => {
 				convexUrl: "https://duplicate.convex.cloud",
 			}),
 		).rejects.toThrow("already exists");
+	});
+});
+
+// =============================================================================
+// 11. List queries: fields=lite + status multi/aliases
+// =============================================================================
+
+describe("List queries — fields=lite + status multi/aliases", () => {
+	// ── shared task factory args ────────────────────────────────────────────────
+	const baseTask = {
+		title: "Test task",
+		description: "A description with some detail that will be omitted in lite mode",
+		project: "vp-test",
+		assignedTo: "pi" as const,
+		priority: "medium" as const,
+		status: "todo" as const,
+		createdBy: "pi" as const,
+		tags: ["tag-a", "tag-b"],
+	};
+
+	// ── 1. fields=lite payload reduction (tasks) ────────────────────────────────
+	test("tasks.list fields=lite returns compact projection only", async () => {
+		const t = createTestConvex();
+
+		// Create 5 tasks assigned to pi
+		for (let i = 0; i < 5; i++) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `Lite task ${i}`,
+			});
+		}
+
+		const liteRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { assignedTo: "pi", fields: "lite" });
+
+		expect(liteRows).toHaveLength(5);
+
+		// Each row must have the lite keys
+		const liteKeys = ["_id", "_creationTime", "title", "status", "priority", "assignedTo"];
+		const forbiddenKeys = [
+			"description",
+			"tags",
+			"dependsOn",
+			"completionNote",
+			"estimatedMinutes",
+			"actualMinutes",
+			"startedAt",
+			"completedAt",
+			"dueDate",
+			"createdBy",
+			"createdAt",
+			"updatedAt",
+		];
+
+		for (const row of liteRows) {
+			for (const k of liteKeys) {
+				expect(row).toHaveProperty(k);
+			}
+			for (const k of forbiddenKeys) {
+				expect(row).not.toHaveProperty(k);
+			}
+		}
+
+		// Snapshot: lite payload must be < 50% of full payload by byte size
+		const fullRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
+
+		const liteBytes = JSON.stringify(liteRows).length;
+		const fullBytes = JSON.stringify(fullRows).length;
+		// lite payload reduction: liteBytes < fullBytes * 0.50
+		// (sample sizes logged as comment: ~liteBytes vs ~fullBytes bytes)
+		expect(liteBytes).toBeLessThan(fullBytes * 0.5);
+	});
+
+	// ── 2. fields="full" default (backward compat) ──────────────────────────────
+	test("tasks.list without fields returns full doc shape (backward compat)", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.tasks.create, { ...baseTask, title: "Full compat task" });
+
+		const noFieldsRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { assignedTo: "pi" });
+
+		const fullFieldsRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
+
+		// Both must include the full shape fields
+		for (const row of noFieldsRows) {
+			expect(row).toHaveProperty("createdBy");
+			expect(row).toHaveProperty("createdAt");
+			expect(row).toHaveProperty("updatedAt");
+		}
+
+		// fields=full and no-fields must produce identical results
+		expect(JSON.stringify(noFieldsRows)).toBe(JSON.stringify(fullFieldsRows));
+	});
+
+	// ── 3. status multi-value array (tasks) ─────────────────────────────────────
+	test("tasks.list status=[todo,in_progress] returns only those 2 statuses", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Task todo",
+			status: "todo",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Task in_progress",
+			status: "in_progress",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Task done",
+			status: "done",
+		});
+
+		const rows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: ["todo", "in_progress"] });
+
+		expect(rows).toHaveLength(2);
+		expect(rows.some((r: { status: string }) => r.status === "done")).toBe(false);
+		expect(rows.every((r: { status: string }) => ["todo", "in_progress"].includes(r.status))).toBe(true);
+	});
+
+	test("tasks.list status=['todo'] (single-element array) === status='todo' string", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Task todo A",
+			status: "todo",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Task in_progress A",
+			status: "in_progress",
+		});
+
+		const arrayRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: ["todo"] });
+
+		const stringRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: "todo" });
+
+		expect(arrayRows).toHaveLength(1);
+		expect(stringRows).toHaveLength(1);
+		expect(arrayRows[0]._id).toBe(stringRows[0]._id);
+	});
+
+	// ── 4. status alias "active" (tasks) ────────────────────────────────────────
+	test("tasks.list status='active' returns todo + in_progress only", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Active todo",
+			status: "todo",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Active in_progress",
+			status: "in_progress",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "Not active done",
+			status: "done",
+		});
+
+		const activeRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: "active" });
+
+		const explicitRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: ["todo", "in_progress"] });
+
+		expect(activeRows).toHaveLength(2);
+		// alias must produce identical result to explicit array
+		expect(activeRows.map((r: { _id: string }) => r._id).sort()).toEqual(
+			explicitRows.map((r: { _id: string }) => r._id).sort(),
+		);
+	});
+
+	// ── 5. status alias "open" (tasks) ──────────────────────────────────────────
+	test("tasks.list status='open' returns all except done", async () => {
+		const t = createTestConvex();
+
+		const statuses = ["todo", "in_progress", "review", "blocked", "done"] as const;
+		for (const s of statuses) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `Open test ${s}`,
+				status: s,
+			});
+		}
+
+		const openRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: "open" });
+
+		expect(openRows).toHaveLength(4);
+		expect(openRows.some((r: { status: string }) => r.status === "done")).toBe(false);
+	});
+
+	// ── 6. status alias mixing rejection (tasks) ─────────────────────────────────
+	test("tasks.list status=['open','active'] throws ConvexError about alias in array", async () => {
+		const t = createTestConvex();
+
+		await expect(
+			t
+				.withIdentity({ subject: "user-pi" })
+				.query(api.tasks.list, { status: ["open", "active"] }),
+		).rejects.toThrow(/alias "open" is not allowed inside an array/);
+	});
+
+	// ── 6b. status alias "all" (tasks) — Eta PR #530 delta-review fix ─────────────
+	test("tasks.list status='all' returns every status (no filter)", async () => {
+		const t = createTestConvex();
+
+		const statuses = ["todo", "in_progress", "review", "blocked", "done"] as const;
+		for (const s of statuses) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `All test ${s}`,
+				status: s,
+			});
+		}
+
+		const allRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, { status: "all" });
+
+		const unfilteredRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.tasks.list, {});
+
+		expect(allRows).toHaveLength(5);
+		expect(allRows.map((r: { _id: string }) => r._id).sort()).toEqual(
+			unfilteredRows.map((r: { _id: string }) => r._id).sort(),
+		);
+	});
+
+	test("tasks.list status=['all'] throws ConvexError about alias in array", async () => {
+		const t = createTestConvex();
+		await expect(
+			t
+				.withIdentity({ subject: "user-pi" })
+				.query(api.tasks.list, { status: ["all"] }),
+		).rejects.toThrow(/alias "all" is not allowed inside an array/);
+	});
+
+	// ── 7. status invalid value (tasks) ─────────────────────────────────────────
+	test("tasks.list status='bogus' throws ConvexError about invalid status", async () => {
+		const t = createTestConvex();
+
+		await expect(
+			t
+				.withIdentity({ subject: "user-pi" })
+				.query(api.tasks.list, { status: "bogus" }),
+		).rejects.toThrow(/invalid status: "bogus"/);
+	});
+
+	// ── 8. missions: status alias "open" / "active" ──────────────────────────────
+	test("missions.list status='open' returns all except complete", async () => {
+		const t = createTestConvex();
+
+		const baseMission = {
+			name: "Mission",
+			project: "vp-test",
+			priority: "medium" as const,
+			pilot: "pi" as const,
+			agents: ["pi"],
+			createdBy: "pi" as const,
+		};
+
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission brainstorm",
+			status: "brainstorm",
+		});
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission plan",
+			status: "plan",
+		});
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission complete",
+			status: "complete",
+		});
+
+		const openRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.missions.list, { status: "open" });
+
+		expect(openRows).toHaveLength(2);
+		expect(openRows.some((m: { status: string }) => m.status === "complete")).toBe(false);
+	});
+
+	test("missions.list status='active' returns plan + execute only", async () => {
+		const t = createTestConvex();
+
+		const baseMission = {
+			name: "Mission",
+			project: "vp-test",
+			priority: "medium" as const,
+			pilot: "pi" as const,
+			agents: ["pi"],
+			createdBy: "pi" as const,
+		};
+
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission brainstorm",
+			status: "brainstorm",
+		});
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission plan",
+			status: "plan",
+		});
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission execute",
+			status: "execute",
+		});
+		await t.mutation(api.missions.create, {
+			...baseMission,
+			name: "Mission complete",
+			status: "complete",
+		});
+
+		const activeRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.missions.list, { status: "active" });
+
+		expect(activeRows).toHaveLength(2);
+		expect(activeRows.every((m: { status: string }) => ["plan", "execute"].includes(m.status))).toBe(true);
+	});
+
+	// ── 8b. missions: status alias "all" — Eta PR #530 delta-review fix ──────────
+	test("missions.list status='all' returns every status (no filter)", async () => {
+		const t = createTestConvex();
+
+		const baseMission = {
+			name: "Mission",
+			project: "vp-test",
+			priority: "medium" as const,
+			pilot: "pi" as const,
+			agents: ["pi"],
+			createdBy: "pi" as const,
+		};
+
+		const statuses = ["brainstorm", "plan", "execute", "validate", "complete"] as const;
+		for (const s of statuses) {
+			await t.mutation(api.missions.create, {
+				...baseMission,
+				name: `All mission ${s}`,
+				status: s,
+			});
+		}
+
+		const allRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.missions.list, { status: "all" });
+
+		expect(allRows).toHaveLength(5);
+	});
+
+	test("missions.list status=['all'] throws ConvexError about alias in array", async () => {
+		const t = createTestConvex();
+		await expect(
+			t
+				.withIdentity({ subject: "user-pi" })
+				.query(api.missions.list, { status: ["all"] }),
+		).rejects.toThrow(/alias "all" is not allowed inside an array/);
+	});
+
+	// ── 9. missions: fields=lite projection ─────────────────────────────────────
+	test("missions.list fields=lite returns compact projection only", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.missions.create, {
+			name: "Lite mission",
+			description: "This description should NOT appear in lite",
+			brief: "This brief should NOT appear in lite",
+			project: "vp-test",
+			status: "plan",
+			priority: "high",
+			pilot: "pi",
+			agents: ["pi"],
+			createdBy: "pi",
+		});
+
+		const liteRows = await t
+			.withIdentity({ subject: "user-pi" })
+			.query(api.missions.list, { fields: "lite" });
+
+		expect(liteRows).toHaveLength(1);
+		const row = liteRows[0];
+
+		// Required lite keys
+		const liteKeys = ["_id", "_creationTime", "name", "status", "pilot", "priority", "project"];
+		for (const k of liteKeys) {
+			expect(row).toHaveProperty(k);
+		}
+
+		// Forbidden full-only keys
+		const forbiddenKeys = ["description", "brief", "agents", "createdBy", "createdAt", "updatedAt"];
+		for (const k of forbiddenKeys) {
+			expect(row).not.toHaveProperty(k);
+		}
+	});
+
+	// ── 10. briefingNotes: fields=lite projection ────────────────────────────────
+	test("briefingNotes.list fields=lite returns compact projection only", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.briefingNotes.create, {
+			title: "Arch note 1",
+			topic: "architecture",
+			participants: ["pi", "tau"],
+			content: "Full content that should NOT appear in lite mode — lots of text here",
+			decisions: ["Decision A", "Decision B"],
+			createdBy: "pi",
+		});
+		await t.mutation(api.briefingNotes.create, {
+			title: "Arch note 2",
+			topic: "architecture",
+			participants: ["pi"],
+			content: "Another full content block that should be stripped in lite",
+			createdBy: "tau",
+		});
+
+		const liteRows = await t.query(api.briefingNotes.list, { fields: "lite" });
+
+		expect(liteRows).toHaveLength(2);
+
+		const liteKeys = ["_id", "_creationTime", "topic", "title", "participants", "createdBy"];
+		const forbiddenKeys = ["content", "decisions", "linkedMemoryIds", "createdAt", "updatedAt"];
+
+		for (const row of liteRows) {
+			for (const k of liteKeys) {
+				expect(row).toHaveProperty(k);
+			}
+			for (const k of forbiddenKeys) {
+				expect(row).not.toHaveProperty(k);
+			}
+		}
+	});
+
+	// ── 11. listByMission fields=lite + status filter ───────────────────────────
+	test("tasks.listByMission fields=lite + status='active' returns 2 lite rows, no done", async () => {
+		const t = createTestConvex();
+
+		const missionId = await t.mutation(api.missions.create, {
+			name: "Mission for listByMission test",
+			project: "vp-test",
+			status: "plan",
+			priority: "high",
+			pilot: "pi",
+			agents: ["pi"],
+			createdBy: "pi",
+		});
+
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "listByMission todo",
+			status: "todo",
+			missionId,
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "listByMission in_progress",
+			status: "in_progress",
+			missionId,
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "listByMission done",
+			status: "done",
+			missionId,
+		});
+
+		const rows = await t.query(api.tasks.listByMission, {
+			missionId,
+			status: "active",
+			fields: "lite",
+		});
+
+		expect(rows).toHaveLength(2);
+		expect(rows.some((r: { status: string }) => r.status === "done")).toBe(false);
+
+		// Verify lite shape: must have lite keys, must NOT have full-only keys
+		const liteKeys = ["_id", "_creationTime", "title", "status", "priority", "assignedTo"];
+		const forbiddenKeys = [
+			"description",
+			"tags",
+			"completionNote",
+			"createdBy",
+			"createdAt",
+			"updatedAt",
+		];
+		for (const row of rows) {
+			for (const k of liteKeys) {
+				expect(row).toHaveProperty(k);
+			}
+			for (const k of forbiddenKeys) {
+				expect(row).not.toHaveProperty(k);
+			}
+		}
 	});
 });

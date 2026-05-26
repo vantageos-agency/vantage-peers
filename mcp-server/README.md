@@ -228,6 +228,70 @@ Example:
 ### Session (1)
 `set_summary`
 
+## Compact payloads and status aliases (v2.3.0)
+
+### `fields=lite` — reduced token payloads
+
+`list_tasks`, `list_tasks_by_mission`, `list_missions`, and `list_briefing_notes` accept an optional `fields` parameter:
+
+| Value | Behaviour |
+|-------|-----------|
+| `"full"` | Default. Returns the complete document (backward-compatible). |
+| `"lite"` | Returns a compact projection — significantly fewer tokens. |
+
+Lite projections per entity:
+
+| Tool | Lite fields |
+|------|------------|
+| `list_tasks` / `list_tasks_by_mission` | `_id`, `_creationTime`, `title`, `status`, `priority`, `assignedTo`, `missionId` |
+| `list_missions` | `_id`, `_creationTime`, `name`, `status`, `pilot`, `priority`, `project` |
+| `list_briefing_notes` | `_id`, `_creationTime`, `topic`, `title`, `participants`, `createdBy` |
+
+Example (tasks lite):
+```json
+{
+  "tool": "list_tasks",
+  "arguments": { "assignedTo": "sigma", "fields": "lite", "limit": 20 }
+}
+```
+Returns:
+```json
+[
+  { "_id": "k17e2r...", "title": "Prepare MCP v2.3.0", "status": "in_progress", "priority": "high", "assignedTo": "sigma", "missionId": "k572a..." }
+]
+```
+
+### `status` arrays and aliases
+
+`list_tasks`, `list_tasks_by_mission`, and `list_missions` now accept `status` as a single string, an array, or one of the aliases below.
+
+#### Task status aliases
+
+| Alias | Expands to |
+|-------|-----------|
+| `"open"` | `["todo", "in_progress", "review", "blocked"]` — everything except `done` |
+| `"active"` | `["todo", "in_progress"]` |
+| `"all"` | No filter — returns all statuses |
+
+#### Mission status aliases
+
+| Alias | Expands to |
+|-------|-----------|
+| `"open"` | `["brainstorm", "plan", "execute", "validate"]` — everything except `complete` |
+| `"active"` | `["plan", "execute"]` |
+| `"all"` | No filter — returns all statuses |
+
+Examples:
+
+```json
+{ "tool": "list_tasks", "arguments": { "status": "open" } }
+{ "tool": "list_tasks", "arguments": { "status": ["todo", "in_progress"] } }
+{ "tool": "list_missions", "arguments": { "status": "active", "fields": "lite" } }
+{ "tool": "list_tasks_by_mission", "arguments": { "missionId": "k572a...", "status": "all", "fields": "lite" } }
+```
+
+Single-string status values still work unchanged — fully backward-compatible.
+
 ## Fix patterns cycle
 
 A fix pattern is a validated learning extracted from a resolved bug — symptom, root cause, and the fix that worked — stored in the VantagePeers knowledge base. Patterns accumulate across projects and agents so that the same bug is never debugged twice from scratch.
@@ -335,6 +399,11 @@ All orchestrator names are open strings — any lowercase name is accepted. The 
 - A VantagePeers Convex deployment ([get started](https://vantagepeers.com/docs))
 
 ## Changelog
+
+### 2.3.0 — 2026-05-26
+- `list_tasks`, `list_missions`, `list_tasks_by_mission`, `list_briefing_notes` now accept `fields=lite` for compact payloads (less tokens).
+- Status filters now accept arrays and aliases: `status=["todo","in_progress"]`, `status="open"` (expands to non-terminal), `status="active"` (in_progress only on tasks; plan+execute on missions), `status="all"` (no filter).
+- Single-string status still accepted unchanged (backward-compatible).
 
 ### 2.2.0 — 2026-05-07
 - 4 new fix-pattern tools: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
