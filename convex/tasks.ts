@@ -1,5 +1,7 @@
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
@@ -25,6 +27,117 @@ const statusValidator = v.union(
 	v.literal("blocked"),
 	v.literal("done"),
 );
+
+// Valid task status values for runtime validation
+const TASK_STATUSES = ["todo", "in_progress", "review", "blocked", "done"] as const;
+type TaskStatus = (typeof TASK_STATUSES)[number];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status alias expansion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Expand a status arg (string | string[] | undefined) into a concrete array
+ * of TaskStatus values. Handles aliases "open" and "active".
+ *
+ * - "open"   → ["todo","in_progress","review","blocked"] (everything except done)
+ * - "active" → ["todo","in_progress"]
+ * - array    → validated element by element; no alias mixing (conservative choice)
+ * - single   → validated enum value wrapped in array
+ * - undefined → undefined (no filter)
+ *
+ * Throws ConvexError on unknown status values.
+ */
+function expandTaskStatuses(
+	status: string | string[] | undefined,
+): TaskStatus[] | undefined {
+	if (status === undefined) return undefined;
+
+	if (Array.isArray(status)) {
+		const result: TaskStatus[] = [];
+		for (const s of status) {
+			if (s === "open" || s === "active") {
+				throw new ConvexError(
+					`invalid status: alias "${s}" is not allowed inside an array — use a direct string instead`,
+				);
+			}
+			if (!TASK_STATUSES.includes(s as TaskStatus)) {
+				throw new ConvexError(`invalid status: "${s}"`);
+			}
+			result.push(s as TaskStatus);
+		}
+		return result;
+	}
+
+	// Single string
+	if (status === "open") return ["todo", "in_progress", "review", "blocked"];
+	if (status === "active") return ["todo", "in_progress"];
+	if (!TASK_STATUSES.includes(status as TaskStatus)) {
+		throw new ConvexError(`invalid status: "${status}"`);
+	}
+	return [status as TaskStatus];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lite projection helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const taskLiteValidator = v.object({
+	_id: v.id("tasks"),
+	_creationTime: v.number(),
+	title: v.string(),
+	status: statusValidator,
+	priority: priorityValidator,
+	assignedTo: assigneeValidator,
+	missionId: v.optional(v.id("missions")),
+});
+
+const taskFullValidator = v.object({
+	_id: v.id("tasks"),
+	_creationTime: v.number(),
+	title: v.string(),
+	description: v.optional(v.string()),
+	project: v.optional(v.string()),
+	tags: v.optional(v.array(v.string())),
+	assignedTo: assigneeValidator,
+	priority: priorityValidator,
+	status: statusValidator,
+	completionNote: v.optional(v.string()),
+	assignedToInstance: v.optional(v.string()),
+	claimedByInstance: v.optional(v.string()),
+	dependsOn: v.optional(v.array(v.id("tasks"))),
+	missionId: v.optional(v.id("missions")),
+	estimatedMinutes: v.optional(v.number()),
+	actualMinutes: v.optional(v.number()),
+	startedAt: v.optional(v.number()),
+	completedAt: v.optional(v.number()),
+	dueDate: v.optional(v.number()),
+	createdBy: creatorValidator,
+	createdAt: v.number(),
+	updatedAt: v.number(),
+});
+
+type TaskLite = {
+	_id: string;
+	_creationTime: number;
+	title: string;
+	status: TaskStatus;
+	priority: "urgent" | "high" | "medium" | "low";
+	assignedTo: string;
+	missionId?: string;
+};
+
+function projectTaskLite(doc: Record<string, unknown>): TaskLite {
+	return {
+		_id: doc._id as string,
+		_creationTime: doc._creationTime as number,
+		title: doc.title as string,
+		status: doc.status as TaskStatus,
+		priority: doc.priority as "urgent" | "high" | "medium" | "low",
+		assignedTo: doc.assignedTo as string,
+		...(doc.missionId !== undefined ? { missionId: doc.missionId as string } : {}),
+	};
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // create — insert a new task
@@ -97,42 +210,27 @@ export const get = query({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // list — list tasks with optional filters (assignedTo, status, project)
+//
+// New in v1.1:
+//   fields="lite" — compact projection: {_id,_creationTime,title,status,priority,assignedTo,missionId}
+//   fields="full" (default) — full doc (current behavior, backward-compatible)
+//   status="open"    — expands to ["todo","in_progress","review","blocked"]
+//   status="active"  — expands to ["todo","in_progress"]
+//   status=["todo","in_progress"] — multi-value array (no alias mixing)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const list = query({
 	args: {
 		assignedTo: v.optional(assigneeValidator),
 		assignedToInstance: v.optional(v.string()),
-		status: v.optional(statusValidator),
+		status: v.optional(v.union(v.string(), v.array(v.string()))),
 		project: v.optional(v.string()),
 		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("tasks"),
-			_creationTime: v.number(),
-			title: v.string(),
-			description: v.optional(v.string()),
-			project: v.optional(v.string()),
-			tags: v.optional(v.array(v.string())),
-			assignedTo: assigneeValidator,
-			priority: priorityValidator,
-			status: statusValidator,
-			completionNote: v.optional(v.string()),
-			assignedToInstance: v.optional(v.string()),
-			claimedByInstance: v.optional(v.string()),
-			dependsOn: v.optional(v.array(v.id("tasks"))),
-			missionId: v.optional(v.id("missions")),
-			estimatedMinutes: v.optional(v.number()),
-			actualMinutes: v.optional(v.number()),
-			startedAt: v.optional(v.number()),
-			completedAt: v.optional(v.number()),
-			dueDate: v.optional(v.number()),
-			createdBy: creatorValidator,
-			createdAt: v.number(),
-			updatedAt: v.number(),
-		}),
-	),
+	// Returns: array of full task docs OR array of lite projections.
+	// Validator omitted because v.union of full+lite produces overly-strict
+	// inferred types that conflict with Doc<"tasks"> field optionality.
 	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// withOrgScope returns isMaster=true for Laurent's no-org session →
@@ -142,86 +240,107 @@ export const list = query({
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 50;
+		const statuses = expandTaskStatuses(args.status);
+		const lite = args.fields === "lite";
+		// Capture to local consts so TypeScript narrows inside closures without assertions
+		const assignedToInstance = args.assignedToInstance;
+		const assignedTo = args.assignedTo;
+		const project = args.project;
 
-		// Filter by instance + status
-		if (args.assignedToInstance !== undefined && args.status !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_instance", (q) =>
-					q.eq("assignedToInstance", args.assignedToInstance!).eq("status", args.status!),
-				)
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
+		// Helper: apply multi-status in-memory filter on a pre-fetched slice
+		type TaskRow = Doc<"tasks">;
+		const applyStatusFilter = (rows: TaskRow[]) => {
+			if (statuses === undefined) return rows;
+			if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
+			return rows.filter((r) => statuses.includes(r.status));
+		};
+
+		let allRows: TaskRow[];
+
+		// Filter by instance — use index for primary key, then filter statuses in-memory
+		if (assignedToInstance !== undefined) {
+			if (statuses !== undefined && statuses.length === 1) {
+				allRows = await ctx.db
+					.query("tasks")
+					.withIndex("by_instance", (q) =>
+						q
+							.eq("assignedToInstance", assignedToInstance)
+							.eq("status", statuses[0]),
+					)
+					.order("desc")
+					.take(limit);
+			} else {
+				const base = await ctx.db
+					.query("tasks")
+					.withIndex("by_instance", (q) =>
+						q.eq("assignedToInstance", assignedToInstance),
+					)
+					.order("desc")
+					.take(limit);
+				allRows = applyStatusFilter(base);
+			}
 		}
-
-		// Filter by instance only
-		if (args.assignedToInstance !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_instance", (q) => q.eq("assignedToInstance", args.assignedToInstance!))
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
+		// Filter by assignee
+		else if (assignedTo !== undefined) {
+			if (statuses !== undefined && statuses.length === 1) {
+				allRows = await ctx.db
+					.query("tasks")
+					.withIndex("by_assignee", (q) =>
+						q.eq("assignedTo", assignedTo).eq("status", statuses[0]),
+					)
+					.order("desc")
+					.take(limit);
+			} else {
+				const base = await ctx.db
+					.query("tasks")
+					.withIndex("by_assignee", (q) => q.eq("assignedTo", assignedTo))
+					.order("desc")
+					.take(limit);
+				allRows = applyStatusFilter(base);
+			}
 		}
-
-		// Filter by assignee + status
-		if (args.assignedTo !== undefined && args.status !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_assignee", (q) =>
-					q.eq("assignedTo", args.assignedTo!).eq("status", args.status!),
-				)
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
+		// Filter by project
+		else if (project !== undefined) {
+			if (statuses !== undefined && statuses.length === 1) {
+				allRows = await ctx.db
+					.query("tasks")
+					.withIndex("by_project", (q) =>
+						q.eq("project", project).eq("status", statuses[0]),
+					)
+					.order("desc")
+					.take(limit);
+			} else {
+				const base = await ctx.db
+					.query("tasks")
+					.withIndex("by_project", (q) => q.eq("project", project))
+					.order("desc")
+					.take(limit);
+				allRows = applyStatusFilter(base);
+			}
 		}
-
-		// Filter by assignee only
-		if (args.assignedTo !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_assignee", (q) => q.eq("assignedTo", args.assignedTo!))
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
-		}
-
-		// Filter by project + status
-		if (args.project !== undefined && args.status !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_project", (q) =>
-					q.eq("project", args.project!).eq("status", args.status!),
-				)
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
-		}
-
-		// Filter by project only
-		if (args.project !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_project", (q) => q.eq("project", args.project!))
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
-		}
-
 		// Filter by status only
-		if (args.status !== undefined) {
-			const rows = await ctx.db
-				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", args.status!))
-				.order("desc")
-				.take(limit);
-			return filterByOrgScope(rows, scope);
+		else if (statuses !== undefined) {
+			if (statuses.length === 1) {
+				allRows = await ctx.db
+					.query("tasks")
+					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
+					.order("desc")
+					.take(limit);
+			} else {
+				// Multi-status without other filter: full table scan bounded by limit.
+				// Acceptable for bounded list sizes; no new index required per brief.
+				const base = await ctx.db.query("tasks").order("desc").take(limit);
+				allRows = applyStatusFilter(base);
+			}
+		}
+		// No filters — return all, newest first
+		else {
+			allRows = await ctx.db.query("tasks").order("desc").take(limit);
 		}
 
-		// No filters — return all, newest first
-		const rows = await ctx.db.query("tasks").order("desc").take(limit);
-		return filterByOrgScope(rows, scope);
+		const scoped = filterByOrgScope(allRows, scope);
+		if (lite) return scoped.map(projectTaskLite);
+		return scoped;
 	},
 });
 

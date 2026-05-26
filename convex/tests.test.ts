@@ -853,7 +853,7 @@ describe("Tasks", () => {
 			.withIdentity({ subject: "user-pi" })
 			.query(api.tasks.list, { assignedTo: "pi" });
 		expect(piTasks).toHaveLength(2);
-		expect(piTasks.every((t) => t.assignedTo === "pi")).toBe(true);
+		expect(piTasks.every((t: { assignedTo: string }) => t.assignedTo === "pi")).toBe(true);
 	});
 
 	test("update task fields", async () => {
