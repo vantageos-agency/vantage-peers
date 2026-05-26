@@ -59,7 +59,7 @@ const memoryTypeSchema = z
     .describe("Memory classification type");
 export const creatorSchema = z
     .string()
-    .describe("Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+    .describe("Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, laurent, or any custom client role (lowercase string)). " +
     "New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.");
 export const severitySchema = z
     .enum(["critical", "major", "minor"])
@@ -105,7 +105,7 @@ export const updateBriefingNoteSchema = z.object({
 });
 const assigneeSchema = z
     .string()
-    .describe("Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, laurent, or any custom client role (lowercase string)). " +
+    .describe("Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, laurent, or any custom client role (lowercase string)). " +
     "New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.");
 const prioritySchema = z
     .enum(["urgent", "high", "medium", "low"])
@@ -615,7 +615,7 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("send_message", "Send a message to one, many, or all orchestrators. " +
         "channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
         "Creates message + one receipt per recipient. Replaces claude-peers send_message.", {
-        from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
+        from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)"),
         fromInstanceId: z
             .string()
             .optional()
@@ -673,7 +673,7 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("check_messages", "Check for unread messages. Returns messages with receiptIds for marking as read. " +
         "If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
         "Replaces claude-peers check_messages.", {
-        recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
+        recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)"),
         recipientInstanceId: z
             .string()
             .optional()
