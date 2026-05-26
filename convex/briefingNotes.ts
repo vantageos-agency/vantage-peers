@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,42 +55,62 @@ export const get = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lite projection helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+type BriefingNoteLite = {
+	_id: string;
+	_creationTime: number;
+	topic: string;
+	title: string;
+	participants: string[];
+	createdBy: string;
+};
+
+function projectBriefingNoteLite(doc: Doc<"briefingNotes">): BriefingNoteLite {
+	return {
+		_id: doc._id,
+		_creationTime: doc._creationTime,
+		topic: doc.topic,
+		title: doc.title,
+		participants: doc.participants,
+		createdBy: doc.createdBy,
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // list — list briefing notes, optional topic filter, ordered by createdAt desc
+//
+// New in v1.1:
+//   fields="lite" — compact projection: {_id,_creationTime,topic,title,participants,createdBy}
+//   fields="full" (default) — full doc (backward-compatible)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const list = query({
 	args: {
 		topic: v.optional(v.string()),
 		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("briefingNotes"),
-			_creationTime: v.number(),
-			title: v.string(),
-			topic: v.string(),
-			participants: v.array(v.string()),
-			content: v.string(),
-			decisions: v.optional(v.array(v.string())),
-			linkedMemoryIds: v.optional(v.array(v.id("memories"))),
-			createdBy: creatorValidator,
-			createdAt: v.number(),
-			updatedAt: v.optional(v.number()),
-			updatedBy: v.optional(creatorValidator),
-		}),
-	),
+	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"briefingNotes"> optionality
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
+		const lite = args.fields === "lite";
+
+		let rows: Doc<"briefingNotes">[];
 
 		if (args.topic !== undefined) {
-			return await ctx.db
+			rows = await ctx.db
 				.query("briefingNotes")
 				.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
 				.order("desc")
 				.take(limit);
+		} else {
+			rows = await ctx.db.query("briefingNotes").order("desc").take(limit);
 		}
 
-		return await ctx.db.query("briefingNotes").order("desc").take(limit);
+		if (lite) return rows.map(projectBriefingNoteLite);
+		return rows;
 	},
 });
 

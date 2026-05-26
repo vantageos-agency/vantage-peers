@@ -734,58 +734,57 @@ export const deleteTask = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listByMission — list tasks filtered by missionId
+//
+// New in v1.1 (same pattern as `list`):
+//   fields="lite" — compact projection: {_id,_creationTime,title,status,priority,assignedTo,missionId}
+//   fields="full" (default) — full doc (backward-compatible)
+//   status="open"    — expands to ["todo","in_progress","review","blocked"]
+//   status="active"  — expands to ["todo","in_progress"]
+//   status=["todo","in_progress"] — multi-value array (no alias mixing)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const listByMission = query({
 	args: {
 		missionId: v.id("missions"),
-		status: v.optional(statusValidator),
+		status: v.optional(v.union(v.string(), v.array(v.string()))),
 		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("tasks"),
-			_creationTime: v.number(),
-			title: v.string(),
-			description: v.optional(v.string()),
-			project: v.optional(v.string()),
-			tags: v.optional(v.array(v.string())),
-			assignedTo: assigneeValidator,
-			priority: priorityValidator,
-			status: statusValidator,
-			completionNote: v.optional(v.string()),
-			assignedToInstance: v.optional(v.string()),
-			claimedByInstance: v.optional(v.string()),
-			dependsOn: v.optional(v.array(v.id("tasks"))),
-			missionId: v.optional(v.id("missions")),
-			estimatedMinutes: v.optional(v.number()),
-			actualMinutes: v.optional(v.number()),
-			startedAt: v.optional(v.number()),
-			completedAt: v.optional(v.number()),
-			dueDate: v.optional(v.number()),
-			createdBy: creatorValidator,
-			createdAt: v.number(),
-			updatedAt: v.number(),
-		}),
-	),
+	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"tasks"> optionality
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		const statuses = expandTaskStatuses(args.status);
+		const lite = args.fields === "lite";
+		const missionId = args.missionId;
 
-		if (args.status !== undefined) {
-			return await ctx.db
+		type TaskRow = Doc<"tasks">;
+		const applyStatusFilter = (rows: TaskRow[]) => {
+			if (statuses === undefined) return rows;
+			if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
+			return rows.filter((r) => statuses.includes(r.status));
+		};
+
+		let allRows: TaskRow[];
+
+		if (statuses !== undefined && statuses.length === 1) {
+			allRows = await ctx.db
 				.query("tasks")
 				.withIndex("by_mission", (q) =>
-					q.eq("missionId", args.missionId).eq("status", args.status!),
+					q.eq("missionId", missionId).eq("status", statuses[0]),
 				)
 				.order("desc")
 				.take(limit);
+		} else {
+			const base = await ctx.db
+				.query("tasks")
+				.withIndex("by_mission", (q) => q.eq("missionId", missionId))
+				.order("desc")
+				.take(limit);
+			allRows = applyStatusFilter(base);
 		}
 
-		return await ctx.db
-			.query("tasks")
-			.withIndex("by_mission", (q) => q.eq("missionId", args.missionId))
-			.order("desc")
-			.take(limit);
+		if (lite) return allRows.map(projectTaskLite);
+		return allRows;
 	},
 });
 
