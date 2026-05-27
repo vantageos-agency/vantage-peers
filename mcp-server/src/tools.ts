@@ -142,7 +142,9 @@ export const updateBriefingNoteSchema = z.object({
 		.array(memoryIdSchema)
 		.optional()
 		.describe(
-			"Optional new linkedMemoryIds array — full replace, not append. Each ID must point to memories table, NOT briefingNotes or any other table.",
+			"Optional new linkedMemoryIds array — full replace, not append. " +
+				"DISCLAIMER: Memory IDs only — NOT briefingNotes IDs or any other table. " +
+				"Passing a briefingNotes ID causes ArgumentValidationError at path .linkedMemoryIds[N].",
 		),
 });
 
@@ -232,6 +234,143 @@ function mcpError(message: string): {
 } {
 	return {
 		content: [{ type: "text" as const, text: `Error: ${message}` }],
+		isError: true,
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ConvexError parser + structured error propagation
+//
+// When a Convex mutation fails with ArgumentValidationError (e.g. passing a
+// briefingNotes ID into linkedMemoryIds which expects a memories ID), the
+// ConvexHttpClient throws a plain Error whose message starts with:
+//
+//   "[CONVEX M(briefingNotes:create)] ArgumentValidationError: Found ID
+//   \"<id>\" from table briefingNotes, which does not match the table name in
+//   validator v.id(\"memories\"). Path: .linkedMemoryIds[4]"
+//
+// Without explicit parsing this would reach the client as an opaque generic
+// error. This helper:
+//  1. Detects ArgumentValidationError (and other named Convex error types)
+//  2. Extracts the path (".linkedMemoryIds[4]"), the validator hint, and the
+//     raw Convex message
+//  3. Returns a structured JSON payload so orchestrators can diagnose and
+//     retry with the correct table IDs without blind guessing
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ParsedConvexError {
+	code: string;
+	message: string;
+	path: string | null;
+	hint: string | null;
+}
+
+/**
+ * Parse a Convex error message string into a structured object.
+ *
+ * Input example (from ConvexHttpClient):
+ *   "[CONVEX M(briefingNotes:create)] ArgumentValidationError: Found ID
+ *    \"js72ewf0m...\" from table briefingNotes, which does not match the table
+ *    name in validator v.id(\"memories\"). Path: .linkedMemoryIds[4]"
+ *
+ * Returns { code, message, path, hint } where:
+ *  - code  = "ArgumentValidationError" (or the parsed error type)
+ *  - message = the full human-readable error description after the code prefix
+ *  - path  = e.g. ".linkedMemoryIds[4]" extracted from "Path: ..." suffix
+ *  - hint  = a concise guidance string derived from the error, or null
+ *
+ * For unrecognised error strings, code = "ServerError" and path/hint = null.
+ *
+ * Exported for unit testing.
+ */
+export function parseConvexError(rawMessage: string): ParsedConvexError {
+	// Known Convex validation/runtime error codes surfaced as plaintext
+	const knownCodes = [
+		"ArgumentValidationError",
+		"AuthorizationError",
+		"ConvexError",
+		"SchemaValidationError",
+		"QueryError",
+		"MutationError",
+		"ActionError",
+	];
+
+	// Strip the [CONVEX M(path)] / [CONVEX Q(path)] prefix if present
+	const stripped = rawMessage.replace(/^\[CONVEX [A-Z]+\([^\]]*\)\]\s*/, "");
+
+	// Detect the error code
+	let code = "ServerError";
+	let remainder = stripped;
+	for (const candidate of knownCodes) {
+		if (stripped.startsWith(candidate + ":") || stripped.startsWith(candidate + " ")) {
+			code = candidate;
+			remainder = stripped.slice(candidate.length).replace(/^[:\s]+/, "");
+			break;
+		}
+	}
+
+	// Extract "Path: .<fieldPath>" from the tail of the message
+	// Convex appends this as the last sentence: "Path: .linkedMemoryIds[4]"
+	let path: string | null = null;
+	const pathMatch = remainder.match(/\bPath:\s*([\w.\[\]"']+)\s*$/);
+	if (pathMatch) {
+		path = pathMatch[1];
+		remainder = remainder.slice(0, pathMatch.index).trim().replace(/\.\s*$/, "");
+	}
+
+	// Build a concise hint for common patterns
+	let hint: string | null = null;
+	if (code === "ArgumentValidationError") {
+		const tableMatch = remainder.match(/from table (\w+),.*validator v\.id\("(\w+)"\)/);
+		if (tableMatch) {
+			hint = `ID belongs to table "${tableMatch[1]}" but validator expects v.id("${tableMatch[2]}"). Check that you are passing the correct document ID from the "${tableMatch[2]}" table.`;
+		}
+	}
+
+	return { code, message: remainder || rawMessage, path, hint };
+}
+
+/**
+ * Produce a structured MCP error response for any error thrown by a Convex
+ * operation. For ConvexError / ArgumentValidationError the response body
+ * contains a JSON object with { code, message, path, hint } so the MCP client
+ * can display actionable diagnostics instead of a bare "Server Error" string.
+ *
+ * For unrecognised errors the response falls back to the plain text format
+ * used by `mcpError`.
+ */
+export function mcpConvexError(error: unknown): {
+	content: Array<{ type: "text"; text: string }>;
+	isError: true;
+} {
+	const rawMessage =
+		error instanceof Error ? error.message : String(error);
+
+	const parsed = parseConvexError(rawMessage);
+
+	// For ArgumentValidationError and other known Convex codes, return structured JSON
+	if (parsed.code !== "ServerError") {
+		const payload: Record<string, string> = {
+			code: parsed.code,
+			message: parsed.message,
+		};
+		if (parsed.path !== null) payload.path = parsed.path;
+		if (parsed.hint !== null) payload.hint = parsed.hint;
+
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: JSON.stringify(payload, null, 2),
+				},
+			],
+			isError: true,
+		};
+	}
+
+	// Fallback: generic error, preserve existing plain-text format
+	return {
+		content: [{ type: "text" as const, text: `Error: ${rawMessage}` }],
 		isError: true,
 	};
 }
@@ -2091,7 +2230,9 @@ export function registerTools(
 		"create_briefing_note",
 		"Create a briefing note — a structured record of a topic discussion, with participants, " +
 			"content, optional decisions, and optional links to existing memories. " +
-			"linkedMemoryIds MUST contain IDs from the memories table only — NOT briefingNotes IDs or IDs from any other table.",
+			"linkedMemoryIds MUST contain IDs from the memories table only — NOT briefingNotes IDs or IDs from any other table. " +
+			"IMPORTANT: If you need to cross-link briefing notes together, use linkedBriefingIds (not yet shipped) — " +
+			"passing a briefingNotes document ID into linkedMemoryIds will produce an ArgumentValidationError at the Convex validator boundary.",
 		{
 			title: z.string().describe("Briefing note title"),
 			topic: z
@@ -2108,7 +2249,10 @@ export function registerTools(
 				.array(memoryIdSchema)
 				.optional()
 				.describe(
-					"Convex document IDs of related memories — each must be a 32-char ID from the memories table, NOT briefingNotes or any other table",
+					"Convex document IDs of related memories — each must be a 32-char ID from the memories table, NOT briefingNotes or any other table. " +
+						"DISCLAIMER: Memory IDs only. Do NOT pass briefingNotes IDs here — they share the same 32-char alphanumeric format but belong to a different table. " +
+						"Passing a briefingNotes ID will fail with ArgumentValidationError at path .linkedMemoryIds[N]. " +
+						"If cross-linking briefings is needed, request the linkedBriefingIds feature instead.",
 				),
 			createdBy: creatorSchema,
 		},
@@ -2159,7 +2303,7 @@ export function registerTools(
 					title,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2216,7 +2360,7 @@ export function registerTools(
 					noteId,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
