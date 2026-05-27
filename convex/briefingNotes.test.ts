@@ -143,3 +143,64 @@ describe("briefingNotes:update", () => {
 		expect(after?.updatedBy).toBe("sigma");
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// briefingNotes:create — linkedMemoryIds validator (Day 52 PM bug / k1764wwsyczv92a3g4q3gp0egn85n0q8)
+//
+// Root cause: caller passes a briefingNotes document ID in linkedMemoryIds[].
+// Convex validates each element as v.id("memories") and rejects with
+// ArgumentValidationError containing the path .linkedMemoryIds[N].
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("briefingNotes:create — linkedMemoryIds validator", () => {
+	test("create rejects a briefingNotes-table ID in linkedMemoryIds with validator error", async () => {
+		const t = createTestConvex();
+		// First create a real briefing note to obtain its ID
+		const briefingId = await seedNote(t);
+		// Pass that briefingNotes ID as a linkedMemoryIds entry — wrong table
+		await expect(
+			t.mutation(api.briefingNotes.create, {
+				title: "test-create",
+				topic: "architecture",
+				participants: ["sigma"],
+				content: "test content",
+				createdBy: "sigma",
+				linkedMemoryIds: [briefingId as unknown as string] as never,
+			}),
+		).rejects.toThrow(/Expected ID for table "memories"/); // ArgumentValidationError at .linkedMemoryIds[0]
+	});
+
+	test("create rejects a tasks-table ID in linkedMemoryIds with validator error", async () => {
+		const t = createTestConvex();
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "dummy",
+			assignedTo: "sigma",
+			priority: "low",
+			status: "todo",
+			createdBy: "sigma",
+		});
+		await expect(
+			t.mutation(api.briefingNotes.create, {
+				title: "test-create",
+				topic: "architecture",
+				participants: ["sigma"],
+				content: "test content",
+				createdBy: "sigma",
+				linkedMemoryIds: [taskId as unknown as string] as never,
+			}),
+		).rejects.toThrow(/Expected ID for table "memories"/);
+	});
+
+	test("create succeeds when linkedMemoryIds is omitted", async () => {
+		const t = createTestConvex();
+		const noteId = await t.mutation(api.briefingNotes.create, {
+			title: "test",
+			topic: "test",
+			participants: ["sigma"],
+			content: "test",
+			createdBy: "sigma",
+		});
+		expect(noteId).toBeTruthy();
+		expect(typeof noteId).toBe("string");
+	});
+});
