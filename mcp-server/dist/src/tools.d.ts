@@ -96,6 +96,7 @@ export declare const fieldsSchema: z.ZodEnum<{
     lite: "lite";
     full: "full";
 }>;
+export declare const updatedSinceSchema: z.ZodNumber;
 export interface ParsedConvexError {
     code: string;
     message: string;

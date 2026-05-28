@@ -228,6 +228,8 @@ export const list = query({
 		project: v.optional(v.string()),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		createdBy: v.optional(creatorValidator),
+		updatedSince: v.optional(v.number()),
 	},
 	// Returns: array of full task docs OR array of lite projections.
 	// Validator omitted because v.union of full+lite produces overly-strict
@@ -240,13 +242,23 @@ export const list = query({
 		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
 
-		const limit = args.limit ?? 50;
 		const statuses = expandTaskStatuses(args.status);
 		const lite = args.fields === "lite";
+		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit (overflow protection)
+		const explicitLimit = args.limit !== undefined;
+		let limit = args.limit ?? 50;
+		if (!explicitLimit && !lite) {
+			limit = 30;
+			console.warn(
+				`[tasks.list] auto-clamp: limit=30 applied (fields=full, no explicit limit). Pass fields="lite" or explicit limit to override.`,
+			);
+		}
 		// Capture to local consts so TypeScript narrows inside closures without assertions
 		const assignedToInstance = args.assignedToInstance;
 		const assignedTo = args.assignedTo;
 		const project = args.project;
+		const createdBy = args.createdBy;
+		const updatedSince = args.updatedSince;
 
 		// Helper: apply multi-status in-memory filter on a pre-fetched slice
 		type TaskRow = Doc<"tasks">;
@@ -339,7 +351,16 @@ export const list = query({
 			allRows = await ctx.db.query("tasks").order("desc").take(limit);
 		}
 
-		const scoped = filterByOrgScope(allRows, scope);
+		// v2.3.3 — apply createdBy + updatedSince filters in-memory
+		let filtered = allRows;
+		if (createdBy !== undefined) {
+			filtered = filtered.filter((r) => r.createdBy === createdBy);
+		}
+		if (updatedSince !== undefined) {
+			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+		}
+
+		const scoped = filterByOrgScope(filtered, scope);
 		if (lite) return scoped.map(projectTaskLite);
 		return scoped;
 	},
@@ -750,13 +771,25 @@ export const listByMission = query({
 		status: v.optional(v.union(v.string(), v.array(v.string()))),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		createdBy: v.optional(creatorValidator),
+		updatedSince: v.optional(v.number()),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"tasks"> optionality
 	handler: async (ctx, args) => {
-		const limit = args.limit ?? 50;
 		const statuses = expandTaskStatuses(args.status);
 		const lite = args.fields === "lite";
 		const missionId = args.missionId;
+		const createdBy = args.createdBy;
+		const updatedSince = args.updatedSince;
+		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit
+		const explicitLimit = args.limit !== undefined;
+		let limit = args.limit ?? 50;
+		if (!explicitLimit && !lite) {
+			limit = 30;
+			console.warn(
+				`[tasks.listByMission] auto-clamp: limit=30 applied (fields=full, no explicit limit).`,
+			);
+		}
 
 		type TaskRow = Doc<"tasks">;
 		const applyStatusFilter = (rows: TaskRow[]) => {
@@ -784,8 +817,17 @@ export const listByMission = query({
 			allRows = applyStatusFilter(base);
 		}
 
-		if (lite) return allRows.map(projectTaskLite);
-		return allRows;
+		// v2.3.3 — apply createdBy + updatedSince in-memory
+		let filtered = allRows;
+		if (createdBy !== undefined) {
+			filtered = filtered.filter((r) => r.createdBy === createdBy);
+		}
+		if (updatedSince !== undefined) {
+			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+		}
+
+		if (lite) return filtered.map(projectTaskLite);
+		return filtered;
 	},
 });
 

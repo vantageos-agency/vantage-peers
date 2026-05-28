@@ -13,6 +13,28 @@ Tests: 5 new Convex security tests (`convex/oauth-dcr-security.test.ts`) + 5 new
 
 VP task: k17218rvqyncs1v6rwj3qdzfsn87jj4n. Beta unblock chain: DCR fix → 5 quick wins onboarding (seed-profiles + marie-iris-rh client + README VP Cloud + runbook + email).
 
+## v2.3.3 — 2026-05-28
+
+**Follow-up to v2.3.2 (Day 84 scope élargi)** — Extend list queries with `createdBy` + `updatedSince` filters + auto-clamp safeguard.
+
+Backend (Convex) :
+- `tasks.list` + `tasks.listByMission` : + `createdBy` (filter by task creator) + `updatedSince` (Unix ms window) + auto-clamp limit=30 when `fields="full"` and no explicit limit
+- `missions.list` : + `updatedSince` + auto-clamp (30)
+- `briefingNotes.list` : + `updatedSince` + auto-clamp (15 when fields=full)
+
+MCP wrapper :
+- 4 list tools forward the new params
+- New export `updatedSinceSchema` (positive integer ms)
+- `limit` `.default()` removed on the 4 list tools so absent limit flows to backend → enables auto-clamp
+
+Tests : 15 new MCP schema cases (`src/__tests__/list-queries-v2.3.3-createdby-updatedsince.test.ts`) + 6 new Convex round-trip cases.
+
+Pi pull cycle unblocked : `list_tasks createdBy="pi" status="review" fields="lite"` returns only Pi-dispatched tasks recently moved to review, payload 5-10× smaller.
+
+Cap fleet : 0 overflow tolérance future (auto-clamp).
+
+VP task: `k1796s5j6jfkvkx0tn5n926ftd87jx9p`. Successor of `k17e09ng1tf217n93z9m4tr0mx87hfe0` (v2.3.2 PR #537).
+
 ## v2.3.2 — 2026-05-28
 
 **Hotfix** — Expose `fields="lite"` + `status` array/aliases in MCP tool schemas (Day 82 sprint gap).

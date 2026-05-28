@@ -1937,3 +1937,153 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 	});
 });
+
+// =============================================================================
+// v2.3.3 — createdBy + updatedSince + auto-clamp
+// VP task: k1796s5j6jfkvkx0tn5n926ftd87jx9p
+// =============================================================================
+
+describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => {
+	const baseTask = {
+		title: "v233 task",
+		description: "v2.3.3 test",
+		project: "v233",
+		assignedTo: "sigma" as const,
+		priority: "medium" as const,
+		status: "todo" as const,
+		createdBy: "sigma" as const,
+	};
+
+	test("tasks.list createdBy filter returns only sigma-created tasks", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.tasks.create, { ...baseTask, title: "sigma-1" });
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "pi-1",
+			createdBy: "pi",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "sigma-2",
+		});
+
+		const rows = await t.query(api.tasks.list, {
+			createdBy: "sigma",
+			fields: "lite",
+			limit: 100,
+		});
+
+		expect(rows.length).toBeGreaterThanOrEqual(2);
+		// In lite mode createdBy is stripped; verify count + that no pi-created rows leak by title
+		expect(rows.every((r: { title: string }) => r.title !== "pi-1")).toBe(true);
+	});
+
+	test("tasks.list createdBy + assignedTo combinatorics", async () => {
+		const t = createTestConvex();
+
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "pi-creates-sigma",
+			createdBy: "pi",
+			assignedTo: "sigma",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "pi-creates-tau",
+			createdBy: "pi",
+			assignedTo: "tau",
+		});
+		await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "sigma-creates-sigma",
+			createdBy: "sigma",
+			assignedTo: "sigma",
+		});
+
+		const rows = await t.query(api.tasks.list, {
+			createdBy: "pi",
+			assignedTo: "sigma",
+			limit: 100,
+		});
+
+		expect(rows).toHaveLength(1);
+		expect(rows[0].title).toBe("pi-creates-sigma");
+	});
+
+	test("tasks.list updatedSince filter returns only recently-updated rows", async () => {
+		const t = createTestConvex();
+
+		const oldId = await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "old-task",
+		});
+		// Advance fake time
+		vi.setSystemTime(new Date(Date.now() + 10_000));
+		const cutoff = Date.now();
+		vi.setSystemTime(new Date(Date.now() + 10_000));
+		const newId = await t.mutation(api.tasks.create, {
+			...baseTask,
+			title: "new-task",
+		});
+
+		const rows = await t.query(api.tasks.list, {
+			updatedSince: cutoff,
+			limit: 100,
+		});
+
+		const ids = rows.map((r: { _id: string }) => r._id);
+		expect(ids).toContain(newId);
+		expect(ids).not.toContain(oldId);
+	});
+
+	test("tasks.list auto-clamp: fields=full + no explicit limit → ≤30", async () => {
+		const t = createTestConvex();
+
+		// Seed 35 tasks
+		for (let i = 0; i < 35; i++) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `bulk-${i}`,
+			});
+		}
+
+		const rows = await t.query(api.tasks.list, { assignedTo: "sigma" });
+		expect(rows.length).toBeLessThanOrEqual(30);
+	});
+
+	test("tasks.list auto-clamp NOT triggered when fields=lite", async () => {
+		const t = createTestConvex();
+
+		for (let i = 0; i < 35; i++) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `lite-${i}`,
+			});
+		}
+
+		const rows = await t.query(api.tasks.list, {
+			assignedTo: "sigma",
+			fields: "lite",
+		});
+		// Default 50, so all 35 should come through
+		expect(rows.length).toBe(35);
+	});
+
+	test("tasks.list auto-clamp NOT triggered when explicit limit passed", async () => {
+		const t = createTestConvex();
+
+		for (let i = 0; i < 35; i++) {
+			await t.mutation(api.tasks.create, {
+				...baseTask,
+				title: `explicit-${i}`,
+			});
+		}
+
+		const rows = await t.query(api.tasks.list, {
+			assignedTo: "sigma",
+			limit: 50,
+		});
+		expect(rows.length).toBe(35);
+	});
+});

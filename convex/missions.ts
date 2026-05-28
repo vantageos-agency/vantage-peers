@@ -181,6 +181,7 @@ export const list = query({
 		status: v.optional(v.union(v.string(), v.array(v.string()))),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		updatedSince: v.optional(v.number()),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
@@ -188,11 +189,20 @@ export const list = query({
 		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-missions");
 
-		const limit = args.limit ?? 50;
 		const statuses = expandMissionStatuses(args.status);
 		const lite = args.fields === "lite";
 		const project = args.project;
 		const pilot = args.pilot;
+		const updatedSince = args.updatedSince;
+		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit
+		const explicitLimit = args.limit !== undefined;
+		let limit = args.limit ?? 50;
+		if (!explicitLimit && !lite) {
+			limit = 30;
+			console.warn(
+				`[missions.list] auto-clamp: limit=30 applied (fields=full, no explicit limit).`,
+			);
+		}
 
 		type MissionRow = Doc<"missions">;
 		const applyStatusFilter = (rows: MissionRow[]) => {
@@ -259,7 +269,13 @@ export const list = query({
 			allRows = await ctx.db.query("missions").order("desc").take(limit);
 		}
 
-		const scoped = filterByOrgScope(allRows, scope);
+		// v2.3.3 — updatedSince in-memory filter
+		let filtered = allRows;
+		if (updatedSince !== undefined) {
+			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+		}
+
+		const scoped = filterByOrgScope(filtered, scope);
 		if (lite) return scoped.map(projectMissionLite);
 		return scoped;
 	},
