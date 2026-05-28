@@ -19,6 +19,41 @@ import {
 	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
+import type { VpToolResult } from "./ui-resources/schemas.js";
+import { wrapToolResult } from "./ui-resources/stream-marker.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VP_EMIT_UI_MARKERS gate
+//
+// When VP_EMIT_UI_MARKERS=1 the 6 list/get tools that have a matching
+// ui:// primitive append a __VP_TOOL_RESULT__<json>__END__ marker after the
+// existing JSON payload. The Gen UI iframe bridge detects this marker and
+// renders the structured primitive inline. Default is OFF so prod behaviour
+// is unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UI_MARKERS_ENABLED =
+	process.env.VP_EMIT_UI_MARKERS === "1" ||
+	process.env.VP_EMIT_UI_MARKERS === "true";
+
+/**
+ * Append a stream marker to a text response when UI markers are enabled.
+ * `buildPayload` is called only when the flag is ON to avoid any overhead.
+ */
+function appendMarkerIfEnabled(
+	text: string,
+	buildPayload: () => VpToolResult | null,
+): string {
+	if (!UI_MARKERS_ENABLED) return text;
+	try {
+		const payload = buildPayload();
+		if (payload === null) return text;
+		return `${text}\n${wrapToolResult(payload)}`;
+	} catch {
+		// Never break the primary response — marker emission is best-effort.
+		return text;
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pre-flight content size guard
@@ -956,13 +991,26 @@ export function registerTools(
 					limit: limit ?? 20,
 				});
 
+				const rawList = Array.isArray(memories)
+					? memories
+					: Array.isArray((memories as any)?.page)
+						? (memories as any).page
+						: [];
+
+				const baseText = JSON.stringify(memories, null, 2);
+				const text = appendMarkerIfEnabled(baseText, () => ({
+					kind: "memory-quote",
+					items: rawList.map((m: any) => ({
+						_id: m._id,
+						namespace: m.namespace,
+						type: m.type,
+						content: m.content,
+						score: m.score,
+					})),
+				}));
+
 				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(memories, null, 2),
-						},
-					],
+					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -1319,13 +1367,22 @@ export function registerTools(
 					limit: limit ?? 100,
 				});
 
+				const baseText = JSON.stringify(messages, null, 2);
+				const text = appendMarkerIfEnabled(baseText, () => ({
+					kind: "messages-feed",
+					items: Array.isArray(messages)
+						? messages.map((m: any) => ({
+								_id: m._id,
+								from: m.from,
+								channel: m.channel,
+								content: m.content,
+								createdAt: m.createdAt,
+							}))
+						: [],
+				}));
+
 				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(messages, null, 2),
-						},
-					],
+					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -1521,13 +1578,23 @@ export function registerTools(
 					updatedSince,
 				});
 
+				const baseText = JSON.stringify(tasks, null, 2);
+				const text = appendMarkerIfEnabled(baseText, () => ({
+					kind: "tasks-table",
+					items: Array.isArray(tasks)
+						? tasks.map((t: any) => ({
+								_id: t._id,
+								title: t.title,
+								status: t.status,
+								priority: t.priority,
+								assignedTo: t.assignedTo,
+								_creationTime: t._creationTime,
+							}))
+						: [],
+				}));
+
 				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(tasks, null, 2),
-						},
-					],
+					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -2067,13 +2134,24 @@ export function registerTools(
 					updatedSince,
 				});
 
+				const baseText = JSON.stringify(missions, null, 2);
+				const text = appendMarkerIfEnabled(baseText, () => ({
+					kind: "mission-timeline",
+					items: Array.isArray(missions)
+						? missions.map((m: any) => ({
+								_id: m._id,
+								name: m.name,
+								project: m.project,
+								status: m.status,
+								pilot: m.pilot,
+								priority: m.priority,
+								progress: m.progress,
+							}))
+						: [],
+				}));
+
 				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(missions, null, 2),
-						},
-					],
+					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -2278,13 +2356,24 @@ export function registerTools(
 					orchestrator,
 				});
 
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(entry, null, 2),
+				const baseText = JSON.stringify(entry, null, 2);
+				const text = appendMarkerIfEnabled(baseText, () => {
+					if (!entry) return null;
+					return {
+						kind: "diary-entry",
+						item: {
+							_id: (entry as any)._id,
+							date: (entry as any).date,
+							orchestrator: (entry as any).orchestrator,
+							content: (entry as any).content,
+							highlights: (entry as any).highlights,
+							blockers: (entry as any).blockers,
 						},
-					],
+					};
+				});
+
+				return {
+					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -2505,13 +2594,27 @@ export function registerTools(
 					updatedSince,
 				});
 
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(notes, null, 2),
+				const baseText = JSON.stringify(notes, null, 2);
+				const text = appendMarkerIfEnabled(baseText, () => {
+					const items = Array.isArray(notes) ? notes : [];
+					if (items.length === 0) return null;
+					// Emit the first note as a briefing-note item for the primitive renderer.
+					const first = items[0] as any;
+					return {
+						kind: "briefing-note",
+						item: {
+							_id: first._id,
+							topic: first.topic,
+							title: first.title,
+							participants: first.participants,
+							content: first.content,
+							createdBy: first.createdBy,
 						},
-					],
+					};
+				});
+
+				return {
+					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));

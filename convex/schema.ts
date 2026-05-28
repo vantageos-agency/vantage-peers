@@ -851,6 +851,26 @@ export default defineSchema({
 		.index("by_customerEmail", ["customerEmail"])
 		.index("by_gumroadOrderId", ["gumroadOrderId"]),
 
+	// ── iframeEmbedSessions ──────────────────────────────────────────────────
+	// Session registry for VP Gen UI iframe embeds (SEP-1865 M3).
+	// Each session is bound to an origin and carries optional tenantId + userId
+	// for multi-tenant routing. Sessions expire via expiresAt; revoked flag
+	// provides immediate invalidation without waiting for TTL.
+	//
+	// Mission : sigma-vantage-peers-mcp-gui-iframe-embed-v1 (k5730xct6rvrwkvxhy5t5js12d87jwfw).
+	iframeEmbedSessions: defineTable({
+		sessionId: v.string(),
+		tenantId: v.optional(v.string()),
+		origin: v.string(),
+		userId: v.optional(v.string()),
+		createdAt: v.number(),
+		lastSeenAt: v.number(),
+		expiresAt: v.number(),
+		revoked: v.boolean(),
+	})
+		.index("by_session_id", ["sessionId"])
+		.index("by_origin_expires", ["origin", "expiresAt"]),
+
 	// ── errorMonitorConfig ───────────────────────────────────────────────────
 	// Singleton-ish dynamic configuration for the error-monitor subsystem.
 	// Key-value store where `key` is a stable slug (e.g. "pendingAliasReleases")

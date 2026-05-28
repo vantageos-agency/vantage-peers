@@ -24,6 +24,7 @@ import type * as githubComments from "../githubComments.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as gumroadWebhook from "../gumroadWebhook.js";
 import type * as http from "../http.js";
+import type * as iframeEmbedSessions from "../iframeEmbedSessions.js";
 import type * as issueStats from "../issueStats.js";
 import type * as issueStatsQueries from "../issueStatsQueries.js";
 import type * as issues from "../issues.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   githubRepoMapping: typeof githubRepoMapping;
   gumroadWebhook: typeof gumroadWebhook;
   http: typeof http;
+  iframeEmbedSessions: typeof iframeEmbedSessions;
   issueStats: typeof issueStats;
   issueStatsQueries: typeof issueStatsQueries;
   issues: typeof issues;

@@ -1,5 +1,78 @@
 # Changelog
 
+## [Unreleased] — M3 iframeEmbedSessions + __VP_TOOL_RESULT__ stream marker + ack-checklist
+
+**Mission instance** : `sigma-vantage-peers-mcp-gui-iframe-embed-v1` (k5730xct6rvrwkvxhy5t5js12d87jwfw).
+**Version target** : `2.4.0` (Pi-gated, NOT bumped here — stays `2.3.5` until Pi sign-off).
+
+M3 delivers the session registry and stream-marker protocol that connects the VP MCP server
+to the Gen UI iframe bridge. All marker emission is gated behind `VP_EMIT_UI_MARKERS=1`
+so production behaviour is unchanged until the bridge is deployed.
+
+### Convex schema — `iframeEmbedSessions` table
+
+NEW table `iframeEmbedSessions` in `convex/schema.ts` :
+- Fields : `sessionId` (string), `tenantId` (optional string), `origin` (string),
+  `userId` (optional string), `createdAt` (number), `lastSeenAt` (number),
+  `expiresAt` (number), `revoked` (boolean).
+- Indexes : `by_session_id` on `["sessionId"]`, `by_origin_expires` on `["origin", "expiresAt"]`.
+
+NEW `convex/iframeEmbedSessions.ts` — 4 operations :
+- `createSession` mutation — inserts a new session row.
+- `getSession` query — returns session or null (null for expired / revoked).
+- `touchSession` mutation — bumps `lastSeenAt` to now; returns bool.
+- `revokeSession` mutation — sets `revoked=true`; returns bool.
+
+### Stream marker — `mcp-server/src/ui-resources/stream-marker.ts`
+
+NEW `MARKER_START = "__VP_TOOL_RESULT__"`, `MARKER_END = "__END__"`.
+
+NEW `wrapToolResult(payload: VpToolResult): string` :
+- Validates via `VpToolResultSchema`, throws `TypeError` on schema failure.
+- Returns `__VP_TOOL_RESULT__<json>__END__`.
+
+NEW `parseToolResult(text: string): VpToolResult | null` :
+- Extracts marker substring (handles bare, embedded, surrounding text).
+- Returns validated `VpToolResult` or null on any failure (no-throw contract).
+
+### MCP tools — marker emission gated by `VP_EMIT_UI_MARKERS=1`
+
+`mcp-server/src/tools.ts` — 6 tools now append `wrapToolResult(...)` after the JSON payload
+when `VP_EMIT_UI_MARKERS=1` (default OFF) :
+
+| Tool                  | kind               |
+|-----------------------|--------------------|
+| `list_tasks`          | `tasks-table`      |
+| `list_messages`       | `messages-feed`    |
+| `get_diary`           | `diary-entry`      |
+| `list_missions`       | `mission-timeline` |
+| `list_briefing_notes` | `briefing-note`    |
+| `list_memories`       | `memory-quote`     |
+
+Change is surgical — existing return shape is preserved; marker is appended as a new line.
+
+### Ack checklist
+
+NEW `docs/M3-ACK-CHECKLIST.md` — bilingual FR/EN post-deploy verification checklist
+for Marie + Ismaël. Covers: package install, primitive reads, Shadow DOM scoping,
+stream marker emit + parse, bilingual spot check, WCAG AA (contrast + role attrs),
+default-OFF guard.
+
+### Tests
+
+15+ new vitest cases (≥264 total after M3, baseline 253 after M2) :
+- `mcp-server/src/__tests__/m3-stream-marker.test.ts` — 14 cases:
+  `wrapToolResult` ×6 valid kinds, ×2 throws on invalid, `parseToolResult` roundtrip,
+  non-marker text ×2, embedded text, malformed JSON ×2, schema rejects unknown kind ×2.
+- `convex/iframeEmbedSessions.test.ts` — 7 cases:
+  create+get, optional fields, getSession unknown, expired session null,
+  touchSession updates lastSeenAt, touchSession unknown false,
+  revokeSession marks revoked (getSession null), revokeSession unknown false.
+
+0 regression on M1+M2 suites (253/253 baseline).
+
+---
+
 ## [Unreleased] — M1 SEP-1865 ui:// resources backend + M2 primitives + Zod schemas
 
 **Mission instance** : `sigma-vantage-peers-mcp-gui-iframe-embed-v1` (k5730xct6rvrwkvxhy5t5js12d87jwfw).
