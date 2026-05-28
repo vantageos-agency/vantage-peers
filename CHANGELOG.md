@@ -1,5 +1,79 @@
 # Changelog
 
+## [2.3.3] - 2026-05-28
+
+### Feature — `createdBy` + `updatedSince` filters + auto-clamp on list queries
+
+**Root cause / Motivation :** Day 83 Pi runtime overflow on `list_tasks limit=50` (~79k chars / 838 lines). Pi pull-cycle HUMAN MODE could not filter to its own dispatched tasks. Need `createdBy` (Pi-dispatched pattern) + `updatedSince` (recent-window pattern) on list queries + auto-clamp safeguard against accidental `fields=full` mega-scans.
+
+**Fix :**
+- `convex/tasks.ts` `list` + `listByMission` : new args `createdBy: v.optional(creatorValidator)` + `updatedSince: v.optional(v.number())`. Auto-clamp `effectiveLimit = 30` when `fields="full"` AND no explicit `limit` (with `console.warn`).
+- `convex/missions.ts` `list` : new arg `updatedSince` + auto-clamp 30.
+- `convex/briefingNotes.ts` `list` : new arg `updatedSince` + auto-clamp 15 (default 20 for this collection).
+- `mcp-server/src/tools.ts` : 4 list tools forward new params. New export `updatedSinceSchema` (positive integer ms timestamp). Removed `.default(50)`/`.default(20)` on `limit` so absent value reaches backend (required for auto-clamp).
+
+**Backward compatibility :** all new args optional. Existing callers (no new args) get unchanged behavior. `taskStatusSchema` + `missionStatusSchema` still exported and used by create/update/start operations.
+
+**Tests :**
+- `mcp-server/src/__tests__/list-queries-v2.3.3-createdby-updatedsince.test.ts` (NEW) : 15 cases (positive int ms accepted, negative/zero/float/string/null rejected, edge cases NaN/Infinity rejected).
+- `convex/tests.test.ts` : 6 new round-trip cases (createdBy filter accuracy, combinatorics, updatedSince window, auto-clamp triggered/bypassed branches).
+- Suites : 175/175 MCP + 73/73 Convex full PASS, 0 regression.
+
+**References :**
+- PR : https://github.com/vantageos-agency/vantage-peers/pull/539
+- Merge commit : `567c6a59` (squash from `6ec70ff96ab53c2b20204489ac96ba09f7fb5923`)
+- npm : `vantage-peers-mcp@2.3.3` shasum `26517e5fcf876f5f9c68722e5c66ec963925b489`
+- Pi pull-cycle quickstart : `list_tasks createdBy="pi" status="review" fields="lite" limit=30`
+
+---
+
+## [2.3.2] - 2026-05-28
+
+### Hotfix — MCP wrapper exposes `fields=lite` + `status` aliases/arrays
+
+**Root cause :** Day 82 sprint `vp-list-queries-fields-lite-status-multi-v1` (v2.3.1) shipped Convex backend support for `fields="lite"` projection + status aliases (`open`/`active`/`all`) + multi-status arrays on the 4 list queries. The MCP wrapper Zod schemas in `mcp-server/src/tools.ts` were NOT updated, so MCP clients (Claude Code, claude.ai web, orchestrators) could not pass those params — the MCP validator rejected them before reaching backend. Day 83 Pi runtime overflow on `list_tasks limit=50` made the gap painful.
+
+**Fix :**
+- `mcp-server/src/tools.ts` : new exports `taskStatusFilterSchema`, `missionStatusFilterSchema`, `fieldsSchema`. Wired into 4 list tools (`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`). Aliases NOT permitted inside arrays (matches backend rejection contract).
+
+**Backward compatibility :** zero behavioral change for existing callers. The single-value `taskStatusSchema` + `missionStatusSchema` are still used by all non-filter operations.
+
+**Tests :**
+- `mcp-server/src/__tests__/list-queries-schema-v2.3.2.test.ts` (NEW) : 17 cases (single/alias/array variants accepted, array-with-alias rejected, empty array rejected, invalid enum rejected).
+- Suite : 160/160 full PASS, 0 regression.
+
+**References :**
+- PR : https://github.com/vantageos-agency/vantage-peers/pull/537
+- Merge commit : `9772091` (squash from `7373e54b0cfd9858153492d7c88e49a6feda4960`)
+- npm : `vantage-peers-mcp@2.3.2` shasum `7fcfa38b2cc3f478bd65607c3e06f420de096c11`
+
+**Fix-pattern fleet-wide :** When backend query supports a new param, ALWAYS update the MCP wrapper tool schema in the SAME PR.
+
+---
+
+## [2.3.1] - 2026-05-26
+
+### Feature — `fields="lite"` projection + status array/aliases on list queries (backend)
+
+**Root cause / Motivation :** MCP list queries (tasks, missions, briefingNotes) returned full Convex documents by default. Large workspaces hit token-budget ceiling on `list_tasks limit=50` (78k+ char payloads). Need compact projection + multi-status filtering.
+
+**Fix :**
+- `convex/tasks.ts` `list` + `listByMission` : new args `fields: v.optional(v.union(v.literal("lite"), v.literal("full")))` + `status: v.optional(v.union(v.string(), v.array(v.string())))`. New helper `expandTaskStatuses()` handles aliases: `"open"` → `["todo","in_progress","review","blocked"]`, `"active"` → `["todo","in_progress"]`, `"all"` → `undefined`. Aliases NOT permitted inside arrays.
+- `convex/missions.ts` `list` : same shape. `"open"` → `["brainstorm","plan","execute","validate"]`, `"active"` → `["plan","execute"]`, `"all"` → `undefined`.
+- `convex/briefingNotes.ts` `list` : `fields` only (no status param).
+- `fields="lite"` projects compact fields : tasks `{_id,_creationTime,title,status,priority,assignedTo,missionId}`, missions `{_id,_creationTime,name,status,pilot,priority,project}`, briefingNotes `{_id,_creationTime,topic,title,participants,createdBy}` — typical 5-10x smaller payload.
+
+**Backward compatibility :** `fields` defaults to `"full"`. `status` accepts single string (existing behavior) OR array OR alias. Old callers untouched.
+
+**Tests :** Convex round-trip tests pin contract (alias expansion, array variant, lite projection field set). Full suite green.
+
+**References :**
+- PR : https://github.com/vantageos-agency/vantage-peers/pull/530
+- Sprint : `vp-list-queries-fields-lite-status-multi-v1`
+- Day 82 Pi flag : "On a fait un sprint pour fixer!" (gap closed in v2.3.2 hotfix above).
+
+---
+
 ## [2.3.0] - 2026-05-21
 
 ### Bug Fix — recall()/hybrid_search() returning [] for self-host with direct OpenAI key
