@@ -162,6 +162,14 @@ export const fieldsSchema = z
     .describe('Field projection — "lite" returns compact fields only ' +
     '(typical 5-10× smaller payload for large list scans), ' +
     '"full" (default) returns the full document.');
+// v2.3.3 — Unix timestamp ms filter for "updated since".
+// Pass `Date.now() - 24*60*60*1000` for "last 24h" pattern.
+export const updatedSinceSchema = z
+    .number()
+    .int()
+    .positive()
+    .describe("Unix timestamp (ms) — return only rows whose updatedAt >= this value. " +
+    "Typical usage: Date.now() - 24*60*60*1000 for last-24h window.");
 const mandateStatusSchema = z
     .enum(["requested", "accepted", "in_progress", "delivered", "settled"])
     .describe("Mandate lifecycle status");
@@ -1141,20 +1149,25 @@ export function registerTools(server, convex, oauthCtx) {
             .min(1)
             .max(200)
             .optional()
-            .default(50)
-            .describe("Maximum number of tasks to return (default 50)"),
+            .describe("Maximum number of tasks to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit (overflow protection)."),
         fields: fieldsSchema
             .optional()
             .describe('Field projection ("lite"|"full")'),
-    }, async ({ assignedTo, assignedToInstance, status, project, limit, fields, }) => {
+        createdBy: assigneeSchema
+            .optional()
+            .describe("Filter by task creator (e.g. 'pi' to find Pi-dispatched tasks)"),
+        updatedSince: updatedSinceSchema.optional(),
+    }, async ({ assignedTo, assignedToInstance, status, project, limit, fields, createdBy, updatedSince, }) => {
         try {
             const tasks = await convex.query("tasks:list", {
                 assignedTo,
                 assignedToInstance,
                 status,
                 project,
-                limit: limit ?? 50,
+                limit,
                 fields,
+                createdBy,
+                updatedSince,
             });
             return {
                 content: [
@@ -1470,18 +1483,23 @@ export function registerTools(server, convex, oauthCtx) {
             .min(1)
             .max(200)
             .optional()
-            .default(50)
-            .describe("Maximum number of tasks to return (default 50)"),
+            .describe("Maximum number of tasks to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit."),
         fields: fieldsSchema
             .optional()
             .describe('Field projection ("lite"|"full")'),
-    }, async ({ missionId, status, limit, fields }) => {
+        createdBy: assigneeSchema
+            .optional()
+            .describe("Filter by task creator"),
+        updatedSince: updatedSinceSchema.optional(),
+    }, async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
         try {
             const tasks = await convex.query("tasks:listByMission", {
                 missionId: missionId,
                 status,
-                limit: limit ?? 50,
+                limit,
                 fields,
+                createdBy,
+                updatedSince,
             });
             return {
                 content: [
@@ -1565,19 +1583,20 @@ export function registerTools(server, convex, oauthCtx) {
             .min(1)
             .max(200)
             .optional()
-            .default(50)
-            .describe("Maximum number of missions to return (default 50)"),
+            .describe("Maximum number of missions to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit."),
         fields: fieldsSchema
             .optional()
             .describe('Field projection ("lite"|"full")'),
-    }, async ({ project, pilot, status, limit, fields }) => {
+        updatedSince: updatedSinceSchema.optional(),
+    }, async ({ project, pilot, status, limit, fields, updatedSince }) => {
         try {
             const missions = await convex.query("missions:list", {
                 project,
                 pilot,
                 status,
-                limit: limit ?? 50,
+                limit,
                 fields,
+                updatedSince,
             });
             return {
                 content: [
@@ -1899,17 +1918,18 @@ export function registerTools(server, convex, oauthCtx) {
             .min(1)
             .max(100)
             .optional()
-            .default(20)
-            .describe("Maximum notes to return (default 20)"),
+            .describe("Maximum notes to return. Default 20 with fields=lite, auto-clamped to 15 when fields=full and no explicit limit."),
         fields: fieldsSchema
             .optional()
             .describe('Field projection ("lite"|"full")'),
-    }, async ({ topic, limit, fields }) => {
+        updatedSince: updatedSinceSchema.optional(),
+    }, async ({ topic, limit, fields, updatedSince }) => {
         try {
             const notes = await convex.query("briefingNotes:list", {
                 topic,
-                limit: limit ?? 20,
+                limit,
                 fields,
+                updatedSince,
             });
             return {
                 content: [
