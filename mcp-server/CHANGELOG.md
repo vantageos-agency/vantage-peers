@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased] — M1 SEP-1865 ui:// resources backend
+
+**Mission instance** : `sigma-vantage-peers-mcp-gui-iframe-embed-v1` (k5730xct6rvrwkvxhy5t5js12d87jwfw).
+**Template VR consumed** : `gui-iframe-embed-v1` v1.0.0 (jx7bzk0x1086tgwgj2zrssk2pn87k1ga).
+
+M1 Foundation (adapted MCP-pure paradigm per Pi arbitrage Day 84) :
+- NEW `mcp-server/src/ui-resources/index.ts` : URI parser `ui://vp/v1/<primitive>?<query>` + primitive registry + handler factory.
+- NEW `mcp-server/src/ui-resources/primitives/tasks-table.ts` : M1 MVP primitive returning HTML inline (Shadow DOM scoped CSS) — WCAG AA + bilingual FR+EN.
+- `mcp-server/server-http.ts` : wired `ListResourcesRequestSchema` + `ReadResourceRequestSchema` MCP handlers on the existing McpServer instance.
+
+Tests : 14 new vitest cases (`src/__tests__/ui-resources-sep-1865.test.ts`) — URI parsing, primitive registry, render variants (empty, populated, FR), backend arg forwarding, XSS escape, error fallback, limit clamping, unknown primitive rejection. 0 regression on existing suites.
+
+M2 next : ≥5 more primitives (messages-feed, diary-entry, mission-timeline, briefing-note, memory-quote) + Zod discriminated union schemas + Bearer sha256 validation hardening.
+M3 next : Registry json-render + `__VP_TOOL_RESULT__<json>` stream marker + smoke E2E + ack-checklist + PI-SIGNED Convex prod deploy.
+
 ## v2.3.5 — 2026-05-28
 
 **Critical hotfix** — v2.3.3 (PR #539) shipped the backend filters `createdBy` + `updatedSince` and the Zod schema exports but did NOT wire those params into the 4 list MCP tool args blocks. Pi pull-cycle quickstart `list_tasks createdBy="pi" status="review" fields="lite"` was silently dropping `createdBy` at the MCP boundary and returning all visible tasks. Auto-clamp safeguard (Day 83) also could not trigger because Zod `.default(50)` / `.default(20)` on `limit` overrode the absent-value signal before it reached the backend.
