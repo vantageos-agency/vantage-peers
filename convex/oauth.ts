@@ -212,9 +212,23 @@ export const createClient = mutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SECURITY: scope profiles that must NEVER be granted via public DCR self-reg.
+// Master scope is admin-only; it requires explicit Pi authorization via the
+// POST /admin/oauth/clients endpoint (masterOnlyMiddleware gated).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BLOCKED_PUBLIC_DCR_PROFILES: ReadonlySet<string> = new Set(["master"]);
+
 // Public DCR path — anonymous clients (Claude.ai connector) register themselves
 // with the default profile. The returned clientSecret is the caller's
 // responsibility to capture; we store only the hash.
+//
+// SECURITY: This function enforces that self-registration NEVER yields master
+// scope. Any attempt to pass scopeProfile="master" is rejected with an explicit
+// ScopeViolation error. Profiles are further constrained to only the safe
+// deny-by-default "client-generic" value; all other non-blocked profiles still
+// require admin elevation post-registration before tokens carry real scopes.
 export const registerPublicClient = mutation({
 	args: {
 		clientId: v.string(),
@@ -225,6 +239,16 @@ export const registerPublicClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
+		// SECURITY: Refuse master scope (and any future admin-only profiles) at the
+		// Convex layer. This is defense-in-depth: server-http.ts already hardcodes
+		// DEFAULT_PUBLIC_DCR_PROFILE, but a direct Convex call must also be safe.
+		if (BLOCKED_PUBLIC_DCR_PROFILES.has(args.scopeProfile)) {
+			throw new Error(
+				`ScopeViolation: scopeProfile="${args.scopeProfile}" cannot be requested via self-registration. ` +
+					"Master scope requires admin authorization via POST /admin/oauth/clients.",
+			);
+		}
+
 		// Enforce a strict default profile for anonymous DCR — no admin required,
 		// but the profile MUST exist and be safe (deny-by-default or marie flow).
 		const profile = await ctx.db
