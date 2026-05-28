@@ -46,4 +46,95 @@ export declare const updateBriefingNoteSchema: z.ZodObject<{
     decisions: z.ZodOptional<z.ZodArray<z.ZodString>>;
     linkedMemoryIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
 }, z.core.$strip>;
+export declare const taskStatusSchema: z.ZodEnum<{
+    todo: "todo";
+    in_progress: "in_progress";
+    review: "review";
+    blocked: "blocked";
+    done: "done";
+}>;
+export declare const missionStatusSchema: z.ZodEnum<{
+    brainstorm: "brainstorm";
+    plan: "plan";
+    execute: "execute";
+    validate: "validate";
+    complete: "complete";
+}>;
+export declare const taskStatusFilterSchema: z.ZodUnion<readonly [z.ZodEnum<{
+    todo: "todo";
+    in_progress: "in_progress";
+    review: "review";
+    blocked: "blocked";
+    done: "done";
+    active: "active";
+    open: "open";
+    all: "all";
+}>, z.ZodArray<z.ZodEnum<{
+    todo: "todo";
+    in_progress: "in_progress";
+    review: "review";
+    blocked: "blocked";
+    done: "done";
+}>>]>;
+export declare const missionStatusFilterSchema: z.ZodUnion<readonly [z.ZodEnum<{
+    brainstorm: "brainstorm";
+    plan: "plan";
+    execute: "execute";
+    validate: "validate";
+    complete: "complete";
+    active: "active";
+    open: "open";
+    all: "all";
+}>, z.ZodArray<z.ZodEnum<{
+    brainstorm: "brainstorm";
+    plan: "plan";
+    execute: "execute";
+    validate: "validate";
+    complete: "complete";
+}>>]>;
+export declare const fieldsSchema: z.ZodEnum<{
+    lite: "lite";
+    full: "full";
+}>;
+export interface ParsedConvexError {
+    code: string;
+    message: string;
+    path: string | null;
+    hint: string | null;
+}
+/**
+ * Parse a Convex error message string into a structured object.
+ *
+ * Input example (from ConvexHttpClient):
+ *   "[CONVEX M(briefingNotes:create)] ArgumentValidationError: Found ID
+ *    \"js72ewf0m...\" from table briefingNotes, which does not match the table
+ *    name in validator v.id(\"memories\"). Path: .linkedMemoryIds[4]"
+ *
+ * Returns { code, message, path, hint } where:
+ *  - code  = "ArgumentValidationError" (or the parsed error type)
+ *  - message = the full human-readable error description after the code prefix
+ *  - path  = e.g. ".linkedMemoryIds[4]" extracted from "Path: ..." suffix
+ *  - hint  = a concise guidance string derived from the error, or null
+ *
+ * For unrecognised error strings, code = "ServerError" and path/hint = null.
+ *
+ * Exported for unit testing.
+ */
+export declare function parseConvexError(rawMessage: string): ParsedConvexError;
+/**
+ * Produce a structured MCP error response for any error thrown by a Convex
+ * operation. For ConvexError / ArgumentValidationError the response body
+ * contains a JSON object with { code, message, path, hint } so the MCP client
+ * can display actionable diagnostics instead of a bare "Server Error" string.
+ *
+ * For unrecognised errors the response falls back to the plain text format
+ * used by `mcpError`.
+ */
+export declare function mcpConvexError(error: unknown): {
+    content: Array<{
+        type: "text";
+        text: string;
+    }>;
+    isError: true;
+};
 export declare function registerTools(server: McpServer, convex: ConvexHttpClient, oauthCtx?: OAuthContext): void;

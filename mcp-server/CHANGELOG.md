@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.3.2 — 2026-05-28
+
+**Hotfix** — Expose `fields="lite"` + `status` array/aliases in MCP tool schemas (Day 82 sprint gap).
+
+Backend support for these params shipped in v2.3.1 but the MCP wrapper Zod schemas never exposed them, so MCP clients couldn't pass them. Fixed for 4 list tools:
+
+- `list_tasks`: + `fields`, status now accepts aliases (`"open"`, `"active"`, `"all"`) and arrays
+- `list_tasks_by_mission`: same
+- `list_missions`: + `fields`, status accepts aliases and arrays
+- `list_briefing_notes`: + `fields`
+
+Aliases NOT permitted inside arrays (matches backend rejection contract).
+
+Tests: 14 new cases (`src/__tests__/list-queries-schema-v2.3.2.test.ts`), 0 regression on 295+ existing.
+
+Fix-pattern (fleet-wide): When backend query supports a new param, ALWAYS update the MCP wrapper tool schema in the SAME PR.
+
+VP task: `k17e09ng1tf217n93z9m4tr0mx87hfe0`.
+
 ## 2.3.1 — 2026-05-26
 
 ### Fixed (Eta PR #530 delta-review)
