@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.3.5 — 2026-05-28
+
+**Critical hotfix** — v2.3.3 (PR #539) shipped the backend filters `createdBy` + `updatedSince` and the Zod schema exports but did NOT wire those params into the 4 list MCP tool args blocks. Pi pull-cycle quickstart `list_tasks createdBy="pi" status="review" fields="lite"` was silently dropping `createdBy` at the MCP boundary and returning all visible tasks. Auto-clamp safeguard (Day 83) also could not trigger because Zod `.default(50)` / `.default(20)` on `limit` overrode the absent-value signal before it reached the backend.
+
+Fixes:
+- `mcp-server/src/tools.ts` : 4 list tools now expose `createdBy` (`list_tasks` + `list_tasks_by_mission` only — `list_missions` + `list_briefing_notes` do not accept it backend-side) and `updatedSince` (all 4).
+- Removed `.default(50)` (3 tools) and `.default(20)` (1 tool) on `limit` so absent value reaches the backend, enabling the v2.3.3 auto-clamp safeguard.
+
+Tests : 8 new boundary-forwarding cases (`src/__tests__/list-queries-v2.3.5-wire-createdby-updatedsince.test.ts`) — verify MCP layer actually forwards new params to `convex.query` instead of dropping them. 0 regression on existing suites.
+
+Detection : Vantage-Bridge architecture review Sigma scope Day 84 — direct `grep`/`sed` inspection of `tools.ts` confirmed the gap. Backend already correct since v2.3.3 (`convex/tasks.ts:354-357`).
+
+Fix-pattern (Day 84 capitalize) : when adding a new param across backend + MCP wrapper, the test suite MUST cover not only schema validation but also the tool-handler→convex.query forwarding boundary. Schema-only tests passed cleanly in v2.3.3 while the actual feature was broken in prod.
+
+VP task : `k177tsvdxzase5sjy2qm9fdvp187kbwr`. Predecessor v2.3.3 PR #539 (`k1796s5j6jfkvkx0tn5n926ftd87jx9p`).
+
 ## v2.3.4 — 2026-05-28
 
 **Security fix** — DCR (Dynamic Client Registration) self-registration now defaults to tenant-scope only. Master scope requires explicit admin authorization (`ADMIN_DCR_TOKEN` / `BEARER_SECRET_MASTER` env var). Closes beta blocker for Marie/Iris RH onboarding identified in VP Cloud audit Day 84.
