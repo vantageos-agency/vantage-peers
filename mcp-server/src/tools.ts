@@ -163,13 +163,63 @@ const componentTypeSchema = z
 	.enum(["agent", "skill", "hook", "plugin"])
 	.describe("Component type");
 
-const taskStatusSchema = z
-	.enum(["todo", "in_progress", "review", "blocked", "done"])
-	.describe("Task status");
+const taskStatusValues = [
+	"todo",
+	"in_progress",
+	"review",
+	"blocked",
+	"done",
+] as const;
+const taskStatusAliases = ["open", "active", "all"] as const;
+export const taskStatusSchema = z.enum(taskStatusValues).describe("Task status");
 
-const missionStatusSchema = z
-	.enum(["brainstorm", "plan", "execute", "validate", "complete"])
+const missionStatusValues = [
+	"brainstorm",
+	"plan",
+	"execute",
+	"validate",
+	"complete",
+] as const;
+const missionStatusAliases = ["open", "active", "all"] as const;
+export const missionStatusSchema = z
+	.enum(missionStatusValues)
 	.describe("Mission lifecycle status");
+
+// v2.3.2 — filter-only schemas: expose status aliases ("open"/"active"/"all")
+// AND multi-status arrays to the MCP client. Backend (convex/tasks.ts +
+// convex/missions.ts) handles alias expansion + array validation.
+// Aliases NOT allowed inside arrays (matches backend rejection).
+export const taskStatusFilterSchema = z
+	.union([
+		z.enum([...taskStatusValues, ...taskStatusAliases]),
+		z.array(z.enum(taskStatusValues)).min(1),
+	])
+	.describe(
+		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"), ' +
+			'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
+			'or array of direct statuses (no aliases inside array).',
+	);
+
+export const missionStatusFilterSchema = z
+	.union([
+		z.enum([...missionStatusValues, ...missionStatusAliases]),
+		z.array(z.enum(missionStatusValues)).min(1),
+	])
+	.describe(
+		'Mission status filter. Single status ("brainstorm"|"plan"|"execute"|"validate"|"complete"), ' +
+			'alias ("open" = brainstorm+plan+execute+validate, "active" = plan+execute, "all" = no filter), ' +
+			'or array of direct statuses (no aliases inside array).',
+	);
+
+// v2.3.2 — fields projection toggle. "lite" returns compact projection
+// (5-10× smaller payload), "full" (default) returns full doc.
+export const fieldsSchema = z
+	.enum(["lite", "full"])
+	.describe(
+		'Field projection — "lite" returns compact fields only ' +
+			'(typical 5-10× smaller payload for large list scans), ' +
+			'"full" (default) returns the full document.',
+	);
 
 const mandateStatusSchema = z
 	.enum(["requested", "accepted", "in_progress", "delivered", "settled"])
@@ -1415,7 +1465,9 @@ export function registerTools(
 				.describe(
 					"Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance.",
 				),
-			status: taskStatusSchema.optional().describe("Filter by status"),
+			status: taskStatusFilterSchema
+				.optional()
+				.describe("Filter by status (single, alias, or array)"),
 			project: z.string().optional().describe("Filter by project name"),
 			limit: z
 				.number()
@@ -1425,8 +1477,18 @@ export function registerTools(
 				.optional()
 				.default(50)
 				.describe("Maximum number of tasks to return (default 50)"),
+			fields: fieldsSchema
+				.optional()
+				.describe('Field projection ("lite"|"full")'),
 		},
-		async ({ assignedTo, assignedToInstance, status, project, limit }) => {
+		async ({
+			assignedTo,
+			assignedToInstance,
+			status,
+			project,
+			limit,
+			fields,
+		}) => {
 			try {
 				const tasks = await convex.query("tasks:list" as any, {
 					assignedTo,
@@ -1434,6 +1496,7 @@ export function registerTools(
 					status,
 					project,
 					limit: limit ?? 50,
+					fields,
 				});
 
 				return {
@@ -1822,7 +1885,9 @@ export function registerTools(
 		"List all tasks linked to a specific mission. Optionally filter by status.",
 		{
 			missionId: z.string().describe("Convex document ID of the mission"),
-			status: taskStatusSchema.optional().describe("Filter by task status"),
+			status: taskStatusFilterSchema
+				.optional()
+				.describe("Filter by task status (single, alias, or array)"),
 			limit: z
 				.number()
 				.int()
@@ -1831,13 +1896,17 @@ export function registerTools(
 				.optional()
 				.default(50)
 				.describe("Maximum number of tasks to return (default 50)"),
+			fields: fieldsSchema
+				.optional()
+				.describe('Field projection ("lite"|"full")'),
 		},
-		async ({ missionId, status, limit }) => {
+		async ({ missionId, status, limit, fields }) => {
 			try {
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
 					limit: limit ?? 50,
+					fields,
 				});
 
 				return {
@@ -1941,7 +2010,9 @@ export function registerTools(
 		{
 			project: z.string().optional().describe("Filter by project name"),
 			pilot: creatorSchema.optional().describe("Filter by pilot orchestrator"),
-			status: missionStatusSchema.optional().describe("Filter by status"),
+			status: missionStatusFilterSchema
+				.optional()
+				.describe("Filter by status (single, alias, or array)"),
 			limit: z
 				.number()
 				.int()
@@ -1950,14 +2021,18 @@ export function registerTools(
 				.optional()
 				.default(50)
 				.describe("Maximum number of missions to return (default 50)"),
+			fields: fieldsSchema
+				.optional()
+				.describe('Field projection ("lite"|"full")'),
 		},
-		async ({ project, pilot, status, limit }) => {
+		async ({ project, pilot, status, limit, fields }) => {
 			try {
 				const missions = await convex.query("missions:list" as any, {
 					project,
 					pilot,
 					status,
 					limit: limit ?? 50,
+					fields,
 				});
 
 				return {
@@ -2383,12 +2458,16 @@ export function registerTools(
 				.optional()
 				.default(20)
 				.describe("Maximum notes to return (default 20)"),
+			fields: fieldsSchema
+				.optional()
+				.describe('Field projection ("lite"|"full")'),
 		},
-		async ({ topic, limit }) => {
+		async ({ topic, limit, fields }) => {
 			try {
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
 					limit: limit ?? 20,
+					fields,
 				});
 
 				return {
