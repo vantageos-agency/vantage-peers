@@ -1,9 +1,11 @@
 # Changelog
 
-## [Unreleased] — M3 iframeEmbedSessions + __VP_TOOL_RESULT__ stream marker + ack-checklist
+## [2.4.0] — 2026-05-28 — M3 iframeEmbedSessions + __VP_TOOL_RESULT__ stream marker + ack-checklist
 
 **Mission instance** : `sigma-vantage-peers-mcp-gui-iframe-embed-v1` (k5730xct6rvrwkvxhy5t5js12d87jwfw).
-**Version target** : `2.4.0` (Pi-gated, NOT bumped here — stays `2.3.5` until Pi sign-off).
+**Pi sign-off** : PI_AUTHORIZED_TASK_ID=`k1793m1qgn0zaay6r87dhvsh7187kwya` (PROD-DEPLOY-AUTHORIZED).
+**Eta sign-off** : ETA_APPROVED_TASK_ID=`k171ep964sxabbrgmb21fk9axd87ka1n` at commit `338a7b9e6130ce69dc5fe7f3e2e9ecc4648b4f6a` (Day 79 SHA-pinned).
+**Merge** : PR #545 squash `f509c8d92f0b142bc063a0e9dd070e1993cc729b`.
 
 M3 delivers the session registry and stream-marker protocol that connects the VP MCP server
 to the Gen UI iframe bridge. All marker emission is gated behind `VP_EMIT_UI_MARKERS=1`
