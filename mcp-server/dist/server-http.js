@@ -25,13 +25,14 @@
  *   NODE_ENV              — set to "production" on Railway
  */
 import { readFileSync } from "node:fs";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate, } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bearerAuthMiddleware, internalClient, masterOnlyMiddleware, sha256Base64Url, sha256Hex, } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
+import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 let pkg;
 try {
     // Source mode: server-http.ts → ./package.json = mcp-server/package.json
@@ -563,6 +564,31 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
         version: pkg.version,
     });
     registerTools(server, convex, oauthCtx);
+    // SEP-1865 ui:// resources for Generative UI primitives
+    // Uses McpServer.resource() high-level API with a ResourceTemplate so that
+    // resources/list (via listCallback) and resources/read both work.
+    // URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
+    const uiResourceTemplate = new ResourceTemplate("ui://vp/v1/{primitive}", {
+        list: async () => ({ resources: listUiResources() }),
+    });
+    server.resource("vp-ui", uiResourceTemplate, {
+        description: "SEP-1865 VantagePeers Generative UI primitives (HTML inline, Shadow DOM scoped)",
+    }, async (uri) => {
+        const fetchConvex = async (functionName, args) => {
+            // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+            return convex.query(functionName, args);
+        };
+        const resource = await readUiResource(uri.toString(), fetchConvex);
+        return {
+            contents: [
+                {
+                    uri: resource.uri,
+                    mimeType: resource.mimeType,
+                    text: resource.text,
+                },
+            ],
+        };
+    });
     const transport = new WebStandardStreamableHTTPServerTransport();
     await server.connect(transport);
     return transport.handleRequest(c.req.raw);
