@@ -37,6 +37,7 @@ import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
 import type * as migrations_populateOrgIds from "../migrations/populateOrgIds.js";
+import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as oauth from "../oauth.js";
@@ -85,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   messages: typeof messages;
   migrations: typeof migrations;
   "migrations/populateOrgIds": typeof migrations_populateOrgIds;
+  "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
   oauth: typeof oauth;

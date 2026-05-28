@@ -221,6 +221,17 @@ export const fieldsSchema = z
 			'"full" (default) returns the full document.',
 	);
 
+// v2.3.3 — Unix timestamp ms filter for "updated since".
+// Pass `Date.now() - 24*60*60*1000` for "last 24h" pattern.
+export const updatedSinceSchema = z
+	.number()
+	.int()
+	.positive()
+	.describe(
+		"Unix timestamp (ms) — return only rows whose updatedAt >= this value. " +
+			"Typical usage: Date.now() - 24*60*60*1000 for last-24h window.",
+	);
+
 const mandateStatusSchema = z
 	.enum(["requested", "accepted", "in_progress", "delivered", "settled"])
 	.describe("Mandate lifecycle status");
@@ -1475,11 +1486,18 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum number of tasks to return (default 50)"),
+				.describe(
+					"Maximum number of tasks to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit (overflow protection).",
+				),
 			fields: fieldsSchema
 				.optional()
 				.describe('Field projection ("lite"|"full")'),
+			createdBy: assigneeSchema
+				.optional()
+				.describe(
+					"Filter by task creator (e.g. 'pi' to find Pi-dispatched tasks)",
+				),
+			updatedSince: updatedSinceSchema.optional(),
 		},
 		async ({
 			assignedTo,
@@ -1488,6 +1506,8 @@ export function registerTools(
 			project,
 			limit,
 			fields,
+			createdBy,
+			updatedSince,
 		}) => {
 			try {
 				const tasks = await convex.query("tasks:list" as any, {
@@ -1495,8 +1515,10 @@ export function registerTools(
 					assignedToInstance,
 					status,
 					project,
-					limit: limit ?? 50,
+					limit,
 					fields,
+					createdBy,
+					updatedSince,
 				});
 
 				return {
@@ -1894,19 +1916,26 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum number of tasks to return (default 50)"),
+				.describe(
+					"Maximum number of tasks to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit.",
+				),
 			fields: fieldsSchema
 				.optional()
 				.describe('Field projection ("lite"|"full")'),
+			createdBy: assigneeSchema
+				.optional()
+				.describe("Filter by task creator"),
+			updatedSince: updatedSinceSchema.optional(),
 		},
-		async ({ missionId, status, limit, fields }) => {
+		async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
 			try {
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
-					limit: limit ?? 50,
+					limit,
 					fields,
+					createdBy,
+					updatedSince,
 				});
 
 				return {
@@ -2019,20 +2048,23 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum number of missions to return (default 50)"),
+				.describe(
+					"Maximum number of missions to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit.",
+				),
 			fields: fieldsSchema
 				.optional()
 				.describe('Field projection ("lite"|"full")'),
+			updatedSince: updatedSinceSchema.optional(),
 		},
-		async ({ project, pilot, status, limit, fields }) => {
+		async ({ project, pilot, status, limit, fields, updatedSince }) => {
 			try {
 				const missions = await convex.query("missions:list" as any, {
 					project,
 					pilot,
 					status,
-					limit: limit ?? 50,
+					limit,
 					fields,
+					updatedSince,
 				});
 
 				return {
@@ -2456,18 +2488,21 @@ export function registerTools(
 				.min(1)
 				.max(100)
 				.optional()
-				.default(20)
-				.describe("Maximum notes to return (default 20)"),
+				.describe(
+					"Maximum notes to return. Default 20 with fields=lite, auto-clamped to 15 when fields=full and no explicit limit.",
+				),
 			fields: fieldsSchema
 				.optional()
 				.describe('Field projection ("lite"|"full")'),
+			updatedSince: updatedSinceSchema.optional(),
 		},
-		async ({ topic, limit, fields }) => {
+		async ({ topic, limit, fields, updatedSince }) => {
 			try {
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
-					limit: limit ?? 20,
+					limit,
 					fields,
+					updatedSince,
 				});
 
 				return {

@@ -91,11 +91,20 @@ export const list = query({
 		topic: v.optional(v.string()),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		updatedSince: v.optional(v.number()),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"briefingNotes"> optionality
 	handler: async (ctx, args) => {
-		const limit = args.limit ?? 20;
 		const lite = args.fields === "lite";
+		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit
+		const explicitLimit = args.limit !== undefined;
+		let limit = args.limit ?? 20;
+		if (!explicitLimit && !lite) {
+			limit = 15;
+			console.warn(
+				`[briefingNotes.list] auto-clamp: limit=15 applied (fields=full, no explicit limit).`,
+			);
+		}
 
 		let rows: Doc<"briefingNotes">[];
 
@@ -107,6 +116,14 @@ export const list = query({
 				.take(limit);
 		} else {
 			rows = await ctx.db.query("briefingNotes").order("desc").take(limit);
+		}
+
+		// v2.3.3 — updatedSince filter on updatedAt (fallback to _creationTime if missing)
+		if (args.updatedSince !== undefined) {
+			const since = args.updatedSince;
+			rows = rows.filter(
+				(r) => (r.updatedAt ?? r._creationTime) >= since,
+			);
 		}
 
 		if (lite) return rows.map(projectBriefingNoteLite);
