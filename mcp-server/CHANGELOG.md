@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — M1 SEP-1865 ui:// resources backend
+## [Unreleased] — M1 SEP-1865 ui:// resources backend + M2 primitives + Zod schemas
 
 **Mission instance** : `sigma-vantage-peers-mcp-gui-iframe-embed-v1` (k5730xct6rvrwkvxhy5t5js12d87jwfw).
 **Template VR consumed** : `gui-iframe-embed-v1` v1.0.0 (jx7bzk0x1086tgwgj2zrssk2pn87k1ga).
@@ -12,8 +12,22 @@ M1 Foundation (adapted MCP-pure paradigm per Pi arbitrage Day 84) :
 
 Tests : 14 new vitest cases (`src/__tests__/ui-resources-sep-1865.test.ts`) — URI parsing, primitive registry, render variants (empty, populated, FR), backend arg forwarding, XSS escape, error fallback, limit clamping, unknown primitive rejection. 0 regression on existing suites.
 
-M2 next : ≥5 more primitives (messages-feed, diary-entry, mission-timeline, briefing-note, memory-quote) + Zod discriminated union schemas + Bearer sha256 validation hardening.
-M3 next : Registry json-render + `__VP_TOOL_RESULT__<json>` stream marker + smoke E2E + ack-checklist + PI-SIGNED Convex prod deploy.
+### M2 — Resolve 5 Gaps + Bearer sha256 hardening (adapted MCP-pure paradigm)
+
+5 new ui:// primitives :
+- `messages-feed` (`messages:listMessages` backend — channel filter applied client-side)
+- `diary-entry` (`diary:get` single-entry + `diary:list` multi-entry backend)
+- `mission-timeline` (`missions:list` backend with fields=lite)
+- `briefing-note` (`briefingNotes:get` by noteId OR `briefingNotes:list` by topic backend)
+- `memory-quote` (`memories:listMemories` backend — supports both plain-array and paginated result shapes)
+
+Zod discriminated union schemas : `mcp-server/src/ui-resources/schemas.ts` exports `VpTaskPayloadSchema` + `VpMessagePayloadSchema` + `VpDiaryEntryPayloadSchema` + `VpMissionPayloadSchema` + `VpBriefingNotePayloadSchema` + `VpMemoryPayloadSchema` + `VpToolResultSchema` (discriminated union by `kind`). Cross-fleet ready for Mu vantage-bridge sidepanel S3 consumer.
+
+Bearer sha256 validation : Already in place since v2.3.4 DCR security fix. `mcp-server/src/auth.ts` line 275 calls `sha256Hex(token)` before every Convex lookup (layers 2 and 4). Raw token never reaches Convex. No further hardening needed in M2.
+
+Tests : 42 new vitest cases in `src/__tests__/ui-resources-m2-primitives.test.ts` (target was ≥22). Covers : PRIMITIVES registry (6 entries), each of 5 new primitives (empty + populated + FR labels + XSS escape + error fallback = 5 cases each), Zod schema roundtrip (VpToolResultSchema all 6 variants accepted, malformed rejected, individual payload schema validations). 0 regression on M1 17 cases + 194 other MCP tests (253/253 total).
+
+M3 next : Registry json-render + `__VP_TOOL_RESULT__<json>` stream marker + smoke E2E + ack-checklist + PI-SIGNED Convex prod deploy + visual ack Marie/Ismaël.
 
 ## v2.3.5 — 2026-05-28
 
