@@ -89,6 +89,19 @@ async function verifySHA256(
 // registerClient
 // ─────────────────────────────────────────────────────────────────────────────
 
+// SECURITY NOTE (Day 84 audit): This internal function writes to the legacy
+// oauthClients / oauthTokens tables (the "DCR simple" path used by the old
+// /register endpoint before the oauth_* tables were introduced). Tokens issued
+// via this path carry "mcp:full" as a scope string label in the oauthTokens
+// table. As of the Day 84 security fix, the bearer middleware in
+// mcp-server/src/auth.ts maps DCR tokens to scopeProfile="client-generic"
+// (deny-by-default), NOT "master". The "mcp:full" string is therefore harmless
+// — it is a legacy label, not an authorization grant.
+//
+// New clients MUST be provisioned via POST /admin/oauth/clients (which writes
+// to oauth_clients) or via the public /register endpoint (which hardcodes
+// scopeProfile="client-generic"). This function is kept for backward
+// compatibility only and should not be called for new integrations.
 export const registerClient = internalMutation({
 	args: {
 		clientName: v.string(),
@@ -120,7 +133,9 @@ export const registerClient = internalMutation({
 			clientSecret: clientSecretHash,
 			clientName: args.clientName.trim(),
 			redirectUris: args.redirectUris,
-			// SC: standardize on mcp:full — ignore any caller-supplied scope
+			// SC: standardize on mcp:full — this is a legacy scope label only.
+			// The bearer middleware maps DCR tokens to client-generic, not master.
+			// See SECURITY NOTE above.
 			scope: "mcp:full",
 			createdAt: Date.now(),
 		});

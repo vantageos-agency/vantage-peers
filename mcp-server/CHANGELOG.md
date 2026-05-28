@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.3.4 — 2026-05-28
+
+**Security fix** — DCR (Dynamic Client Registration) self-registration now defaults to tenant-scope only. Master scope requires explicit admin authorization (`ADMIN_DCR_TOKEN` / `BEARER_SECRET_MASTER` env var). Closes beta blocker for Marie/Iris RH onboarding identified in VP Cloud audit Day 84.
+
+Changes:
+- `convex/oauth.ts`: `registerPublicClient` now explicitly rejects `scopeProfile="master"` with a `ScopeViolation` error. Previously only the HTTP server enforced this; the Convex-layer was bypassable via direct internal call.
+- `mcp-server/src/auth.ts`: bearer layer 3 (DCR token path) no longer maps `mcp:full` scope string to `scopeProfile="master"`. DCR tokens now always resolve to `client-generic` (deny-by-default). The `mcp:full` label in the legacy `oauthTokens` table was a scope label, not an authorization grant.
+- `convex/oauthDcr.ts`: added security documentation clarifying the legacy table is no longer an escalation path; the auth middleware fix is the primary gate.
+
+Tests: 5 new Convex security tests (`convex/oauth-dcr-security.test.ts`) + 5 new MCP scope enforcement tests (`mcp-server/src/__tests__/dcr-scope-enforcement.test.ts`), 0 regression on existing suites.
+
+VP task: k17218rvqyncs1v6rwj3qdzfsn87jj4n. Beta unblock chain: DCR fix → 5 quick wins onboarding (seed-profiles + marie-iris-rh client + README VP Cloud + runbook + email).
+
 ## v2.3.2 — 2026-05-28
 
 **Hotfix** — Expose `fields="lite"` + `status` array/aliases in MCP tool schemas (Day 82 sprint gap).

@@ -231,10 +231,18 @@ export function bearerAuthMiddleware() {
                 console.error("[auth] CONVEX_URL_INTERNAL not set — cannot route DCR OAuth token");
                 return c.json({ error: "Server misconfigured: internal deployment URL missing" }, 500);
             }
-            // Map DCR single-scope string → OAuthContext fields.
-            // DCR tokens always carry "mcp:full" which maps to full access.
+            // SECURITY FIX: DCR tokens from the legacy oauthDcr path (oauthTokens
+            // table) carry "mcp:full" as a scope string. Previously this was mapped
+            // to scopeProfile="master" which granted cross-tenant, full-access.
+            // This is the DCR master-scope leak identified in VP Cloud audit Day 84.
+            //
+            // Fix: DCR self-registered clients ALWAYS resolve to "client-generic"
+            // (deny-by-default). "mcp:full" in the legacy table is a scope label, NOT
+            // an authorization to bypass namespace isolation. Master scope is only
+            // granted via the master bearer token path (layer 1) or via the
+            // oauth_access_tokens table with an admin-provisioned scopeProfile
+            // (layer 2). The DCR layer (layer 3) never grants master access.
             const scopes = dcrResult.scope.split(/\s+/).filter(Boolean);
-            const isFull = scopes.includes("mcp:full");
             c.set("tenant", {
                 tenantName: `dcr:${dcrResult.clientId}`,
                 convexUrl: internalUrl,
@@ -243,10 +251,11 @@ export function bearerAuthMiddleware() {
                 clientId: dcrResult.clientId,
                 userId: dcrResult.clientId,
                 scopes,
-                scopeProfile: isFull ? "master" : "client-generic",
-                fromAllowList: isFull ? ["*"] : [],
-                namespaceReadPrefixes: isFull ? ["*"] : [],
-                namespaceWritePrefixes: isFull ? ["*"] : [],
+                // Always tenant-scoped — never master — regardless of scope string value.
+                scopeProfile: "client-generic",
+                fromAllowList: [],
+                namespaceReadPrefixes: [],
+                namespaceWritePrefixes: [],
                 expiresAt: dcrResult.expiresAt,
                 isMaster: false,
             });
