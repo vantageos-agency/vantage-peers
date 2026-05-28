@@ -236,6 +236,24 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `update_briefing_note` | Partial-update an existing briefing note (RBAC: createdBy or system; arrays full-replace) |
 | `list_briefing_notes` | List briefing notes filtered by topic or creator |
 
+### List queries — `list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`
+
+All 4 list queries support these projection + filter params (v2.3.x) :
+
+| Param | Type | Notes |
+|---|---|---|
+| `fields` | `"lite" \| "full"` | `"lite"` returns compact projection (5-10x smaller payload), `"full"` returns full doc (default). v2.3.1+. |
+| `status` | `string \| string[] \| alias` | Single status, array of statuses, or alias (`"open"`, `"active"`, `"all"`). Aliases NOT permitted inside arrays. v2.3.2+ MCP exposure. |
+| `createdBy` | `creator` | Filter by row creator (e.g. `"pi"`). `list_tasks` + `list_tasks_by_mission` only. v2.3.3. |
+| `updatedSince` | `number` (ms) | Filter to rows with `updatedAt >= this`. Typical : `Date.now() - 24*60*60*1000` for last-24h window. v2.3.3. |
+| `limit` | `number` | Default 50 (briefingNotes 20). Auto-clamp safeguard: when `fields="full"` AND no explicit `limit`, server clamps to 30 (15 for briefingNotes) + emits warn log. v2.3.3. |
+
+**Pi pull-cycle quickstart** :
+```text
+list_tasks createdBy="pi" status="review" fields="lite" limit=30
+```
+Returns recently-completed Pi-dispatched tasks with compact projection — typical 5-10x smaller payload than the default.
+
 ### Components (6 tools)
 
 | Tool | Description |
