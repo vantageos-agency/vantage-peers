@@ -14,7 +14,11 @@ import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { ActionCtx } from "./_generated/server";
-import { handleIssueBearerFromClerk, sha256Hex } from "./credentials";
+import {
+	handleIssueBearerFromClerk,
+	sha256Hex,
+	verifyClerkJwt,
+} from "./credentials";
 import schema from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +156,7 @@ beforeEach(() => {
 	vi.setSystemTime(NOW);
 	vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", "https://clerk.vantagepeers.com");
 	vi.stubEnv("VP_ALLOWED_EXT_IDS", VALID_EXT_ID);
+	vi.stubEnv("VP_CLERK_EXPECTED_AUD", "convex");
 });
 
 afterEach(() => {
@@ -370,7 +375,9 @@ describe("issueBearerFromClerk: hash-only storage", () => {
 		const expectedHash = await sha256Hex(payload.bearer);
 
 		// Look up by hash — should find the token row
-		const stored = await t.query(getTokenByHashRef, { tokenHash: expectedHash });
+		const stored = await t.query(getTokenByHashRef, {
+			tokenHash: expectedHash,
+		});
 		expect(stored).not.toBeNull();
 		expect(stored?.clerkUserId).toBe(CLERK_USER_ID);
 		expect(stored?.workspaceId).toBe(CLERK_USER_ID);
@@ -519,5 +526,295 @@ describe("issueBearerFromClerk: input validation", () => {
 		expect(response.status).toBe(400);
 		const payload = (await response.json()) as Record<string, unknown>;
 		expect(payload.error).toContain("extId");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Iter 2 regression suite — Eta P1 fixes (M1 aud + M2 nbf/clock-skew + P2 ext-id prod)
+// https://github.com/vantageos-agency/vantage-peers/pull/546#issuecomment-4571836001
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Helpers for verifyClerkJwt direct tests ──────────────────────────────────
+
+/**
+ * Build a minimal JWT with the given payload, signed with a fake RSA signature.
+ * verifyClerkJwt is tested via fetch mock so the signature bytes don't matter —
+ * we bypass crypto.subtle.verify by returning `true` from the mocked response.
+ */
+function buildFakeJwt(
+	payload: Record<string, unknown>,
+	kid = "test-kid",
+): string {
+	const header = btoa(JSON.stringify({ alg: "RS256", kid }))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+	const body = btoa(JSON.stringify(payload))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+	// 32 zero bytes as base64url — valid base64 that atob can decode
+	const fakeSig = btoa(String.fromCharCode(...new Array(32).fill(0)))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+	return `${header}.${body}.${fakeSig}`;
+}
+
+/**
+ * Stub global fetch to return a fake JWKS and mock crypto.subtle.verify to
+ * return true so tests exercise only the claim-checking logic.
+ */
+function setupJwksAndCryptoMocks(): () => void {
+	const originalFetch = globalThis.fetch;
+	const originalVerify = crypto.subtle.verify.bind(crypto.subtle);
+
+	globalThis.fetch = vi.fn().mockResolvedValue({
+		ok: true,
+		json: async () => ({
+			keys: [
+				{
+					kty: "RSA",
+					kid: "test-kid",
+					use: "sig",
+					alg: "RS256",
+					n: "sIpk",
+					e: "AQAB",
+				},
+			],
+		}),
+	} as Response);
+
+	// biome-ignore lint/suspicious/noExplicitAny: test mock override
+	(crypto.subtle as any).verify = vi.fn().mockResolvedValue(true);
+
+	return () => {
+		globalThis.fetch = originalFetch;
+		// biome-ignore lint/suspicious/noExplicitAny: test mock restore
+		(crypto.subtle as any).verify = originalVerify;
+	};
+}
+
+const NOW_SEC = Math.floor(NOW / 1000);
+const ISSUER = "https://clerk.vantagepeers.com";
+const EXPECTED_AUD = "convex";
+
+// ── M1: aud validation ────────────────────────────────────────────────────────
+
+describe("verifyClerkJwt: M1 aud validation (iter 2)", () => {
+	test("T1 — valid JWT with string aud matching VP_CLERK_EXPECTED_AUD → resolves", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+			});
+			const claims = await verifyClerkJwt(jwt, ISSUER);
+			expect(claims.sub).toBe(CLERK_USER_ID);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T2 — valid JWT with aud as array containing expected value → resolves", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: ["other-service", EXPECTED_AUD, "yet-another"],
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+			});
+			const claims = await verifyClerkJwt(jwt, ISSUER);
+			expect(claims.sub).toBe(CLERK_USER_ID);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T3 — valid JWT with mismatched aud → throws aud mismatch error", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: "wrong-audience",
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+			});
+			await expect(verifyClerkJwt(jwt, ISSUER)).rejects.toThrow(
+				"JWT aud claim mismatch",
+			);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T-aud-missing-env — VP_CLERK_EXPECTED_AUD not set → throws clear error", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.unstubAllEnvs();
+			vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", ISSUER);
+			vi.stubEnv("VP_ALLOWED_EXT_IDS", VALID_EXT_ID);
+			// VP_CLERK_EXPECTED_AUD intentionally not set
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+			});
+			await expect(verifyClerkJwt(jwt, ISSUER)).rejects.toThrow(
+				"VP_CLERK_EXPECTED_AUD env var not set",
+			);
+		} finally {
+			restore();
+		}
+	});
+});
+
+// ── M2: nbf + clock skew ─────────────────────────────────────────────────────
+
+describe("verifyClerkJwt: M2 nbf + clock skew (iter 2)", () => {
+	test("T4 — valid JWT without nbf claim → resolves (nbf is optional)", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+				// nbf deliberately omitted
+			});
+			const claims = await verifyClerkJwt(jwt, ISSUER);
+			expect(claims.sub).toBe(CLERK_USER_ID);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T5 — JWT with nbf 90s in the future → throws not yet valid", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+				nbf: NOW_SEC + 90, // 90s in the future — beyond 60s skew
+			});
+			await expect(verifyClerkJwt(jwt, ISSUER)).rejects.toThrow(
+				"JWT not yet valid (nbf > now + skew)",
+			);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T6 — JWT with nbf 30s in the future (within 60s skew) → resolves", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC + 3600,
+				iat: NOW_SEC,
+				nbf: NOW_SEC + 30, // 30s in future — within 60s skew
+			});
+			const claims = await verifyClerkJwt(jwt, ISSUER);
+			expect(claims.sub).toBe(CLERK_USER_ID);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T7 — JWT with exp 30s in the past (within 60s skew) → resolves", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC - 30, // 30s expired — within 60s skew
+				iat: NOW_SEC - 3630,
+			});
+			const claims = await verifyClerkJwt(jwt, ISSUER);
+			expect(claims.sub).toBe(CLERK_USER_ID);
+		} finally {
+			restore();
+		}
+	});
+
+	test("T8 — JWT with exp 90s in the past (beyond 60s skew) → throws expired", async () => {
+		const restore = setupJwksAndCryptoMocks();
+		try {
+			vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+			const jwt = buildFakeJwt({
+				sub: CLERK_USER_ID,
+				iss: ISSUER,
+				aud: EXPECTED_AUD,
+				exp: NOW_SEC - 90, // 90s expired — beyond 60s skew
+				iat: NOW_SEC - 3690,
+			});
+			await expect(verifyClerkJwt(jwt, ISSUER)).rejects.toThrow("JWT expired");
+		} finally {
+			restore();
+		}
+	});
+});
+
+// ── P2: extId fail-closed in production ──────────────────────────────────────
+
+describe("issueBearerFromClerk: P2 extId fail-closed in production (iter 2)", () => {
+	test("T9 — VP_ALLOWED_EXT_IDS unset + NODE_ENV=production → 500 refuse all extension auth", async () => {
+		vi.unstubAllEnvs();
+		vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", ISSUER);
+		vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+		vi.stubEnv("NODE_ENV", "production");
+		// VP_ALLOWED_EXT_IDS intentionally not set
+
+		const t = createT();
+		const response = await handleIssueBearerFromClerk(
+			makeCtx(t),
+			makeRequest({ clerkJwt: MOCK_JWT, extId: VALID_EXT_ID }),
+			makeVerifyStub(),
+		);
+
+		expect(response.status).toBe(500);
+		const payload = (await response.json()) as Record<string, unknown>;
+		expect(payload.error).toContain(
+			"refusing all extension auth in production",
+		);
+	});
+
+	test("T9b — VP_ALLOWED_EXT_IDS unset + NODE_ENV=development → dev fallback, 200 with known ext_id", async () => {
+		vi.unstubAllEnvs();
+		vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", ISSUER);
+		vi.stubEnv("VP_CLERK_EXPECTED_AUD", EXPECTED_AUD);
+		vi.stubEnv("NODE_ENV", "development");
+		// VP_ALLOWED_EXT_IDS intentionally not set — should use dev hardcoded fallback
+
+		const t = createT();
+		const response = await handleIssueBearerFromClerk(
+			makeCtx(t),
+			makeRequest({ clerkJwt: MOCK_JWT, extId: VALID_EXT_ID }),
+			makeVerifyStub(),
+		);
+
+		expect(response.status).toBe(200);
 	});
 });

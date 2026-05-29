@@ -81,6 +81,7 @@ interface ClerkClaims {
 	aud: string | string[];
 	exp: number;
 	iat: number;
+	nbf?: number;
 }
 
 interface JwksKey {
@@ -149,10 +150,28 @@ export async function verifyClerkJwt(
 		new TextDecoder().decode(base64UrlToUint8Array(payloadB64)),
 	) as ClerkClaims;
 
-	// Fast-fail: check expiry before JWKS fetch
+	// Fast-fail: check temporal claims before JWKS fetch
+	const CLOCK_SKEW_SEC = 60;
 	const nowSec = Math.floor(Date.now() / 1000);
-	if (claims.exp < nowSec) {
+
+	// exp check with clock skew tolerance (allow tokens up to 60s past their stated exp)
+	if (typeof claims.exp !== "number" || claims.exp < nowSec - CLOCK_SKEW_SEC) {
 		throw new Error("JWT expired");
+	}
+
+	// nbf check with clock skew tolerance (refuse tokens whose nbf is more than 60s in the future)
+	if (claims.nbf !== undefined) {
+		if (typeof claims.nbf !== "number") {
+			throw new Error("JWT nbf claim invalid type");
+		}
+		if (claims.nbf > nowSec + CLOCK_SKEW_SEC) {
+			throw new Error("JWT not yet valid (nbf > now + skew)");
+		}
+	}
+
+	// iat sanity check (if present, must not be in the far future)
+	if (typeof claims.iat === "number" && claims.iat > nowSec + CLOCK_SKEW_SEC) {
+		throw new Error("JWT iat in the future beyond clock skew tolerance");
 	}
 
 	const expectedIssuer = issuerDomain.startsWith("https://")
@@ -162,6 +181,23 @@ export async function verifyClerkJwt(
 	if (claims.iss !== expectedIssuer) {
 		throw new Error(
 			`JWT issuer mismatch: expected ${expectedIssuer}, got ${claims.iss}`,
+		);
+	}
+
+	// aud validation — VP_CLERK_EXPECTED_AUD env var required
+	const expectedAud = process.env.VP_CLERK_EXPECTED_AUD;
+	if (!expectedAud) {
+		throw new Error(
+			"VP_CLERK_EXPECTED_AUD env var not set — refusing to validate JWT without expected audience",
+		);
+	}
+	const audClaim = claims.aud;
+	const audMatches = Array.isArray(audClaim)
+		? audClaim.includes(expectedAud)
+		: audClaim === expectedAud;
+	if (!audMatches) {
+		throw new Error(
+			`JWT aud claim mismatch: expected ${expectedAud}, got ${JSON.stringify(audClaim)}`,
 		);
 	}
 
@@ -439,13 +475,29 @@ export async function handleIssueBearerFromClerk(
 
 	// ── 2. Whitelist extId ────────────────────────────────────────────────────
 	const allowedExtIdsRaw = process.env.VP_ALLOWED_EXT_IDS;
-	// allow-hardcode: dev-only fallback
 	const allowedExtIds: string[] = allowedExtIdsRaw
 		? allowedExtIdsRaw
 				.split(",")
 				.map((s) => s.trim())
 				.filter(Boolean)
-		: ["mhfnnhkmnclmnnllhmoidkflgpkogjpe"];
+		: [];
+
+	if (!allowedExtIds.length) {
+		if (process.env.NODE_ENV === "production") {
+			return new Response(
+				JSON.stringify({
+					error:
+						"Server misconfigured: VP_ALLOWED_EXT_IDS not configured — refusing all extension auth in production",
+				}),
+				{
+					status: 500,
+					headers: { ...corsHdrs, "Content-Type": "application/json" },
+				},
+			);
+		}
+		// allow-hardcode: dev-only fallback
+		allowedExtIds.push("mhfnnhkmnclmnnllhmoidkflgpkogjpe");
+	}
 
 	if (!allowedExtIds.includes(extId)) {
 		return new Response(JSON.stringify({ error: "Extension not authorized" }), {
