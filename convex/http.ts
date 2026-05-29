@@ -485,6 +485,30 @@ http.route({
 	}),
 });
 
+// ── credentials:issueBearerFromClerk — VP Clerk JWT → Bearer exchange ────────
+// POST /issueBearerFromClerk
+// Called by the webapp /auth/extension-callback page (Clerk-protected).
+// Verifies Clerk JWT, resolves/creates workspace, issues 7d Bearer token.
+// Raw token returned once in response; SHA-256 hash stored in userBearerTokens.
+http.route({
+	path: "/issueBearerFromClerk",
+	method: "POST",
+	handler: httpAction(async (ctx, request) => {
+		const mod = await import("./credentials");
+		return mod.handleIssueBearerFromClerk(ctx, request);
+	}),
+});
+
+// OPTIONS preflight for /issueBearerFromClerk
+http.route({
+	path: "/issueBearerFromClerk",
+	method: "OPTIONS",
+	handler: httpAction(async (ctx, request) => {
+		const mod = await import("./credentials");
+		return mod.handleIssueBearerFromClerk(ctx, request);
+	}),
+});
+
 // ── Gumroad webhook — VantagePeers self-host pack auto-delivery ───────────────
 // POST /api/gumroad-webhook
 // Gumroad sends application/x-www-form-urlencoded with X-Gumroad-Signature.

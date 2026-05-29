@@ -914,4 +914,53 @@ export default defineSchema({
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_isActive", ["isActive"]),
+
+	// ── userBearerTokens ─────────────────────────────────────────────────────
+	// Bearer tokens issued to VP webapp users via Clerk JWT exchange
+	// (POST /issueBearerFromClerk). Separate from the OAuth DCR flow in
+	// oauth_access_tokens — these are user-grade tokens bound to a Clerk userId
+	// rather than an OAuth client.
+	//
+	// tokenHash = SHA-256 hex of the raw token (raw value NEVER stored).
+	// The raw bearer is returned once in the HTTP response payload and never
+	// re-derivable from the database.
+	//
+	// TTL: 7 days (issuedAt + 604800000 ms).
+	userBearerTokens: defineTable({
+		tokenHash: v.string(), // SHA-256 hex of raw bearer
+		clerkUserId: v.string(), // Clerk `sub` claim
+		workspaceId: v.string(), // logical workspace identifier (clerkUserId-based slug)
+		extId: v.string(), // Chrome extension ID that requested the token
+		expiresAt: v.number(), // ms since epoch
+		revoked: v.boolean(),
+		createdAt: v.number(),
+		lastUsedAt: v.optional(v.number()),
+	})
+		.index("by_token_hash", ["tokenHash"])
+		.index("by_clerkUserId", ["clerkUserId"]),
+
+	// ── credentialsAuditLog ──────────────────────────────────────────────────
+	// Append-only audit trail for every Bearer issuance via issueBearerFromClerk.
+	// Never updated after insert — one row per successful (or failed) issuance.
+	credentialsAuditLog: defineTable({
+		clerkUserId: v.string(),
+		workspaceId: v.string(),
+		extId: v.string(),
+		extVersion: v.optional(v.string()),
+		issuedAt: v.number(),
+		ip: v.optional(v.string()),
+		userAgent: v.optional(v.string()),
+	})
+		.index("by_clerkUserId", ["clerkUserId"])
+		.index("by_workspaceId", ["workspaceId"]),
+
+	// ── credentialsRateLimits ────────────────────────────────────────────────
+	// Rolling rate-limit counter for issueBearerFromClerk.
+	// key = "<clerkUserId>-issueBearer"
+	// Resets automatically when windowStart + 60000 < now.
+	credentialsRateLimits: defineTable({
+		key: v.string(), // "<clerkUserId>-issueBearer"
+		count: v.number(), // requests in current window
+		windowStart: v.number(), // ms since epoch — start of 1-minute window
+	}).index("by_key", ["key"]),
 });
