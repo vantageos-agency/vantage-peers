@@ -658,6 +658,9 @@ export function registerTools(
 		},
 		async ({ memoryId }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_memory");
+				if (_scopeDenied) return _scopeDenied;
+
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId,
 				});
@@ -926,6 +929,9 @@ export function registerTools(
 		},
 		async ({ orchestratorId }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_profile");
+				if (_scopeDenied) return _scopeDenied;
+
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
 				});
@@ -1204,6 +1210,16 @@ export function registerTools(
 		},
 		async ({ recipient, recipientInstanceId, tenantId, since }) => {
 			try {
+				// Non-master: force recipient to caller's own userId. Anything else
+				// would let the client read another tenant's inbox.
+				if (oauthCtx && !isMasterScope(oauthCtx)) {
+					if (recipient !== oauthCtx.userId) {
+						return mcpError(
+							`Forbidden: check_messages can only read messages for your own identity ('${oauthCtx.userId}'), not '${recipient}'.`,
+						);
+					}
+				}
+
 				const messages = await convex.query(
 					"messages:checkNewMessages" as any,
 					{
@@ -1414,6 +1430,9 @@ export function registerTools(
 		},
 		async () => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_peers");
+				if (_scopeDenied) return _scopeDenied;
+
 				const profiles = await convex.query("profiles:listProfiles" as any, {});
 
 				const peers = profiles.map((p: any) => ({
@@ -1470,6 +1489,9 @@ export function registerTools(
 		},
 		async ({ sessionDay, from, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_messages");
+				if (_scopeDenied) return _scopeDenied;
+
 				const messages = await convex.query("messages:listMessages" as any, {
 					sessionDay,
 					from,
@@ -1517,6 +1539,9 @@ export function registerTools(
 		},
 		async ({ messageId }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_broadcast_status");
+				if (_scopeDenied) return _scopeDenied;
+
 				const status = await convex.query(
 					"messages:listBroadcastStatus" as any,
 					{
@@ -1694,6 +1719,20 @@ export function registerTools(
 			updatedSince,
 		}) => {
 			try {
+				// Non-master: must scope to own identity. If neither assignedTo
+				// nor createdBy matches the caller's userId, reject — otherwise
+				// the query would span the whole tenant table.
+				if (oauthCtx && !isMasterScope(oauthCtx)) {
+					const myId = oauthCtx.userId;
+					const scopedToSelf =
+						assignedTo === myId || createdBy === myId;
+					if (!scopedToSelf) {
+						return mcpError(
+							`Forbidden: list_tasks requires assignedTo='${myId}' or createdBy='${myId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
+						);
+					}
+				}
+
 				const tasks = await convex.query("tasks:list" as any, {
 					assignedTo,
 					assignedToInstance,
@@ -2169,6 +2208,9 @@ export function registerTools(
 		},
 		async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_tasks_by_mission");
+				if (_scopeDenied) return _scopeDenied;
+
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
@@ -2310,6 +2352,16 @@ export function registerTools(
 		},
 		async ({ project, pilot, status, limit, fields, updatedSince }) => {
 			try {
+				// Non-master: must pilot=<own-userId>. Otherwise the query spans
+				// every tenant's missions.
+				if (oauthCtx && !isMasterScope(oauthCtx)) {
+					if (pilot !== oauthCtx.userId) {
+						return mcpError(
+							`Forbidden: list_missions requires pilot='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
+						);
+					}
+				}
+
 				const missions = await convex.query("missions:list" as any, {
 					project,
 					pilot,
@@ -2360,6 +2412,9 @@ export function registerTools(
 		},
 		async ({ missionId }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_mission");
+				if (_scopeDenied) return _scopeDenied;
+
 				const mission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
@@ -2566,6 +2621,9 @@ export function registerTools(
 		},
 		async ({ date, orchestrator }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_diary");
+				if (_scopeDenied) return _scopeDenied;
+
 				const entry = await convex.query("diary:get" as any, {
 					date,
 					orchestrator,
@@ -2622,6 +2680,15 @@ export function registerTools(
 		},
 		async ({ orchestrator, limit }) => {
 			try {
+				// Non-master: must scope to own orchestrator id.
+				if (oauthCtx && !isMasterScope(oauthCtx)) {
+					if (orchestrator !== oauthCtx.userId) {
+						return mcpError(
+							`Forbidden: list_diaries requires orchestrator='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
+						);
+					}
+				}
+
 				const entries = await convex.query("diary:list" as any, {
 					orchestrator,
 					limit: limit ?? 20,
@@ -2826,6 +2893,9 @@ export function registerTools(
 		},
 		async ({ topic, limit, fields, updatedSince }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_briefing_notes");
+				if (_scopeDenied) return _scopeDenied;
+
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
 					limit,
@@ -2957,6 +3027,9 @@ export function registerTools(
 		},
 		async ({ type, team, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_components");
+				if (_scopeDenied) return _scopeDenied;
+
 				const components = await convex.query("components:list" as any, {
 					type,
 					team,
@@ -2994,6 +3067,9 @@ export function registerTools(
 		},
 		async ({ name, type }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_component");
+				if (_scopeDenied) return _scopeDenied;
+
 				const component = await convex.query("components:get" as any, {
 					name,
 					type,
@@ -3117,6 +3193,9 @@ export function registerTools(
 		},
 		async ({ query, type, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("search_components");
+				if (_scopeDenied) return _scopeDenied;
+
 				const results = await convex.query("components:search" as any, {
 					query,
 					type,
@@ -3230,6 +3309,9 @@ export function registerTools(
 		},
 		async ({ assignedTo, active, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_recurring_tasks");
+				if (_scopeDenied) return _scopeDenied;
+
 				const tasks = await convex.query("recurringTasks:list" as any, {
 					assignedTo,
 					active,
@@ -3685,6 +3767,9 @@ export function registerTools(
 		},
 		async ({ requestedBy, fulfilledBy, status, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_mandates");
+				if (_scopeDenied) return _scopeDenied;
+
 				const mandates = await convex.query("mandates:list" as any, {
 					requestedBy,
 					fulfilledBy,
@@ -3914,6 +3999,9 @@ export function registerTools(
 		},
 		async ({ buId }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_bu");
+				if (_scopeDenied) return _scopeDenied;
+
 				const bu = await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
 				});
@@ -3961,6 +4049,9 @@ export function registerTools(
 		},
 		async ({ orchestratorId, status, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_bus");
+				if (_scopeDenied) return _scopeDenied;
+
 				const bus = await convex.query("businessUnits:list" as any, {
 					orchestratorId,
 					status,
@@ -4085,6 +4176,9 @@ export function registerTools(
 		},
 		async () => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_repo_mappings");
+				if (_scopeDenied) return _scopeDenied;
+
 				const mappings = await convex.query(
 					"githubRepoMapping:list" as any,
 					{},
@@ -4182,6 +4276,9 @@ export function registerTools(
 		},
 		async ({ project, status, assignedTo, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_issues");
+				if (_scopeDenied) return _scopeDenied;
+
 				let results: any;
 				if (assignedTo) {
 					results = await convex.query("issues:listByOrchestrator" as any, {
@@ -4244,6 +4341,9 @@ export function registerTools(
 		},
 		async ({ repo, issueNumber }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_issue");
+				if (_scopeDenied) return _scopeDenied;
+
 				const issue = await convex.query("issues:getByRepoNumber" as any, {
 					repo,
 					issueNumber,
@@ -4426,6 +4526,9 @@ export function registerTools(
 		},
 		async ({ project }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("issue_stats");
+				if (_scopeDenied) return _scopeDenied;
+
 				const stats = await convex.query("issues:getStats" as any, {
 					project,
 				});
@@ -4640,6 +4743,9 @@ export function registerTools(
 		},
 		async ({ query, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("search_fix_patterns");
+				if (_scopeDenied) return _scopeDenied;
+
 				const results = await convex.action("search:searchFixPatterns" as any, {
 					query,
 					limit,
@@ -4679,6 +4785,9 @@ export function registerTools(
 		},
 		async ({ project, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_fix_patterns");
+				if (_scopeDenied) return _scopeDenied;
+
 				if (project) {
 					const results = await convex.query(
 						"fixPatterns:listByProject" as any,
@@ -4763,6 +4872,9 @@ export function registerTools(
 		},
 		async ({ name }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_mission_template");
+				if (_scopeDenied) return _scopeDenied;
+
 				const template = await convex.query(
 					"missionTemplates:getByName" as any,
 					{ name },
@@ -5088,6 +5200,9 @@ export function registerTools(
 		},
 		async ({ deployment, limit }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("list_errors");
+				if (_scopeDenied) return _scopeDenied;
+
 				const errors = await convex.query("errorMonitor:listErrors" as any, {
 					deployment,
 					limit: limit ?? 50,
@@ -5122,6 +5237,9 @@ export function registerTools(
 		},
 		async ({ errorId }) => {
 			try {
+				const _scopeDenied = guardMasterOnly("get_error");
+				if (_scopeDenied) return _scopeDenied;
+
 				const error = await convex.query("errorMonitor:getError" as any, {
 					errorId: errorId as any,
 				});
