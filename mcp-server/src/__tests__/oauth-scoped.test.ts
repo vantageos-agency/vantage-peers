@@ -8,8 +8,12 @@
  * harness (spun up separately against a Bun server + convex-test fixture).
  */
 
-import { describe, expect, it } from "vitest";
+import type { ConvexHttpClient } from "convex/browser";
+import { Hono } from "hono";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	_setInternalClientForTest,
+	bearerAuthMiddleware,
 	checkFromAllowed,
 	checkNamespacePrefix,
 	checkNamespaceRead,
@@ -291,5 +295,123 @@ describe("Extended tool guard coverage (newly guarded tools)", () => {
 		expect(checkFromAllowed(genericCtx, "anonymous-dcr-hijack")).toMatch(
 			/Forbidden/,
 		);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #556 (Day 88) — DCR auth path e2e regression
+//
+// Verifies bearerAuthMiddleware layer 3 (DCR token) succeeds when the upstream
+// Convex query `oauthDcr:validateAccessToken` is callable. Before the fix the
+// function was declared `internalQuery`, causing ConvexHttpClient.query() to
+// throw "Could not find public function for 'oauthDcr:validateAccessToken'",
+// the catch block swallowed it, dcrResult stayed null, and Path 3 returned 401.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("bearerAuthMiddleware DCR path e2e (#556)", () => {
+	beforeEach(() => {
+		vi.stubEnv("CONVEX_URL_INTERNAL", "https://example.convex.cloud");
+		vi.stubEnv("BEARER_SECRET_MASTER", "test-master-not-used-here");
+	});
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		_setInternalClientForTest(null);
+	});
+
+	function buildMockConvex(
+		dcrResponse:
+			| { valid: true; clientId: string; scope: string; expiresAt: number }
+			| { valid: false },
+	): ConvexHttpClient {
+		// Layers 2 (oauth:getAccessTokenByHash) → null (miss), Layer 3 → DCR
+		const queryFn = vi.fn(async (name: string) => {
+			if (name === "oauth:getAccessTokenByHash") return null;
+			if (name === "oauthDcr:validateAccessToken") return dcrResponse;
+			if (name === "mcpTenants:getTenantByTokenHash") return null;
+			return null;
+		});
+		return {
+			query: queryFn,
+			mutation: vi.fn().mockResolvedValue(null),
+			action: vi.fn().mockResolvedValue(null),
+		} as unknown as ConvexHttpClient;
+	}
+
+	it("returns 200 and sets DCR oauthContext for a valid DCR bearer token", async () => {
+		const expiresAt = Date.now() + 3600_000;
+		_setInternalClientForTest(
+			buildMockConvex({
+				valid: true,
+				clientId: "claude-ai-dcr-client-abc",
+				scope: "mcp:full",
+				expiresAt,
+			}),
+		);
+
+		const app = new Hono();
+		app.use("*", bearerAuthMiddleware());
+		app.get("/protected", (c) => {
+			const ctx = c.get("oauthContext");
+			return c.json({
+				ok: true,
+				clientId: ctx?.clientId,
+				scopeProfile: ctx?.scopeProfile,
+				isMaster: ctx?.isMaster,
+			});
+		});
+
+		const res = await app.request("/protected", {
+			headers: { Authorization: "Bearer dcr-valid-opaque-token-xyz" },
+		});
+
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual({
+			ok: true,
+			clientId: "claude-ai-dcr-client-abc",
+			// Security: DCR always resolves to client-generic, never master.
+			scopeProfile: "client-generic",
+			isMaster: false,
+		});
+	});
+
+	it("returns 401 when DCR validateAccessToken reports { valid: false }", async () => {
+		_setInternalClientForTest(buildMockConvex({ valid: false }));
+
+		const app = new Hono();
+		app.use("*", bearerAuthMiddleware());
+		app.get("/protected", (c) => c.json({ ok: true }));
+
+		const res = await app.request("/protected", {
+			headers: { Authorization: "Bearer unknown-token" },
+		});
+		expect(res.status).toBe(401);
+	});
+
+	// MCP spec §"Protected Resource Metadata Discovery Requirements" mandates
+	// `WWW-Authenticate: Bearer resource_metadata="..."` so Claude.ai's OAuth
+	// connector can bootstrap PRM discovery on a 401. With the old `resource=`
+	// form, the entire DCR chain breaks before any token is issued.
+	it("emits WWW-Authenticate with resource_metadata= (not resource=) on 401", async () => {
+		_setInternalClientForTest(buildMockConvex({ valid: false }));
+
+		const app = new Hono();
+		app.use("*", bearerAuthMiddleware());
+		app.get("/protected", (c) => c.json({ ok: true }));
+
+		const resNoAuth = await app.request("/protected");
+		expect(resNoAuth.status).toBe(401);
+		const headerNoAuth = resNoAuth.headers.get("WWW-Authenticate");
+		expect(headerNoAuth).toBeTruthy();
+		expect(headerNoAuth).toMatch(/^Bearer resource_metadata="/);
+		expect(headerNoAuth).not.toMatch(/^Bearer resource="/);
+		expect(headerNoAuth).toContain("/.well-known/oauth-protected-resource");
+
+		const resBadToken = await app.request("/protected", {
+			headers: { Authorization: "Bearer unknown-token" },
+		});
+		expect(resBadToken.status).toBe(401);
+		const headerBadToken = resBadToken.headers.get("WWW-Authenticate");
+		expect(headerBadToken).toMatch(/^Bearer resource_metadata="/);
 	});
 });

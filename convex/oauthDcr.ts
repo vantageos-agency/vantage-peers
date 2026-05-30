@@ -23,7 +23,7 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crypto helpers (Web Crypto — available in default Convex V8 runtime)
@@ -316,7 +316,26 @@ export const exchangeCodeForToken = internalMutation({
 // validateAccessToken
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const validateAccessToken = internalQuery({
+/**
+ * Public query — validateAccessToken
+ *
+ * Exposed as a PUBLIC `query` (not `internalQuery`) because the MCP HTTP server
+ * (mcp-server/src/auth.ts bearerAuthMiddleware layer 3) calls it via
+ * `ConvexHttpClient.query(...)`, which only resolves public functions. Routing
+ * through an internal function would surface as
+ * `Could not find public function for 'oauthDcr:validateAccessToken'`, silently
+ * breaking the DCR auth path for claude.ai auto-discovery clients (issue #556).
+ *
+ * Security posture:
+ *   - Lookup keyed solely on the opaque random `accessToken` (high-entropy bearer)
+ *   - Returns `{ valid: false }` on miss / expired / revoked — never throws,
+ *     no timing-distinguishable branch on existence vs expiry
+ *   - On hit returns ONLY: clientId, scope, expiresAt — no userId/email/PII,
+ *     no token echo
+ *   - Same shape and gating logic as the previous internalQuery — pure
+ *     visibility flip, no semantic change
+ */
+export const validateAccessToken = query({
 	args: { accessToken: v.string() },
 	returns: v.union(
 		v.object({

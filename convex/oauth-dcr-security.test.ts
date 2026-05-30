@@ -14,8 +14,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 
@@ -184,7 +183,9 @@ describe("DCR self-registration default scope enforcement", () => {
 		});
 
 		// Retrieve and assert token scope is deny-by-default (not master)
-		const tokenCtx = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		const tokenCtx = await t.query(api.oauth.getAccessTokenByHash, {
+			tokenHash,
+		});
 		expect(tokenCtx).not.toBeNull();
 		expect(tokenCtx?.scopeProfile).toBe("client-generic");
 		expect(tokenCtx?.fromAllowList).toEqual([]);
@@ -193,5 +194,84 @@ describe("DCR self-registration default scope enforcement", () => {
 		// Explicitly confirm this is NOT master scope
 		expect(tokenCtx?.scopeProfile).not.toBe("master");
 		expect(tokenCtx?.fromAllowList).not.toContain("*");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #556 (Day 88) — validateAccessToken MUST be a PUBLIC query so the MCP
+// HTTP server's ConvexHttpClient.query() can resolve it. Regression for the
+// "Could not find public function for 'oauthDcr:validateAccessToken'" failure
+// that broke claude.ai DCR auto-discovery clients (Path 3).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("oauthDcr.validateAccessToken — public query exposure (#556)", () => {
+	test("6. callable via PUBLIC query API (api.oauthDcr.validateAccessToken)", async () => {
+		const t = createTestConvex();
+		// The mere fact that `api.oauthDcr.validateAccessToken` resolves and
+		// returns a value (rather than throwing "Could not find public function")
+		// is the regression assertion. Empty token → { valid: false }.
+		const result = await t.query(api.oauthDcr.validateAccessToken, {
+			accessToken: "",
+		});
+		expect(result).toEqual({ valid: false });
+	});
+
+	test("7. returns { valid: false } for unknown/invalid access token (no throw, no leak)", async () => {
+		const t = createTestConvex();
+		const result = await t.query(api.oauthDcr.validateAccessToken, {
+			accessToken: "totally-random-never-issued-token-xyz",
+		});
+		expect(result).toEqual({ valid: false });
+	});
+
+	test("8. returns proper shape { valid: true, clientId, scope, expiresAt } for valid token", async () => {
+		const t = createTestConvex();
+		const accessToken = "dcr-test-access-token-valid";
+		const clientId = "self-reg-dcr-valid";
+		const expiresAt = Date.now() + 3600_000;
+
+		// Seed a valid DCR access token row directly into the oauthTokens table
+		// (mirrors what exchangeCodeForToken would produce).
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauthTokens", {
+				clientId,
+				accessToken,
+				scope: "mcp:full",
+				expiresAt,
+				createdAt: Date.now(),
+			});
+		});
+
+		const result = await t.query(api.oauthDcr.validateAccessToken, {
+			accessToken,
+		});
+		expect(result).toEqual({
+			valid: true,
+			clientId,
+			scope: "mcp:full",
+			expiresAt,
+		});
+		// No PII / no token echo in response
+		expect(result).not.toHaveProperty("accessToken");
+		expect(result).not.toHaveProperty("userId");
+		expect(result).not.toHaveProperty("refreshToken");
+	});
+
+	test("9. returns { valid: false } for expired token", async () => {
+		const t = createTestConvex();
+		const accessToken = "dcr-test-access-token-expired";
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauthTokens", {
+				clientId: "self-reg-dcr-expired",
+				accessToken,
+				scope: "mcp:full",
+				expiresAt: Date.now() - 1000, // already expired
+				createdAt: Date.now() - 7200_000,
+			});
+		});
+		const result = await t.query(api.oauthDcr.validateAccessToken, {
+			accessToken,
+		});
+		expect(result).toEqual({ valid: false });
 	});
 });

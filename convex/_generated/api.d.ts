@@ -11,6 +11,7 @@
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as components_ from "../components.js";
+import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as diary from "../diary.js";
@@ -61,6 +62,7 @@ declare const fullApi: ApiFromModules<{
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   components: typeof components_;
+  credentials: typeof credentials;
   crons: typeof crons;
   dashboard: typeof dashboard;
   diary: typeof diary;
