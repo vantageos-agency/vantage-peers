@@ -170,6 +170,35 @@ describe("checkNamespaceRead", () => {
 	it("undefined namespace (list-all) is allowed when no context", () => {
 		expect(checkNamespaceRead(undefined, undefined)).toBeNull();
 	});
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Day 88 P0 regression — listing across the whole table with namespace
+	// undefined was a cross-tenant leak. checkNamespaceRead now rejects it for
+	// every non-master scope.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	it("Day 88 P0: Marie CANNOT call a read tool with namespace=undefined", () => {
+		const err = checkNamespaceRead(marieCtx, undefined);
+		expect(err).toMatch(/Forbidden/);
+		expect(err).toMatch(/explicit namespace argument/);
+		expect(err).toMatch(/marie-iris-rh/);
+		// the error must hint at which prefixes the client may use
+		expect(err).toMatch(/orchestrator\/victor/);
+	});
+
+	it("Day 88 P0: generic deny-by-default client CANNOT list-all either", () => {
+		const err = checkNamespaceRead(genericCtx, undefined);
+		expect(err).toMatch(/Forbidden/);
+		expect(err).toMatch(/your client has no read scope/);
+	});
+
+	it("Day 88 P0: master CAN still list-all (backward compat)", () => {
+		expect(checkNamespaceRead(masterCtx, undefined)).toBeNull();
+	});
+
+	it("Day 88 P0: legacy bearer CAN still list-all (backward compat)", () => {
+		expect(checkNamespaceRead(undefined, undefined)).toBeNull();
+	});
 });
 
 describe("checkNamespaceWrite", () => {

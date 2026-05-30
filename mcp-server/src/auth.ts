@@ -194,7 +194,23 @@ export function checkNamespaceRead(
 ): string | null {
 	if (!ctx) return null;
 	if (isMasterScope(ctx)) return null;
-	if (!namespace) return null; // no namespace filter — list-across, which master-only in practice
+	if (!namespace) {
+		// Day 88 P0 fix: a list-across (namespace undefined) call from a
+		// non-master scope cannot be served safely — the underlying query
+		// returns rows across every tenant. Reject with an explicit message
+		// telling the caller to pass a namespace they own. Previously this
+		// returned null and leaked the whole memories/profiles/etc. table
+		// to any DCR-issued client.
+		const allowed =
+			ctx.namespaceReadPrefixes.length > 0
+				? ctx.namespaceReadPrefixes.join(", ")
+				: "(none — your client has no read scope)";
+		return (
+			"Forbidden: this tool requires an explicit namespace argument when " +
+			`called with a non-master scope (current: ${ctx.scopeProfile}). ` +
+			`Pass namespace= one of: ${allowed}.`
+		);
+	}
 	if (checkNamespacePrefix(ctx.namespaceReadPrefixes, namespace)) return null;
 	return `Forbidden: namespace='${namespace}' is not readable by scope_profile=${ctx.scopeProfile}.`;
 }
