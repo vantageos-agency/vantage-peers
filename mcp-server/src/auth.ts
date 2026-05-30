@@ -315,6 +315,10 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		// ── (3) DCR OAuth token — check oauthTokens via oauthDcr:validateAccessToken
 		// Uses raw token (not hashed) — the DCR table stores tokens in plaintext.
 		// This path handles Claude.ai clients registered via POST /register.
+		// NOTE: validateAccessToken is exposed as a PUBLIC query (not internalQuery)
+		// because ConvexHttpClient.query() only resolves public functions. Making it
+		// internal silently breaks the DCR path (#556). Security: lookup is keyed
+		// on the high-entropy opaque token; returns null on miss with no PII echo.
 		let dcrResult: DcrLookupResult = null;
 		try {
 			dcrResult = (await internalClient().query(
