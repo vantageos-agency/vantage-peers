@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
-[![Tests: 82/82](https://img.shields.io/badge/MCP_tests-82%2F82_passing-green)]()
+[![Tests: 84/84](https://img.shields.io/badge/MCP_tests-84%2F84_passing-green)]()
 
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
@@ -22,7 +22,7 @@ Self-host VantagePeers MCP in under 10 minutes. Free Convex tier sufficient for 
 
 ## What It Is
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 83 MCP tools that any Claude Code session can call. Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 84 MCP tools that any Claude Code session can call (with ChatGPT Apps SDK annotations: `readOnlyHint`, `openWorldHint`, `destructiveHint`). Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
 
 ## Why VantagePeers?
 
@@ -126,7 +126,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 Claude Code (Agent 1) ──┐
 Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
 Claude Code (Agent 3) ──┘        |
-                          83 MCP Tools
+                          84 MCP Tools
 ```
 
 One Convex deployment. One MCP server process per agent. All agents share the same database.
@@ -156,7 +156,7 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 - **PR monitoring** -- hourly cron polls open PRs on external repos, notifies on merge/close
 - **Orchestrator signatures** -- automated VantageOS Team branding on commits, PRs, and GitHub comments
 
-## MCP Tools Reference (83 tools)
+## MCP Tools Reference (84 tools)
 
 ### Memory (6 tools)
 
@@ -429,7 +429,7 @@ Multiple instances of the same role can run concurrently. Messages can be routed
 
 ### MCP Smoke Tests
 
-Runs all 83 MCP tools against a live Convex deployment:
+Runs all 84 MCP tools against a live Convex deployment:
 
 ```bash
 bun scripts/test-mcp.ts
@@ -488,7 +488,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) -- install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) -- two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) -- orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 83 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 84 MCP tools
 
 ## Contributing
 
