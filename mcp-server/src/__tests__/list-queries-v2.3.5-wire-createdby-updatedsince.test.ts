@@ -42,17 +42,12 @@ function buildFakeServer(): {
 	const handlers = new Map<string, ToolHandler>();
 
 	const fakeServer = {
-		tool(
-			name: string,
-			_descriptionOrSchema: unknown,
-			_schemaOrHandler: unknown,
-			handlerOrUndefined?: unknown,
-		): unknown {
-			// tools.ts uses: server.tool(name, description, argsSchema, handler)
-			const handler =
-				handlerOrUndefined !== undefined
-					? (handlerOrUndefined as ToolHandler)
-					: (_schemaOrHandler as ToolHandler);
+		tool(...args: unknown[]): unknown {
+			// Supports both 4-arg legacy form `tool(name, desc, schema, handler)`
+			// and Day 88 5-arg form `tool(name, desc, schema, annotations, handler)`.
+			// In both cases the handler is the LAST argument.
+			const name = args[0] as string;
+			const handler = args[args.length - 1] as ToolHandler;
 			handlers.set(name, handler);
 			return {};
 		},
