@@ -3,11 +3,11 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](https://github.com/vantageos-agency/vantage-peers/blob/main/LICENSE)
-[![Tests: 82/82](https://img.shields.io/badge/MCP_tools-82_registered-green)]()
+[![Tests: 84/84](https://img.shields.io/badge/MCP_tools-84_registered-green)]()
 
 MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
 
-82 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session.
+84 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session. All tools ship with ChatGPT Apps SDK annotations (`readOnlyHint`, `openWorldHint`, `destructiveHint`) for native UX in ChatGPT custom connectors.
 
 ## Quick start
 
@@ -74,7 +74,7 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 
 The server also reads `CONVEX_URL` from `.env.local` in the parent directory if not set via environment.
 
-## Tools (82)
+## Tools (84)
 
 ### Memory (6)
 `store_memory`, `recall`, `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
@@ -399,6 +399,17 @@ All orchestrator names are open strings — any lowercase name is accepted. The 
 - A VantagePeers Convex deployment ([get started](https://vantagepeers.com/docs))
 
 ## Changelog
+
+### 2.4.1 — 2026-05-30 (Day 88)
+- fix(dcr): `oauthDcr:validateAccessToken` exposed as PUBLIC `query` (was `internalQuery`, unreachable via `ConvexHttpClient.query()` → Path 3 DCR returned 401 even with valid token) — issue #556 / PR #557.
+- fix(dcr): `WWW-Authenticate` header now emits `Bearer resource_metadata="..."` per MCP spec §Protected Resource Metadata Discovery (was `resource="..."` — broke Claude.ai PRM discovery bootstrap on 401) — PR #557.
+- feat(mcp): ChatGPT Apps SDK tool annotations on all 84 tools (`readOnlyHint`, `openWorldHint`, `destructiveHint`) — 34 read-only + 41 write + 9 destructive — PR #555.
+- security(dcr): DCR scope isolation — new `public-readonly` profile + cross-tenant assertion tests + `scopeProfile` forced to `client-generic` for auto-discovery flow (never `master`) — PR #554.
+- docs(cloud): dedicated `/docs/cloud/` section in vantage-peers-site for VantagePeers Cloud (multi-tenant, multi-clients MCP: Claude.ai, ChatGPT, Claude Code, Codex) — site PR #120.
+
+### 2.4.0 — 2026-05-29 (Day 86)
+- feat(m3): `iframeEmbedSessions` table + `__VP_TOOL_RESULT__` stream marker + ack-checklist primitive — PR #545.
+- feat(v0.0.2-auth): `credentials:issueBearerFromClerk` httpAction + audit log + iter 2 P1 fixes — PR #546.
 
 ### 2.3.0 — 2026-05-26
 - `list_tasks`, `list_missions`, `list_tasks_by_mission`, `list_briefing_notes` now accept `fields=lite` for compact payloads (less tokens).
