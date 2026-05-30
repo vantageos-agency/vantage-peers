@@ -162,9 +162,7 @@ export const updateBriefingNoteSchema = z.object({
 	participants: z
 		.array(z.string())
 		.optional()
-		.describe(
-			"Optional new participants array — full replace, not append",
-		),
+		.describe("Optional new participants array — full replace, not append"),
 	content: z
 		.string()
 		.optional()
@@ -206,7 +204,9 @@ const taskStatusValues = [
 	"done",
 ] as const;
 const taskStatusAliases = ["open", "active", "all"] as const;
-export const taskStatusSchema = z.enum(taskStatusValues).describe("Task status");
+export const taskStatusSchema = z
+	.enum(taskStatusValues)
+	.describe("Task status");
 
 const missionStatusValues = [
 	"brainstorm",
@@ -232,7 +232,7 @@ export const taskStatusFilterSchema = z
 	.describe(
 		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"), ' +
 			'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
-			'or array of direct statuses (no aliases inside array).',
+			"or array of direct statuses (no aliases inside array).",
 	);
 
 export const missionStatusFilterSchema = z
@@ -243,7 +243,7 @@ export const missionStatusFilterSchema = z
 	.describe(
 		'Mission status filter. Single status ("brainstorm"|"plan"|"execute"|"validate"|"complete"), ' +
 			'alias ("open" = brainstorm+plan+execute+validate, "active" = plan+execute, "all" = no filter), ' +
-			'or array of direct statuses (no aliases inside array).',
+			"or array of direct statuses (no aliases inside array).",
 	);
 
 // v2.3.2 — fields projection toggle. "lite" returns compact projection
@@ -252,7 +252,7 @@ export const fieldsSchema = z
 	.enum(["lite", "full"])
 	.describe(
 		'Field projection — "lite" returns compact fields only ' +
-			'(typical 5-10× smaller payload for large list scans), ' +
+			"(typical 5-10× smaller payload for large list scans), " +
 			'"full" (default) returns the full document.',
 	);
 
@@ -398,7 +398,10 @@ export function parseConvexError(rawMessage: string): ParsedConvexError {
 	let code = "ServerError";
 	let remainder = stripped;
 	for (const candidate of knownCodes) {
-		if (stripped.startsWith(candidate + ":") || stripped.startsWith(candidate + " ")) {
+		if (
+			stripped.startsWith(candidate + ":") ||
+			stripped.startsWith(candidate + " ")
+		) {
 			code = candidate;
 			remainder = stripped.slice(candidate.length).replace(/^[:\s]+/, "");
 			break;
@@ -408,16 +411,21 @@ export function parseConvexError(rawMessage: string): ParsedConvexError {
 	// Extract "Path: .<fieldPath>" from the tail of the message
 	// Convex appends this as the last sentence: "Path: .linkedMemoryIds[4]"
 	let path: string | null = null;
-	const pathMatch = remainder.match(/\bPath:\s*([\w.\[\]"']+)\s*$/);
+	const pathMatch = remainder.match(/\bPath:\s*([\w.[\]"']+)\s*$/);
 	if (pathMatch) {
 		path = pathMatch[1];
-		remainder = remainder.slice(0, pathMatch.index).trim().replace(/\.\s*$/, "");
+		remainder = remainder
+			.slice(0, pathMatch.index)
+			.trim()
+			.replace(/\.\s*$/, "");
 	}
 
 	// Build a concise hint for common patterns
 	let hint: string | null = null;
 	if (code === "ArgumentValidationError") {
-		const tableMatch = remainder.match(/from table (\w+),.*validator v\.id\("(\w+)"\)/);
+		const tableMatch = remainder.match(
+			/from table (\w+),.*validator v\.id\("(\w+)"\)/,
+		);
 		if (tableMatch) {
 			hint = `ID belongs to table "${tableMatch[1]}" but validator expects v.id("${tableMatch[2]}"). Check that you are passing the correct document ID from the "${tableMatch[2]}" table.`;
 		}
@@ -439,8 +447,7 @@ export function mcpConvexError(error: unknown): {
 	content: Array<{ type: "text"; text: string }>;
 	isError: true;
 } {
-	const rawMessage =
-		error instanceof Error ? error.message : String(error);
+	const rawMessage = error instanceof Error ? error.message : String(error);
 
 	const parsed = parseConvexError(rawMessage);
 
@@ -540,6 +547,12 @@ export function registerTools(
 				.optional()
 				.describe("Optional expiry ISO timestamp e.g. '2026-06-01T00:00:00Z'"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Store memory",
+		},
 		async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
 			let contentBytes = 0;
 			try {
@@ -600,6 +613,12 @@ export function registerTools(
 				.string()
 				.describe("Convex document ID of the memory to soft-delete"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete memory (soft)",
+		},
 		async ({ memoryId }) => {
 			try {
 				const denied = guardMasterOnly("soft_delete_memory");
@@ -630,6 +649,12 @@ export function registerTools(
 		"Fetch a single memory by its ID. Returns full memory content including relations and episode data.",
 		{
 			memoryId: z.string().describe("Memory document ID"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get memory",
 		},
 		async ({ memoryId }) => {
 			try {
@@ -670,6 +695,12 @@ export function registerTools(
 				.optional()
 				.default(5)
 				.describe("Maximum number of results to return (default 5)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Recall memories",
 		},
 		async ({ query, namespace, type, limit }) => {
 			try {
@@ -717,6 +748,12 @@ export function registerTools(
 				.optional()
 				.default(10)
 				.describe("Max results"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search memories (text)",
 		},
 		async ({ query, namespace, type, limit }) => {
 			try {
@@ -768,6 +805,12 @@ export function registerTools(
 				.optional()
 				.describe("Weight for text results in RRF (default: 0.5)"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search memories (hybrid)",
+		},
 		async ({ query, namespace, type, limit, vectorWeight, textWeight }) => {
 			try {
 				const nsDenied = guardRead(namespace);
@@ -814,6 +857,12 @@ export function registerTools(
 					"The lesson extracted — procedural memory, what to do differently",
 				),
 			severity: severitySchema,
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Store episode",
 		},
 		async ({
 			namespace,
@@ -869,6 +918,12 @@ export function registerTools(
 		{
 			orchestratorId: z.string().describe("Orchestrator identifier"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get orchestrator profile",
+		},
 		async ({ orchestratorId }) => {
 			try {
 				const profile = await convex.query("profiles:getProfile" as any, {
@@ -921,6 +976,12 @@ export function registerTools(
 				})
 				.optional()
 				.describe("Mutable session state — updated each session"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update orchestrator profile",
 		},
 		async ({ orchestratorId, name, static: staticFields, dynamic }) => {
 			try {
@@ -979,6 +1040,12 @@ export function registerTools(
 				.optional()
 				.default(20)
 				.describe("Maximum number of memories to return (default 20)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List memories",
 		},
 		async ({ namespace, type, limit }) => {
 			try {
@@ -1048,6 +1115,12 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe("Tenant identifier for multi-tenant isolation"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Send message",
 		},
 		async ({
 			from,
@@ -1123,6 +1196,12 @@ export function registerTools(
 					"Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog.",
 				),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Check messages",
+		},
 		async ({ recipient, recipientInstanceId, tenantId, since }) => {
 			try {
 				const messages = await convex.query(
@@ -1183,6 +1262,12 @@ export function registerTools(
 				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
 				.describe("Receipt IDs to mark as read — array or single string"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Mark messages as read",
+		},
 		async ({ receiptIds }) => {
 			try {
 				let receiptIdsArray: string[];
@@ -1231,6 +1316,12 @@ export function registerTools(
 				.optional()
 				.describe("Optional RBAC — must be the sender or system"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete message",
+		},
 		async ({ messageId, callerOrchestrator }) => {
 			try {
 				if (callerOrchestrator) {
@@ -1272,6 +1363,12 @@ export function registerTools(
 				.describe("Instance ID — e.g. 'pi-chromebook', 'pi-vps', 'tau-vps-1'"),
 			summary: z.string().describe("1-2 sentence summary of current work"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Set instance summary",
+		},
 		async ({ orchestratorId, instanceId, summary }) => {
 			try {
 				const fromDenied = guardFrom(orchestratorId);
@@ -1309,6 +1406,12 @@ export function registerTools(
 		"List all orchestrator profiles with their current status and summary. " +
 			"Replaces claude-peers list_peers.",
 		{},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List peers",
+		},
 		async () => {
 			try {
 				const profiles = await convex.query("profiles:listProfiles" as any, {});
@@ -1359,6 +1462,12 @@ export function registerTools(
 				.default(100)
 				.describe("Max messages to return (default 100)"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List messages",
+		},
 		async ({ sessionDay, from, limit }) => {
 			try {
 				const messages = await convex.query("messages:listMessages" as any, {
@@ -1399,6 +1508,12 @@ export function registerTools(
 			messageId: z
 				.string()
 				.describe("Convex document ID of the broadcast message"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List broadcast status",
 		},
 		async ({ messageId }) => {
 			try {
@@ -1463,6 +1578,12 @@ export function registerTools(
 				.optional()
 				.describe("Optional due date as Unix timestamp (ms)"),
 			createdBy: creatorSchema,
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create task",
 		},
 		async ({
 			title,
@@ -1556,6 +1677,12 @@ export function registerTools(
 				),
 			updatedSince: updatedSinceSchema.optional(),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List tasks",
+		},
 		async ({
 			assignedTo,
 			assignedToInstance,
@@ -1643,6 +1770,12 @@ export function registerTools(
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update task",
+		},
 		async ({
 			taskId,
 			title,
@@ -1720,6 +1853,12 @@ export function registerTools(
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Complete task",
+		},
 		async ({ taskId, completionNote, callerOrchestrator }) => {
 			try {
 				if (callerOrchestrator) {
@@ -1758,6 +1897,12 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Start task",
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
@@ -1801,6 +1946,12 @@ export function registerTools(
 				.optional()
 				.describe("Instance identifier, e.g. 'sigma-vps'"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Checkout task",
+		},
 		async ({ taskId, callerOrchestrator, callerInstance }) => {
 			try {
 				const fromDenied = guardFrom(callerOrchestrator);
@@ -1836,6 +1987,12 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or system"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete task",
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
@@ -1878,6 +2035,12 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Block task",
 		},
 		async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
 			try {
@@ -1932,6 +2095,12 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Add task dependency",
 		},
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
@@ -1989,10 +2158,14 @@ export function registerTools(
 			fields: fieldsSchema
 				.optional()
 				.describe('Field projection ("lite"|"full")'),
-			createdBy: assigneeSchema
-				.optional()
-				.describe("Filter by task creator"),
+			createdBy: assigneeSchema.optional().describe("Filter by task creator"),
 			updatedSince: updatedSinceSchema.optional(),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List tasks by mission",
 		},
 		async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
 			try {
@@ -2043,6 +2216,12 @@ export function registerTools(
 				.describe("Target completion date (Unix ms)"),
 			progress: z.number().optional().describe("Progress percentage (0-100)"),
 			createdBy: creatorSchema,
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create mission",
 		},
 		async ({
 			name,
@@ -2123,6 +2302,12 @@ export function registerTools(
 				.describe('Field projection ("lite"|"full")'),
 			updatedSince: updatedSinceSchema.optional(),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List missions",
+		},
 		async ({ project, pilot, status, limit, fields, updatedSince }) => {
 			try {
 				const missions = await convex.query("missions:list" as any, {
@@ -2167,6 +2352,12 @@ export function registerTools(
 		{
 			missionId: z.string().describe("Convex document ID of the mission"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get mission",
+		},
 		async ({ missionId }) => {
 			try {
 				const mission = await convex.query("missions:get" as any, {
@@ -2208,6 +2399,12 @@ export function registerTools(
 			startDate: z.number().optional().describe("New start date (Unix ms)"),
 			targetDate: z.number().optional().describe("New target date (Unix ms)"),
 			progress: z.number().optional().describe("New progress (0-100)"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update mission",
 		},
 		async ({
 			missionId,
@@ -2267,6 +2464,12 @@ export function registerTools(
 			missionId: z.string().describe("Convex document ID of the mission"),
 			status: missionStatusSchema.describe("New status"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update mission status",
+		},
 		async ({ missionId, status }) => {
 			try {
 				await convex.mutation("missions:updateStatus" as any, {
@@ -2300,6 +2503,12 @@ export function registerTools(
 			content: z.string().describe("Full diary entry content"),
 			highlights: flexArrayOptional.describe("Key highlights of the day"),
 			blockers: flexArrayOptional.describe("Blockers encountered"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Write diary entry",
 		},
 		async ({ date, orchestrator, content, highlights, blockers }) => {
 			let contentBytes = 0;
@@ -2348,6 +2557,12 @@ export function registerTools(
 			orchestrator: creatorSchema.describe(
 				"Which orchestrator's diary to fetch",
 			),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get diary entry",
 		},
 		async ({ date, orchestrator }) => {
 			try {
@@ -2398,6 +2613,12 @@ export function registerTools(
 				.optional()
 				.default(20)
 				.describe("Maximum entries to return (default 20)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List diary entries",
 		},
 		async ({ orchestrator, limit }) => {
 			try {
@@ -2451,6 +2672,12 @@ export function registerTools(
 						"If cross-linking briefings is needed, request the linkedBriefingIds feature instead.",
 				),
 			createdBy: creatorSchema,
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create briefing note",
 		},
 		async ({
 			title,
@@ -2510,6 +2737,12 @@ export function registerTools(
 		"update_briefing_note",
 		updateBriefingNoteDescription,
 		updateBriefingNoteSchema.shape,
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update briefing note",
+		},
 		async ({
 			noteId,
 			callerOrchestrator,
@@ -2585,6 +2818,12 @@ export function registerTools(
 				.describe('Field projection ("lite"|"full")'),
 			updatedSince: updatedSinceSchema.optional(),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List briefing notes",
+		},
 		async ({ topic, limit, fields, updatedSince }) => {
 			try {
 				const notes = await convex.query("briefingNotes:list" as any, {
@@ -2647,6 +2886,12 @@ export function registerTools(
 				.describe("Project this component belongs to"),
 			createdBy: creatorSchema,
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Register component",
+		},
 		async ({ name, type, team, content, version, project, createdBy }) => {
 			let contentBytes = 0;
 			try {
@@ -2704,6 +2949,12 @@ export function registerTools(
 				.default(100)
 				.describe("Maximum components to return (default 100)"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List components",
+		},
 		async ({ type, team, limit }) => {
 			try {
 				const components = await convex.query("components:list" as any, {
@@ -2734,6 +2985,12 @@ export function registerTools(
 		{
 			name: z.string().describe("Component name"),
 			type: componentTypeSchema,
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get component",
 		},
 		async ({ name, type }) => {
 			try {
@@ -2768,6 +3025,12 @@ export function registerTools(
 			content: z.string().optional().describe("New content/source code"),
 			version: z.string().optional().describe("New version string"),
 			project: z.string().optional().describe("New project name"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update component",
 		},
 		async ({ componentId, ...fields }) => {
 			let contentBytes = 0;
@@ -2814,6 +3077,12 @@ export function registerTools(
 				.string()
 				.describe("Convex document ID of the component to delete"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete component",
+		},
 		async ({ componentId }) => {
 			try {
 				const result = await convex.mutation("components:remove" as any, {
@@ -2839,6 +3108,12 @@ export function registerTools(
 				.describe("Search term to match against component name or team"),
 			type: componentTypeSchema.optional().describe("Filter by component type"),
 			limit: z.number().int().optional().describe("Max results (default 50)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search components",
 		},
 		async ({ query, type, limit }) => {
 			try {
@@ -2877,6 +3152,12 @@ export function registerTools(
 				.string()
 				.describe("5-field cron: minute hour day-of-month month day-of-week"),
 			createdBy: creatorSchema,
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create recurring task",
 		},
 		async ({
 			title,
@@ -2941,6 +3222,12 @@ export function registerTools(
 				.default(50)
 				.describe("Max results"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List recurring tasks",
+		},
 		async ({ assignedTo, active, limit }) => {
 			try {
 				const tasks = await convex.query("recurringTasks:list" as any, {
@@ -2966,6 +3253,12 @@ export function registerTools(
 		{
 			taskId: z.string().describe("Recurring task ID"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Pause recurring task",
+		},
 		async ({ taskId }) => {
 			try {
 				const result = await convex.mutation("recurringTasks:pause" as any, {
@@ -2989,6 +3282,12 @@ export function registerTools(
 		{
 			taskId: z.string().describe("Recurring task ID"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Resume recurring task",
+		},
 		async ({ taskId }) => {
 			try {
 				const result = await convex.mutation("recurringTasks:resume" as any, {
@@ -3011,6 +3310,12 @@ export function registerTools(
 		"Permanently delete a recurring task template.",
 		{
 			taskId: z.string().describe("Recurring task ID"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete recurring task",
 		},
 		async ({ taskId }) => {
 			try {
@@ -3047,6 +3352,12 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe("New cron expression (5-field)"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update recurring task",
 		},
 		async ({ recurringTaskId, ...fields }) => {
 			try {
@@ -3108,6 +3419,12 @@ export function registerTools(
 				.optional()
 				.describe("Signed authorization document or reference"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create mandate",
+		},
 		async ({
 			requestedBy,
 			fulfilledBy,
@@ -3164,6 +3481,12 @@ export function registerTools(
 				"Must be the fulfilledBy orchestrator or system",
 			),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Accept mandate",
+		},
 		async ({ mandateId, callerOrchestrator }) => {
 			try {
 				const fromDenied = guardFrom(callerOrchestrator);
@@ -3207,6 +3530,12 @@ export function registerTools(
 				.array(z.string())
 				.optional()
 				.describe("Task IDs created to fulfill this mandate"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update mandate",
 		},
 		async ({
 			mandateId,
@@ -3256,6 +3585,12 @@ export function registerTools(
 			),
 			finalCost: z.number().describe("Final actual token cost to record"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Settle mandate",
+		},
 		async ({ mandateId, callerOrchestrator, finalCost }) => {
 			try {
 				const fromDenied = guardFrom(callerOrchestrator);
@@ -3296,6 +3631,12 @@ export function registerTools(
 				.number()
 				.describe("Proposed token spend amount to validate"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Validate mandate spending",
+		},
 		async ({ mandateId, proposedAmount }) => {
 			try {
 				const result = await convex.query("mandates:validateSpending" as any, {
@@ -3335,6 +3676,12 @@ export function registerTools(
 				.optional()
 				.default(50)
 				.describe("Maximum mandates to return (default 50)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List mandates",
 		},
 		async ({ requestedBy, fulfilledBy, status, limit }) => {
 			try {
@@ -3391,6 +3738,12 @@ export function registerTools(
 				.optional()
 				.default(10)
 				.describe("Management fee percentage (default 10)"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create BU",
 		},
 		async ({
 			name,
@@ -3480,6 +3833,12 @@ export function registerTools(
 			kpis: flexArrayOptional.describe("New KPIs"),
 			managementFee: z.number().optional().describe("New management fee %"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update BU",
+		},
 		async ({
 			buId,
 			name,
@@ -3547,6 +3906,12 @@ export function registerTools(
 		{
 			buId: z.string().describe("Convex document ID of the business unit"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get BU",
+		},
 		async ({ buId }) => {
 			try {
 				const bu = await convex.query("businessUnits:get" as any, {
@@ -3588,6 +3953,12 @@ export function registerTools(
 				.default(50)
 				.describe("Maximum BUs to return (default 50)"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List BUs",
+		},
 		async ({ orchestratorId, status, limit }) => {
 			try {
 				const bus = await convex.query("businessUnits:list" as any, {
@@ -3619,6 +3990,12 @@ export function registerTools(
 			buId: z
 				.string()
 				.describe("Convex document ID of the business unit to delete"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete BU",
 		},
 		async ({ buId }) => {
 			try {
@@ -3661,6 +4038,12 @@ export function registerTools(
 				.default(true)
 				.describe("Whether this mapping is active (default true)"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Add repo mapping",
+		},
 		async ({ repo, orchestrator, project, active }) => {
 			try {
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
@@ -3694,6 +4077,12 @@ export function registerTools(
 		"list_repo_mappings",
 		"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.",
 		{},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List repo mappings",
+		},
 		async () => {
 			try {
 				const mappings = await convex.query(
@@ -3726,6 +4115,12 @@ export function registerTools(
 				.describe(
 					"Full repo name to remove — e.g. 'vantageos-agency/vantage-peers'",
 				),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Remove repo mapping",
 		},
 		async ({ repo }) => {
 			try {
@@ -3778,6 +4173,12 @@ export function registerTools(
 				.optional()
 				.default(50)
 				.describe("Maximum number of issues to return (default 50)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List issues",
 		},
 		async ({ project, status, assignedTo, limit }) => {
 			try {
@@ -3835,6 +4236,12 @@ export function registerTools(
 				.describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
 			issueNumber: z.number().int().describe("GitHub issue number"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get issue",
+		},
 		async ({ repo, issueNumber }) => {
 			try {
 				const issue = await convex.query("issues:getByRepoNumber" as any, {
@@ -3873,6 +4280,12 @@ export function registerTools(
 			status: z
 				.enum(["open", "in_progress", "fixed", "verified", "closed"])
 				.describe("New status for the issue"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update issue status",
 		},
 		async ({ repo, issueNumber, status }) => {
 			try {
@@ -3915,6 +4328,12 @@ export function registerTools(
 				.string()
 				.describe("Who fixed it — orchestrator name or person"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Link commit to issue",
+		},
 		async ({ repo, issueNumber, commitSha, fixedBy }) => {
 			try {
 				await convex.mutation("issues:linkCommit" as any, {
@@ -3956,6 +4375,12 @@ export function registerTools(
 				.string()
 				.describe("Who verified the fix — orchestrator name or person"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Verify issue",
+		},
 		async ({ repo, issueNumber, verifiedBy }) => {
 			try {
 				await convex.mutation("issues:verify" as any, {
@@ -3992,6 +4417,12 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe("Filter stats to a specific project — omit for all projects"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Issue statistics",
 		},
 		async ({ project }) => {
 			try {
@@ -4044,6 +4475,12 @@ export function registerTools(
 			linkedIssueIds: flexArrayOptional.describe(
 				"VantagePeers issue IDs linked to this pattern",
 			),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create fix pattern",
 		},
 		async ({
 			symptom,
@@ -4101,6 +4538,12 @@ export function registerTools(
 			createdBy: creatorSchema,
 			commit: z.string().optional().describe("Git commit hash of this attempt"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Add fix attempt",
+		},
 		async ({ patternId, description, worked, why, createdBy, commit }) => {
 			try {
 				const fromDenied = guardFrom(createdBy);
@@ -4140,6 +4583,12 @@ export function registerTools(
 		{
 			patternId: z.string().describe("ID of the fix pattern"),
 			validatedFix: z.string().describe("Description of the validated fix"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Validate fix",
 		},
 		async ({ patternId, validatedFix }) => {
 			try {
@@ -4183,6 +4632,12 @@ export function registerTools(
 				.optional()
 				.describe("Max results to return (default 10)"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search fix patterns",
+		},
 		async ({ query, limit }) => {
 			try {
 				const results = await convex.action("search:searchFixPatterns" as any, {
@@ -4215,6 +4670,12 @@ export function registerTools(
 				.optional()
 				.describe("Filter by source project — omit for all"),
 			limit: z.number().int().optional().describe("Max results (default 50)"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List fix patterns",
 		},
 		async ({ project, limit }) => {
 			try {
@@ -4254,6 +4715,12 @@ export function registerTools(
 			patternId: z.string().describe("ID of the fix pattern"),
 			issueId: z.string().describe("VantagePeers issue ID to link"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Link issue to fix pattern",
+		},
 		async ({ patternId, issueId }) => {
 			try {
 				await convex.mutation("fixPatterns:linkIssue" as any, {
@@ -4287,6 +4754,12 @@ export function registerTools(
 			"Use 'issue-resolution-v2' for the default Issue Resolution Protocol.",
 		{
 			name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get mission template",
 		},
 		async ({ name }) => {
 			try {
@@ -4364,6 +4837,12 @@ export function registerTools(
 				.optional()
 				.describe("Mark as the default template for its type"),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update mission template",
+		},
 		async ({ name, description, steps, createdBy, isDefault }) => {
 			try {
 				const fromDenied = guardFrom(createdBy);
@@ -4429,7 +4908,19 @@ export function registerTools(
 					"Orchestrator making this call — used as createdBy on tasks. Defaults to 'system'.",
 				),
 		},
-		async ({ templateName, missionId, context, titlePrefix, callerOrchestrator }) => {
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Instantiate mission template",
+		},
+		async ({
+			templateName,
+			missionId,
+			context,
+			titlePrefix,
+			callerOrchestrator,
+		}) => {
 			try {
 				const denied = guardMasterOnly("instantiate_template_into_mission");
 				if (denied) return denied;
@@ -4493,6 +4984,12 @@ export function registerTools(
 					"Orchestrator responsible for this deployment — e.g. 'sigma'",
 				),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Add deployment",
+		},
 		async ({
 			name,
 			deploymentUrl,
@@ -4538,6 +5035,12 @@ export function registerTools(
 					"Name of the deployment to deactivate — e.g. 'your-deployment-123'",
 				),
 		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Remove deployment",
+		},
 		async ({ name }) => {
 			try {
 				await convex.mutation("errorMonitor:removeDeployment" as any, { name });
@@ -4577,6 +5080,12 @@ export function registerTools(
 				.default(50)
 				.describe("Maximum number of errors to return (default 50)"),
 		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List errors",
+		},
 		async ({ deployment, limit }) => {
 			try {
 				const errors = await convex.query("errorMonitor:listErrors" as any, {
@@ -4604,6 +5113,12 @@ export function registerTools(
 		"Fetch a single error log entry by its Convex document ID, including stack trace and issue linkage.",
 		{
 			errorId: z.string().describe("Convex document ID of the errorLogs entry"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get error",
 		},
 		async ({ errorId }) => {
 			try {
