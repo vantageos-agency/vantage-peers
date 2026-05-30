@@ -195,6 +195,70 @@ describe("DCR self-registration default scope enforcement", () => {
 		expect(tokenCtx?.scopeProfile).not.toBe("master");
 		expect(tokenCtx?.fromAllowList).not.toContain("*");
 	});
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Day 88 — public-readonly profile seed + cross-tenant denial
+	// ─────────────────────────────────────────────────────────────────────────
+
+	test("6. seedDefaultProfiles creates public-readonly with read=global/* only", async () => {
+		const t = createTestConvex();
+		await seedProfiles(t);
+
+		const profile = await t.query(api.oauth.getScopeProfile, {
+			profileId: "public-readonly",
+		});
+		expect(profile).not.toBeNull();
+		// "global" is the prefix form (no glob support in checkNamespacePrefix);
+		// matches both exact "global" and nested "global/X" via slash boundary.
+		expect(profile?.namespaceReadPrefixes).toEqual(["global"]);
+		expect(profile?.namespaceWritePrefixes).toEqual([]);
+		expect(profile?.fromAllowList).toEqual(["external"]);
+	});
+
+	test("7. DCR self-reg with scopeProfile=public-readonly → succeeds (non-master)", async () => {
+		const t = createTestConvex();
+		await seedProfiles(t);
+
+		await t.mutation(api.oauth.registerPublicClient, {
+			clientId: "dcr-public-ro",
+			clientSecretHash: "1".repeat(64),
+			name: "claude-ai-autodiscovery",
+			redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+			scopeProfile: "public-readonly",
+		});
+
+		const client = await t.query(api.oauth.getClientByClientId, {
+			clientId: "dcr-public-ro",
+		});
+		expect(client?.scopeProfile).toBe("public-readonly");
+		expect(client?.scopeProfile).not.toBe("master");
+	});
+
+	test("8. cross-tenant attempt — DCR client with public-readonly profile has no orchestrator/* read access", async () => {
+		// This asserts the persisted scope profile cannot reach cross-tenant
+		// namespaces. The actual 403 enforcement happens in auth.ts predicates
+		// (checkNamespaceRead) — covered in mcp-server/__tests__/oauth-scoped.test.ts
+		// Day 88 block. Here we verify the Convex-side data shape that drives them.
+		const t = createTestConvex();
+		await seedProfiles(t);
+
+		const profile = await t.query(api.oauth.getScopeProfile, {
+			profileId: "public-readonly",
+		});
+		expect(profile).not.toBeNull();
+
+		// Cross-tenant namespaces are NOT in the read prefix list.
+		const reads = profile?.namespaceReadPrefixes ?? [];
+		expect(reads).not.toContain("orchestrator/pi");
+		expect(reads).not.toContain("orchestrator/marie");
+		expect(reads).not.toContain("project/secret");
+		expect(reads).not.toContain("*");
+		// Only "global" (matching exact + nested global/X) is allowed
+		expect(reads).toEqual(["global"]);
+
+		// Writes are fully denied
+		expect(profile?.namespaceWritePrefixes).toEqual([]);
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

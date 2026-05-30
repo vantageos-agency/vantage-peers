@@ -112,6 +112,23 @@ export const seedDefaultProfiles = mutation({
 				namespaceReadPrefixes: [],
 				namespaceWritePrefixes: [],
 			},
+			{
+				// Day 88: minimum-read scope profile for self-registered (DCR) clients
+				// that need to read PUBLIC global state without any tenant or
+				// orchestrator-owned data. Used by Claude.ai "Add custom integration"
+				// auto-discovery path so anonymous clients cannot reach cross-tenant
+				// namespaces. Write is empty (deny). fromAllowList="external" tags
+				// the impersonation source for audit trails.
+				profileId: "public-readonly",
+				description:
+					"Minimum-read scope for anonymous DCR clients — read global/* only, no write, no tenant access.",
+				fromAllowList: ["external"],
+				// "global" matches both the exact namespace and any nested global/X
+				// per the checkNamespacePrefix slash-boundary rule in mcp-server/auth.ts.
+				// This is the "global/*" intent expressed in prefix form (no glob support).
+				namespaceReadPrefixes: ["global"],
+				namespaceWritePrefixes: [],
+			},
 		];
 
 		const created: string[] = [];
