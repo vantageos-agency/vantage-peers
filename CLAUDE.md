@@ -1,5 +1,17 @@
 # VantagePeers
 
+## ABSOLUTE RULE — 2 PRODUITS DISTINCTS, NE JAMAIS MÉLANGER
+
+VANTAGEPEERS = 2 PRODUITS DISTINCTS — NE JAMAIS MÉLANGER.
+
+- **VantagePeers Cloud** (multi-tenant) = UN SEUL produit, multi-clients MCP : Claude.ai, ChatGPT, Claude Code, Codex, tout IDE supportant MCP. Pas de "Path A/B/C" — c'est UN produit, plusieurs façons d'y accéder.
+- **VantagePeers Self-host** = PRODUIT SÉPARÉ.
+- Runbook Cloud = `docs/cloud/` uniquement. Runbook Self-host = `docs/getting-started/` uniquement.
+- Briefs missions, tasks, messages users : préciser EXPLICITEMENT "Cloud" ou "Self-host" en intro.
+- Day 88 Laurent verbatim : "self host c'est self host! on parle de la version vantage peers cloud (multi tenant). les users doivent pouvoir utiliser cette version cloud sur claude ET chatgpt ET claude Code ET codex et tout IDE supportant MCP. est clair? ne mélange pas tout!". Memory `j57dy3049btafda9m2f5d2ggk987ph3f`.
+
+---
+
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns.
