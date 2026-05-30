@@ -215,12 +215,14 @@ export function checkNamespaceWrite(
 
 export function bearerAuthMiddleware(): MiddlewareHandler {
 	return async (c: Context, next: Next) => {
-		// RFC 6750 §3 — point clients at the protected-resource metadata so
-		// Claude.ai's OAuth connector can bootstrap discovery from any 401.
+		// MCP spec §"Protected Resource Metadata Discovery Requirements" + RFC 6750 §3 —
+		// the param MUST be `resource_metadata=` (not `resource=`). Claude.ai's OAuth
+		// connector looks for `resource_metadata=` to bootstrap PRM discovery; with
+		// `resource=` the entire DCR chain breaks before any token is issued.
 		const publicBaseUrl =
 			process.env.PUBLIC_BASE_URL ??
 			"https://vantage-peers-production.up.railway.app";
-		const wwwAuthHeader = `Bearer resource="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
+		const wwwAuthHeader = `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
 
 		const authHeader = c.req.header("Authorization");
 

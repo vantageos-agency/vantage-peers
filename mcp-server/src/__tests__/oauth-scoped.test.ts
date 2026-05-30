@@ -387,4 +387,31 @@ describe("bearerAuthMiddleware DCR path e2e (#556)", () => {
 		});
 		expect(res.status).toBe(401);
 	});
+
+	// MCP spec §"Protected Resource Metadata Discovery Requirements" mandates
+	// `WWW-Authenticate: Bearer resource_metadata="..."` so Claude.ai's OAuth
+	// connector can bootstrap PRM discovery on a 401. With the old `resource=`
+	// form, the entire DCR chain breaks before any token is issued.
+	it("emits WWW-Authenticate with resource_metadata= (not resource=) on 401", async () => {
+		_setInternalClientForTest(buildMockConvex({ valid: false }));
+
+		const app = new Hono();
+		app.use("*", bearerAuthMiddleware());
+		app.get("/protected", (c) => c.json({ ok: true }));
+
+		const resNoAuth = await app.request("/protected");
+		expect(resNoAuth.status).toBe(401);
+		const headerNoAuth = resNoAuth.headers.get("WWW-Authenticate");
+		expect(headerNoAuth).toBeTruthy();
+		expect(headerNoAuth).toMatch(/^Bearer resource_metadata="/);
+		expect(headerNoAuth).not.toMatch(/^Bearer resource="/);
+		expect(headerNoAuth).toContain("/.well-known/oauth-protected-resource");
+
+		const resBadToken = await app.request("/protected", {
+			headers: { Authorization: "Bearer unknown-token" },
+		});
+		expect(resBadToken.status).toBe(401);
+		const headerBadToken = resBadToken.headers.get("WWW-Authenticate");
+		expect(headerBadToken).toMatch(/^Bearer resource_metadata="/);
+	});
 });
