@@ -415,3 +415,103 @@ describe("bearerAuthMiddleware DCR path e2e (#556)", () => {
 		expect(headerBadToken).toMatch(/^Bearer resource_metadata="/);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 88 — DCR auto-discovery path must NEVER yield master scope
+//
+// Claude.ai Settings → Integrations → "Add custom integration" presents only a
+// URL field (no manual creds). The auth.ts middleware that resolves the bearer
+// MUST map any DCR-issued token to a tenant-scoped profile (client-generic or
+// public-readonly), never master, even if the legacy oauthTokens row carries
+// scope="mcp:full".
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Day 88 — DCR auto-discovery scope isolation", () => {
+	// What auth.ts L341-368 produces for a DCR token after the fix:
+	// scopeProfile forced to "client-generic", isMaster=false, all prefixes empty.
+	const dcrAutoCtx: OAuthContext = {
+		clientId: "dcr-autodiscovery-claude-ai",
+		userId: "dcr-autodiscovery-claude-ai",
+		scopes: ["mcp:full"], // legacy label only — NOT an authorization grant
+		scopeProfile: "client-generic",
+		fromAllowList: [],
+		namespaceReadPrefixes: [],
+		namespaceWritePrefixes: [],
+		expiresAt: now + 3600_000,
+		isMaster: false,
+	};
+
+	it("DCR auto-flow ctx is NOT master scope even when scope='mcp:full'", () => {
+		expect(isMasterScope(dcrAutoCtx)).toBe(false);
+		expect(dcrAutoCtx.scopeProfile).not.toBe("master");
+		expect(dcrAutoCtx.isMaster).toBe(false);
+	});
+
+	it("DCR auto-flow client cannot read any orchestrator namespace (cross-tenant denied)", () => {
+		// Cross-tenant attempt — DCR client trying to read another tenant's data.
+		expect(checkNamespaceRead(dcrAutoCtx, "orchestrator/pi")).toMatch(
+			/Forbidden/,
+		);
+		expect(checkNamespaceRead(dcrAutoCtx, "orchestrator/marie")).toMatch(
+			/Forbidden/,
+		);
+		expect(checkNamespaceRead(dcrAutoCtx, "project/secret")).toMatch(
+			/Forbidden/,
+		);
+	});
+
+	it("DCR auto-flow client cannot write anywhere (deny-by-default)", () => {
+		expect(checkNamespaceWrite(dcrAutoCtx, "global")).toMatch(/Forbidden/);
+		expect(checkNamespaceWrite(dcrAutoCtx, "orchestrator/pi")).toMatch(
+			/Forbidden/,
+		);
+	});
+
+	it("DCR auto-flow client cannot impersonate any orchestrator (from=*)", () => {
+		expect(checkFromAllowed(dcrAutoCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(dcrAutoCtx, "marie")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(dcrAutoCtx, "external")).toMatch(/Forbidden/);
+	});
+
+	// public-readonly profile — Day 88 new seed. Read global/* only.
+	const publicReadonlyCtx: OAuthContext = {
+		clientId: "dcr-public-readonly-claude-ai",
+		userId: "dcr-public-readonly-claude-ai",
+		scopes: ["mcp:full"],
+		scopeProfile: "public-readonly",
+		fromAllowList: ["external"],
+		// "global" is the prefix value persisted by seedDefaultProfiles for the
+		// public-readonly profile; checkNamespacePrefix matches it against the
+		// exact "global" namespace and any nested "global/X" via slash boundary.
+		namespaceReadPrefixes: ["global"],
+		namespaceWritePrefixes: [],
+		expiresAt: now + 3600_000,
+		isMaster: false,
+	};
+
+	it("public-readonly ctx is NOT master scope", () => {
+		expect(isMasterScope(publicReadonlyCtx)).toBe(false);
+		expect(publicReadonlyCtx.scopeProfile).not.toBe("master");
+	});
+
+	it("public-readonly client can read global/* but NOT orchestrator namespaces", () => {
+		expect(
+			checkNamespaceRead(publicReadonlyCtx, "global/announcements"),
+		).toBeNull();
+		expect(checkNamespaceRead(publicReadonlyCtx, "orchestrator/pi")).toMatch(
+			/Forbidden/,
+		);
+		expect(checkNamespaceRead(publicReadonlyCtx, "project/marie")).toMatch(
+			/Forbidden/,
+		);
+	});
+
+	it("public-readonly client cannot write anywhere", () => {
+		expect(
+			checkNamespaceWrite(publicReadonlyCtx, "global/announcements"),
+		).toMatch(/Forbidden/);
+		expect(checkNamespaceWrite(publicReadonlyCtx, "orchestrator/pi")).toMatch(
+			/Forbidden/,
+		);
+	});
+});
