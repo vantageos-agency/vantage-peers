@@ -28,13 +28,13 @@ function createTestConvex() {
 }
 
 describe("oauth.seedDefaultProfiles", () => {
-	test("seeds master, marie-iris-rh, client-generic on first run", async () => {
+	test("seeds master, marie-iris-rh, client-generic, public-readonly on first run", async () => {
 		const t = createTestConvex();
 		const created = await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
 		expect(created.sort()).toEqual(
-			["client-generic", "marie-iris-rh", "master"].sort(),
+			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
 		);
 	});
 
