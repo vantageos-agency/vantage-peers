@@ -94,6 +94,64 @@ export function assertContentSize(content: string, toolName: string): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// List response byte cap (overflow protection for MCP clients)
+//
+// MCP clients (Claude.ai, ChatGPT, Claude Code) reject tool results that
+// exceed their token budget — typical ceiling ~25k tokens ≈ 75 KB JSON.
+// When that happens the entire response is lost to a downstream truncation
+// error and the user must fall back to reading the on-disk overflow file.
+//
+// `capListResponseBytes` guards every bulk list_* tool: if the serialized
+// payload exceeds MAX_LIST_RESPONSE_BYTES (60 KB), it truncates the items
+// array (halving until it fits) and wraps the result in a _meta envelope
+// that tells the caller exactly how to refine the query.
+//
+// 60 KB leaves headroom for tool-call JSON framing and the UI stream marker
+// before any MCP client hits its own ceiling. The cap is byte-counted on the
+// raw JSON string, not on item count, because content-heavy rows
+// (memories / diaries / briefing notes) blow past 30 items easily.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const MAX_LIST_RESPONSE_BYTES = 60_000;
+
+export function capListResponseBytes(
+	items: unknown,
+	rawText: string,
+	toolName: string,
+	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
+): string {
+	const byteLen = Buffer.byteLength(rawText, "utf8");
+	if (byteLen <= maxBytes) return rawText;
+	if (!Array.isArray(items) || items.length === 0) return rawText;
+
+	let n = items.length;
+	let truncated: unknown[] = items;
+	let truncatedText = rawText;
+	while (n > 1) {
+		n = Math.max(1, Math.floor(n / 2));
+		truncated = (items as unknown[]).slice(0, n);
+		truncatedText = JSON.stringify(truncated, null, 2);
+		if (Buffer.byteLength(truncatedText, "utf8") <= maxBytes - 600) break;
+	}
+
+	const envelope = {
+		_meta: {
+			_truncated: true,
+			_showing: truncated.length,
+			_total: (items as unknown[]).length,
+			_bytesOriginal: byteLen,
+			_bytesCap: maxBytes,
+			_tool: toolName,
+			_advice:
+				`Response exceeded ${maxBytes} bytes. Showing first ${truncated.length}/${(items as unknown[]).length}. ` +
+				`Pass fields="lite", a smaller limit, stricter filters (status, assignedTo, project, namespace, updatedSince), or paginate.`,
+		},
+		items: truncated,
+	};
+	return JSON.stringify(envelope, null, 2);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Shared Zod schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1070,7 +1128,7 @@ export function registerTools(
 						? (memories as any).page
 						: [];
 
-				const baseText = JSON.stringify(memories, null, 2);
+				const baseText = capListResponseBytes(memories, JSON.stringify(memories, null, 2), "list_memories");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "memory-quote",
 					items: rawList.map((m: any) => ({
@@ -1450,7 +1508,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(peers, null, 2),
+							text: capListResponseBytes(peers, JSON.stringify(peers, null, 2), "list_peers"),
 						},
 					],
 				};
@@ -1498,7 +1556,7 @@ export function registerTools(
 					limit: limit ?? 100,
 				});
 
-				const baseText = JSON.stringify(messages, null, 2);
+				const baseText = capListResponseBytes(messages, JSON.stringify(messages, null, 2), "list_messages");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "messages-feed",
 					items: Array.isArray(messages)
@@ -1553,7 +1611,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(status, null, 2),
+							text: capListResponseBytes(status, JSON.stringify(status, null, 2), "list_broadcast_status"),
 						},
 					],
 				};
@@ -1744,7 +1802,7 @@ export function registerTools(
 					updatedSince,
 				});
 
-				const baseText = JSON.stringify(tasks, null, 2);
+				const baseText = capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_tasks");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "tasks-table",
 					items: Array.isArray(tasks)
@@ -2224,7 +2282,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(tasks, null, 2),
+							text: capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_tasks_by_mission"),
 						},
 					],
 				};
@@ -2371,7 +2429,7 @@ export function registerTools(
 					updatedSince,
 				});
 
-				const baseText = JSON.stringify(missions, null, 2);
+				const baseText = capListResponseBytes(missions, JSON.stringify(missions, null, 2), "list_missions");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "mission-timeline",
 					items: Array.isArray(missions)
@@ -2698,7 +2756,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(entries, null, 2),
+							text: capListResponseBytes(entries, JSON.stringify(entries, null, 2), "list_diaries"),
 						},
 					],
 				};
@@ -2903,7 +2961,7 @@ export function registerTools(
 					updatedSince,
 				});
 
-				const baseText = JSON.stringify(notes, null, 2);
+				const baseText = capListResponseBytes(notes, JSON.stringify(notes, null, 2), "list_briefing_notes");
 				const text = appendMarkerIfEnabled(baseText, () => {
 					const items = Array.isArray(notes) ? notes : [];
 					if (items.length === 0) return null;
@@ -3040,7 +3098,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(components, null, 2),
+							text: capListResponseBytes(components, JSON.stringify(components, null, 2), "list_components"),
 						},
 					],
 				};
@@ -3319,7 +3377,7 @@ export function registerTools(
 				});
 
 				return {
-					content: [{ type: "text", text: JSON.stringify(tasks, null, 2) }],
+					content: [{ type: "text", text: capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_recurring_tasks") }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -3781,7 +3839,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(mandates, null, 2),
+							text: capListResponseBytes(mandates, JSON.stringify(mandates, null, 2), "list_mandates"),
 						},
 					],
 				};
@@ -4062,7 +4120,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(bus, null, 2),
+							text: capListResponseBytes(bus, JSON.stringify(bus, null, 2), "list_bus"),
 						},
 					],
 				};
@@ -4188,7 +4246,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(mappings, null, 2),
+							text: capListResponseBytes(mappings, JSON.stringify(mappings, null, 2), "list_repo_mappings"),
 						},
 					],
 				};
@@ -4308,10 +4366,14 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(
-								{ count: results.length, issues: results },
-								null,
-								2,
+							text: capListResponseBytes(
+								results,
+								JSON.stringify(
+									{ count: results.length, issues: results },
+									null,
+									2,
+								),
+								"list_issues",
 							),
 						},
 					],
@@ -4797,7 +4859,7 @@ export function registerTools(
 						},
 					);
 					return {
-						content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+						content: [{ type: "text", text: capListResponseBytes(results, JSON.stringify(results, null, 2), "list_fix_patterns") }],
 					};
 				}
 
@@ -4806,7 +4868,7 @@ export function registerTools(
 				});
 				return {
 					content: [
-						{ type: "text", text: JSON.stringify(allResults, null, 2) },
+						{ type: "text", text: capListResponseBytes(allResults, JSON.stringify(allResults, null, 2), "list_fix_patterns") },
 					],
 				};
 			} catch (error: any) {
@@ -5211,7 +5273,7 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(errors, null, 2),
+							text: capListResponseBytes(errors, JSON.stringify(errors, null, 2), "list_errors"),
 						},
 					],
 				};
