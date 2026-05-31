@@ -400,6 +400,9 @@ All orchestrator names are open strings — any lowercase name is accepted. The 
 
 ## Changelog
 
+### 2.4.3 — 2026-05-31 (Day 89)
+- fix(overflow): defensive byte-cap on all 17 `list_*` tools — `capListResponseBytes` truncates any list response above 60 KB and wraps the result in a `_meta` envelope (`_truncated`, `_showing`, `_total`, `_advice`) so MCP clients (Claude.ai, ChatGPT, Claude Code) never reject a list result for exceeding their token budget. Day 89 Pi 75,003-char `list_tasks` overflow incident reproduced and capped in regression test. PR #565.
+
 ### 2.4.1 — 2026-05-30 (Day 88)
 - fix(dcr): `oauthDcr:validateAccessToken` exposed as PUBLIC `query` (was `internalQuery`, unreachable via `ConvexHttpClient.query()` → Path 3 DCR returned 401 even with valid token) — issue #556 / PR #557.
 - fix(dcr): `WWW-Authenticate` header now emits `Bearer resource_metadata="..."` per MCP spec §Protected Resource Metadata Discovery (was `resource="..."` — broke Claude.ai PRM discovery bootstrap on 401) — PR #557.
