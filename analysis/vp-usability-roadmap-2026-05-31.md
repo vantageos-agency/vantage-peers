@@ -51,6 +51,28 @@ Same 9 skills, packaged as a plugin (`vantage-peers-plugin v2.4.0`). No new tool
 
 Same 9 + `vantage-peers-init` (smoke test). Plus a `pre-compact` skill (session-state snapshot) overlapping with `close-day`.
 
+## 2.4-bis VantageRegistry as canonical authoring source
+
+**Critical context** : VR (`github.com/elpiarthera/vantage-registry`) is a separate Convex backend exposing **55 MCP tools** that govern the lifecycle of every skill, hook, agent, plugin, prompt, template, command, and runbook fleet-wide:
+
+- Skills (14 tools) : `upsert_skill`, `list_skills`, `list_skills_by_team`, `list_skills_by_category`, `list_skills_by_freshness`, `list_skills_below_threshold`, `get_skill`, `get_skill_content`, `upsert_skill_content`, `detect_skill_drift`, `upsert_test_run`, `get_skill_test_history`, `upsert_skill_eval_corpus`.
+- Agents (7), Plugins (7), Hooks (7), Prompts (3), Templates (3), Commands (3), Runbooks (10), Teams (3), Stats (1).
+
+**Shipping path for any new skill** (corrected from earlier section 8):
+
+1. Author canonical skill body via VR `upsert_skill` + `upsert_skill_content`.
+2. Run `detect_skill_drift` to verify the workspace / plugin / VR mirrors are in sync.
+3. Hand-pull workspace `.claude/skills/<name>/SKILL.md` from VR (bytes-exact, per VR canonical source doctrine).
+4. Hand-pull `vantage-peers-plugin/vantage-peers/skills/<name>/SKILL.md` from VR.
+5. Bump `vantage-peers-plugin` version and publish.
+6. Eta dim-12 review on the PR before merge.
+
+This corrects my earlier roadmap which had each skill ship as a standalone PR against vantage-memory — most skills live upstream in VR, only the BYTES land in vantage-memory + plugin.
+
+## 2.4-ter `vantage-peers-plugin` repository
+
+`github.com/vantageos-agency/vantage-peers-plugin` is the distribution layer. Today it ships the same 9 skills mirrored from VR (`vantage-peers/skills/`). Phase A skills land here as `vantage-peers-plugin v2.5.0`, Phase B as v2.6.0, Phase C as v2.7.0.
+
 ## 2.4 Coverage today
 
 Out of 19 tool buckets (Section 3), skills exist for **5**:
@@ -122,7 +144,7 @@ The phrases listed below as "blocking conditions" use placeholders like `<durati
 | `enforce-pi-authorization-before-prod-deploy.py` | PreToolUse | Bash (`convex deploy --prod`) | YES (no Pi-auth token) | High at deploy time |
 | `enforce-ship-24-7.py` | PreToolUse | `mcp__vantage-peers__send_message\|create_task\|update_task\|complete_task` | YES (defer-temporel phrasing) | Medium |
 | `enforce-signature.py` | PreToolUse | `Agent`, Bash (commits/PRs); PostToolUse Bash + send_message | YES (no orchestrator signature line) | **Very high** — every PR body, every commit, every cross-orch DM |
-| `enforce-task-quality.py` | (latent) | n/a | n/a | n/a |
+| `enforce-task-quality.py` | PreToolUse | `mcp__vantage-peers__create_task` (active in pi-chromebook, latent in sigma-vps) | YES (requires `VERIFICATION:` + `TESTS:` blocks per IRP doctrine in `description`) | **Very high** — Pi reports this blocks her every `create_task` until she adds the IRP scaffolding |
 | `qa-breadcrumb.py` | PostToolUse | `mcp__vantage-peers__complete_task` | NO (records breadcrumb) | n/a |
 | `check-file-size.py` | (latent) | n/a | n/a | n/a |
 | `check-french-diacritics.py` | PostToolUse | `Write(*.md)\|Edit(*.md)` | NO (warns) | Low |
@@ -170,7 +192,7 @@ Every candidate skill, with one line per bucket. Phasing is an ordering hint onl
 | # | Skill | Bucket | Tools wrapped | Impact | Effort | Hook-comp | ROI | Phase |
 |---:|---|---|---|:---:|:---:|:---:|:---:|:---:|
 | 1 | `dispatch-message` | Messaging | `send_message`, `mark_as_read` (post-action) | 5 | 2 | 5 | 12.5 | A |
-| 2 | `dispatch-task-create` | Tasks core | `create_task` | 5 | 2 | 5 | 12.5 | A |
+| 2 | `dispatch-task-create` | Tasks core | `create_task` + mandatory `VERIFICATION:` + `TESTS:` blocks injection per IRP doctrine (kills `enforce-task-quality` rejection) | 5 | 2 | 5 | 12.5 | A |
 | 3 | `dispatch-task-complete` | Tasks core | `complete_task`, `update_task→done\|review` | 5 | 2 | 5 | 12.5 | A |
 | 4 | `dispatch-task-start` (a.k.a. `start-task-clean`) | Tasks core | `start_task` + stale-in-progress sweep via `complete_task`/`block_task` | 5 | 2 | 4 | 10 | A |
 | 5 | `dispatch-subagent` | Agent | `Agent` + auto template ref | 4 | 2 | 5 | 10 | A |
@@ -295,6 +317,8 @@ Pi proposed `dispatch-task` and `dispatch-message`.
 - `dispatch-subagent` (#9) — the brief-template hook is currently a major silent rejection source on Agent calls.
 - `mission-bootstrap` (#11) — full IRP creation is the biggest "multi-call repeated by hand" pattern.
 - The 4 rewrites of existing skills (#1–#4) — every rewrite reuses the new dispatch-* primitives.
+
+**Critical fix for the screenshot Pi shared** : `dispatch-task-create` (#6) MUST inject `VERIFICATION:` + `TESTS:` blocks in the task description by default (per IRP doctrine and `enforce-task-quality.py`). The current rejection pattern "Every task MUST include: VERIFICATION:..." is the daily killer — the skill auto-assembles these blocks from the task title + acceptance criteria the assistant already has in context, so Pi never has to remember the IRP scaffold by hand.
 
 ---
 
