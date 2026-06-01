@@ -4,6 +4,12 @@ import { creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // write — upsert diary entry (if entry exists for date+orchestrator, update it)
+//
+// v2.4.8: `createdBy` is server-supplied (auth-derived from oauthCtx.userId at
+// the MCP layer, passed as a trusted arg). It is NOT accepted from the MCP
+// client directly — the MCP handler derives it and passes it here. On insert,
+// it records the authenticated author. On update (upsert), createdBy is NOT
+// overwritten — preserving the original author captured at creation time.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const write = mutation({
@@ -13,6 +19,9 @@ export const write = mutation({
 		content: v.string(),
 		highlights: v.optional(v.array(v.string())),
 		blockers: v.optional(v.array(v.string())),
+		// v2.4.8: auth-derived author. MCP layer passes oauthCtx.userId here.
+		// Optional for backwards compat (pre-v2.4.8 callers omit it).
+		createdBy: v.optional(creatorValidator),
 	},
 	returns: v.id("diary"),
 	handler: async (ctx, args) => {
@@ -27,6 +36,8 @@ export const write = mutation({
 			.unique();
 
 		if (existing !== null) {
+			// Update content fields only — do NOT overwrite createdBy (preserve
+			// original auth-verified author captured at creation time).
 			await ctx.db.patch(existing._id, {
 				content: args.content,
 				highlights: args.highlights,
@@ -41,6 +52,7 @@ export const write = mutation({
 			content: args.content,
 			highlights: args.highlights,
 			blockers: args.blockers,
+			createdBy: args.createdBy,
 			createdAt: now,
 		});
 	},
@@ -65,6 +77,7 @@ export const get = query({
 			content: v.string(),
 			highlights: v.optional(v.array(v.string())),
 			blockers: v.optional(v.array(v.string())),
+			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
 		}),
 		v.null(),
@@ -86,6 +99,9 @@ export const get = query({
 export const list = query({
 	args: {
 		orchestrator: v.optional(creatorValidator),
+		// v2.4.8: filter by auth-derived author (distinct from orchestrator).
+		// Applied universally post-take (mirrors tasks.ts:354-357 pattern).
+		createdBy: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
 	},
 	returns: v.array(
@@ -98,23 +114,33 @@ export const list = query({
 			content: v.string(),
 			highlights: v.optional(v.array(v.string())),
 			blockers: v.optional(v.array(v.string())),
+			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
 		}),
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
 
-		if (args.orchestrator !== undefined) {
-			return await ctx.db
-				.query("diary")
-				.withIndex("by_orchestrator_date", (q) =>
-					q.eq("orchestrator", args.orchestrator!),
-				)
-				.order("desc")
-				.take(limit);
+		const orchestrator = args.orchestrator;
+		const allRows =
+			orchestrator !== undefined
+				? await ctx.db
+						.query("diary")
+						.withIndex("by_orchestrator_date", (q) =>
+							q.eq("orchestrator", orchestrator),
+						)
+						.order("desc")
+						.take(limit)
+				: await ctx.db.query("diary").order("desc").take(limit);
+
+		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
+		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
+		// (oauthCtx.userId from MCP layer), client cannot spoof.
+		if (args.createdBy !== undefined) {
+			return allRows.filter((r) => r.createdBy === args.createdBy);
 		}
 
-		return await ctx.db.query("diary").order("desc").take(limit);
+		return allRows;
 	},
 });
 
@@ -172,11 +198,12 @@ export const listByDateRange = query({
 	),
 	handler: async (ctx, args) => {
 		if (args.orchestrator !== undefined) {
+			const orchestrator = args.orchestrator;
 			return await ctx.db
 				.query("diary")
 				.withIndex("by_orchestrator_date", (q) =>
 					q
-						.eq("orchestrator", args.orchestrator!)
+						.eq("orchestrator", orchestrator)
 						.gte("date", args.from)
 						.lte("date", args.to),
 				)

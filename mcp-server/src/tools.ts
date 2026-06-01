@@ -2637,12 +2637,20 @@ export function registerTools(
 				const fromDenied = guardFrom(orchestrator);
 				if (fromDenied) return fromDenied;
 
+				// v2.4.8: derive createdBy from auth context (oauthCtx.userId).
+				// This is the anti-spoof authored-by — distinct from orchestrator
+				// (writer-intent label, client-supplied). On the no-auth path
+				// (master-scope bearer / local dev), oauthCtx is undefined and
+				// createdBy gracefully degrades to undefined (transition period).
+				const createdBy: string | undefined = oauthCtx?.userId;
+
 				const diaryId = await convex.mutation("diary:write" as any, {
 					date,
 					orchestrator,
 					content,
 					highlights: toArray(highlights),
 					blockers: toArray(blockers),
+					createdBy,
 				});
 
 				return {
@@ -2730,7 +2738,7 @@ export function registerTools(
 			createdBy: assigneeSchema
 				.optional()
 				.describe(
-					"Filter by creator/orchestrator role — alias of `orchestrator` for cross-tool consistency (mirrors list_tasks pattern). If both are passed, `createdBy` wins.",
+					"Filter by auth-derived author (v2.4.8+, anti-spoof). Distinct from `orchestrator` which is the writer-intent label. Pre-v2.4.8 entries are backfilled with orchestrator as best-guess.",
 				),
 			limit: z
 				.number()
@@ -2749,19 +2757,25 @@ export function registerTools(
 		},
 		async ({ orchestrator, createdBy, limit }) => {
 			try {
-				// createdBy is an alias of orchestrator (diary's author field). If both set, createdBy wins.
-				const effectiveOrchestrator = createdBy ?? orchestrator;
-				// Non-master: must scope to own orchestrator id.
+				// v2.4.8: orchestrator (writer-intent) and createdBy (auth-derived
+				// author) are separate filters — NOT aliases. Forward both independently.
+				// Non-master: REQUIRE at least one explicit self-scope — undefined passes
+				// through are forbidden. Mirrors v2.4.7 effectiveOrchestrator shortcircuit:
+				// undefined !== myId → Forbidden. No silent fleet-read for non-master callers.
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
-					if (effectiveOrchestrator !== oauthCtx.userId) {
+					const myId = oauthCtx.userId;
+					const orchestratorScoped = orchestrator === myId;
+					const createdByScoped = createdBy === myId;
+					if (!orchestratorScoped && !createdByScoped) {
 						return mcpError(
-							`Forbidden: list_diaries requires orchestrator='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
+							`Forbidden: list_diaries requires orchestrator='${myId}' OR createdBy='${myId}' for non-master scope (current scope: ${oauthCtx.scopeProfile}).`,
 						);
 					}
 				}
 
 				const entries = await convex.query("diary:list" as any, {
-					orchestrator: effectiveOrchestrator,
+					orchestrator,
+					createdBy,
 					limit: limit ?? 20,
 				});
 
