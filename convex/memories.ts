@@ -248,7 +248,7 @@ export const listMemories = query({
         .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
         .order("desc")
         .paginate(opts);
-      return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+      return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
     }
 
     // ── Bounded default path (no paginationOpts) — compat with existing callers ──
@@ -294,7 +294,7 @@ export const listMemories = query({
       .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
       .order("desc")
       .take(limit);
-    return { value: page, continueCursor: null, isDone: true };
+    return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
   },
 });
 
