@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
@@ -860,5 +860,145 @@ export const listOverdue = query({
 		}
 
 		return tasks;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A.6 auto-task dedup helpers (Day 88)
+//
+// Used by the GitHub PR-merge webhook in convex/http.ts to prevent accumulation
+// of superseded "[Deploy] PR #N merged" tasks when a stream of PRs merges
+// rapidly (e.g. v2.4.4→v2.4.6 trilogy produced 5 stale deploy tasks).
+//
+// Dedup key: project + tags ["github","deploy","pr-merged"] + open status.
+// When a new deploy event arrives we close ALL existing open deploy tasks for
+// that project with a [SUPERSEDED-BY-k<new>] completionNote, then insert the
+// fresh task. The caller receives the new task ID in every case.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * findOpenDeployTasks — internal query
+ * Returns all open (non-done) auto-deploy tasks for a given project that carry
+ * the "github", "deploy", "pr-merged" tags.  Used to decide whether dedup is
+ * needed before inserting a new task.
+ */
+export const findOpenDeployTasks = internalQuery({
+	args: {
+		project: v.string(),
+	},
+	returns: v.array(
+		v.object({
+			_id: v.id("tasks"),
+			_creationTime: v.number(),
+			title: v.string(),
+			status: v.union(
+				v.literal("todo"),
+				v.literal("in_progress"),
+				v.literal("review"),
+				v.literal("blocked"),
+				v.literal("done"),
+			),
+			tags: v.optional(v.array(v.string())),
+			completionNote: v.optional(v.string()),
+		}),
+	),
+	handler: async (ctx, args) => {
+		// Use by_project index: equality on project, then filter status != done
+		const candidates = await ctx.db
+			.query("tasks")
+			.withIndex("by_project", (q) => q.eq("project", args.project))
+			.collect();
+
+		return candidates
+			.filter((t) => {
+				if (t.status === "done") return false;
+				const tags = t.tags ?? [];
+				return (
+					tags.includes("github") &&
+					tags.includes("deploy") &&
+					tags.includes("pr-merged")
+				);
+			})
+			.map((t) => ({
+				_id: t._id,
+				_creationTime: t._creationTime,
+				title: t.title,
+				status: t.status,
+				tags: t.tags,
+				completionNote: t.completionNote,
+			}));
+	},
+});
+
+/**
+ * createDeployTaskWithDedup — internal mutation
+ *
+ * Fix 1 + Fix 3 (Day 88 A.6):
+ *   1. Query open deploy tasks for the same project.
+ *   2. If any exist, patch each to status="done" with a [SUPERSEDED-BY-k<new>]
+ *      completionNote (Fix 3 — auto-close superseded tasks).
+ *   3. Insert the new deploy task and return its ID (Fix 1 — single active task).
+ *
+ * The caller (http.ts webhook) should replace the direct api.tasks.create call
+ * with ctx.runMutation(internal.tasks.createDeployTaskWithDedup, { ... }).
+ */
+export const createDeployTaskWithDedup = internalMutation({
+	args: {
+		title: v.string(),
+		description: v.optional(v.string()),
+		project: v.string(),
+		assignedTo: assigneeValidator,
+		priority: priorityValidator,
+		tags: v.optional(v.array(v.string())),
+		createdBy: creatorValidator,
+	},
+	returns: v.object({
+		taskId: v.id("tasks"),
+		supersededCount: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		const now = Date.now();
+
+		// Step 1: find existing open deploy tasks for this project
+		const existing: Array<Doc<"tasks">> = await ctx.db
+			.query("tasks")
+			.withIndex("by_project", (q) => q.eq("project", args.project))
+			.collect();
+
+		const openDeployTasks = existing.filter((t) => {
+			if (t.status === "done") return false;
+			const tags = t.tags ?? [];
+			return (
+				tags.includes("github") &&
+				tags.includes("deploy") &&
+				tags.includes("pr-merged")
+			);
+		});
+
+		// Step 2: insert the new task first so we have its ID for the marker
+		const newTaskId: Id<"tasks"> = await ctx.db.insert("tasks", {
+			title: args.title,
+			description: args.description,
+			project: args.project,
+			assignedTo: args.assignedTo,
+			priority: args.priority,
+			status: "todo",
+			tags: args.tags ?? ["github", "deploy", "pr-merged"],
+			createdBy: args.createdBy,
+			createdAt: now,
+			updatedAt: now,
+		});
+
+		// Step 3: close older open deploy tasks with SUPERSEDED-BY marker (Fix 3)
+		for (const old of openDeployTasks) {
+			await ctx.db.patch(old._id, {
+				status: "done",
+				completionNote: `[SUPERSEDED-BY-k${newTaskId}] Auto-closed by deploy webhook — newer deploy task k${newTaskId} created. Old title: "${old.title}"`,
+				completedAt: now,
+				updatedAt: now,
+			});
+		}
+
+		return { taskId: newTaskId, supersededCount: openDeployTasks.length };
 	},
 });

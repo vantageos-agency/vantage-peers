@@ -467,14 +467,14 @@ http.route({
 					content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Deploy to prod now: npx convex deploy --yes`,
 				});
 
-				// Create deploy task
-				await ctx.runMutation(api.tasks.create, {
+				// Create deploy task — with dedup: closes older open deploy tasks for
+				// the same project before inserting (Fix 1 + Fix 3, Day 88 A.6).
+				await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
 					title: `[Deploy] PR #${pr.number as number} merged — deploy ${project} to prod`,
 					description: `PR #${pr.number as number} "${pr.title as string}" was merged by ${(pr.merged_by as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url as string}`,
 					assignedTo: orchestratorAssignee,
 					project,
 					priority: "urgent",
-					status: "todo",
 					createdBy: "system",
 					tags: ["github", "deploy", "pr-merged"],
 				});
