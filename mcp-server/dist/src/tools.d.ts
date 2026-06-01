@@ -99,6 +99,11 @@ export declare const fieldsSchema: z.ZodEnum<{
     full: "full";
 }>;
 export declare const updatedSinceSchema: z.ZodNumber;
+/**
+ * Derive the current VantagePeers day number from the server clock.
+ * Returns 1 on or before 2026-03-06 UTC; increments by 1 per UTC day.
+ */
+export declare function deriveSessionDay(nowMs?: number): number;
 export interface ParsedConvexError {
     code: string;
     message: string;

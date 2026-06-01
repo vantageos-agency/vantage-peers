@@ -274,6 +274,30 @@ const coreTeamSchema = z
 })
     .describe("Core team composition — agents, skills, hooks, plugins");
 // ─────────────────────────────────────────────────────────────────────────────
+// A.7 — project day number derivation
+//
+// VantagePeers uses a sequential "Day N" numbering convention where Day 1 =
+// 2026-03-06 UTC. This is the confirmed epoch: Day 88 = 2026-06-01 (87 days
+// after Day 1), verified from Pi VP task k178tqgzhbhzg1h4vbgn4kwdm987vntn
+// Day 88 brief (2026-06-01).
+//
+// No Convex-side day-counter table exists. The value is purely clock-based:
+//   dayNumber = floor((nowUTC_midnight - epoch_midnight) / MS_PER_DAY) + 1
+//
+// Callers who pass explicit sessionDay always override this derivation.
+// ─────────────────────────────────────────────────────────────────────────────
+/** UTC midnight of Day 1 (2026-03-06). All arithmetic is in whole UTC days. */
+const VP_DAY1_EPOCH_UTC_MS = Date.UTC(2026, 2, 6); // month is 0-indexed: 2 = March
+/**
+ * Derive the current VantagePeers day number from the server clock.
+ * Returns 1 on or before 2026-03-06 UTC; increments by 1 per UTC day.
+ */
+export function deriveSessionDay(nowMs = Date.now()) {
+    const MS_PER_DAY = 86_400_000;
+    const deltaDays = Math.floor((nowMs - VP_DAY1_EPOCH_UTC_MS) / MS_PER_DAY);
+    return Math.max(1, deltaDays + 1);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 // Helper: normalize string|array inputs to array
 // ─────────────────────────────────────────────────────────────────────────────
 function toArray(val) {
@@ -933,7 +957,8 @@ export function registerTools(server, convex, oauthCtx) {
             .number()
             .int()
             .optional()
-            .describe("Day number (e.g. 19 for Day 19)"),
+            .describe("Day number (e.g. 88 for Day 88). If omitted, auto-derived from project epoch " +
+            "(Day 1 = 2026-03-06 UTC). Pass explicitly to override."),
         tenantId: z
             .string()
             .optional()
@@ -950,12 +975,16 @@ export function registerTools(server, convex, oauthCtx) {
             const fromDenied = guardFrom(from);
             if (fromDenied)
                 return fromDenied;
+            // A.7: auto-derive sessionDay from project epoch when caller omits it.
+            // Day 1 = 2026-03-06 UTC (Day 88 confirmed as 2026-06-01).
+            // Explicit args.sessionDay always wins (backward-compat).
+            const resolvedSessionDay = sessionDay !== undefined ? sessionDay : deriveSessionDay();
             const messageId = await convex.mutation("messages:sendMessage", {
                 from,
                 fromInstanceId,
                 channel,
                 content,
-                sessionDay,
+                sessionDay: resolvedSessionDay,
                 tenantId,
             });
             return {
@@ -2062,12 +2091,19 @@ export function registerTools(server, convex, oauthCtx) {
             const fromDenied = guardFrom(orchestrator);
             if (fromDenied)
                 return fromDenied;
+            // v2.4.8: derive createdBy from auth context (oauthCtx.userId).
+            // This is the anti-spoof authored-by — distinct from orchestrator
+            // (writer-intent label, client-supplied). On the no-auth path
+            // (master-scope bearer / local dev), oauthCtx is undefined and
+            // createdBy gracefully degrades to undefined (transition period).
+            const createdBy = oauthCtx?.userId;
             const diaryId = await convex.mutation("diary:write", {
                 date,
                 orchestrator,
                 content,
                 highlights: toArray(highlights),
                 blockers: toArray(blockers),
+                createdBy,
             });
             return {
                 content: [
@@ -2139,7 +2175,7 @@ export function registerTools(server, convex, oauthCtx) {
             .describe("Filter to a specific orchestrator — omit for all"),
         createdBy: assigneeSchema
             .optional()
-            .describe("Filter by creator/orchestrator role — alias of `orchestrator` for cross-tool consistency (mirrors list_tasks pattern). If both are passed, `createdBy` wins."),
+            .describe("Filter by auth-derived author (v2.4.8+, anti-spoof). Distinct from `orchestrator` which is the writer-intent label. Pre-v2.4.8 entries are backfilled with orchestrator as best-guess."),
         limit: z
             .number()
             .int()
@@ -2155,16 +2191,22 @@ export function registerTools(server, convex, oauthCtx) {
         title: "List diary entries",
     }, async ({ orchestrator, createdBy, limit }) => {
         try {
-            // createdBy is an alias of orchestrator (diary's author field). If both set, createdBy wins.
-            const effectiveOrchestrator = createdBy ?? orchestrator;
-            // Non-master: must scope to own orchestrator id.
+            // v2.4.8: orchestrator (writer-intent) and createdBy (auth-derived
+            // author) are separate filters — NOT aliases. Forward both independently.
+            // Non-master: REQUIRE at least one explicit self-scope — undefined passes
+            // through are forbidden. Mirrors v2.4.7 effectiveOrchestrator shortcircuit:
+            // undefined !== myId → Forbidden. No silent fleet-read for non-master callers.
             if (oauthCtx && !isMasterScope(oauthCtx)) {
-                if (effectiveOrchestrator !== oauthCtx.userId) {
-                    return mcpError(`Forbidden: list_diaries requires orchestrator='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`);
+                const myId = oauthCtx.userId;
+                const orchestratorScoped = orchestrator === myId;
+                const createdByScoped = createdBy === myId;
+                if (!orchestratorScoped && !createdByScoped) {
+                    return mcpError(`Forbidden: list_diaries requires orchestrator='${myId}' OR createdBy='${myId}' for non-master scope (current scope: ${oauthCtx.scopeProfile}).`);
                 }
             }
             const entries = await convex.query("diary:list", {
-                orchestrator: effectiveOrchestrator,
+                orchestrator,
+                createdBy,
                 limit: limit ?? 20,
             });
             return {
