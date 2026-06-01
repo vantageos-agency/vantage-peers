@@ -1096,6 +1096,11 @@ export function registerTools(
 			type: memoryTypeSchema
 				.optional()
 				.describe("Filter to a specific type — omit to return all types"),
+			createdBy: assigneeSchema
+				.optional()
+				.describe(
+					"Filter by creator/orchestrator role — mirrors list_tasks pattern for cross-tool consistency.",
+				),
 			limit: z
 				.number()
 				.int()
@@ -1111,7 +1116,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List memories",
 		},
-		async ({ namespace, type, limit }) => {
+		async ({ namespace, type, createdBy, limit }) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
@@ -1119,6 +1124,7 @@ export function registerTools(
 				const memories = await convex.query("memories:listMemories" as any, {
 					namespace,
 					type,
+					createdBy,
 					limit: limit ?? 20,
 				});
 
@@ -2721,6 +2727,11 @@ export function registerTools(
 			orchestrator: creatorSchema
 				.optional()
 				.describe("Filter to a specific orchestrator — omit for all"),
+			createdBy: assigneeSchema
+				.optional()
+				.describe(
+					"Filter by creator/orchestrator role — alias of `orchestrator` for cross-tool consistency (mirrors list_tasks pattern). If both are passed, `createdBy` wins.",
+				),
 			limit: z
 				.number()
 				.int()
@@ -2736,11 +2747,13 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List diary entries",
 		},
-		async ({ orchestrator, limit }) => {
+		async ({ orchestrator, createdBy, limit }) => {
 			try {
+				// createdBy is an alias of orchestrator (diary's author field). If both set, createdBy wins.
+				const effectiveOrchestrator = createdBy ?? orchestrator;
 				// Non-master: must scope to own orchestrator id.
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
-					if (orchestrator !== oauthCtx.userId) {
+					if (effectiveOrchestrator !== oauthCtx.userId) {
 						return mcpError(
 							`Forbidden: list_diaries requires orchestrator='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
 						);
@@ -2748,7 +2761,7 @@ export function registerTools(
 				}
 
 				const entries = await convex.query("diary:list" as any, {
-					orchestrator,
+					orchestrator: effectiveOrchestrator,
 					limit: limit ?? 20,
 				});
 

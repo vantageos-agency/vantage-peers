@@ -21,6 +21,8 @@ export declare const MAX_CONTENT_BYTES = 900000;
  * @param toolName  Caller tool name (used only in the error message).
  */
 export declare function assertContentSize(content: string, toolName: string): number;
+export declare const MAX_LIST_RESPONSE_BYTES = 60000;
+export declare function capListResponseBytes(items: unknown, rawText: string, toolName: string, maxBytes?: number): string;
 /**
  * Convex document IDs are 32 lowercase alphanumeric characters (a-z0-9).
  * Exported so tests can validate the schema independently of the MCP server.

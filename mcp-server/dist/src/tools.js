@@ -10,6 +10,36 @@
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { checkFromAllowed, checkNamespaceRead, checkNamespaceWrite, isMasterScope, } from "./auth.js";
+import { wrapToolResult } from "./ui-resources/stream-marker.js";
+// ─────────────────────────────────────────────────────────────────────────────
+// VP_EMIT_UI_MARKERS gate
+//
+// When VP_EMIT_UI_MARKERS=1 the 6 list/get tools that have a matching
+// ui:// primitive append a __VP_TOOL_RESULT__<json>__END__ marker after the
+// existing JSON payload. The Gen UI iframe bridge detects this marker and
+// renders the structured primitive inline. Default is OFF so prod behaviour
+// is unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+const UI_MARKERS_ENABLED = process.env.VP_EMIT_UI_MARKERS === "1" ||
+    process.env.VP_EMIT_UI_MARKERS === "true";
+/**
+ * Append a stream marker to a text response when UI markers are enabled.
+ * `buildPayload` is called only when the flag is ON to avoid any overhead.
+ */
+function appendMarkerIfEnabled(text, buildPayload) {
+    if (!UI_MARKERS_ENABLED)
+        return text;
+    try {
+        const payload = buildPayload();
+        if (payload === null)
+            return text;
+        return `${text}\n${wrapToolResult(payload)}`;
+    }
+    catch {
+        // Never break the primary response — marker emission is best-effort.
+        return text;
+    }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Pre-flight content size guard
 //
@@ -39,6 +69,56 @@ export function assertContentSize(content, toolName) {
         throw new McpError(ErrorCode.InvalidParams, `[${toolName}] Content too large: ${contentBytes} bytes, max ${MAX_CONTENT_BYTES} bytes (~${Math.floor(MAX_CONTENT_BYTES / 6)} words). Use deliverable .md file pattern for large content (commit to repo + reference from ${toolName}).`);
     }
     return contentBytes;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// List response byte cap (overflow protection for MCP clients)
+//
+// MCP clients (Claude.ai, ChatGPT, Claude Code) reject tool results that
+// exceed their token budget — typical ceiling ~25k tokens ≈ 75 KB JSON.
+// When that happens the entire response is lost to a downstream truncation
+// error and the user must fall back to reading the on-disk overflow file.
+//
+// `capListResponseBytes` guards every bulk list_* tool: if the serialized
+// payload exceeds MAX_LIST_RESPONSE_BYTES (60 KB), it truncates the items
+// array (halving until it fits) and wraps the result in a _meta envelope
+// that tells the caller exactly how to refine the query.
+//
+// 60 KB leaves headroom for tool-call JSON framing and the UI stream marker
+// before any MCP client hits its own ceiling. The cap is byte-counted on the
+// raw JSON string, not on item count, because content-heavy rows
+// (memories / diaries / briefing notes) blow past 30 items easily.
+// ─────────────────────────────────────────────────────────────────────────────
+export const MAX_LIST_RESPONSE_BYTES = 60_000;
+export function capListResponseBytes(items, rawText, toolName, maxBytes = MAX_LIST_RESPONSE_BYTES) {
+    const byteLen = Buffer.byteLength(rawText, "utf8");
+    if (byteLen <= maxBytes)
+        return rawText;
+    if (!Array.isArray(items) || items.length === 0)
+        return rawText;
+    let n = items.length;
+    let truncated = items;
+    let truncatedText = rawText;
+    while (n > 1) {
+        n = Math.max(1, Math.floor(n / 2));
+        truncated = items.slice(0, n);
+        truncatedText = JSON.stringify(truncated, null, 2);
+        if (Buffer.byteLength(truncatedText, "utf8") <= maxBytes - 600)
+            break;
+    }
+    const envelope = {
+        _meta: {
+            _truncated: true,
+            _showing: truncated.length,
+            _total: items.length,
+            _bytesOriginal: byteLen,
+            _bytesCap: maxBytes,
+            _tool: toolName,
+            _advice: `Response exceeded ${maxBytes} bytes. Showing first ${truncated.length}/${items.length}. ` +
+                `Pass fields="lite", a smaller limit, stricter filters (status, assignedTo, project, namespace, updatedSince), or paginate.`,
+        },
+        items: truncated,
+    };
+    return JSON.stringify(envelope, null, 2);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared Zod schemas
@@ -123,7 +203,9 @@ const taskStatusValues = [
     "done",
 ];
 const taskStatusAliases = ["open", "active", "all"];
-export const taskStatusSchema = z.enum(taskStatusValues).describe("Task status");
+export const taskStatusSchema = z
+    .enum(taskStatusValues)
+    .describe("Task status");
 const missionStatusValues = [
     "brainstorm",
     "plan",
@@ -146,7 +228,7 @@ export const taskStatusFilterSchema = z
 ])
     .describe('Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"), ' +
     'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
-    'or array of direct statuses (no aliases inside array).');
+    "or array of direct statuses (no aliases inside array).");
 export const missionStatusFilterSchema = z
     .union([
     z.enum([...missionStatusValues, ...missionStatusAliases]),
@@ -154,13 +236,13 @@ export const missionStatusFilterSchema = z
 ])
     .describe('Mission status filter. Single status ("brainstorm"|"plan"|"execute"|"validate"|"complete"), ' +
     'alias ("open" = brainstorm+plan+execute+validate, "active" = plan+execute, "all" = no filter), ' +
-    'or array of direct statuses (no aliases inside array).');
+    "or array of direct statuses (no aliases inside array).");
 // v2.3.2 — fields projection toggle. "lite" returns compact projection
 // (5-10× smaller payload), "full" (default) returns full doc.
 export const fieldsSchema = z
     .enum(["lite", "full"])
     .describe('Field projection — "lite" returns compact fields only ' +
-    '(typical 5-10× smaller payload for large list scans), ' +
+    "(typical 5-10× smaller payload for large list scans), " +
     '"full" (default) returns the full document.');
 // v2.3.3 — Unix timestamp ms filter for "updated since".
 // Pass `Date.now() - 24*60*60*1000` for "last 24h" pattern.
@@ -266,7 +348,8 @@ export function parseConvexError(rawMessage) {
     let code = "ServerError";
     let remainder = stripped;
     for (const candidate of knownCodes) {
-        if (stripped.startsWith(candidate + ":") || stripped.startsWith(candidate + " ")) {
+        if (stripped.startsWith(candidate + ":") ||
+            stripped.startsWith(candidate + " ")) {
             code = candidate;
             remainder = stripped.slice(candidate.length).replace(/^[:\s]+/, "");
             break;
@@ -275,10 +358,13 @@ export function parseConvexError(rawMessage) {
     // Extract "Path: .<fieldPath>" from the tail of the message
     // Convex appends this as the last sentence: "Path: .linkedMemoryIds[4]"
     let path = null;
-    const pathMatch = remainder.match(/\bPath:\s*([\w.\[\]"']+)\s*$/);
+    const pathMatch = remainder.match(/\bPath:\s*([\w.[\]"']+)\s*$/);
     if (pathMatch) {
         path = pathMatch[1];
-        remainder = remainder.slice(0, pathMatch.index).trim().replace(/\.\s*$/, "");
+        remainder = remainder
+            .slice(0, pathMatch.index)
+            .trim()
+            .replace(/\.\s*$/, "");
     }
     // Build a concise hint for common patterns
     let hint = null;
@@ -382,6 +468,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("Optional expiry ISO timestamp e.g. '2026-06-01T00:00:00Z'"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Store memory",
     }, async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
         let contentBytes = 0;
         try {
@@ -431,6 +522,11 @@ export function registerTools(server, convex, oauthCtx) {
         memoryId: z
             .string()
             .describe("Convex document ID of the memory to soft-delete"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Delete memory (soft)",
     }, async ({ memoryId }) => {
         try {
             const denied = guardMasterOnly("soft_delete_memory");
@@ -455,8 +551,16 @@ export function registerTools(server, convex, oauthCtx) {
     // ── get_memory ──────────────────────────────────────────────────────────────
     server.tool("get_memory", "Fetch a single memory by its ID. Returns full memory content including relations and episode data.", {
         memoryId: z.string().describe("Memory document ID"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get memory",
     }, async ({ memoryId }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_memory");
+            if (_scopeDenied)
+                return _scopeDenied;
             const memory = await convex.query("memories:getMemory", {
                 memoryId,
             });
@@ -489,6 +593,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(5)
             .describe("Maximum number of results to return (default 5)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Recall memories",
     }, async ({ query, namespace, type, limit }) => {
         try {
             const nsDenied = guardRead(namespace);
@@ -529,6 +638,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(10)
             .describe("Max results"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search memories (text)",
     }, async ({ query, namespace, type, limit }) => {
         try {
             const nsDenied = guardRead(namespace);
@@ -573,6 +687,11 @@ export function registerTools(server, convex, oauthCtx) {
             .max(1)
             .optional()
             .describe("Weight for text results in RRF (default: 0.5)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search memories (hybrid)",
     }, async ({ query, namespace, type, limit, vectorWeight, textWeight }) => {
         try {
             const nsDenied = guardRead(namespace);
@@ -612,6 +731,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .describe("The lesson extracted — procedural memory, what to do differently"),
         severity: severitySchema,
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Store episode",
     }, async ({ namespace, createdBy, context, goal, action, outcome, insight, severity, }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -647,8 +771,16 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("get_profile", "Fetch an orchestrator profile (static identity + dynamic session state). " +
         "Returns null if the profile does not exist yet — call update_profile to create it.", {
         orchestratorId: z.string().describe("Orchestrator identifier"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get orchestrator profile",
     }, async ({ orchestratorId }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_profile");
+            if (_scopeDenied)
+                return _scopeDenied;
             const profile = await convex.query("profiles:getProfile", {
                 orchestratorId,
             });
@@ -694,6 +826,11 @@ export function registerTools(server, convex, oauthCtx) {
         })
             .optional()
             .describe("Mutable session state — updated each session"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update orchestrator profile",
     }, async ({ orchestratorId, name, static: staticFields, dynamic }) => {
         try {
             const fromDenied = guardFrom(orchestratorId);
@@ -728,6 +865,9 @@ export function registerTools(server, convex, oauthCtx) {
         type: memoryTypeSchema
             .optional()
             .describe("Filter to a specific type — omit to return all types"),
+        createdBy: assigneeSchema
+            .optional()
+            .describe("Filter by creator/orchestrator role — mirrors list_tasks pattern for cross-tool consistency."),
         limit: z
             .number()
             .int()
@@ -736,7 +876,12 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(20)
             .describe("Maximum number of memories to return (default 20)"),
-    }, async ({ namespace, type, limit }) => {
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List memories",
+    }, async ({ namespace, type, createdBy, limit }) => {
         try {
             const nsDenied = guardRead(namespace);
             if (nsDenied)
@@ -744,15 +889,27 @@ export function registerTools(server, convex, oauthCtx) {
             const memories = await convex.query("memories:listMemories", {
                 namespace,
                 type,
+                createdBy,
                 limit: limit ?? 20,
             });
+            const rawList = Array.isArray(memories)
+                ? memories
+                : Array.isArray(memories?.page)
+                    ? memories.page
+                    : [];
+            const baseText = capListResponseBytes(memories, JSON.stringify(memories, null, 2), "list_memories");
+            const text = appendMarkerIfEnabled(baseText, () => ({
+                kind: "memory-quote",
+                items: rawList.map((m) => ({
+                    _id: m._id,
+                    namespace: m.namespace,
+                    type: m.type,
+                    content: m.content,
+                    score: m.score,
+                })),
+            }));
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(memories, null, 2),
-                    },
-                ],
+                content: [{ type: "text", text }],
             };
         }
         catch (error) {
@@ -781,6 +938,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("Tenant identifier for multi-tenant isolation"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Send message",
     }, async ({ from, fromInstanceId, channel, content, sessionDay, tenantId, }) => {
         let contentBytes = 0;
         try {
@@ -835,8 +997,20 @@ export function registerTools(server, convex, oauthCtx) {
             .int()
             .optional()
             .describe("Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Check messages",
     }, async ({ recipient, recipientInstanceId, tenantId, since }) => {
         try {
+            // Non-master: force recipient to caller's own userId. Anything else
+            // would let the client read another tenant's inbox.
+            if (oauthCtx && !isMasterScope(oauthCtx)) {
+                if (recipient !== oauthCtx.userId) {
+                    return mcpError(`Forbidden: check_messages can only read messages for your own identity ('${oauthCtx.userId}'), not '${recipient}'.`);
+                }
+            }
             const messages = await convex.query("messages:checkNewMessages", {
                 recipient,
                 recipientInstanceId,
@@ -874,6 +1048,11 @@ export function registerTools(server, convex, oauthCtx) {
         receiptIds: z
             .union([z.array(receiptIdSchema).min(1), receiptIdSchema])
             .describe("Receipt IDs to mark as read — array or single string"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Mark messages as read",
     }, async ({ receiptIds }) => {
         try {
             let receiptIdsArray;
@@ -916,6 +1095,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — must be the sender or system"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Delete message",
     }, async ({ messageId, callerOrchestrator }) => {
         try {
             if (callerOrchestrator) {
@@ -950,6 +1134,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe("Instance ID — e.g. 'pi-chromebook', 'pi-vps', 'tau-vps-1'"),
         summary: z.string().describe("1-2 sentence summary of current work"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Set instance summary",
     }, async ({ orchestratorId, instanceId, summary }) => {
         try {
             const fromDenied = guardFrom(orchestratorId);
@@ -976,8 +1165,16 @@ export function registerTools(server, convex, oauthCtx) {
     });
     // ── list_peers ──────────────────────────────────────────────────────────────
     server.tool("list_peers", "List all orchestrator profiles with their current status and summary. " +
-        "Replaces claude-peers list_peers.", {}, async () => {
+        "Replaces claude-peers list_peers.", {}, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List peers",
+    }, async () => {
         try {
+            const _scopeDenied = guardMasterOnly("list_peers");
+            if (_scopeDenied)
+                return _scopeDenied;
             const profiles = await convex.query("profiles:listProfiles", {});
             const peers = profiles.map((p) => ({
                 id: p.orchestratorId,
@@ -993,7 +1190,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(peers, null, 2),
+                        text: capListResponseBytes(peers, JSON.stringify(peers, null, 2), "list_peers"),
                     },
                 ],
             };
@@ -1018,20 +1215,36 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(100)
             .describe("Max messages to return (default 100)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List messages",
     }, async ({ sessionDay, from, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_messages");
+            if (_scopeDenied)
+                return _scopeDenied;
             const messages = await convex.query("messages:listMessages", {
                 sessionDay,
                 from,
                 limit: limit ?? 100,
             });
+            const baseText = capListResponseBytes(messages, JSON.stringify(messages, null, 2), "list_messages");
+            const text = appendMarkerIfEnabled(baseText, () => ({
+                kind: "messages-feed",
+                items: Array.isArray(messages)
+                    ? messages.map((m) => ({
+                        _id: m._id,
+                        from: m.from,
+                        channel: m.channel,
+                        content: m.content,
+                        createdAt: m.createdAt,
+                    }))
+                    : [],
+            }));
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(messages, null, 2),
-                    },
-                ],
+                content: [{ type: "text", text }],
             };
         }
         catch (error) {
@@ -1043,8 +1256,16 @@ export function registerTools(server, convex, oauthCtx) {
         messageId: z
             .string()
             .describe("Convex document ID of the broadcast message"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List broadcast status",
     }, async ({ messageId }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_broadcast_status");
+            if (_scopeDenied)
+                return _scopeDenied;
             const status = await convex.query("messages:listBroadcastStatus", {
                 messageId,
             });
@@ -1052,7 +1273,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(status, null, 2),
+                        text: capListResponseBytes(status, JSON.stringify(status, null, 2), "list_broadcast_status"),
                     },
                 ],
             };
@@ -1095,6 +1316,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe("Optional due date as Unix timestamp (ms)"),
         createdBy: creatorSchema,
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create task",
     }, async ({ title, description, project, tags, assignedTo, assignedToInstance, priority, status, dependsOn, missionId, estimatedMinutes, dueDate, createdBy, }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -1157,8 +1383,23 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe("Filter by task creator (e.g. 'pi' to find Pi-dispatched tasks)"),
         updatedSince: updatedSinceSchema.optional(),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List tasks",
     }, async ({ assignedTo, assignedToInstance, status, project, limit, fields, createdBy, updatedSince, }) => {
         try {
+            // Non-master: must scope to own identity. If neither assignedTo
+            // nor createdBy matches the caller's userId, reject — otherwise
+            // the query would span the whole tenant table.
+            if (oauthCtx && !isMasterScope(oauthCtx)) {
+                const myId = oauthCtx.userId;
+                const scopedToSelf = assignedTo === myId || createdBy === myId;
+                if (!scopedToSelf) {
+                    return mcpError(`Forbidden: list_tasks requires assignedTo='${myId}' or createdBy='${myId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`);
+                }
+            }
             const tasks = await convex.query("tasks:list", {
                 assignedTo,
                 assignedToInstance,
@@ -1169,13 +1410,22 @@ export function registerTools(server, convex, oauthCtx) {
                 createdBy,
                 updatedSince,
             });
+            const baseText = capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_tasks");
+            const text = appendMarkerIfEnabled(baseText, () => ({
+                kind: "tasks-table",
+                items: Array.isArray(tasks)
+                    ? tasks.map((t) => ({
+                        _id: t._id,
+                        title: t.title,
+                        status: t.status,
+                        priority: t.priority,
+                        assignedTo: t.assignedTo,
+                        _creationTime: t._creationTime,
+                    }))
+                    : [],
+            }));
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(tasks, null, 2),
-                    },
-                ],
+                content: [{ type: "text", text }],
             };
         }
         catch (error) {
@@ -1218,6 +1468,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — if provided, must be creator or assignee"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update task",
     }, async ({ taskId, title, description, project, tags, assignedTo, priority, status, dependsOn, missionId, estimatedMinutes, actualMinutes, startedAt, completedAt, dueDate, callerOrchestrator, }) => {
         try {
             if (callerOrchestrator) {
@@ -1272,6 +1527,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — if provided, must be creator or assignee"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Complete task",
     }, async ({ taskId, completionNote, callerOrchestrator }) => {
         try {
             if (callerOrchestrator) {
@@ -1304,6 +1564,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — if provided, must be creator or assignee"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Start task",
     }, async ({ taskId, callerOrchestrator }) => {
         try {
             if (callerOrchestrator) {
@@ -1337,6 +1602,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("Instance identifier, e.g. 'sigma-vps'"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Checkout task",
     }, async ({ taskId, callerOrchestrator, callerInstance }) => {
         try {
             const fromDenied = guardFrom(callerOrchestrator);
@@ -1366,6 +1636,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — must be creator or system"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Delete task",
     }, async ({ taskId, callerOrchestrator }) => {
         try {
             if (callerOrchestrator) {
@@ -1401,6 +1676,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — must be creator or assignee"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Block task",
     }, async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
         try {
             if (callerOrchestrator) {
@@ -1444,6 +1724,11 @@ export function registerTools(server, convex, oauthCtx) {
         callerOrchestrator: creatorSchema
             .optional()
             .describe("Optional RBAC — must be creator or assignee"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Add task dependency",
     }, async ({ taskId, dependsOn, callerOrchestrator }) => {
         try {
             if (callerOrchestrator) {
@@ -1487,12 +1772,18 @@ export function registerTools(server, convex, oauthCtx) {
         fields: fieldsSchema
             .optional()
             .describe('Field projection ("lite"|"full")'),
-        createdBy: assigneeSchema
-            .optional()
-            .describe("Filter by task creator"),
+        createdBy: assigneeSchema.optional().describe("Filter by task creator"),
         updatedSince: updatedSinceSchema.optional(),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List tasks by mission",
     }, async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_tasks_by_mission");
+            if (_scopeDenied)
+                return _scopeDenied;
             const tasks = await convex.query("tasks:listByMission", {
                 missionId: missionId,
                 status,
@@ -1505,7 +1796,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(tasks, null, 2),
+                        text: capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_tasks_by_mission"),
                     },
                 ],
             };
@@ -1534,6 +1825,11 @@ export function registerTools(server, convex, oauthCtx) {
             .describe("Target completion date (Unix ms)"),
         progress: z.number().optional().describe("Progress percentage (0-100)"),
         createdBy: creatorSchema,
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create mission",
     }, async ({ name, description, project, status, priority, pilot, agents, brief, startDate, targetDate, progress, createdBy, }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -1588,8 +1884,20 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe('Field projection ("lite"|"full")'),
         updatedSince: updatedSinceSchema.optional(),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List missions",
     }, async ({ project, pilot, status, limit, fields, updatedSince }) => {
         try {
+            // Non-master: must pilot=<own-userId>. Otherwise the query spans
+            // every tenant's missions.
+            if (oauthCtx && !isMasterScope(oauthCtx)) {
+                if (pilot !== oauthCtx.userId) {
+                    return mcpError(`Forbidden: list_missions requires pilot='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`);
+                }
+            }
             const missions = await convex.query("missions:list", {
                 project,
                 pilot,
@@ -1598,13 +1906,23 @@ export function registerTools(server, convex, oauthCtx) {
                 fields,
                 updatedSince,
             });
+            const baseText = capListResponseBytes(missions, JSON.stringify(missions, null, 2), "list_missions");
+            const text = appendMarkerIfEnabled(baseText, () => ({
+                kind: "mission-timeline",
+                items: Array.isArray(missions)
+                    ? missions.map((m) => ({
+                        _id: m._id,
+                        name: m.name,
+                        project: m.project,
+                        status: m.status,
+                        pilot: m.pilot,
+                        priority: m.priority,
+                        progress: m.progress,
+                    }))
+                    : [],
+            }));
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(missions, null, 2),
-                    },
-                ],
+                content: [{ type: "text", text }],
             };
         }
         catch (error) {
@@ -1614,8 +1932,16 @@ export function registerTools(server, convex, oauthCtx) {
     // ── get_mission ─────────────────────────────────────────────────────────────
     server.tool("get_mission", "Fetch a single mission by ID. Returns full mission details including status, pilot, agents, progress, and dates.", {
         missionId: z.string().describe("Convex document ID of the mission"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get mission",
     }, async ({ missionId }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_mission");
+            if (_scopeDenied)
+                return _scopeDenied;
             const mission = await convex.query("missions:get", {
                 missionId: missionId,
             });
@@ -1649,6 +1975,11 @@ export function registerTools(server, convex, oauthCtx) {
         startDate: z.number().optional().describe("New start date (Unix ms)"),
         targetDate: z.number().optional().describe("New target date (Unix ms)"),
         progress: z.number().optional().describe("New progress (0-100)"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update mission",
     }, async ({ missionId, name, description, project, status, priority, pilot, agents, brief, startDate, targetDate, progress, }) => {
         try {
             if (pilot) {
@@ -1687,6 +2018,11 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("update_mission_status", "Change a mission's status. Shortcut for updating only the status field.", {
         missionId: z.string().describe("Convex document ID of the mission"),
         status: missionStatusSchema.describe("New status"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update mission status",
     }, async ({ missionId, status }) => {
         try {
             await convex.mutation("missions:updateStatus", {
@@ -1714,6 +2050,11 @@ export function registerTools(server, convex, oauthCtx) {
         content: z.string().describe("Full diary entry content"),
         highlights: flexArrayOptional.describe("Key highlights of the day"),
         blockers: flexArrayOptional.describe("Blockers encountered"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Write diary entry",
     }, async ({ date, orchestrator, content, highlights, blockers }) => {
         let contentBytes = 0;
         try {
@@ -1753,19 +2094,38 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("get_diary", "Fetch a diary entry for a specific date and orchestrator. Returns null if no entry exists.", {
         date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
         orchestrator: creatorSchema.describe("Which orchestrator's diary to fetch"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get diary entry",
     }, async ({ date, orchestrator }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_diary");
+            if (_scopeDenied)
+                return _scopeDenied;
             const entry = await convex.query("diary:get", {
                 date,
                 orchestrator,
             });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(entry, null, 2),
+            const baseText = JSON.stringify(entry, null, 2);
+            const text = appendMarkerIfEnabled(baseText, () => {
+                if (!entry)
+                    return null;
+                return {
+                    kind: "diary-entry",
+                    item: {
+                        _id: entry._id,
+                        date: entry.date,
+                        orchestrator: entry.orchestrator,
+                        content: entry.content,
+                        highlights: entry.highlights,
+                        blockers: entry.blockers,
                     },
-                ],
+                };
+            });
+            return {
+                content: [{ type: "text", text }],
             };
         }
         catch (error) {
@@ -1777,6 +2137,9 @@ export function registerTools(server, convex, oauthCtx) {
         orchestrator: creatorSchema
             .optional()
             .describe("Filter to a specific orchestrator — omit for all"),
+        createdBy: assigneeSchema
+            .optional()
+            .describe("Filter by creator/orchestrator role — alias of `orchestrator` for cross-tool consistency (mirrors list_tasks pattern). If both are passed, `createdBy` wins."),
         limit: z
             .number()
             .int()
@@ -1785,17 +2148,30 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(20)
             .describe("Maximum entries to return (default 20)"),
-    }, async ({ orchestrator, limit }) => {
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List diary entries",
+    }, async ({ orchestrator, createdBy, limit }) => {
         try {
+            // createdBy is an alias of orchestrator (diary's author field). If both set, createdBy wins.
+            const effectiveOrchestrator = createdBy ?? orchestrator;
+            // Non-master: must scope to own orchestrator id.
+            if (oauthCtx && !isMasterScope(oauthCtx)) {
+                if (effectiveOrchestrator !== oauthCtx.userId) {
+                    return mcpError(`Forbidden: list_diaries requires orchestrator='${oauthCtx.userId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`);
+                }
+            }
             const entries = await convex.query("diary:list", {
-                orchestrator,
+                orchestrator: effectiveOrchestrator,
                 limit: limit ?? 20,
             });
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(entries, null, 2),
+                        text: capListResponseBytes(entries, JSON.stringify(entries, null, 2), "list_diaries"),
                     },
                 ],
             };
@@ -1827,6 +2203,11 @@ export function registerTools(server, convex, oauthCtx) {
             "Passing a briefingNotes ID will fail with ArgumentValidationError at path .linkedMemoryIds[N]. " +
             "If cross-linking briefings is needed, request the linkedBriefingIds feature instead."),
         createdBy: creatorSchema,
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create briefing note",
     }, async ({ title, topic, participants, content, decisions, linkedMemoryIds, createdBy, }) => {
         let contentBytes = 0;
         try {
@@ -1866,7 +2247,12 @@ export function registerTools(server, convex, oauthCtx) {
         }
     });
     // ── update_briefing_note ────────────────────────────────────────────────────
-    server.tool("update_briefing_note", updateBriefingNoteDescription, updateBriefingNoteSchema.shape, async ({ noteId, callerOrchestrator, title, topic, participants, content, decisions, linkedMemoryIds, }) => {
+    server.tool("update_briefing_note", updateBriefingNoteDescription, updateBriefingNoteSchema.shape, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update briefing note",
+    }, async ({ noteId, callerOrchestrator, title, topic, participants, content, decisions, linkedMemoryIds, }) => {
         let contentBytes = 0;
         try {
             if (content !== undefined) {
@@ -1923,21 +2309,43 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe('Field projection ("lite"|"full")'),
         updatedSince: updatedSinceSchema.optional(),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List briefing notes",
     }, async ({ topic, limit, fields, updatedSince }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_briefing_notes");
+            if (_scopeDenied)
+                return _scopeDenied;
             const notes = await convex.query("briefingNotes:list", {
                 topic,
                 limit,
                 fields,
                 updatedSince,
             });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(notes, null, 2),
+            const baseText = capListResponseBytes(notes, JSON.stringify(notes, null, 2), "list_briefing_notes");
+            const text = appendMarkerIfEnabled(baseText, () => {
+                const items = Array.isArray(notes) ? notes : [];
+                if (items.length === 0)
+                    return null;
+                // Emit the first note as a briefing-note item for the primitive renderer.
+                const first = items[0];
+                return {
+                    kind: "briefing-note",
+                    item: {
+                        _id: first._id,
+                        topic: first.topic,
+                        title: first.title,
+                        participants: first.participants,
+                        content: first.content,
+                        createdBy: first.createdBy,
                     },
-                ],
+                };
+            });
+            return {
+                content: [{ type: "text", text }],
             };
         }
         catch (error) {
@@ -1962,6 +2370,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe("Project this component belongs to"),
         createdBy: creatorSchema,
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Register component",
     }, async ({ name, type, team, content, version, project, createdBy }) => {
         let contentBytes = 0;
         try {
@@ -2012,8 +2425,16 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(100)
             .describe("Maximum components to return (default 100)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List components",
     }, async ({ type, team, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_components");
+            if (_scopeDenied)
+                return _scopeDenied;
             const components = await convex.query("components:list", {
                 type,
                 team,
@@ -2023,7 +2444,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(components, null, 2),
+                        text: capListResponseBytes(components, JSON.stringify(components, null, 2), "list_components"),
                     },
                 ],
             };
@@ -2036,8 +2457,16 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("get_component", "Fetch a single component by name and type. Returns the full content.", {
         name: z.string().describe("Component name"),
         type: componentTypeSchema,
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get component",
     }, async ({ name, type }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_component");
+            if (_scopeDenied)
+                return _scopeDenied;
             const component = await convex.query("components:get", {
                 name,
                 type,
@@ -2063,6 +2492,11 @@ export function registerTools(server, convex, oauthCtx) {
         content: z.string().optional().describe("New content/source code"),
         version: z.string().optional().describe("New version string"),
         project: z.string().optional().describe("New project name"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update component",
     }, async ({ componentId, ...fields }) => {
         let contentBytes = 0;
         try {
@@ -2098,6 +2532,11 @@ export function registerTools(server, convex, oauthCtx) {
         componentId: z
             .string()
             .describe("Convex document ID of the component to delete"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Delete component",
     }, async ({ componentId }) => {
         try {
             const result = await convex.mutation("components:remove", {
@@ -2118,8 +2557,16 @@ export function registerTools(server, convex, oauthCtx) {
             .describe("Search term to match against component name or team"),
         type: componentTypeSchema.optional().describe("Filter by component type"),
         limit: z.number().int().optional().describe("Max results (default 50)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search components",
     }, async ({ query, type, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("search_components");
+            if (_scopeDenied)
+                return _scopeDenied;
             const results = await convex.query("components:search", {
                 query,
                 type,
@@ -2150,6 +2597,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .describe("5-field cron: minute hour day-of-month month day-of-week"),
         createdBy: creatorSchema,
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create recurring task",
     }, async ({ title, description, assignedTo, priority, project, tags, cronExpression, createdBy, }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -2198,15 +2650,23 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(50)
             .describe("Max results"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List recurring tasks",
     }, async ({ assignedTo, active, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_recurring_tasks");
+            if (_scopeDenied)
+                return _scopeDenied;
             const tasks = await convex.query("recurringTasks:list", {
                 assignedTo,
                 active,
                 limit: limit ?? 50,
             });
             return {
-                content: [{ type: "text", text: JSON.stringify(tasks, null, 2) }],
+                content: [{ type: "text", text: capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_recurring_tasks") }],
             };
         }
         catch (error) {
@@ -2216,6 +2676,11 @@ export function registerTools(server, convex, oauthCtx) {
     // ── pause_recurring_task ────────────────────────────────────────────────────
     server.tool("pause_recurring_task", "Pause a recurring task — stops auto-creating tasks until resumed.", {
         taskId: z.string().describe("Recurring task ID"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Pause recurring task",
     }, async ({ taskId }) => {
         try {
             const result = await convex.mutation("recurringTasks:pause", {
@@ -2232,6 +2697,11 @@ export function registerTools(server, convex, oauthCtx) {
     // ── resume_recurring_task ───────────────────────────────────────────────────
     server.tool("resume_recurring_task", "Resume a paused recurring task — recalculates next run time.", {
         taskId: z.string().describe("Recurring task ID"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Resume recurring task",
     }, async ({ taskId }) => {
         try {
             const result = await convex.mutation("recurringTasks:resume", {
@@ -2248,6 +2718,11 @@ export function registerTools(server, convex, oauthCtx) {
     // ── delete_recurring_task ───────────────────────────────────────────────────
     server.tool("delete_recurring_task", "Permanently delete a recurring task template.", {
         taskId: z.string().describe("Recurring task ID"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Delete recurring task",
     }, async ({ taskId }) => {
         try {
             const result = await convex.mutation("recurringTasks:remove", {
@@ -2277,6 +2752,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("New cron expression (5-field)"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update recurring task",
     }, async ({ recurringTaskId, ...fields }) => {
         try {
             if (fields.assignedTo) {
@@ -2324,6 +2804,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("Signed authorization document or reference"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create mandate",
     }, async ({ requestedBy, fulfilledBy, service, budget, spendingLimits, approvedCategories, mandateDocument, }) => {
         try {
             const fromDenied = guardFrom(requestedBy);
@@ -2360,6 +2845,11 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .describe("Convex document ID of the mandate to accept"),
         callerOrchestrator: creatorSchema.describe("Must be the fulfilledBy orchestrator or system"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Accept mandate",
     }, async ({ mandateId, callerOrchestrator }) => {
         try {
             const fromDenied = guardFrom(callerOrchestrator);
@@ -2395,6 +2885,11 @@ export function registerTools(server, convex, oauthCtx) {
             .array(z.string())
             .optional()
             .describe("Task IDs created to fulfill this mandate"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update mandate",
     }, async ({ mandateId, callerOrchestrator, status, tokensCost, linkedTaskIds, }) => {
         try {
             const fromDenied = guardFrom(callerOrchestrator);
@@ -2428,6 +2923,11 @@ export function registerTools(server, convex, oauthCtx) {
             .describe("Convex document ID of the mandate to settle"),
         callerOrchestrator: creatorSchema.describe("Must be the requestedBy orchestrator or system"),
         finalCost: z.number().describe("Final actual token cost to record"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Settle mandate",
     }, async ({ mandateId, callerOrchestrator, finalCost }) => {
         try {
             const fromDenied = guardFrom(callerOrchestrator);
@@ -2457,6 +2957,11 @@ export function registerTools(server, convex, oauthCtx) {
         proposedAmount: z
             .number()
             .describe("Proposed token spend amount to validate"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Validate mandate spending",
     }, async ({ mandateId, proposedAmount }) => {
         try {
             const result = await convex.query("mandates:validateSpending", {
@@ -2491,8 +2996,16 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(50)
             .describe("Maximum mandates to return (default 50)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List mandates",
     }, async ({ requestedBy, fulfilledBy, status, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_mandates");
+            if (_scopeDenied)
+                return _scopeDenied;
             const mandates = await convex.query("mandates:list", {
                 requestedBy,
                 fulfilledBy,
@@ -2503,7 +3016,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(mandates, null, 2),
+                        text: capListResponseBytes(mandates, JSON.stringify(mandates, null, 2), "list_mandates"),
                     },
                 ],
             };
@@ -2540,6 +3053,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(10)
             .describe("Management fee percentage (default 10)"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create BU",
     }, async ({ name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
         try {
             const fromDenied = guardFrom(orchestratorId);
@@ -2600,6 +3118,11 @@ export function registerTools(server, convex, oauthCtx) {
         dependencies: flexArrayOptional.describe("New dependencies"),
         kpis: flexArrayOptional.describe("New KPIs"),
         managementFee: z.number().optional().describe("New management fee %"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update BU",
     }, async ({ buId, name, description, purpose, domain, orchestratorId, status, businessModel, targetCustomers, services, pricing, revenueProjections, coreTeam, coreProcesses, dependencies, kpis, managementFee, }) => {
         try {
             if (orchestratorId) {
@@ -2642,8 +3165,16 @@ export function registerTools(server, convex, oauthCtx) {
     // ── get_bu ──────────────────────────────────────────────────────────────────
     server.tool("get_bu", "Fetch a single business unit by its Convex document ID. Returns null if not found.", {
         buId: z.string().describe("Convex document ID of the business unit"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get BU",
     }, async ({ buId }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_bu");
+            if (_scopeDenied)
+                return _scopeDenied;
             const bu = await convex.query("businessUnits:get", {
                 buId: buId,
             });
@@ -2676,8 +3207,16 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(50)
             .describe("Maximum BUs to return (default 50)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List BUs",
     }, async ({ orchestratorId, status, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_bus");
+            if (_scopeDenied)
+                return _scopeDenied;
             const bus = await convex.query("businessUnits:list", {
                 orchestratorId,
                 status,
@@ -2687,7 +3226,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(bus, null, 2),
+                        text: capListResponseBytes(bus, JSON.stringify(bus, null, 2), "list_bus"),
                     },
                 ],
             };
@@ -2701,6 +3240,11 @@ export function registerTools(server, convex, oauthCtx) {
         buId: z
             .string()
             .describe("Convex document ID of the business unit to delete"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Delete BU",
     }, async ({ buId }) => {
         try {
             const result = await convex.mutation("businessUnits:remove", {
@@ -2735,6 +3279,11 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(true)
             .describe("Whether this mapping is active (default true)"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Add repo mapping",
     }, async ({ repo, orchestrator, project, active }) => {
         try {
             const id = await convex.mutation("githubRepoMapping:add", {
@@ -2757,14 +3306,22 @@ export function registerTools(server, convex, oauthCtx) {
         }
     });
     // ── list_repo_mappings ──────────────────────────────────────────────────────
-    server.tool("list_repo_mappings", "List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.", {}, async () => {
+    server.tool("list_repo_mappings", "List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.", {}, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List repo mappings",
+    }, async () => {
         try {
+            const _scopeDenied = guardMasterOnly("list_repo_mappings");
+            if (_scopeDenied)
+                return _scopeDenied;
             const mappings = await convex.query("githubRepoMapping:list", {});
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(mappings, null, 2),
+                        text: capListResponseBytes(mappings, JSON.stringify(mappings, null, 2), "list_repo_mappings"),
                     },
                 ],
             };
@@ -2778,6 +3335,11 @@ export function registerTools(server, convex, oauthCtx) {
         repo: z
             .string()
             .describe("Full repo name to remove — e.g. 'vantageos-agency/vantage-peers'"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Remove repo mapping",
     }, async ({ repo }) => {
         try {
             const result = await convex.mutation("githubRepoMapping:remove", {
@@ -2818,8 +3380,16 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(50)
             .describe("Maximum number of issues to return (default 50)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List issues",
     }, async ({ project, status, assignedTo, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_issues");
+            if (_scopeDenied)
+                return _scopeDenied;
             let results;
             if (assignedTo) {
                 results = await convex.query("issues:listByOrchestrator", {
@@ -2851,7 +3421,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify({ count: results.length, issues: results }, null, 2),
+                        text: capListResponseBytes(results, JSON.stringify({ count: results.length, issues: results }, null, 2), "list_issues"),
                     },
                 ],
             };
@@ -2866,8 +3436,16 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .describe("Full repo name — e.g. 'myreeldream-ai/MyShortReel-beta'"),
         issueNumber: z.number().int().describe("GitHub issue number"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get issue",
     }, async ({ repo, issueNumber }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_issue");
+            if (_scopeDenied)
+                return _scopeDenied;
             const issue = await convex.query("issues:getByRepoNumber", {
                 repo,
                 issueNumber,
@@ -2894,6 +3472,11 @@ export function registerTools(server, convex, oauthCtx) {
         status: z
             .enum(["open", "in_progress", "fixed", "verified", "closed"])
             .describe("New status for the issue"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update issue status",
     }, async ({ repo, issueNumber, status }) => {
         try {
             await convex.mutation("issues:updateStatus", {
@@ -2924,6 +3507,11 @@ export function registerTools(server, convex, oauthCtx) {
         fixedBy: z
             .string()
             .describe("Who fixed it — orchestrator name or person"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Link commit to issue",
     }, async ({ repo, issueNumber, commitSha, fixedBy }) => {
         try {
             await convex.mutation("issues:linkCommit", {
@@ -2954,6 +3542,11 @@ export function registerTools(server, convex, oauthCtx) {
         verifiedBy: z
             .string()
             .describe("Who verified the fix — orchestrator name or person"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Verify issue",
     }, async ({ repo, issueNumber, verifiedBy }) => {
         try {
             await convex.mutation("issues:verify", {
@@ -2980,8 +3573,16 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("Filter stats to a specific project — omit for all projects"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Issue statistics",
     }, async ({ project }) => {
         try {
+            const _scopeDenied = guardMasterOnly("issue_stats");
+            if (_scopeDenied)
+                return _scopeDenied;
             const stats = await convex.query("issues:getStats", {
                 project,
             });
@@ -3019,6 +3620,11 @@ export function registerTools(server, convex, oauthCtx) {
             .describe("The fix that worked — set later if not known yet"),
         files: flexArrayOptional.describe("Files involved in the fix"),
         linkedIssueIds: flexArrayOptional.describe("VantagePeers issue IDs linked to this pattern"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Create fix pattern",
     }, async ({ symptom, rootCause, tags, stack, sourceProject, createdBy, severity, validatedFix, files, linkedIssueIds, }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -3057,6 +3663,11 @@ export function registerTools(server, convex, oauthCtx) {
         why: z.string().describe("Why it worked or didn't — the reasoning"),
         createdBy: creatorSchema,
         commit: z.string().optional().describe("Git commit hash of this attempt"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Add fix attempt",
     }, async ({ patternId, description, worked, why, createdBy, commit }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -3087,6 +3698,11 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("validate_fix", "Set or update the validated fix on a pattern. Use after confirming a fix works.", {
         patternId: z.string().describe("ID of the fix pattern"),
         validatedFix: z.string().describe("Description of the validated fix"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Validate fix",
     }, async ({ patternId, validatedFix }) => {
         try {
             await convex.mutation("fixPatterns:validate", {
@@ -3116,8 +3732,16 @@ export function registerTools(server, convex, oauthCtx) {
             .int()
             .optional()
             .describe("Max results to return (default 10)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search fix patterns",
     }, async ({ query, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("search_fix_patterns");
+            if (_scopeDenied)
+                return _scopeDenied;
             const results = await convex.action("search:searchFixPatterns", {
                 query,
                 limit,
@@ -3142,15 +3766,23 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .describe("Filter by source project — omit for all"),
         limit: z.number().int().optional().describe("Max results (default 50)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List fix patterns",
     }, async ({ project, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_fix_patterns");
+            if (_scopeDenied)
+                return _scopeDenied;
             if (project) {
                 const results = await convex.query("fixPatterns:listByProject", {
                     sourceProject: project,
                     limit,
                 });
                 return {
-                    content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+                    content: [{ type: "text", text: capListResponseBytes(results, JSON.stringify(results, null, 2), "list_fix_patterns") }],
                 };
             }
             const allResults = await convex.query("fixPatterns:listAll", {
@@ -3158,7 +3790,7 @@ export function registerTools(server, convex, oauthCtx) {
             });
             return {
                 content: [
-                    { type: "text", text: JSON.stringify(allResults, null, 2) },
+                    { type: "text", text: capListResponseBytes(allResults, JSON.stringify(allResults, null, 2), "list_fix_patterns") },
                 ],
             };
         }
@@ -3170,6 +3802,11 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("link_issue_to_pattern", "Link a VantagePeers issue to a fix pattern. Creates a bidirectional reference.", {
         patternId: z.string().describe("ID of the fix pattern"),
         issueId: z.string().describe("VantagePeers issue ID to link"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Link issue to fix pattern",
     }, async ({ patternId, issueId }) => {
         try {
             await convex.mutation("fixPatterns:linkIssue", {
@@ -3193,8 +3830,16 @@ export function registerTools(server, convex, oauthCtx) {
     server.tool("get_mission_template", "Fetch a mission template by name. Returns the template with all steps, or null if not found. " +
         "Use 'issue-resolution-v2' for the default Issue Resolution Protocol.", {
         name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get mission template",
     }, async ({ name }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_mission_template");
+            if (_scopeDenied)
+                return _scopeDenied;
             const template = await convex.query("missionTemplates:getByName", { name });
             return {
                 content: [
@@ -3247,6 +3892,11 @@ export function registerTools(server, convex, oauthCtx) {
             .boolean()
             .optional()
             .describe("Mark as the default template for its type"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Update mission template",
     }, async ({ name, description, steps, createdBy, isDefault }) => {
         try {
             const fromDenied = guardFrom(createdBy);
@@ -3292,7 +3942,12 @@ export function registerTools(server, convex, oauthCtx) {
             .string()
             .optional()
             .describe("Orchestrator making this call — used as createdBy on tasks. Defaults to 'system'."),
-    }, async ({ templateName, missionId, context, titlePrefix, callerOrchestrator }) => {
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Instantiate mission template",
+    }, async ({ templateName, missionId, context, titlePrefix, callerOrchestrator, }) => {
         try {
             const denied = guardMasterOnly("instantiate_template_into_mission");
             if (denied)
@@ -3336,6 +3991,11 @@ export function registerTools(server, convex, oauthCtx) {
         orchestrator: z
             .string()
             .describe("Orchestrator responsible for this deployment — e.g. 'sigma'"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Add deployment",
     }, async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator, }) => {
         try {
             const id = await convex.mutation("errorMonitor:addDeployment", {
@@ -3363,6 +4023,11 @@ export function registerTools(server, convex, oauthCtx) {
         name: z
             .string()
             .describe("Name of the deployment to deactivate — e.g. 'your-deployment-123'"),
+    }, {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        title: "Remove deployment",
     }, async ({ name }) => {
         try {
             await convex.mutation("errorMonitor:removeDeployment", { name });
@@ -3394,8 +4059,16 @@ export function registerTools(server, convex, oauthCtx) {
             .optional()
             .default(50)
             .describe("Maximum number of errors to return (default 50)"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List errors",
     }, async ({ deployment, limit }) => {
         try {
+            const _scopeDenied = guardMasterOnly("list_errors");
+            if (_scopeDenied)
+                return _scopeDenied;
             const errors = await convex.query("errorMonitor:listErrors", {
                 deployment,
                 limit: limit ?? 50,
@@ -3404,7 +4077,7 @@ export function registerTools(server, convex, oauthCtx) {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(errors, null, 2),
+                        text: capListResponseBytes(errors, JSON.stringify(errors, null, 2), "list_errors"),
                     },
                 ],
             };
@@ -3416,8 +4089,16 @@ export function registerTools(server, convex, oauthCtx) {
     // ── get_error ───────────────────────────────────────────────────────────────
     server.tool("get_error", "Fetch a single error log entry by its Convex document ID, including stack trace and issue linkage.", {
         errorId: z.string().describe("Convex document ID of the errorLogs entry"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get error",
     }, async ({ errorId }) => {
         try {
+            const _scopeDenied = guardMasterOnly("get_error");
+            if (_scopeDenied)
+                return _scopeDenied;
             const error = await convex.query("errorMonitor:getError", {
                 errorId: errorId,
             });
