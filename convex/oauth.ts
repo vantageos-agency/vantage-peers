@@ -91,14 +91,16 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "marie-iris-rh",
 				description:
-					"Marie (Iris RH) — send_message as 'marie' only; read/write in her namespaces + global.",
+					"Marie (Iris RH) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
 				fromAllowList: ["marie"],
 				namespaceReadPrefixes: [
+					"orchestrator/marie",
 					"orchestrator/victor",
 					"project/marie",
 					"global",
 				],
 				namespaceWritePrefixes: [
+					"orchestrator/marie",
 					"orchestrator/victor",
 					"project/marie",
 					"global",
