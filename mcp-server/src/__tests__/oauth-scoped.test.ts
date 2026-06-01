@@ -102,6 +102,20 @@ describe("checkFromAllowed", () => {
 		// mcpTenants path is unscoped by design — Pi/Tau/Phi still trusted.
 		expect(checkFromAllowed(undefined, "anything")).toBeNull();
 	});
+
+	// Day 88 capitalize — Marie onboarding friction (2026-06-01).
+	it("error message surfaces the allowlist so the LLM can self-correct", () => {
+		const err = checkFromAllowed(marieCtx, "pi");
+		expect(err).not.toBeNull();
+		expect(err).toContain("Allowed: marie");
+		expect(err).toContain("scope_profile=marie-iris-rh");
+	});
+
+	it("error message handles empty allowlist (deny-by-default) gracefully", () => {
+		const err = checkFromAllowed(genericCtx, "marie");
+		expect(err).not.toBeNull();
+		expect(err).toContain("none");
+	});
 });
 
 describe("checkNamespacePrefix", () => {
