@@ -97,7 +97,14 @@ export function checkFromAllowed(ctx, from) {
         return null;
     if (ctx.fromAllowList.includes(from))
         return null;
-    return `Forbidden: from='${from}' is not in this client's allowlist (scope_profile=${ctx.scopeProfile}).`;
+    // Day 88 friction capitalize: surface the allowed values so the LLM caller
+    // can self-correct on the next attempt instead of guessing identifiers.
+    // Marie onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
+    // the actual allowlist was ["marie"].
+    const allowed = ctx.fromAllowList.length === 0
+        ? "(none — this client has no allowed 'from' identities)"
+        : ctx.fromAllowList.join(", ");
+    return `Forbidden: from='${from}' is not in this client's allowlist (scope_profile=${ctx.scopeProfile}). Allowed: ${allowed}.`;
 }
 /**
  * Checks namespace against prefix list. A prefix of "*" means any namespace.
