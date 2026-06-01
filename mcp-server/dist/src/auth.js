@@ -119,8 +119,20 @@ export function checkNamespaceRead(ctx, namespace) {
         return null;
     if (isMasterScope(ctx))
         return null;
-    if (!namespace)
-        return null; // no namespace filter — list-across, which master-only in practice
+    if (!namespace) {
+        // Day 88 P0 fix: a list-across (namespace undefined) call from a
+        // non-master scope cannot be served safely — the underlying query
+        // returns rows across every tenant. Reject with an explicit message
+        // telling the caller to pass a namespace they own. Previously this
+        // returned null and leaked the whole memories/profiles/etc. table
+        // to any DCR-issued client.
+        const allowed = ctx.namespaceReadPrefixes.length > 0
+            ? ctx.namespaceReadPrefixes.join(", ")
+            : "(none — your client has no read scope)";
+        return ("Forbidden: this tool requires an explicit namespace argument when " +
+            `called with a non-master scope (current: ${ctx.scopeProfile}). ` +
+            `Pass namespace= one of: ${allowed}.`);
+    }
     if (checkNamespacePrefix(ctx.namespaceReadPrefixes, namespace))
         return null;
     return `Forbidden: namespace='${namespace}' is not readable by scope_profile=${ctx.scopeProfile}.`;
@@ -139,11 +151,13 @@ export function checkNamespaceWrite(ctx, namespace) {
 // ─────────────────────────────────────────────────────────────────────────────
 export function bearerAuthMiddleware() {
     return async (c, next) => {
-        // RFC 6750 §3 — point clients at the protected-resource metadata so
-        // Claude.ai's OAuth connector can bootstrap discovery from any 401.
+        // MCP spec §"Protected Resource Metadata Discovery Requirements" + RFC 6750 §3 —
+        // the param MUST be `resource_metadata=` (not `resource=`). Claude.ai's OAuth
+        // connector looks for `resource_metadata=` to bootstrap PRM discovery; with
+        // `resource=` the entire DCR chain breaks before any token is issued.
         const publicBaseUrl = process.env.PUBLIC_BASE_URL ??
             "https://vantage-peers-production.up.railway.app";
-        const wwwAuthHeader = `Bearer resource="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
+        const wwwAuthHeader = `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
         const authHeader = c.req.header("Authorization");
         if (!authHeader?.startsWith("Bearer ")) {
             c.header("WWW-Authenticate", wwwAuthHeader);
@@ -215,6 +229,10 @@ export function bearerAuthMiddleware() {
         // ── (3) DCR OAuth token — check oauthTokens via oauthDcr:validateAccessToken
         // Uses raw token (not hashed) — the DCR table stores tokens in plaintext.
         // This path handles Claude.ai clients registered via POST /register.
+        // NOTE: validateAccessToken is exposed as a PUBLIC query (not internalQuery)
+        // because ConvexHttpClient.query() only resolves public functions. Making it
+        // internal silently breaks the DCR path (#556). Security: lookup is keyed
+        // on the high-entropy opaque token; returns null on miss with no PII echo.
         let dcrResult = null;
         try {
             dcrResult = (await internalClient().query(
