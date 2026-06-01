@@ -70,6 +70,7 @@ export const register = mutation({
 
 export const list = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		type: v.optional(componentTypeValidator),
 		team: v.optional(v.string()),
 		limit: v.optional(v.number()),
@@ -172,6 +173,7 @@ export const remove = mutation({
 
 export const search = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		type: v.optional(componentTypeValidator),
 		limit: v.optional(v.number()),

@@ -120,6 +120,7 @@ export const create = mutation({
 
 export const list = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		assignedTo: v.optional(assigneeValidator),
 		active: v.optional(v.boolean()),
 		limit: v.optional(v.number()),

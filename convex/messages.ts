@@ -267,6 +267,7 @@ export const deleteMessage = mutation({
 
 export const listMessages = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		sessionDay: v.optional(v.number()),
 		from: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
@@ -331,7 +332,10 @@ export const getUnreadCount = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const listBroadcastStatus = query({
-	args: { messageId: v.id("messages") },
+	args: {
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
+		messageId: v.id("messages"),
+	},
 	returns: v.object({
 		messageId: v.id("messages"),
 		from: creatorValidator,

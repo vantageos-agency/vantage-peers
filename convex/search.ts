@@ -78,6 +78,7 @@ const recallResultValidator = v.object({
 
 export const recall = action({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		namespace: v.optional(v.string()),
 		type: v.optional(memoryTypeValidator),
@@ -137,6 +138,7 @@ export const recall = action({
 
 export const textSearch = action({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		namespace: v.optional(v.string()),
 		type: v.optional(memoryTypeValidator),
@@ -191,6 +193,7 @@ export const textSearch = action({
 
 export const hybridSearch = action({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		namespace: v.optional(v.string()),
 		type: v.optional(memoryTypeValidator),
@@ -259,6 +262,7 @@ export const hybridSearch = action({
 
 export const searchFixPatterns = action({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		limit: v.optional(v.number()),
 		scoreThreshold: v.optional(v.number()),

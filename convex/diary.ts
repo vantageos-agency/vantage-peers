@@ -98,6 +98,7 @@ export const get = query({
 
 export const list = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		orchestrator: v.optional(creatorValidator),
 		// v2.4.8: filter by auth-derived author (distinct from orchestrator).
 		// Applied universally post-take (mirrors tasks.ts:354-357 pattern).
