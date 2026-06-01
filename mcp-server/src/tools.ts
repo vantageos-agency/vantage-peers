@@ -351,6 +351,33 @@ const coreTeamSchema = z
 	.describe("Core team composition — agents, skills, hooks, plugins");
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A.7 — project day number derivation
+//
+// VantagePeers uses a sequential "Day N" numbering convention where Day 1 =
+// 2026-03-06 UTC. This is the confirmed epoch: Day 88 = 2026-06-01 (87 days
+// after Day 1), verified from Pi VP task k178tqgzhbhzg1h4vbgn4kwdm987vntn
+// Day 88 brief (2026-06-01).
+//
+// No Convex-side day-counter table exists. The value is purely clock-based:
+//   dayNumber = floor((nowUTC_midnight - epoch_midnight) / MS_PER_DAY) + 1
+//
+// Callers who pass explicit sessionDay always override this derivation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** UTC midnight of Day 1 (2026-03-06). All arithmetic is in whole UTC days. */
+const VP_DAY1_EPOCH_UTC_MS = Date.UTC(2026, 2, 6); // month is 0-indexed: 2 = March
+
+/**
+ * Derive the current VantagePeers day number from the server clock.
+ * Returns 1 on or before 2026-03-06 UTC; increments by 1 per UTC day.
+ */
+export function deriveSessionDay(nowMs: number = Date.now()): number {
+	const MS_PER_DAY = 86_400_000;
+	const deltaDays = Math.floor((nowMs - VP_DAY1_EPOCH_UTC_MS) / MS_PER_DAY);
+	return Math.max(1, deltaDays + 1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helper: normalize string|array inputs to array
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -752,10 +779,13 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(50)
+				.max(200)
 				.optional()
-				.default(5)
-				.describe("Maximum number of results to return (default 5)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -763,7 +793,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Recall memories",
 		},
-		async ({ query, namespace, type, limit }) => {
+		async ({ query, namespace, type, limit, fields }) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
@@ -772,7 +802,8 @@ export function registerTools(
 					query,
 					namespace,
 					type,
-					limit: limit ?? 5,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -805,10 +836,13 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(50)
+				.max(200)
 				.optional()
-				.default(10)
-				.describe("Max results"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -816,7 +850,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Search memories (text)",
 		},
-		async ({ query, namespace, type, limit }) => {
+		async ({ query, namespace, type, limit, fields }) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
@@ -825,7 +859,8 @@ export function registerTools(
 					query,
 					namespace,
 					type,
-					limit: limit ?? 10,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -849,10 +884,13 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(50)
+				.max(200)
 				.optional()
-				.default(10)
-				.describe("Max results"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 			vectorWeight: z
 				.number()
 				.min(0)
@@ -872,7 +910,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Search memories (hybrid)",
 		},
-		async ({ query, namespace, type, limit, vectorWeight, textWeight }) => {
+		async ({ query, namespace, type, limit, fields, vectorWeight, textWeight }) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
@@ -881,7 +919,8 @@ export function registerTools(
 					query,
 					namespace,
 					type,
-					limit: limit ?? 10,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 					vectorWeight,
 					textWeight,
 				});
@@ -1107,8 +1146,11 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(20)
-				.describe("Maximum number of memories to return (default 20)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -1116,7 +1158,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List memories",
 		},
-		async ({ namespace, type, createdBy, limit }) => {
+		async ({ namespace, type, createdBy, limit, fields }) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
@@ -1126,6 +1168,7 @@ export function registerTools(
 					type,
 					createdBy,
 					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				const rawList = Array.isArray(memories)
@@ -1180,7 +1223,10 @@ export function registerTools(
 				.number()
 				.int()
 				.optional()
-				.describe("Day number (e.g. 19 for Day 19)"),
+				.describe(
+					"Day number (e.g. 88 for Day 88). If omitted, auto-derived from project epoch " +
+					"(Day 1 = 2026-03-06 UTC). Pass explicitly to override.",
+				),
 			tenantId: z
 				.string()
 				.optional()
@@ -1207,12 +1253,20 @@ export function registerTools(
 				const fromDenied = guardFrom(from);
 				if (fromDenied) return fromDenied;
 
+				// A.7: auto-derive sessionDay from project epoch when caller omits it.
+				// Day 1 = 2026-03-06 UTC (Day 88 confirmed as 2026-06-01).
+				// Explicit args.sessionDay always wins (backward-compat).
+				const derivedSessionDay: number =
+					sessionDay !== undefined
+						? sessionDay
+						: deriveSessionDay();
+
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from,
 					fromInstanceId,
 					channel,
 					content,
-					sessionDay,
+					sessionDay: derivedSessionDay,
 					tenantId,
 				});
 
@@ -1485,19 +1539,34 @@ export function registerTools(
 		"list_peers",
 		"List all orchestrator profiles with their current status and summary. " +
 			"Replaces claude-peers list_peers.",
-		{},
+		{
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+		},
 		{
 			readOnlyHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List peers",
 		},
-		async () => {
+		async ({ limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_peers");
 				if (_scopeDenied) return _scopeDenied;
 
-				const profiles = await convex.query("profiles:listProfiles" as any, {});
+				const profiles = await convex.query("profiles:listProfiles" as any, {
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
 
 				const peers = profiles.map((p: any) => ({
 					id: p.orchestratorId,
@@ -1540,10 +1609,13 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(500)
+				.max(200)
 				.optional()
-				.default(100)
-				.describe("Max messages to return (default 100)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -1551,7 +1623,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List messages",
 		},
-		async ({ sessionDay, from, limit }) => {
+		async ({ sessionDay, from, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_messages");
 				if (_scopeDenied) return _scopeDenied;
@@ -1559,7 +1631,8 @@ export function registerTools(
 				const messages = await convex.query("messages:listMessages" as any, {
 					sessionDay,
 					from,
-					limit: limit ?? 100,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				const baseText = capListResponseBytes(messages, JSON.stringify(messages, null, 2), "list_messages");
@@ -1594,6 +1667,17 @@ export function registerTools(
 			messageId: z
 				.string()
 				.describe("Convex document ID of the broadcast message"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -1601,7 +1685,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List broadcast status",
 		},
-		async ({ messageId }) => {
+		async ({ messageId, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_broadcast_status");
 				if (_scopeDenied) return _scopeDenied;
@@ -1610,6 +1694,8 @@ export function registerTools(
 					"messages:listBroadcastStatus" as any,
 					{
 						messageId,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
 					},
 				);
 
@@ -1753,12 +1839,10 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.describe(
-					"Maximum number of tasks to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit (overflow protection).",
-				),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
-				.describe('Field projection ("lite"|"full")'),
+				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
 			createdBy: assigneeSchema
 				.optional()
 				.describe(
@@ -1802,8 +1886,8 @@ export function registerTools(
 					assignedToInstance,
 					status,
 					project,
-					limit,
-					fields,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 					createdBy,
 					updatedSince,
 				});
@@ -2255,9 +2339,7 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.describe(
-					"Maximum number of tasks to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit.",
-				),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
 				.describe('Field projection ("lite"|"full")'),
@@ -2278,8 +2360,8 @@ export function registerTools(
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
-					limit,
-					fields,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 					createdBy,
 					updatedSince,
 				});
@@ -2400,12 +2482,10 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.describe(
-					"Maximum number of missions to return. Default 50 with fields=lite, auto-clamped to 30 when fields=full and no explicit limit.",
-				),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
-				.describe('Field projection ("lite"|"full")'),
+				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
 			updatedSince: updatedSinceSchema.optional(),
 		},
 		{
@@ -2430,8 +2510,8 @@ export function registerTools(
 					project,
 					pilot,
 					status,
-					limit,
-					fields,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 					updatedSince,
 				});
 
@@ -2744,10 +2824,13 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(100)
+				.max(200)
 				.optional()
-				.default(20)
-				.describe("Maximum entries to return (default 20)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -2755,7 +2838,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List diary entries",
 		},
-		async ({ orchestrator, createdBy, limit }) => {
+		async ({ orchestrator, createdBy, limit, fields }) => {
 			try {
 				// v2.4.8: orchestrator (writer-intent) and createdBy (auth-derived
 				// author) are separate filters — NOT aliases. Forward both independently.
@@ -2777,6 +2860,7 @@ export function registerTools(
 					orchestrator,
 					createdBy,
 					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -2960,14 +3044,12 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(100)
+				.max(200)
 				.optional()
-				.describe(
-					"Maximum notes to return. Default 20 with fields=lite, auto-clamped to 15 when fields=full and no explicit limit.",
-				),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
-				.describe('Field projection ("lite"|"full")'),
+				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
 			updatedSince: updatedSinceSchema.optional(),
 		},
 		{
@@ -2983,8 +3065,8 @@ export function registerTools(
 
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
-					limit,
-					fields,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 					updatedSince,
 				});
 
@@ -3099,10 +3181,13 @@ export function registerTools(
 				.number()
 				.int()
 				.min(1)
-				.max(500)
+				.max(200)
 				.optional()
-				.default(100)
-				.describe("Maximum components to return (default 100)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -3110,7 +3195,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List components",
 		},
-		async ({ type, team, limit }) => {
+		async ({ type, team, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_components");
 				if (_scopeDenied) return _scopeDenied;
@@ -3118,7 +3203,8 @@ export function registerTools(
 				const components = await convex.query("components:list" as any, {
 					type,
 					team,
-					limit: limit ?? 100,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -3268,7 +3354,17 @@ export function registerTools(
 				.string()
 				.describe("Search term to match against component name or team"),
 			type: componentTypeSchema.optional().describe("Filter by component type"),
-			limit: z.number().int().optional().describe("Max results (default 50)"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -3276,7 +3372,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Search components",
 		},
-		async ({ query, type, limit }) => {
+		async ({ query, type, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("search_components");
 				if (_scopeDenied) return _scopeDenied;
@@ -3284,7 +3380,8 @@ export function registerTools(
 				const results = await convex.query("components:search" as any, {
 					query,
 					type,
-					limit,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -3383,8 +3480,11 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Max results"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -3392,7 +3492,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List recurring tasks",
 		},
-		async ({ assignedTo, active, limit }) => {
+		async ({ assignedTo, active, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_recurring_tasks");
 				if (_scopeDenied) return _scopeDenied;
@@ -3400,7 +3500,8 @@ export function registerTools(
 				const tasks = await convex.query("recurringTasks:list" as any, {
 					assignedTo,
 					active,
-					limit: limit ?? 50,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -3841,8 +3942,11 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum mandates to return (default 50)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -3850,7 +3954,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List mandates",
 		},
-		async ({ requestedBy, fulfilledBy, status, limit }) => {
+		async ({ requestedBy, fulfilledBy, status, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_mandates");
 				if (_scopeDenied) return _scopeDenied;
@@ -3859,7 +3963,8 @@ export function registerTools(
 					requestedBy,
 					fulfilledBy,
 					status,
-					limit: limit ?? 50,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -4123,8 +4228,11 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum BUs to return (default 50)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -4132,7 +4240,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List BUs",
 		},
-		async ({ orchestratorId, status, limit }) => {
+		async ({ orchestratorId, status, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_bus");
 				if (_scopeDenied) return _scopeDenied;
@@ -4140,7 +4248,8 @@ export function registerTools(
 				const bus = await convex.query("businessUnits:list" as any, {
 					orchestratorId,
 					status,
-					limit: limit ?? 50,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -4252,21 +4361,36 @@ export function registerTools(
 	server.tool(
 		"list_repo_mappings",
 		"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.",
-		{},
+		{
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+		},
 		{
 			readOnlyHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List repo mappings",
 		},
-		async () => {
+		async ({ limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_repo_mappings");
 				if (_scopeDenied) return _scopeDenied;
 
 				const mappings = await convex.query(
 					"githubRepoMapping:list" as any,
-					{},
+					{
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
+					},
 				);
 
 				return {
@@ -4350,8 +4474,11 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum number of issues to return (default 50)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -4359,7 +4486,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List issues",
 		},
-		async ({ project, status, assignedTo, limit }) => {
+		async ({ project, status, assignedTo, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_issues");
 				if (_scopeDenied) return _scopeDenied;
@@ -4369,23 +4496,27 @@ export function registerTools(
 					results = await convex.query("issues:listByOrchestrator" as any, {
 						assignedOrchestrator: assignedTo,
 						status: status as any,
-						limit: limit ?? 50,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
 					});
 				} else if (project) {
 					results = await convex.query("issues:listByProject" as any, {
 						project,
 						status: status as any,
-						limit: limit ?? 50,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
 					});
 				} else if (status) {
 					results = await convex.query("issues:listByStatus" as any, {
 						status: status as any,
-						limit: limit ?? 50,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
 					});
 				} else {
 					results = await convex.query("issues:listByProject" as any, {
 						project: "",
-						limit: limit ?? 50,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
 					});
 				}
 
@@ -4821,8 +4952,14 @@ export function registerTools(
 			limit: z
 				.number()
 				.int()
+				.min(1)
+				.max(200)
 				.optional()
-				.describe("Max results to return (default 10)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -4830,14 +4967,15 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Search fix patterns",
 		},
-		async ({ query, limit }) => {
+		async ({ query, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("search_fix_patterns");
 				if (_scopeDenied) return _scopeDenied;
 
 				const results = await convex.action("search:searchFixPatterns" as any, {
 					query,
-					limit,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 
 				return {
@@ -4864,7 +5002,17 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe("Filter by source project — omit for all"),
-			limit: z.number().int().optional().describe("Max results (default 50)"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -4872,7 +5020,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List fix patterns",
 		},
-		async ({ project, limit }) => {
+		async ({ project, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_fix_patterns");
 				if (_scopeDenied) return _scopeDenied;
@@ -4882,7 +5030,8 @@ export function registerTools(
 						"fixPatterns:listByProject" as any,
 						{
 							sourceProject: project,
-							limit,
+							limit: limit ?? 20,
+							fields: fields ?? "lite",
 						},
 					);
 					return {
@@ -4891,7 +5040,8 @@ export function registerTools(
 				}
 
 				const allResults = await convex.query("fixPatterns:listAll" as any, {
-					limit,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 				return {
 					content: [
@@ -5278,8 +5428,11 @@ export function registerTools(
 				.min(1)
 				.max(200)
 				.optional()
-				.default(50)
-				.describe("Maximum number of errors to return (default 50)"),
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
 		},
 		{
 			readOnlyHint: true,
@@ -5287,14 +5440,15 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List errors",
 		},
-		async ({ deployment, limit }) => {
+		async ({ deployment, limit, fields }) => {
 			try {
 				const _scopeDenied = guardMasterOnly("list_errors");
 				if (_scopeDenied) return _scopeDenied;
 
 				const errors = await convex.query("errorMonitor:listErrors" as any, {
 					deployment,
-					limit: limit ?? 50,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
 				});
 				return {
 					content: [
