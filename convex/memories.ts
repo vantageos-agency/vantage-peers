@@ -178,6 +178,7 @@ export const listMemories = query({
   args: {
     namespace: v.string(),
     type: v.optional(memoryTypeValidator),
+    createdBy: v.optional(creatorValidator),
     includeSuperseded: v.optional(v.boolean()),
     limit: v.optional(v.number()),
     // Optional Convex pagination — when passed, uses .paginate() for cursor-based pagination.
@@ -194,6 +195,15 @@ export const listMemories = query({
     const isLatest = args.includeSuperseded === true ? undefined : true;
     const numItems = args.paginationOpts?.numItems ?? args.limit ?? 50;
     const cursor = args.paginationOpts?.cursor ?? null;
+    const createdByFilter = args.createdBy;
+    // Post-take filter helper — applied to result arrays when createdBy is set.
+    // Mirrors list_tasks createdBy semantics (Day 88 cross-tool consistency).
+    // Post-filter (not index-pushdown) is acceptable because createdBy is a
+    // rare diagnostic filter and the bounded numItems keeps the working set small.
+    const filterCreatedBy = <T extends { createdBy?: string }>(rows: T[]): T[] =>
+      createdByFilter === undefined
+        ? rows
+        : rows.filter((r) => r.createdBy === createdByFilter);
 
     // ── Paginated path (paginationOpts provided) ──────────────────────────────
     if (args.paginationOpts !== undefined) {
@@ -208,7 +218,7 @@ export const listMemories = query({
           )
           .order("desc")
           .paginate(opts);
-        return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
       }
 
       if (type !== undefined) {
@@ -219,7 +229,7 @@ export const listMemories = query({
           )
           .order("desc")
           .paginate(opts);
-        return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
       }
 
       if (isLatest !== undefined) {
@@ -230,7 +240,7 @@ export const listMemories = query({
           )
           .order("desc")
           .paginate(opts);
-        return { value: r.page, continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
       }
 
       const r = await ctx.db
@@ -254,7 +264,7 @@ export const listMemories = query({
         )
         .order("desc")
         .take(limit);
-      return { value: page, continueCursor: null, isDone: true };
+      return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
     }
 
     if (type !== undefined) {
@@ -265,7 +275,7 @@ export const listMemories = query({
         )
         .order("desc")
         .take(limit);
-      return { value: page, continueCursor: null, isDone: true };
+      return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
     }
 
     if (isLatest !== undefined) {
@@ -276,7 +286,7 @@ export const listMemories = query({
         )
         .order("desc")
         .take(limit);
-      return { value: page, continueCursor: null, isDone: true };
+      return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
     }
 
     const page = await ctx.db
