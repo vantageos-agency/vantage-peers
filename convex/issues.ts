@@ -259,6 +259,7 @@ export const getByRepoNumber = query({
 
 export const listByProject = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		project: v.string(),
 		status: v.optional(issueStatusValidator),
 		limit: v.optional(v.number()),
@@ -286,6 +287,7 @@ export const listByProject = query({
 
 export const listByOrchestrator = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		assignedOrchestrator: v.string(),
 		status: v.optional(issueStatusValidator),
 		limit: v.optional(v.number()),
@@ -317,6 +319,7 @@ export const listByOrchestrator = query({
 
 export const listByStatus = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		status: issueStatusValidator,
 		limit: v.optional(v.number()),
 	},

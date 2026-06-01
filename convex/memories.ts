@@ -176,6 +176,7 @@ const listMemoriesResultValidator = v.object({
 
 export const listMemories = query({
   args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
     namespace: v.string(),
     type: v.optional(memoryTypeValidator),
     createdBy: v.optional(creatorValidator),

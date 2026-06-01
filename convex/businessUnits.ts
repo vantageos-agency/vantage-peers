@@ -177,6 +177,7 @@ export const get = query({
 
 export const list = query({
 	args: {
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		orchestratorId: v.optional(v.string()),
 		status: v.optional(buStatusValidator),
 		limit: v.optional(v.number()),
