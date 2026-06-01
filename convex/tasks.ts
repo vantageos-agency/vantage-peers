@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, internalMutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
@@ -29,7 +29,13 @@ const statusValidator = v.union(
 );
 
 // Valid task status values for runtime validation
-const TASK_STATUSES = ["todo", "in_progress", "review", "blocked", "done"] as const;
+const TASK_STATUSES = [
+	"todo",
+	"in_progress",
+	"review",
+	"blocked",
+	"done",
+] as const;
 type TaskStatus = (typeof TASK_STATUSES)[number];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +142,9 @@ function projectTaskLite(doc: Record<string, unknown>): TaskLite {
 		status: doc.status as TaskStatus,
 		priority: doc.priority as "urgent" | "high" | "medium" | "low",
 		assignedTo: doc.assignedTo as string,
-		...(doc.missionId !== undefined ? { missionId: doc.missionId as string } : {}),
+		...(doc.missionId !== undefined
+			? { missionId: doc.missionId as string }
+			: {}),
 	};
 }
 
@@ -264,7 +272,8 @@ export const list = query({
 		type TaskRow = Doc<"tasks">;
 		const applyStatusFilter = (rows: TaskRow[]) => {
 			if (statuses === undefined) return rows;
-			if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
+			if (statuses.length === 1)
+				return rows.filter((r) => r.status === statuses[0]);
 			return rows.filter((r) => statuses.includes(r.status));
 		};
 
@@ -452,7 +461,9 @@ export const complete = mutation({
 		}
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
-			throw new Error("completionNote is required. Describe what was actually done.");
+			throw new Error(
+				"completionNote is required. Describe what was actually done.",
+			);
 		}
 
 		const now = Date.now();
@@ -510,10 +521,7 @@ export const complete = mutation({
 								fixedAt: Date.now(),
 								...(shaMatch
 									? {
-											fixCommits: [
-												...(issue.fixCommits || []),
-												shaMatch[1],
-											],
+											fixCommits: [...(issue.fixCommits || []), shaMatch[1]],
 										}
 									: {}),
 							});
@@ -566,7 +574,9 @@ export const complete = mutation({
 					const note = args.completionNote;
 
 					// Parse structured completionNote: "Root cause: ... Fix: ... Files: ..."
-					const rootCauseMatch = note.match(/Root cause:\s*(.+?)(?=\s*Fix:|$)/is);
+					const rootCauseMatch = note.match(
+						/Root cause:\s*(.+?)(?=\s*Fix:|$)/is,
+					);
 					const fixMatch = note.match(/Fix:\s*(.+?)(?=\s*Files:|$)/is);
 					const filesMatch = note.match(/Files:\s*(.+?)$/is);
 
@@ -623,7 +633,8 @@ export const complete = mutation({
 				.withIndex("by_mission", (q) => q.eq("missionId", task.missionId!))
 				.collect();
 			const allDone = missionTasks.every(
-				(t) => t._id.toString() === args.taskId.toString() || t.status === "done",
+				(t) =>
+					t._id.toString() === args.taskId.toString() || t.status === "done",
 			);
 			if (allDone) {
 				const mission = await ctx.db.get(task.missionId);
@@ -678,7 +689,10 @@ export const start = mutation({
 				)
 				.take(1);
 
-			if (inProgressTasks.length > 0 && inProgressTasks[0]._id !== args.taskId) {
+			if (
+				inProgressTasks.length > 0 &&
+				inProgressTasks[0]._id !== args.taskId
+			) {
 				throw new Error(
 					`Cannot start task: you have an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first.`,
 				);
@@ -741,7 +755,10 @@ export const deleteTask = mutation({
 		const task = await ctx.db.get(args.taskId);
 		if (!task) throw new Error("Task not found");
 
-		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
+		if (
+			args.callerOrchestrator !== undefined &&
+			args.callerOrchestrator !== "system"
+		) {
 			if (task.createdBy !== args.callerOrchestrator) {
 				throw new Error(
 					`Unauthorized: only ${task.createdBy} (creator) or system can delete this task`,
@@ -794,7 +811,8 @@ export const listByMission = query({
 		type TaskRow = Doc<"tasks">;
 		const applyStatusFilter = (rows: TaskRow[]) => {
 			if (statuses === undefined) return rows;
-			if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
+			if (statuses.length === 1)
+				return rows.filter((r) => r.status === statuses[0]);
 			return rows.filter((r) => statuses.includes(r.status));
 		};
 
@@ -860,5 +878,132 @@ export const listOverdue = query({
 		}
 
 		return tasks;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEPLOY TASK TITLE PATTERN
+// "[Deploy] PR #<prNumber> merged — deploy <repo> to prod"
+// ─────────────────────────────────────────────────────────────────────────────
+const DEPLOY_TITLE_RE =
+	/^\[Deploy\] PR #(\d+) merged — deploy ([\w-]+) to prod$/;
+
+/**
+ * Parse a deploy task title into (prNumber, repo) tuple.
+ * Returns null if the title does not match the expected pattern.
+ */
+function parseDeployTitle(
+	title: string,
+): { prNumber: number; repo: string } | null {
+	const m = DEPLOY_TITLE_RE.exec(title);
+	if (!m) return null;
+	return { prNumber: parseInt(m[1], 10), repo: m[2] };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// createDeployTaskWithDedup — Fix 1 + Fix 3
+//
+// Fix 1 (pre-create dedup): if an open deploy task already exists for the same
+//   (repo, prNumber) tuple, skip creating a new one and return the existing ID.
+//
+// Fix 3 (post-create supersede): after creating a new deploy task, mark every
+//   other older open deploy task for the same (repo, prNumber) as "done" with
+//   completionNote "[SUPERSEDED-BY-k<newId>] <originalTitle>\nfriction_observed:
+//   superseded-by-newer-deploy-task".
+//
+// Called from convex/http.ts GitHub webhook handler (PR merged event).
+// ─────────────────────────────────────────────────────────────────────────────
+export const createDeployTaskWithDedup = internalMutation({
+	args: {
+		title: v.string(),
+		description: v.optional(v.string()),
+		project: v.optional(v.string()),
+		assignedTo: assigneeValidator,
+		priority: priorityValidator,
+		createdBy: creatorValidator,
+		tags: v.optional(v.array(v.string())),
+	},
+	returns: v.union(v.id("tasks"), v.null()),
+	handler: async (ctx, args) => {
+		const parsed = parseDeployTitle(args.title);
+		if (!parsed) {
+			// Unexpected title format — fall through to plain create with no dedup.
+			const now = Date.now();
+			return await ctx.db.insert("tasks", {
+				...args,
+				status: "todo" as const,
+				createdAt: now,
+				updatedAt: now,
+			});
+		}
+
+		const { prNumber, repo } = parsed;
+
+		// ── Fix 1: pre-create dedup ───────────────────────────────────────────
+		// Scan open tasks with "by_status" index for statuses that are not done,
+		// then filter in memory for matching (repo, prNumber) in title.
+		// We check the four open statuses to keep the query bounded.
+		const OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
+
+		const existing: Doc<"tasks">[] = [];
+		for (const status of OPEN_STATUSES) {
+			const batch = await ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+			for (const t of batch) {
+				const p = parseDeployTitle(t.title);
+				if (p && p.prNumber === prNumber && p.repo === repo) {
+					existing.push(t);
+				}
+			}
+		}
+
+		if (existing.length > 0) {
+			// At least one open deploy task for the same (repo, prNumber) exists.
+			// Skip creating a duplicate — return the most-recently-created one.
+			const newest = existing.reduce((a, b) =>
+				a.createdAt > b.createdAt ? a : b,
+			);
+			return newest._id;
+		}
+
+		// ── Create the new deploy task ────────────────────────────────────────
+		const now = Date.now();
+		const newId = await ctx.db.insert("tasks", {
+			...args,
+			status: "todo" as const,
+			createdAt: now,
+			updatedAt: now,
+		});
+
+		// ── Fix 3: post-create supersede ─────────────────────────────────────
+		// Find any open deploy tasks for (repo, prNumber) created before newId.
+		// (There should be none due to Fix 1, but defend against race conditions.)
+		const toSupersede: Doc<"tasks">[] = [];
+		for (const status of OPEN_STATUSES) {
+			const batch = await ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+			for (const t of batch) {
+				if (t._id === newId) continue;
+				const p = parseDeployTitle(t.title);
+				if (p && p.prNumber === prNumber && p.repo === repo) {
+					toSupersede.push(t);
+				}
+			}
+		}
+
+		for (const stale of toSupersede) {
+			await ctx.db.patch(stale._id, {
+				status: "done" as const,
+				completedAt: now,
+				updatedAt: now,
+				completionNote: `[SUPERSEDED-BY-k${newId}] ${stale.title}\nfriction_observed: superseded-by-newer-deploy-task`,
+			});
+		}
+
+		return newId;
 	},
 });
