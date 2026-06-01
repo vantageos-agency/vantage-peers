@@ -256,10 +256,16 @@ export default defineSchema({
 		content: v.string(), // Full diary entry
 		highlights: v.optional(v.array(v.string())),
 		blockers: v.optional(v.array(v.string())),
+		// v2.4.8: auth-derived author captured at write time from oauthCtx.userId.
+		// Distinct from `orchestrator` (writer-intent label, client-supplied).
+		// Pre-v2.4.8 entries are backfilled with orchestrator as best-guess via
+		// migrations/diary_backfill_createdBy — NOT auth-verified.
+		createdBy: v.optional(creatorValidator),
 		createdAt: v.number(),
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
-		.index("by_date", ["date"]),
+		.index("by_date", ["date"])
+		.index("by_createdBy_date", ["createdBy", "date"]),
 
 	// ── briefingNotes ──────────────────────────────────────────────────────────
 	briefingNotes: defineTable({
