@@ -133,8 +133,9 @@ export const list = query({
 						.take(limit)
 				: await ctx.db.query("diary").order("desc").take(limit);
 
-		// v2.4.8 — apply createdBy filter in-memory (universal, post-take)
-		// Mirrors tasks.ts:354-357 pattern.
+		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
+		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
+		// (oauthCtx.userId from MCP layer), client cannot spoof.
 		if (args.createdBy !== undefined) {
 			return allRows.filter((r) => r.createdBy === args.createdBy);
 		}

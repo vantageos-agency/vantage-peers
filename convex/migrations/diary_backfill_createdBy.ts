@@ -1,3 +1,9 @@
+// MANUAL INVOCATION REQUIRED post-deploy:
+//   bunx convex run "migrations:diary_backfill_createdBy:backfillCreatedBy" '{}'
+// Run repeatedly until { updated: 0, skipped: N } indicates all entries backfilled.
+// Pre-v2.4.8 entries get createdBy = orchestrator (best-guess, NOT auth-verified).
+// New post-v2.4.8 entries get createdBy = oauthCtx.userId (auth-verified, anti-spoof).
+
 import { internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 

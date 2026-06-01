@@ -2759,14 +2759,16 @@ export function registerTools(
 			try {
 				// v2.4.8: orchestrator (writer-intent) and createdBy (auth-derived
 				// author) are separate filters — NOT aliases. Forward both independently.
-				// Non-master: must scope to own userId. Check both filters.
+				// Non-master: REQUIRE at least one explicit self-scope — undefined passes
+				// through are forbidden. Mirrors v2.4.7 effectiveOrchestrator shortcircuit:
+				// undefined !== myId → Forbidden. No silent fleet-read for non-master callers.
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
 					const myId = oauthCtx.userId;
-					const scopedOrchestrator = orchestrator === myId || orchestrator === undefined;
-					const scopedCreatedBy = createdBy === myId || createdBy === undefined;
-					if (!scopedOrchestrator || !scopedCreatedBy) {
+					const orchestratorScoped = orchestrator === myId;
+					const createdByScoped = createdBy === myId;
+					if (!orchestratorScoped && !createdByScoped) {
 						return mcpError(
-							`Forbidden: list_diaries requires orchestrator='${myId}' and/or createdBy='${myId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
+							`Forbidden: list_diaries requires orchestrator='${myId}' OR createdBy='${myId}' for non-master scope (current scope: ${oauthCtx.scopeProfile}).`,
 						);
 					}
 				}
