@@ -306,6 +306,19 @@ export const pollAllDeployments = internalAction({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
+		// Kill-switch: set AUTO_IRP_PAUSED=true in Convex env to skip the entire
+		// auto-IRP generation pipeline (poll → upsertError → createGitHubIssue →
+		// IRP mission cascade). Reversible without code re-deploy — just toggle env
+		// in Convex dashboard. Introduced 2026-06-02 for pre-public repo cleanup
+		// (Day 90 mission k57e4t21sr55rhz8ng554eseb987wvh3, T4 step). Unset/set-false
+		// to re-enable after public switch + matcher-gap fix lands.
+		if (process.env.AUTO_IRP_PAUSED === "true") {
+			console.log(
+				"[pollAllDeployments] Skipped — AUTO_IRP_PAUSED env var is set to 'true'.",
+			);
+			return null;
+		}
+
 		const deployments = (await ctx.runQuery(
 			internal.errorMonitor.listActiveDeployments,
 			{},
