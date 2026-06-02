@@ -1,0 +1,3056 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-06-02T12:08:59+00:00",
+  "generatedFromCommit": "ee5752020d044fe13cafd45e38f5753308cf8894",
+  "generatedBy": "scripts/gen-mcp-http-arg-names.py",
+  "purpose": "Canonical HTTP-API arg-names + public-function-names map for VantagePeers Convex backend. Use this to look up the exact `{path, args}` shape before invoking any tasks:get / messages:check / etc. Eliminates the m970x5wzkc family of caller-side arg-name violations.",
+  "modules": {
+    "briefingNotes": {
+      "file": "convex/briefingNotes.ts",
+      "publicFunctions": [
+        "create",
+        "get",
+        "list",
+        "deleteBriefingNote",
+        "update"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ title: v.string(), topic: v.string(), participants: v.array(v.string()), content: v.string(), decisions: v.optional(v.array(v.string())), linkedMemoryIds: v.optional(v.array(v.id(\"memories\"))), createdBy: creatorValidator, }",
+          "argNames": [
+            "title",
+            "topic",
+            "participants",
+            "content",
+            "decisions",
+            "linkedMemoryIds",
+            "createdBy"
+          ],
+          "file": "convex/briefingNotes.ts:10",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ noteId: v.id(\"briefingNotes\") }",
+          "argNames": [
+            "noteId"
+          ],
+          "file": "convex/briefingNotes.ts:33",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ topic: v.optional(v.string()), limit: v.optional(v.number()), fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), updatedSince: v.optional(v.number()), }",
+          "argNames": [
+            "topic",
+            "limit",
+            "fields",
+            "updatedSince"
+          ],
+          "file": "convex/briefingNotes.ts:89",
+          "errorCodes": []
+        },
+        "deleteBriefingNote": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ noteId: v.id(\"briefingNotes\"), callerOrchestrator: v.optional(creatorValidator), }",
+          "argNames": [
+            "noteId",
+            "callerOrchestrator"
+          ],
+          "file": "convex/briefingNotes.ts:140",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ noteId: v.id(\"briefingNotes\"), callerOrchestrator: creatorValidator, // REQUIRED — deny-by-default per memory j573cwcs3znp0xsvtg34x435jh84b0eg title: v.optional(v.string()), topic: v.optional(v.string()), participants: v.optional(v.array(v.string())), content: v.optional(v.string()), decisions: v.optional(v.array(v.string())), linkedMemoryIds: v.optional(v.array(v.id(\"memories\"))), }",
+          "argNames": [
+            "noteId",
+            "callerOrchestrator",
+            "title",
+            "topic",
+            "participants",
+            "content",
+            "decisions",
+            "linkedMemoryIds"
+          ],
+          "file": "convex/briefingNotes.ts:168",
+          "errorCodes": []
+        }
+      }
+    },
+    "businessUnits": {
+      "file": "convex/businessUnits.ts",
+      "publicFunctions": [
+        "create",
+        "update",
+        "remove",
+        "get",
+        "list"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ name: v.string(), description: v.string(), purpose: v.string(), domain: v.optional(v.string()), orchestratorId: v.string(), status: buStatusValidator, businessModel: v.string(), targetCustomers: v.string(), services: v.array(v.string()), pricing: v.string(), revenueProjections: revenueProjectionsValidator, coreTeam: coreTeamValidator, coreProcesses: v.array(v.string()), dependencies: v.array(v.string()), kpis: v.array(v.string()), managementFee: v.optional(v.number()), }",
+          "argNames": [
+            "name",
+            "description",
+            "purpose",
+            "domain",
+            "orchestratorId",
+            "status",
+            "businessModel",
+            "targetCustomers",
+            "services",
+            "pricing",
+            "revenueProjections",
+            "coreTeam",
+            "coreProcesses",
+            "dependencies",
+            "kpis",
+            "managementFee"
+          ],
+          "file": "convex/businessUnits.ts:56",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ buId: v.id(\"businessUnits\"), name: v.optional(v.string()), description: v.optional(v.string()), purpose: v.optional(v.string()), domain: v.optional(v.string()), orchestratorId: v.optional(v.string()), status: v.optional(buStatusValidator), businessModel: v.optional(v.string()), targetCustomers: v.optional(v.string()), services: v.optional(v.array(v.string())), pricing: v.optional(v.string()), revenueProjections: v.optional(revenueProjectionsValidator), coreTeam: v.optional(coreTeamValidator), coreProcesses: v.optional(v.array(v.string())), dependencies: v.optional(v.array(v.string())), kpis: v.optional(v.array(v.string())), managementFee: v.optional(v.number()), }",
+          "argNames": [
+            "buId",
+            "name",
+            "description",
+            "purpose",
+            "domain",
+            "orchestratorId",
+            "status",
+            "businessModel",
+            "targetCustomers",
+            "services",
+            "pricing",
+            "revenueProjections",
+            "coreTeam",
+            "coreProcesses",
+            "dependencies",
+            "kpis",
+            "managementFee"
+          ],
+          "file": "convex/businessUnits.ts:105",
+          "errorCodes": []
+        },
+        "remove": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ buId: v.id(\"businessUnits\") }",
+          "argNames": [
+            "buId"
+          ],
+          "file": "convex/businessUnits.ts:151",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ buId: v.id(\"businessUnits\") }",
+          "argNames": [
+            "buId"
+          ],
+          "file": "convex/businessUnits.ts:166",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields orchestratorId: v.optional(v.string()), status: v.optional(buStatusValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "orchestratorId",
+            "status",
+            "limit"
+          ],
+          "file": "convex/businessUnits.ts:178",
+          "errorCodes": []
+        }
+      }
+    },
+    "components": {
+      "file": "convex/components.ts",
+      "publicFunctions": [
+        "register",
+        "list",
+        "get",
+        "update",
+        "remove",
+        "search"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "register": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ name: v.string(), type: componentTypeValidator, team: v.optional(v.string()), content: v.string(), version: v.optional(v.string()), project: v.optional(v.string()), createdBy: creatorValidator, }",
+          "argNames": [
+            "name",
+            "type",
+            "team",
+            "content",
+            "version",
+            "project",
+            "createdBy"
+          ],
+          "file": "convex/components.ts:16",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields type: v.optional(componentTypeValidator), team: v.optional(v.string()), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "type",
+            "team",
+            "limit"
+          ],
+          "file": "convex/components.ts:71",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ name: v.string(), type: componentTypeValidator, }",
+          "argNames": [
+            "name",
+            "type"
+          ],
+          "file": "convex/components.ts:107",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ componentId: v.id(\"components\"), name: v.optional(v.string()), team: v.optional(v.string()), content: v.optional(v.string()), version: v.optional(v.string()), project: v.optional(v.string()), }",
+          "argNames": [
+            "componentId",
+            "name",
+            "team",
+            "content",
+            "version",
+            "project"
+          ],
+          "file": "convex/components.ts:126",
+          "errorCodes": []
+        },
+        "remove": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ componentId: v.id(\"components\"), }",
+          "argNames": [
+            "componentId"
+          ],
+          "file": "convex/components.ts:157",
+          "errorCodes": []
+        },
+        "search": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields query: v.string(), type: v.optional(componentTypeValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "query",
+            "type",
+            "limit"
+          ],
+          "file": "convex/components.ts:174",
+          "errorCodes": []
+        }
+      }
+    },
+    "credentials": {
+      "file": "convex/credentials.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "_getOrCreateWorkspace",
+        "_checkRateLimit",
+        "_issueToken",
+        "_auditLog",
+        "_getTokenByHash"
+      ],
+      "functions": {
+        "_getOrCreateWorkspace": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ clerkUserId: v.string(), email: v.optional(v.string()), name: v.optional(v.string()), }",
+          "argNames": [
+            "clerkUserId",
+            "email",
+            "name"
+          ],
+          "file": "convex/credentials.ts:251",
+          "errorCodes": []
+        },
+        "_checkRateLimit": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ key: v.string(), maxPerWindow: v.number(), windowMs: v.number(), }",
+          "argNames": [
+            "key",
+            "maxPerWindow",
+            "windowMs"
+          ],
+          "file": "convex/credentials.ts:274",
+          "errorCodes": []
+        },
+        "_issueToken": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ tokenHash: v.string(), clerkUserId: v.string(), workspaceId: v.string(), extId: v.string(), expiresAt: v.number(), }",
+          "argNames": [
+            "tokenHash",
+            "clerkUserId",
+            "workspaceId",
+            "extId",
+            "expiresAt"
+          ],
+          "file": "convex/credentials.ts:310",
+          "errorCodes": []
+        },
+        "_auditLog": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ clerkUserId: v.string(), workspaceId: v.string(), extId: v.string(), extVersion: v.optional(v.string()), issuedAt: v.number(), ip: v.optional(v.string()), userAgent: v.optional(v.string()), }",
+          "argNames": [
+            "clerkUserId",
+            "workspaceId",
+            "extId",
+            "extVersion",
+            "issuedAt",
+            "ip",
+            "userAgent"
+          ],
+          "file": "convex/credentials.ts:333",
+          "errorCodes": []
+        },
+        "_getTokenByHash": {
+          "kind": "internalQuery",
+          "public": false,
+          "args": "{ tokenHash: v.string() }",
+          "argNames": [
+            "tokenHash"
+          ],
+          "file": "convex/credentials.ts:358",
+          "errorCodes": []
+        }
+      }
+    },
+    "dashboard": {
+      "file": "convex/dashboard.ts",
+      "publicFunctions": [
+        "getDashboardSummary",
+        "getProjectSummary"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "getDashboardSummary": {
+          "kind": "query",
+          "public": true,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/dashboard.ts:11",
+          "errorCodes": []
+        },
+        "getProjectSummary": {
+          "kind": "query",
+          "public": true,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/dashboard.ts:139",
+          "errorCodes": []
+        }
+      }
+    },
+    "diary": {
+      "file": "convex/diary.ts",
+      "publicFunctions": [
+        "write",
+        "get",
+        "list",
+        "deleteDiary",
+        "listByDateRange"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "write": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ date: v.string(), orchestrator: creatorValidator, content: v.string(), highlights: v.optional(v.array(v.string())), blockers: v.optional(v.array(v.string())), // v2.4.8: auth-derived author. MCP layer passes oauthCtx.userId here. // Optional for backwards compat (pre-v2.4.8 callers omit it). createdBy: v.optional(creatorValidator), }",
+          "argNames": [
+            "date",
+            "orchestrator",
+            "content",
+            "highlights",
+            "blockers",
+            "createdBy"
+          ],
+          "file": "convex/diary.ts:15",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ date: v.string(), orchestrator: creatorValidator, }",
+          "argNames": [
+            "date",
+            "orchestrator"
+          ],
+          "file": "convex/diary.ts:65",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields orchestrator: v.optional(creatorValidator), // v2.4.8: filter by auth-derived author (distinct from orchestrator). // Applied universally post-take (mirrors tasks.ts:354-357 pattern). createdBy: v.optional(creatorValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "orchestrator",
+            "createdBy",
+            "limit"
+          ],
+          "file": "convex/diary.ts:99",
+          "errorCodes": []
+        },
+        "deleteDiary": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ diaryId: v.id(\"diary\"), callerOrchestrator: v.optional(creatorValidator), }",
+          "argNames": [
+            "diaryId",
+            "callerOrchestrator"
+          ],
+          "file": "convex/diary.ts:154",
+          "errorCodes": []
+        },
+        "listByDateRange": {
+          "kind": "query",
+          "public": true,
+          "args": "{ from: v.string(), to: v.string(), orchestrator: v.optional(creatorValidator), }",
+          "argNames": [
+            "from",
+            "to",
+            "orchestrator"
+          ],
+          "file": "convex/diary.ts:181",
+          "errorCodes": []
+        }
+      }
+    },
+    "episodes": {
+      "file": "convex/episodes.ts",
+      "publicFunctions": [
+        "storeEpisode",
+        "listEpisodes",
+        "getCriticalInsights"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "storeEpisode": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ namespace: v.string(), createdBy: creatorValidator, // The 5 episode fields (mandatory for type=\"episode\") context: v.string(), goal: v.string(), action: v.string(), outcome: v.string(), insight: v.string(), severity: severityValidator, // Optional relations to related memories relations: v.optional( v.array( v.object({ targetId: v.id(\"memories\"), type: relationTypeValidator, }), ), ), ttl: v.optional(v.string()), }",
+          "argNames": [
+            "namespace",
+            "createdBy",
+            "context",
+            "goal",
+            "action",
+            "outcome",
+            "insight",
+            "severity",
+            "relations",
+            "targetId",
+            "type",
+            "ttl"
+          ],
+          "file": "convex/episodes.ts:14",
+          "errorCodes": []
+        },
+        "listEpisodes": {
+          "kind": "query",
+          "public": true,
+          "args": "{ namespace: v.string(), severity: v.optional(severityValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "namespace",
+            "severity",
+            "limit"
+          ],
+          "file": "convex/episodes.ts:85",
+          "errorCodes": []
+        },
+        "getCriticalInsights": {
+          "kind": "query",
+          "public": true,
+          "args": "{ limit: v.optional(v.number()) }",
+          "argNames": [
+            "limit"
+          ],
+          "file": "convex/episodes.ts:152",
+          "errorCodes": []
+        }
+      }
+    },
+    "errorMonitor": {
+      "file": "convex/errorMonitor.ts",
+      "publicFunctions": [
+        "addDeployment",
+        "removeDeployment",
+        "listDeployments",
+        "listErrors",
+        "getError"
+      ],
+      "internalFunctions": [
+        "upsertError",
+        "updateCursor",
+        "linkIssue",
+        "linkIrpMission",
+        "linkIrpMissionByIssueNumber",
+        "listActiveDeployments",
+        "listStaleAutoIrp",
+        "resolveStaleIrpMission"
+      ],
+      "functions": {
+        "upsertError": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ hash: v.string(), deployment: v.string(), functionName: v.string(), errorMessage: v.string(), stackTrace: v.optional(v.string()), githubRepo: v.string(), orchestrator: v.string(), // Optional per-call threshold override. Falls back to // DEFAULT_RECURRENCE_THRESHOLD when absent. recurrenceThreshold: v.optional(v.number()), }",
+          "argNames": [
+            "hash",
+            "deployment",
+            "functionName",
+            "errorMessage",
+            "stackTrace",
+            "githubRepo",
+            "orchestrator",
+            "recurrenceThreshold"
+          ],
+          "file": "convex/errorMonitor.ts:38",
+          "errorCodes": []
+        },
+        "updateCursor": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ deploymentName: v.string(), cursor: v.number(), }",
+          "argNames": [
+            "deploymentName",
+            "cursor"
+          ],
+          "file": "convex/errorMonitor.ts:114",
+          "errorCodes": []
+        },
+        "linkIssue": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ errorId: v.id(\"errorLogs\"), issueNumber: v.number(), githubRepo: v.string(), }",
+          "argNames": [
+            "errorId",
+            "issueNumber",
+            "githubRepo"
+          ],
+          "file": "convex/errorMonitor.ts:132",
+          "errorCodes": []
+        },
+        "linkIrpMission": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ errorId: v.id(\"errorLogs\"), missionId: v.id(\"missions\"), }",
+          "argNames": [
+            "errorId",
+            "missionId"
+          ],
+          "file": "convex/errorMonitor.ts:154",
+          "errorCodes": []
+        },
+        "linkIrpMissionByIssueNumber": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ issueNumber: v.number(), githubRepo: v.string(), missionId: v.id(\"missions\"), }",
+          "argNames": [
+            "issueNumber",
+            "githubRepo",
+            "missionId"
+          ],
+          "file": "convex/errorMonitor.ts:173",
+          "errorCodes": []
+        },
+        "listActiveDeployments": {
+          "kind": "internalQuery",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitor.ts:206",
+          "errorCodes": []
+        },
+        "listStaleAutoIrp": {
+          "kind": "internalQuery",
+          "public": false,
+          "args": "{ quietWindowMs: v.number(), limit: v.optional(v.number()), }",
+          "argNames": [
+            "quietWindowMs",
+            "limit"
+          ],
+          "file": "convex/errorMonitor.ts:238",
+          "errorCodes": []
+        },
+        "resolveStaleIrpMission": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ errorLogId: v.id(\"errorLogs\"), missionId: v.id(\"missions\"), }",
+          "argNames": [
+            "errorLogId",
+            "missionId"
+          ],
+          "file": "convex/errorMonitor.ts:296",
+          "errorCodes": []
+        },
+        "addDeployment": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ name: v.string(), deploymentUrl: v.string(), deployKeyEnvVar: v.string(), githubRepo: v.string(), orchestrator: v.string(), }",
+          "argNames": [
+            "name",
+            "deploymentUrl",
+            "deployKeyEnvVar",
+            "githubRepo",
+            "orchestrator"
+          ],
+          "file": "convex/errorMonitor.ts:359",
+          "errorCodes": []
+        },
+        "removeDeployment": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ name: v.string() }",
+          "argNames": [
+            "name"
+          ],
+          "file": "convex/errorMonitor.ts:391",
+          "errorCodes": []
+        },
+        "listDeployments": {
+          "kind": "query",
+          "public": true,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitor.ts:410",
+          "errorCodes": []
+        },
+        "listErrors": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields deployment: v.optional(v.string()), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "deployment",
+            "limit"
+          ],
+          "file": "convex/errorMonitor.ts:434",
+          "errorCodes": []
+        },
+        "getError": {
+          "kind": "query",
+          "public": true,
+          "args": "{ errorId: v.id(\"errorLogs\") }",
+          "argNames": [
+            "errorId"
+          ],
+          "file": "convex/errorMonitor.ts:474",
+          "errorCodes": []
+        }
+      }
+    },
+    "errorMonitorActions": {
+      "file": "convex/errorMonitorActions.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "createGitHubIssue",
+        "pollDeploymentLogs",
+        "pollAllDeployments"
+      ],
+      "functions": {
+        "createGitHubIssue": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ errorId: v.id(\"errorLogs\"), githubRepo: v.string(), functionName: v.string(), errorMessage: v.string(), stackTrace: v.string(), deployment: v.string(), orchestrator: v.string(), }",
+          "argNames": [
+            "errorId",
+            "githubRepo",
+            "functionName",
+            "errorMessage",
+            "stackTrace",
+            "deployment",
+            "orchestrator"
+          ],
+          "file": "convex/errorMonitorActions.ts:30",
+          "errorCodes": []
+        },
+        "pollDeploymentLogs": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ deploymentName: v.string(), deploymentUrl: v.string(), deployKeyEnvVar: v.string(), githubRepo: v.string(), orchestrator: v.string(), lastCursor: v.optional(v.number()), }",
+          "argNames": [
+            "deploymentName",
+            "deploymentUrl",
+            "deployKeyEnvVar",
+            "githubRepo",
+            "orchestrator",
+            "lastCursor"
+          ],
+          "file": "convex/errorMonitorActions.ts:119",
+          "errorCodes": []
+        },
+        "pollAllDeployments": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitorActions.ts:305",
+          "errorCodes": []
+        }
+      }
+    },
+    "errorMonitorAutoResolver": {
+      "file": "convex/errorMonitorAutoResolver.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "autoResolveStaleIrp"
+      ],
+      "functions": {
+        "autoResolveStaleIrp": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitorAutoResolver.ts:110",
+          "errorCodes": []
+        }
+      }
+    },
+    "errorMonitorFilters": {
+      "file": "convex/errorMonitorFilters.ts",
+      "publicFunctions": [
+        "addFilterRule",
+        "disableFilterRule",
+        "listFilterRules",
+        "getPendingAliasReleases"
+      ],
+      "internalFunctions": [
+        "loadActiveRules",
+        "seedDefaultRules",
+        "incrementRuleMatch",
+        "setPendingAliasReleases"
+      ],
+      "functions": {
+        "loadActiveRules": {
+          "kind": "internalQuery",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitorFilters.ts:276",
+          "errorCodes": []
+        },
+        "seedDefaultRules": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitorFilters.ts:329",
+          "errorCodes": []
+        },
+        "addFilterRule": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ functionName: v.string(), errorMessageRegex: v.string(), regexFlags: v.optional(v.string()), reason: v.string(), severity: severityValidator, priority: v.optional(v.number()), }",
+          "argNames": [
+            "functionName",
+            "errorMessageRegex",
+            "regexFlags",
+            "reason",
+            "severity",
+            "priority"
+          ],
+          "file": "convex/errorMonitorFilters.ts:355",
+          "errorCodes": []
+        },
+        "incrementRuleMatch": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ ruleId: v.id(\"errorMonitorFilterRules\") }",
+          "argNames": [
+            "ruleId"
+          ],
+          "file": "convex/errorMonitorFilters.ts:389",
+          "errorCodes": []
+        },
+        "disableFilterRule": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ ruleId: v.id(\"errorMonitorFilterRules\") }",
+          "argNames": [
+            "ruleId"
+          ],
+          "file": "convex/errorMonitorFilters.ts:403",
+          "errorCodes": []
+        },
+        "listFilterRules": {
+          "kind": "query",
+          "public": true,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitorFilters.ts:415",
+          "errorCodes": []
+        },
+        "getPendingAliasReleases": {
+          "kind": "query",
+          "public": true,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/errorMonitorFilters.ts:452",
+          "errorCodes": []
+        },
+        "setPendingAliasReleases": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ aliases: v.array(v.string()) }",
+          "argNames": [
+            "aliases"
+          ],
+          "file": "convex/errorMonitorFilters.ts:472",
+          "errorCodes": []
+        }
+      }
+    },
+    "fixPatterns": {
+      "file": "convex/fixPatterns.ts",
+      "publicFunctions": [
+        "create",
+        "addAttempt",
+        "validate",
+        "linkIssue",
+        "get",
+        "listByProject",
+        "listAll",
+        "listByStack"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ symptom: v.string(), rootCause: v.string(), validatedFix: v.optional(v.string()), files: v.optional(v.array(v.string())), tags: v.array(v.string()), stack: v.array(v.string()), sourceProject: v.string(), linkedIssueIds: v.optional(v.array(v.string())), createdBy: creatorValidator, severity: severityValidator, }",
+          "argNames": [
+            "symptom",
+            "rootCause",
+            "validatedFix",
+            "files",
+            "tags",
+            "stack",
+            "sourceProject",
+            "linkedIssueIds",
+            "createdBy",
+            "severity"
+          ],
+          "file": "convex/fixPatterns.ts:10",
+          "errorCodes": []
+        },
+        "addAttempt": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ patternId: v.id(\"fixPatterns\"), description: v.string(), commit: v.optional(v.string()), worked: v.boolean(), why: v.string(), createdBy: creatorValidator, }",
+          "argNames": [
+            "patternId",
+            "description",
+            "commit",
+            "worked",
+            "why",
+            "createdBy"
+          ],
+          "file": "convex/fixPatterns.ts:58",
+          "errorCodes": []
+        },
+        "validate": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ patternId: v.id(\"fixPatterns\"), validatedFix: v.string(), }",
+          "argNames": [
+            "patternId",
+            "validatedFix"
+          ],
+          "file": "convex/fixPatterns.ts:108",
+          "errorCodes": []
+        },
+        "linkIssue": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ patternId: v.id(\"fixPatterns\"), issueId: v.string(), }",
+          "argNames": [
+            "patternId",
+            "issueId"
+          ],
+          "file": "convex/fixPatterns.ts:141",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ patternId: v.id(\"fixPatterns\") }",
+          "argNames": [
+            "patternId"
+          ],
+          "file": "convex/fixPatterns.ts:169",
+          "errorCodes": []
+        },
+        "listByProject": {
+          "kind": "query",
+          "public": true,
+          "args": "{ sourceProject: v.string(), limit: v.optional(v.number()), }",
+          "argNames": [
+            "sourceProject",
+            "limit"
+          ],
+          "file": "convex/fixPatterns.ts:230",
+          "errorCodes": []
+        },
+        "listAll": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "limit"
+          ],
+          "file": "convex/fixPatterns.ts:266",
+          "errorCodes": []
+        },
+        "listByStack": {
+          "kind": "query",
+          "public": true,
+          "args": "{ stack: v.string(), limit: v.optional(v.number()), }",
+          "argNames": [
+            "stack",
+            "limit"
+          ],
+          "file": "convex/fixPatterns.ts:302",
+          "errorCodes": []
+        }
+      }
+    },
+    "githubComments": {
+      "file": "convex/githubComments.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "postComment"
+      ],
+      "functions": {
+        "postComment": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ repo: v.string(), // \"owner/repo\" issueNumber: v.number(), body: v.string(), }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "body"
+          ],
+          "file": "convex/githubComments.ts:11",
+          "errorCodes": []
+        }
+      }
+    },
+    "githubRepoMapping": {
+      "file": "convex/githubRepoMapping.ts",
+      "publicFunctions": [
+        "getByRepo",
+        "list",
+        "add",
+        "remove",
+        "seed"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "getByRepo": {
+          "kind": "query",
+          "public": true,
+          "args": "{ repo: v.string() }",
+          "argNames": [
+            "repo"
+          ],
+          "file": "convex/githubRepoMapping.ts:4",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/githubRepoMapping.ts:14",
+          "errorCodes": []
+        },
+        "add": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), orchestrator: v.string(), project: v.string(), active: v.optional(v.boolean()), }",
+          "argNames": [
+            "repo",
+            "orchestrator",
+            "project",
+            "active"
+          ],
+          "file": "convex/githubRepoMapping.ts:21",
+          "errorCodes": []
+        },
+        "remove": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string() }",
+          "argNames": [
+            "repo"
+          ],
+          "file": "convex/githubRepoMapping.ts:51",
+          "errorCodes": []
+        },
+        "seed": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ mappings: v.array( v.object({ repo: v.string(), orchestrator: v.string(), project: v.string(), }), ), }",
+          "argNames": [
+            "mappings",
+            "repo",
+            "orchestrator",
+            "project"
+          ],
+          "file": "convex/githubRepoMapping.ts:71",
+          "errorCodes": []
+        }
+      }
+    },
+    "gumroadWebhook": {
+      "file": "convex/gumroadWebhook.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "handleGumroadWebhook"
+      ],
+      "functions": {
+        "handleGumroadWebhook": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ body: v.string(), signature: v.union(v.string(), v.null()), }",
+          "argNames": [
+            "body",
+            "signature"
+          ],
+          "file": "convex/gumroadWebhook.ts:567",
+          "errorCodes": []
+        }
+      }
+    },
+    "iframeEmbedSessions": {
+      "file": "convex/iframeEmbedSessions.ts",
+      "publicFunctions": [
+        "createSession",
+        "getSession",
+        "touchSession",
+        "revokeSession"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "createSession": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ sessionId: v.string(), tenantId: v.optional(v.string()), origin: v.string(), userId: v.optional(v.string()), expiresAt: v.number(), }",
+          "argNames": [
+            "sessionId",
+            "tenantId",
+            "origin",
+            "userId",
+            "expiresAt"
+          ],
+          "file": "convex/iframeEmbedSessions.ts:18",
+          "errorCodes": []
+        },
+        "getSession": {
+          "kind": "query",
+          "public": true,
+          "args": "{ sessionId: v.string(), }",
+          "argNames": [
+            "sessionId"
+          ],
+          "file": "convex/iframeEmbedSessions.ts:44",
+          "errorCodes": []
+        },
+        "touchSession": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ sessionId: v.string(), }",
+          "argNames": [
+            "sessionId"
+          ],
+          "file": "convex/iframeEmbedSessions.ts:85",
+          "errorCodes": []
+        },
+        "revokeSession": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ sessionId: v.string(), }",
+          "argNames": [
+            "sessionId"
+          ],
+          "file": "convex/iframeEmbedSessions.ts:107",
+          "errorCodes": []
+        }
+      }
+    },
+    "issueStats": {
+      "file": "convex/issueStats.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "calculateStats",
+        "calculateAllRepos"
+      ],
+      "functions": {
+        "calculateStats": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ repo: v.string(), since: v.optional(v.string()), }",
+          "argNames": [
+            "repo",
+            "since"
+          ],
+          "file": "convex/issueStats.ts:19",
+          "errorCodes": []
+        },
+        "calculateAllRepos": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/issueStats.ts:246",
+          "errorCodes": []
+        }
+      }
+    },
+    "issueStatsQueries": {
+      "file": "convex/issueStatsQueries.ts",
+      "publicFunctions": [
+        "getLatest"
+      ],
+      "internalFunctions": [
+        "upsertStats",
+        "listActiveRepos"
+      ],
+      "functions": {
+        "upsertStats": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ repo: v.string(), date: v.string(), totalIssues: v.number(), resolvedIssues: v.number(), medianTimeToFirstResponse: v.optional(v.number()), medianTimeToFix: v.optional(v.number()), fastestResolution: v.optional(v.number()), slowestResolution: v.optional(v.number()), avgTimeToFix: v.optional(v.number()), beforeVantageOS: v.optional(v.object({ totalIssues: v.number(), resolvedIssues: v.number(), medianTimeToFix: v.optional(v.number()), avgTimeToFix: v.optional(v.number()), })), afterVantageOS: v.optional(v.object({ totalIssues: v.number(), resolvedIssues: v.number(), medianTimeToFix: v.optional(v.number()), avgTimeToFix: v.optional(v.number()), })), issueDetails: v.optional( v.array( v.object({ number: v.number(), title: v.string(), timeToFirstResponse: v.optional(v.number()), timeToFix: v.optional(v.number()), status: v.string(), }), ), ), }",
+          "argNames": [
+            "repo",
+            "date",
+            "totalIssues",
+            "resolvedIssues",
+            "medianTimeToFirstResponse",
+            "medianTimeToFix",
+            "fastestResolution",
+            "slowestResolution",
+            "avgTimeToFix",
+            "beforeVantageOS",
+            "afterVantageOS",
+            "issueDetails",
+            "number",
+            "title",
+            "timeToFirstResponse",
+            "timeToFix",
+            "status"
+          ],
+          "file": "convex/issueStatsQueries.ts:8",
+          "errorCodes": []
+        },
+        "listActiveRepos": {
+          "kind": "internalQuery",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/issueStatsQueries.ts:71",
+          "errorCodes": []
+        },
+        "getLatest": {
+          "kind": "query",
+          "public": true,
+          "args": "{ repo: v.optional(v.string()), limit: v.optional(v.number()), }",
+          "argNames": [
+            "repo",
+            "limit"
+          ],
+          "file": "convex/issueStatsQueries.ts:94",
+          "errorCodes": []
+        }
+      }
+    },
+    "issues": {
+      "file": "convex/issues.ts",
+      "publicFunctions": [
+        "upsertFromGitHub",
+        "updateStatus",
+        "linkCommit",
+        "linkTask",
+        "verify",
+        "close",
+        "getByRepoNumber",
+        "listByProject",
+        "listByOrchestrator",
+        "listByStatus",
+        "getStats",
+        "createExternal",
+        "updatePrStatus",
+        "listExternalOpen"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "upsertFromGitHub": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), title: v.string(), body: v.string(), htmlUrl: v.string(), labels: v.array(v.string()), status: issueStatusValidator, githubCreatedAt: v.number(), githubUpdatedAt: v.number(), }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "title",
+            "body",
+            "htmlUrl",
+            "labels",
+            "status",
+            "githubCreatedAt",
+            "githubUpdatedAt"
+          ],
+          "file": "convex/issues.ts:46",
+          "errorCodes": []
+        },
+        "updateStatus": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), status: issueStatusValidator, }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "status"
+          ],
+          "file": "convex/issues.ts:116",
+          "errorCodes": []
+        },
+        "linkCommit": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), commitSha: v.string(), fixedBy: v.string(), }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "commitSha",
+            "fixedBy"
+          ],
+          "file": "convex/issues.ts:139",
+          "errorCodes": []
+        },
+        "linkTask": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), taskId: v.string(), }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "taskId"
+          ],
+          "file": "convex/issues.ts:168",
+          "errorCodes": []
+        },
+        "verify": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), verifiedBy: v.string(), }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "verifiedBy"
+          ],
+          "file": "convex/issues.ts:192",
+          "errorCodes": []
+        },
+        "close": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), }",
+          "argNames": [
+            "repo",
+            "issueNumber"
+          ],
+          "file": "convex/issues.ts:219",
+          "errorCodes": []
+        },
+        "getByRepoNumber": {
+          "kind": "query",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), }",
+          "argNames": [
+            "repo",
+            "issueNumber"
+          ],
+          "file": "convex/issues.ts:241",
+          "errorCodes": []
+        },
+        "listByProject": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields project: v.string(), status: v.optional(issueStatusValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "project",
+            "status",
+            "limit"
+          ],
+          "file": "convex/issues.ts:260",
+          "errorCodes": []
+        },
+        "listByOrchestrator": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields assignedOrchestrator: v.string(), status: v.optional(issueStatusValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "assignedOrchestrator",
+            "status",
+            "limit"
+          ],
+          "file": "convex/issues.ts:288",
+          "errorCodes": []
+        },
+        "listByStatus": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields status: issueStatusValidator, limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "status",
+            "limit"
+          ],
+          "file": "convex/issues.ts:320",
+          "errorCodes": []
+        },
+        "getStats": {
+          "kind": "query",
+          "public": true,
+          "args": "{ project: v.optional(v.string()), }",
+          "argNames": [
+            "project"
+          ],
+          "file": "convex/issues.ts:341",
+          "errorCodes": []
+        },
+        "createExternal": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ externalRepo: v.string(), externalIssueNumber: v.number(), externalIssueUrl: v.string(), title: v.string(), body: v.string(), assignedOrchestrator: v.string(), project: v.optional(v.string()), priority: v.optional(v.union(v.literal(\"urgent\"), v.literal(\"high\"), v.literal(\"medium\"), v.literal(\"low\"))), forkRepo: v.optional(v.string()), }",
+          "argNames": [
+            "externalRepo",
+            "externalIssueNumber",
+            "externalIssueUrl",
+            "title",
+            "body",
+            "assignedOrchestrator",
+            "project",
+            "priority",
+            "forkRepo"
+          ],
+          "file": "convex/issues.ts:371",
+          "errorCodes": []
+        },
+        "updatePrStatus": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ repo: v.string(), issueNumber: v.number(), prUrl: v.string(), prStatus: v.union( v.literal(\"draft\"), v.literal(\"open\"), v.literal(\"merged\"), v.literal(\"closed\"), ), }",
+          "argNames": [
+            "repo",
+            "issueNumber",
+            "prUrl",
+            "prStatus"
+          ],
+          "file": "convex/issues.ts:407",
+          "errorCodes": []
+        },
+        "listExternalOpen": {
+          "kind": "query",
+          "public": true,
+          "args": "{ prStatus: v.optional(v.union( v.literal(\"draft\"), v.literal(\"open\"), v.literal(\"merged\"), v.literal(\"closed\"), )), limit: v.optional(v.number()), paginationToken: v.optional(v.union(v.string(), v.null())), }",
+          "argNames": [
+            "prStatus",
+            "limit",
+            "paginationToken"
+          ],
+          "file": "convex/issues.ts:438",
+          "errorCodes": []
+        }
+      }
+    },
+    "licenses": {
+      "file": "convex/licenses.ts",
+      "publicFunctions": [
+        "generate",
+        "activate",
+        "validate"
+      ],
+      "internalFunctions": [
+        "generateInternal",
+        "findOrCreateForGumroad",
+        "flagEmailSent",
+        "getByGumroadOrderId"
+      ],
+      "functions": {
+        "generate": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), // must match BEARER_SECRET_MASTER customerEmail: v.string(), customerName: v.optional(v.string()), productCode: v.string(), tier: v.string(), purchaseLocale: v.optional(v.union(v.literal(\"en\"), v.literal(\"fr\"))), githubRepos: v.optional(v.array(v.string())), gumroadOrderId: v.optional(v.string()), expiresInDays: v.optional(v.number()), // defaults to 365 }",
+          "argNames": [
+            "callerToken",
+            "customerEmail",
+            "customerName",
+            "productCode",
+            "tier",
+            "purchaseLocale",
+            "githubRepos",
+            "gumroadOrderId",
+            "expiresInDays"
+          ],
+          "file": "convex/licenses.ts:84",
+          "errorCodes": []
+        },
+        "activate": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ licenseKey: v.string(), customerEmail: v.string(), }",
+          "argNames": [
+            "licenseKey",
+            "customerEmail"
+          ],
+          "file": "convex/licenses.ts:133",
+          "errorCodes": []
+        },
+        "validate": {
+          "kind": "query",
+          "public": true,
+          "args": "{ licenseKey: v.string(), }",
+          "argNames": [
+            "licenseKey"
+          ],
+          "file": "convex/licenses.ts:182",
+          "errorCodes": []
+        },
+        "generateInternal": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ customerEmail: v.string(), customerName: v.optional(v.string()), productCode: v.string(), tier: v.string(), purchaseLocale: v.optional(v.union(v.literal(\"en\"), v.literal(\"fr\"))), githubRepos: v.optional(v.array(v.string())), gumroadOrderId: v.optional(v.string()), expiresInDays: v.optional(v.number()), }",
+          "argNames": [
+            "customerEmail",
+            "customerName",
+            "productCode",
+            "tier",
+            "purchaseLocale",
+            "githubRepos",
+            "gumroadOrderId",
+            "expiresInDays"
+          ],
+          "file": "convex/licenses.ts:233",
+          "errorCodes": []
+        },
+        "findOrCreateForGumroad": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ customerEmail: v.string(), customerName: v.optional(v.string()), productCode: v.string(), tier: v.string(), purchaseLocale: v.optional(v.union(v.literal(\"en\"), v.literal(\"fr\"))), githubRepos: v.optional(v.array(v.string())), gumroadOrderId: v.string(), expiresInDays: v.optional(v.number()), }",
+          "argNames": [
+            "customerEmail",
+            "customerName",
+            "productCode",
+            "tier",
+            "purchaseLocale",
+            "githubRepos",
+            "gumroadOrderId",
+            "expiresInDays"
+          ],
+          "file": "convex/licenses.ts:286",
+          "errorCodes": []
+        },
+        "flagEmailSent": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ licenseId: v.id(\"licenses\"), emailSent: v.boolean(), }",
+          "argNames": [
+            "licenseId",
+            "emailSent"
+          ],
+          "file": "convex/licenses.ts:399",
+          "errorCodes": []
+        },
+        "getByGumroadOrderId": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ gumroadOrderId: v.string(), }",
+          "argNames": [
+            "gumroadOrderId"
+          ],
+          "file": "convex/licenses.ts:415",
+          "errorCodes": []
+        }
+      }
+    },
+    "mandates": {
+      "file": "convex/mandates.ts",
+      "publicFunctions": [
+        "create",
+        "accept",
+        "update",
+        "settle",
+        "list",
+        "get",
+        "validateSpending"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ requestedBy: creatorValidator, fulfilledBy: creatorValidator, service: v.string(), budget: v.number(), spendingLimits: v.optional(v.object({ maxPerTransaction: v.number(), maxPerPeriod: v.number(), periodDays: v.optional(v.number()), })), approvedCategories: v.optional(v.array(v.string())), mandateDocument: v.optional(v.string()), }",
+          "argNames": [
+            "requestedBy",
+            "fulfilledBy",
+            "service",
+            "budget",
+            "spendingLimits",
+            "maxPerTransaction",
+            "maxPerPeriod",
+            "periodDays",
+            "approvedCategories",
+            "mandateDocument"
+          ],
+          "file": "convex/mandates.ts:44",
+          "errorCodes": []
+        },
+        "accept": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ mandateId: v.id(\"mandates\"), callerOrchestrator: creatorValidator, }",
+          "argNames": [
+            "mandateId",
+            "callerOrchestrator"
+          ],
+          "file": "convex/mandates.ts:80",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ mandateId: v.id(\"mandates\"), callerOrchestrator: creatorValidator, status: v.optional(mandateStatusValidator), tokensCost: v.optional(v.number()), linkedTaskIds: v.optional(v.array(v.id(\"tasks\"))), }",
+          "argNames": [
+            "mandateId",
+            "callerOrchestrator",
+            "status",
+            "tokensCost",
+            "linkedTaskIds"
+          ],
+          "file": "convex/mandates.ts:108",
+          "errorCodes": []
+        },
+        "settle": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ mandateId: v.id(\"mandates\"), callerOrchestrator: creatorValidator, finalCost: v.number(), }",
+          "argNames": [
+            "mandateId",
+            "callerOrchestrator",
+            "finalCost"
+          ],
+          "file": "convex/mandates.ts:147",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields requestedBy: v.optional(creatorValidator), fulfilledBy: v.optional(creatorValidator), status: v.optional(mandateStatusValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "requestedBy",
+            "fulfilledBy",
+            "status",
+            "limit"
+          ],
+          "file": "convex/mandates.ts:179",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ mandateId: v.id(\"mandates\") }",
+          "argNames": [
+            "mandateId"
+          ],
+          "file": "convex/mandates.ts:249",
+          "errorCodes": []
+        },
+        "validateSpending": {
+          "kind": "query",
+          "public": true,
+          "args": "{ mandateId: v.id(\"mandates\"), proposedAmount: v.number(), }",
+          "argNames": [
+            "mandateId",
+            "proposedAmount"
+          ],
+          "file": "convex/mandates.ts:261",
+          "errorCodes": []
+        }
+      }
+    },
+    "mcpTenants": {
+      "file": "convex/mcpTenants.ts",
+      "publicFunctions": [
+        "getTenantByTokenHash",
+        "touchLastUsed",
+        "createTenant",
+        "enableTenant",
+        "disableTenant",
+        "revokeTenant",
+        "listTenants"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "getTenantByTokenHash": {
+          "kind": "query",
+          "public": true,
+          "args": "{ tokenHash: v.string() }",
+          "argNames": [
+            "tokenHash"
+          ],
+          "file": "convex/mcpTenants.ts:78",
+          "errorCodes": []
+        },
+        "touchLastUsed": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ tokenHash: v.string() }",
+          "argNames": [
+            "tokenHash"
+          ],
+          "file": "convex/mcpTenants.ts:104",
+          "errorCodes": []
+        },
+        "createTenant": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), tokenHash: v.string(), tenantName: v.string(), convexUrl: v.string(), }",
+          "argNames": [
+            "callerToken",
+            "tokenHash",
+            "tenantName",
+            "convexUrl"
+          ],
+          "file": "convex/mcpTenants.ts:122",
+          "errorCodes": []
+        },
+        "enableTenant": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), tenantId: v.id(\"mcpTenants\"), }",
+          "argNames": [
+            "callerToken",
+            "tenantId"
+          ],
+          "file": "convex/mcpTenants.ts:157",
+          "errorCodes": []
+        },
+        "disableTenant": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), tenantId: v.id(\"mcpTenants\"), }",
+          "argNames": [
+            "callerToken",
+            "tenantId"
+          ],
+          "file": "convex/mcpTenants.ts:179",
+          "errorCodes": []
+        },
+        "revokeTenant": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), tenantId: v.id(\"mcpTenants\"), }",
+          "argNames": [
+            "callerToken",
+            "tenantId"
+          ],
+          "file": "convex/mcpTenants.ts:201",
+          "errorCodes": []
+        },
+        "listTenants": {
+          "kind": "query",
+          "public": true,
+          "args": "{ callerToken: v.string() }",
+          "argNames": [
+            "callerToken"
+          ],
+          "file": "convex/mcpTenants.ts:225",
+          "errorCodes": []
+        }
+      }
+    },
+    "memories": {
+      "file": "convex/memories.ts",
+      "publicFunctions": [
+        "storeMemory",
+        "getMemory",
+        "listMemories",
+        "softDeleteMemory"
+      ],
+      "internalFunctions": [
+        "expireMemoriesByTtl"
+      ],
+      "functions": {
+        "storeMemory": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ namespace: v.string(), type: memoryTypeValidator, content: v.string(), createdBy: creatorValidator, // Optional: defaults to [] server-side if omitted (fixes #262) relations: v.optional( v.array( v.object({ targetId: v.id(\"memories\"), type: relationTypeValidator, }), ), ), isLatest: v.optional(v.boolean()), ttl: v.optional(v.string()), episode: v.optional( v.object({ context: v.string(), goal: v.string(), action: v.string(), outcome: v.string(), insight: v.string(), severity: severityValidator, }), ), }",
+          "argNames": [
+            "namespace",
+            "type",
+            "content",
+            "createdBy",
+            "relations",
+            "targetId",
+            "isLatest",
+            "ttl",
+            "episode",
+            "context",
+            "goal",
+            "action",
+            "outcome",
+            "insight",
+            "severity"
+          ],
+          "file": "convex/memories.ts:13",
+          "errorCodes": []
+        },
+        "getMemory": {
+          "kind": "query",
+          "public": true,
+          "args": "{ memoryId: v.id(\"memories\") }",
+          "argNames": [
+            "memoryId"
+          ],
+          "file": "convex/memories.ts:99",
+          "errorCodes": []
+        },
+        "listMemories": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields namespace: v.string(), type: v.optional(memoryTypeValidator), createdBy: v.optional(creatorValidator), includeSuperseded: v.optional(v.boolean()), limit: v.optional(v.number()), // Optional Convex pagination — when passed, uses .paginate() for cursor-based pagination. // Shape: { numItems: number; cursor: string | null } paginationOpts: v.optional( v.object({ numItems: v.number(), cursor: v.union(v.string(), v.null()), }), ), }",
+          "argNames": [
+            "fields",
+            "namespace",
+            "type",
+            "createdBy",
+            "includeSuperseded",
+            "limit",
+            "paginationOpts",
+            "numItems",
+            "cursor"
+          ],
+          "file": "convex/memories.ts:177",
+          "errorCodes": []
+        },
+        "softDeleteMemory": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ memoryId: v.id(\"memories\") }",
+          "argNames": [
+            "memoryId"
+          ],
+          "file": "convex/memories.ts:307",
+          "errorCodes": []
+        },
+        "expireMemoriesByTtl": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/memories.ts:334",
+          "errorCodes": []
+        }
+      }
+    },
+    "messages": {
+      "file": "convex/messages.ts",
+      "publicFunctions": [
+        "sendMessage",
+        "checkNewMessages",
+        "markAsRead",
+        "deleteMessage",
+        "listMessages",
+        "getUnreadCount",
+        "listBroadcastStatus",
+        "listByChannel"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "sendMessage": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ from: creatorValidator, fromInstanceId: v.optional(v.string()), channel: v.string(), content: v.string(), sessionDay: v.optional(v.number()), tenantId: v.optional(v.string()), }",
+          "argNames": [
+            "from",
+            "fromInstanceId",
+            "channel",
+            "content",
+            "sessionDay",
+            "tenantId"
+          ],
+          "file": "convex/messages.ts:15",
+          "errorCodes": []
+        },
+        "checkNewMessages": {
+          "kind": "query",
+          "public": true,
+          "args": "{ recipient: creatorValidator, recipientInstanceId: v.optional(v.string()), tenantId: v.optional(v.string()), since: v.optional(v.number()), // Unix ms — only return receipts with _creationTime > since }",
+          "argNames": [
+            "recipient",
+            "recipientInstanceId",
+            "tenantId",
+            "since"
+          ],
+          "file": "convex/messages.ts:74",
+          "errorCodes": []
+        },
+        "markAsRead": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ receiptIds: v.array(v.id(\"messageReceipts\")), }",
+          "argNames": [
+            "receiptIds"
+          ],
+          "file": "convex/messages.ts:200",
+          "errorCodes": []
+        },
+        "deleteMessage": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ messageId: v.id(\"messages\"), callerOrchestrator: v.optional(creatorValidator), }",
+          "argNames": [
+            "messageId",
+            "callerOrchestrator"
+          ],
+          "file": "convex/messages.ts:225",
+          "errorCodes": []
+        },
+        "listMessages": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields sessionDay: v.optional(v.number()), from: v.optional(creatorValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "sessionDay",
+            "from",
+            "limit"
+          ],
+          "file": "convex/messages.ts:268",
+          "errorCodes": []
+        },
+        "getUnreadCount": {
+          "kind": "query",
+          "public": true,
+          "args": "{ orchestratorId: creatorValidator }",
+          "argNames": [
+            "orchestratorId"
+          ],
+          "file": "convex/messages.ts:315",
+          "errorCodes": []
+        },
+        "listBroadcastStatus": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields messageId: v.id(\"messages\"), }",
+          "argNames": [
+            "fields",
+            "messageId"
+          ],
+          "file": "convex/messages.ts:334",
+          "errorCodes": []
+        },
+        "listByChannel": {
+          "kind": "query",
+          "public": true,
+          "args": "{ channel: v.optional(v.string()), limit: v.optional(v.number()), }",
+          "argNames": [
+            "channel",
+            "limit"
+          ],
+          "file": "convex/messages.ts:381",
+          "errorCodes": []
+        }
+      }
+    },
+    "migrations": {
+      "file": "convex/migrations.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "backfillTaskTimes",
+        "deleteTestBriefings",
+        "deleteTestTasks",
+        "deleteTestMissions",
+        "deleteTestMemories",
+        "deleteTestMessages",
+        "migrateMemoriesNamespace",
+        "migrateDiaryOrchestrator"
+      ],
+      "functions": {
+        "backfillTaskTimes": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:8",
+          "errorCodes": []
+        },
+        "deleteTestBriefings": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:55",
+          "errorCodes": []
+        },
+        "deleteTestTasks": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:78",
+          "errorCodes": []
+        },
+        "deleteTestMissions": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:104",
+          "errorCodes": []
+        },
+        "deleteTestMemories": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:130",
+          "errorCodes": []
+        },
+        "deleteTestMessages": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:154",
+          "errorCodes": []
+        },
+        "migrateMemoriesNamespace": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:185",
+          "errorCodes": []
+        },
+        "migrateDiaryOrchestrator": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/migrations.ts:209",
+          "errorCodes": []
+        }
+      }
+    },
+    "missionTemplates": {
+      "file": "convex/missionTemplates.ts",
+      "publicFunctions": [
+        "getByName",
+        "upsert",
+        "instantiateTemplateIntoMission"
+      ],
+      "internalFunctions": [
+        "seed"
+      ],
+      "functions": {
+        "getByName": {
+          "kind": "query",
+          "public": true,
+          "args": "{ name: v.string() }",
+          "argNames": [
+            "name"
+          ],
+          "file": "convex/missionTemplates.ts:34",
+          "errorCodes": []
+        },
+        "upsert": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ name: v.string(), description: v.optional(v.string()), steps: v.array(stepValidator), isDefault: v.optional(v.boolean()), createdBy: creatorValidator, }",
+          "argNames": [
+            "name",
+            "description",
+            "steps",
+            "isDefault",
+            "createdBy"
+          ],
+          "file": "convex/missionTemplates.ts:49",
+          "errorCodes": []
+        },
+        "seed": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/missionTemplates.ts:92",
+          "errorCodes": []
+        },
+        "instantiateTemplateIntoMission": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ templateName: v.string(), missionId: v.id(\"missions\"), context: v.optional(v.record(v.string(), v.string())), titlePrefix: v.optional(v.string()), callerOrchestrator: v.optional(v.string()), }",
+          "argNames": [
+            "templateName",
+            "missionId",
+            "context",
+            "titlePrefix",
+            "callerOrchestrator"
+          ],
+          "file": "convex/missionTemplates.ts:196",
+          "errorCodes": []
+        }
+      }
+    },
+    "missions": {
+      "file": "convex/missions.ts",
+      "publicFunctions": [
+        "create",
+        "get",
+        "list",
+        "update",
+        "updateStatus",
+        "updateProgress"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ name: v.string(), description: v.optional(v.string()), project: v.string(), status: missionStatusValidator, priority: priorityValidator, pilot: creatorValidator, agents: v.array(v.string()), brief: v.optional(v.string()), startDate: v.optional(v.number()), targetDate: v.optional(v.number()), progress: v.optional(v.number()), createdBy: creatorValidator, }",
+          "argNames": [
+            "name",
+            "description",
+            "project",
+            "status",
+            "priority",
+            "pilot",
+            "agents",
+            "brief",
+            "startDate",
+            "targetDate",
+            "progress",
+            "createdBy"
+          ],
+          "file": "convex/missions.ts:108",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ missionId: v.id(\"missions\") }",
+          "argNames": [
+            "missionId"
+          ],
+          "file": "convex/missions.ts:138",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ project: v.optional(v.string()), pilot: v.optional(creatorValidator), status: v.optional(v.union(v.string(), v.array(v.string()))), limit: v.optional(v.number()), fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), updatedSince: v.optional(v.number()), }",
+          "argNames": [
+            "project",
+            "pilot",
+            "status",
+            "limit",
+            "fields",
+            "updatedSince"
+          ],
+          "file": "convex/missions.ts:177",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ missionId: v.id(\"missions\"), name: v.optional(v.string()), description: v.optional(v.string()), project: v.optional(v.string()), status: v.optional(missionStatusValidator), priority: v.optional(priorityValidator), pilot: v.optional(creatorValidator), agents: v.optional(v.array(v.string())), brief: v.optional(v.string()), startDate: v.optional(v.number()), targetDate: v.optional(v.number()), progress: v.optional(v.number()), }",
+          "argNames": [
+            "missionId",
+            "name",
+            "description",
+            "project",
+            "status",
+            "priority",
+            "pilot",
+            "agents",
+            "brief",
+            "startDate",
+            "targetDate",
+            "progress"
+          ],
+          "file": "convex/missions.ts:288",
+          "errorCodes": []
+        },
+        "updateStatus": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ missionId: v.id(\"missions\"), status: missionStatusValidator, }",
+          "argNames": [
+            "missionId",
+            "status"
+          ],
+          "file": "convex/missions.ts:328",
+          "errorCodes": []
+        },
+        "updateProgress": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ missionId: v.id(\"missions\"), progress: v.number(), }",
+          "argNames": [
+            "missionId",
+            "progress"
+          ],
+          "file": "convex/missions.ts:352",
+          "errorCodes": []
+        }
+      }
+    },
+    "oauth": {
+      "file": "convex/oauth.ts",
+      "publicFunctions": [
+        "seedDefaultProfiles",
+        "getScopeProfile",
+        "createClient",
+        "registerPublicClient",
+        "getClientByClientId",
+        "listClients",
+        "deleteClient",
+        "createAuthorizationCode",
+        "consumeAuthorizationCode",
+        "createAccessToken",
+        "getAccessTokenByHash",
+        "createRefreshToken",
+        "getRefreshTokenByHash"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "seedDefaultProfiles": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string() }",
+          "argNames": [
+            "callerToken"
+          ],
+          "file": "convex/oauth.ts:77",
+          "errorCodes": []
+        },
+        "getScopeProfile": {
+          "kind": "query",
+          "public": true,
+          "args": "{ profileId: v.string() }",
+          "argNames": [
+            "profileId"
+          ],
+          "file": "convex/oauth.ts:159",
+          "errorCodes": []
+        },
+        "createClient": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), clientId: v.string(), clientSecretHash: v.string(), name: v.string(), redirectUris: v.array(v.string()), scopeProfile: v.string(), }",
+          "argNames": [
+            "callerToken",
+            "clientId",
+            "clientSecretHash",
+            "name",
+            "redirectUris",
+            "scopeProfile"
+          ],
+          "file": "convex/oauth.ts:192",
+          "errorCodes": []
+        },
+        "registerPublicClient": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ clientId: v.string(), clientSecretHash: v.string(), name: v.string(), redirectUris: v.array(v.string()), scopeProfile: v.string(), }",
+          "argNames": [
+            "clientId",
+            "clientSecretHash",
+            "name",
+            "redirectUris",
+            "scopeProfile"
+          ],
+          "file": "convex/oauth.ts:251",
+          "errorCodes": []
+        },
+        "getClientByClientId": {
+          "kind": "query",
+          "public": true,
+          "args": "{ clientId: v.string() }",
+          "argNames": [
+            "clientId"
+          ],
+          "file": "convex/oauth.ts:300",
+          "errorCodes": []
+        },
+        "listClients": {
+          "kind": "query",
+          "public": true,
+          "args": "{ callerToken: v.string() }",
+          "argNames": [
+            "callerToken"
+          ],
+          "file": "convex/oauth.ts:330",
+          "errorCodes": []
+        },
+        "deleteClient": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), clientId: v.string() }",
+          "argNames": [
+            "callerToken",
+            "clientId"
+          ],
+          "file": "convex/oauth.ts:348",
+          "errorCodes": []
+        },
+        "createAuthorizationCode": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), code: v.string(), clientId: v.string(), redirectUri: v.string(), codeChallenge: v.string(), scope: v.string(), userId: v.string(), expiresAt: v.number(), }",
+          "argNames": [
+            "callerToken",
+            "code",
+            "clientId",
+            "redirectUri",
+            "codeChallenge",
+            "scope",
+            "userId",
+            "expiresAt"
+          ],
+          "file": "convex/oauth.ts:405",
+          "errorCodes": []
+        },
+        "consumeAuthorizationCode": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ code: v.string() }",
+          "argNames": [
+            "code"
+          ],
+          "file": "convex/oauth.ts:431",
+          "errorCodes": []
+        },
+        "createAccessToken": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), tokenHash: v.string(), clientId: v.string(), userId: v.string(), scopes: v.array(v.string()), scopeProfile: v.string(), fromAllowList: v.array(v.string()), namespaceReadPrefixes: v.array(v.string()), namespaceWritePrefixes: v.array(v.string()), expiresAt: v.number(), refreshTokenHash: v.optional(v.string()), }",
+          "argNames": [
+            "callerToken",
+            "tokenHash",
+            "clientId",
+            "userId",
+            "scopes",
+            "scopeProfile",
+            "fromAllowList",
+            "namespaceReadPrefixes",
+            "namespaceWritePrefixes",
+            "expiresAt",
+            "refreshTokenHash"
+          ],
+          "file": "convex/oauth.ts:470",
+          "errorCodes": []
+        },
+        "getAccessTokenByHash": {
+          "kind": "query",
+          "public": true,
+          "args": "{ tokenHash: v.string() }",
+          "argNames": [
+            "tokenHash"
+          ],
+          "file": "convex/oauth.ts:515",
+          "errorCodes": []
+        },
+        "createRefreshToken": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ callerToken: v.string(), tokenHash: v.string(), clientId: v.string(), userId: v.string(), scopeProfile: v.string(), expiresAt: v.number(), }",
+          "argNames": [
+            "callerToken",
+            "tokenHash",
+            "clientId",
+            "userId",
+            "scopeProfile",
+            "expiresAt"
+          ],
+          "file": "convex/oauth.ts:544",
+          "errorCodes": []
+        },
+        "getRefreshTokenByHash": {
+          "kind": "query",
+          "public": true,
+          "args": "{ tokenHash: v.string() }",
+          "argNames": [
+            "tokenHash"
+          ],
+          "file": "convex/oauth.ts:567",
+          "errorCodes": []
+        }
+      }
+    },
+    "oauthDcr": {
+      "file": "convex/oauthDcr.ts",
+      "publicFunctions": [
+        "validateAccessToken"
+      ],
+      "internalFunctions": [
+        "registerClient",
+        "issueAuthCode",
+        "exchangeCodeForToken",
+        "refreshAccessToken",
+        "listClientsInWindow",
+        "purgeClientsInWindow",
+        "cleanupExpiredOAuth"
+      ],
+      "functions": {
+        "registerClient": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ clientName: v.string(), redirectUris: v.array(v.string()), scope: v.optional(v.string()), }",
+          "argNames": [
+            "clientName",
+            "redirectUris",
+            "scope"
+          ],
+          "file": "convex/oauthDcr.ts:105",
+          "errorCodes": []
+        },
+        "issueAuthCode": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ clientId: v.string(), redirectUri: v.string(), codeChallenge: v.string(), codeChallengeMethod: v.string(), scope: v.optional(v.string()), }",
+          "argNames": [
+            "clientId",
+            "redirectUri",
+            "codeChallenge",
+            "codeChallengeMethod",
+            "scope"
+          ],
+          "file": "convex/oauthDcr.ts:152",
+          "errorCodes": []
+        },
+        "exchangeCodeForToken": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ authCode: v.string(), codeVerifier: v.string(), clientId: v.string(), clientSecret: v.string(), redirectUri: v.string(), }",
+          "argNames": [
+            "authCode",
+            "codeVerifier",
+            "clientId",
+            "clientSecret",
+            "redirectUri"
+          ],
+          "file": "convex/oauthDcr.ts:212",
+          "errorCodes": []
+        },
+        "validateAccessToken": {
+          "kind": "query",
+          "public": true,
+          "args": "{ accessToken: v.string() }",
+          "argNames": [
+            "accessToken"
+          ],
+          "file": "convex/oauthDcr.ts:338",
+          "errorCodes": []
+        },
+        "refreshAccessToken": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ refreshToken: v.string(), clientId: v.string(), clientSecret: v.string(), }",
+          "argNames": [
+            "refreshToken",
+            "clientId",
+            "clientSecret"
+          ],
+          "file": "convex/oauthDcr.ts:388",
+          "errorCodes": []
+        },
+        "listClientsInWindow": {
+          "kind": "internalQuery",
+          "public": false,
+          "args": "{ startMs: v.number(), endMs: v.number() }",
+          "argNames": [
+            "startMs",
+            "endMs"
+          ],
+          "file": "convex/oauthDcr.ts:502",
+          "errorCodes": []
+        },
+        "purgeClientsInWindow": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ startMs: v.number(), endMs: v.number() }",
+          "argNames": [
+            "startMs",
+            "endMs"
+          ],
+          "file": "convex/oauthDcr.ts:525",
+          "errorCodes": []
+        },
+        "cleanupExpiredOAuth": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/oauthDcr.ts:548",
+          "errorCodes": []
+        }
+      }
+    },
+    "prMonitor": {
+      "file": "convex/prMonitor.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "pollOpenPRs"
+      ],
+      "functions": {
+        "pollOpenPRs": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/prMonitor.ts:10",
+          "errorCodes": []
+        }
+      }
+    },
+    "profiles": {
+      "file": "convex/profiles.ts",
+      "publicFunctions": [
+        "getProfile",
+        "upsertProfile",
+        "updateDynamic",
+        "getProfileWithMemories",
+        "listProfiles"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "getProfile": {
+          "kind": "query",
+          "public": true,
+          "args": "{ orchestratorId: v.optional(v.string()), instanceId: v.optional(v.string()), }",
+          "argNames": [
+            "orchestratorId",
+            "instanceId"
+          ],
+          "file": "convex/profiles.ts:39",
+          "errorCodes": []
+        },
+        "upsertProfile": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ orchestratorId: v.string(), instanceId: v.optional(v.string()), name: v.optional(v.string()), static: v.optional(v.object({ role: v.string(), workspace: v.string(), capabilities: v.array(v.string()), })), dynamic: v.optional(v.object({ currentTask: v.optional(v.string()), lastSeen: v.number(), sessionCount: v.number(), })), }",
+          "argNames": [
+            "orchestratorId",
+            "instanceId",
+            "name",
+            "static",
+            "role",
+            "workspace",
+            "capabilities",
+            "dynamic",
+            "currentTask",
+            "lastSeen",
+            "sessionCount"
+          ],
+          "file": "convex/profiles.ts:72",
+          "errorCodes": []
+        },
+        "updateDynamic": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ orchestratorId: v.string(), instanceId: v.optional(v.string()), currentTask: v.optional(v.string()), // Optional: defaults to Date.now() server-side if omitted (fixes #261) lastSeen: v.optional(v.number()), sessionCountDelta: v.optional(v.number()), }",
+          "argNames": [
+            "orchestratorId",
+            "instanceId",
+            "currentTask",
+            "lastSeen",
+            "sessionCountDelta"
+          ],
+          "file": "convex/profiles.ts:136",
+          "errorCodes": []
+        },
+        "getProfileWithMemories": {
+          "kind": "query",
+          "public": true,
+          "args": "{ orchestratorId: v.string(), instanceId: v.optional(v.string()), namespace: v.string(), memoryLimit: v.optional(v.number()), }",
+          "argNames": [
+            "orchestratorId",
+            "instanceId",
+            "namespace",
+            "memoryLimit"
+          ],
+          "file": "convex/profiles.ts:203",
+          "errorCodes": []
+        },
+        "listProfiles": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields orchestratorId: v.optional(v.string()), }",
+          "argNames": [
+            "fields",
+            "orchestratorId"
+          ],
+          "file": "convex/profiles.ts:257",
+          "errorCodes": []
+        }
+      }
+    },
+    "ragSync": {
+      "file": "convex/ragSync.ts",
+      "publicFunctions": [],
+      "internalFunctions": [
+        "addRagEntry",
+        "addFixPatternRagEntry",
+        "markRagEntrySuperseded"
+      ],
+      "functions": {
+        "addRagEntry": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ memoryId: v.id(\"memories\"), content: v.string(), namespace: v.string(), type: memoryTypeValidator, }",
+          "argNames": [
+            "memoryId",
+            "content",
+            "namespace",
+            "type"
+          ],
+          "file": "convex/ragSync.ts:23",
+          "errorCodes": []
+        },
+        "addFixPatternRagEntry": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ patternId: v.id(\"fixPatterns\"), content: v.string(), sourceProject: v.string(), }",
+          "argNames": [
+            "patternId",
+            "content",
+            "sourceProject"
+          ],
+          "file": "convex/ragSync.ts:58",
+          "errorCodes": []
+        },
+        "markRagEntrySuperseded": {
+          "kind": "internalAction",
+          "public": false,
+          "args": "{ memoryId: v.id(\"memories\"), content: v.string(), namespace: v.string(), type: memoryTypeValidator, }",
+          "argNames": [
+            "memoryId",
+            "content",
+            "namespace",
+            "type"
+          ],
+          "file": "convex/ragSync.ts:89",
+          "errorCodes": []
+        }
+      }
+    },
+    "recurringTasks": {
+      "file": "convex/recurringTasks.ts",
+      "publicFunctions": [
+        "create",
+        "list",
+        "update",
+        "pause",
+        "resume",
+        "remove"
+      ],
+      "internalFunctions": [
+        "processDueTasks"
+      ],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ title: v.string(), description: v.optional(v.string()), assignedTo: assigneeValidator, priority: priorityValidator, project: v.optional(v.string()), tags: v.optional(v.array(v.string())), cronExpression: v.string(), createdBy: creatorValidator, }",
+          "argNames": [
+            "title",
+            "description",
+            "assignedTo",
+            "priority",
+            "project",
+            "tags",
+            "cronExpression",
+            "createdBy"
+          ],
+          "file": "convex/recurringTasks.ts:83",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields assignedTo: v.optional(assigneeValidator), active: v.optional(v.boolean()), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "assignedTo",
+            "active",
+            "limit"
+          ],
+          "file": "convex/recurringTasks.ts:121",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ recurringTaskId: v.id(\"recurringTasks\"), title: v.optional(v.string()), description: v.optional(v.string()), assignedTo: v.optional(assigneeValidator), priority: v.optional(priorityValidator), project: v.optional(v.string()), tags: v.optional(v.array(v.string())), cronExpression: v.optional(v.string()), }",
+          "argNames": [
+            "recurringTaskId",
+            "title",
+            "description",
+            "assignedTo",
+            "priority",
+            "project",
+            "tags",
+            "cronExpression"
+          ],
+          "file": "convex/recurringTasks.ts:159",
+          "errorCodes": []
+        },
+        "pause": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"recurringTasks\") }",
+          "argNames": [
+            "taskId"
+          ],
+          "file": "convex/recurringTasks.ts:196",
+          "errorCodes": []
+        },
+        "resume": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"recurringTasks\") }",
+          "argNames": [
+            "taskId"
+          ],
+          "file": "convex/recurringTasks.ts:208",
+          "errorCodes": []
+        },
+        "remove": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"recurringTasks\") }",
+          "argNames": [
+            "taskId"
+          ],
+          "file": "convex/recurringTasks.ts:228",
+          "errorCodes": []
+        },
+        "processDueTasks": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{}",
+          "argNames": [],
+          "file": "convex/recurringTasks.ts:241",
+          "errorCodes": []
+        }
+      }
+    },
+    "search": {
+      "file": "convex/search.ts",
+      "publicFunctions": [
+        "recall",
+        "textSearch",
+        "hybridSearch",
+        "searchFixPatterns"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "recall": {
+          "kind": "action",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields query: v.string(), namespace: v.optional(v.string()), type: v.optional(memoryTypeValidator), limit: v.optional(v.number()), scoreThreshold: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "query",
+            "namespace",
+            "type",
+            "limit",
+            "scoreThreshold"
+          ],
+          "file": "convex/search.ts:79",
+          "errorCodes": []
+        },
+        "textSearch": {
+          "kind": "action",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields query: v.string(), namespace: v.optional(v.string()), type: v.optional(memoryTypeValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "query",
+            "namespace",
+            "type",
+            "limit"
+          ],
+          "file": "convex/search.ts:139",
+          "errorCodes": []
+        },
+        "hybridSearch": {
+          "kind": "action",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields query: v.string(), namespace: v.optional(v.string()), type: v.optional(memoryTypeValidator), limit: v.optional(v.number()), vectorWeight: v.optional(v.number()), textWeight: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "query",
+            "namespace",
+            "type",
+            "limit",
+            "vectorWeight",
+            "textWeight"
+          ],
+          "file": "convex/search.ts:194",
+          "errorCodes": []
+        },
+        "searchFixPatterns": {
+          "kind": "action",
+          "public": true,
+          "args": "{ fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields query: v.string(), limit: v.optional(v.number()), scoreThreshold: v.optional(v.number()), }",
+          "argNames": [
+            "fields",
+            "query",
+            "limit",
+            "scoreThreshold"
+          ],
+          "file": "convex/search.ts:263",
+          "errorCodes": []
+        }
+      }
+    },
+    "stats": {
+      "file": "convex/stats.ts",
+      "publicFunctions": [
+        "orchestratorStats"
+      ],
+      "internalFunctions": [],
+      "functions": {
+        "orchestratorStats": {
+          "kind": "query",
+          "public": true,
+          "args": "{ window: v.union(v.literal(\"24h\"), v.literal(\"7d\"), v.literal(\"30d\")), }",
+          "argNames": [
+            "window"
+          ],
+          "file": "convex/stats.ts:62",
+          "errorCodes": []
+        }
+      }
+    },
+    "tasks": {
+      "file": "convex/tasks.ts",
+      "publicFunctions": [
+        "create",
+        "get",
+        "list",
+        "update",
+        "complete",
+        "start",
+        "checkout",
+        "deleteTask",
+        "listByMission",
+        "listOverdue"
+      ],
+      "internalFunctions": [
+        "createDeployTaskWithDedup"
+      ],
+      "functions": {
+        "create": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ title: v.string(), description: v.optional(v.string()), project: v.optional(v.string()), tags: v.optional(v.array(v.string())), assignedTo: assigneeValidator, assignedToInstance: v.optional(v.string()), priority: priorityValidator, status: statusValidator, dependsOn: v.optional(v.array(v.id(\"tasks\"))), missionId: v.optional(v.id(\"missions\")), estimatedMinutes: v.optional(v.number()), dueDate: v.optional(v.number()), createdBy: creatorValidator, }",
+          "argNames": [
+            "title",
+            "description",
+            "project",
+            "tags",
+            "assignedTo",
+            "assignedToInstance",
+            "priority",
+            "status",
+            "dependsOn",
+            "missionId",
+            "estimatedMinutes",
+            "dueDate",
+            "createdBy"
+          ],
+          "file": "convex/tasks.ts:155",
+          "errorCodes": []
+        },
+        "get": {
+          "kind": "query",
+          "public": true,
+          "args": "{ taskId: v.id(\"tasks\") }",
+          "argNames": [
+            "taskId"
+          ],
+          "file": "convex/tasks.ts:186",
+          "errorCodes": []
+        },
+        "list": {
+          "kind": "query",
+          "public": true,
+          "args": "{ assignedTo: v.optional(assigneeValidator), assignedToInstance: v.optional(v.string()), status: v.optional(v.union(v.string(), v.array(v.string()))), project: v.optional(v.string()), limit: v.optional(v.number()), fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), createdBy: v.optional(creatorValidator), updatedSince: v.optional(v.number()), }",
+          "argNames": [
+            "assignedTo",
+            "assignedToInstance",
+            "status",
+            "project",
+            "limit",
+            "fields",
+            "createdBy",
+            "updatedSince"
+          ],
+          "file": "convex/tasks.ts:231",
+          "errorCodes": []
+        },
+        "update": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"tasks\"), callerOrchestrator: v.optional(creatorValidator), title: v.optional(v.string()), description: v.optional(v.string()), project: v.optional(v.string()), tags: v.optional(v.array(v.string())), assignedTo: v.optional(assigneeValidator), priority: v.optional(priorityValidator), status: v.optional(statusValidator), missionId: v.optional(v.id(\"missions\")), estimatedMinutes: v.optional(v.number()), actualMinutes: v.optional(v.number()), startedAt: v.optional(v.number()), completedAt: v.optional(v.number()), dueDate: v.optional(v.number()), dependsOn: v.optional(v.array(v.id(\"tasks\"))), completionNote: v.optional(v.string()), assignedToInstance: v.optional(v.string()), }",
+          "argNames": [
+            "taskId",
+            "callerOrchestrator",
+            "title",
+            "description",
+            "project",
+            "tags",
+            "assignedTo",
+            "priority",
+            "status",
+            "missionId",
+            "estimatedMinutes",
+            "actualMinutes",
+            "startedAt",
+            "completedAt",
+            "dueDate",
+            "dependsOn",
+            "completionNote",
+            "assignedToInstance"
+          ],
+          "file": "convex/tasks.ts:382",
+          "errorCodes": [
+            "TASK_NOT_FOUND",
+            "TASK_UNAUTHORIZED"
+          ]
+        },
+        "complete": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"tasks\"), callerOrchestrator: v.optional(creatorValidator), completionNote: v.optional(v.string()), }",
+          "argNames": [
+            "taskId",
+            "callerOrchestrator",
+            "completionNote"
+          ],
+          "file": "convex/tasks.ts:446",
+          "errorCodes": [
+            "TASK_NOT_FOUND",
+            "TASK_UNAUTHORIZED",
+            "COMPLETION_NOTE_REQUIRED"
+          ]
+        },
+        "start": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"tasks\"), callerOrchestrator: v.optional(creatorValidator), }",
+          "argNames": [
+            "taskId",
+            "callerOrchestrator"
+          ],
+          "file": "convex/tasks.ts:674",
+          "errorCodes": [
+            "TASK_NOT_FOUND",
+            "TASK_UNAUTHORIZED",
+            "TASK_START_BLOCKED"
+          ]
+        },
+        "checkout": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"tasks\"), callerOrchestrator: creatorValidator, callerInstance: v.optional(v.string()), }",
+          "argNames": [
+            "taskId",
+            "callerOrchestrator",
+            "callerInstance"
+          ],
+          "file": "convex/tasks.ts:745",
+          "errorCodes": []
+        },
+        "deleteTask": {
+          "kind": "mutation",
+          "public": true,
+          "args": "{ taskId: v.id(\"tasks\"), callerOrchestrator: v.optional(creatorValidator), }",
+          "argNames": [
+            "taskId",
+            "callerOrchestrator"
+          ],
+          "file": "convex/tasks.ts:777",
+          "errorCodes": [
+            "TASK_NOT_FOUND",
+            "TASK_DELETE_UNAUTHORIZED"
+          ]
+        },
+        "listByMission": {
+          "kind": "query",
+          "public": true,
+          "args": "{ missionId: v.id(\"missions\"), status: v.optional(v.union(v.string(), v.array(v.string()))), limit: v.optional(v.number()), fields: v.optional(v.union(v.literal(\"lite\"), v.literal(\"full\"))), createdBy: v.optional(creatorValidator), updatedSince: v.optional(v.number()), }",
+          "argNames": [
+            "missionId",
+            "status",
+            "limit",
+            "fields",
+            "createdBy",
+            "updatedSince"
+          ],
+          "file": "convex/tasks.ts:823",
+          "errorCodes": []
+        },
+        "listOverdue": {
+          "kind": "query",
+          "public": true,
+          "args": "{ assignedTo: v.optional(assigneeValidator), limit: v.optional(v.number()), }",
+          "argNames": [
+            "assignedTo",
+            "limit"
+          ],
+          "file": "convex/tasks.ts:894",
+          "errorCodes": []
+        },
+        "createDeployTaskWithDedup": {
+          "kind": "internalMutation",
+          "public": false,
+          "args": "{ title: v.string(), description: v.optional(v.string()), project: v.optional(v.string()), assignedTo: assigneeValidator, priority: priorityValidator, createdBy: creatorValidator, tags: v.optional(v.array(v.string())), }",
+          "argNames": [
+            "title",
+            "description",
+            "project",
+            "assignedTo",
+            "priority",
+            "createdBy",
+            "tags"
+          ],
+          "file": "convex/tasks.ts:954",
+          "errorCodes": []
+        }
+      }
+    }
+  },
+  "errorCodes": {
+    "TASK_NOT_FOUND": [
+      {
+        "module": "tasks",
+        "function": "update",
+        "file": "convex/tasks.ts:408",
+        "message": "Task ${taskId} not found"
+      },
+      {
+        "module": "tasks",
+        "function": "complete",
+        "file": "convex/tasks.ts:456",
+        "message": "Task ${args.taskId} not found"
+      },
+      {
+        "module": "tasks",
+        "function": "start",
+        "file": "convex/tasks.ts:683",
+        "message": "Task ${args.taskId} not found"
+      },
+      {
+        "module": "tasks",
+        "function": "deleteTask",
+        "file": "convex/tasks.ts:786",
+        "message": "Task not found"
+      }
+    ],
+    "TASK_UNAUTHORIZED": [
+      {
+        "module": "tasks",
+        "function": "update",
+        "file": "convex/tasks.ts:420",
+        "message": "Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task"
+      },
+      {
+        "module": "tasks",
+        "function": "complete",
+        "file": "convex/tasks.ts:468",
+        "message": "Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task"
+      },
+      {
+        "module": "tasks",
+        "function": "start",
+        "file": "convex/tasks.ts:695",
+        "message": "Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task"
+      }
+    ],
+    "COMPLETION_NOTE_REQUIRED": [
+      {
+        "module": "tasks",
+        "function": "complete",
+        "file": "convex/tasks.ts:478",
+        "message": "completionNote is required. Describe what was actually done."
+      }
+    ],
+    "TASK_START_BLOCKED": [
+      {
+        "module": "tasks",
+        "function": "start",
+        "file": "convex/tasks.ts:719",
+        "message": "Cannot start task: you have an unclosed in_progress task "
+      }
+    ],
+    "TASK_DELETE_UNAUTHORIZED": [
+      {
+        "module": "tasks",
+        "function": "deleteTask",
+        "file": "convex/tasks.ts:797",
+        "message": "Unauthorized: only ${task.createdBy} (creator) or system can delete this task"
+      }
+    ]
+  },
+  "stats": {
+    "moduleCount": 36,
+    "publicFunctionCount": 145,
+    "internalFunctionCount": 54,
+    "errorCodeCount": 5
+  }
+}
