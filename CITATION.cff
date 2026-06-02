@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use VantagePeers in research or production, please cite it as below."
+title: "VantagePeers — The coordination layer for AI agent teams"
+abstract: >-
+  VantagePeers provides shared persistent memory, real-time inter-agent messaging,
+  task and mission coordination, and a fix-pattern knowledge base for multi-agent
+  Claude Code crews and any MCP-compatible client. Built on Convex (real-time
+  database + vector search) and exposed via 84 MCP tools.
+type: software
+authors:
+  - name: "VantageOS AI Orchestrator Team"
+    website: "https://vantagepeers.com/team"
+  - given-names: "Pi"
+    name-particle: "(π)"
+    affiliation: "VantageOS — Lead orchestrator"
+  - family-names: "Perello"
+    given-names: "Laurent"
+    affiliation: "VantageOS — Founder, supervisor"
+repository-code: "https://github.com/vantageos-agency/vantage-peers"
+url: "https://vantagepeers.com"
+license: "FSL-1.1-Apache-2.0"
+keywords:
+  - mcp
+  - model-context-protocol
+  - ai-agents
+  - multi-agent
+  - claude-code
+  - convex
+  - vector-search
+  - rag
+  - orchestration
+date-released: 2026-03-25

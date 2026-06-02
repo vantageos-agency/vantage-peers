@@ -14,6 +14,10 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-vantagepeers.com-green.svg)](https://vantagepeers.com/docs)
 
+## TL;DR
+
+Multi-agent Claude Code crews share one persistent brain via 84 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
+
 ## Deploy on Railway (1-click)
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
@@ -40,62 +44,82 @@ VantagePeers runs on [Convex](https://convex.dev) — a real-time database with 
 
 For any path, the MCP server is identical (`npm install -g vantage-peers-mcp` then `vantage-peers-mcp` to start) — only the `CONVEX_URL` differs.
 
-## What It Is
+## Architecture
 
-VantagePeers is a shared brain for multiple Claude Code agents. It provides persistent memory with semantic search, inter-agent messaging, task management, fix pattern knowledge base, issue tracking, business unit management, and structured episodic learning -- all exposed as 84 MCP tools that any Claude Code session can call (with ChatGPT Apps SDK annotations: `readOnlyHint`, `openWorldHint`, `destructiveHint`). Built on [Convex](https://convex.dev) for the real-time database and [@convex-dev/rag](https://www.npmjs.com/package/@convex-dev/rag) for vector embeddings and hybrid search.
+```mermaid
+flowchart LR
+    A1[Claude Code agent A] -->|stdio| MCP
+    A2[Claude Code agent B] -->|stdio| MCP
+    A3[Cursor / Codex / etc.] -->|stdio| MCP
+    MCP[vantage-peers-mcp<br/>84 MCP tools] -->|HTTPS| Convex
+    Convex[(Convex Cloud<br/>real-time DB<br/>vector search)]
+    Convex -.shared by all agents.-> A1
+    Convex -.shared by all agents.-> A2
+    Convex -.shared by all agents.-> A3
+```
+
+One Convex deployment. One MCP server process per agent. All agents share the same database — memories, messages, tasks, missions, fix patterns.
 
 ## Why VantagePeers?
 
-If you run multiple Claude Code agents, each session starts from scratch. No shared context, no coordination, no memory.
-
-VantagePeers fixes this:
+Run multiple Claude Code agents and every session starts blind. No shared context. No coordination. Work duplicated. Mistakes repeated. VantagePeers fixes this:
 
 | Without VantagePeers | With VantagePeers |
-|---------------------|-------------------|
-| Each agent starts blind | Agents recall shared knowledge |
+|----------------------|-------------------|
+| Each agent starts blind | Agents recall shared knowledge via semantic search |
 | No communication between agents | Real-time messaging (broadcast, DM, channels) |
-| Work gets duplicated | Task tracking with dependencies |
-| Mistakes get repeated | Fix pattern knowledge base |
+| Work gets duplicated | Task tracking with dependencies and assignees |
+| Mistakes get repeated | Fix-pattern KB with semantic lookup before debugging |
 | No coordination | Mission-based multi-step workflows |
 
 ## Quick Demo
 
-**Agent A stores a memory:**
+Agent A stores a fact:
+
 ```json
 { "namespace": "global", "type": "project", "content": "API uses FastAPI with SQLAlchemy ORM", "createdBy": "alice" }
 ```
 
-**Agent B recalls it later:**
+Agent B recalls it 3 days later:
+
 ```json
 { "query": "what framework does the API use", "namespace": "global" }
 ```
-→ Returns: "API uses FastAPI with SQLAlchemy ORM"
 
-**Agent A messages Agent B:**
-```json
-{ "from": "alice", "channel": "bob", "content": "Database schema is ready. Start on the API endpoints." }
+Returns:
+
 ```
+"API uses FastAPI with SQLAlchemy ORM" (score 0.91, type=project, createdBy=alice)
+```
+
+Agent A pings Agent B directly:
+
+```json
+{ "from": "alice", "channel": "bob", "content": "Schema is ready. Start on the API endpoints." }
+```
+
+Agent B's next `check_messages` returns the message; status flips to read after `mark_as_read`.
 
 ## Prerequisites
 
-- **Node.js 18+**
-- **Convex account** (free tier works) -- [https://convex.dev](https://convex.dev)
-- **OpenAI API key** (for `text-embedding-3-small` embeddings, used via AI Gateway)
+- **Node.js 18+** (20+ recommended for the MCP server)
+- **Convex account** — free tier works ([convex.dev](https://convex.dev))
+- **OpenAI-compatible API key** — for `text-embedding-3-small` embeddings (used via AI Gateway or direct OpenAI)
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repository
+# 1. Clone
 git clone https://github.com/vantageos-agency/vantage-peers.git
 cd vantage-peers
 
-# 2. Install dependencies
+# 2. Install
 bun install
 
 # 3. Start the Convex dev server (creates a new deployment on first run)
 npx convex dev
 
-# 4. Set your OpenAI-compatible API key as a Convex environment variable
+# 4. Set your embedding API key as a Convex env var
 npx convex env set AI_GATEWAY_API_KEY=your-openai-api-key
 ```
 
@@ -115,13 +139,62 @@ Then configure MCP in your Claude Code settings (`~/.claude.json`):
 }
 ```
 
-Replace `your-deployment` with the Convex deployment URL printed by `npx convex dev`.
+Replace `your-deployment` with the URL printed by `npx convex dev`. Open Claude Code and confirm `vantage-peers` tools appear in the tool list.
 
-Verify: open Claude Code and confirm that vantage-peers tools appear in the tool list.
+## Hero Features
+
+Top 5 capabilities, in order of impact:
+
+1. **Semantic memory + recall** — store typed facts; retrieve by meaning via 1536-dim vector search (`text-embedding-3-small`). Hybrid search (vector + BM25 + RRF fusion) available.
+2. **Inter-agent messaging** — real-time channel/DM/broadcast routing with per-recipient read receipts. Multi-instance aware (route to a role or a specific instance).
+3. **Task + mission orchestration** — typed task lifecycle with dependencies, atomic `checkout_task` for multi-instance conflict safety, missions for multi-step workflows (configurable templates: IRP, repo-fix, new-feature).
+4. **Fix-pattern KB** — every validated bug fix becomes a searchable pattern (symptom → root cause → fix). `search_fix_patterns` BEFORE debugging cuts repeat-mistake rate.
+5. **Proactive error monitoring** — hourly cron polls Convex deployments for new errors, dedups, auto-files GitHub issues. MTTR dropped from 4-day median to 28 minutes on the VantageOS fleet.
+
+<details>
+<summary><b>All features</b> (click to expand) — grouped by category</summary>
+
+**Memory & knowledge**
+- Semantic memory with typed entries (`user`, `feedback`, `project`, `reference`, `episode`)
+- Memory graph relations (updates, extends, derives) with automatic versioning (`isLatest`)
+- Episodic learning records (context / goal / action / outcome / insight + severity)
+- Fix-pattern knowledge base with semantic search and per-attempt logging
+- Hybrid search (vector + BM25 with Reciprocal Rank Fusion)
+
+**Coordination**
+- Inter-agent messaging (channels, role DMs, instance DMs, broadcast)
+- Per-recipient read receipts on broadcasts (`list_broadcast_status`)
+- Task management with priorities, dependencies, atomic claim (`checkout_task`)
+- Mission planning with configurable multi-step templates
+- Recurring tasks (cron-based templates that auto-create on schedule)
+- Mandates (cross-agent service requests with budget tracking)
+
+**Operations**
+- Agent profiles (static identity + dynamic session state)
+- Multi-instance support (same role, many concurrent instances)
+- Diary entries (daily per-agent journals)
+- Briefing notes (shared topic discussions with decisions)
+- Component registry (agents, skills, hooks, plugins — full content backup)
+- Business unit registry (BUs with strategy, pricing, KPIs, management fees)
+
+**External integration**
+- GitHub issue tracking synced via webhooks with status lifecycle + fix verification
+- External issue tracking on third-party repos
+- Hourly PR-monitoring cron (notifies on merge/close)
+- Orchestrator signatures (automated VantageOS Team branding on commits/PRs/comments)
+
+**Observability**
+- Proactive error monitoring across Convex deployments
+- Daily MTTR statistics with before/after VantagePeers eras
+- Mission templates: IRP (13 steps), repo-fix (10 steps), new-feature (10 steps)
+
+See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full reference.
+
+</details>
 
 ## Works With
 
-VantagePeers is an MCP server — it works with any tool that supports the Model Context Protocol:
+VantagePeers is a standard MCP server — works with any client supporting the Model Context Protocol:
 
 | Tool | Support | Config |
 |------|---------|--------|
@@ -138,47 +211,14 @@ VantagePeers is an MCP server — it works with any tool that supports the Model
 | **Continue.dev** | Agent mode | `~/.continue/config.json` |
 | **GitHub Copilot** | Agent mode | `.github/copilot-mcp.json` |
 
-See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for config snippets per tool.
+<!-- TODO(sigma): verify each config path against current vendor docs before public launch -->
 
-## Architecture
-
-```
-Claude Code (Agent 1) ──┐
-Claude Code (Agent 2) ──┤── MCP Server (stdio) ── Convex Cloud
-Claude Code (Agent 3) ──┘        |
-                          84 MCP Tools
-```
-
-One Convex deployment. One MCP server process per agent. All agents share the same database.
-
-## Features
-
-- **Semantic memory** -- store facts, decisions, and feedback; retrieve by meaning via vector search
-- **Episodic learning** -- structured context/goal/action/outcome/insight records with severity levels
-- **Memory graph** -- relations between memories (updates, extends, derives) with automatic versioning
-- **Inter-agent messaging** -- send messages to specific agents, channels, or broadcast to all
-- **Task management** -- create, assign, prioritize, and track tasks with dependencies and missions
-- **Mission planning** -- group tasks into missions with status lifecycle (brainstorm through complete)
-- **Fix pattern KB** -- knowledge base of bugs, root causes, and validated fixes with semantic search
-- **Issue tracking** -- GitHub issues synced via webhooks, with status lifecycle and fix verification
-- **Business units** -- track BUs with strategy, KPIs, pricing, and management fees
-- **Mandates** -- cross-agent service requests with budget tracking and spending limits
-- **Recurring tasks** -- cron-based task templates that auto-create on schedule
-- **Component registry** -- backup and inventory of agents, skills, hooks, and plugins
-- **Diary** -- daily diary entries per agent
-- **Briefing notes** -- shared briefing documents with topic, participants, and decisions
-- **Multi-instance support** -- multiple instances of the same agent role can run concurrently
-- **Hybrid search** -- vector, full-text (BM25), and combined search via Reciprocal Rank Fusion
-- **Proactive error monitoring** -- detect errors across Convex deployments before users report them, auto-create GitHub issues
-- **Issue resolution stats** -- daily MTTR calculation with before/after era comparison (median 4 days → 28 minutes)
-- **Mission templates** -- configurable multi-step workflows (IRP 13 steps, repo-fix 10 steps, new-feature 10 steps)
-- **External issue tracking** -- track issues on third-party repos, monitor PRs, coordinate open-source contributions
-- **PR monitoring** -- hourly cron polls open PRs on external repos, notifies on merge/close
-- **Orchestrator signatures** -- automated VantageOS Team branding on commits, PRs, and GitHub comments
+See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for copy-paste config snippets per tool.
 
 ## MCP Tools Reference (84 tools)
 
-### Memory (6 tools)
+<details>
+<summary><b>Memory (6 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -189,295 +229,218 @@ One Convex deployment. One MCP server process per agent. All agents share the sa
 | `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
 | `get_memory` | Retrieve a single memory entry by ID |
 
-### Profiles (3 tools)
+</details>
+
+<details>
+<summary><b>Profiles + Session (4 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `get_profile` | Fetch an orchestrator's profile (static identity + dynamic session state) |
 | `update_profile` | Create or update an orchestrator profile |
 | `list_peers` | List all registered agent instances and their current summaries |
+| `set_summary` | Set a status summary visible to other agents via `list_peers` |
 
-### Session (1 tool)
+</details>
 
-| Tool | Description |
-|------|-------------|
-| `set_summary` | Set a status summary visible to other agents via list_peers |
-
-### Messaging (6 tools)
+<details>
+<summary><b>Messaging (6 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `send_message` | Send a message to a channel, agent, or broadcast |
-| `check_messages` | Check for unread messages addressed to a recipient/instance (supports optional `since` timestamp for incremental polling) |
+| `check_messages` | Check unread messages for a recipient/instance (supports `since` for incremental polling) |
 | `mark_as_read` | Mark message receipts as read by receipt ID |
 | `delete_message` | Delete a message by ID |
 | `list_messages` | List messages with filters (channel, sender, date range) |
 | `list_broadcast_status` | List read/unread receipts for a broadcast message |
 
-### Tasks (10 tools)
+</details>
+
+<details>
+<summary><b>Tasks (10 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
-| `create_task` | Create a new task with assignee, priority, and optional dependencies |
-| `list_tasks` | List tasks filtered by assignee, status, project, or priority |
+| `create_task` | Create a new task with assignee, priority, optional dependencies |
+| `list_tasks` | List tasks filtered by assignee, status, project, priority |
 | `list_tasks_by_mission` | List all tasks belonging to a specific mission |
-| `update_task` | Update any task fields (status, priority, description, etc.) |
+| `update_task` | Update any task fields |
 | `complete_task` | Mark a task as done with a mandatory completion note |
-| `start_task` | Claim a task and set its status to in_progress |
+| `start_task` | Claim a task and set status to `in_progress` |
 | `checkout_task` | Atomically claim a task (conflict-safe for multi-instance) |
 | `delete_task` | Delete a task by ID |
 | `block_task` | Mark a task as blocked with optional reason |
 | `add_task_dependency` | Add dependency tasks that must complete first |
 
-### Missions (6 tools)
+</details>
+
+<details>
+<summary><b>Missions (6 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `create_mission` | Create a mission grouping related tasks under a project |
-| `list_missions` | List missions filtered by project, pilot, or status |
-| `update_mission` | Update mission fields (description, brief, agents, dates) |
+| `list_missions` | List missions filtered by project, pilot, status |
+| `update_mission` | Update mission fields |
 | `update_mission_status` | Advance a mission through its lifecycle stages |
 | `get_mission_template` | Fetch a configurable mission template by name |
 | `get_mission` | Fetch a single mission by ID |
 
-### Diary (3 tools)
+</details>
+
+<details>
+<summary><b>Diary + Briefing Notes (6 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `write_diary` | Write a daily diary entry for an agent instance |
 | `get_diary` | Retrieve a diary entry by orchestrator and date |
-| `list_diaries` | List diary entries with optional date range and orchestrator filter |
-
-### Briefing Notes (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `create_briefing_note` | Create a briefing note with topic, participants, and decisions |
-| `update_briefing_note` | Partial-update an existing briefing note (RBAC: createdBy or system; arrays full-replace) |
+| `list_diaries` | List diary entries with date range and orchestrator filters |
+| `create_briefing_note` | Create a briefing note with topic, participants, decisions |
+| `update_briefing_note` | Partial-update an existing briefing note (RBAC: createdBy or system) |
 | `list_briefing_notes` | List briefing notes filtered by topic or creator |
 
-### List queries — `list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`
+</details>
 
-All 4 list queries support these projection + filter params (v2.3.x) :
+<details>
+<summary><b>Components + Recurring + Mandates (18 tools)</b></summary>
+
+**Components (6):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components`
+
+**Recurring tasks (6):** `create_recurring_task`, `list_recurring_tasks`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
+
+**Mandates (6):** `create_mandate`, `accept_mandate`, `update_mandate`, `settle_mandate`, `validate_mandate_spending`, `list_mandates`
+
+</details>
+
+<details>
+<summary><b>Business Units + Issues + Fix Patterns (16 tools)</b></summary>
+
+**Business units (5):** `create_bu`, `update_bu`, `get_bu`, `list_bus`, `delete_bu`
+
+**Issues (6):** `list_issues`, `get_issue`, `update_issue_status`, `link_commit_to_issue`, `verify_issue`, `issue_stats`
+
+**Fix patterns (5):** `create_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
+
+</details>
+
+<details>
+<summary><b>Search + Templates + Errors + Deployments (11 tools)</b></summary>
+
+**Search / RAG (3):** `search_fix_patterns`, `text_search`, `hybrid_search`
+
+**Mission templates (1):** `update_mission_template`
+
+**Error monitoring (2):** `list_errors`, `get_error`
+
+**Deployments + repos (5):** `add_deployment`, `remove_deployment`, `add_repo_mapping`, `list_repo_mappings`, `remove_repo_mapping`
+
+</details>
+
+### List query projection + filters
+
+All 4 list queries (`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`) support these params (v2.3.x):
 
 | Param | Type | Notes |
-|---|---|---|
-| `fields` | `"lite" \| "full"` | `"lite"` returns compact projection (5-10x smaller payload), `"full"` returns full doc (default). v2.3.1+. |
-| `status` | `string \| string[] \| alias` | Single status, array of statuses, or alias (`"open"`, `"active"`, `"all"`). Aliases NOT permitted inside arrays. v2.3.2+ MCP exposure. |
-| `createdBy` | `creator` | Filter by row creator (e.g. `"pi"`). `list_tasks` + `list_tasks_by_mission` only. v2.3.3. |
-| `updatedSince` | `number` (ms) | Filter to rows with `updatedAt >= this`. Typical : `Date.now() - 24*60*60*1000` for last-24h window. v2.3.3. |
-| `limit` | `number` | Default 50 (briefingNotes 20). Auto-clamp safeguard: when `fields="full"` AND no explicit `limit`, server clamps to 30 (15 for briefingNotes) + emits warn log. v2.3.3. |
+|-------|------|-------|
+| `fields` | `"lite" \| "full"` | `"lite"` returns compact projection (5-10x smaller payload). v2.3.1+. |
+| `status` | `string \| string[] \| alias` | Single status, array, or alias (`"open"`, `"active"`, `"all"`). Aliases NOT permitted inside arrays. v2.3.2+. |
+| `createdBy` | `creator` | Filter by row creator (e.g. `"pi"`). `list_tasks` + `list_tasks_by_mission` only. v2.3.3+. |
+| `updatedSince` | `number` (ms) | Filter to rows with `updatedAt >= this`. Typical: `Date.now() - 24*60*60*1000`. v2.3.3+. |
+| `limit` | `number` | Default 50 (briefingNotes 20). Auto-clamps to 30 (15 for briefingNotes) when `fields="full"` AND no explicit `limit`. v2.3.3+. |
 
-**Pi pull-cycle quickstart** :
+Pi pull-cycle quickstart:
+
 ```text
 list_tasks createdBy="pi" status="review" fields="lite" limit=30
 ```
-Returns recently-completed Pi-dispatched tasks with compact projection — typical 5-10x smaller payload than the default.
 
-### Components (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `register_component` | Register an agent, skill, hook, or plugin with full content backup |
-| `list_components` | List components filtered by type or team |
-| `get_component` | Fetch a single component by name and type |
-| `update_component` | Update a component's fields |
-| `delete_component` | Delete a component from the registry |
-| `search_components` | Search components by name or team |
-
-### Recurring Tasks (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `create_recurring_task` | Create a cron-based task template (e.g., daily standup) |
-| `list_recurring_tasks` | List recurring task templates |
-| `pause_recurring_task` | Pause a recurring task (stops auto-creation) |
-| `resume_recurring_task` | Resume a paused recurring task |
-| `delete_recurring_task` | Delete a recurring task template |
-| `update_recurring_task` | Update a recurring task's fields |
-
-### Mandates (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `create_mandate` | Create a cross-agent service request with budget |
-| `accept_mandate` | Accept a mandate (sets status to accepted) |
-| `update_mandate` | Update mandate fields (status, cost, linked tasks) |
-| `settle_mandate` | Settle a mandate (record actual cost, mark complete) |
-| `validate_mandate_spending` | Check if spending is within mandate limits |
-| `list_mandates` | List mandates filtered by requestor, fulfiller, or status |
-
-### Business Units (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `create_bu` | Create a business unit with strategy, pricing, and KPIs |
-| `update_bu` | Update business unit fields |
-| `get_bu` | Fetch a business unit by ID |
-| `list_bus` | List all business units with optional status/orchestrator filter |
-| `delete_bu` | Delete a business unit |
-
-### Issues (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `list_issues` | List tracked issues with filters (repo, status, project, assignee) |
-| `get_issue` | Fetch a single issue by repo and number |
-| `update_issue_status` | Update issue status (open, in_progress, fixed, verified, closed) |
-| `link_commit_to_issue` | Link a git commit to an issue |
-| `verify_issue` | Mark an issue as verified (fix confirmed) |
-| `issue_stats` | Get issue count statistics grouped by status |
-
-### Fix Patterns (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `create_fix_pattern` | Create a fix pattern documenting a bug, root cause, and fix |
-| `list_fix_patterns` | List fix patterns by project |
-| `add_fix_attempt` | Document a fix attempt (worked/failed) with reasoning |
-| `validate_fix` | Set the validated fix on a pattern |
-| `link_issue_to_pattern` | Link a GitHub issue to a fix pattern |
-
-### Search / RAG (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `search_fix_patterns` | Semantic search over fix patterns (use BEFORE fixing bugs) |
-| `text_search` | BM25 full-text search over memories |
-| `hybrid_search` | Combined vector + BM25 search with RRF fusion |
-
-### Mission Templates (1 tool)
-
-| Tool | Description |
-|------|-------------|
-| `update_mission_template` | Update template steps and configuration |
-
-### Error Monitoring (2 tools)
-
-| Tool | Description |
-|------|-------------|
-| `list_errors` | List detected errors with dedup counts |
-| `get_error` | Get full error details including stack trace |
-
-### Deployments & Repos (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `add_deployment` | Register a Convex deployment to monitor for errors |
-| `remove_deployment` | Stop monitoring a deployment |
-| `add_repo_mapping` | Map a GitHub repo to an orchestrator and project |
-| `list_repo_mappings` | List all repo-to-orchestrator mappings |
-| `remove_repo_mapping` | Remove a repo mapping |
+Returns recently-completed Pi-dispatched tasks with compact projection — typically 5-10x smaller payload than the default.
 
 ## Database Schema (20 tables)
+
+<details>
+<summary>Full schema reference</summary>
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
 | `memories` | Core memory store with typed entries and graph relations | namespace, type, content, createdBy, relations, isLatest |
 | `profiles` | Agent identity and session state | orchestratorId, instanceId, static, dynamic |
 | `messages` | Inter-agent messages | from, channel, content, sessionDay |
-| `messageReceipts` | Per-recipient read tracking for messages | messageId, recipient, recipientInstanceId, readAt |
+| `messageReceipts` | Per-recipient read tracking | messageId, recipient, recipientInstanceId, readAt |
 | `missions` | High-level mission grouping for tasks | name, project, status, priority, pilot |
 | `tasks` | Individual work items with dependencies | title, assignedTo, status, priority, dependsOn, missionId |
 | `diary` | Daily diary entries per agent | date, orchestrator, content, highlights, blockers |
 | `briefingNotes` | Shared briefing documents | title, topic, participants, content, decisions |
 | `components` | Agent/skill/hook/plugin registry with content backup | name, type, team, content, version |
 | `recurringTasks` | Cron-based task templates | title, assignedTo, cronExpression, active, nextRunAt |
-| `missionTemplates` | Configurable multi-step workflow templates (IRP, repo-fix, etc.) | name, steps, isDefault, createdBy |
+| `missionTemplates` | Configurable multi-step workflow templates | name, steps, isDefault, createdBy |
 | `mandates` | Cross-agent service requests with budgets | requestedBy, fulfilledBy, service, budget, spendingLimits |
-| `businessUnits` | ElPi Corp business units | name, status, businessModel, pricing, kpis, managementFee |
+| `businessUnits` | Business units | name, status, businessModel, pricing, kpis, managementFee |
 | `issues` | GitHub issues synced via webhook | repo, issueNumber, status, priority, fixCommits |
 | `githubRepoMapping` | Maps GitHub repos to orchestrators | repo, orchestrator, project, active |
-| `fixPatterns` | Bug fix knowledge base with semantic search | symptom, rootCause, validatedFix, tags, stack, severity |
+| `fixPatterns` | Bug-fix knowledge base with semantic search | symptom, rootCause, validatedFix, tags, stack, severity |
 | `fixAttempts` | Individual fix attempts per pattern | patternId, description, worked, why, commit |
-| `monitoredDeployments` | Registry of Convex deployments polled for errors | name, deploymentUrl, deployKeyEnvVar, githubRepo, active |
+| `monitoredDeployments` | Convex deployments polled for errors | name, deploymentUrl, deployKeyEnvVar, githubRepo, active |
 | `errorLogs` | Deduplicated error log with auto-issue linking | hash, functionName, errorMessage, count, issueNumber |
-| `issueStats` | Daily issue resolution metrics per repo | repo, date, medianTimeToFix, beforeVantageOS, afterVantageOS |
+| `issueStats` | Daily issue-resolution metrics per repo | repo, date, medianTimeToFix, beforeVantageOS, afterVantageOS |
 
-## Orchestrator Roles
+</details>
 
-All orchestrator names are open strings — any name is accepted. The following are conventions used by the VantageOS team:
+## Orchestrator Roles + Memory Types
+
+Orchestrator names are open strings — any value is accepted. The following are conventions used by the VantageOS team:
 
 | Role | Purpose |
 |------|---------|
 | `pi` | Lead orchestrator — planning, delegation, strategy |
-| `tau` | Frontend specialist — UI, design systems, components |
-| `phi` | Backend specialist — APIs, database, infrastructure |
+| `tau` | Frontend specialist |
+| `phi` | Backend specialist |
 | `sigma` | Infrastructure — deployments, CI/CD, monitoring |
 | `omega` | VantageRegistry — agent and skill catalog |
-| `zeta` | Project-specific specialist |
 | `eta` | Code reviewer — GitHub PR reviews |
-| `alpha` | Perello Consulting — client delivery |
-| `lambda` | Tech intelligence — research and monitoring |
+| `alpha` | Client delivery |
+| `lambda` | Tech intelligence |
 | `victor` | HR / people operations |
-| `system` | Reserved for automated/webhook operations. Bypasses RBAC checks on delete_message, delete_task, and mandate operations. Not a real agent — used by webhooks and internal processes. |
+| `system` | Reserved for webhooks. Bypasses RBAC on delete operations. |
 
-> **Note:** Since issue #132, all orchestrator validators accept any string. The names above are conventions, not enforced constraints. New orchestrators can use any name.
+> Since issue #132, validators accept any string. The names above are conventions, not enforced constraints.
 
-## Memory Types
-
-| Type | Purpose | Example |
-|------|---------|---------|
-| `user` | Facts about the user | "Laurent prefers English, solo founder" |
-| `feedback` | Behavioral corrections and guidance | "Always use lowercase for orchestrator names" |
-| `project` | Project state and architectural decisions | "API uses Convex mutations, not REST" |
-| `reference` | Pointers to external resources | "Bug tracker is in Linear project INGEST" |
-| `episode` | Structured lessons from experience | context/goal/action/outcome/insight with severity |
+Memory types: `user` (facts about the user), `feedback` (behavioral corrections), `project` (architectural decisions), `reference` (external pointers), `episode` (structured lessons with severity).
 
 ## Search Modes
 
-VantagePeers supports three search strategies via `@convex-dev/rag`:
+Three search strategies via `@convex-dev/rag`:
 
-1. **Vector search** -- semantic similarity using cosine distance on 1536-dim embeddings (`text-embedding-3-small`). This is what the `recall` and `search_fix_patterns` MCP tools use.
-2. **Text search** -- BM25 full-text search for exact keyword matching.
-3. **Hybrid search** -- combines vector and text results using Reciprocal Rank Fusion (RRF).
+1. **Vector** — cosine similarity on 1536-dim embeddings (`text-embedding-3-small`). Used by `recall` and `search_fix_patterns`.
+2. **Text** — BM25 full-text matching. Exposed via `text_search`.
+3. **Hybrid** — vector + text combined via Reciprocal Rank Fusion. Exposed via `hybrid_search`.
 
-Text and hybrid search are available via direct Convex function calls. The MCP `recall` tool exposes vector search for memories; `search_fix_patterns` exposes it for the fix pattern knowledge base.
-
-Embedding is asynchronous -- there is a 2-5 second delay between storing a memory/pattern and it becoming searchable.
+Embedding is asynchronous — expect a 2-5s delay between `store_memory` and the entry becoming searchable.
 
 ## Multi-Instance Support
 
-VantagePeers distinguishes between **roles** and **instances**:
-
-- A **role** (e.g., `pi`, `tau`, `sigma`) is a logical agent identity.
-- An **instance** (e.g., `pi-chromebook`, `sigma-vps`, `tau-client-acme`) is a specific running copy of that role.
-
-Multiple instances of the same role can run concurrently. Messages can be routed to a role (all instances receive it) or to a specific instance. Each instance can set its own status summary and claim tasks independently. The `checkout_task` tool provides atomic task claiming to prevent conflicts between instances.
+A **role** (e.g., `pi`, `sigma`) is a logical identity. An **instance** (e.g., `pi-chromebook`, `sigma-vps`) is a specific running copy. Multiple instances of the same role can run concurrently. Messages route to a role (all instances receive) or to a specific instance. Each instance sets its own `set_summary` and claims tasks independently via the atomic `checkout_task` tool.
 
 ## Testing
 
-### MCP Smoke Tests
-
-Runs all 84 MCP tools against a live Convex deployment:
-
 ```bash
+# MCP smoke tests — all 84 tools against a live Convex deployment
 bun scripts/test-mcp.ts
-```
 
-Results are saved to `tests/mcp-smoke-report.md`.
-
-### Unit Tests
-
-Runs Convex function unit tests with vitest:
-
-```bash
+# Convex function unit tests
 npx vitest run
-```
 
-Results are saved to `tests/unit-report.md`.
-
-### RAG Integration Tests
-
-Tests the store → embed → recall pipeline:
-
-```bash
+# RAG integration tests — store → embed → recall pipeline
 bun scripts/test-rag-integration.ts
 ```
 
+Reports written to `tests/mcp-smoke-report.md`, `tests/unit-report.md`.
+
 ## CLAUDE.md Integration
 
-Add this snippet to any agent's `CLAUDE.md` to enable the memory protocol:
+Drop this into any agent's `CLAUDE.md` to enable the memory protocol:
 
 ```markdown
 ## SHARED MEMORY (non-negotiable)
@@ -494,26 +457,30 @@ You have access to VantagePeers via MCP tools.
 
 ## Tech Stack
 
-- **Convex** -- real-time database, serverless functions, vector search
-- **@convex-dev/rag** -- embedding generation, indexing, hybrid search
-- **@modelcontextprotocol/sdk** -- MCP server implementation for Claude Code
-- **Bun** -- TypeScript runtime for the MCP server process
-- **OpenAI text-embedding-3-small** -- 1536-dimension embeddings via AI Gateway
-- **TypeScript** -- end to end, both server and Convex functions
+- **Convex** — real-time database, serverless functions, vector search
+- **@convex-dev/rag** — embedding generation, indexing, hybrid search
+- **@modelcontextprotocol/sdk** — MCP server runtime
+- **OpenAI `text-embedding-3-small`** — 1536-dim embeddings via AI Gateway or direct OpenAI
+- **TypeScript** — end-to-end, both server and Convex functions
+- **Bun** — TypeScript runtime for the MCP server
 
 ## Documentation
 
 Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 
-- [Getting Started](https://vantagepeers.com/docs/getting-started) -- install, deploy, configure
-- [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) -- two agents exchanging messages in 5 minutes
-- [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) -- orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) -- all 84 MCP tools
+- [Getting Started](https://vantagepeers.com/docs/getting-started) — install, deploy, configure
+- [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) — two agents exchanging messages in 5 minutes
+- [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) — orchestrators, instances, namespaces
+- [Tools Reference](https://vantagepeers.com/docs/tools) — all 84 MCP tools
 
 ## Contributing
 
 Contributions welcome. Please open an issue first to discuss what you would like to change.
 
+## Credits
+
+Built by the VantageOS AI Orchestrator Team — sigma, omega, kappa, tau, beta, theta, gamma, mu, athena, hermes, demeter, eta, chi, iota, psi, rho, phi, alpha, lambda, victor, ulysse, atlas, argus — under the supervision of Pi (π) and Laurent Perello. See [the team page](https://vantagepeers.com/team) for the full fleet.
+
 ## License
 
-[FSL-1.1-Apache-2.0](LICENSE) -- source-available, free to self-host, converts to Apache 2.0 after 2 years. You may not offer VantagePeers as a competing hosted service.
+[FSL-1.1-Apache-2.0](LICENSE) — source-available, free to self-host, converts to Apache 2.0 after 2 years. You may not offer VantagePeers as a competing hosted service.

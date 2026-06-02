@@ -1,10 +1,10 @@
 # Changelog
 
-## [2.3.3] - 2026-05-28
+## [2.3.3] — 2026-05-28 (Day 84 — 2026-05-28)
 
 ### Feature — `createdBy` + `updatedSince` filters + auto-clamp on list queries
 
-**Root cause / Motivation :** Day 83 Pi runtime overflow on `list_tasks limit=50` (~79k chars / 838 lines). Pi pull-cycle HUMAN MODE could not filter to its own dispatched tasks. Need `createdBy` (Pi-dispatched pattern) + `updatedSince` (recent-window pattern) on list queries + auto-clamp safeguard against accidental `fields=full` mega-scans.
+**Root cause / Motivation :** Day 83 (2026-05-27) Pi runtime overflow on `list_tasks limit=50` (~79k chars / 838 lines). Pi pull-cycle HUMAN MODE could not filter to its own dispatched tasks. Need `createdBy` (Pi-dispatched pattern) + `updatedSince` (recent-window pattern) on list queries + auto-clamp safeguard against accidental `fields=full` mega-scans.
 
 **Fix :**
 - `convex/tasks.ts` `list` + `listByMission` : new args `createdBy: v.optional(creatorValidator)` + `updatedSince: v.optional(v.number())`. Auto-clamp `effectiveLimit = 30` when `fields="full"` AND no explicit `limit` (with `console.warn`).
@@ -27,11 +27,11 @@
 
 ---
 
-## [2.3.2] - 2026-05-28
+## [2.3.2] — 2026-05-28 (Day 84 — 2026-05-28)
 
 ### Hotfix — MCP wrapper exposes `fields=lite` + `status` aliases/arrays
 
-**Root cause :** Day 82 sprint `vp-list-queries-fields-lite-status-multi-v1` (v2.3.1) shipped Convex backend support for `fields="lite"` projection + status aliases (`open`/`active`/`all`) + multi-status arrays on the 4 list queries. The MCP wrapper Zod schemas in `mcp-server/src/tools.ts` were NOT updated, so MCP clients (Claude Code, claude.ai web, orchestrators) could not pass those params — the MCP validator rejected them before reaching backend. Day 83 Pi runtime overflow on `list_tasks limit=50` made the gap painful.
+**Root cause :** Day 82 (2026-05-26) sprint `vp-list-queries-fields-lite-status-multi-v1` (v2.3.1) shipped Convex backend support for `fields="lite"` projection + status aliases (`open`/`active`/`all`) + multi-status arrays on the 4 list queries. The MCP wrapper Zod schemas in `mcp-server/src/tools.ts` were NOT updated, so MCP clients (Claude Code, claude.ai web, orchestrators) could not pass those params — the MCP validator rejected them before reaching backend. Day 83 (2026-05-27) Pi runtime overflow on `list_tasks limit=50` made the gap painful.
 
 **Fix :**
 - `mcp-server/src/tools.ts` : new exports `taskStatusFilterSchema`, `missionStatusFilterSchema`, `fieldsSchema`. Wired into 4 list tools (`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`). Aliases NOT permitted inside arrays (matches backend rejection contract).
@@ -51,7 +51,7 @@
 
 ---
 
-## [2.3.1] - 2026-05-26
+## [2.3.1] — 2026-05-26 (Day 82 — 2026-05-26)
 
 ### Feature — `fields="lite"` projection + status array/aliases on list queries (backend)
 
@@ -70,11 +70,11 @@
 **References :**
 - PR : https://github.com/vantageos-agency/vantage-peers/pull/530
 - Sprint : `vp-list-queries-fields-lite-status-multi-v1`
-- Day 82 Pi flag : "On a fait un sprint pour fixer!" (gap closed in v2.3.2 hotfix above).
+- Day 82 (2026-05-26) Pi flag : "On a fait un sprint pour fixer!" (gap closed in v2.3.2 hotfix above).
 
 ---
 
-## [2.3.0] - 2026-05-21
+## [2.3.0] — 2026-05-21 (Day 77 — 2026-05-21)
 
 ### Bug Fix — recall()/hybrid_search() returning [] for self-host with direct OpenAI key
 
@@ -105,10 +105,10 @@ including the Cédric regression case (sk-* in AI_GATEWAY_API_KEY → direct pat
 `docs/self-host/recall-empty-troubleshooting.md` — set `OPENAI_API_KEY`, redeploy,
 run reindex mutation.
 
-**References:** Cédric Delport support ticket 2026-05-18, Day 76 reindex PR #483,
+**References:** Cédric Delport support ticket 2026-05-18 (Day 74), Day 76 (2026-05-20) reindex PR #483,
 Sigma task k17defa52nzyp7z03198ne9ay186ygss.
 
-## [2.2.0] - 2026-05-07
+## [2.2.0] — 2026-05-07 (Day 63 — 2026-05-07)
 
 ### Added
 - 4 fix-pattern MCP tools wrapping existing Convex backend functions:
@@ -122,7 +122,7 @@ Sigma task k17defa52nzyp7z03198ne9ay186ygss.
 ### Why
 Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, Psi, Victor, Phi) can now capitalize learnings via MCP rather than shelling out to `npx convex run fixPatterns:*`. Powers the `/capitalize-fix` skill and the `inject-fix-patterns` hook.
 
-## [v2.1.1] - 2026-05-04
+## [v2.1.1] — 2026-05-04 (Day 60 — 2026-05-04)
 
 ### Bug Fixes
 - Defense-in-depth memoryIdSchema for briefingNotes linkedMemoryIds (closes #386, #387)
@@ -134,7 +134,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Closes #386 (canonical), #387 (duplicate)
 - Pattern reuse: PR #328 mark_as_read fix (m97ewrrqczew67kc6at3a59e7985ea7h)
 
-## [v2.1.0] - 2026-04-25
+## [v2.1.0] — 2026-04-25 (Day 51 — 2026-04-25)
 
 ### Added
 - update_briefing_note MCP tool — partial update for briefing notes with RBAC (createdBy or system only)
@@ -144,7 +144,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Closes issue #333
 - Mission k5708d9xxwj81v92e0x3hwv36985g4d7
 
-## v11 — 2026-04-08
+## v11 — 2026-04-08 (Day 34 — 2026-04-08)
 
 ### New Features
 - **Dynamic broadcast** — broadcast channel now queries profiles table instead of hardcoded list (#219)
@@ -172,7 +172,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Broadcast unit test updated for dynamic profiles
 - Test reports committed to tests/
 
-## v10 — Public Launch Cleanup (2026-04-07)
+## v10 — Public Launch Cleanup — 2026-04-07 (Day 33 — 2026-04-07)
 
 - PR #100: Deep repo cleanup for public launch
 - Removed internal orchestrator instructions and person names from CLAUDE.md
@@ -182,7 +182,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Updated CONTRIBUTING.md and README.md with current tool and test counts
 - Removed absolute internal server paths from docs
 
-## v9 — README Rewrite + 3 New Tools (2026-04-07)
+## v9 — README Rewrite + 3 New Tools — 2026-04-07 (Day 33 — 2026-04-07)
 
 - PR #96: README rewritten for public consumption
 - Added `get_memory` tool (fetch single memory by ID)
@@ -190,7 +190,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Added `hybrid_search` tool (RRF fusion of vector + BM25)
 - Total tool count: 75
 
-## v8 — MCP Smoke Tests Expanded to 75 (2026-04-07)
+## v8 — MCP Smoke Tests Expanded to 75 — 2026-04-07 (Day 33 — 2026-04-07)
 
 - PR #95: Expanded MCP smoke test suite from 29 to 75 tests (all 75 tools covered, 75/75 pass)
 - PR #94: string-based API calls for all 75 tools
@@ -198,7 +198,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - PR #89: RAG integration tests (6/6 pass)
 - PR #87: standalone MCP server, schema validators, soft_delete_memory
 
-## v7 — Open Source Release (2026-03-25)
+## v7 — Open Source Release — 2026-03-25 (Day 20 — 2026-03-25)
 
 - README rewritten for public consumption (27 MCP tools documented)
 - MCP integration tests: 29/29 covering all tools
@@ -208,7 +208,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Added .env.example
 - Package.json metadata (keywords, repository, engines, scripts)
 
-## v6 — Schema Migration + Hardening (2026-03-25)
+## v6 — Schema Migration + Hardening — 2026-03-25 (Day 20 — 2026-03-25)
 
 - Removed deprecated `to` field from messages table
 - Made `channel` field required on messages
@@ -219,7 +219,7 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Global string-to-array tolerance for all MCP array fields (tags, participants, highlights, etc.)
 - Cleaned up test data residue from MCP integration tests
 
-## v5 — Multi-Instance Support (2026-03-24)
+## v5 — Multi-Instance Support — 2026-03-24 (Day 19 — 2026-03-24)
 
 - Added `instanceId` to profiles, messages, and task claiming
 - `set_summary` supports instance-level registration
@@ -227,14 +227,14 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - `fromInstanceId` on messages for sender identification
 - `recipientInstanceId` on message receipts for instance routing
 
-## v4 — Messaging with Receipts (2026-03-23)
+## v4 — Messaging with Receipts — 2026-03-23 (Day 18 — 2026-03-23)
 
 - Replaced claude-peers with native messaging
 - `send_message`, `check_messages`, `mark_as_read`, `list_messages` tools
 - Channel-based routing: broadcast, role DM, instance DM, multi-target
 - Per-recipient read receipts via `messageReceipts` table
 
-## v3 — Tasks, Missions, Diary (2026-03-22)
+## v3 — Tasks, Missions, Diary — 2026-03-22 (Day 17 — 2026-03-22)
 
 - Task management: create, update, start, complete with `completionNote`
 - Task dependencies (`dependsOn`) and priority sorting
@@ -244,14 +244,14 @@ Enables the agent improvement cycle: orchestrators (Pi, Sigma, Eta, Chi, Iota, P
 - Briefing notes for structured topic discussions
 - RAG threshold fix for semantic search
 
-## v2 — Profiles and Episodes (2026-03-21)
+## v2 — Profiles and Episodes — 2026-03-21 (Day 16 — 2026-03-21)
 
 - Orchestrator profiles with static identity and dynamic session state
 - Episodic memory (context → goal → action → outcome → insight)
 - Severity levels for episodes (critical, major, minor)
 - Memory graph relations (updates, extends, derives)
 
-## v1 — Initial Release (2026-03-20)
+## v1 — Initial Release — 2026-03-20 (Day 15 — 2026-03-20)
 
 - Core memory storage with 5 types (user, feedback, project, reference, episode)
 - Semantic vector search via `@convex-dev/rag` and OpenAI embeddings
