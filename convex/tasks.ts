@@ -405,7 +405,11 @@ export const update = mutation({
 		const { taskId, callerOrchestrator, ...fields } = args;
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
-			throw new Error(`Task ${taskId} not found`);
+			throw new ConvexError({
+				code: "TASK_NOT_FOUND",
+				message: `Task ${taskId} not found`,
+				taskId,
+			});
 		}
 		if (args.callerOrchestrator !== undefined) {
 			const isAuthorized =
@@ -413,9 +417,12 @@ export const update = mutation({
 				task.assignedTo === args.callerOrchestrator ||
 				args.callerOrchestrator === "system";
 			if (!isAuthorized) {
-				throw new Error(
-					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-				);
+				throw new ConvexError({
+					code: "TASK_UNAUTHORIZED",
+					message: `Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+					caller: args.callerOrchestrator,
+					taskId,
+				});
 			}
 		}
 
@@ -446,7 +453,11 @@ export const complete = mutation({
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
-			throw new Error(`Task ${args.taskId} not found`);
+			throw new ConvexError({
+				code: "TASK_NOT_FOUND",
+				message: `Task ${args.taskId} not found`,
+				taskId: args.taskId,
+			});
 		}
 		if (args.callerOrchestrator !== undefined) {
 			const isAuthorized =
@@ -454,16 +465,21 @@ export const complete = mutation({
 				task.assignedTo === args.callerOrchestrator ||
 				args.callerOrchestrator === "system";
 			if (!isAuthorized) {
-				throw new Error(
-					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-				);
+				throw new ConvexError({
+					code: "TASK_UNAUTHORIZED",
+					message: `Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+					caller: args.callerOrchestrator,
+					taskId: args.taskId,
+				});
 			}
 		}
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
-			throw new Error(
-				"completionNote is required. Describe what was actually done.",
-			);
+			throw new ConvexError({
+				code: "COMPLETION_NOTE_REQUIRED",
+				message: "completionNote is required. Describe what was actually done.",
+				taskId: args.taskId,
+			});
 		}
 
 		const now = Date.now();
@@ -664,7 +680,11 @@ export const start = mutation({
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
-			throw new Error(`Task ${args.taskId} not found`);
+			throw new ConvexError({
+				code: "TASK_NOT_FOUND",
+				message: `Task ${args.taskId} not found`,
+				taskId: args.taskId,
+			});
 		}
 		if (args.callerOrchestrator !== undefined) {
 			const isAuthorized =
@@ -672,9 +692,12 @@ export const start = mutation({
 				task.assignedTo === args.callerOrchestrator ||
 				args.callerOrchestrator === "system";
 			if (!isAuthorized) {
-				throw new Error(
-					`Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-				);
+				throw new ConvexError({
+					code: "TASK_UNAUTHORIZED",
+					message: `Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
+					caller: args.callerOrchestrator,
+					taskId: args.taskId,
+				});
 			}
 		}
 
@@ -693,9 +716,15 @@ export const start = mutation({
 				inProgressTasks.length > 0 &&
 				inProgressTasks[0]._id !== args.taskId
 			) {
-				throw new Error(
-					`Cannot start task: you have an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first.`,
-				);
+				throw new ConvexError({
+					code: "TASK_START_BLOCKED",
+					message: `Cannot start task: you have an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first.`,
+					currentInProgress: {
+						taskId: inProgressTasks[0]._id,
+						title: inProgressTasks[0].title,
+					},
+					attemptedTaskId: args.taskId,
+				});
 			}
 		}
 
@@ -753,16 +782,25 @@ export const deleteTask = mutation({
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
-		if (!task) throw new Error("Task not found");
+		if (!task)
+			throw new ConvexError({
+				code: "TASK_NOT_FOUND",
+				message: "Task not found",
+				taskId: args.taskId,
+			});
 
 		if (
 			args.callerOrchestrator !== undefined &&
 			args.callerOrchestrator !== "system"
 		) {
 			if (task.createdBy !== args.callerOrchestrator) {
-				throw new Error(
-					`Unauthorized: only ${task.createdBy} (creator) or system can delete this task`,
-				);
+				throw new ConvexError({
+					code: "TASK_DELETE_UNAUTHORIZED",
+					message: `Unauthorized: only ${task.createdBy} (creator) or system can delete this task`,
+					caller: args.callerOrchestrator,
+					creator: task.createdBy,
+					taskId: args.taskId,
+				});
 			}
 		}
 
