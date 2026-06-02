@@ -56,7 +56,7 @@ Change is surgical — existing return shape is preserved; marker is appended as
 ### Ack checklist
 
 NEW `docs/M3-ACK-CHECKLIST.md` — bilingual FR/EN post-deploy verification checklist
-for Marie + Ismaël. Covers: package install, primitive reads, Shadow DOM scoping,
+for the beta verifier cohort. Covers: package install, primitive reads, Shadow DOM scoping,
 stream marker emit + parse, bilingual spot check, WCAG AA (contrast + role attrs),
 default-OFF guard.
 
@@ -102,7 +102,7 @@ Bearer sha256 validation : Already in place since v2.3.4 DCR security fix. `mcp-
 
 Tests : 42 new vitest cases in `src/__tests__/ui-resources-m2-primitives.test.ts` (target was ≥22). Covers : PRIMITIVES registry (6 entries), each of 5 new primitives (empty + populated + FR labels + XSS escape + error fallback = 5 cases each), Zod schema roundtrip (VpToolResultSchema all 6 variants accepted, malformed rejected, individual payload schema validations). 0 regression on M1 17 cases + 194 other MCP tests (253/253 total).
 
-M3 next : Registry json-render + `__VP_TOOL_RESULT__<json>` stream marker + smoke E2E + ack-checklist + PI-SIGNED Convex prod deploy + visual ack Marie/Ismaël.
+M3 next : Registry json-render + `__VP_TOOL_RESULT__<json>` stream marker + smoke E2E + ack-checklist + PI-SIGNED Convex prod deploy + visual ack from beta cohort verifiers.
 
 ---
 
@@ -124,7 +124,7 @@ VP task : `k177tsvdxzase5sjy2qm9fdvp187kbwr`. Predecessor v2.3.3 PR #539 (`k1796
 
 ## v2.3.4 — 2026-05-28 (Day 84 — 2026-05-28)
 
-**Security fix** — DCR (Dynamic Client Registration) self-registration now defaults to tenant-scope only. Master scope requires explicit admin authorization (`ADMIN_DCR_TOKEN` / `BEARER_SECRET_MASTER` env var). Closes beta blocker for Marie/Iris RH onboarding identified in VP Cloud audit Day 84 (2026-05-28).
+**Security fix** — DCR (Dynamic Client Registration) self-registration now defaults to tenant-scope only. Master scope requires explicit admin authorization (`ADMIN_DCR_TOKEN` / `BEARER_SECRET_MASTER` env var). Closes beta blocker for early-access RH cohort onboarding identified in VP Cloud audit Day 84 (2026-05-28).
 
 Changes:
 - `convex/oauth.ts`: `registerPublicClient` now explicitly rejects `scopeProfile="master"` with a `ScopeViolation` error. Previously only the HTTP server enforced this; the Convex-layer was bypassable via direct internal call.
@@ -133,7 +133,7 @@ Changes:
 
 Tests: 5 new Convex security tests (`convex/oauth-dcr-security.test.ts`) + 5 new MCP scope enforcement tests (`mcp-server/src/__tests__/dcr-scope-enforcement.test.ts`), 0 regression on existing suites.
 
-VP task: k17218rvqyncs1v6rwj3qdzfsn87jj4n. Beta unblock chain: DCR fix → 5 quick wins onboarding (seed-profiles + marie-iris-rh client + README VP Cloud + runbook + email).
+VP task: k17218rvqyncs1v6rwj3qdzfsn87jj4n. Beta unblock chain: DCR fix → 5 quick wins onboarding (seed-profiles + early-access RH cohort client + README VP Cloud + runbook + email).
 
 ## v2.3.3 — 2026-05-28 (Day 84 — 2026-05-28)
 

@@ -24,8 +24,8 @@
 
 | Persona | Best tier | ARPU expectation |
 |---------|-----------|-------------------|
-| P1 Solo AI/Dev (Cédric) | **Solo €49 / Lifetime €99** | Sub-impulse vs €400-700/day TJM. Acquisition-friction-free. **Primary Solo target.** |
-| P2 Formateur/Trainer (Marie) | Solo €49 → Team €290 if scaling cohort | Annual SaaS budget €1.2K-3.5K, GDPR-first messaging required |
+| P1 Solo AI/Dev (Solo-Builder) | **Solo €49 / Lifetime €99** | Sub-impulse vs €400-700/day TJM. Acquisition-friction-free. **Primary Solo target.** |
+| P2 Formateur/Trainer (Trainer) | Solo €49 → Team €290 if scaling cohort | Annual SaaS budget €1.2K-3.5K, GDPR-first messaging required |
 | P3 Independent Consultant (Thomas) | **Team €290 / Lifetime €590** | $150-300/hr billing, multi-client isolation pain. **Primary Team target. Strongest path to Enterprise.** |
 | P4 Small dev/marketing agency (3-10 seats) | Team €290 → Enterprise @ 10+ | Per-seat ~€58/yr beats Notion AI €120/seat |
 | P5 Coaching team (2-5 coaches) | Team €290 | Longer discovery cycle, non-tech UX framing |

@@ -3,7 +3,7 @@
 **Mission :** `sigma-vantage-peers-mcp-gui-iframe-embed-v1` (k5730xct6rvrwkvxhy5t5js12d87jwfw)
 **MCP package :** `vantage-peers-mcp@2.4.0` (pending Pi-gated ship)
 **Deployment :** `compassionate-goldfinch-737`
-**Verifiers :** Marie + Ismaël
+**Verifiers :** Beta cohort verifier 1 + verifier 2
 
 ---
 
@@ -106,8 +106,8 @@ Outils qui émettent des marqueurs quand `VP_EMIT_UI_MARKERS=1` :
 
 | Verifier | Date | Signature |
 |----------|------|-----------|
-| Marie    |      |           |
-| Ismaël   |      |           |
+| Verifier 1 |      |           |
+| Verifier 2 |      |           |
 
 Both verifiers must sign before M3 is marked DONE.
 Les deux vérificateurs doivent signer avant que M3 soit marqué DONE.

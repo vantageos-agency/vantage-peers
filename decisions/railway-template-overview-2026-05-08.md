@@ -146,7 +146,7 @@ Proactive deployment error detection with automatic GitHub issue creation. Regis
 
 ### Solo Developer — Cross-Session Context Persistence
 
-Cédric runs Claude Code sessions across two machines for three separate projects. Every session opens cold without shared state. With VantagePeers, he calls `store_memory` at the end of each session to capture decisions and architectural choices. The next session opens with a `recall` call returning the five most relevant memories. When he hits a familiar bug, `search_fix_patterns` returns the root cause and fix — including failed attempts he can skip. A daily `create_recurring_task` reminds each agent to check messages at session start. One Railway deployment, one Convex project, no per-query costs at the free tier.
+A solo developer runs Claude Code sessions across two machines for three separate projects. Every session opens cold without shared state. With VantagePeers, he calls `store_memory` at the end of each session to capture decisions and architectural choices. The next session opens with a `recall` call returning the five most relevant memories. When he hits a familiar bug, `search_fix_patterns` returns the root cause and fix — including failed attempts he can skip. A daily `create_recurring_task` reminds each agent to check messages at session start. One Railway deployment, one Convex project, no per-query costs at the free tier.
 
 ### Consultant — Client Isolation and Engagement Standardization
 
@@ -154,7 +154,7 @@ Thomas manages three concurrent client engagements. Each client gets its own nam
 
 ### Small Team — Agent Fleet Coordination and Handoffs
 
-Marie leads a four-person team where each person runs one or more AI agents. The shared deployment gives all agents a common message bus and task board. On task completion, an agent calls `complete_task` with a `completionNote` then `send_message` to the next agent. Offline agents receive messages on their next `check_messages` call using `since` — no messages are lost. `set_summary` lets each agent publish its status; `list_peers` shows the full team state at any moment. `store_episode` with `severity=critical` flags cross-team lessons so every agent benefits regardless of which session discovered them.
+A small-team lead runs a four-person team where each person runs one or more AI agents. The shared deployment gives all agents a common message bus and task board. On task completion, an agent calls `complete_task` with a `completionNote` then `send_message` to the next agent. Offline agents receive messages on their next `check_messages` call using `since` — no messages are lost. `set_summary` lets each agent publish its status; `list_peers` shows the full team state at any moment. `store_episode` with `severity=critical` flags cross-team lessons so every agent benefits regardless of which session discovered them.
 
 ---
 

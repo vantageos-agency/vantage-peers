@@ -135,7 +135,7 @@ VP Cloud Team at **€290/year flat (~5 seats = €58/seat/year)** lands as foll
 
 4. **Annual-only — Maintain, but add risk mitigation.** The annual-only doctrine is not market-standard but is defensible as a simplicity signal for a v1 product. Add a 30-day money-back guarantee to reduce trial friction. This is consistent with Plausible's approach (30-day trial) which normalizes annual commitment for indie/dev tools.
 
-5. **Currency — EUR as primary, confirmed.** Price in EUR (€) as primary. This differentiates from 9/12 USD-first competitors, signals European trust/compliance posture, and eliminates FX friction for the core EU customer base (Cédric, Marie, independent consultant personas).
+5. **Currency — EUR as primary, confirmed.** Price in EUR (€) as primary. This differentiates from 9/12 USD-first competitors, signals European trust/compliance posture, and eliminates FX friction for the core EU customer base (solo-builder, trainer, independent consultant personas).
 
 ---
 
