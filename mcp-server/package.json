@@ -54,7 +54,12 @@
     "rag",
     "vector-search"
   ],
-  "author": "ElPi Corp",
+  "author": "VantageOS AI Orchestrator Team",
+  "contributors": [
+    "Pi (π) — Lead orchestrator",
+    "Laurent Perello — Founder, supervisor",
+    "ElPi Corp"
+  ],
   "license": "FSL-1.1-Apache-2.0",
   "dependencies": {
     "@mcp-ui/server": "^6.1.0",

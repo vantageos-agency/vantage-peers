@@ -12,7 +12,11 @@
     "vector-search",
     "multi-agent"
   ],
-  "author": "VantageOS",
+  "author": "VantageOS AI Orchestrator Team",
+  "contributors": [
+    "Pi (π) — Lead orchestrator",
+    "Laurent Perello — Founder, supervisor"
+  ],
   "license": "FSL-1.1-Apache-2.0",
   "repository": {
     "type": "git",
