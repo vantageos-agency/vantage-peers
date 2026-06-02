@@ -1,9 +1,9 @@
 # VantagePeers
 
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
+[![npm weekly downloads](https://img.shields.io/npm/dw/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
-[![Tests: 84/84](https://img.shields.io/badge/MCP_tests-84%2F84_passing-green)]()
+[![MCP tools: 84](https://img.shields.io/badge/MCP_tools-84_registered-green)]()
 
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
@@ -14,11 +14,31 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-vantagepeers.com-green.svg)](https://vantagepeers.com/docs)
 
-## Deploy on Railway
+## Deploy on Railway (1-click)
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
 
-Self-host VantagePeers MCP in under 10 minutes. Free Convex tier sufficient for solo + small-team deployments. See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full quick-start guide.
+Deploy your own VantagePeers MCP server in 1 click. Auto-configures `CONVEX_URL` + healthcheck + public HTTPS endpoint. Free Convex tier sufficient for solo + small-team deployments. See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full quick-start guide.
+
+## Backend: Convex
+
+VantagePeers runs on [Convex](https://convex.dev) — a real-time database with serverless functions, vector search, and built-in cron. `CONVEX_URL` in your environment points to a specific Convex deployment.
+
+**Three deployment paths:**
+
+1. **Free self-host (recommended for solo + small teams)** — deploy your own Convex project:
+   ```bash
+   git clone https://github.com/vantageos-agency/vantage-peers.git
+   cd vantage-peers && bun install
+   npx convex dev      # creates a new Convex deployment under your account
+   ```
+   The Convex free tier covers solo + small-team coordination usage. Your `CONVEX_URL` is the deployment URL printed by `npx convex dev`.
+
+2. **Hosted cloud (consume our fleet deployment)** — point `CONVEX_URL` to our managed Convex prod (`compassionate-goldfinch-737.convex.cloud`). Subject to fair-use quotas; intended for evaluation. Production use should self-host or upgrade to Pro Support.
+
+3. **Pro Support (dedicated deployment)** — dedicated Convex instance with SLA, multi-tenant isolation, and priority support. Contact `lp@alorsonsort.com` for setup.
+
+For any path, the MCP server is identical (`npm install -g vantage-peers-mcp` then `vantage-peers-mcp` to start) — only the `CONVEX_URL` differs.
 
 ## What It Is
 
