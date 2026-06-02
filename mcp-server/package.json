@@ -59,6 +59,7 @@
   "dependencies": {
     "@mcp-ui/server": "^6.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vantageos/mosaic": "^0.1.2",
     "convex": ">=1.0.0",
     "dotenv": "^17.4.2",
     "zod": "^4.3.6"
