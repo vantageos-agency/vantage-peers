@@ -12,7 +12,7 @@ Personas are synthesised from: Stack Overflow Developer Survey 2025 (49,000+ res
 
 ---
 
-## Persona 1 — Solo AI/Dev Builder ("Cédric")
+## Persona 1 — Solo AI/Dev Builder ("Solo-Builder")
 
 **Archetype**: Freelance full-stack developer or indie hacker building agent-powered products
 
@@ -61,7 +61,7 @@ Claude Code (primary coding agent), Cursor or Windsurf (IDE), ChatGPT Plus ($20/
 
 ---
 
-## Persona 2 — Formateur / Independent AI Trainer ("Marie")
+## Persona 2 — Formateur / Independent AI Trainer ("Trainer")
 
 **Archetype**: Self-employed trainer or coach who has built a practice around AI tools for corporate clients
 

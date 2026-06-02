@@ -34,7 +34,7 @@ Add to your Claude Desktop `claude_desktop_config.json` (or Claude Code `.mcp.js
 
 ## VP Cloud (managed beta) onboarding
 
-VP Cloud beta is in pre-launch validation. Beta testers (e.g. Marie/Iris RH cohort) receive credentials from the VantagePeers team and configure their client with `CONVEX_URL=https://compassionate-goldfinch-737.convex.cloud` + a tenant-scoped bearer token. Reach out via the project repo for beta access.
+VP Cloud beta is in pre-launch validation. Beta testers (e.g. early-access RH cohort) receive credentials from the VantagePeers team and configure their client with `CONVEX_URL=https://compassionate-goldfinch-737.convex.cloud` + a tenant-scoped bearer token. Reach out via the project repo for beta access.
 
 DCR (Dynamic Client Registration) self-registration is tenant-scoped only ; master scope requires explicit admin authorization (v2.3.4+, see security note).
 

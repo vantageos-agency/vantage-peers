@@ -120,7 +120,7 @@ Contains internal orchestrator identity, workspace paths (`/root/coding/vantage-
 
 ### MAJOR-6: Personal referral code in onboarding doc
 
-**File:** `decisions/cedric-setup-2026-05-08.md` line 30; `decisions/railway-template-overview-2026-05-08.md` lines 19, 185
+**File:** historical client-setup decision docs removed pre-public 2026-06-02; `decisions/railway-template-overview-2026-05-08.md` lines 19, 185
 
 **Evidence:** `convex.dev/referral/LAUREN7583` — this is Laurent's personal Convex referral code. If public, it stays associated with a personal identity rather than the VantageOS brand.
 

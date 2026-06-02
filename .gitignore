@@ -21,3 +21,4 @@ apps/
 .claude/scheduled_tasks.lock
 .claude/*.lock
 .playwright-mcp/
+_archive/

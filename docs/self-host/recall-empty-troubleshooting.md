@@ -158,7 +158,7 @@ query prints `approxCostUSD` so you can confirm the number before paying. As a r
 ## Related
 
 - `convex/migrations/reindexMemoriesByPeriod.ts` — batch reindex mutation
-- `projects/cedric-delport/inbox-2026-05-19/batch-reindex-procedure.md` — full runbook
+- `docs/self-host/batch-reindex-procedure.md` — full self-host reindex runbook (internal)
 - CHANGELOG v2.3.0 — root cause analysis and fix description
 - PR #505 — code fix + tests
 - PR #483 — batch reindex mutation (Day 76)

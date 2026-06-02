@@ -20,8 +20,8 @@ The Self-Hosted edition is free + Pro Support paid (€99/year). VantagePeers Cl
 
 ## Target users (initial hypothesis)
 
-- AI/dev solo: Cédric profile (validated customer Day 61) — building agents, no time for ops
-- Trainers/coaches: Marie profile (formateur — uses agents for prep, sessions, assets)
+- AI/dev solo: solo-builder profile (validated customer Day 61) — building agents, no time for ops
+- Trainers/coaches: trainer profile (formateur — uses agents for prep, sessions, assets)
 - Independent consultants — agent fleets for client engagements
 - Small dev/marketing agencies (3-10 seats)
 - Coaching teams sharing context across coaches
