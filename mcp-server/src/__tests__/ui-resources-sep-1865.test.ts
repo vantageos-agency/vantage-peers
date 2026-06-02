@@ -48,20 +48,30 @@ describe("listUiResources (M1 SEP-1865)", () => {
 		const resources = listUiResources();
 		expect(resources.length).toBeGreaterThanOrEqual(1);
 		expect(resources[0].uri).toBe("ui://vp/v1/tasks-table");
-		expect(resources[0].mimeType).toBe("text/html");
+		expect(resources[0].mimeType).toBe("text/html;profile=mcp-app");
 	});
 
-	it("each resource has uri + name + description + mimeType", () => {
+	it("each resource has uri + name + description + mimeType + _meta.ui envelope", () => {
 		for (const r of listUiResources()) {
 			expect(r.uri).toMatch(/^ui:\/\/vp\/v1\/[a-z][a-z0-9-]*$/);
 			expect(r.name).toBeTypeOf("string");
 			expect(r.description).toBeTypeOf("string");
-			expect(r.mimeType).toBe("text/html");
+			expect(r.mimeType).toBe("text/html;profile=mcp-app");
+			expect(r._meta).toBeDefined();
+			expect(r._meta.ui).toBeDefined();
 		}
 	});
 });
 
 describe("readUiResource (M1 tasks-table)", () => {
+	// PR #1865 canonical resources/read returns a contents array with the HTML
+	// profile=mcp-app entry first and a markdown fallback second (Critical Rule #1).
+	const htmlOf = (r: { contents: Array<{ mimeType: string; text: string }> }) =>
+		r.contents.find((c) => c.mimeType === "text/html;profile=mcp-app");
+	const fallbackOf = (r: {
+		contents: Array<{ mimeType: string; text: string }>;
+	}) => r.contents.find((c) => c.mimeType === "text/markdown");
+
 	it("renders empty table when backend returns no tasks", async () => {
 		const fetchConvex = async (
 			_fn: string,
@@ -71,10 +81,33 @@ describe("readUiResource (M1 tasks-table)", () => {
 			"ui://vp/v1/tasks-table?limit=10",
 			fetchConvex,
 		);
-		expect(r.uri).toBe("ui://vp/v1/tasks-table?limit=10");
-		expect(r.mimeType).toBe("text/html");
-		expect(r.text).toContain("vp-tasks-table");
-		expect(r.text).toContain("0 task");
+		const html = htmlOf(r);
+		expect(html).toBeDefined();
+		expect(html?.uri).toBe("ui://vp/v1/tasks-table?limit=10");
+		expect(html?.mimeType).toBe("text/html;profile=mcp-app");
+		expect(html?.text).toContain("vp-tasks-table");
+		expect(html?.text).toContain("0 task");
+	});
+
+	it("includes markdown fallback as second content (Critical Rule #1)", async () => {
+		const fetchConvex = async () => [];
+		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
+		expect(r.contents).toHaveLength(2);
+		const fb = fallbackOf(r);
+		expect(fb).toBeDefined();
+		expect(fb?.mimeType).toBe("text/markdown");
+		expect(fb?.text).toContain("tasks-table");
+		expect(fb?.text).toContain("ui://vp/v1/tasks-table");
+	});
+
+	it("attaches _meta.ui envelope on the HTML content (SEP-1865 §UIResource)", async () => {
+		const fetchConvex = async () => [];
+		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
+		const html = htmlOf(r);
+		expect(html).toBeDefined();
+		expect("_meta" in (html ?? {})).toBe(true);
+		const meta = (html as { _meta?: { ui: unknown } })._meta;
+		expect(meta?.ui).toBeDefined();
 	});
 
 	it("renders tasks rows with status badge classes", async () => {
@@ -86,11 +119,12 @@ describe("readUiResource (M1 tasks-table)", () => {
 			"ui://vp/v1/tasks-table?limit=5",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Test task 1");
-		expect(r.text).toContain("Test task 2");
-		expect(r.text).toContain("vp-status-todo");
-		expect(r.text).toContain("vp-status-review");
-		expect(r.text).toContain("2 tasks");
+		const html = htmlOf(r);
+		expect(html?.text).toContain("Test task 1");
+		expect(html?.text).toContain("Test task 2");
+		expect(html?.text).toContain("vp-status-todo");
+		expect(html?.text).toContain("vp-status-review");
+		expect(html?.text).toContain("2 tasks");
 	});
 
 	it("renders French labels when lang=fr", async () => {
@@ -101,9 +135,10 @@ describe("readUiResource (M1 tasks-table)", () => {
 			"ui://vp/v1/tasks-table?lang=fr",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Titre");
-		expect(r.text).toContain("Statut");
-		expect(r.text).toContain("1 tâche");
+		const html = htmlOf(r);
+		expect(html?.text).toContain("Titre");
+		expect(html?.text).toContain("Statut");
+		expect(html?.text).toContain("1 tâche");
 	});
 
 	it("forwards status array (comma-separated) to backend args", async () => {
@@ -142,8 +177,9 @@ describe("readUiResource (M1 tasks-table)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
-		expect(r.text).not.toContain("<script>alert");
-		expect(r.text).toContain("&lt;script&gt;");
+		const html = htmlOf(r);
+		expect(html?.text).not.toContain("<script>alert");
+		expect(html?.text).toContain("&lt;script&gt;");
 	});
 
 	it("returns error div when backend throws", async () => {
@@ -151,8 +187,9 @@ describe("readUiResource (M1 tasks-table)", () => {
 			throw new Error("Backend unavailable");
 		};
 		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
-		expect(r.text).toContain("vp-tasks-table-error");
-		expect(r.text).toContain("Backend unavailable");
+		const html = htmlOf(r);
+		expect(html?.text).toContain("vp-tasks-table-error");
+		expect(html?.text).toContain("Backend unavailable");
 	});
 
 	it("rejects unknown primitive with throw", async () => {

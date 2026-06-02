@@ -780,16 +780,7 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(functionName as any, args as any);
 			};
-			const resource = await readUiResource(uri.toString(), fetchConvex);
-			return {
-				contents: [
-					{
-						uri: resource.uri,
-						mimeType: resource.mimeType,
-						text: resource.text,
-					},
-				],
-			};
+			return await readUiResource(uri.toString(), fetchConvex);
 		},
 	);
 
