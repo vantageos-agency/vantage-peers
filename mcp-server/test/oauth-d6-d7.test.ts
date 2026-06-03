@@ -15,6 +15,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { app, parseBasicAuthSecret } from "../server-http.js";
 import { _setInternalClientForTest, sha256Hex } from "../src/auth.js";
+import { timingSafeEqual } from "../src/crypto.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture state — reset before each test
@@ -660,5 +661,34 @@ describe("Multi-tenant T11-T13 (stubbed handler layer)", () => {
 		});
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toContain("Bearer");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Eta F1 (Day 91) — timingSafeEqual truth table.
+// Ported from convex/oauth.ts:23-45 to close the timing-oracle on client_secret
+// validation. Functional equivalence + length-mismatch safety are asserted here;
+// statistical timing assertions are out of scope (unreliable in CI).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("F1 — timingSafeEqual (mcp-server/src/crypto.ts)", () => {
+	it("returns true for identical hex hashes (sha256 length 64)", async () => {
+		const h = await sha256Hex("some-client-secret");
+		expect(await timingSafeEqual(h, h)).toBe(true);
+	});
+
+	it("returns false for different hashes of equal length", async () => {
+		const a = await sha256Hex("client-secret-A");
+		const b = await sha256Hex("client-secret-B");
+		expect(a).not.toBe(b);
+		expect(a.length).toBe(b.length);
+		expect(await timingSafeEqual(a, b)).toBe(false);
+	});
+
+	it("returns false for strings of different length (no throw, length-mismatch guard)", async () => {
+		expect(await timingSafeEqual("abc", "abcd")).toBe(false);
+		expect(await timingSafeEqual("", "nonempty")).toBe(false);
+		// Empty / empty edge case — equal length 0, diff accumulator stays 0.
+		expect(await timingSafeEqual("", "")).toBe(true);
 	});
 });

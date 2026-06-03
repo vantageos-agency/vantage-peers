@@ -1,5 +1,7 @@
 # RED-PHASE EVIDENCE — S1.5 OAuth D6 + D7 TDD Discipline Audit
 
+> Canonical S1.5 test report (D14 path): [`docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md`](../../docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md). This file is the detailed RED-phase audit referenced from that report.
+
 **Branch:** `fix/oauth-d6-d7-confidential-client-validation`
 **Date:** 2026-06-03
 **Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n` · Task `k17c8h9kdevcfpjqxtd77e6kms87ydjq`
