@@ -144,9 +144,9 @@ describe("U — passesScopeFilter (helper unit)", () => {
 
 	it("U3 non-master, namespace exact-equal a prefix → true", () => {
 		const ctx = alphaCtx();
-		expect(
-			passesScopeFilter(ctx, { namespace: "orchestrator/alpha" }),
-		).toBe(true);
+		expect(passesScopeFilter(ctx, { namespace: "orchestrator/alpha" })).toBe(
+			true,
+		);
 		expect(passesScopeFilter(ctx, { namespace: "project/alpha" })).toBe(true);
 	});
 
@@ -155,9 +155,9 @@ describe("U — passesScopeFilter (helper unit)", () => {
 		expect(
 			passesScopeFilter(ctx, { namespace: "orchestrator/alpha/sub" }),
 		).toBe(true);
-		expect(
-			passesScopeFilter(ctx, { namespace: "project/alpha/2026" }),
-		).toBe(true);
+		expect(passesScopeFilter(ctx, { namespace: "project/alpha/2026" })).toBe(
+			true,
+		);
 	});
 
 	it("U5 non-master, row missing both createdBy and namespace → false", () => {
@@ -175,9 +175,9 @@ describe("U — passesScopeFilter (helper unit)", () => {
 	// namespace-prefix non-substring trap (orchestrator/alphabet ⊄ alpha).
 	it("U7 non-master, namespace shares string-prefix but not '/' boundary → false", () => {
 		const ctx = alphaCtx();
-		expect(
-			passesScopeFilter(ctx, { namespace: "orchestrator/alphabet" }),
-		).toBe(false);
+		expect(passesScopeFilter(ctx, { namespace: "orchestrator/alphabet" })).toBe(
+			false,
+		);
 	});
 
 	it("U8 isWildcardScope() mirrors legacy + master passthrough", () => {

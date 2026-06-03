@@ -38,14 +38,32 @@ export type ScopeFilterable = {
 /**
  * Core predicate. Returns true when the row is visible to the caller.
  *
- * Phase 1 STUB: passes everything through. Replaced in GREEN commit.
+ *   - Master scope (isMasterScope === true)            → true (wildcard)
+ *   - Legacy bearer (oauthCtx === undefined)           → true (back-compat)
+ *   - row.createdBy ∈ oauthCtx.fromAllowList           → true
+ *   - row.namespace === prefix OR startsWith prefix+'/'
+ *     for any prefix ∈ oauthCtx.namespaceReadPrefixes  → true
+ *   - otherwise                                        → false
+ *
+ * Substring matches that don't fall on a '/' boundary are explicitly rejected
+ * (e.g. namespace="orchestrator/alphabet" does NOT match prefix
+ * "orchestrator/alpha"). This avoids the classic prefix-isolation bypass.
  */
 export function passesScopeFilter(
-	_oauthCtx: OAuthContext | undefined,
-	_row: ScopeFilterable,
+	oauthCtx: OAuthContext | undefined,
+	row: ScopeFilterable,
 ): boolean {
-	// STUB — to be implemented in GREEN commit
-	return true;
+	if (!oauthCtx) return true;
+	if (isMasterScope(oauthCtx)) return true;
+	const { createdBy, namespace } = row;
+	if (createdBy && oauthCtx.fromAllowList.includes(createdBy)) return true;
+	if (namespace) {
+		for (const p of oauthCtx.namespaceReadPrefixes) {
+			if (namespace === p) return true;
+			if (namespace.startsWith(`${p}/`)) return true;
+		}
+	}
+	return false;
 }
 
 /**
