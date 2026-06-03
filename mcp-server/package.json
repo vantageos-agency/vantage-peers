@@ -1,6 +1,6 @@
 {
   "name": "vantage-peers-mcp",
-  "version": "2.4.13",
+  "version": "2.4.14",
   "description": "MCP server for VantagePeers — shared memory, messaging, and task coordination for AI agent teams",
   "type": "module",
   "main": "./dist/server.js",
