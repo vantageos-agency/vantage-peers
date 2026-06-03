@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.4.14] — 2026-06-03
+
+### Security — D6 + D7 + patchScopeProfileEmergency + oauth_audit_log + S3.1 Waves A+B
+
+**Scope:** v2.4.14 closes the S2.4b security cascade: OAuth 2.1 hardening, master-gated emergency tenant maintenance, append-only audit ledger, and the first two waves of the scope-aware filter framework.
+
+**Changes:**
+- **D6 — confidential `client_secret` at `/token`** — `mcp-server/server-http.ts` L382-585. Constant-time `crypto.timingSafeEqual` comparison. PKCE-only path preserved for public clients. PR #621, commit `5fd6354`.
+- **D7 — `redirect_uri` exact-match at `/authorize`** — `mcp-server/server-http.ts` L298-376. Byte-identical match against the client's registered URIs; no prefix / host-only / scheme-normalized acceptance. PR #621, commit `5fd6354`.
+- **`patchScopeProfileEmergency`** — `convex/oauth.ts`. Master-token-gated mutation enforcing D4 (no `*` in `cloud-*` profiles), D9 cascade rename, cascade-update on `oauth_clients`, cascade-revoke on `oauth_tokens`, and append-only audit write. PR #622, commit `9a1b8cf`.
+- **D9 cascade-update `oauth_clients`** — full enforcement parity. PR #623, commit `2f5c974`.
+- **S3.1 — scope-aware filter framework (D3) Waves A+B** — `mcp-server/src/scope-filter.ts` applied to `list_memories`, `get_memory`, `list_briefing_notes`, `list_messages`, `list_peers`. Wave A merged at main `251d183` (PR #624). Wave B in PR #625.
+- **`oauth_audit_log`** — append-only emergency-action ledger in `convex/schema.ts`. No update / delete path.
+
+**Doctrine reminder:** Cloud (multi-tenant) and Self-host are distinct products. Runbooks: `docs/cloud/` (Cloud) and `docs/getting-started/` (Self-host) — never mixed.
+
+**References:** PRs #621, #622, #623, #624, #625. Test reports: `docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md`, `docs/test-reports/s1.2-mutation-2026-06-03.md`, `docs/test-reports/s2.1-d9-cascade-clients-2026-06-03.md`, `docs/test-reports/s3.1.a-scope-aware-filter-wave-a-2026-06-03.md`, `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`.
+
+---
+
 ## [2.3.3] — 2026-05-28
 
 ### Feature — `createdBy` + `updatedSince` filters + auto-clamp on list queries

@@ -192,6 +192,45 @@ See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full referenc
 
 </details>
 
+## Security & multi-tenant scope
+
+VantagePeers Cloud (multi-tenant) and Self-host both share the same OAuth 2.1 + scope enforcement core. The following controls form the v2.4.14 security baseline.
+
+### OAuth 2.1 hardening — D6 + D7
+
+- **D6 — confidential `client_secret` at `/token`** — `mcp-server/server-http.ts` L382-585. Confidential clients (issued at DCR) must present `client_secret` on every token exchange. Comparison uses `crypto.timingSafeEqual` (constant-time) to eliminate length/early-exit oracles. Public clients (no secret at registration) continue PKCE-only. Refusal returns `invalid_client` per RFC 6749 §5.2. Shipped PR #621, commit `5fd6354`.
+- **D7 — `redirect_uri` exact-match at `/authorize`** — `mcp-server/server-http.ts` L298-376. The authorization endpoint rejects any `redirect_uri` that is not byte-identical to one of the URIs registered for the `client_id`. No prefix match, no host-only match, no scheme normalization. Hard error before any consent screen. Shipped PR #621, commit `5fd6354`.
+
+### Emergency tenant maintenance — `patchScopeProfileEmergency`
+
+`convex/oauth.ts` exposes `patchScopeProfileEmergency`, a master-token-gated mutation for tenant rename / scope-profile rewrite. Guarantees:
+
+- **D4 — no global wildcard in cloud-* profiles** — the mutation refuses to write `*` into any scope of a `cloud-*` profile.
+- **D9 — cascade rename** — when a scope profile key is renamed, every existing `oauth_clients` row referencing the old key is cascade-updated.
+- **Cascade-revoke tokens** — all `oauth_tokens` issued under the old key are revoked atomically with the rename.
+- **Append-only audit ledger** — every invocation writes an `oauth_audit_log` entry (action, actor, before/after snapshot, timestamp). The ledger is append-only; no update or delete path exists.
+
+Shipped PR #622, commit `9a1b8cf`. Full D9 cascade-update across `oauth_clients` reached enforcement parity in PR #623, commit `2f5c974`.
+
+### S3.1 — scope-aware filter framework (D3) — Waves A + B
+
+`mcp-server/src/scope-filter.ts` is the single chokepoint that translates the caller's OAuth scope set into a row-level filter applied to every multi-tenant list/get path. The framework is wired into:
+
+- `list_memories`, `get_memory`
+- `list_briefing_notes`
+- `list_messages`
+- `list_peers`
+
+Wave A (initial surface) shipped PR #624, merged at main `251d183`. Wave B (extended surface) is tracked in PR #625.
+
+### `oauth_audit_log` — append-only emergency-action ledger
+
+`convex/schema.ts` defines `oauth_audit_log` as an append-only table. Every emergency mutation (`patchScopeProfileEmergency`, future master-gated paths) writes a row capturing actor, action, before/after, and timestamp. No mutation path updates or deletes existing rows. This is the auditable record of every out-of-band tenant operation.
+
+### Doctrine separation — Cloud vs Self-host
+
+VantagePeers Cloud (multi-tenant SaaS) and VantagePeers Self-host are two distinct products. Runbooks are split: Cloud operations live under `docs/cloud/`, Self-host operations under `docs/getting-started/`. Security controls above apply to both products; tenant-specific cascade and audit semantics are documented in `docs/cloud/security-multi-tenant.md`.
+
 ## Works With
 
 VantagePeers is a standard MCP server — works with any client supporting the Model Context Protocol:
