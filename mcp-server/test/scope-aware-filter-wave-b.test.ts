@@ -152,9 +152,9 @@ describe("BN — list_briefing_notes slice (scopeFilterList)", () => {
 	it("BN-T3 cross-tenant: alpha never sees beta briefing notes", () => {
 		const out = scopeFilterList(alphaCtx(), BRIEFING_FIXTURE);
 		expect(out.some((r) => r.createdBy === "beta")).toBe(false);
-		expect(
-			out.some((r) => r.namespace?.startsWith("orchestrator/beta")),
-		).toBe(false);
+		expect(out.some((r) => r.namespace?.startsWith("orchestrator/beta"))).toBe(
+			false,
+		);
 		expect(out.some((r) => r.namespace?.startsWith("project/beta"))).toBe(
 			false,
 		);
@@ -280,9 +280,9 @@ describe("MSG — list_messages slice (scopeFilterList)", () => {
 	it("MSG-T3 cross-tenant: alpha never sees beta messages", () => {
 		const out = scopeFilterList(alphaCtx(), MESSAGE_FIXTURE);
 		expect(out.some((r) => r.createdBy === "beta")).toBe(false);
-		expect(
-			out.some((r) => r.namespace?.startsWith("orchestrator/beta")),
-		).toBe(false);
+		expect(out.some((r) => r.namespace?.startsWith("orchestrator/beta"))).toBe(
+			false,
+		);
 		expect(out.some((r) => r.namespace?.startsWith("project/beta"))).toBe(
 			false,
 		);
@@ -381,9 +381,9 @@ describe("PEER — list_peers slice (scopeFilterList)", () => {
 	it("PEER-T3 cross-tenant: alpha never sees beta peers", () => {
 		const out = scopeFilterList(alphaCtx(), PROFILE_FIXTURE);
 		expect(out.some((r) => r.createdBy === "beta")).toBe(false);
-		expect(
-			out.some((r) => r.namespace?.startsWith("orchestrator/beta")),
-		).toBe(false);
+		expect(out.some((r) => r.namespace?.startsWith("orchestrator/beta"))).toBe(
+			false,
+		);
 		expect(out.some((r) => r.namespace?.startsWith("project/beta"))).toBe(
 			false,
 		);
