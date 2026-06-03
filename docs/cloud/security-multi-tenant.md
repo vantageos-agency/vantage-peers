@@ -73,13 +73,16 @@ The scope-aware filter framework is the single chokepoint that translates an aut
 
 - `list_memories`
 - `get_memory`
+
+Test report: `docs/test-reports/s3.1.a-scope-aware-filter-wave-a-2026-06-03.md`.
+
+### Wave B — extended surface (shipped, PR #625, main `28db616`)
+
 - `list_briefing_notes`
 - `list_messages`
 - `list_peers`
 
-### Wave B — extended surface (PR #625)
-
-Wave B extends the framework across the remaining cross-tenant-reachable read paths. Test report: `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`.
+Wave B extends the framework across the remaining Marie-impacted cross-tenant-reachable read paths. Test report: `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`.
 
 ---
 
