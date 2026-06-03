@@ -100,3 +100,61 @@ cd mcp-server && npm test                        # expect 21/21 PASS
 
 **Filed by:** Sigma — VantageOS Team Infra
 **Reviewed-by (PR gate):** Pi (architecture) + Eta (security)
+
+---
+
+## S3.1.C Wave C Phase C0 — get_briefing_note registration + scope-aware
+
+**Date:** 2026-06-03
+**Branch:** `feat/s3-1-c0-get-briefing-note-registration`
+**Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n` · Task `k17fjd4dvp34k9q57t5e1qzrv187zz9n`
+
+### SHAs
+
+| Phase | SHA | State |
+|---|---|---|
+| RED — test file added, tool not yet registered | `4db05e4` | 3/11 FAIL (R1-R3 registration) · 8/11 PASS (slice contract) |
+| GREEN — `get_briefing_note` registered in tools.ts | `d30a604` | 11/11 PASS (full suite 67/67) |
+
+### RED-phase failure surface (3 tests)
+
+| Test | Assertion | Got (RED) | Expected (GREEN) | Path exercised |
+|---|---|---|---|---|
+| **R1** — `tools.has("get_briefing_note")` | `expect(...).toBe(true)` | `false` | `true` | tools.ts registration of `get_briefing_note` |
+| **R2** — schema has `noteId: string` input | `expect(t).toBeDefined()` | `undefined` | defined | tools.ts schema declaration |
+| **R3** — annotations `readOnlyHint=true, destructiveHint=false` | `expect(t?.annotations.readOnlyHint).toBe(true)` | `undefined` | `true` | tools.ts annotations declaration |
+
+R1-R3 use a lightweight duck-typed `McpServer` mock that captures every `.tool(name, desc, schema, annotations, handler)` call by `registerTools` and asserts presence + shape of the new registration. Failure mode is consistent: at RED, `get_briefing_note` is absent from the capture map; at GREEN, it is present with the expected schema + annotations.
+
+### PASS-in-RED contract slice (8 tests)
+
+U1-U5 + M1-M3 exercise `scopeFilterGet(ctx, row)` directly. They pass at both RED and GREEN because `scopeFilterGet` already exists from Wave A (`mcp-server/src/scope-filter.ts`). Their role is to lock in the contract that the GREEN patch wires `get_briefing_note` to `scopeFilterGet` (not to a different filter) — any future change that swaps the filter or removes the null-collapse behaviour will fail these.
+
+- U1 — caller in scope → row returned
+- U2 — backend `null` (note absent) → `null` (not-found shape preserved)
+- U3 — `oauthCtx === undefined` (legacy bearer) → row returned regardless of tenancy
+- U4 — master scope → foreign-tenant row returned
+- U5 — scoped caller, row outside scope → `null` (non-leaky 404)
+- M1 — cross-tenant: tenant-A row, tenant-B caller → `null`
+- M2 — namespace-prefix allowed: row `orchestrator/marie/x` + prefix `orchestrator/marie` → row returned
+- M3 — `fromAllowList` allowed: row.createdBy=`marie` + allowList=[`marie`] → row returned
+
+### Reproduction
+
+```bash
+cd /root/coding/vantage-memory
+git checkout feat/s3-1-c0-get-briefing-note-registration
+
+# RED
+git checkout 4db05e4
+cd mcp-server && npx vitest run test/get-briefing-note-scope-aware.test.ts
+# expect 3 FAIL / 8 PASS
+
+# GREEN
+cd .. && git checkout d30a604
+cd mcp-server && npx vitest run test/get-briefing-note-scope-aware.test.ts
+# expect 11/11 PASS
+```
+
+**Filed by:** Sigma — VantageOS Team
+
