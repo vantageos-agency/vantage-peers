@@ -213,3 +213,58 @@ cd mcp-server && npx vitest run
 
 **Filed by:** Sigma — VantageOS Team
 
+---
+
+## S3.1.C Wave C Phase C2 — 7 read-path tools scope-aware applied
+
+**Date:** 2026-06-03
+**Branch:** `feat/s3-1-c2-scope-aware-batch-2`
+**Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n` · Task `k17fjd4dvp34k9q57t5e1qzrv187zz9n`
+**Canonical D14 report:** `docs/test-reports/s3.1.c2-scope-aware-batch-2-2026-06-03.md`
+
+### Tools covered (next 7 source-order sites after C1)
+
+1. `search_components` (tools.ts L3451) → `scopeFilterList` on `components:search`
+2. `list_recurring_tasks` (tools.ts L3571) → `scopeFilterList` on `recurringTasks:list`
+3. `list_mandates` (tools.ts L4033) → `scopeFilterList` on `mandates:list`
+4. `get_bu` (tools.ts L4266) → `scopeFilterGet` on `businessUnits:get`
+5. `list_bus` (tools.ts L4319) → `scopeFilterList` on `businessUnits:list`
+6. `list_repo_mappings` (tools.ts L4459) → `scopeFilterList` on `githubRepoMapping:list`
+7. `list_issues` (tools.ts L4565) → `scopeFilterList` on the materialised `results` of `issues:listByOrchestrator` / `issues:listByProject` / `issues:listByStatus` branches
+
+### SHAs
+
+| Phase | SHA | State |
+|---|---|---|
+| RED — tests added, handlers still call `guardMasterOnly` | `bf631f9` | 21/35 FAIL · 14/35 PASS |
+| GREEN — `guardMasterOnly` removed, scope-aware filter applied | `0d01bc1` | 35/35 PASS · full suite 137/137 |
+
+### RED-phase failure surface (21 tests)
+
+Per tool: 5 tests (T1 master, T2 non-master in-scope, T3 legacy bearer, M1 cross-tenant, M2 own-tenant). T1 + T3 pass at RED (master no-op / undefined ctx no-op). T2 + M1 + M2 FAIL at RED because the handler short-circuits with `mcpError("Forbidden: <toolName> requires master scope (current: <profile>).")` (`isError: true`) before any scope-filter can run — the negative assertion `expect(isForbiddenResponse(res)).toBe(false)` inverts at GREEN.
+
+Failure cardinality: 3 FAIL × 7 tools = 21. PASS-in-RED: 2 × 7 = 14.
+
+### Reproduction
+
+```bash
+cd /root/coding/vantage-memory
+git checkout feat/s3-1-c2-scope-aware-batch-2
+
+# RED
+git checkout bf631f9
+cd mcp-server && npx vitest run test/scope-aware-filter-wave-c2.test.ts
+# expect 21 FAIL / 14 PASS / 35 total
+
+# GREEN
+cd .. && git checkout 0d01bc1
+cd mcp-server && npx vitest run test/scope-aware-filter-wave-c2.test.ts
+# expect 35/35 PASS
+
+# Full suite at GREEN
+cd mcp-server && npx vitest run
+# expect 137/137 PASS (102 baseline + 35 new, zero regression)
+```
+
+**Filed by:** Sigma — VantageOS Team
+
