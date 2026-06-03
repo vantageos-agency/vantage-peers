@@ -10,6 +10,7 @@
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { checkFromAllowed, checkNamespaceRead, checkNamespaceWrite, isMasterScope, } from "./auth.js";
+import { scopeFilterGet, scopeFilterList } from "./scope-filter.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // VP_EMIT_UI_MARKERS gate
@@ -582,14 +583,18 @@ export function registerTools(server, convex, oauthCtx) {
         title: "Get memory",
     }, async ({ memoryId }) => {
         try {
-            const _scopeDenied = guardMasterOnly("get_memory");
-            if (_scopeDenied)
-                return _scopeDenied;
+            // S3.1.A Wave A — scope-aware filter replaces guardMasterOnly.
+            // Non-master clients may now read their own data; cross-tenant rows
+            // collapse to a non-leaky "not found" shape (same as a missing row).
             const memory = await convex.query("memories:getMemory", {
                 memoryId,
             });
+            const filtered = scopeFilterGet(oauthCtx, memory);
+            if (filtered === null) {
+                return mcpError(`Memory not found: ${memoryId}`);
+            }
             return {
-                content: [{ type: "text", text: JSON.stringify(memory, null, 2) }],
+                content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
             };
         }
         catch (error) {
@@ -937,10 +942,20 @@ export function registerTools(server, convex, oauthCtx) {
                 : Array.isArray(memories?.page)
                     ? memories.page
                     : [];
-            const baseText = capListResponseBytes(memories, JSON.stringify(memories, null, 2), "list_memories");
+            // S3.1.A Wave A — row-level scope filter on the post-query list.
+            // Master + legacy bearer pass through unchanged. Non-master clients
+            // see only rows whose createdBy ∈ fromAllowList OR whose namespace
+            // matches one of namespaceReadPrefixes (exact or '/' boundary).
+            const filteredList = scopeFilterList(oauthCtx, rawList);
+            // Preserve the original response shape (array vs {page} envelope)
+            // so downstream consumers don't need to special-case Wave A.
+            const filteredEnvelope = Array.isArray(memories)
+                ? filteredList
+                : { ...memories, page: filteredList };
+            const baseText = capListResponseBytes(filteredEnvelope, JSON.stringify(filteredEnvelope, null, 2), "list_memories");
             const text = appendMarkerIfEnabled(baseText, () => ({
                 kind: "memory-quote",
-                items: rawList.map((m) => ({
+                items: filteredList.map((m) => ({
                     _id: m._id,
                     namespace: m.namespace,
                     type: m.type,

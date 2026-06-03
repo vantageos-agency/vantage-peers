@@ -31,6 +31,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bearerAuthMiddleware, internalClient, masterOnlyMiddleware, sha256Base64Url, sha256Hex, } from "./src/auth.js";
+import { timingSafeEqual } from "./src/crypto.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 let pkg;
@@ -409,7 +410,7 @@ app.post("/token", async (c) => {
             }
             const presentedHash = await sha256Hex(clientSecret);
             if (!client.clientSecretHash ||
-                presentedHash !== client.clientSecretHash) {
+                !(await timingSafeEqual(presentedHash, client.clientSecretHash))) {
                 return c.json({
                     error: "invalid_client",
                     error_description: "client_secret mismatch",
@@ -497,7 +498,7 @@ app.post("/token", async (c) => {
             }
             const presentedHash = await sha256Hex(clientSecret);
             if (!refreshClient.clientSecretHash ||
-                presentedHash !== refreshClient.clientSecretHash) {
+                !(await timingSafeEqual(presentedHash, refreshClient.clientSecretHash))) {
                 return c.json({
                     error: "invalid_client",
                     error_description: "client_secret mismatch",
