@@ -3056,6 +3056,40 @@ export function registerTools(
 		},
 	);
 
+	// ── get_briefing_note ───────────────────────────────────────────────────────
+	// S3.1.C0 — single-row read with scope-aware filter (mirrors get_memory).
+	// scopeFilterGet collapses cross-tenant rows to a non-leaky "not found".
+
+	server.tool(
+		"get_briefing_note",
+		"Fetch a single briefing note by its ID. Returns the full note (title, topic, participants, content, decisions, linkedMemoryIds, audit fields).",
+		{
+			noteId: z.string().describe("Briefing note document ID"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get briefing note",
+		},
+		async ({ noteId }) => {
+			try {
+				const note = await convex.query("briefingNotes:get" as any, {
+					noteId,
+				});
+				const filtered = scopeFilterGet(oauthCtx, note);
+				if (filtered === null) {
+					return mcpError(`Briefing note not found: ${noteId}`);
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
 	// ── list_briefing_notes ─────────────────────────────────────────────────────
 
 	server.tool(
