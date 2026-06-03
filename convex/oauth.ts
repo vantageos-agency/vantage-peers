@@ -591,3 +591,32 @@ export const getRefreshTokenByHash = query({
 		};
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// patchScopeProfileEmergency — S1.2-mutation skeleton (RED phase)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const patchScopeProfileEmergency = mutation({
+	args: {
+		callerToken: v.string(),
+		profileId: v.string(),
+		rename: v.optional(v.string()),
+		fromAllowList: v.optional(v.array(v.string())),
+		namespaceReadPrefixes: v.optional(v.array(v.string())),
+		namespaceWritePrefixes: v.optional(v.array(v.string())),
+		cascadeRevokeTokens: v.boolean(),
+		reason: v.string(),
+	},
+	returns: v.object({
+		patchedProfileId: v.string(),
+		cascadeRevokedCount: v.number(),
+		auditLogId: v.id("oauth_audit_log"),
+	}),
+	handler: async (_ctx, _args): Promise<{
+		patchedProfileId: string;
+		cascadeRevokedCount: number;
+		auditLogId: string;
+	}> => {
+		throw new Error("not implemented");
+	},
+});

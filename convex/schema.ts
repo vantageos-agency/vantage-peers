@@ -971,4 +971,33 @@ export default defineSchema({
 		count: v.number(), // requests in current window
 		windowStart: v.number(), // ms since epoch — start of 1-minute window
 	}).index("by_key", ["key"]),
+
+	// ── oauth_audit_log ──────────────────────────────────────────────────────
+	// Append-only audit trail for administrative scope profile mutations.
+	// One row per patchScopeProfileEmergency invocation.
+	// actorTokenHash = sha256Hex of the callerToken (raw token never stored).
+	// previousState + newState allow forensic reconstruction of leaked scopes.
+	// S1.2-mutation: captures Day 90 Marie `global` leak remediation.
+	oauth_audit_log: defineTable({
+		eventType: v.string(),
+		actorTokenHash: v.string(),
+		targetProfileId: v.string(),
+		previousState: v.object({
+			profileId: v.string(),
+			fromAllowList: v.array(v.string()),
+			namespaceReadPrefixes: v.array(v.string()),
+			namespaceWritePrefixes: v.array(v.string()),
+		}),
+		newState: v.object({
+			profileId: v.string(),
+			fromAllowList: v.array(v.string()),
+			namespaceReadPrefixes: v.array(v.string()),
+			namespaceWritePrefixes: v.array(v.string()),
+		}),
+		reason: v.string(),
+		cascadeRevokedCount: v.number(),
+		createdAt: v.number(),
+	})
+		.index("by_targetProfileId", ["targetProfileId"])
+		.index("by_createdAt", ["createdAt"]),
 });
