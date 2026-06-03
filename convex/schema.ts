@@ -265,9 +265,9 @@ export default defineSchema({
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
 		.index("by_date", ["date"]),
-		// by_createdBy_date intentionally omitted: createdBy filtering is handled
-		// as a universal post-take in-memory filter (mirrors tasks.ts:371-373 pattern).
-		// Adding an index pushdown optimization is deferred to a separate PR.
+	// by_createdBy_date intentionally omitted: createdBy filtering is handled
+	// as a universal post-take in-memory filter (mirrors tasks.ts:371-373 pattern).
+	// Adding an index pushdown optimization is deferred to a separate PR.
 
 	// ── briefingNotes ──────────────────────────────────────────────────────────
 	briefingNotes: defineTable({

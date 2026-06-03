@@ -178,7 +178,8 @@ describe("T5 — master profile CAN include global (no D4 violation)", () => {
 				namespaceReadPrefixes: ["*", "global"],
 				namespaceWritePrefixes: ["*", "global"],
 				cascadeRevokeTokens: false,
-				reason: "Admin patching master profile to add explicit global prefix for audit completeness",
+				reason:
+					"Admin patching master profile to add explicit global prefix for audit completeness",
 			}),
 		).resolves.toBeDefined();
 	});
@@ -309,7 +310,7 @@ describe("T9 — audit log row inserted with correct fields", () => {
 	test("audit log has previousState, newState, actorTokenHash, reason", async () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
+		await t.mutation(api.oauth.patchScopeProfileEmergency, {
 			callerToken: MASTER_TOKEN,
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: ["orchestrator/marie"],
@@ -318,9 +319,14 @@ describe("T9 — audit log row inserted with correct fields", () => {
 			reason: REASON_OK,
 		});
 
-		// Read the audit log row directly
+		// Read the audit log row directly via typed query
 		const auditRow = await t.run(async (ctx) => {
-			return await ctx.db.get(result.auditLogId as Parameters<typeof ctx.db.get>[0]);
+			return await ctx.db
+				.query("oauth_audit_log")
+				.withIndex("by_targetProfileId", (q) =>
+					q.eq("targetProfileId", "marie-iris-rh"),
+				)
+				.unique();
 		});
 		expect(auditRow).not.toBeNull();
 		expect(auditRow?.eventType).toBe("scope_profile_emergency_patch");
@@ -652,7 +658,7 @@ describe("SL3 — audit log forensic: previousState captures leaked global", () 
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
+		await t.mutation(api.oauth.patchScopeProfileEmergency, {
 			callerToken: MASTER_TOKEN,
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: ["orchestrator/marie"],
@@ -662,7 +668,12 @@ describe("SL3 — audit log forensic: previousState captures leaked global", () 
 		});
 
 		const auditRow = await t.run(async (ctx) => {
-			return await ctx.db.get(result.auditLogId as Parameters<typeof ctx.db.get>[0]);
+			return await ctx.db
+				.query("oauth_audit_log")
+				.withIndex("by_targetProfileId", (q) =>
+					q.eq("targetProfileId", "marie-iris-rh"),
+				)
+				.unique();
 		});
 		// Forensic evidence: previous state must document the leaked `global`
 		expect(auditRow?.previousState.namespaceReadPrefixes).toContain("global");

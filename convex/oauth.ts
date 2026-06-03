@@ -593,7 +593,31 @@ export const getRefreshTokenByHash = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// patchScopeProfileEmergency — S1.2-mutation skeleton (RED phase)
+// SHA-256 hex helper (local, mirrors credentials.ts — avoids cross-file import)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sha256Hex(input: string): Promise<string> {
+	const encoded = new TextEncoder().encode(input);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
+	return Array.from(new Uint8Array(hashBuffer))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// patchScopeProfileEmergency — S1.2-mutation
+//
+// Emergency mutation for administrative scope profile remediation.
+// Security properties:
+//   - Master token guard (constant-time, same timingSafeEqual as createClient)
+//   - reason ≥ 40 chars required (audit trail hygiene)
+//   - D4 enforcement: `global` and `*` forbidden in read/write prefixes unless
+//     the target profileId is "master" (after optional rename applied)
+//   - Cascade revoke: deletes all oauth_access_tokens + oauth_refresh_tokens
+//     where scopeProfile = oldName OR newName
+//   - Append-only audit log: previousState + newState + actorTokenHash + reason
+//
+// Day 90 use-case: drops `global` from `marie-iris-rh`, renames to `iris-rh`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const patchScopeProfileEmergency = mutation({
@@ -612,11 +636,141 @@ export const patchScopeProfileEmergency = mutation({
 		cascadeRevokedCount: v.number(),
 		auditLogId: v.id("oauth_audit_log"),
 	}),
-	handler: async (_ctx, _args): Promise<{
-		patchedProfileId: string;
-		cascadeRevokedCount: number;
-		auditLogId: string;
-	}> => {
-		throw new Error("not implemented");
+	handler: async (ctx, args) => {
+		// ── Master token guard (constant-time) ────────────────────────────────
+		await requireMasterAuth(args.callerToken);
+
+		// ── Reason length guard ───────────────────────────────────────────────
+		if (args.reason.length < 40) {
+			throw new Error(
+				"reason must be at least 40 characters for audit trail hygiene",
+			);
+		}
+
+		// ── Lookup existing profile ───────────────────────────────────────────
+		const existing = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.profileId))
+			.unique();
+		if (!existing) {
+			throw new Error(`profile not found: ${args.profileId}`);
+		}
+
+		// ── Determine final profileId after optional rename ───────────────────
+		const newProfileId = args.rename ?? args.profileId;
+
+		// ── D4 enforcement ────────────────────────────────────────────────────
+		// If target profile name is NOT "master", forbid "global" and "*" in
+		// any submitted prefix list.
+		if (newProfileId !== "master") {
+			const allPrefixes = [
+				...(args.namespaceReadPrefixes ?? []),
+				...(args.namespaceWritePrefixes ?? []),
+			];
+			for (const p of allPrefixes) {
+				if (p === "global" || p === "*") {
+					throw new Error(
+						`D4 violation: profile "${newProfileId}" cannot include "${p}" in namespace prefixes`,
+					);
+				}
+			}
+		}
+
+		// ── Capture previous state for audit log ──────────────────────────────
+		const previousState = {
+			profileId: existing.profileId,
+			fromAllowList: existing.fromAllowList,
+			namespaceReadPrefixes: existing.namespaceReadPrefixes,
+			namespaceWritePrefixes: existing.namespaceWritePrefixes,
+		};
+
+		// ── Apply selective patch ─────────────────────────────────────────────
+		const patchPayload: {
+			profileId?: string;
+			fromAllowList?: string[];
+			namespaceReadPrefixes?: string[];
+			namespaceWritePrefixes?: string[];
+			updatedAt: number;
+		} = { updatedAt: Date.now() };
+
+		if (args.rename !== undefined) {
+			patchPayload.profileId = args.rename;
+		}
+		if (args.fromAllowList !== undefined) {
+			patchPayload.fromAllowList = args.fromAllowList;
+		}
+		if (args.namespaceReadPrefixes !== undefined) {
+			patchPayload.namespaceReadPrefixes = args.namespaceReadPrefixes;
+		}
+		if (args.namespaceWritePrefixes !== undefined) {
+			patchPayload.namespaceWritePrefixes = args.namespaceWritePrefixes;
+		}
+
+		await ctx.db.patch(existing._id, patchPayload);
+
+		// ── Cascade revoke tokens ─────────────────────────────────────────────
+		let cascadeRevokedCount = 0;
+
+		if (args.cascadeRevokeTokens) {
+			const oldName = args.profileId;
+
+			// Collect profile names to revoke (old name + new name if renamed)
+			const profileNamesToRevoke = new Set<string>([oldName]);
+			if (newProfileId !== oldName) {
+				profileNamesToRevoke.add(newProfileId);
+			}
+
+			for (const profileName of profileNamesToRevoke) {
+				// Delete access tokens citing this profile
+				const accessTokens = await ctx.db
+					.query("oauth_access_tokens")
+					.filter((q) => q.eq(q.field("scopeProfile"), profileName))
+					.collect();
+				for (const t of accessTokens) {
+					await ctx.db.delete(t._id);
+					cascadeRevokedCount++;
+				}
+
+				// Delete refresh tokens citing this profile
+				const refreshTokens = await ctx.db
+					.query("oauth_refresh_tokens")
+					.filter((q) => q.eq(q.field("scopeProfile"), profileName))
+					.collect();
+				for (const t of refreshTokens) {
+					await ctx.db.delete(t._id);
+					cascadeRevokedCount++;
+				}
+			}
+		}
+
+		// ── Re-read new state ─────────────────────────────────────────────────
+		const updated = await ctx.db.get(existing._id);
+		const newState = {
+			profileId: updated?.profileId ?? newProfileId,
+			fromAllowList: updated?.fromAllowList ?? existing.fromAllowList,
+			namespaceReadPrefixes:
+				updated?.namespaceReadPrefixes ?? existing.namespaceReadPrefixes,
+			namespaceWritePrefixes:
+				updated?.namespaceWritePrefixes ?? existing.namespaceWritePrefixes,
+		};
+
+		// ── Append audit log ──────────────────────────────────────────────────
+		const actorTokenHash = await sha256Hex(args.callerToken);
+		const auditLogId = await ctx.db.insert("oauth_audit_log", {
+			eventType: "scope_profile_emergency_patch",
+			actorTokenHash,
+			targetProfileId: args.profileId, // original profileId for stable index key
+			previousState,
+			newState,
+			reason: args.reason,
+			cascadeRevokedCount,
+			createdAt: Date.now(),
+		});
+
+		return {
+			patchedProfileId: newProfileId,
+			cascadeRevokedCount,
+			auditLogId,
+		};
 	},
 });
