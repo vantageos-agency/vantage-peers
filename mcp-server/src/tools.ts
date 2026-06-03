@@ -1031,17 +1031,19 @@ export function registerTools(
 		},
 		async ({ orchestratorId }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("get_profile");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
+				// Master + legacy bearer pass through unchanged. Non-master clients
+				// see the profile only when createdBy ∈ fromAllowList OR namespace
+				// matches namespaceReadPrefixes; otherwise null (non-leaky 404).
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
 				});
+				const filteredProfile = scopeFilterGet(oauthCtx, profile as any);
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(profile, null, 2),
+							text: JSON.stringify(filteredProfile, null, 2),
 						},
 					],
 				};
@@ -1713,9 +1715,7 @@ export function registerTools(
 		},
 		async ({ messageId, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_broadcast_status");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const status = await convex.query(
 					"messages:listBroadcastStatus" as any,
 					{
@@ -1725,11 +1725,16 @@ export function registerTools(
 					},
 				);
 
+				const filteredStatus = scopeFilterList(
+					oauthCtx,
+					Array.isArray(status) ? status : [],
+				);
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(status, JSON.stringify(status, null, 2), "list_broadcast_status"),
+							text: capListResponseBytes(filteredStatus, JSON.stringify(filteredStatus, null, 2), "list_broadcast_status"),
 						},
 					],
 				};
@@ -2380,9 +2385,7 @@ export function registerTools(
 		},
 		async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_tasks_by_mission");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
@@ -2392,11 +2395,16 @@ export function registerTools(
 					updatedSince,
 				});
 
+				const filteredTasks = scopeFilterList(
+					oauthCtx,
+					Array.isArray(tasks) ? tasks : [],
+				);
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_tasks_by_mission"),
+							text: capListResponseBytes(filteredTasks, JSON.stringify(filteredTasks, null, 2), "list_tasks_by_mission"),
 						},
 					],
 				};
@@ -2582,18 +2590,17 @@ export function registerTools(
 		},
 		async ({ missionId }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("get_mission");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const mission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
+				const filteredMission = scopeFilterGet(oauthCtx, mission as any);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(mission, null, 2),
+							text: JSON.stringify(filteredMission, null, 2),
 						},
 					],
 				};
@@ -2799,26 +2806,25 @@ export function registerTools(
 		},
 		async ({ date, orchestrator }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("get_diary");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const entry = await convex.query("diary:get" as any, {
 					date,
 					orchestrator,
 				});
+				const filteredEntry = scopeFilterGet(oauthCtx, entry as any);
 
-				const baseText = JSON.stringify(entry, null, 2);
+				const baseText = JSON.stringify(filteredEntry, null, 2);
 				const text = appendMarkerIfEnabled(baseText, () => {
-					if (!entry) return null;
+					if (!filteredEntry) return null;
 					return {
 						kind: "diary-entry",
 						item: {
-							_id: (entry as any)._id,
-							date: (entry as any).date,
-							orchestrator: (entry as any).orchestrator,
-							content: (entry as any).content,
-							highlights: (entry as any).highlights,
-							blockers: (entry as any).blockers,
+							_id: (filteredEntry as any)._id,
+							date: (filteredEntry as any).date,
+							orchestrator: (filteredEntry as any).orchestrator,
+							content: (filteredEntry as any).content,
+							highlights: (filteredEntry as any).highlights,
+							blockers: (filteredEntry as any).blockers,
 						},
 					};
 				});
@@ -3263,9 +3269,7 @@ export function registerTools(
 		},
 		async ({ type, team, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_components");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const components = await convex.query("components:list" as any, {
 					type,
 					team,
@@ -3273,11 +3277,16 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 
+				const filteredComponents = scopeFilterList(
+					oauthCtx,
+					Array.isArray(components) ? components : [],
+				);
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(components, JSON.stringify(components, null, 2), "list_components"),
+							text: capListResponseBytes(filteredComponents, JSON.stringify(filteredComponents, null, 2), "list_components"),
 						},
 					],
 				};
@@ -3304,19 +3313,18 @@ export function registerTools(
 		},
 		async ({ name, type }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("get_component");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const component = await convex.query("components:get" as any, {
 					name,
 					type,
 				});
+				const filteredComponent = scopeFilterGet(oauthCtx, component as any);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(component, null, 2),
+							text: JSON.stringify(filteredComponent, null, 2),
 						},
 					],
 				};
