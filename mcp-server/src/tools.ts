@@ -3448,17 +3448,21 @@ export function registerTools(
 		},
 		async ({ query, type, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("search_components");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const results = await convex.query("components:search" as any, {
 					query,
 					type,
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const filteredResults = scopeFilterList(
+					oauthCtx,
+					Array.isArray(results) ? results : [],
+				);
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+					content: [
+						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
+					],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -3568,18 +3572,20 @@ export function registerTools(
 		},
 		async ({ assignedTo, active, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_recurring_tasks");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const tasks = await convex.query("recurringTasks:list" as any, {
 					assignedTo,
 					active,
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const filteredTasks = scopeFilterList(
+					oauthCtx,
+					Array.isArray(tasks) ? tasks : [],
+				);
 
 				return {
-					content: [{ type: "text", text: capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_recurring_tasks") }],
+					content: [{ type: "text", text: capListResponseBytes(filteredTasks, JSON.stringify(filteredTasks, null, 2), "list_recurring_tasks") }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -4030,9 +4036,7 @@ export function registerTools(
 		},
 		async ({ requestedBy, fulfilledBy, status, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_mandates");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const mandates = await convex.query("mandates:list" as any, {
 					requestedBy,
 					fulfilledBy,
@@ -4040,12 +4044,16 @@ export function registerTools(
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const filteredMandates = scopeFilterList(
+					oauthCtx,
+					Array.isArray(mandates) ? mandates : [],
+				);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(mandates, JSON.stringify(mandates, null, 2), "list_mandates"),
+							text: capListResponseBytes(filteredMandates, JSON.stringify(filteredMandates, null, 2), "list_mandates"),
 						},
 					],
 				};
@@ -4263,18 +4271,17 @@ export function registerTools(
 		},
 		async ({ buId }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("get_bu");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const bu = await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
 				});
+				const filteredBu = scopeFilterGet(oauthCtx, bu as any);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(bu, null, 2),
+							text: JSON.stringify(filteredBu, null, 2),
 						},
 					],
 				};
@@ -4316,21 +4323,23 @@ export function registerTools(
 		},
 		async ({ orchestratorId, status, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_bus");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const bus = await convex.query("businessUnits:list" as any, {
 					orchestratorId,
 					status,
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const filteredBus = scopeFilterList(
+					oauthCtx,
+					Array.isArray(bus) ? bus : [],
+				);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(bus, JSON.stringify(bus, null, 2), "list_bus"),
+							text: capListResponseBytes(filteredBus, JSON.stringify(filteredBus, null, 2), "list_bus"),
 						},
 					],
 				};
@@ -4456,9 +4465,7 @@ export function registerTools(
 		},
 		async ({ limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_repo_mappings");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const mappings = await convex.query(
 					"githubRepoMapping:list" as any,
 					{
@@ -4466,12 +4473,16 @@ export function registerTools(
 						fields: fields ?? "lite",
 					},
 				);
+				const filteredMappings = scopeFilterList(
+					oauthCtx,
+					Array.isArray(mappings) ? mappings : [],
+				);
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(mappings, JSON.stringify(mappings, null, 2), "list_repo_mappings"),
+							text: capListResponseBytes(filteredMappings, JSON.stringify(filteredMappings, null, 2), "list_repo_mappings"),
 						},
 					],
 				};
@@ -4562,9 +4573,7 @@ export function registerTools(
 		},
 		async ({ project, status, assignedTo, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_issues");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				let results: any;
 				if (assignedTo) {
 					results = await convex.query("issues:listByOrchestrator" as any, {
@@ -4594,14 +4603,19 @@ export function registerTools(
 					});
 				}
 
+				const filteredIssues = scopeFilterList(
+					oauthCtx,
+					Array.isArray(results) ? results : [],
+				);
+
 				return {
 					content: [
 						{
 							type: "text",
 							text: capListResponseBytes(
-								results,
+								filteredIssues,
 								JSON.stringify(
-									{ count: results.length, issues: results },
+									{ count: filteredIssues.length, issues: filteredIssues },
 									null,
 									2,
 								),
