@@ -645,6 +645,7 @@ export const patchScopeProfileEmergency = mutation({
 	returns: v.object({
 		patchedProfileId: v.string(),
 		cascadeRevokedCount: v.number(),
+		clientsRetargeted: v.number(),
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
@@ -719,6 +720,13 @@ export const patchScopeProfileEmergency = mutation({
 
 		await ctx.db.patch(existing._id, patchPayload);
 
+		// ── Cascade-update oauth_clients (S2.1-D9) ───────────────────────────
+		// When renamed, retarget every oauth_clients row that pointed at the old
+		// profile name so no client orphans after rename.
+		// NOTE: patch loop not yet implemented (RED commit stub — returns 0).
+		let clientsRetargeted = 0;
+		// TODO S2.1-GREEN: walk oauth_clients by_scopeProfile index and patch each row
+
 		// ── Cascade revoke tokens ─────────────────────────────────────────────
 		let cascadeRevokedCount = 0;
 
@@ -775,12 +783,14 @@ export const patchScopeProfileEmergency = mutation({
 			newState,
 			reason: args.reason,
 			cascadeRevokedCount,
+			clientsRetargeted,
 			createdAt: Date.now(),
 		});
 
 		return {
 			patchedProfileId: newProfileId,
 			cascadeRevokedCount,
+			clientsRetargeted,
 			auditLogId,
 		};
 	},

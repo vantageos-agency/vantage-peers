@@ -983,6 +983,7 @@ export default defineSchema({
 	// actorTokenHash = sha256Hex of the callerToken (raw token never stored).
 	// previousState + newState allow forensic reconstruction of leaked scopes.
 	// S1.2-mutation: captures Day 90 Marie `global` leak remediation.
+	// S2.1-D9: clientsRetargeted added (additive, optional for backward compat).
 	oauth_audit_log: defineTable({
 		eventType: v.string(),
 		actorTokenHash: v.string(),
@@ -1001,6 +1002,9 @@ export default defineSchema({
 		}),
 		reason: v.string(),
 		cascadeRevokedCount: v.number(),
+		// S2.1-D9: number of oauth_clients rows retargeted during rename (0 if no rename).
+		// Optional for backward compat with pre-S2.1 rows.
+		clientsRetargeted: v.optional(v.number()),
 		createdAt: v.number(),
 	})
 		.index("by_targetProfileId", ["targetProfileId"])
