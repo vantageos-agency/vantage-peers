@@ -645,6 +645,7 @@ export const patchScopeProfileEmergency = mutation({
 	returns: v.object({
 		patchedProfileId: v.string(),
 		cascadeRevokedCount: v.number(),
+		clientsRetargeted: v.number(),
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
@@ -719,6 +720,25 @@ export const patchScopeProfileEmergency = mutation({
 
 		await ctx.db.patch(existing._id, patchPayload);
 
+		// ── Cascade-update oauth_clients (S2.1-D9) ───────────────────────────
+		// When renamed, retarget every oauth_clients row that pointed at the old
+		// profile name so no client orphans after rename.
+		// This step runs BEFORE cascade revoke so revoke logic covers both names.
+		let clientsRetargeted = 0;
+
+		if (args.rename !== undefined && args.rename !== args.profileId) {
+			const clientsToRetarget = await ctx.db
+				.query("oauth_clients")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", args.profileId),
+				)
+				.collect();
+			for (const client of clientsToRetarget) {
+				await ctx.db.patch(client._id, { scopeProfile: args.rename });
+				clientsRetargeted++;
+			}
+		}
+
 		// ── Cascade revoke tokens ─────────────────────────────────────────────
 		let cascadeRevokedCount = 0;
 
@@ -775,12 +795,14 @@ export const patchScopeProfileEmergency = mutation({
 			newState,
 			reason: args.reason,
 			cascadeRevokedCount,
+			clientsRetargeted,
 			createdAt: Date.now(),
 		});
 
 		return {
 			patchedProfileId: newProfileId,
 			cascadeRevokedCount,
+			clientsRetargeted,
 			auditLogId,
 		};
 	},
