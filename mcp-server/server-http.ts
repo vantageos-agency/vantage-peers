@@ -41,6 +41,7 @@ import {
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
+import { timingSafeEqual } from "./src/crypto.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -118,6 +119,37 @@ type ScopeProfile = {
 	namespaceWritePrefixes: string[];
 };
 
+/**
+ * D6 helper — extract client_secret from either the Authorization: Basic header
+ * (RFC 6749 §2.3.1 client_secret_basic) or the form body (client_secret_post).
+ * Returns { clientId, clientSecret } when present, else nulls.
+ *
+ * Basic header format: "Basic base64(client_id:client_secret)".
+ * Per RFC 6749 §2.3.1 the values are form-urlencoded before being colon-joined.
+ */
+export function parseBasicAuthSecret(
+	authHeader: string | undefined,
+	body: Record<string, string>,
+): { clientId: string | null; clientSecret: string | null } {
+	if (authHeader?.toLowerCase().startsWith("basic ")) {
+		try {
+			const decoded = atob(authHeader.slice(6).trim());
+			const idx = decoded.indexOf(":");
+			if (idx > 0) {
+				const id = decodeURIComponent(decoded.slice(0, idx));
+				const secret = decodeURIComponent(decoded.slice(idx + 1));
+				return { clientId: id, clientSecret: secret };
+			}
+		} catch {
+			// fall through to body
+		}
+	}
+	const id = typeof body.client_id === "string" ? body.client_id : null;
+	const secret =
+		typeof body.client_secret === "string" ? body.client_secret : null;
+	return { clientId: id, clientSecret: secret };
+}
+
 async function loadScopeProfile(
 	profileId: string,
 ): Promise<ScopeProfile | null> {
@@ -132,7 +164,7 @@ async function loadScopeProfile(
 // App
 // ─────────────────────────────────────────────────────────────────────────────
 
-const app = new Hono();
+export const app = new Hono();
 
 // CORS — Claude web sends requests from claude.ai origin
 app.use(
@@ -252,6 +284,20 @@ app.post("/register", async (c) => {
 	// via POST /admin/oauth/clients (master-token gated).
 	const scopeProfile = DEFAULT_PUBLIC_DCR_PROFILE;
 
+	// RFC 7591 §2: honour token_endpoint_auth_method if provided, else default
+	// to client_secret_basic (confidential). Only "none" / "client_secret_basic"
+	// / "client_secret_post" are accepted; anything else falls back to default.
+	const requestedAuthMethod =
+		typeof body.token_endpoint_auth_method === "string"
+			? body.token_endpoint_auth_method
+			: undefined;
+	const tokenEndpointAuthMethod =
+		requestedAuthMethod === "none" ||
+		requestedAuthMethod === "client_secret_basic" ||
+		requestedAuthMethod === "client_secret_post"
+			? requestedAuthMethod
+			: "client_secret_basic";
+
 	try {
 		await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
@@ -262,6 +308,7 @@ app.post("/register", async (c) => {
 				name: clientName,
 				redirectUris,
 				scopeProfile,
+				tokenEndpointAuthMethod,
 			},
 		);
 	} catch (err: unknown) {
@@ -281,7 +328,7 @@ app.post("/register", async (c) => {
 			client_secret_expires_at: 0, // never expires
 			redirect_uris: redirectUris,
 			client_name: clientName,
-			token_endpoint_auth_method: "client_secret_post",
+			token_endpoint_auth_method: tokenEndpointAuthMethod,
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
 			// SC: standardized on mcp:full — consistent with well-known metadata
@@ -330,7 +377,13 @@ app.get("/authorize", async (c) => {
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:getClientByClientId" as any,
 		{ clientId },
-	)) as { revokedAt?: number; scopeProfile: string } | null;
+	)) as {
+		revokedAt?: number;
+		scopeProfile: string;
+		redirectUris?: string[];
+		clientSecretHash?: string;
+		tokenEndpointAuthMethod?: string;
+	} | null;
 	if (!client) {
 		return c.json(
 			{ error: "invalid_client", error_description: "unknown client_id" },
@@ -340,6 +393,21 @@ app.get("/authorize", async (c) => {
 	if (client.revokedAt !== undefined) {
 		return c.json(
 			{ error: "invalid_client", error_description: "client revoked" },
+			400,
+		);
+	}
+
+	// D7 — RFC 6749 §3.1.2.3/§3.1.2.4: redirect_uri MUST exact-match a
+	// registered URI. Defense against open-redirect / token-exfiltration via
+	// attacker-controlled redirect. No partial / prefix / wildcard match.
+	const registeredUris = client.redirectUris ?? [];
+	if (registeredUris.length === 0 || !registeredUris.includes(redirectUri)) {
+		return c.json(
+			{
+				error: "invalid_request",
+				error_description:
+					"redirect_uri does not match a registered redirect URI for this client",
+			},
 			400,
 		);
 	}
@@ -475,10 +543,52 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:getClientByClientId" as any,
 			{ clientId: record.clientId },
-		)) as { scopeProfile: string; revokedAt?: number } | null;
+		)) as {
+			scopeProfile: string;
+			revokedAt?: number;
+			clientSecretHash?: string;
+			tokenEndpointAuthMethod?: string;
+		} | null;
 		if (!client || client.revokedAt !== undefined) {
 			return c.json({ error: "invalid_client" }, 400);
 		}
+
+		// D6 — RFC 6749 §4.1.3 + §6: confidential clients MUST authenticate at
+		// /token. Default (absent) treated as confidential for backward compat.
+		// Public clients (token_endpoint_auth_method="none") skip the check —
+		// PKCE provides the binding (already verified above).
+		const authMethod = client.tokenEndpointAuthMethod ?? "client_secret_basic";
+		if (authMethod !== "none") {
+			const { clientSecret } = parseBasicAuthSecret(
+				c.req.header("authorization"),
+				body,
+			);
+			if (!clientSecret) {
+				c.header("WWW-Authenticate", 'Basic realm="oauth"');
+				return c.json(
+					{
+						error: "invalid_client",
+						error_description:
+							"client authentication required for confidential client",
+					},
+					401,
+				);
+			}
+			const presentedHash = await sha256Hex(clientSecret);
+			if (
+				!client.clientSecretHash ||
+				!(await timingSafeEqual(presentedHash, client.clientSecretHash))
+			) {
+				return c.json(
+					{
+						error: "invalid_client",
+						error_description: "client_secret mismatch",
+					},
+					401,
+				);
+			}
+		}
+
 		const profile = await loadScopeProfile(client.scopeProfile);
 		if (!profile) {
 			console.error(
@@ -561,6 +671,53 @@ app.post("/token", async (c) => {
 
 		if (!record) {
 			return c.json({ error: "invalid_grant" }, 400);
+		}
+
+		// D6 — confidential client authentication on refresh too (RFC 6749 §6).
+		const refreshClient = (await internalClient().query(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:getClientByClientId" as any,
+			{ clientId: record.clientId },
+		)) as {
+			scopeProfile: string;
+			revokedAt?: number;
+			clientSecretHash?: string;
+			tokenEndpointAuthMethod?: string;
+		} | null;
+		if (!refreshClient || refreshClient.revokedAt !== undefined) {
+			return c.json({ error: "invalid_client" }, 400);
+		}
+		const refreshAuthMethod =
+			refreshClient.tokenEndpointAuthMethod ?? "client_secret_basic";
+		if (refreshAuthMethod !== "none") {
+			const { clientSecret } = parseBasicAuthSecret(
+				c.req.header("authorization"),
+				body,
+			);
+			if (!clientSecret) {
+				c.header("WWW-Authenticate", 'Basic realm="oauth"');
+				return c.json(
+					{
+						error: "invalid_client",
+						error_description:
+							"client authentication required for confidential client",
+					},
+					401,
+				);
+			}
+			const presentedHash = await sha256Hex(clientSecret);
+			if (
+				!refreshClient.clientSecretHash ||
+				!(await timingSafeEqual(presentedHash, refreshClient.clientSecretHash))
+			) {
+				return c.json(
+					{
+						error: "invalid_client",
+						error_description: "client_secret mismatch",
+					},
+					401,
+				);
+			}
 		}
 
 		const profile = await loadScopeProfile(record.scopeProfile);
@@ -650,6 +807,16 @@ admin.post("/oauth/clients", async (c) => {
 	const redirectUris = Array.isArray(body.redirect_uris)
 		? (body.redirect_uris as string[])
 		: [];
+	const adminRequestedAuthMethod =
+		typeof body.token_endpoint_auth_method === "string"
+			? body.token_endpoint_auth_method
+			: undefined;
+	const adminTokenEndpointAuthMethod =
+		adminRequestedAuthMethod === "none" ||
+		adminRequestedAuthMethod === "client_secret_basic" ||
+		adminRequestedAuthMethod === "client_secret_post"
+			? adminRequestedAuthMethod
+			: "client_secret_basic";
 	if (!name || !scopeProfile) {
 		return c.json(
 			{
@@ -680,6 +847,7 @@ admin.post("/oauth/clients", async (c) => {
 				name,
 				redirectUris,
 				scopeProfile,
+				tokenEndpointAuthMethod: adminTokenEndpointAuthMethod,
 			},
 		);
 	} catch (err: unknown) {
@@ -797,21 +965,25 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 const PORT = Number(process.env.PORT ?? 3000);
 const HOSTNAME = "0.0.0.0";
 
-// Explicit Bun.serve() — does not rely on default-export auto-detection,
-// which can fail when started via `bun run <file>` (vs `bun <file>`).
-// @ts-expect-error — Bun global available at runtime on Railway
-const server = Bun.serve({
-	port: PORT,
-	hostname: HOSTNAME,
-	fetch: app.fetch,
-});
+// Bootstrap is gated so tests can `import { app }` without binding a socket.
+// VP_TEST_MODE=1 short-circuits the listener (vitest sets this in setup).
+if (process.env.VP_TEST_MODE !== "1") {
+	// Explicit Bun.serve() — does not rely on default-export auto-detection,
+	// which can fail when started via `bun run <file>` (vs `bun <file>`).
+	// @ts-expect-error — Bun global available at runtime on Railway
+	const server = Bun.serve({
+		port: PORT,
+		hostname: HOSTNAME,
+		fetch: app.fetch,
+	});
 
-console.log(
-	`[vantage-peers-mcp] HTTP transport listening on ${server.hostname}:${server.port}`,
-);
-console.log(
-	`[vantage-peers-mcp] Health: http://${server.hostname}:${server.port}/health`,
-);
-console.log(
-	`[vantage-peers-mcp] MCP:    http://${server.hostname}:${server.port}/mcp`,
-);
+	console.log(
+		`[vantage-peers-mcp] HTTP transport listening on ${server.hostname}:${server.port}`,
+	);
+	console.log(
+		`[vantage-peers-mcp] Health: http://${server.hostname}:${server.port}/health`,
+	);
+	console.log(
+		`[vantage-peers-mcp] MCP:    http://${server.hostname}:${server.port}/mcp`,
+	);
+}

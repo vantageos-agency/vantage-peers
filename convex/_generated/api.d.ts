@@ -47,6 +47,7 @@ import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as oauth from "../oauth.js";
 import type * as oauthDcr from "../oauthDcr.js";
+import type * as oauthMigrations from "../oauthMigrations.js";
 import type * as prMonitor from "../prMonitor.js";
 import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   missions: typeof missions;
   oauth: typeof oauth;
   oauthDcr: typeof oauthDcr;
+  oauthMigrations: typeof oauthMigrations;
   prMonitor: typeof prMonitor;
   profiles: typeof profiles;
   ragSync: typeof ragSync;

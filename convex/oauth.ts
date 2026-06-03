@@ -197,6 +197,7 @@ export const createClient = mutation({
 		name: v.string(),
 		redirectUris: v.array(v.string()),
 		scopeProfile: v.string(),
+		tokenEndpointAuthMethod: v.optional(v.string()),
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
@@ -227,6 +228,9 @@ export const createClient = mutation({
 			redirectUris: args.redirectUris,
 			scopeProfile: args.scopeProfile,
 			createdAt: Date.now(),
+			// RFC 7591 §2: default to confidential client_secret_basic when absent.
+			tokenEndpointAuthMethod:
+				args.tokenEndpointAuthMethod ?? "client_secret_basic",
 		});
 	},
 });
@@ -255,6 +259,7 @@ export const registerPublicClient = mutation({
 		name: v.string(),
 		redirectUris: v.array(v.string()),
 		scopeProfile: v.string(),
+		tokenEndpointAuthMethod: v.optional(v.string()),
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
@@ -293,6 +298,10 @@ export const registerPublicClient = mutation({
 			redirectUris: args.redirectUris,
 			scopeProfile: args.scopeProfile,
 			createdAt: Date.now(),
+			// RFC 7591 §2: default confidential. Public clients ("none") may be
+			// promoted later via admin/oauth/clients PATCH (out of scope here).
+			tokenEndpointAuthMethod:
+				args.tokenEndpointAuthMethod ?? "client_secret_basic",
 		});
 	},
 });
@@ -307,6 +316,7 @@ export const getClientByClientId = query({
 			redirectUris: v.array(v.string()),
 			scopeProfile: v.string(),
 			revokedAt: v.optional(v.number()),
+			tokenEndpointAuthMethod: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -323,6 +333,7 @@ export const getClientByClientId = query({
 			redirectUris: row.redirectUris,
 			scopeProfile: row.scopeProfile,
 			revokedAt: row.revokedAt,
+			tokenEndpointAuthMethod: row.tokenEndpointAuthMethod,
 		};
 	},
 });

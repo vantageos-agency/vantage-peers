@@ -24,4 +24,17 @@
  *   PORT                  — HTTP port (default 3000)
  *   NODE_ENV              — set to "production" on Railway
  */
-export {};
+import { Hono } from "hono";
+/**
+ * D6 helper — extract client_secret from either the Authorization: Basic header
+ * (RFC 6749 §2.3.1 client_secret_basic) or the form body (client_secret_post).
+ * Returns { clientId, clientSecret } when present, else nulls.
+ *
+ * Basic header format: "Basic base64(client_id:client_secret)".
+ * Per RFC 6749 §2.3.1 the values are form-urlencoded before being colon-joined.
+ */
+export declare function parseBasicAuthSecret(authHeader: string | undefined, body: Record<string, string>): {
+    clientId: string | null;
+    clientSecret: string | null;
+};
+export declare const app: Hono<import("hono/types").BlankEnv, import("hono/types").BlankSchema, "/">;
