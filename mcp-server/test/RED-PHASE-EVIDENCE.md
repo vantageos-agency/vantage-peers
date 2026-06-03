@@ -268,3 +268,67 @@ cd mcp-server && npx vitest run
 
 **Filed by:** Sigma — VantageOS Team
 
+---
+
+## § S3.1.C3 — Scope-Aware Filter Wave C, FINAL BATCH (8 tools: 7 reads + 1 write)
+
+**Date:** 2026-06-03
+**Branch:** `feat/s3-1-c3-scope-aware-final-batch`
+**Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n` · Task `k17fjd4dvp34k9q57t5e1qzrv187zz9n`
+**Canonical D14 report:** `docs/test-reports/s3.1.c3-scope-aware-final-batch-2026-06-03.md`
+
+### Tools covered (final 8 grep-derived `guardMasterOnly` sites)
+
+Inventory derived authoritatively from `grep -n "guardMasterOnly" mcp-server/src/tools.ts` against pre-patch HEAD — NOT from prior memory or briefing recall. Adopts Eta's capitalize doctrine candidate **"scope-aware-migration-inventory-must-be-grep-derived-not-memory-derived"**.
+
+1. `get_issue` (tools.ts L4652) → `scopeFilterGet` on `issues:getByRepoNumber`
+2. `issue_stats` (tools.ts L4837) → `scopeFilterGet` on `issues:getStats`
+3. `search_fix_patterns` (tools.ts L5060) → `scopeFilterList` on action `search:searchFixPatterns`
+4. `list_fix_patterns` (tools.ts L5113) → `scopeFilterList` on both `fixPatterns:listByProject` and `fixPatterns:listAll` branches
+5. `get_mission_template` (tools.ts L5202) → `scopeFilterGet` on `missionTemplates:getByName`
+6. `instantiate_template_into_mission` (tools.ts L5364) → **pre-mutation** `scopeFilterGet` on `missions:get` BEFORE `missionTemplates:instantiateTemplateIntoMission`
+7. `list_errors` (tools.ts L5533) → `scopeFilterList` on `errorMonitor:listErrors`
+8. `get_error` (tools.ts L5571) → `scopeFilterGet` on `errorMonitor:getError`
+
+### soft_delete_memory exempt rationale (intentional non-migration)
+
+`soft_delete_memory` (tools.ts L710) remains `guardMasterOnly` by design. The underlying mutation `memories:softDelete` accepts only `memoryId` — no namespace / `createdBy` context — so no per-resource RBAC is possible without a separate backend doctrine change. Destructive operation: silent cross-tenant data loss risk on a wrong scope check. Excluded from migration on purpose; Wave C terminal coverage = **28/29 = 96%** by migration definition.
+
+### SHAs
+
+| Phase | SHA | State |
+|---|---|---|
+| RED — tests added, handlers still call `guardMasterOnly` | `f7f9bb4` | 23/40 FAIL · 17/40 PASS |
+| GREEN — `guardMasterOnly` removed, scope-aware filter applied | `3130901` | 40/40 PASS · full suite 177/177 |
+
+### RED-phase failure surface (23 tests)
+
+Per tool: 5 tests (T1 master, T2 non-master in-scope, T3 legacy bearer, M1 cross-tenant, M2 own-tenant). For the 7 read-path tools: T1 + T3 pass at RED (master / undefined ctx no-op), T2 + M1 + M2 FAIL at RED (Forbidden envelope) = 3 × 7 = 21 FAIL.
+
+For `instantiate_template_into_mission` (write, pre-mutation): T1, T3, ITM-M1 pass at RED (T1/T3 short-circuit OK; M1 asserts mutation NOT called and `res.isError === true` — both held at RED via Forbidden short-circuit); T2 and M2 FAIL at RED (assert NOT Forbidden + mutation runs).
+
+Total: 17 PASS-in-RED + 23 FAIL-in-RED = 40. RED→GREEN delta on T2/M1/M2 read paths and T2/M2 write paths is observable.
+
+### Reproduction
+
+```bash
+cd /root/coding/vantage-memory
+git checkout feat/s3-1-c3-scope-aware-final-batch
+
+# RED
+git checkout f7f9bb4
+cd mcp-server && npx vitest run test/scope-aware-filter-wave-c3.test.ts
+# expect 23 FAIL / 17 PASS / 40 total
+
+# GREEN
+cd .. && git checkout 3130901
+cd mcp-server && npx vitest run test/scope-aware-filter-wave-c3.test.ts
+# expect 40/40 PASS
+
+# Full suite at GREEN
+cd mcp-server && npx vitest run
+# expect 177/177 PASS (137 baseline + 40 new, zero regression)
+```
+
+**Filed by:** Sigma — VantageOS Team
+
