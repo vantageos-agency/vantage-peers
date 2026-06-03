@@ -723,9 +723,21 @@ export const patchScopeProfileEmergency = mutation({
 		// ── Cascade-update oauth_clients (S2.1-D9) ───────────────────────────
 		// When renamed, retarget every oauth_clients row that pointed at the old
 		// profile name so no client orphans after rename.
-		// NOTE: patch loop not yet implemented (RED commit stub — returns 0).
+		// This step runs BEFORE cascade revoke so revoke logic covers both names.
 		let clientsRetargeted = 0;
-		// TODO S2.1-GREEN: walk oauth_clients by_scopeProfile index and patch each row
+
+		if (args.rename !== undefined && args.rename !== args.profileId) {
+			const clientsToRetarget = await ctx.db
+				.query("oauth_clients")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", args.profileId),
+				)
+				.collect();
+			for (const client of clientsToRetarget) {
+				await ctx.db.patch(client._id, { scopeProfile: args.rename });
+				clientsRetargeted++;
+			}
+		}
 
 		// ── Cascade revoke tokens ─────────────────────────────────────────────
 		let cascadeRevokedCount = 0;
