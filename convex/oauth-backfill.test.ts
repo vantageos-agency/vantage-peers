@@ -49,38 +49,42 @@ async function seedProfiles(t: ReturnType<typeof createTestConvex>) {
 	});
 }
 
-// Helper: insert an oauth_client row with optional tokenEndpointAuthMethod
+// Helper: insert an oauth_client row directly via ctx.db.insert to control
+// exactly whether tokenEndpointAuthMethod is present or absent.
+// Using t.run (raw db access) instead of api.oauth.createClient because
+// createClient always defaults tokenEndpointAuthMethod to "client_secret_basic"
+// — bypassing that is required to simulate pre-migration rows.
 async function insertClient(
 	t: ReturnType<typeof createTestConvex>,
 	suffix: string,
 	tokenEndpointAuthMethod?: string,
 ) {
-	await t.mutation(api.oauth.createClient, {
-		callerToken: "test-master-token-backfill",
-		clientId: `client-backfill-${suffix}`,
-		clientSecretHash: `deadbeef${suffix}`.padEnd(64, "0"),
-		name: `Backfill Client ${suffix}`,
-		redirectUris: ["https://example.com/callback"],
-		scopeProfile: "client-generic",
+	await t.run(async (ctx) => {
+		const row: {
+			clientId: string;
+			clientSecretHash: string;
+			name: string;
+			redirectUris: string[];
+			scopeProfile: string;
+			createdAt: number;
+			tokenEndpointAuthMethod?: string;
+		} = {
+			clientId: `client-backfill-${suffix}`,
+			clientSecretHash:
+				`deadbeef${suffix}0000000000000000000000000000000000000000000000000000000000`.slice(
+					0,
+					64,
+				),
+			name: `Backfill Client ${suffix}`,
+			redirectUris: ["https://example.com/callback"],
+			scopeProfile: "client-generic",
+			createdAt: Date.now(),
+		};
+		if (tokenEndpointAuthMethod !== undefined) {
+			row.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
+		}
+		await ctx.db.insert("oauth_clients", row);
 	});
-	// If tokenEndpointAuthMethod is specified, patch it directly via db
-	// (createClient doesn't expose the field — the backfill sets it)
-	if (tokenEndpointAuthMethod !== undefined) {
-		// Fetch the just-inserted client and patch via the migration mutation
-		// We use a workaround: directly patch via a run query
-		// Actually, we patch via the raw db in a mutation
-		await t.run(async (ctx) => {
-			const row = await ctx.db
-				.query("oauth_clients")
-				.withIndex("by_clientId", (q) =>
-					q.eq("clientId", `client-backfill-${suffix}`),
-				)
-				.unique();
-			if (row) {
-				await ctx.db.patch(row._id, { tokenEndpointAuthMethod });
-			}
-		});
-	}
 }
 
 describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {

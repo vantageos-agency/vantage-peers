@@ -73,8 +73,24 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 export const backfillTokenEndpointAuthMethod = mutation({
 	args: { callerToken: v.string() },
 	returns: v.object({ scanned: v.number(), backfilled: v.number() }),
-	handler: async (_ctx, args) => {
+	handler: async (ctx, args) => {
 		await requireMasterAuth(args.callerToken);
-		throw new Error("not implemented");
+
+		const clients = await ctx.db.query("oauth_clients").collect();
+		let backfilled = 0;
+
+		for (const c of clients) {
+			if (
+				c.tokenEndpointAuthMethod === undefined ||
+				c.tokenEndpointAuthMethod === null
+			) {
+				await ctx.db.patch(c._id, {
+					tokenEndpointAuthMethod: "client_secret_basic",
+				});
+				backfilled++;
+			}
+		}
+
+		return { scanned: clients.length, backfilled };
 	},
 });
