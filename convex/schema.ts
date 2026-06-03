@@ -265,9 +265,9 @@ export default defineSchema({
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
 		.index("by_date", ["date"]),
-		// by_createdBy_date intentionally omitted: createdBy filtering is handled
-		// as a universal post-take in-memory filter (mirrors tasks.ts:371-373 pattern).
-		// Adding an index pushdown optimization is deferred to a separate PR.
+	// by_createdBy_date intentionally omitted: createdBy filtering is handled
+	// as a universal post-take in-memory filter (mirrors tasks.ts:371-373 pattern).
+	// Adding an index pushdown optimization is deferred to a separate PR.
 
 	// ── briefingNotes ──────────────────────────────────────────────────────────
 	briefingNotes: defineTable({
@@ -616,6 +616,11 @@ export default defineSchema({
 		scopeProfile: v.string(), // FK to oauth_scope_profiles.profileId
 		createdAt: v.number(),
 		revokedAt: v.optional(v.number()),
+		// RFC 7591 §2 token_endpoint_auth_method (D6 — confidential client validation).
+		// Absent => treat as confidential ("client_secret_basic") for backward
+		// compatibility; existing rows MUST be backfilled in S2 with explicit value
+		// ("client_secret_basic" for confidential; "none" for known public clients).
+		tokenEndpointAuthMethod: v.optional(v.string()),
 	})
 		.index("by_clientId", ["clientId"])
 		.index("by_scopeProfile", ["scopeProfile"]),

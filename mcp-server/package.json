@@ -25,7 +25,10 @@
     "prepublishOnly": "npm run build",
     "dev": "bun run server.ts",
     "start": "bun run dist/server-http.js",
-    "dev:http": "bun run server-http.ts"
+    "dev:http": "bun run server-http.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "repository": {
     "type": "git",
@@ -74,7 +77,9 @@
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
-    "typescript": "^5.9.3"
+    "@vitest/coverage-v8": "^4.1.8",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8"
   },
   "overrides": {
     "path-to-regexp": "^8.4.0"
