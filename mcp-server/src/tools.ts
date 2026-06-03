@@ -1576,15 +1576,21 @@ export function registerTools(
 		},
 		async ({ limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_peers");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
+				// Master + legacy bearer pass through unchanged. Non-master clients
+				// see only profiles whose createdBy ∈ fromAllowList OR whose namespace
+				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const profiles = await convex.query("profiles:listProfiles" as any, {
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
 
-				const peers = profiles.map((p: any) => ({
+				const filteredProfiles = scopeFilterList(
+					oauthCtx,
+					Array.isArray(profiles) ? profiles : [],
+				);
+
+				const peers = filteredProfiles.map((p: any) => ({
 					id: p.orchestratorId,
 					instanceId: p.instanceId ?? p.orchestratorId,
 					name: p.name,
@@ -1641,9 +1647,10 @@ export function registerTools(
 		},
 		async ({ sessionDay, from, limit, fields }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_messages");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
+				// Master + legacy bearer pass through unchanged. Non-master clients
+				// see only messages whose createdBy ∈ fromAllowList OR whose namespace
+				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const messages = await convex.query("messages:listMessages" as any, {
 					sessionDay,
 					from,
@@ -1651,18 +1658,21 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 
-				const baseText = capListResponseBytes(messages, JSON.stringify(messages, null, 2), "list_messages");
+				const filteredMessages = scopeFilterList(
+					oauthCtx,
+					Array.isArray(messages) ? messages : [],
+				);
+
+				const baseText = capListResponseBytes(filteredMessages, JSON.stringify(filteredMessages, null, 2), "list_messages");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "messages-feed",
-					items: Array.isArray(messages)
-						? messages.map((m: any) => ({
-								_id: m._id,
-								from: m.from,
-								channel: m.channel,
-								content: m.content,
-								createdAt: m.createdAt,
-							}))
-						: [],
+					items: filteredMessages.map((m: any) => ({
+						_id: m._id,
+						from: m.from,
+						channel: m.channel,
+						content: m.content,
+						createdAt: m.createdAt,
+					})),
 				}));
 
 				return {
@@ -3076,9 +3086,10 @@ export function registerTools(
 		},
 		async ({ topic, limit, fields, updatedSince }) => {
 			try {
-				const _scopeDenied = guardMasterOnly("list_briefing_notes");
-				if (_scopeDenied) return _scopeDenied;
-
+				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
+				// Master + legacy bearer pass through unchanged. Non-master clients
+				// see only notes whose createdBy ∈ fromAllowList OR whose namespace
+				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
 					limit: limit ?? 20,
@@ -3086,9 +3097,14 @@ export function registerTools(
 					updatedSince,
 				});
 
-				const baseText = capListResponseBytes(notes, JSON.stringify(notes, null, 2), "list_briefing_notes");
+				const filteredNotes = scopeFilterList(
+					oauthCtx,
+					Array.isArray(notes) ? notes : [],
+				);
+
+				const baseText = capListResponseBytes(filteredNotes, JSON.stringify(filteredNotes, null, 2), "list_briefing_notes");
 				const text = appendMarkerIfEnabled(baseText, () => {
-					const items = Array.isArray(notes) ? notes : [];
+					const items = filteredNotes;
 					if (items.length === 0) return null;
 					// Emit the first note as a briefing-note item for the primitive renderer.
 					const first = items[0] as any;
