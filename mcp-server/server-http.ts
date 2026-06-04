@@ -1035,6 +1035,161 @@ admin.patch("/scope-profiles/:id", async (c) => {
 	}
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/access-tokens — direct mint (bypass full OAuth flow)
+//
+// Wraps Convex mutation `oauth:createAccessToken` so operators with the
+// master bearer can mint a scoped access token in a single call without
+// running the DCR → /authorize → /token dance.
+//
+// Use case: provisioning isolated test workspaces for manual cross-tenant
+// e2e verification, or onboarding a paying user when the dashboard does
+// not yet exist (cloud-launch-v1 close-out window).
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware (mounted on /admin).
+//
+// Body schema:
+//   {
+//     scopeProfile:              string,   // REQUIRED — must exist in oauth_scope_profiles
+//     userId:                    string,   // REQUIRED — caller-supplied user identifier
+//     clientId?:                 string,   // optional — defaults to "admin-mint:<random>"
+//     scopes?:                   string[], // optional — defaults to ["mcp:full"]
+//     fromAllowList?:            string[], // optional — defaults to profile.fromAllowList
+//     namespaceReadPrefixes?:    string[], // optional — defaults to profile.namespaceReadPrefixes
+//     namespaceWritePrefixes?:   string[], // optional — defaults to profile.namespaceWritePrefixes
+//     expiresInSec?:             number,   // optional — defaults to 86400 (24h), max 30d
+//   }
+//
+// Response (201):
+//   {
+//     access_token:            <raw token, 64 hex chars — returned ONCE, never again>,
+//     token_type:              "Bearer",
+//     expires_at:              <unix ms>,
+//     expires_in:              <seconds>,
+//     clientId:                <effective>,
+//     userId:                  <effective>,
+//     scopes:                  <effective array>,
+//     scopeProfile:            <effective>,
+//     fromAllowList:           <effective array>,
+//     namespaceReadPrefixes:   <effective array>,
+//     namespaceWritePrefixes:  <effective array>
+//   }
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/access-tokens", async (c) => {
+	const masterToken = process.env.BEARER_SECRET_MASTER;
+	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
+
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+
+	const scopeProfileArg =
+		typeof body.scopeProfile === "string" ? body.scopeProfile : null;
+	const userId = typeof body.userId === "string" ? body.userId : null;
+	if (!scopeProfileArg || !userId) {
+		return c.json(
+			{
+				error: "invalid_request",
+				detail: "scopeProfile and userId are required",
+			},
+			400,
+		);
+	}
+
+	const loadedProfile = await loadScopeProfile(scopeProfileArg);
+	if (!loadedProfile) {
+		return c.json(
+			{ error: "invalid_scope_profile", scopeProfile: scopeProfileArg },
+			400,
+		);
+	}
+	const profile: ScopeProfile = loadedProfile;
+
+	const clientId =
+		typeof body.clientId === "string"
+			? body.clientId
+			: `admin-mint:${crypto.randomUUID()}`;
+	const scopes = Array.isArray(body.scopes)
+		? (body.scopes as unknown[]).filter((x) => typeof x === "string") as string[]
+		: ["mcp:full"];
+
+	const arrayOrProfile = (
+		key: "fromAllowList" | "namespaceReadPrefixes" | "namespaceWritePrefixes",
+	): string[] => {
+		const v = body[key];
+		if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+			return v as string[];
+		}
+		return profile[key];
+	};
+	const fromAllowList = arrayOrProfile("fromAllowList");
+	const namespaceReadPrefixes = arrayOrProfile("namespaceReadPrefixes");
+	const namespaceWritePrefixes = arrayOrProfile("namespaceWritePrefixes");
+
+	const expiresInSecRaw =
+		typeof body.expiresInSec === "number" ? body.expiresInSec : 86400;
+	const MAX_EXPIRES_IN_SEC = 30 * 86400;
+	if (expiresInSecRaw <= 0 || expiresInSecRaw > MAX_EXPIRES_IN_SEC) {
+		return c.json(
+			{
+				error: "invalid_request",
+				detail: `expiresInSec must be in (0, ${MAX_EXPIRES_IN_SEC}]`,
+			},
+			400,
+		);
+	}
+	const expiresAt = Date.now() + expiresInSecRaw * 1000;
+
+	const accessToken = randomOpaqueToken();
+	const tokenHash = await sha256Hex(accessToken);
+
+	try {
+		await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:createAccessToken" as any,
+			{
+				callerToken: masterToken,
+				tokenHash,
+				clientId,
+				userId,
+				scopes,
+				scopeProfile: scopeProfileArg,
+				fromAllowList,
+				namespaceReadPrefixes,
+				namespaceWritePrefixes,
+				expiresAt,
+			},
+		);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error("[admin] createAccessToken failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+
+	return c.json(
+		{
+			access_token: accessToken,
+			token_type: "Bearer",
+			expires_at: expiresAt,
+			expires_in: expiresInSecRaw,
+			clientId,
+			userId,
+			scopes,
+			scopeProfile: scopeProfileArg,
+			fromAllowList,
+			namespaceReadPrefixes,
+			namespaceWritePrefixes,
+		},
+		201,
+	);
+});
+
 app.route("/admin", admin);
 
 // ─────────────────────────────────────────────────────────────────────────────
