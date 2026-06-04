@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
 
@@ -183,62 +184,62 @@ export const list = query({
 		fulfilledBy: v.optional(creatorValidator),
 		status: v.optional(mandateStatusValidator),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	returns: v.array(mandateObject),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
 
-		// Filter by requestedBy + status
+		let rows: Doc<"mandates">[];
 		if (args.requestedBy !== undefined && args.status !== undefined) {
-			return await ctx.db
+			rows = await ctx.db
 				.query("mandates")
 				.withIndex("by_requestedBy", (q) =>
 					q.eq("requestedBy", args.requestedBy!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
-		}
-
-		// Filter by requestedBy only
-		if (args.requestedBy !== undefined) {
-			return await ctx.db
+		} else if (args.requestedBy !== undefined) {
+			rows = await ctx.db
 				.query("mandates")
-				.withIndex("by_requestedBy", (q) => q.eq("requestedBy", args.requestedBy!))
+				.withIndex("by_requestedBy", (q) =>
+					q.eq("requestedBy", args.requestedBy!),
+				)
 				.order("desc")
 				.take(limit);
-		}
-
-		// Filter by fulfilledBy + status
-		if (args.fulfilledBy !== undefined && args.status !== undefined) {
-			return await ctx.db
+		} else if (args.fulfilledBy !== undefined && args.status !== undefined) {
+			rows = await ctx.db
 				.query("mandates")
 				.withIndex("by_fulfilledBy", (q) =>
 					q.eq("fulfilledBy", args.fulfilledBy!).eq("status", args.status!),
 				)
 				.order("desc")
 				.take(limit);
-		}
-
-		// Filter by fulfilledBy only
-		if (args.fulfilledBy !== undefined) {
-			return await ctx.db
+		} else if (args.fulfilledBy !== undefined) {
+			rows = await ctx.db
 				.query("mandates")
-				.withIndex("by_fulfilledBy", (q) => q.eq("fulfilledBy", args.fulfilledBy!))
+				.withIndex("by_fulfilledBy", (q) =>
+					q.eq("fulfilledBy", args.fulfilledBy!),
+				)
 				.order("desc")
 				.take(limit);
-		}
-
-		// Filter by status only
-		if (args.status !== undefined) {
-			return await ctx.db
+		} else if (args.status !== undefined) {
+			rows = await ctx.db
 				.query("mandates")
 				.withIndex("by_status", (q) => q.eq("status", args.status!))
 				.order("desc")
 				.take(limit);
+		} else {
+			rows = await ctx.db.query("mandates").order("desc").take(limit);
 		}
 
-		// No filters — return all, newest first
-		return await ctx.db.query("mandates").order("desc").take(limit);
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 

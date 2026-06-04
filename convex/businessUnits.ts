@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,44 +182,46 @@ export const list = query({
 		orchestratorId: v.optional(v.string()),
 		status: v.optional(buStatusValidator),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	returns: v.array(buObject),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
 
-		// Filter by orchestratorId only
+		let rows: Doc<"businessUnits">[];
 		if (args.orchestratorId !== undefined && args.status === undefined) {
-			return await ctx.db
+			rows = await ctx.db
 				.query("businessUnits")
 				.withIndex("by_orchestrator", (q) =>
 					q.eq("orchestratorId", args.orchestratorId!),
 				)
 				.order("desc")
 				.take(limit);
-		}
-
-		// Filter by status only
-		if (args.status !== undefined && args.orchestratorId === undefined) {
-			return await ctx.db
+		} else if (args.status !== undefined && args.orchestratorId === undefined) {
+			rows = await ctx.db
 				.query("businessUnits")
 				.withIndex("by_status", (q) => q.eq("status", args.status!))
 				.order("desc")
 				.take(limit);
-		}
-
-		// Both filters — use orchestrator index then filter status in memory
-		if (args.orchestratorId !== undefined && args.status !== undefined) {
-			const rows = await ctx.db
+		} else if (args.orchestratorId !== undefined && args.status !== undefined) {
+			const all = await ctx.db
 				.query("businessUnits")
 				.withIndex("by_orchestrator", (q) =>
 					q.eq("orchestratorId", args.orchestratorId!),
 				)
 				.order("desc")
 				.collect();
-			return rows.filter((r) => r.status === args.status).slice(0, limit);
+			rows = all.filter((r) => r.status === args.status).slice(0, limit);
+		} else {
+			rows = await ctx.db.query("businessUnits").order("desc").take(limit);
 		}
 
-		// No filters — return all, newest first
-		return await ctx.db.query("businessUnits").order("desc").take(limit);
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });

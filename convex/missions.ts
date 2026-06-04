@@ -182,6 +182,8 @@ export const list = query({
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 		updatedSince: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
@@ -273,6 +275,11 @@ export const list = query({
 		let filtered = allRows;
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+		}
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			filtered = filtered.filter((r) => r._creationTime < before);
 		}
 
 		const scoped = filterByOrgScope(filtered, scope);

@@ -104,6 +104,8 @@ export const list = query({
 		// Applied universally post-take (mirrors tasks.ts:354-357 pattern).
 		createdBy: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	returns: v.array(
 		v.object({
@@ -137,11 +139,16 @@ export const list = query({
 		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
 		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
 		// (oauthCtx.userId from MCP layer), client cannot spoof.
+		let rows = allRows;
 		if (args.createdBy !== undefined) {
-			return allRows.filter((r) => r.createdBy === args.createdBy);
+			rows = rows.filter((r) => r.createdBy === args.createdBy);
 		}
-
-		return allRows;
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 

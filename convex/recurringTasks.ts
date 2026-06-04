@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
@@ -124,31 +125,38 @@ export const list = query({
 		assignedTo: v.optional(assigneeValidator),
 		active: v.optional(v.boolean()),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
 
+		let rows: Doc<"recurringTasks">[];
 		if (args.assignedTo !== undefined) {
-			const results = await ctx.db
+			rows = await ctx.db
 				.query("recurringTasks")
 				.withIndex("by_assignee", (q) => q.eq("assignedTo", args.assignedTo!))
 				.order("desc")
 				.take(limit);
 			if (args.active !== undefined) {
-				return results.filter((t) => t.active === args.active);
+				rows = rows.filter((t) => t.active === args.active);
 			}
-			return results;
-		}
-
-		if (args.active !== undefined) {
-			return await ctx.db
+		} else if (args.active !== undefined) {
+			rows = await ctx.db
 				.query("recurringTasks")
 				.withIndex("by_active", (q) => q.eq("active", args.active!))
 				.order("desc")
 				.take(limit);
+		} else {
+			rows = await ctx.db.query("recurringTasks").order("desc").take(limit);
 		}
 
-		return await ctx.db.query("recurringTasks").order("desc").take(limit);
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 
