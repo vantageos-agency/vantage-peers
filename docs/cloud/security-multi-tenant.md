@@ -18,6 +18,7 @@ VantagePeers Cloud implements OAuth 2.1 with Dynamic Client Registration (DCR). 
 - **Failure mode:** missing or mismatched secret returns `invalid_client` per RFC 6749 §5.2.
 - **Public clients:** clients registered without a secret remain PKCE-only. The `/token` endpoint does not require a secret for them.
 - **Provenance:** PR #621, commit `5fd6354`. Test report: `docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md`.
+- **S2.3 D8 brick migration (2026-06-04):** the `timingSafeEqual` implementation is now consumed from the shared npm brick `@vantageos/cloud-identity@0.1.0` (was an in-tree local module). The constant-time XOR-accumulate algorithm is unchanged; the brick's surface takes `Uint8Array` arguments and call sites at server-http.ts L580 + L711 wrap the hex digest strings via `TextEncoder.encode(...)`. Additionally, the **master-token gate** `masterOnlyMiddleware` (auth.ts L455) now consumes `validateMasterBearer` from the same brick, which sha256-hashes both the presented token and the configured master secret before constant-time comparing the digests — closing both the byte-oracle and length-oracle leaks present in the prior direct `token !== masterToken` compare. Coverage: every `/admin/*` route, including the `PATCH /admin/scope-profiles/:id` emergency endpoint. Test report: `docs/test-reports/s2.3-d8-vp-mcp-migration-cloud-identity-0.1.0-2026-06-04.md`.
 
 ### D7 — `redirect_uri` exact-match at `/authorize`
 
