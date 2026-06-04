@@ -374,3 +374,54 @@ cd mcp-server && npx vitest run
 ```
 
 **Filed by:** Sigma — VantageOS Team
+
+---
+
+## § S2.2 D5 — PATCH /admin/scope-profiles/:id (HTTP wrapper)
+
+**Branch:** `feat/s2-2-d5-admin-scope-profiles-patch`
+**Date:** 2026-06-04
+**Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n` · Task `k1760d42tbpxqs0h57d1bzt8h187yga4`
+**Test report (D14 canonical):** `docs/test-reports/s2.2-d5-admin-scope-profiles-patch-2026-06-04.md`
+
+### SHAs
+
+| Phase | SHA | State |
+|---|---|---|
+| RED (tests only, route not implemented) | `f86fe75` | 4/13 PASS · **9/13 FAIL** |
+| GREEN (route added in server-http.ts) | `ca2d2dd` | 13/13 PASS |
+| Full mcp-server suite at GREEN | `ca2d2dd` | 218/218 PASS (baseline 205 + 13 new) |
+
+### RED → GREEN delta (verifiable)
+
+- RED: 9 tests fail because Hono returns 404 for the undefined PATCH route
+  (T1 happy path; T5 missing required field 400; T5b reason missing 400;
+  T5b' reason-too-short bubble; T6 rename + clientsRetargeted; T7 cascade
+  revoke count; T8 not-found bubble → 404; T9 D4 violation bubble; T10 shape).
+- 4 tests already pass in RED — `masterOnlyMiddleware` fires for the entire
+  `/admin/*` prefix and returns 401/403/400 before reaching the missing
+  route (T2 missing auth, T3 wrong bearer, T4 malformed bearer, T5d body parse).
+- GREEN delta is exclusively in `mcp-server/server-http.ts` (route handler add).
+  Test file untouched between RED and GREEN.
+
+### How to reproduce
+
+```bash
+git fetch origin
+
+# RED
+git checkout f86fe75
+cd mcp-server && npx vitest run test/admin-scope-profiles-patch.test.ts
+# expect 4 PASS / 9 FAIL
+
+# GREEN
+cd .. && git checkout ca2d2dd
+cd mcp-server && npx vitest run test/admin-scope-profiles-patch.test.ts
+# expect 13/13 PASS
+
+# Full suite at GREEN
+cd mcp-server && npx vitest run
+# expect 218/218 PASS (baseline 205 + 13 new, zero regression)
+```
+
+**Filed by:** Sigma — VantageOS Team

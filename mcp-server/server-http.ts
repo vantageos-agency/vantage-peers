@@ -905,6 +905,128 @@ admin.post("/oauth/seed-profiles", async (c) => {
 	return c.json({ created });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// S2.2 D5 — PATCH /admin/scope-profiles/:id
+//
+// HTTP wrapper around Convex mutation `oauth:patchScopeProfileEmergency`
+// (S1.2-mutation + S2.1 cascade + audit log).
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware (already mounted on
+// the `admin` Hono sub-app). The mutation itself does a second constant-time
+// master-token check via `requireMasterAuth` at the Convex layer.
+//
+// Body schema:
+//   {
+//     rename?:                  string,
+//     fromAllowList?:           string[],
+//     namespaceReadPrefixes?:   string[],
+//     namespaceWritePrefixes?:  string[],
+//     cascadeRevokeTokens:      boolean,   // REQUIRED
+//     reason:                   string,    // REQUIRED, Convex enforces ≥40
+//   }
+//
+// Response (200):
+//   { patchedProfileId, cascadeRevokedCount, clientsRetargeted, auditLogId }
+//
+// Error mapping (Convex throw → HTTP status):
+//   "profile not found" → 404
+//   "D4 violation"      → 400
+//   "reason must be"    → 400  (reason length guard)
+//   anything else       → 500
+// ─────────────────────────────────────────────────────────────────────────────
+admin.patch("/scope-profiles/:id", async (c) => {
+	const masterToken = process.env.BEARER_SECRET_MASTER;
+	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
+
+	const profileId = c.req.param("id");
+	if (!profileId) {
+		return c.json({ error: "invalid_request", detail: "missing :id" }, 400);
+	}
+
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+
+	// Required: cascadeRevokeTokens (boolean), reason (string)
+	if (typeof body.cascadeRevokeTokens !== "boolean") {
+		return c.json(
+			{
+				error: "invalid_request",
+				detail: "cascadeRevokeTokens (boolean) is required",
+			},
+			400,
+		);
+	}
+	if (typeof body.reason !== "string" || body.reason.length === 0) {
+		return c.json(
+			{ error: "invalid_request", detail: "reason (string) is required" },
+			400,
+		);
+	}
+
+	// Optional fields — typed coercion / validation
+	const mutationArgs: Record<string, unknown> = {
+		callerToken: masterToken,
+		profileId,
+		cascadeRevokeTokens: body.cascadeRevokeTokens,
+		reason: body.reason,
+	};
+	if (body.rename !== undefined) {
+		if (typeof body.rename !== "string") {
+			return c.json(
+				{ error: "invalid_request", detail: "rename must be a string" },
+				400,
+			);
+		}
+		mutationArgs.rename = body.rename;
+	}
+	for (const key of [
+		"fromAllowList",
+		"namespaceReadPrefixes",
+		"namespaceWritePrefixes",
+	] as const) {
+		const v = body[key];
+		if (v !== undefined) {
+			if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
+				return c.json(
+					{ error: "invalid_request", detail: `${key} must be string[]` },
+					400,
+				);
+			}
+			mutationArgs[key] = v;
+		}
+	}
+
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:patchScopeProfileEmergency" as any,
+			mutationArgs,
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		// Map known Convex throws to HTTP status
+		if (/profile not found/i.test(message)) {
+			return c.json({ error: "not_found", detail: message }, 404);
+		}
+		if (/D4 violation/i.test(message)) {
+			return c.json({ error: "D4 violation", detail: message }, 400);
+		}
+		if (/reason must be at least/i.test(message)) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error("[admin] patchScopeProfileEmergency failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
+
 app.route("/admin", admin);
 
 // ─────────────────────────────────────────────────────────────────────────────
