@@ -104,7 +104,38 @@ export const DEFAULT_FILTER_RULES: ReadonlyArray<FilterRule> = [
 		reason: "Truncated/empty missionId — likely self-cascade from auto-IRP bot",
 		severity: "skip",
 	},
+	// Day 90 — transient retry-class entry. Issue #632 surfaced a Convex
+	// "Server Error\nRequest ID: ..." wrapping a ConvexError that succeeded on
+	// the immediate caller-side retry. These transient envelope errors should
+	// NEVER produce a GitHub issue + IRP cascade. The wildcard functionName
+	// "*" is detected by evaluateFilter() as a match-any.
+	{
+		functionName: "*",
+		errorMessageRegex: /Server Error\s*\n\s*Request ID:/,
+		reason: "Transient retry-class error (Server Error + Request ID envelope) — D90 #632",
+		severity: "skip",
+		priority: 100,
+	},
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transient classification — pure, no Convex deps
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true iff the error message matches a known TRANSIENT retry-class
+ * shape — typically a Convex `Server Error\nRequest ID: <id>` envelope that
+ * succeeded on immediate retry. These messages should never escalate to a
+ * GitHub issue or IRP cascade regardless of recurrence count.
+ *
+ * Day 90 #632 specific shape :
+ *   Server Error
+ *   Request ID: deadbeef
+ *   ConvexError: {"code":"TASK_START_BLOCKED",...}
+ */
+export function isTransientErrorMessage(errorMessage: string): boolean {
+	return /Server Error\s*\n\s*Request ID:/.test(errorMessage);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure evaluator — the unit-testable core
@@ -138,7 +169,12 @@ export function evaluateFilter(
 		return ca - cb; // older creation time first (stable tiebreak)
 	});
 	for (const rule of sorted) {
-		if (rule.functionName !== candidate.functionName) continue;
+		// "*" matches any functionName (D90 transient classifier hook)
+		if (
+			rule.functionName !== "*" &&
+			rule.functionName !== candidate.functionName
+		)
+			continue;
 		// Re-create RegExp per call to avoid stateful `lastIndex` if /g is used.
 		const re = new RegExp(
 			rule.errorMessageRegex.source,

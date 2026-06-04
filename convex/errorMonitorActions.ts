@@ -7,7 +7,12 @@ import {
 	deserializeRule,
 	evaluateFilter,
 	type FilterRule,
+	isTransientErrorMessage,
 } from "./errorMonitorFilters";
+import {
+	assertKillSwitchHealth,
+	isKillSwitchActive,
+} from "./errorMonitorKillSwitch";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -39,6 +44,25 @@ export const createGitHubIssue = internalAction({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// D90 hardening — kill-switch guard at the createGitHubIssue layer.
+		// Day 88 PR #609 guarded only pollAllDeployments; the scheduler.runAfter
+		// call from upsertError bypassed that guard, letting #632 fire despite
+		// AUTO_IRP_PAUSED=true on prod.
+		if (isKillSwitchActive()) {
+			console.log(
+				"[createGitHubIssue] Skipped — AUTO_IRP_PAUSED env var is 'true'.",
+			);
+			return null;
+		}
+		// D90 hardening — transient retry-class classification. A "Server Error
+		// + Request ID" envelope that succeeded on immediate caller-side retry
+		// must NEVER escalate to a GitHub issue + IRP cascade (issue #632 root).
+		if (isTransientErrorMessage(args.errorMessage)) {
+			console.log(
+				`[createGitHubIssue] Skipped — transient retry-class error in ${args.functionName} on ${args.deployment}.`,
+			);
+			return null;
+		}
 		const token = process.env.GITHUB_TOKEN;
 		if (!token) {
 			console.warn(
@@ -306,13 +330,20 @@ export const pollAllDeployments = internalAction({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
+		// D90 — startup health check (belt-and-suspenders). Loudly warns in logs
+		// when AUTO_IRP_PAUSED is unset so a missing env var is visible without
+		// crashing the deployment. See errorMonitorKillSwitch.ts for contract.
+		assertKillSwitchHealth();
+
 		// Kill-switch: set AUTO_IRP_PAUSED=true in Convex env to skip the entire
 		// auto-IRP generation pipeline (poll → upsertError → createGitHubIssue →
 		// IRP mission cascade). Reversible without code re-deploy — just toggle env
 		// in Convex dashboard. Introduced 2026-06-02 for pre-public repo cleanup
 		// (Day 90 mission k57e4t21sr55rhz8ng554eseb987wvh3, T4 step). Unset/set-false
 		// to re-enable after public switch + matcher-gap fix lands.
-		if (process.env.AUTO_IRP_PAUSED === "true") {
+		// D90 hardened : uses shared isKillSwitchActive() helper. Same guard is
+		// now also applied at createGitHubIssue and http.ts webhook layers.
+		if (isKillSwitchActive()) {
 			console.log(
 				"[pollAllDeployments] Skipped — AUTO_IRP_PAUSED env var is set to 'true'.",
 			);

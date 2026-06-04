@@ -104,10 +104,12 @@ describe("evaluateFilter — should NOT be filtered (issue created)", () => {
 });
 
 describe("DEFAULT_FILTER_RULES sanity", () => {
-	test("ships exactly the two acceptance-criteria rules", () => {
-		expect(DEFAULT_FILTER_RULES).toHaveLength(2);
+	test("ships the acceptance-criteria rules + D90 transient classifier", () => {
+		// D90 added a third rule (functionName "*") for transient retry-class
+		// envelope errors (issue #632). Total expected: 3.
+		expect(DEFAULT_FILTER_RULES).toHaveLength(3);
 		const fns = DEFAULT_FILTER_RULES.map((r) => r.functionName).sort();
-		expect(fns).toEqual(["missions:update", "tasks:complete"]);
+		expect(fns).toEqual(["*", "missions:update", "tasks:complete"]);
 		for (const r of DEFAULT_FILTER_RULES) {
 			expect(r.severity).toBe("skip");
 			expect(r.errorMessageRegex).toBeInstanceOf(RegExp);

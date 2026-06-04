@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
+import { isKillSwitchActive } from "./errorMonitorKillSwitch";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -133,6 +134,22 @@ http.route({
 					content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string} — template issue-resolution-v3 not found, no mission created. ${issue.html_url as string}`,
 				});
 				return new Response("OK - no template", { status: 200 });
+			}
+
+			// D90 hardening — kill-switch guard at the webhook IRP-cascade layer.
+			// Day 91 issue #632 fired despite AUTO_IRP_PAUSED=true because the
+			// webhook handler created the 14-task cascade unconditionally once a
+			// GH issue existed (even from manual `gh issue create` or external).
+			// For [Auto]-prefixed issues (created by the auto-IRP bot itself),
+			// honor the kill-switch and skip mission + cascade creation entirely.
+			if (
+				isKillSwitchActive() &&
+				(issue.title as string).startsWith("[Auto]")
+			) {
+				console.log(
+					`[webhook.issues.opened] Skipped IRP cascade for #${issue.number as number} — AUTO_IRP_PAUSED=true and title is [Auto]-prefixed.`,
+				);
+				return new Response("OK - kill-switch active", { status: 200 });
 			}
 
 			// 5. Idempotency: skip if mission already exists for this issue

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **D90 kill-switch hardening** — `AUTO_IRP_PAUSED` env-var guard now applied at all three auto-IRP pipeline entries (`pollAllDeployments` cron, `createGitHubIssue` action, `http.ts` webhook `issues.opened` for `[Auto]`-prefixed titles), not only the cron entry shipped in PR #609. Adds `convex/errorMonitorKillSwitch.ts` (`KILL_SWITCH_VARS`, `isKillSwitchActive()`, `assertKillSwitchHealth()` startup warning), a transient retry-class filter rule (`Server Error\nRequest ID:` envelope, severity `skip`) in `DEFAULT_FILTER_RULES`, an `isTransientErrorMessage()` pure classifier, and wildcard `functionName: "*"` support in `evaluateFilter()`. Closes issue #632 false-positive root cause. Tests: 10 new (10/10 PASS) in `convex/error-monitor-kill-switch-harden.test.ts`; errorMonitor suite 92→102; full suite 1358→1368 PASS, zero regression. Test report: `docs/test-reports/d90-kill-switch-harden-2026-06-04.md`.
 - `seedDefaultProfiles` (`convex/oauth.ts`) now UPSERTS (patch-on-diff) instead of skip-on-exists, with `oauth_audit_log` entries (eventType `seed_upsert`) per actual update. Operator-created profiles outside the catalog are preserved (no destructive sync). Return shape changed to `{ inserted, updated, skipped }` for caller visibility. Obsoletes the bespoke catalog-drift migration pattern shown in `convex/migrations/patch_marie_iris_rh_scope.ts` for future catalog edits (S3.4 B4). Test report: `docs/test-reports/s3.4-b4-seed-default-profiles-upsert-2026-06-03.md`.
 
 ## [2.4.14] — 2026-06-03
