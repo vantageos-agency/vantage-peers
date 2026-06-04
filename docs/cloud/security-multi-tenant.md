@@ -106,6 +106,12 @@ Wave B extends the framework across the remaining Marie-impacted cross-tenant-re
 
 ---
 
+## 5.b S3.3 B8 cursor paging rollout — COMPLETE
+
+The envelope-safe cursor paging utility (`mcp-server/src/paging.ts`: `DEFAULT_LIMIT=50`, `MAX_LIMIT=200`, `ENVELOPE_TARGET_BYTES=50_000`) is now wired into **16 of 19** `list_*` / `search_*` tools in the Cloud MCP surface. The remaining 3 tools (`list_broadcast_status`, `search_components`, `search_fix_patterns`) carry explicit `@cursorPagingException` JSDoc markers documenting why cursor paging is not semantically applicable (single-object shape, relevance-ranked semantic search). Coverage is therefore **19 / 19** — every list/search tool has either cursor paging or a documented exception. See test reports `s3.3-followup-batch-1-cursor-paging-2026-06-04.md`, `s3.3-followup-batch-2-cursor-paging-2026-06-04.md`, and `s3.3-followup-batch-3-final-cursor-paging-2026-06-04.md`.
+
+---
+
 ## 6. References
 
 - PR #621 — D6 + D7 hardening at `/token` and `/authorize`.

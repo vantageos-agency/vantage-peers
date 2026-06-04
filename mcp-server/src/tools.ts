@@ -1590,7 +1590,8 @@ export function registerTools(
 	server.tool(
 		"list_peers",
 		"List all orchestrator profiles with their current status and summary. " +
-			"Replaces claude-peers list_peers.",
+			"Replaces claude-peers list_peers. " +
+			"S3.3 B8 follow-up batch 3 FINAL — supports cursor paging via `cursor` arg.",
 		{
 			limit: z
 				.number()
@@ -1603,6 +1604,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination over profiles._creationTime).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1610,15 +1618,31 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List peers",
 		},
-		async ({ limit, fields }) => {
+		async ({ limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up batch 3 FINAL — decode opaque cursor → createdBefore.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only profiles whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const profiles = await convex.query("profiles:listProfiles" as any, {
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 
 				const filteredProfiles = scopeFilterList(
@@ -1627,6 +1651,8 @@ export function registerTools(
 				);
 
 				const peers = filteredProfiles.map((p: any) => ({
+					_id: p._id,
+					_creationTime: p._creationTime,
 					id: p.orchestratorId,
 					instanceId: p.instanceId ?? p.orchestratorId,
 					name: p.name,
@@ -1637,11 +1663,25 @@ export function registerTools(
 					sessionCount: p.dynamic.sessionCount,
 				}));
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (peers.length >= requestedLimit && peers.length > 0) {
+					const last = peers[peers.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const peersWithCursor =
+					nextCursor !== null ? { items: peers, nextCursor } : peers;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(peers, JSON.stringify(peers, null, 2), "list_peers"),
+							text: capListResponseBytes(peersWithCursor, JSON.stringify(peersWithCursor, null, 2), "list_peers"),
 						},
 					],
 				};
@@ -1764,6 +1804,13 @@ export function registerTools(
 	);
 
 	// ── list_broadcast_status ───────────────────────────────────────────────────
+	// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
+	// @cursorPagingException single-object-shape-not-list
+	// Rationale: this tool returns a single status object — `{ messageId, from,
+	// channel, createdAt, receipts[] }` — not a top-level array. Cursor paging
+	// is defined on top-level arrays, not embedded sub-arrays of a single
+	// envelope. Migrating would require a separate `list_broadcast_receipts`
+	// tool, which is out of scope for the S3.3 B8 rollout.
 
 	server.tool(
 		"list_broadcast_status",
@@ -3755,6 +3802,12 @@ export function registerTools(
 
 	server.tool(
 		"search_components",
+		// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
+		// @cursorPagingException relevance-ranked-not-chronological
+		// Rationale: results are scored by query similarity; a `createdBefore`
+		// anchor would skip high-relevance older matches in favor of newer
+		// low-relevance ones, breaking the search contract. Pagination on
+		// semantic search should be score-based (offset / topK), not time-based.
 		"Search components by name or team substring. Optionally filter by type.",
 		{
 			query: z
@@ -5575,6 +5628,11 @@ export function registerTools(
 
 	server.tool(
 		"search_fix_patterns",
+		// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
+		// @cursorPagingException semantic-action-not-chronological
+		// Rationale: backed by `convex.action("search:searchFixPatterns")` which
+		// runs an embedding-similarity ranker; cursor paging by `createdBefore`
+		// would corrupt relevance ordering. Same rationale as search_components.
 		"Semantic search over fix patterns. Use this BEFORE fixing a bug to check if it's been seen before. Returns patterns ranked by relevance.",
 		{
 			query: z

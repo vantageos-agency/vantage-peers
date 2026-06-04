@@ -1,5 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+// convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,17 +260,32 @@ export const listProfiles = query({
   args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
     orchestratorId: v.optional(v.string()),
+    // S3.3 B8 follow-up batch 3 FINAL — cursor paging rollout.
+    limit: v.optional(v.number()),
+    createdBefore: v.optional(v.number()),
   },
   returns: v.array(profileDocValidator),
   handler: async (ctx, args) => {
+    const take = args.limit ?? 50;
+    let rows: Doc<"profiles">[];
     if (args.orchestratorId !== undefined) {
-      return await ctx.db
+      rows = await ctx.db
         .query("profiles")
         .withIndex("by_orchestrator", (q) =>
           q.eq("orchestratorId", args.orchestratorId!),
         )
-        .collect();
+        .order("desc")
+        .take(take);
+    } else {
+      rows = await ctx.db.query("profiles").order("desc").take(take);
     }
-    return await ctx.db.query("profiles").collect();
+    // S3.3 B8 follow-up — post-take createdBefore filter mirrors briefingNotes
+    // pattern (convex/briefingNotes.ts:96-134, GREEN of PR #635). Profiles use
+    // `_creationTime` as the cursor anchor.
+    if (args.createdBefore !== undefined) {
+      const before = args.createdBefore;
+      rows = rows.filter((r) => r._creationTime < before);
+    }
+    return rows;
   },
 });
