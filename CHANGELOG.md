@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `seedDefaultProfiles` (`convex/oauth.ts`) now UPSERTS (patch-on-diff) instead of skip-on-exists, with `oauth_audit_log` entries (eventType `seed_upsert`) per actual update. Operator-created profiles outside the catalog are preserved (no destructive sync). Return shape changed to `{ inserted, updated, skipped }` for caller visibility. Obsoletes the bespoke catalog-drift migration pattern shown in `convex/migrations/patch_marie_iris_rh_scope.ts` for future catalog edits (S3.4 B4). Test report: `docs/test-reports/s3.4-b4-seed-default-profiles-upsert-2026-06-03.md`.
+
 ## [2.4.14] — 2026-06-03
 
 ### Security — D6 + D7 + patchScopeProfileEmergency + oauth_audit_log + S3.1 Waves A+B

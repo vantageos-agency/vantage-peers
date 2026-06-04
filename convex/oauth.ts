@@ -68,15 +68,30 @@ const scopeProfileShape = v.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// seedDefaultProfiles — admin only, idempotent
-// Creates master / marie-iris-rh / client-generic profiles if they do not yet
-// exist. Safe to re-run after deploy. Master preserves full-access semantics
-// of the existing BEARER_SECRET_MASTER path.
+// seedDefaultProfiles — admin only, idempotent, UPSERT semantics
+// S3.4 B4 (catalog-SSOT doctrine): when a persisted row drifts from the
+// catalog seed (description / fromAllowList / namespaceReadPrefixes /
+// namespaceWritePrefixes), patch the differing fields in-place and write an
+// `oauth_audit_log` entry with eventType=`seed_upsert` capturing before/after.
+// When the persisted row already matches the catalog, the row is a true no-op
+// (no DB write, no audit log). When no row exists, the seed is inserted.
+//
+// Rows present in the DB but NOT in the catalog (operator-created profiles,
+// post-D9 rename survivors like `iris-rh`) are PRESERVED — this seed mutation
+// is never destructive. This obsoletes the bespoke catalog-drift migration
+// pattern shown in `convex/migrations/patch_marie_iris_rh_scope.ts`.
+//
+// Return shape: `{ inserted, updated, skipped }` arrays of profileId strings.
+// Master preserves full-access semantics of the BEARER_SECRET_MASTER path.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const seedDefaultProfiles = mutation({
 	args: { callerToken: v.string() },
-	returns: v.array(v.string()),
+	returns: v.object({
+		inserted: v.array(v.string()),
+		updated: v.array(v.string()),
+		skipped: v.array(v.string()),
+	}),
 	handler: async (ctx, args) => {
 		await requireMasterAuth(args.callerToken);
 
@@ -133,22 +148,113 @@ export const seedDefaultProfiles = mutation({
 			},
 		];
 
-		const created: string[] = [];
+		const inserted: string[] = [];
+		const updated: string[] = [];
+		const skipped: string[] = [];
+
+		const arraysEqual = (a: string[], b: string[]): boolean => {
+			if (a.length !== b.length) return false;
+			for (let i = 0; i < a.length; i++) {
+				if (a[i] !== b[i]) return false;
+			}
+			return true;
+		};
+
+		// actorTokenHash is computed lazily (only when we know we'll write an
+		// audit row) so the no-op idempotent path stays a pure read.
+		let actorTokenHashCache: string | null = null;
+		const getActorTokenHash = async (): Promise<string> => {
+			if (actorTokenHashCache === null) {
+				actorTokenHashCache = await sha256Hex(args.callerToken);
+			}
+			return actorTokenHashCache;
+		};
+
 		for (const p of defaults) {
 			const existing = await ctx.db
 				.query("oauth_scope_profiles")
 				.withIndex("by_profileId", (q) => q.eq("profileId", p.profileId))
 				.unique();
-			if (existing) continue;
+
 			const now = Date.now();
-			await ctx.db.insert("oauth_scope_profiles", {
-				...p,
+
+			if (!existing) {
+				await ctx.db.insert("oauth_scope_profiles", {
+					...p,
+					createdAt: now,
+					updatedAt: now,
+				});
+				inserted.push(p.profileId);
+				continue;
+			}
+
+			// Build the patch: only fields whose persisted value diverges from
+			// the catalog. _creationTime + createdAt are preserved.
+			const patch: Record<string, unknown> = {};
+			if (existing.description !== p.description) {
+				patch.description = p.description;
+			}
+			if (!arraysEqual(existing.fromAllowList, p.fromAllowList)) {
+				patch.fromAllowList = p.fromAllowList;
+			}
+			if (
+				!arraysEqual(
+					existing.namespaceReadPrefixes,
+					p.namespaceReadPrefixes,
+				)
+			) {
+				patch.namespaceReadPrefixes = p.namespaceReadPrefixes;
+			}
+			if (
+				!arraysEqual(
+					existing.namespaceWritePrefixes,
+					p.namespaceWritePrefixes,
+				)
+			) {
+				patch.namespaceWritePrefixes = p.namespaceWritePrefixes;
+			}
+
+			if (Object.keys(patch).length === 0) {
+				skipped.push(p.profileId);
+				continue;
+			}
+
+			patch.updatedAt = now;
+			await ctx.db.patch(existing._id, patch);
+
+			// Audit log: capture the constrained {profileId, fromAllowList,
+			// namespaceReadPrefixes, namespaceWritePrefixes} snapshots required
+			// by the oauth_audit_log schema. Description drift, while patched,
+			// is not part of the forensic schema and is intentionally omitted
+			// from the audit row.
+			const previousState = {
+				profileId: existing.profileId,
+				fromAllowList: existing.fromAllowList,
+				namespaceReadPrefixes: existing.namespaceReadPrefixes,
+				namespaceWritePrefixes: existing.namespaceWritePrefixes,
+			};
+			const newState = {
+				profileId: p.profileId,
+				fromAllowList: p.fromAllowList,
+				namespaceReadPrefixes: p.namespaceReadPrefixes,
+				namespaceWritePrefixes: p.namespaceWritePrefixes,
+			};
+			await ctx.db.insert("oauth_audit_log", {
+				eventType: "seed_upsert",
+				actorTokenHash: await getActorTokenHash(),
+				targetProfileId: p.profileId,
+				previousState,
+				newState,
+				reason:
+					"seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
+				cascadeRevokedCount: 0,
+				clientsRetargeted: 0,
 				createdAt: now,
-				updatedAt: now,
 			});
-			created.push(p.profileId);
+			updated.push(p.profileId);
 		}
-		return created;
+
+		return { inserted, updated, skipped };
 	},
 });
 

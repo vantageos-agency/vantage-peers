@@ -30,12 +30,15 @@ function createTestConvex() {
 describe("oauth.seedDefaultProfiles", () => {
 	test("seeds master, marie-iris-rh, client-generic, public-readonly on first run", async () => {
 		const t = createTestConvex();
-		const created = await t.mutation(api.oauth.seedDefaultProfiles, {
+		const summary = await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
-		expect(created.sort()).toEqual(
+		// S3.4 B4: return shape now `{ inserted, updated, skipped }`.
+		expect((summary.inserted as string[]).sort()).toEqual(
 			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
 		);
+		expect(summary.updated).toEqual([]);
+		expect(summary.skipped).toEqual([]);
 	});
 
 	test("is idempotent — second run creates nothing", async () => {
@@ -46,7 +49,13 @@ describe("oauth.seedDefaultProfiles", () => {
 		const secondRun = await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
-		expect(secondRun).toEqual([]);
+		// S3.4 B4: idempotent re-run inserts nothing, updates nothing; all 4
+		// catalog profiles fall into `skipped`.
+		expect(secondRun.inserted).toEqual([]);
+		expect(secondRun.updated).toEqual([]);
+		expect((secondRun.skipped as string[]).sort()).toEqual(
+			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
+		);
 	});
 
 	test("rejects invalid master token", async () => {
