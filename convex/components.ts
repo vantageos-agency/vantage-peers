@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
 
@@ -74,29 +75,37 @@ export const list = query({
 		type: v.optional(componentTypeValidator),
 		team: v.optional(v.string()),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 100;
 
+		let rows: Doc<"components">[];
 		if (args.team !== undefined && args.type !== undefined) {
-			return await ctx.db
+			rows = await ctx.db
 				.query("components")
 				.withIndex("by_team", (q) =>
 					q.eq("team", args.team!).eq("type", args.type!),
 				)
 				.order("desc")
 				.take(limit);
-		}
-
-		if (args.type !== undefined) {
-			return await ctx.db
+		} else if (args.type !== undefined) {
+			rows = await ctx.db
 				.query("components")
 				.withIndex("by_type", (q) => q.eq("type", args.type!))
 				.order("desc")
 				.take(limit);
+		} else {
+			rows = await ctx.db.query("components").order("desc").take(limit);
 		}
 
-		return await ctx.db.query("components").order("desc").take(limit);
+		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 

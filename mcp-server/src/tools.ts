@@ -2581,7 +2581,8 @@ export function registerTools(
 	server.tool(
 		"list_missions",
 		"List missions from VantagePeers with optional filters. " +
-			"Filter by project, pilot, and/or status. Returns newest first.",
+			"Filter by project, pilot, and/or status. Returns newest first. " +
+			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
 		{
 			project: z.string().optional().describe("Filter by project name"),
 			pilot: creatorSchema.optional().describe("Filter by pilot orchestrator"),
@@ -2599,6 +2600,13 @@ export function registerTools(
 				.optional()
 				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
 			updatedSince: updatedSinceSchema.optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -2606,7 +2614,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List missions",
 		},
-		async ({ project, pilot, status, limit, fields, updatedSince }) => {
+		async ({ project, pilot, status, limit, fields, updatedSince, cursor }) => {
 			try {
 				// Non-master: must pilot=<own-userId>. Otherwise the query spans
 				// every tenant's missions.
@@ -2618,16 +2626,49 @@ export function registerTools(
 					}
 				}
 
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				const missions = await convex.query("missions:list" as any, {
 					project,
 					pilot,
 					status,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					updatedSince,
+					createdBefore,
 				});
 
-				const baseText = capListResponseBytes(missions, JSON.stringify(missions, null, 2), "list_missions");
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				const missionsArr = Array.isArray(missions) ? missions : [];
+				let nextCursor: string | null = null;
+				if (missionsArr.length >= requestedLimit && missionsArr.length > 0) {
+					const last = missionsArr[missionsArr.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const missionsWithCursor =
+					nextCursor !== null
+						? { items: missionsArr, nextCursor }
+						: missions;
+
+				const baseText = capListResponseBytes(missionsWithCursor, JSON.stringify(missionsWithCursor, null, 2), "list_missions");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "mission-timeline",
 					items: Array.isArray(missions)
@@ -2920,7 +2961,8 @@ export function registerTools(
 
 	server.tool(
 		"list_diaries",
-		"List diary entries, optionally filtered by orchestrator. Returns newest first.",
+		"List diary entries, optionally filtered by orchestrator. Returns newest first. " +
+			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
 		{
 			orchestrator: creatorSchema
 				.optional()
@@ -2941,6 +2983,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -2948,7 +2997,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List diary entries",
 		},
-		async ({ orchestrator, createdBy, limit, fields }) => {
+		async ({ orchestrator, createdBy, limit, fields, cursor }) => {
 			try {
 				// v2.4.8: orchestrator (writer-intent) and createdBy (auth-derived
 				// author) are separate filters — NOT aliases. Forward both independently.
@@ -2966,18 +3015,51 @@ export function registerTools(
 					}
 				}
 
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				const entries = await convex.query("diary:list" as any, {
 					orchestrator,
 					createdBy,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
+
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				const entriesArr = Array.isArray(entries) ? entries : [];
+				let nextCursor: string | null = null;
+				if (entriesArr.length >= requestedLimit && entriesArr.length > 0) {
+					const last = entriesArr[entriesArr.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const entriesWithCursor =
+					nextCursor !== null
+						? { items: entriesArr, nextCursor }
+						: entries;
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(entries, JSON.stringify(entries, null, 2), "list_diaries"),
+							text: capListResponseBytes(entriesWithCursor, JSON.stringify(entriesWithCursor, null, 2), "list_diaries"),
 						},
 					],
 				};
@@ -3367,7 +3449,8 @@ export function registerTools(
 
 	server.tool(
 		"list_components",
-		"List registered components. Filter by type (agent/skill/hook/plugin) and/or team.",
+		"List registered components. Filter by type (agent/skill/hook/plugin) and/or team. " +
+			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
 		{
 			type: componentTypeSchema.optional().describe("Filter by component type"),
 			team: z.string().optional().describe("Filter by team"),
@@ -3382,6 +3465,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -3389,14 +3479,30 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List components",
 		},
-		async ({ type, team, limit, fields }) => {
+		async ({ type, team, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const components = await convex.query("components:list" as any, {
 					type,
 					team,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 
 				const filteredComponents = scopeFilterList(
@@ -3404,11 +3510,30 @@ export function registerTools(
 					Array.isArray(components) ? components : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredComponents.length >= requestedLimit &&
+					filteredComponents.length > 0
+				) {
+					const last = filteredComponents[filteredComponents.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const componentsWithCursor =
+					nextCursor !== null
+						? { items: filteredComponents, nextCursor }
+						: filteredComponents;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredComponents, JSON.stringify(filteredComponents, null, 2), "list_components"),
+							text: capListResponseBytes(componentsWithCursor, JSON.stringify(componentsWithCursor, null, 2), "list_components"),
 						},
 					],
 				};
@@ -3670,7 +3795,8 @@ export function registerTools(
 
 	server.tool(
 		"list_recurring_tasks",
-		"List recurring task templates. Filter by assignee or active status.",
+		"List recurring task templates. Filter by assignee or active status. " +
+			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
 		{
 			assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
 			active: z.boolean().optional().describe("Filter by active status"),
@@ -3685,6 +3811,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -3692,22 +3825,57 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List recurring tasks",
 		},
-		async ({ assignedTo, active, limit, fields }) => {
+		async ({ assignedTo, active, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const tasks = await convex.query("recurringTasks:list" as any, {
 					assignedTo,
 					active,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 				const filteredTasks = scopeFilterList(
 					oauthCtx,
 					Array.isArray(tasks) ? tasks : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredTasks.length >= requestedLimit &&
+					filteredTasks.length > 0
+				) {
+					const last = filteredTasks[filteredTasks.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const tasksWithCursor =
+					nextCursor !== null
+						? { items: filteredTasks, nextCursor }
+						: filteredTasks;
+
 				return {
-					content: [{ type: "text", text: capListResponseBytes(filteredTasks, JSON.stringify(filteredTasks, null, 2), "list_recurring_tasks") }],
+					content: [{ type: "text", text: capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_recurring_tasks") }],
 				};
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
@@ -4127,7 +4295,8 @@ export function registerTools(
 	server.tool(
 		"list_mandates",
 		"List mandates with optional filters. Filter by requestedBy, fulfilledBy, and/or status. " +
-			"Returns newest first. Use to track service agreements between orchestrators.",
+			"Returns newest first. Use to track service agreements between orchestrators. " +
+			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
 		{
 			requestedBy: creatorSchema
 				.optional()
@@ -4149,6 +4318,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -4156,26 +4332,61 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List mandates",
 		},
-		async ({ requestedBy, fulfilledBy, status, limit, fields }) => {
+		async ({ requestedBy, fulfilledBy, status, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const mandates = await convex.query("mandates:list" as any, {
 					requestedBy,
 					fulfilledBy,
 					status,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 				const filteredMandates = scopeFilterList(
 					oauthCtx,
 					Array.isArray(mandates) ? mandates : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredMandates.length >= requestedLimit &&
+					filteredMandates.length > 0
+				) {
+					const last = filteredMandates[filteredMandates.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const mandatesWithCursor =
+					nextCursor !== null
+						? { items: filteredMandates, nextCursor }
+						: filteredMandates;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredMandates, JSON.stringify(filteredMandates, null, 2), "list_mandates"),
+							text: capListResponseBytes(mandatesWithCursor, JSON.stringify(mandatesWithCursor, null, 2), "list_mandates"),
 						},
 					],
 				};
@@ -4418,7 +4629,7 @@ export function registerTools(
 	server.tool(
 		"list_bus",
 		"List business units with optional filters. Filter by orchestratorId and/or status. " +
-			"Returns newest first.",
+			"Returns newest first. S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
 		{
 			orchestratorId: z
 				.string()
@@ -4436,6 +4647,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -4443,25 +4661,57 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List BUs",
 		},
-		async ({ orchestratorId, status, limit, fields }) => {
+		async ({ orchestratorId, status, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const bus = await convex.query("businessUnits:list" as any, {
 					orchestratorId,
 					status,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 				const filteredBus = scopeFilterList(
 					oauthCtx,
 					Array.isArray(bus) ? bus : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (filteredBus.length >= requestedLimit && filteredBus.length > 0) {
+					const last = filteredBus[filteredBus.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const busWithCursor =
+					nextCursor !== null
+						? { items: filteredBus, nextCursor }
+						: filteredBus;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredBus, JSON.stringify(filteredBus, null, 2), "list_bus"),
+							text: capListResponseBytes(busWithCursor, JSON.stringify(busWithCursor, null, 2), "list_bus"),
 						},
 					],
 				};
