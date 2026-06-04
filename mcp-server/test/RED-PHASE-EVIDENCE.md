@@ -332,3 +332,45 @@ cd mcp-server && npx vitest run
 
 **Filed by:** Sigma — VantageOS Team
 
+
+---
+
+## S3.3 B8 — list_* cursor paging + envelope cap protection
+
+**Branch:** `feat/s3-3-b8-list-tools-cursor-paging`
+**Date:** 2026-06-04
+**Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n` · Task `k1794r6q329q1s36pz4zzjnpvd87zfbn`
+
+| Phase | SHA       | Suite outcome (paging)                    | Full mcp-server suite |
+| ----- | --------- | ----------------------------------------- | --------------------- |
+| RED   | `602795b` | 1 suite FAIL (module `../src/paging.js` missing) | not run separately |
+| GREEN | `c1ba9a1` | 28/28 PASS                                | 205/205 PASS (177 baseline + 28 new) |
+
+Tools wired (3): `list_tasks`, `list_memories`, `list_briefing_notes`.
+Backend changed: `convex/tasks.ts list()` + `convex/briefingNotes.ts list()`
+accept `createdBefore: v.optional(v.number())`. `convex/memories.ts listMemories`
+already supports `paginationOpts` (Day-N work) — MCP forwards `backendCursor`
+unchanged.
+
+### Reproduction
+
+```bash
+cd /root/coding/vantage-memory
+git checkout feat/s3-3-b8-list-tools-cursor-paging
+
+# RED
+git checkout 602795b
+cd mcp-server && npx vitest run test/list-tools-cursor-paging.test.ts
+# expect Cannot find module '../src/paging.js' — 1 suite FAIL
+
+# GREEN
+cd .. && git checkout c1ba9a1
+cd mcp-server && npx vitest run test/list-tools-cursor-paging.test.ts
+# expect 28/28 PASS
+
+# Full suite at GREEN
+cd mcp-server && npx vitest run
+# expect 205/205 PASS (zero regression vs 177 baseline)
+```
+
+**Filed by:** Sigma — VantageOS Team

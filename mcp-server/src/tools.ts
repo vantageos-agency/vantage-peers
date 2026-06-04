@@ -19,6 +19,7 @@ import {
 	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
+import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { scopeFilterGet, scopeFilterList } from "./scope-filter.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
@@ -1158,6 +1159,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"When set, forwards Convex `paginationOpts.cursor` to fetch the next page.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1165,18 +1173,44 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List memories",
 		},
-		async ({ namespace, type, createdBy, limit, fields }) => {
+		async ({ namespace, type, createdBy, limit, fields, cursor }) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
 
-				const memories = await convex.query("memories:listMemories" as any, {
+				// S3.3 B8 — decode cursor → backendCursor (paginationOpts.cursor)
+				let backendCursor: string | null | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "backendCursor" in decoded) {
+							backendCursor = decoded.backendCursor;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
+				const queryArgs: Record<string, unknown> = {
 					namespace,
 					type,
 					createdBy,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
-				});
+				};
+				if (backendCursor !== undefined) {
+					queryArgs.paginationOpts = {
+						numItems: effectiveLimit ?? 50,
+						cursor: backendCursor,
+					};
+				}
+
+				const memories = await convex.query(
+					"memories:listMemories" as any,
+					queryArgs,
+				);
 
 				const rawList = Array.isArray(memories)
 					? memories
@@ -1851,7 +1885,8 @@ export function registerTools(
 	server.tool(
 		"list_tasks",
 		"List tasks from VantagePeers with optional filters. " +
-			"Filter by assignee, instance, status, and/or project. Returns newest first.",
+			"Filter by assignee, instance, status, and/or project. Returns newest first. " +
+			"S3.3 B8 — supports cursor paging: pass `cursor` from a prior call's nextCursor to fetch the next page.",
 		{
 			assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
 			assignedToInstance: z
@@ -1880,6 +1915,13 @@ export function registerTools(
 					"Filter by task creator (e.g. 'pi' to find Pi-dispatched tasks)",
 				),
 			updatedSince: updatedSinceSchema.optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"When set, fetches tasks strictly older than the cursor anchor (forward, newest-first).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1896,6 +1938,7 @@ export function registerTools(
 			fields,
 			createdBy,
 			updatedSince,
+			cursor,
 		}) => {
 			try {
 				// Non-master: must scope to own identity. If neither assignedTo
@@ -1912,18 +1955,53 @@ export function registerTools(
 					}
 				}
 
+				// S3.3 B8 — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				// Clamp caller limit through paging contract (zod already caps at 200).
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				const tasks = await convex.query("tasks:list" as any, {
 					assignedTo,
 					assignedToInstance,
 					status,
 					project,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBy,
 					updatedSince,
+					createdBefore,
 				});
 
-				const baseText = capListResponseBytes(tasks, JSON.stringify(tasks, null, 2), "list_tasks");
+				// Build nextCursor from the last row's _creationTime when the
+				// page is full (heuristic — caller can keep paging until empty).
+				const requestedLimit = effectiveLimit ?? 20;
+				const tasksArr = Array.isArray(tasks) ? tasks : [];
+				let nextCursor: string | null = null;
+				if (tasksArr.length >= requestedLimit && tasksArr.length > 0) {
+					const last = tasksArr[tasksArr.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const tasksWithCursor =
+					nextCursor !== null
+						? { items: tasksArr, nextCursor }
+						: tasks;
+
+				const baseText = capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_tasks");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "tasks-table",
 					items: Array.isArray(tasks)
@@ -3117,6 +3195,13 @@ export function registerTools(
 				.optional()
 				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
 			updatedSince: updatedSinceSchema.optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -3124,17 +3209,33 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List briefing notes",
 		},
-		async ({ topic, limit, fields, updatedSince }) => {
+		async ({ topic, limit, fields, updatedSince, cursor }) => {
 			try {
+				// S3.3 B8 — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only notes whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					updatedSince,
+					createdBefore,
 				});
 
 				const filteredNotes = scopeFilterList(
@@ -3142,7 +3243,28 @@ export function registerTools(
 					Array.isArray(notes) ? notes : [],
 				);
 
-				const baseText = capListResponseBytes(filteredNotes, JSON.stringify(filteredNotes, null, 2), "list_briefing_notes");
+				// S3.3 B8 — emit nextCursor when page is full (more likely follows).
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredNotes.length >= requestedLimit &&
+					filteredNotes.length > 0
+				) {
+					const last = filteredNotes[filteredNotes.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({
+							createdBefore: last._creationTime,
+						});
+					}
+				}
+				const notesWithCursor =
+					nextCursor !== null
+						? { items: filteredNotes, nextCursor }
+						: filteredNotes;
+
+				const baseText = capListResponseBytes(notesWithCursor, JSON.stringify(notesWithCursor, null, 2), "list_briefing_notes");
 				const text = appendMarkerIfEnabled(baseText, () => {
 					const items = filteredNotes;
 					if (items.length === 0) return null;
