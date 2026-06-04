@@ -425,3 +425,37 @@ cd mcp-server && npx vitest run
 ```
 
 **Filed by:** Sigma — VantageOS Team
+
+---
+
+## § S2.3 D8 — VP MCP migration to `@vantageos/cloud-identity@0.1.0` (2026-06-04)
+
+**Branch:** `feat/s2-3-d8-vp-mcp-migrate-cloud-identity-0.1.0`
+**Mission:** `k57c7s478gw1a3e5gmhdeptg5n87z78n`
+**Task:** `k1707g7qa0stt6bd2g0w2pnp3h87y9xw`
+**Canonical report:** [`docs/test-reports/s2.3-d8-vp-mcp-migration-cloud-identity-0.1.0-2026-06-04.md`](../../docs/test-reports/s2.3-d8-vp-mcp-migration-cloud-identity-0.1.0-2026-06-04.md)
+
+### RED commit
+- SHA: `fbe73e066c8cf6cf3dcbdbe23c7632bff9aa8cdf`
+- Change: delete `mcp-server/src/crypto.ts` + `mcp-server/src/scope-filter.ts`; add `@vantageos/cloud-identity@^0.1.0` to `mcp-server/package.json` dependencies.
+- Expected failure: 10/10 test files fail at module resolution with `Cannot find module ../src/crypto.js` and `Cannot find module ../src/scope-filter.js`.
+- Observed failure: matched expectation. Vitest output reports `Test Files 10 failed (10) | Tests no tests` — no test cases load because every importer chain breaks before collection.
+
+### GREEN commit
+- SHA: `ce9f7ba335491eda28d2a001366f421df77e6df7`
+- Change: rewire all 7 importers to `@vantageos/cloud-identity` (3 source + 4 test files). Apply SECURITY UPGRADE in `mcp-server/src/auth.ts` `masterOnlyMiddleware` (replace non-constant-time direct compare with brick's `validateMasterBearer` which sha256-hashes both sides and constant-time-compares the digests). Wrap `timingSafeEqual` call sites with `TextEncoder.encode(...)` to match brick `Uint8Array` surface.
+- Test ratio: 254/254 PASS (baseline preserved, zero regression).
+- TypeScript: `tsc --noEmit` clean.
+
+### SECURITY UPGRADE note
+The migration is not a pure refactor — it ships a measurable security hardening of the master-token gate by replacing the previous `token !== masterToken` direct string compare (non-constant-time, length-oracle + byte-oracle) with the brick's hash-then-constant-time-compare path. Coverage extends to every `/admin/*` route (S2.2 D5 PATCH endpoint, all OAuth admin routes).
+
+### Reproduce
+```
+git checkout fbe73e066c8cf6cf3dcbdbe23c7632bff9aa8cdf
+cd mcp-server && npx vitest run         # expect 10 test files FAIL
+git checkout ce9f7ba335491eda28d2a001366f421df77e6df7
+cd mcp-server && npx vitest run         # expect 254/254 PASS
+```
+
+**Filed by:** Sigma — VantageOS Team | 2026-06-04

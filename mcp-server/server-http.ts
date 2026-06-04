@@ -41,7 +41,7 @@ import {
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
-import { timingSafeEqual } from "./src/crypto.js";
+import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -575,9 +575,13 @@ app.post("/token", async (c) => {
 				);
 			}
 			const presentedHash = await sha256Hex(clientSecret);
+			const _enc = new TextEncoder();
 			if (
 				!client.clientSecretHash ||
-				!(await timingSafeEqual(presentedHash, client.clientSecretHash))
+				!(await timingSafeEqual(
+					_enc.encode(presentedHash),
+					_enc.encode(client.clientSecretHash),
+				))
 			) {
 				return c.json(
 					{
@@ -706,9 +710,13 @@ app.post("/token", async (c) => {
 				);
 			}
 			const presentedHash = await sha256Hex(clientSecret);
+			const _enc = new TextEncoder();
 			if (
 				!refreshClient.clientSecretHash ||
-				!(await timingSafeEqual(presentedHash, refreshClient.clientSecretHash))
+				!(await timingSafeEqual(
+					_enc.encode(presentedHash),
+					_enc.encode(refreshClient.clientSecretHash),
+				))
 			) {
 				return c.json(
 					{

@@ -33,7 +33,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
-import { scopeFilterGet } from "../src/scope-filter.js";
+import { scopeFilterGet } from "@vantageos/cloud-identity";
 import { registerTools } from "../src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────

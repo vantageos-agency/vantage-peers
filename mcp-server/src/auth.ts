@@ -18,6 +18,7 @@
  * OAuth connector can bootstrap discovery.
  */
 
+import { validateMasterBearer } from "@vantageos/cloud-identity";
 import { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
 
@@ -454,7 +455,6 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 
 export function masterOnlyMiddleware(): MiddlewareHandler {
 	return async (c: Context, next: Next) => {
-		const authHeader = c.req.header("Authorization");
 		const masterToken = process.env.BEARER_SECRET_MASTER;
 		if (!masterToken) {
 			return c.json(
@@ -462,11 +462,18 @@ export function masterOnlyMiddleware(): MiddlewareHandler {
 				500,
 			);
 		}
-		if (!authHeader?.startsWith("Bearer ")) {
-			return c.json({ error: "Missing Authorization header" }, 401);
-		}
-		const token = authHeader.slice("Bearer ".length).trim();
-		if (token !== masterToken) {
+		// SECURITY UPGRADE (S2.3 D8): validateMasterBearer from
+		// @vantageos/cloud-identity sha256-hashes both the presented token and
+		// the configured master secret, then constant-time-compares the digests.
+		// Replaces the previous non-constant-time `token !== masterToken`
+		// string compare.
+		const authHeader = c.req.header("Authorization");
+		const result = await validateMasterBearer(authHeader, masterToken);
+		if (!result.ok) {
+			if (result.error === "missing" || result.error === "malformed") {
+				return c.json({ error: "Missing Authorization header" }, 401);
+			}
+			// "mismatch"
 			return c.json(
 				{ error: "Forbidden: admin endpoints require master token" },
 				403,

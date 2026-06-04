@@ -30,7 +30,7 @@ import {
 	passesScopeFilter,
 	scopeFilterGet,
 	scopeFilterList,
-} from "../src/scope-filter.js";
+} from "@vantageos/cloud-identity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture builders
