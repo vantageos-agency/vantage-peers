@@ -238,6 +238,10 @@ export const list = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 		createdBy: v.optional(creatorValidator),
 		updatedSince: v.optional(v.number()),
+		// S3.3 B8 — cursor paging anchor. When provided, rows with
+		// _creationTime >= createdBefore are filtered out (newest-first
+		// forward pagination). Used by MCP list_* cursor layer.
+		createdBefore: v.optional(v.number()),
 	},
 	// Returns: array of full task docs OR array of lite projections.
 	// Validator omitted because v.union of full+lite produces overly-strict
@@ -367,6 +371,11 @@ export const list = query({
 		}
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+		}
+		// S3.3 B8 — cursor paging: drop rows newer-or-equal to cursor anchor.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			filtered = filtered.filter((r) => r._creationTime < before);
 		}
 
 		const scoped = filterByOrgScope(filtered, scope);
