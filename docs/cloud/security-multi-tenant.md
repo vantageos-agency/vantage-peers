@@ -51,6 +51,16 @@ Tenant operations that fall outside the normal admin path (scope-profile rewrite
 - D9 cascade-update across `oauth_clients` reached full enforcement parity in PR #623, commit `2f5c974`.
 - Test reports: `docs/test-reports/s1.2-mutation-2026-06-03.md`, `docs/test-reports/s2.1-d9-cascade-clients-2026-06-03.md`.
 
+### S2.2 D5 — HTTP wrapper `PATCH /admin/scope-profiles/:id`
+
+Operators do not call Convex directly. The mutation is exposed at the MCP server HTTP surface as `PATCH /admin/scope-profiles/:id`, gated by `BEARER_SECRET_MASTER` via the existing `masterOnlyMiddleware` on the `/admin/*` Hono sub-app. The handler validates the body shape (`cascadeRevokeTokens: boolean` and `reason: string` are required; `rename` / `fromAllowList` / `namespaceReadPrefixes` / `namespaceWritePrefixes` are optional `string[]`), forwards to `oauth:patchScopeProfileEmergency`, and returns the mutation result body `{ patchedProfileId, cascadeRevokedCount, clientsRetargeted, auditLogId }` on 200. Convex throws are mapped to HTTP status: `profile not found` → 404, `D4 violation` → 400, `reason must be at least 40 characters` → 400, anything else → 500.
+
+Token re-issue after cascade revoke is **not** an admin-endpoint responsibility: clients re-authenticate via the standard `/authorize` + `/token` flow against the patched profile. This keeps the emergency surface to a single revoke-and-audit primitive.
+
+- Endpoint shipped in `feat/s2-2-d5-admin-scope-profiles-patch` (commit `ca2d2dd`, RED `f86fe75`).
+- Test report: `docs/test-reports/s2.2-d5-admin-scope-profiles-patch-2026-06-04.md`.
+- Phase tests: 13/13 PASS · Full mcp-server suite: 218/218 PASS (baseline 205 + 13 new).
+
 ---
 
 ## 3. `oauth_audit_log` — append-only ledger
