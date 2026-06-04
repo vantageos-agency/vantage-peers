@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { api } from "./_generated/api";
+// convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
+import type { Doc } from "./_generated/dataModel";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -263,19 +265,25 @@ export const listByProject = query({
 		project: v.string(),
 		status: v.optional(issueStatusValidator),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
 		// The by_project index only has ["project"], so we query by project
 		// and filter status in-memory if needed
-		const results = await ctx.db
+		let results = await ctx.db
 			.query("issues")
 			.withIndex("by_project", (q) => q.eq("project", args.project))
 			.order("desc")
 			.take(limit);
 
 		if (args.status !== undefined) {
-			return results.filter((r) => r.status === args.status);
+			results = results.filter((r) => r.status === args.status);
+		}
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			results = results.filter((r) => r._creationTime < before);
 		}
 		return results;
 	},
@@ -291,25 +299,35 @@ export const listByOrchestrator = query({
 		assignedOrchestrator: v.string(),
 		status: v.optional(issueStatusValidator),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		let rows: Doc<"issues">[];
 		if (args.status !== undefined) {
-			return await ctx.db
+			const statusFilter = args.status;
+			rows = await ctx.db
 				.query("issues")
 				.withIndex("by_assigned", (q) =>
-					q.eq("assignedOrchestrator", args.assignedOrchestrator).eq("status", args.status!),
+					q.eq("assignedOrchestrator", args.assignedOrchestrator).eq("status", statusFilter),
+				)
+				.order("desc")
+				.take(limit);
+		} else {
+			rows = await ctx.db
+				.query("issues")
+				.withIndex("by_assigned", (q) =>
+					q.eq("assignedOrchestrator", args.assignedOrchestrator),
 				)
 				.order("desc")
 				.take(limit);
 		}
-		return await ctx.db
-			.query("issues")
-			.withIndex("by_assigned", (q) =>
-				q.eq("assignedOrchestrator", args.assignedOrchestrator),
-			)
-			.order("desc")
-			.take(limit);
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 
@@ -322,15 +340,22 @@ export const listByStatus = query({
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		status: issueStatusValidator,
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	returns: v.array(v.any()),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
-		return await ctx.db
+		let rows: Doc<"issues">[] = await ctx.db
 			.query("issues")
 			.withIndex("by_status", (q) => q.eq("status", args.status))
 			.order("desc")
 			.take(limit);
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 

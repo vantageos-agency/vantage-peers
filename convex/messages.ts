@@ -1,5 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+// convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
+import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,6 +273,8 @@ export const listMessages = query({
 		sessionDay: v.optional(v.number()),
 		from: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	returns: v.array(
 		v.object({
@@ -287,24 +291,30 @@ export const listMessages = query({
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 100;
+		const before = args.createdBefore;
 
+		let rows: Doc<"messages">[];
 		if (args.sessionDay !== undefined) {
-			return await ctx.db
+			rows = await ctx.db
 				.query("messages")
 				.withIndex("by_day", (q) => q.eq("sessionDay", args.sessionDay!))
 				.order("asc")
 				.take(limit);
-		}
-
-		if (args.from !== undefined) {
-			return await ctx.db
+		} else if (args.from !== undefined) {
+			rows = await ctx.db
 				.query("messages")
 				.withIndex("by_from", (q) => q.eq("from", args.from!))
 				.order("desc")
 				.take(limit);
+		} else {
+			rows = await ctx.db.query("messages").order("desc").take(limit);
 		}
 
-		return await ctx.db.query("messages").order("desc").take(limit);
+		// S3.3 B8 follow-up batch 2 — drop rows newer-or-equal to anchor.
+		if (before !== undefined) {
+			rows = rows.filter((r) => r._creationTime < before);
+		}
+		return rows;
 	},
 });
 

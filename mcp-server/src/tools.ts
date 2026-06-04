@@ -1655,7 +1655,8 @@ export function registerTools(
 
 	server.tool(
 		"list_messages",
-		"List message history. Filter by day or sender. For unread messages use check_messages instead.",
+		"List message history. Filter by day or sender. For unread messages use check_messages instead. " +
+			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
 		{
 			sessionDay: z
 				.number()
@@ -1674,6 +1675,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1681,8 +1689,23 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List messages",
 		},
-		async ({ sessionDay, from, limit, fields }) => {
+		async ({ sessionDay, from, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only messages whose createdBy ∈ fromAllowList OR whose namespace
@@ -1690,8 +1713,9 @@ export function registerTools(
 				const messages = await convex.query("messages:listMessages" as any, {
 					sessionDay,
 					from,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 
 				const filteredMessages = scopeFilterList(
@@ -1699,7 +1723,26 @@ export function registerTools(
 					Array.isArray(messages) ? messages : [],
 				);
 
-				const baseText = capListResponseBytes(filteredMessages, JSON.stringify(filteredMessages, null, 2), "list_messages");
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredMessages.length >= requestedLimit &&
+					filteredMessages.length > 0
+				) {
+					const last = filteredMessages[filteredMessages.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const messagesWithCursor =
+					nextCursor !== null
+						? { items: filteredMessages, nextCursor }
+						: filteredMessages;
+
+				const baseText = capListResponseBytes(messagesWithCursor, JSON.stringify(messagesWithCursor, null, 2), "list_messages");
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "messages-feed",
 					items: filteredMessages.map((m: any) => ({
@@ -2436,7 +2479,8 @@ export function registerTools(
 
 	server.tool(
 		"list_tasks_by_mission",
-		"List all tasks linked to a specific mission. Optionally filter by status.",
+		"List all tasks linked to a specific mission. Optionally filter by status. " +
+			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
 		{
 			missionId: z.string().describe("Convex document ID of the mission"),
 			status: taskStatusFilterSchema
@@ -2454,6 +2498,13 @@ export function registerTools(
 				.describe('Field projection ("lite"|"full")'),
 			createdBy: assigneeSchema.optional().describe("Filter by task creator"),
 			updatedSince: updatedSinceSchema.optional(),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -2461,16 +2512,32 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List tasks by mission",
 		},
-		async ({ missionId, status, limit, fields, createdBy, updatedSince }) => {
+		async ({ missionId, status, limit, fields, createdBy, updatedSince, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBy,
 					updatedSince,
+					createdBefore,
 				});
 
 				const filteredTasks = scopeFilterList(
@@ -2478,11 +2545,30 @@ export function registerTools(
 					Array.isArray(tasks) ? tasks : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredTasks.length >= requestedLimit &&
+					filteredTasks.length > 0
+				) {
+					const last = filteredTasks[filteredTasks.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const tasksWithCursor =
+					nextCursor !== null
+						? { items: filteredTasks, nextCursor }
+						: filteredTasks;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredTasks, JSON.stringify(filteredTasks, null, 2), "list_tasks_by_mission"),
+							text: capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_tasks_by_mission"),
 						},
 					],
 				};
@@ -4815,7 +4901,8 @@ export function registerTools(
 
 	server.tool(
 		"list_repo_mappings",
-		"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each.",
+		"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each. " +
+			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
 		{
 			limit: z
 				.number()
@@ -4828,6 +4915,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -4835,14 +4929,30 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List repo mappings",
 		},
-		async ({ limit, fields }) => {
+		async ({ limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				const mappings = await convex.query(
 					"githubRepoMapping:list" as any,
 					{
-						limit: limit ?? 20,
+						limit: effectiveLimit ?? 20,
 						fields: fields ?? "lite",
+						createdBefore,
 					},
 				);
 				const filteredMappings = scopeFilterList(
@@ -4850,11 +4960,30 @@ export function registerTools(
 					Array.isArray(mappings) ? mappings : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredMappings.length >= requestedLimit &&
+					filteredMappings.length > 0
+				) {
+					const last = filteredMappings[filteredMappings.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const mappingsWithCursor =
+					nextCursor !== null
+						? { items: filteredMappings, nextCursor }
+						: filteredMappings;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredMappings, JSON.stringify(filteredMappings, null, 2), "list_repo_mappings"),
+							text: capListResponseBytes(mappingsWithCursor, JSON.stringify(mappingsWithCursor, null, 2), "list_repo_mappings"),
 						},
 					],
 				};
@@ -4909,7 +5038,8 @@ export function registerTools(
 
 	server.tool(
 		"list_issues",
-		"List GitHub issues tracked in VantagePeers. Filter by project, status, or assigned orchestrator.",
+		"List GitHub issues tracked in VantagePeers. Filter by project, status, or assigned orchestrator. " +
+			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
 		{
 			project: z
 				.string()
@@ -4936,6 +5066,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -4943,35 +5080,55 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List issues",
 		},
-		async ({ project, status, assignedTo, limit, fields }) => {
+		async ({ project, status, assignedTo, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+				const requestedLimit = effectiveLimit ?? 20;
+
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				let results: any;
 				if (assignedTo) {
 					results = await convex.query("issues:listByOrchestrator" as any, {
 						assignedOrchestrator: assignedTo,
 						status: status as any,
-						limit: limit ?? 20,
+						limit: requestedLimit,
 						fields: fields ?? "lite",
+						createdBefore,
 					});
 				} else if (project) {
 					results = await convex.query("issues:listByProject" as any, {
 						project,
 						status: status as any,
-						limit: limit ?? 20,
+						limit: requestedLimit,
 						fields: fields ?? "lite",
+						createdBefore,
 					});
 				} else if (status) {
 					results = await convex.query("issues:listByStatus" as any, {
 						status: status as any,
-						limit: limit ?? 20,
+						limit: requestedLimit,
 						fields: fields ?? "lite",
+						createdBefore,
 					});
 				} else {
 					results = await convex.query("issues:listByProject" as any, {
 						project: "",
-						limit: limit ?? 20,
+						limit: requestedLimit,
 						fields: fields ?? "lite",
+						createdBefore,
 					});
 				}
 
@@ -4980,17 +5137,35 @@ export function registerTools(
 					Array.isArray(results) ? results : [],
 				);
 
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				let nextCursor: string | null = null;
+				if (
+					filteredIssues.length >= requestedLimit &&
+					filteredIssues.length > 0
+				) {
+					const last = filteredIssues[filteredIssues.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const payload =
+					nextCursor !== null
+						? {
+								count: filteredIssues.length,
+								issues: filteredIssues,
+								nextCursor,
+							}
+						: { count: filteredIssues.length, issues: filteredIssues };
+
 				return {
 					content: [
 						{
 							type: "text",
 							text: capListResponseBytes(
 								filteredIssues,
-								JSON.stringify(
-									{ count: filteredIssues.length, issues: filteredIssues },
-									null,
-									2,
-								),
+								JSON.stringify(payload, null, 2),
 								"list_issues",
 							),
 						},
@@ -5456,7 +5631,8 @@ export function registerTools(
 
 	server.tool(
 		"list_fix_patterns",
-		"List fix patterns, optionally filtered by project. Returns patterns sorted by creation date (newest first).",
+		"List fix patterns, optionally filtered by project. Returns patterns sorted by creation date (newest first). " +
+			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
 		{
 			project: z
 				.string()
@@ -5473,6 +5649,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -5480,38 +5663,73 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List fix patterns",
 		},
-		async ({ project, limit, fields }) => {
+		async ({ project, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+				const requestedLimit = effectiveLimit ?? 20;
+
+				const buildPayload = (rows: unknown[]) => {
+					let nextCursor: string | null = null;
+					if (rows.length >= requestedLimit && rows.length > 0) {
+						const last = rows[rows.length - 1] as {
+							_creationTime?: number;
+						};
+						if (typeof last._creationTime === "number") {
+							nextCursor = encodeCursor({ createdBefore: last._creationTime });
+						}
+					}
+					return nextCursor !== null
+						? { items: rows, nextCursor }
+						: rows;
+				};
+
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
 				if (project) {
 					const results = await convex.query(
 						"fixPatterns:listByProject" as any,
 						{
 							sourceProject: project,
-							limit: limit ?? 20,
+							limit: requestedLimit,
 							fields: fields ?? "lite",
+							createdBefore,
 						},
 					);
 					const filteredResults = scopeFilterList(
 						oauthCtx,
 						Array.isArray(results) ? results : [],
 					);
+					const payload = buildPayload(filteredResults);
 					return {
-						content: [{ type: "text", text: capListResponseBytes(filteredResults, JSON.stringify(filteredResults, null, 2), "list_fix_patterns") }],
+						content: [{ type: "text", text: capListResponseBytes(payload, JSON.stringify(payload, null, 2), "list_fix_patterns") }],
 					};
 				}
 
 				const allResults = await convex.query("fixPatterns:listAll" as any, {
-					limit: limit ?? 20,
+					limit: requestedLimit,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 				const filteredAll = scopeFilterList(
 					oauthCtx,
 					Array.isArray(allResults) ? allResults : [],
 				);
+				const payload = buildPayload(filteredAll);
 				return {
 					content: [
-						{ type: "text", text: capListResponseBytes(filteredAll, JSON.stringify(filteredAll, null, 2), "list_fix_patterns") },
+						{ type: "text", text: capListResponseBytes(payload, JSON.stringify(payload, null, 2), "list_fix_patterns") },
 					],
 				};
 			} catch (error: any) {
@@ -5894,7 +6112,8 @@ export function registerTools(
 	server.tool(
 		"list_errors",
 		"List detected errors from monitored deployments, ordered newest first. " +
-			"Each entry includes deduplication count and the linked GitHub issue number if one was created.",
+			"Each entry includes deduplication count and the linked GitHub issue number if one was created. " +
+			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
 		{
 			deployment: z
 				.string()
@@ -5913,6 +6132,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
+						"Decoded to `createdBefore` (newest-first forward pagination).",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -5920,23 +6146,59 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List errors",
 		},
-		async ({ deployment, limit, fields }) => {
+		async ({ deployment, limit, fields, cursor }) => {
 			try {
+				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				let createdBefore: number | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "createdBefore" in decoded) {
+							createdBefore = decoded.createdBefore;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
 				const errors = await convex.query("errorMonitor:listErrors" as any, {
 					deployment,
-					limit: limit ?? 20,
+					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					createdBefore,
 				});
 				const filteredErrors = scopeFilterList(
 					oauthCtx,
 					Array.isArray(errors) ? errors : [],
 				);
+
+				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				const requestedLimit = effectiveLimit ?? 20;
+				let nextCursor: string | null = null;
+				if (
+					filteredErrors.length >= requestedLimit &&
+					filteredErrors.length > 0
+				) {
+					const last = filteredErrors[filteredErrors.length - 1] as {
+						_creationTime?: number;
+					};
+					if (typeof last._creationTime === "number") {
+						nextCursor = encodeCursor({ createdBefore: last._creationTime });
+					}
+				}
+				const errorsWithCursor =
+					nextCursor !== null
+						? { items: filteredErrors, nextCursor }
+						: filteredErrors;
+
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredErrors, JSON.stringify(filteredErrors, null, 2), "list_errors"),
+							text: capListResponseBytes(errorsWithCursor, JSON.stringify(errorsWithCursor, null, 2), "list_errors"),
 						},
 					],
 				};
