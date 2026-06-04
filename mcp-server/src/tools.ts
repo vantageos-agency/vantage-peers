@@ -20,7 +20,7 @@ import {
 	type OAuthContext,
 } from "./auth.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
-import { scopeFilterGet, scopeFilterList } from "./scope-filter.js";
+import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 

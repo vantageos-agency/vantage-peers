@@ -15,7 +15,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { app, parseBasicAuthSecret } from "../server-http.js";
 import { _setInternalClientForTest, sha256Hex } from "../src/auth.js";
-import { timingSafeEqual } from "../src/crypto.js";
+import { timingSafeEqual } from "@vantageos/cloud-identity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture state — reset before each test
@@ -671,10 +671,17 @@ describe("Multi-tenant T11-T13 (stubbed handler layer)", () => {
 // statistical timing assertions are out of scope (unreliable in CI).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("F1 — timingSafeEqual (mcp-server/src/crypto.ts)", () => {
+describe("F1 — timingSafeEqual (@vantageos/cloud-identity)", () => {
+	// S2.3 D8 brick migration: brick surface adapted from (string, string) to
+	// (Uint8Array, Uint8Array) per @vantageos/cloud-identity 0.1.0 contract.
+	// Tests are rewrapped via TextEncoder; equivalence + length-mismatch safety
+	// invariants preserved.
+	const enc = new TextEncoder();
+	const u8 = (s: string) => enc.encode(s);
+
 	it("returns true for identical hex hashes (sha256 length 64)", async () => {
 		const h = await sha256Hex("some-client-secret");
-		expect(await timingSafeEqual(h, h)).toBe(true);
+		expect(await timingSafeEqual(u8(h), u8(h))).toBe(true);
 	});
 
 	it("returns false for different hashes of equal length", async () => {
@@ -682,13 +689,13 @@ describe("F1 — timingSafeEqual (mcp-server/src/crypto.ts)", () => {
 		const b = await sha256Hex("client-secret-B");
 		expect(a).not.toBe(b);
 		expect(a.length).toBe(b.length);
-		expect(await timingSafeEqual(a, b)).toBe(false);
+		expect(await timingSafeEqual(u8(a), u8(b))).toBe(false);
 	});
 
 	it("returns false for strings of different length (no throw, length-mismatch guard)", async () => {
-		expect(await timingSafeEqual("abc", "abcd")).toBe(false);
-		expect(await timingSafeEqual("", "nonempty")).toBe(false);
+		expect(await timingSafeEqual(u8("abc"), u8("abcd"))).toBe(false);
+		expect(await timingSafeEqual(u8(""), u8("nonempty"))).toBe(false);
 		// Empty / empty edge case — equal length 0, diff accumulator stays 0.
-		expect(await timingSafeEqual("", "")).toBe(true);
+		expect(await timingSafeEqual(u8(""), u8(""))).toBe(true);
 	});
 });

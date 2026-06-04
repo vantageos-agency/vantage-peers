@@ -31,7 +31,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
-import { scopeFilterList } from "../src/scope-filter.js";
+import { scopeFilterList } from "@vantageos/cloud-identity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture builders (mirror Wave A)
