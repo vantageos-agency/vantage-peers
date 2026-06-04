@@ -837,6 +837,8 @@ export const listByMission = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 		createdBy: v.optional(creatorValidator),
 		updatedSince: v.optional(v.number()),
+		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
+		createdBefore: v.optional(v.number()),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"tasks"> optionality
 	handler: async (ctx, args) => {
@@ -889,6 +891,11 @@ export const listByMission = query({
 		}
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+		}
+		// S3.3 B8 follow-up batch 2 — drop rows newer-or-equal to anchor.
+		if (args.createdBefore !== undefined) {
+			const before = args.createdBefore;
+			filtered = filtered.filter((r) => r._creationTime < before);
 		}
 
 		if (lite) return filtered.map(projectTaskLite);
