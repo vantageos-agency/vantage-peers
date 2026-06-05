@@ -10,8 +10,10 @@ input: docs/test-reports/day92-vp-mcp-audit-matrix.md (PR #659 commit 8065a7a)
 
 VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
 
-**Corpus:** 87 tools registered in `mcp-server/src/tools.ts` as of Day 92.
-The A1 audit matrix (PR #659, commit 8065a7a) covers 85 tools — `whoami` and `validate_task_payload` were added after the A1 snapshot. All four distribution analyses below cover the full 87-tool corpus from `tools.ts`.
+**Corpus:** 86 tools registered in `mcp-server/src/tools.ts` as of Day 92 (SHA 9e31caf).
+The A1 audit matrix (PR #659, commit 8065a7a) covers 85 tools — `whoami` was added after the A1 snapshot (A3 PR #660). `validate_task_payload` does NOT exist at this SHA — it ships in F1 PR #663 (OPEN, not merged). All four distribution analyses below cover the correct 86-tool corpus.
+
+> **A2 iter 2 phantom-fix note**: original A2 claimed 87 tools and included `validate_task_payload` in distributions. That tool is absent at SHA 9e31caf. Counts corrected below (Eta verdict comment 4634019881 on PR #662).
 
 ---
 
@@ -21,20 +23,20 @@ The A1 audit matrix (PR #659, commit 8065a7a) covers 85 tools — `whoami` and `
 
 | Pattern | Count | % | Notes |
 |---------|-------|---|-------|
-| `verb_noun_lowercase_snake` — allowed verb | 66 | 75.9% | Core standard — dominant pattern |
-| `verb_noun_lowercase_snake` — non-standard verb | 21 | 24.1% | See sub-table below |
+| `verb_noun_lowercase_snake` — allowed verb | 66 | 76.7% | Core standard — dominant pattern |
+| `verb_noun_lowercase_snake` — non-standard verb | 20 | 23.3% | See sub-table below |
 | camelCase | 0 | 0% | No anomalies |
 | noun-first anomaly | 1 | 1.1% | `issue_stats` (counted in non-standard above) |
 
-**Total: 87**
+**Total: 86**
 
-### Non-standard verb breakdown (21 tools)
+### Non-standard verb breakdown (20 tools)
 
 | Non-standard verb | Count | Tools | Canonicalization |
 |-------------------|-------|-------|-----------------|
 | `add` | 4 | `add_deployment`, `add_fix_attempt`, `add_repo_mapping`, `add_task_dependency` | → `create` |
 | `remove` | 2 | `remove_deployment`, `remove_repo_mapping` | → `delete` |
-| `validate` | 3 | `validate_fix`, `validate_mandate_spending`, `validate_task_payload` | → `check` |
+| `validate` | 2 | `validate_fix`, `validate_mandate_spending` | → `check` |
 | `soft` | 1 | `soft_delete_memory` | → `delete_memory` + `soft: true` arg |
 | `text` | 1 | `text_search` | → `search_text` (swap word order) |
 | `hybrid` | 1 | `hybrid_search` | → `search_hybrid` (swap word order) |
@@ -48,7 +50,7 @@ The A1 audit matrix (PR #659, commit 8065a7a) covers 85 tools — `whoami` and `
 | `instantiate` | 1 | `instantiate_template_into_mission` | → `create_mission_from_template` |
 | `issue` (noun-first) | 1 | `issue_stats` | → `get_issue_stats` (move verb to front) |
 
-### Verb frequency (all 87 tools)
+### Verb frequency (all 86 tools)
 
 | Verb | Count | Status |
 |------|-------|--------|
@@ -60,7 +62,7 @@ The A1 audit matrix (PR #659, commit 8065a7a) covers 85 tools — `whoami` and `
 | `add` | 4 | Non-standard |
 | `store` | 2 | Allowed |
 | `search` | 2 | Allowed |
-| `validate` | 3 | Non-standard |
+| `validate` | 2 | Non-standard |
 | `remove` | 2 | Non-standard |
 | `link` | 2 | Allowed |
 | All others | 1 each | Mixed — see table above |
@@ -75,14 +77,14 @@ Standardize on `verb_noun_lowercase_snake` with a fixed allowed-verb whitelist. 
 **Migration targets (by priority):**
 
 - **High impact (confusing to LLM clients):** `instantiate_template_into_mission` → `create_mission_from_template` | `issue_stats` → `get_issue_stats` | `soft_delete_memory` → fold into `delete_memory` with `soft: true` arg | `text_search` / `hybrid_search` → `search_text` / `search_hybrid`
-- **Medium impact (consistent family names):** `add_*` → `create_*` (4 tools) | `remove_*` → `delete_*` (2 tools) | `validate_*` → `check_*` (3 tools) | `set_summary` → `update_summary` | `write_diary` → `create_diary`
+- **Medium impact (consistent family names):** `add_*` → `create_*` (4 tools) | `remove_*` → `delete_*` (2 tools) | `validate_*` → `check_*` (2 tools at this SHA: `validate_fix`, `validate_mandate_spending`; `validate_task_payload` ships post-F1-merge PR #663) | `set_summary` → `update_summary` | `write_diary` → `create_diary`
 - **Low impact (domain shortcuts acceptable):** `checkout_task`, `block_task`, `pause_recurring_task`, `resume_recurring_task`, `verify_issue` — may keep as named shortcuts if product surface area justifies; document exception in B2.
 
 ---
 
 ## §2 Description Length Distribution
 
-### Measurements (87 tools)
+### Measurements (86 tools)
 
 | Percentile | Char count |
 |-----------|-----------|
@@ -129,7 +131,6 @@ Mean: 143 chars | Stdev: 75 chars
 | Tool | Chars | Reason |
 |------|-------|--------|
 | `create_briefing_note` | 426 | `linkedMemoryIds` disclaimer inflates; should move to arg-level `describe()` |
-| `validate_task_payload` | 398 | Acceptable — lint-tool needs axis enumeration; cap at 500 |
 | `add_deployment` | 273 | Security note inflates; acceptable |
 
 ### RECOMMENDATION for B2
@@ -153,12 +154,12 @@ Enforce in B2:
 
 ## §3 Example Presence
 
-### Counts (87 tools)
+### Counts (86 tools)
 
 | Status | Count | % |
 |--------|-------|---|
-| Explicit example in description | 5 | 5.7% |
-| No example | 82 | 94.3% |
+| Explicit example in description | 5 | 5.8% |
+| No example | 81 | 94.2% |
 
 ### Tools with explicit examples
 
@@ -175,7 +176,7 @@ Enforce in B2:
 MCP clients (Claude.ai, ChatGPT, Claude Code, Codex) select tools by comparing the user's intent against tool descriptions. Without an example:
 
 1. **Ambiguous value selection** — clients guess field formats (Convex IDs, orchestrator role names, namespace prefixes, cron expressions) and produce `ArgumentValidationError` on first attempt.
-2. **Retry tax** — each failed guess costs a round-trip; Day 92 diagnosis showed 2–3 rejection loops per task on `create_task` / `complete_task` without the `validate_task_payload` pre-lint tool.
+2. **Retry tax** — each failed guess costs a round-trip; Day 92 diagnosis showed 2–3 rejection loops per task on `create_task` / `complete_task` (note: `validate_task_payload` pre-lint tool ships in F1 PR #663, not yet merged at this SHA).
 3. **ChatGPT-specific degradation** — GPT-4o description ranking weighs concrete examples more heavily than Claude; 94% of tools have no anchor value.
 
 ### RECOMMENDATION for B2
@@ -184,23 +185,23 @@ MCP clients (Claude.ai, ChatGPT, Claude Code, Codex) select tools by comparing t
 
 Example format: `EXAMPLE: <tool>({ field: "concrete-value", ... })` or `EXAMPLE: <narrative sentence with real value>`.
 
-Priority: fix all 15 short-description tools first (they have both no example and no WHEN clause). The 4 tools with `send_message`-style broadcasts or cron expressions (`send_message`, `create_recurring_task`, `get_mission_template`) already demonstrate the pattern — replicate it.
+Priority: fix all 15 short-description tools first (they have both no example and no WHEN clause). The 3 tools with `send_message`-style broadcasts or cron expressions (`send_message`, `create_recurring_task`, `get_mission_template`) already demonstrate the pattern — replicate it.
 
 ---
 
 ## §4 Response Structure
 
-### Counts (87 tools)
+### Counts (86 tools)
 
 | Category | Count | % | Description |
 |----------|-------|---|-------------|
-| Object — write confirmation | 37 | 42.5% | `{ entityId, status/updated, ... }` custom per-family |
-| Array — list/search | 24 | 27.6% | Raw JSON array, sometimes `_meta`-wrapped by `capListResponseBytes` |
-| Object — entity get | 11 | 12.6% | Raw entity shape from Convex passthrough |
-| Object — raw passthrough | 13 | 14.9% | `JSON.stringify(result)` — no reshaping |
-| Object — structured special | 2 | 2.3% | `whoami`, `validate_task_payload` (typed, stable shape) |
+| Object — write confirmation | 37 | 43.0% | `{ entityId, status/updated, ... }` custom per-family |
+| Array — list/search | 24 | 27.9% | Raw JSON array, sometimes `_meta`-wrapped by `capListResponseBytes` |
+| Object — entity get | 11 | 12.8% | Raw entity shape from Convex passthrough |
+| Object — raw passthrough | 13 | 15.1% | `JSON.stringify(result)` — no reshaping |
+| Object — structured special | 1 | 1.2% | `whoami` (typed, stable shape with exported `outputSchema`) |
 
-**Total: 87**
+**Total: 86**
 
 ### Envelope consistency analysis
 
@@ -236,7 +237,7 @@ Priority: fix all 15 short-description tools first (they have both no example an
 
 1. **Delete shape divergence:** `delete_task`, `delete_component`, `delete_bu`, `delete_message`, `delete_recurring_task` — 5 tools return raw Convex result (may be `null`, may be the deleted doc). No uniform `{ deleted: true, id }` shape.
 2. **List truncation opacity:** `list_*` tools return bare array when under 60 KB but switch to `{ _meta, items }` envelope when over — callers must handle both shapes.
-3. **`whoami` is the only tool with an exported `outputSchema`** (line 576). Declared as "precedent for C1 code-gen." All other 86 tools have `outputSchema: 0/86` (A1 gap metric).
+3. **`whoami` is the only tool with an exported `outputSchema`** (line 576). Declared as "precedent for C1 code-gen." All other 85 tools have `outputSchema: 0/85` (A1 gap metric, adjusted for 86-tool corpus).
 4. **Raw passthrough risk:** 13 tools forward the Convex mutation/query return directly — if Convex schema changes, the MCP tool response shape changes silently with no outputSchema validation gate.
 
 ### RECOMMENDATION for B2
@@ -253,7 +254,7 @@ Adopt a **per-family envelope convention** (not a global envelope — migration 
 | `search_*` | `{ results: [...] }` — named key prevents confusion with `list_*` |
 | Special | Free-form with exported `outputSchema` (see `whoami` precedent) |
 
-**outputSchema gap is structural:** 86/87 tools have no `outputSchema`. B2 should designate the `create_*` and `get_*` families as pilot targets for outputSchema addition (stable shapes, high call frequency). `whoami` is the reference implementation.
+**outputSchema gap is structural:** 85/86 tools have no `outputSchema`. B2 should designate the `create_*` and `get_*` families as pilot targets for outputSchema addition (stable shapes, high call frequency). `whoami` is the reference implementation.
 
 **Truncation envelope fix:** standardize `list_*` response to always be `{ items: [...], cursor: string | null, _meta?: { truncated, showing, total } }` — the `_meta` field becomes optional rather than the shape itself switching.
 
@@ -263,9 +264,9 @@ Adopt a **per-family envelope convention** (not a global envelope — migration 
 
 | Distribution | Key finding | B2 section driven |
 |--------------|------------|-------------------|
-| §1 Naming | 75.9% compliant; 21 non-standard verbs, 0 camelCase | B2 §2 "Allowed verb whitelist" + §3 "Migration targets" |
-| §2 Description length | P50=131 chars; 15 tools too short (<80), 3 outlier-long (>400) | B2 §4 "Description format template" + floor/ceiling enforcement |
-| §3 Example presence | 5.7% with examples (5/87); 94.3% missing | B2 §5 "Mandatory example rule" |
+| §1 Naming | 76.7% compliant; 20 non-standard verbs, 0 camelCase | B2 §2 "Allowed verb whitelist" + §3 "Migration targets" |
+| §2 Description length | P50=131 chars; 15 tools too short (<80), 2 outlier-long (>250) at this SHA | B2 §4 "Description format template" + floor/ceiling enforcement |
+| §3 Example presence | 5.8% with examples (5/86); 94.2% missing | B2 §5 "Mandatory example rule" |
 | §4 Response structure | No global envelope; per-family near-consistent for write tools; delete and passthrough diverge | B2 §6 "Per-family envelope standard" + §7 "outputSchema pilot targets" |
 
 **Next step: B2 (tools-quality-standard.md)** encodes each recommendation above as a binding rule with conformance check procedure. B2 is the reference document for PR review of any new or modified tool registration.
@@ -278,9 +279,9 @@ Adopt a **per-family envelope convention** (not a global envelope — migration 
 - Primary: `docs/test-reports/day92-vp-mcp-audit-matrix.md` (PR #659, commit 8065a7a) — 85-tool matrix with description lengths, naming convention flag, example presence flag, and scope-gate assessment.
 - Secondary: `mcp-server/src/tools.ts` (HEAD at branch creation) — direct scan for tool names, response shapes, example presence in description strings, and `outputSchema` registration.
 
-**Tool count derivation:**
-- `grep -c "server\.tool(" mcp-server/src/tools.ts` → **87** (A1 baseline was 85; `whoami` and `validate_task_payload` added post-matrix).
-- Name extraction: `awk '/server\.tool\(/{found=1; next} found{...}' tools.ts` — 87 unique names, 0 duplicates.
+**Tool count derivation (iter 2 corrected):**
+- `grep -c "server\.tool(" mcp-server/src/tools.ts` → **86** at SHA 9e31caf (A1 baseline was 85; `whoami` added post-matrix via A3 PR #660; `validate_task_payload` absent — ships in F1 PR #663).
+- Name extraction: `awk '/server\.tool\(/{found=1; next} found{...}' tools.ts` — 86 unique names, 0 duplicates.
 
 **Naming analysis:**
 - Allowed verb whitelist derived from mission spec + existing compliant-tool verb set.
@@ -289,13 +290,12 @@ Adopt a **per-family envelope convention** (not a global envelope — migration 
 
 **Description length:**
 - A1 matrix char counts used directly for 85 tools (methodology: visual character count at matrix scan time).
-- `whoami` and `validate_task_payload` lengths measured via `len()` on the string literal in `tools.ts`.
+- `whoami` length measured via `len()` on the string literal in `tools.ts`.
 - Line counts not measured (descriptions are single-string concatenations with no literal newlines — line count = 1 for all tools).
 
 **Example presence:**
 - A1 matrix "Example in description" column used for 85 tools.
 - `whoami` description scanned manually — contains `EXAMPLE:` keyword, counted as Yes.
-- `validate_task_payload` description scanned — no `EXAMPLE:` keyword, no concrete value, counted as No.
 
 **Response structure:**
 - Manual scan of each handler's return statement in `tools.ts`.
