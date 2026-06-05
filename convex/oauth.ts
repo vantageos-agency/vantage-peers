@@ -121,32 +121,74 @@ export const seedDefaultProfiles = mutation({
 					"global",
 				],
 			},
+			// Iris RH trio (Clio + Hélios + Victor) — Marie's 3 dual-host
+			// orchestrator personas share a workspace (project/iris-rh) and
+			// every profile lists the other two's case variants in
+			// `fromAllowList` + their orchestrator namespaces in both prefix
+			// arrays so each persona can switch hosts and continue the
+			// conversation without re-paste of credentials. The
+			// `recipient ∈ fromAllowList` doctrine (commit 24b39c5) gives
+			// each persona symmetric read access to the others' inbox.
 			{
 				profileId: "clio-iris-rh",
 				description:
-					"Clio (Marie / Iris RH ChatGPT orchestrator) — send_message as 'Clio'/'clio'; read/write own orchestrator namespace + project/iris-rh shared workspace.",
-				fromAllowList: ["Clio", "clio"],
+					"Clio (Marie / Iris RH ChatGPT orchestrator) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
+				fromAllowList: [
+					"Clio",
+					"clio",
+					"Hélios",
+					"Helios",
+					"helios",
+					"hélios",
+					"Victor",
+					"victor",
+				],
 				namespaceReadPrefixes: [
 					"orchestrator/Clio",
 					"orchestrator/clio",
+					"orchestrator/Hélios",
+					"orchestrator/Helios",
+					"orchestrator/helios",
+					"orchestrator/hélios",
+					"orchestrator/Victor",
+					"orchestrator/victor",
 					"project/iris-rh",
 				],
 				namespaceWritePrefixes: [
 					"orchestrator/Clio",
 					"orchestrator/clio",
+					"orchestrator/Hélios",
+					"orchestrator/Helios",
+					"orchestrator/helios",
+					"orchestrator/hélios",
+					"orchestrator/Victor",
+					"orchestrator/victor",
 					"project/iris-rh",
 				],
 			},
 			{
 				profileId: "helios-iris-rh",
 				description:
-					"Hélios (Marie / Iris RH Claude.ai orchestrator) — send_message as 'Hélios'/'Helios'/'helios'/'hélios'; read/write own orchestrator namespace + project/iris-rh shared workspace.",
-				fromAllowList: ["Hélios", "Helios", "helios", "hélios"],
+					"Hélios (Marie / Iris RH Claude.ai orchestrator) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
+				fromAllowList: [
+					"Hélios",
+					"Helios",
+					"helios",
+					"hélios",
+					"Clio",
+					"clio",
+					"Victor",
+					"victor",
+				],
 				namespaceReadPrefixes: [
 					"orchestrator/Hélios",
 					"orchestrator/Helios",
 					"orchestrator/helios",
 					"orchestrator/hélios",
+					"orchestrator/Clio",
+					"orchestrator/clio",
+					"orchestrator/Victor",
+					"orchestrator/victor",
 					"project/iris-rh",
 				],
 				namespaceWritePrefixes: [
@@ -154,6 +196,10 @@ export const seedDefaultProfiles = mutation({
 					"orchestrator/Helios",
 					"orchestrator/helios",
 					"orchestrator/hélios",
+					"orchestrator/Clio",
+					"orchestrator/clio",
+					"orchestrator/Victor",
+					"orchestrator/victor",
 					"project/iris-rh",
 				],
 			},
