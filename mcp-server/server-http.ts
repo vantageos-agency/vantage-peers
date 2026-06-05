@@ -1344,6 +1344,75 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 	}
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/clients/:clientId/revoke-access-tokens-only — Day 92 LIVE
+//
+// Wraps Convex mutation `oauth:revokeAccessTokensOnly`. Force-rotates every
+// live access token for the client by setting `revokedAt`, while leaving
+// refresh tokens untouched. The next API call from the connector hits 401
+// → connector silently runs the OAuth refresh-flow → fresh access token
+// minted from the current client scope_profile + catalog. Combined with
+// `patchClientScopeAndRefreshTokens` (which retargeted
+// refresh_tokens.scopeProfile in commit 40413bd) the next mint observes
+// the new profile end-to-end with zero customer re-paste.
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
+//
+// Body schema: { reason: string (≥20 chars) }
+// Response (200): { clientId, accessTokensRevoked, refreshTokensPreserved }
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post(
+	"/oauth/clients/:clientId/revoke-access-tokens-only",
+	async (c) => {
+		const masterToken = process.env.BEARER_SECRET_MASTER;
+		if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
+
+		const clientId = c.req.param("clientId");
+		if (!clientId) {
+			return c.json(
+				{ error: "invalid_request", detail: "missing :clientId" },
+				400,
+			);
+		}
+
+		let body: Record<string, unknown> = {};
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json(
+				{ error: "invalid_request", detail: "body must be valid JSON" },
+				400,
+			);
+		}
+		const reason = typeof body.reason === "string" ? body.reason : null;
+		if (!reason) {
+			return c.json(
+				{ error: "invalid_request", detail: "reason is required" },
+				400,
+			);
+		}
+
+		try {
+			const result = await internalClient().mutation(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauth:revokeAccessTokensOnly" as any,
+				{ callerToken: masterToken, clientId, reason },
+			);
+			return c.json(result as Record<string, unknown>, 200);
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (/client not found/i.test(message)) {
+				return c.json({ error: "not_found", detail: message }, 404);
+			}
+			if (/reason must be at least/i.test(message)) {
+				return c.json({ error: "invalid_request", detail: message }, 400);
+			}
+			console.error("[admin] revokeAccessTokensOnly failed:", message);
+			return c.json({ error: "server_error", detail: message }, 500);
+		}
+	},
+);
+
 app.route("/admin", admin);
 
 // ─────────────────────────────────────────────────────────────────────────────

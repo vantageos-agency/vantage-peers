@@ -740,6 +740,84 @@ export const patchClientScopeAndRefreshTokens = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// revokeAccessTokensOnly — Day 92 LIVE
+//
+// Revoke every live access token for a client WITHOUT touching its
+// refresh tokens. The next API call from the connector hits 401, which
+// triggers an OAuth refresh-flow that re-mints a fresh access token
+// reading the CURRENT `oauth_clients.scopeProfile` + the current scope
+// profile catalog (via server-http.ts L789 loadScopeProfile). Combined
+// with `patchClientScopeAndRefreshTokens` (which already retargeted
+// refresh_tokens.scopeProfile in commit 40413bd) this guarantees the
+// next mint observes the new profile.
+//
+// Use case: a profile change shipped while a long-lived bearer is in
+// use. The operator does NOT want to wait for the natural access-token
+// expiry (24h) but ALSO does NOT want to force the customer to re-paste
+// credentials (the refresh token stays alive). This mutation is the
+// minimum-friction force-rotate.
+//
+// Master-gated. Returns the number of access tokens revoked.
+// ─────────────────────────────────────────────────────────────────────────────
+export const revokeAccessTokensOnly = mutation({
+	args: {
+		callerToken: v.string(),
+		clientId: v.string(),
+		reason: v.string(),
+	},
+	returns: v.object({
+		clientId: v.string(),
+		accessTokensRevoked: v.number(),
+		refreshTokensPreserved: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+
+		if (args.reason.length < 20) {
+			throw new Error(
+				"reason must be at least 20 characters (operator audit trail)",
+			);
+		}
+
+		const client = await ctx.db
+			.query("oauth_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		if (!client) {
+			throw new Error(`client not found: ${args.clientId}`);
+		}
+
+		const now = Date.now();
+		let revoked = 0;
+		const accessTokens = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.collect();
+		for (const t of accessTokens) {
+			if (t.revokedAt !== undefined) continue;
+			await ctx.db.patch(t._id, { revokedAt: now });
+			revoked++;
+		}
+
+		// Count surviving refresh tokens (no patch). Useful in the response
+		// so the operator can confirm the refresh-flow can proceed.
+		const refreshTokens = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.collect();
+		const preserved = refreshTokens.filter(
+			(r) => r.revokedAt === undefined && r.expiresAt > now,
+		).length;
+
+		return {
+			clientId: args.clientId,
+			accessTokensRevoked: revoked,
+			refreshTokensPreserved: preserved,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AUTHORIZATION CODES
 // ─────────────────────────────────────────────────────────────────────────────
 
