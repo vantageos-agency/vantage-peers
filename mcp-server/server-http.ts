@@ -161,6 +161,61 @@ async function loadScopeProfile(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// D7 wildcard redirect_uri matcher
+//
+// RFC 6749 §3.1.2.3/§3.1.2.4 mandates that the authorization server validate
+// the inbound `redirect_uri` against the URIs registered for the client and
+// reject anything that does not match. The default match is byte-exact.
+//
+// Some MCP clients (notably ChatGPT's custom connector flow as of Day 92,
+// 2026-06-04) issue per-session callbacks under a stable path prefix with a
+// dynamic trailing segment, e.g. `https://chatgpt.com/connector/oauth/<id>`
+// where `<id>` rotates per connector instance. A pure exact-match policy
+// blocks every such flow after the first registration.
+//
+// To allow these flows without re-opening the open-redirect attack surface
+// that the exact-match rule was designed to close, a registered URI may
+// embed exactly one `*` token. When present, the URI is treated as a glob:
+//   - every other character is matched literally (regex-escaped),
+//   - the `*` is expanded to `[a-zA-Z0-9_-]+` — at least one char, no slash,
+//     no dot, no path separator, no host-bracketing punctuation,
+//   - the result is anchored with `^` and `$`.
+//
+// Lookalike attacks are still rejected because:
+//   - the host portion is literal, so `chatgpt.com.evil.io` does not match
+//     `https://chatgpt.com/connector/oauth/*`,
+//   - the path prefix is literal, so `/connector/oauth/../admin` does not
+//     match (`.` and `/` are not in the dynamic char class),
+//   - the dynamic segment requires at least one allowed character, so a
+//     trailing-slash variant (`.../oauth/`) does not match either.
+//
+// URIs without a `*` keep the original exact-match semantics — this helper
+// is a strict superset of the prior behavior.
+export function redirectUriMatches(
+	registeredUri: string,
+	presentedUri: string,
+): boolean {
+	if (!registeredUri.includes("*")) {
+		return registeredUri === presentedUri;
+	}
+	// Escape regex metacharacters EXCEPT `*`, then expand `*`.
+	const escaped = registeredUri.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+	const pattern = `^${escaped.replace(/\*/g, "[a-zA-Z0-9_-]+")}$`;
+	try {
+		return new RegExp(pattern).test(presentedUri);
+	} catch {
+		return false;
+	}
+}
+
+function redirectUriMatchesAny(
+	registeredUris: string[],
+	presentedUri: string,
+): boolean {
+	return registeredUris.some((u) => redirectUriMatches(u, presentedUri));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -401,7 +456,10 @@ app.get("/authorize", async (c) => {
 	// registered URI. Defense against open-redirect / token-exfiltration via
 	// attacker-controlled redirect. No partial / prefix / wildcard match.
 	const registeredUris = client.redirectUris ?? [];
-	if (registeredUris.length === 0 || !registeredUris.includes(redirectUri)) {
+	if (
+		registeredUris.length === 0 ||
+		!redirectUriMatchesAny(registeredUris, redirectUri)
+	) {
 		return c.json(
 			{
 				error: "invalid_request",
@@ -510,7 +568,7 @@ app.post("/token", async (c) => {
 				400,
 			);
 		}
-		if (redirectUri && redirectUri !== record.redirectUri) {
+		if (redirectUri && !redirectUriMatches(record.redirectUri, redirectUri)) {
 			return c.json(
 				{
 					error: "invalid_grant",
