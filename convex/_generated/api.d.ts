@@ -20,6 +20,7 @@ import type * as errorMonitor from "../errorMonitor.js";
 import type * as errorMonitorActions from "../errorMonitorActions.js";
 import type * as errorMonitorAutoResolver from "../errorMonitorAutoResolver.js";
 import type * as errorMonitorFilters from "../errorMonitorFilters.js";
+import type * as errorMonitorKillSwitch from "../errorMonitorKillSwitch.js";
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   errorMonitorActions: typeof errorMonitorActions;
   errorMonitorAutoResolver: typeof errorMonitorAutoResolver;
   errorMonitorFilters: typeof errorMonitorFilters;
+  errorMonitorKillSwitch: typeof errorMonitorKillSwitch;
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;
   githubRepoMapping: typeof githubRepoMapping;
