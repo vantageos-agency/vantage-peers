@@ -1380,12 +1380,23 @@ export function registerTools(
 		},
 		async ({ recipient, recipientInstanceId, tenantId, since }) => {
 			try {
-				// Non-master: force recipient to caller's own userId. Anything else
-				// would let the client read another tenant's inbox.
+				// Non-master: caller may read messages addressed to any identity
+				// they are authorized to speak as, i.e. recipient ∈ fromAllowList.
+				// fromAllowList is the set of `from` values the bearer can use
+				// when sending; by symmetry the bearer can also read the inbox
+				// of each of those identities (case variants, multi-host orches-
+				// trator personas, shared-team aliases). Anything else would
+				// let the client read another tenant's inbox. The legacy
+				// userId equality is preserved as a fallback when fromAllowList
+				// is empty (e.g. minted token without explicit allow list).
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
-					if (recipient !== oauthCtx.userId) {
+					const allowed =
+						(oauthCtx.fromAllowList?.length ?? 0) > 0
+							? oauthCtx.fromAllowList.includes(recipient)
+							: recipient === oauthCtx.userId;
+					if (!allowed) {
 						return mcpError(
-							`Forbidden: check_messages can only read messages for your own identity ('${oauthCtx.userId}'), not '${recipient}'.`,
+							`Forbidden: check_messages can only read messages addressed to an identity you are authorized to speak as (token userId='${oauthCtx.userId}', allowed senders=[${(oauthCtx.fromAllowList ?? []).join(", ")}]); requested recipient '${recipient}' is not in that set.`,
 						);
 					}
 				}
