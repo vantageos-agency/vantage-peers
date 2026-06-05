@@ -37,4 +37,5 @@ export declare function parseBasicAuthSecret(authHeader: string | undefined, bod
     clientId: string | null;
     clientSecret: string | null;
 };
+export declare function redirectUriMatches(registeredUri: string, presentedUri: string): boolean;
 export declare const app: Hono<import("hono/types").BlankEnv, import("hono/types").BlankSchema, "/">;

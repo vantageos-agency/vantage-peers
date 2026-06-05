@@ -31,7 +31,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bearerAuthMiddleware, internalClient, masterOnlyMiddleware, sha256Base64Url, sha256Hex, } from "./src/auth.js";
-import { timingSafeEqual } from "./src/crypto.js";
+import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 let pkg;
@@ -118,6 +118,54 @@ async function loadScopeProfile(profileId) {
     return (await internalClient().query(
     // biome-ignore lint/suspicious/noExplicitAny: Convex string API
     "oauth:getScopeProfile", { profileId }));
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// D7 wildcard redirect_uri matcher
+//
+// RFC 6749 §3.1.2.3/§3.1.2.4 mandates that the authorization server validate
+// the inbound `redirect_uri` against the URIs registered for the client and
+// reject anything that does not match. The default match is byte-exact.
+//
+// Some MCP clients (notably ChatGPT's custom connector flow as of Day 92,
+// 2026-06-04) issue per-session callbacks under a stable path prefix with a
+// dynamic trailing segment, e.g. `https://chatgpt.com/connector/oauth/<id>`
+// where `<id>` rotates per connector instance. A pure exact-match policy
+// blocks every such flow after the first registration.
+//
+// To allow these flows without re-opening the open-redirect attack surface
+// that the exact-match rule was designed to close, a registered URI may
+// embed exactly one `*` token. When present, the URI is treated as a glob:
+//   - every other character is matched literally (regex-escaped),
+//   - the `*` is expanded to `[a-zA-Z0-9_-]+` — at least one char, no slash,
+//     no dot, no path separator, no host-bracketing punctuation,
+//   - the result is anchored with `^` and `$`.
+//
+// Lookalike attacks are still rejected because:
+//   - the host portion is literal, so `chatgpt.com.evil.io` does not match
+//     `https://chatgpt.com/connector/oauth/*`,
+//   - the path prefix is literal, so `/connector/oauth/../admin` does not
+//     match (`.` and `/` are not in the dynamic char class),
+//   - the dynamic segment requires at least one allowed character, so a
+//     trailing-slash variant (`.../oauth/`) does not match either.
+//
+// URIs without a `*` keep the original exact-match semantics — this helper
+// is a strict superset of the prior behavior.
+export function redirectUriMatches(registeredUri, presentedUri) {
+    if (!registeredUri.includes("*")) {
+        return registeredUri === presentedUri;
+    }
+    // Escape regex metacharacters EXCEPT `*`, then expand `*`.
+    const escaped = registeredUri.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = `^${escaped.replace(/\*/g, "[a-zA-Z0-9_-]+")}$`;
+    try {
+        return new RegExp(pattern).test(presentedUri);
+    }
+    catch {
+        return false;
+    }
+}
+function redirectUriMatchesAny(registeredUris, presentedUri) {
+    return registeredUris.some((u) => redirectUriMatches(u, presentedUri));
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // App
@@ -300,7 +348,8 @@ app.get("/authorize", async (c) => {
     // registered URI. Defense against open-redirect / token-exfiltration via
     // attacker-controlled redirect. No partial / prefix / wildcard match.
     const registeredUris = client.redirectUris ?? [];
-    if (registeredUris.length === 0 || !registeredUris.includes(redirectUri)) {
+    if (registeredUris.length === 0 ||
+        !redirectUriMatchesAny(registeredUris, redirectUri)) {
         return c.json({
             error: "invalid_request",
             error_description: "redirect_uri does not match a registered redirect URI for this client",
@@ -370,7 +419,7 @@ app.post("/token", async (c) => {
         if (Date.now() > record.expiresAt) {
             return c.json({ error: "invalid_grant", error_description: "code expired" }, 400);
         }
-        if (redirectUri && redirectUri !== record.redirectUri) {
+        if (redirectUri && !redirectUriMatches(record.redirectUri, redirectUri)) {
             return c.json({
                 error: "invalid_grant",
                 error_description: "redirect_uri mismatch",
@@ -409,8 +458,9 @@ app.post("/token", async (c) => {
                 }, 401);
             }
             const presentedHash = await sha256Hex(clientSecret);
+            const _enc = new TextEncoder();
             if (!client.clientSecretHash ||
-                !(await timingSafeEqual(presentedHash, client.clientSecretHash))) {
+                !(await timingSafeEqual(_enc.encode(presentedHash), _enc.encode(client.clientSecretHash)))) {
                 return c.json({
                     error: "invalid_client",
                     error_description: "client_secret mismatch",
@@ -497,8 +547,9 @@ app.post("/token", async (c) => {
                 }, 401);
             }
             const presentedHash = await sha256Hex(clientSecret);
+            const _enc = new TextEncoder();
             if (!refreshClient.clientSecretHash ||
-                !(await timingSafeEqual(presentedHash, refreshClient.clientSecretHash))) {
+                !(await timingSafeEqual(_enc.encode(presentedHash), _enc.encode(refreshClient.clientSecretHash)))) {
                 return c.json({
                     error: "invalid_client",
                     error_description: "client_secret mismatch",
@@ -656,6 +707,367 @@ admin.post("/oauth/seed-profiles", async (c) => {
     // biome-ignore lint/suspicious/noExplicitAny: Convex string API
     "oauth:seedDefaultProfiles", { callerToken: masterToken });
     return c.json({ created });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// S2.2 D5 — PATCH /admin/scope-profiles/:id
+//
+// HTTP wrapper around Convex mutation `oauth:patchScopeProfileEmergency`
+// (S1.2-mutation + S2.1 cascade + audit log).
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware (already mounted on
+// the `admin` Hono sub-app). The mutation itself does a second constant-time
+// master-token check via `requireMasterAuth` at the Convex layer.
+//
+// Body schema:
+//   {
+//     rename?:                  string,
+//     fromAllowList?:           string[],
+//     namespaceReadPrefixes?:   string[],
+//     namespaceWritePrefixes?:  string[],
+//     cascadeRevokeTokens:      boolean,   // REQUIRED
+//     reason:                   string,    // REQUIRED, Convex enforces ≥40
+//   }
+//
+// Response (200):
+//   { patchedProfileId, cascadeRevokedCount, clientsRetargeted, auditLogId }
+//
+// Error mapping (Convex throw → HTTP status):
+//   "profile not found" → 404
+//   "D4 violation"      → 400
+//   "reason must be"    → 400  (reason length guard)
+//   anything else       → 500
+// ─────────────────────────────────────────────────────────────────────────────
+admin.patch("/scope-profiles/:id", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    const profileId = c.req.param("id");
+    if (!profileId) {
+        return c.json({ error: "invalid_request", detail: "missing :id" }, 400);
+    }
+    let body = {};
+    try {
+        body = await c.req.json();
+    }
+    catch {
+        return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+    }
+    // Required: cascadeRevokeTokens (boolean), reason (string)
+    if (typeof body.cascadeRevokeTokens !== "boolean") {
+        return c.json({
+            error: "invalid_request",
+            detail: "cascadeRevokeTokens (boolean) is required",
+        }, 400);
+    }
+    if (typeof body.reason !== "string" || body.reason.length === 0) {
+        return c.json({ error: "invalid_request", detail: "reason (string) is required" }, 400);
+    }
+    // Optional fields — typed coercion / validation
+    const mutationArgs = {
+        callerToken: masterToken,
+        profileId,
+        cascadeRevokeTokens: body.cascadeRevokeTokens,
+        reason: body.reason,
+    };
+    if (body.rename !== undefined) {
+        if (typeof body.rename !== "string") {
+            return c.json({ error: "invalid_request", detail: "rename must be a string" }, 400);
+        }
+        mutationArgs.rename = body.rename;
+    }
+    for (const key of [
+        "fromAllowList",
+        "namespaceReadPrefixes",
+        "namespaceWritePrefixes",
+    ]) {
+        const v = body[key];
+        if (v !== undefined) {
+            if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
+                return c.json({ error: "invalid_request", detail: `${key} must be string[]` }, 400);
+            }
+            mutationArgs[key] = v;
+        }
+    }
+    try {
+        const result = await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:patchScopeProfileEmergency", mutationArgs);
+        return c.json(result, 200);
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Map known Convex throws to HTTP status
+        if (/profile not found/i.test(message)) {
+            return c.json({ error: "not_found", detail: message }, 404);
+        }
+        if (/D4 violation/i.test(message)) {
+            return c.json({ error: "D4 violation", detail: message }, 400);
+        }
+        if (/reason must be at least/i.test(message)) {
+            return c.json({ error: "invalid_request", detail: message }, 400);
+        }
+        console.error("[admin] patchScopeProfileEmergency failed:", message);
+        return c.json({ error: "server_error", detail: message }, 500);
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/access-tokens — direct mint (bypass full OAuth flow)
+//
+// Wraps Convex mutation `oauth:createAccessToken` so operators with the
+// master bearer can mint a scoped access token in a single call without
+// running the DCR → /authorize → /token dance.
+//
+// Use case: provisioning isolated test workspaces for manual cross-tenant
+// e2e verification, or onboarding a paying user when the dashboard does
+// not yet exist (cloud-launch-v1 close-out window).
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware (mounted on /admin).
+//
+// Body schema:
+//   {
+//     scopeProfile:              string,   // REQUIRED — must exist in oauth_scope_profiles
+//     userId:                    string,   // REQUIRED — caller-supplied user identifier
+//     clientId?:                 string,   // optional — defaults to "admin-mint:<random>"
+//     scopes?:                   string[], // optional — defaults to ["mcp:full"]
+//     fromAllowList?:            string[], // optional — defaults to profile.fromAllowList
+//     namespaceReadPrefixes?:    string[], // optional — defaults to profile.namespaceReadPrefixes
+//     namespaceWritePrefixes?:   string[], // optional — defaults to profile.namespaceWritePrefixes
+//     expiresInSec?:             number,   // optional — defaults to 86400 (24h), max 30d
+//   }
+//
+// Response (201):
+//   {
+//     access_token:            <raw token, 64 hex chars — returned ONCE, never again>,
+//     token_type:              "Bearer",
+//     expires_at:              <unix ms>,
+//     expires_in:              <seconds>,
+//     clientId:                <effective>,
+//     userId:                  <effective>,
+//     scopes:                  <effective array>,
+//     scopeProfile:            <effective>,
+//     fromAllowList:           <effective array>,
+//     namespaceReadPrefixes:   <effective array>,
+//     namespaceWritePrefixes:  <effective array>
+//   }
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/access-tokens", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    let body = {};
+    try {
+        body = await c.req.json();
+    }
+    catch {
+        return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+    }
+    const scopeProfileArg = typeof body.scopeProfile === "string" ? body.scopeProfile : null;
+    const userId = typeof body.userId === "string" ? body.userId : null;
+    if (!scopeProfileArg || !userId) {
+        return c.json({
+            error: "invalid_request",
+            detail: "scopeProfile and userId are required",
+        }, 400);
+    }
+    const loadedProfile = await loadScopeProfile(scopeProfileArg);
+    if (!loadedProfile) {
+        return c.json({ error: "invalid_scope_profile", scopeProfile: scopeProfileArg }, 400);
+    }
+    const profile = loadedProfile;
+    const clientId = typeof body.clientId === "string"
+        ? body.clientId
+        : `admin-mint:${crypto.randomUUID()}`;
+    const scopes = Array.isArray(body.scopes)
+        ? body.scopes.filter((x) => typeof x === "string")
+        : ["mcp:full"];
+    const arrayOrProfile = (key) => {
+        const v = body[key];
+        if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+            return v;
+        }
+        return profile[key];
+    };
+    const fromAllowList = arrayOrProfile("fromAllowList");
+    const namespaceReadPrefixes = arrayOrProfile("namespaceReadPrefixes");
+    const namespaceWritePrefixes = arrayOrProfile("namespaceWritePrefixes");
+    const expiresInSecRaw = typeof body.expiresInSec === "number" ? body.expiresInSec : 86400;
+    const MAX_EXPIRES_IN_SEC = 30 * 86400;
+    if (expiresInSecRaw <= 0 || expiresInSecRaw > MAX_EXPIRES_IN_SEC) {
+        return c.json({
+            error: "invalid_request",
+            detail: `expiresInSec must be in (0, ${MAX_EXPIRES_IN_SEC}]`,
+        }, 400);
+    }
+    const expiresAt = Date.now() + expiresInSecRaw * 1000;
+    const accessToken = randomOpaqueToken();
+    const tokenHash = await sha256Hex(accessToken);
+    try {
+        await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:createAccessToken", {
+            callerToken: masterToken,
+            tokenHash,
+            clientId,
+            userId,
+            scopes,
+            scopeProfile: scopeProfileArg,
+            fromAllowList,
+            namespaceReadPrefixes,
+            namespaceWritePrefixes,
+            expiresAt,
+        });
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[admin] createAccessToken failed:", message);
+        return c.json({ error: "server_error", detail: message }, 500);
+    }
+    return c.json({
+        access_token: accessToken,
+        token_type: "Bearer",
+        expires_at: expiresAt,
+        expires_in: expiresInSecRaw,
+        clientId,
+        userId,
+        scopes,
+        scopeProfile: scopeProfileArg,
+        fromAllowList,
+        namespaceReadPrefixes,
+        namespaceWritePrefixes,
+    }, 201);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/clients/:clientId/patch-scope — Day 92 LIVE
+//
+// Wraps Convex mutation `oauth:patchClientScopeAndRefreshTokens`. Re-targets
+// the client to a new scope_profile and propagates the new
+// `fromAllowList` + namespace prefixes into every live access token row
+// for that clientId WITHOUT revoking refresh tokens — the bearer the
+// operator already pasted into their MCP host keeps working, immediately
+// gaining the new profile's allow list. Eliminates the customer
+// re-paste step that profile rotation would otherwise force.
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
+//
+// Body schema: { newScopeProfile: string, reason: string (≥20 chars) }
+//
+// Response (200): {
+//   clientPatched, previousScopeProfile, newScopeProfile,
+//   accessTokensRefreshed, auditLogId
+// }
+//
+// Error mapping (Convex throw → HTTP status):
+//   "client not found"      → 404
+//   "client is revoked"     → 410 (Gone — re-mint required)
+//   "scope_profile not found" → 400
+//   "reason must be at least 20" → 400
+//   anything else           → 500
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    const clientId = c.req.param("clientId");
+    if (!clientId) {
+        return c.json({ error: "invalid_request", detail: "missing :clientId" }, 400);
+    }
+    let body = {};
+    try {
+        body = await c.req.json();
+    }
+    catch {
+        return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+    }
+    const newScopeProfile = typeof body.newScopeProfile === "string" ? body.newScopeProfile : null;
+    const reason = typeof body.reason === "string" ? body.reason : null;
+    if (!newScopeProfile || !reason) {
+        return c.json({
+            error: "invalid_request",
+            detail: "newScopeProfile and reason are required",
+        }, 400);
+    }
+    try {
+        const result = await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:patchClientScopeAndRefreshTokens", {
+            callerToken: masterToken,
+            clientId,
+            newScopeProfile,
+            reason,
+        });
+        return c.json(result, 200);
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/client not found/i.test(message)) {
+            return c.json({ error: "not_found", detail: message }, 404);
+        }
+        if (/client is revoked/i.test(message)) {
+            return c.json({ error: "gone", detail: message }, 410);
+        }
+        if (/scope_profile not found/i.test(message)) {
+            return c.json({ error: "invalid_scope_profile", detail: message }, 400);
+        }
+        if (/reason must be at least/i.test(message)) {
+            return c.json({ error: "invalid_request", detail: message }, 400);
+        }
+        console.error("[admin] patchClientScopeAndRefreshTokens failed:", message);
+        return c.json({ error: "server_error", detail: message }, 500);
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/clients/:clientId/revoke-access-tokens-only — Day 92 LIVE
+//
+// Wraps Convex mutation `oauth:revokeAccessTokensOnly`. Force-rotates every
+// live access token for the client by setting `revokedAt`, while leaving
+// refresh tokens untouched. The next API call from the connector hits 401
+// → connector silently runs the OAuth refresh-flow → fresh access token
+// minted from the current client scope_profile + catalog. Combined with
+// `patchClientScopeAndRefreshTokens` (which retargeted
+// refresh_tokens.scopeProfile in commit 40413bd) the next mint observes
+// the new profile end-to-end with zero customer re-paste.
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
+//
+// Body schema: { reason: string (≥20 chars) }
+// Response (200): { clientId, accessTokensRevoked, refreshTokensPreserved }
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
+    const masterToken = process.env.BEARER_SECRET_MASTER;
+    if (!masterToken)
+        return c.json({ error: "server_misconfigured" }, 500);
+    const clientId = c.req.param("clientId");
+    if (!clientId) {
+        return c.json({ error: "invalid_request", detail: "missing :clientId" }, 400);
+    }
+    let body = {};
+    try {
+        body = await c.req.json();
+    }
+    catch {
+        return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+    }
+    const reason = typeof body.reason === "string" ? body.reason : null;
+    if (!reason) {
+        return c.json({ error: "invalid_request", detail: "reason is required" }, 400);
+    }
+    try {
+        const result = await internalClient().mutation(
+        // biome-ignore lint/suspicious/noExplicitAny: Convex string API
+        "oauth:revokeAccessTokensOnly", { callerToken: masterToken, clientId, reason });
+        return c.json(result, 200);
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/client not found/i.test(message)) {
+            return c.json({ error: "not_found", detail: message }, 404);
+        }
+        if (/reason must be at least/i.test(message)) {
+            return c.json({ error: "invalid_request", detail: message }, 400);
+        }
+        console.error("[admin] revokeAccessTokensOnly failed:", message);
+        return c.json({ error: "server_error", detail: message }, 500);
+    }
 });
 app.route("/admin", admin);
 // ─────────────────────────────────────────────────────────────────────────────
