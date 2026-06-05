@@ -122,6 +122,42 @@ export const seedDefaultProfiles = mutation({
 				],
 			},
 			{
+				profileId: "clio-iris-rh",
+				description:
+					"Clio (Marie / Iris RH ChatGPT orchestrator) — send_message as 'Clio'/'clio'; read/write own orchestrator namespace + project/iris-rh shared workspace.",
+				fromAllowList: ["Clio", "clio"],
+				namespaceReadPrefixes: [
+					"orchestrator/Clio",
+					"orchestrator/clio",
+					"project/iris-rh",
+				],
+				namespaceWritePrefixes: [
+					"orchestrator/Clio",
+					"orchestrator/clio",
+					"project/iris-rh",
+				],
+			},
+			{
+				profileId: "helios-iris-rh",
+				description:
+					"Hélios (Marie / Iris RH Claude.ai orchestrator) — send_message as 'Hélios'/'Helios'/'helios'/'hélios'; read/write own orchestrator namespace + project/iris-rh shared workspace.",
+				fromAllowList: ["Hélios", "Helios", "helios", "hélios"],
+				namespaceReadPrefixes: [
+					"orchestrator/Hélios",
+					"orchestrator/Helios",
+					"orchestrator/helios",
+					"orchestrator/hélios",
+					"project/iris-rh",
+				],
+				namespaceWritePrefixes: [
+					"orchestrator/Hélios",
+					"orchestrator/Helios",
+					"orchestrator/helios",
+					"orchestrator/hélios",
+					"project/iris-rh",
+				],
+			},
+			{
 				profileId: "client-generic",
 				description:
 					"Deny-by-default template for new clients. MUST be overridden before issuing tokens.",
