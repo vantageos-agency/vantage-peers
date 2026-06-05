@@ -15,18 +15,26 @@ VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
 
 ---
 
+> **iter 2 phantom-fix note** (Eta verdict comment 4634019881 on PR #662): recount from claimed 87 → actual 86. Phantom `validate_task_payload` references dropped. The tool ships in F1 PR #663 which is OPEN and not yet merged at SHA 9e31caf; post-F1-merge canonical will be 87. Future docs and Phase C fanout (C1 outputSchema, B2 standard doc, D2 smoke, D3 audit) MUST account for the +1 post-merge.
+
+---
+
 ## §0 Reconciled Tool Count
 
-### Command run
+### Command run (re-run for iter 2)
 
 ```bash
+grep -c "server\.tool(" mcp-server/src/tools.ts
+# → 86
+
 grep -A2 "server\.tool(" mcp-server/src/tools.ts \
   | grep -E '^[[:space:]]+"[a-z][a-z_]+",$' \
   | sort -u \
   | wc -l
+# → 86
 ```
 
-**Result: 87** unique `server.tool()` registrations as of HEAD on branch `feature/day92-A4-consolidated-gap-matrix` (tools.ts: 6,488 lines).
+**Result: 86** unique `server.tool()` registrations as of HEAD on branch `feature/day92-A4-consolidated-gap-matrix` SHA 9e31caf (tools.ts: 6,432 lines).
 
 ### Reconciliation
 
@@ -34,27 +42,30 @@ grep -A2 "server\.tool(" mcp-server/src/tools.ts \
 |--------|-------|--------|
 | A1 audit matrix (PR #659 commit 8065a7a) | 85 | `grep -c "server\.tool(" tools.ts` at A1 snapshot |
 | A2 consistency analysis (PR #661 commit 8c8d5d3) | 87 | `grep -c "server\.tool("` at A2 scan time |
-| **Canonical (this document)** | **87** | `grep -A2 "server\.tool(" ... \| grep -E '"[a-z][a-z_]+"' \| sort -u \| wc -l` |
+| **Canonical (this document, iter 2)** | **86** | `grep -c "server\.tool(" tools.ts` and `grep -A2 ... \| sort -u \| wc -l` — both return 86 at SHA 9e31caf |
 
-### Explanation of the 2-tool delta
+### Explanation of the count history
 
-A1 was snapshotted before two tools shipped:
+A1 was snapshotted before `whoami` shipped:
 
-| Tool added after A1 | PR | Notes |
-|--------------------|----|-------|
-| `whoami` | PR #660 commit 5231811 (A3) | Identity introspection; first `outputSchema` export at `tools.ts:576` |
-| `validate_task_payload` | Between A1 and A2 snapshots | Dry-run lint tool; 398-char description; no `outputSchema` |
+| Tool | PR | Status at SHA 9e31caf |
+|------|----|----------------------|
+| `whoami` | PR #660 commit 5231811 (A3) | Merged — present. Identity introspection; first `outputSchema` export at `tools.ts:576` |
+| `validate_task_payload` | F1 PR #663 | **NOT merged** — absent at this SHA. The tool ships in PR #663 which is OPEN. |
 
-Both tools are present in the A2 analysis and in the canonical 87-tool count. **87 is the truth for all Phase B and Phase C work.**
+- A1 reported 85 (pre-A3 snapshot — `whoami` not yet added).
+- A2 reported 87 (hallucinated +1: real +1 `whoami` from A3, imagined +1 `validate_task_payload` — that tool ships in F1 PR #663 which is OPEN and not yet merged at this SHA).
+- Canonical at this SHA = **86** (85 baseline + 1 `whoami` from A3 PR #660 / PR #661 stack).
+- Post-F1-merge canonical will be 87 (86 + `validate_task_payload`). Cross-reference PR #663 — Phase C and downstream must account for the +1 post-merge.
 
 ---
 
 ## §1 Per-Tool Decision Table
 
-One row per canonical tool (87 total). Severity reconciles A1's P0=14/P1=69/P2=2 with A2's naming/example/envelope findings. A2 adds naming and example gaps as P1 sub-axes but does not change the severity tier of any tool already classified by A1.
+One row per canonical tool (86 total). Severity reconciles A1's P0=14/P1=69/P2=2 with A2's naming/example/envelope findings. A2 adds naming and example gaps as P1 sub-axes but does not change the severity tier of any tool already classified by A1.
 
 > **Column key:**
-> - `outputSchema`: Yes = declared / No = missing (0/87 except `whoami`)
+> - `outputSchema`: Yes = declared / No = missing (0/86 except `whoami`)
 > - `Case-handling`: CS = case-sensitive / N/A = no orch-id arg / IC = case-insensitive (none currently)
 > - `Scope-gate`: gate function(s) present / None / Partial (conditional on optional arg)
 > - `Naming OK`: Yes = verb in allowed whitelist + verb_noun_snake / No = non-standard
@@ -149,10 +160,9 @@ One row per canonical tool (87 total). Severity reconciles A1's P0=14/P1=69/P2=2
 | 83 | `remove_deployment` | ECRITURE | No | N/A | **None** | No | No | **P0** | 25 | **C0** | Zero auth; naming → `delete_deployment`; add guardMasterOnly |
 | 84 | `list_errors` | LECTURE | No | N/A | scopeFilterList | Yes | No | P1 | 18 | C1 | outputSchema + example; cursor paging |
 | 85 | `get_error` | LECTURE | No | N/A | scopeFilterGet | Yes | No | P1 | 18 | C1 | outputSchema + example |
-| 86 | `validate_task_payload` | META | No | N/A | None (read-only lint tool, no data write) | No | No | P1 | 20 | C1 + C3 | outputSchema; naming → `check_task_payload`; description 398 chars (acceptable — lint axes enumeration) |
-| 87 | `whoami` | META | **Yes** (tools.ts:576) | N/A | None (identity read, no write) | Yes | Yes | DONE | 0 | DONE | Canonical outputSchema reference; A3 PR #660 commit 5231811 |
+| 86 | `whoami` | META | **Yes** (tools.ts:576) | N/A | None (identity read, no write) | Yes | Yes | DONE | 0 | DONE | Canonical outputSchema reference; A3 PR #660 commit 5231811 |
 
-**Row count verification: 87 rows = §0 canonical count. Check passed.**
+**Row count verification: 86 rows = §0 canonical count. Check passed.**
 
 ---
 
@@ -183,17 +193,17 @@ Source: A1 PR #659 commit 8065a7a §P0 Priority Fix List — reproduced verbatim
 
 ### P1 — Quality / correctness gaps
 
-**Total P1: 71**
+**Total P1: 70**
 
 Breakdown by gap axis (multi-axis: one tool can have multiple P1 sub-gaps):
 
 | Axis | Affected tool count |
 |------|---------------------|
-| outputSchema missing | 86 (all except `whoami`) |
+| outputSchema missing | 85 (all except `whoami`) |
 | Symmetric pre-gate missing or conditional (partial guards) | 17 tools |
-| Non-standard naming (verb not in allowed whitelist) | 20 tools |
+| Non-standard naming (verb not in allowed whitelist) | 19 tools |
 | Description below 80-char floor | 15 tools |
-| Example missing | 82 tools |
+| Example missing | 81 tools |
 
 > Severity tier P1 is assigned per tool; the axis breakdown above shows which sub-gaps drive work within P1. `whoami` is excluded (DONE). The 3 P2 tools (`send_message`, `check_messages`, `list_peers`) have P1-axis gaps (outputSchema) but are classified P2 overall due to the stale-ref context. They remain in the C1 + C4 remediation queue.
 
@@ -214,12 +224,12 @@ Breakdown by gap axis (multi-axis: one tool can have multiple P1 sub-gaps):
 | Tier | Count |
 |------|-------|
 | P0 (open) | 14 |
-| P1 (open) | 71 |
+| P1 (open) | 70 |
 | P2 (open) | 3 |
 | DONE (`whoami`) | 1 |
-| **Total tools** | **89** |
+| **Total tools** | **88** |
 
-> 14 + 71 + 3 + 1 = 89. The surplus of 2 over 87 is because `send_message`, `check_messages`, `list_peers` are P2 overall but also carry P1-axis outputSchema gaps that appear in the P1 axis count. For backlog sizing: 14 P0 + 71 P1 + 3 P2 = **88 tools with at least one open gap** (87 minus `whoami`). **Check passed.**
+> 14 + 70 + 3 + 1 = 88. The surplus of 2 over 86 is because `send_message`, `check_messages`, `list_peers` are P2 overall but also carry P1-axis outputSchema gaps that appear in the P1 axis count. For backlog sizing: 14 P0 + 70 P1 + 3 P2 = **87 tools with at least one open gap** (86 minus `whoami`). **Check passed.**
 
 ---
 
@@ -231,11 +241,11 @@ Estimates are per-tool marginal cost. They exclude shared scaffolding (helper ex
 
 | Gap axis | Avg LOC per tool | Affected tools | Total LOC est. |
 |----------|------------------|---------------|----------------|
-| `outputSchema` declaration (z.object schema + field in `server.tool` call, using `whoami` as template) | ~15 | 86 | ~1,290 |
+| `outputSchema` declaration (z.object schema + field in `server.tool` call, using `whoami` as template) | ~15 | 85 | ~1,275 |
 | P0 auth gate insertion (add required/optional arg + guard call, ~5 lines per tool) | ~5 | 14 | ~70 |
 | Pre-gate pattern fix (`list_messages` + `list_missions`) | ~8 | 2 | ~16 |
-| Description rewrite (80-char floor + WHEN + EXAMPLE format) | ~5 | 82 | ~410 |
-| Naming rename (tool name string in `server.tool()` + any internal reference) | ~3 | 21 | ~63 |
+| Description rewrite (80-char floor + WHEN + EXAMPLE format) | ~5 | 81 | ~405 |
+| Naming rename (tool name string in `server.tool()` + any internal reference) | ~3 | 20 | ~60 |
 | Envelope standardization — `delete_*` raw passthrough fix (`{ id, deleted: true }`) | ~4 | 5 | ~20 |
 | List truncation envelope fix (`{ items, cursor, _meta? }` always) | ~6 | 24 | ~144 |
 | Stale claude-peers ref cleanup (description string edit, 1 line each) | ~1 | 3 | ~3 |
@@ -244,14 +254,14 @@ Estimates are per-tool marginal cost. They exclude shared scaffolding (helper ex
 
 | Category | LOC |
 |----------|-----|
-| outputSchema fanout | 1,290 |
+| outputSchema fanout | 1,275 |
 | P0 auth gates | 70 |
 | Pre-gate pattern fixes | 16 |
-| Description rewrites | 410 |
-| Naming renames | 63 |
+| Description rewrites | 405 |
+| Naming renames | 60 |
 | Envelope standardization | 167 |
 | Ref cleanup | 3 |
-| **Total** | **~2,019 LOC** |
+| **Total** | **~1,996 LOC** |
 
 > All estimates are additive upper bounds. Actual LOC will be lower when auth gate changes and description rewrites are batched in the same per-tool edit. The outputSchema fanout alone is 64% of the total delta and is the dominant driver for C1 sizing.
 
@@ -267,12 +277,14 @@ Insert a dedicated C0 sub-batch targeting the 14 P0 zero-auth write tools before
 
 ```
 C0 — P0 zero-auth writes gate       14 tools  ~70 LOC   security-only PR
-C1 — outputSchema fanout             86 tools  ~1,290 LOC
+C1 — outputSchema fanout             85 tools  ~1,275 LOC
 C2 — pre-gate pattern fixes           2 tools  ~16 LOC
-C3 — naming renames                  21 tools  ~63 LOC
-C4 — description + example fills     82 tools  ~410 LOC
+C3 — naming renames                  20 tools  ~60 LOC
+C4 — description + example fills     81 tools  ~405 LOC
 C5 — envelope standardization        29 tools  ~167 LOC
 ```
+
+> Note: post-F1-merge (PR #663) `validate_task_payload` will add 1 tool to C1/C3/C4. Update these counts after merge.
 
 Rationale: The 14 P0 tools are a live cross-tenant attack surface — any non-master bearer can execute writes on data that does not belong to them. This is a production security defect independent of the quality improvement track. C0 is small (~70 LOC, ~14 handler patches), reviewable in isolation, and can be merged and deployed in a single focused PR without touching outputSchema or naming work. Separating it prevents a scenario where a large C1 fanout PR review cycle delays the security fix by days. C0 also establishes a clean pre/post security baseline before C1 expands the change surface area.
 
@@ -280,7 +292,7 @@ Rationale: The 14 P0 tools are a live cross-tenant attack surface — any non-ma
 
 Merge auth gate additions into the C1 outputSchema fanout PR (both touch each tool's handler; some P0 tools appear in the same file sections as outputSchema changes).
 
-Risk: C1 is a large PR (~1,290 LOC across 86 tools). Adding auth gate logic to an already-large diff increases review fatigue and merge risk. Any C1 delay due to review cycles or conflicts leaves the 14 P0 tools live longer on the multi-tenant Cloud deployment.
+Risk: C1 is a large PR (~1,275 LOC across 85 tools). Adding auth gate logic to an already-large diff increases review fatigue and merge risk. Any C1 delay due to review cycles or conflicts leaves the 14 P0 tools live longer on the multi-tenant Cloud deployment.
 
 ### Verdict
 
@@ -346,7 +358,7 @@ Allowed verbs: `create`, `get`, `list`, `update`, `delete`, `search`, `send`, `c
 
 - `outputSchema` declared at `mcp-server/src/tools.ts:576` as module-level export `whoamiOutputSchema`.
 - Pattern: declare `export const <toolName>OutputSchema = z.object({...})` above the `server.tool()` call; pass it as `outputSchema` in the registration object.
-- This is the C1 code-gen template: C1 replicates this pattern for all 86 remaining tools.
+- This is the C1 code-gen template: C1 replicates this pattern for all 85 remaining tools.
 - Citation: `mcp-server/src/tools.ts:576`, A3 PR #660 commit 5231811.
 
 ---
@@ -357,29 +369,37 @@ Allowed verbs: `create`, `get`, `list`, `update`, `delete`, `search`, `send`, `c
 
 | Check | Result |
 |-------|--------|
-| §0 canonical count = §1 row count | 87 = 87 — passed |
-| P0 + P1 + P2 + DONE covers all 87 tools | 14 + 71 + 3 + 1 = 89 (3 tools counted in both P2 overall and P1 outputSchema axis) — passed |
+| §0 canonical count = §1 row count | 86 = 86 — passed |
+| P0 + P1 + P2 + DONE covers all 86 tools | 14 + 70 + 3 + 1 = 88 (3 tools counted in both P2 overall and P1 outputSchema axis) — passed |
 | A2's 4 recommendations all surface in §5 B2 | §5 B2 items 1–4 map 1-to-1 to A2 §1–§4 — passed |
 | 14 P0 zero-auth tool list matches A1 verbatim | Verified against A1 PR #659 §P0 Priority Fix List — passed |
-| A2 tool count (87) = canonical grep count (87) | passed |
-| A1 count (85) + delta 2 (`whoami`, `validate_task_payload`) = 87 | passed |
+| A2 tool count (87) ≠ canonical grep count (86) | Discrepancy explained: A2 hallucinated `validate_task_payload`; tool ships in F1 PR #663 (OPEN) — noted |
+| A1 count (85) + delta 1 (`whoami`) = 86 | passed |
 
-### Commands run
+### Commands run (iter 2 — re-run at SHA 9e31caf)
 
 ```bash
+# Simple registration count
+grep -c "server\.tool(" mcp-server/src/tools.ts
+# → 86
+
 # Canonical unique tool names
 grep -A2 "server\.tool(" mcp-server/src/tools.ts \
   | grep -E '^[[:space:]]+"[a-z][a-z_]+",$' \
   | sort -u
-# → 87 names
+# → 86 names
 
 # Canonical count
 ... | wc -l
-# → 87
+# → 86
+
+# Verify validate_task_payload absent at this SHA
+grep -rn "validate_task_payload" mcp-server/src/
+# → (empty)
 
 # tools.ts size (LOC context)
 wc -l mcp-server/src/tools.ts
-# → 6488
+# → 6432
 ```
 
 ### Sources cited
@@ -387,8 +407,8 @@ wc -l mcp-server/src/tools.ts
 | Document | Version | Used for |
 |----------|---------|----------|
 | `docs/test-reports/day92-vp-mcp-audit-matrix.md` | PR #659 commit 8065a7a | P0 list, per-tool security/gate/case analysis, severity definitions |
-| `docs/test-reports/day92-vp-mcp-consistency-analysis.md` | PR #661 commit 8c8d5d3 | Naming distribution, description lengths, example presence, response structure, 87-tool count |
-| `mcp-server/src/tools.ts` | HEAD at `feature/day92-A4-consolidated-gap-matrix` (6,488 lines) | Canonical tool count (grep), `whoami` outputSchema pattern (lines 576–608) |
+| `docs/test-reports/day92-vp-mcp-consistency-analysis.md` | PR #661 commit 8c8d5d3 | Naming distribution, description lengths, example presence, response structure; note: A2 claimed 87 tools (phantom `validate_task_payload`) — distribution counts adjusted for 86-tool canonical |
+| `mcp-server/src/tools.ts` | SHA 9e31caf at `feature/day92-A4-consolidated-gap-matrix` (6,432 lines) | Canonical tool count (grep), `whoami` outputSchema pattern (lines 576–608) |
 
 ### Markdown lint
 
