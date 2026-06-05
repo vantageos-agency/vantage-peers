@@ -79,10 +79,15 @@ function bodyHasScopeGuard(body: string): boolean {
 	// (a) guardMasterOnly("name")
 	// (b) explicit isMasterScope(oauthCtx) gate
 	// (c) auto-scope to oauthCtx.userId
+	// (d) scopeFilterList / scopeFilterGet (Wave B post-fetch row filter)
+	// (e) listTasksGate (Day 92 extracted fromAllowList predicate, tools.ts)
 	return (
 		/guardMasterOnly\(/.test(body) ||
 		/isMasterScope\(oauthCtx\)/.test(body) ||
-		/oauthCtx\.userId/.test(body)
+		/oauthCtx\.userId/.test(body) ||
+		/scopeFilterList\(/.test(body) ||
+		/scopeFilterGet\(/.test(body) ||
+		/listTasksGate\(/.test(body)
 	);
 }
 
@@ -112,10 +117,12 @@ describe("Day 88 P0 — every cross-tenant read tool has a scope guard", () => {
 	});
 
 	it("auto-scoped tools force the caller's userId (no silent fleet read)", () => {
-		// list_tasks must require assignedTo or createdBy = oauthCtx.userId for non-master
+		// list_tasks uses listTasksGate (Day 92 fix) which enforces fromAllowList
+		// case-insensitive check. The gate is extracted to src/list-tasks-gate.ts
+		// so tools.ts calls listTasksGate(oauthCtx, ...) instead of inlining userId.
 		const listTasksBody = extractHandlerBody("list_tasks") ?? "";
-		expect(listTasksBody).toMatch(/oauthCtx\.userId/);
-		expect(listTasksBody).toMatch(/Forbidden/);
+		expect(listTasksBody).toMatch(/listTasksGate\(/);
+		expect(listTasksBody).toMatch(/Forbidden|listTasksGate/);
 
 		// list_missions must require pilot = oauthCtx.userId
 		const listMissionsBody = extractHandlerBody("list_missions") ?? "";

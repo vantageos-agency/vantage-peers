@@ -21,10 +21,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { OAuthContext } from "../src/auth.js";
-import { isMasterScope } from "../src/auth.js";
+import type { OAuthCtx } from "@vantageos/cloud-identity";
 import { scopeFilterList } from "@vantageos/cloud-identity";
-// RED: this import will fail until GREEN phase creates the module
+import type { OAuthContext } from "../src/auth.js";
 import { listTasksGate } from "../src/list-tasks-gate.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,27 +178,27 @@ describe("list_messages — scopeFilterList symmetric audit", () => {
 
 	it("master scope: any createdBy passes", () => {
 		const rows = [{ createdBy: "Outsider", namespace: undefined }];
-		expect(scopeFilterList(masterCtx() as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Helios passes (exact in fromAllowList)", () => {
 		const rows = [{ createdBy: "Helios" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Clio passes", () => {
 		const rows = [{ createdBy: "Clio" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Victor passes", () => {
 		const rows = [{ createdBy: "Victor" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Outsider is filtered out", () => {
 		const rows = [{ createdBy: "Outsider" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(0);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(0);
 	});
 
 	it("non-master: mixed rows filtered correctly", () => {
@@ -209,7 +208,7 @@ describe("list_messages — scopeFilterList symmetric audit", () => {
 			{ createdBy: "Clio" },
 			{ createdBy: "attacker" },
 		];
-		const filtered = scopeFilterList(ctx as any, rows);
+		const filtered = scopeFilterList(ctx as unknown as OAuthCtx, rows);
 		expect(filtered).toHaveLength(2);
 		expect(filtered.map((r) => r.createdBy)).toEqual(["Helios", "Clio"]);
 	});
@@ -228,28 +227,28 @@ describe("list_briefing_notes — scopeFilterList symmetric audit", () => {
 
 	it("master scope: any row passes", () => {
 		const rows = [{ createdBy: "anyone" }];
-		expect(scopeFilterList(masterCtx() as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Helios passes", () => {
 		const rows = [{ createdBy: "Helios" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=hélios passes (accent variant in list)", () => {
 		// "hélios" is in fromAllowList verbatim — exact match
 		const rows = [{ createdBy: "hélios" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Outsider is filtered out", () => {
 		const rows = [{ createdBy: "Outsider" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(0);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(0);
 	});
 
 	it("non-master: row with namespace matching prefix passes", () => {
 		const rows = [{ namespace: "orchestrator/helios-iris-rh/notes" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 });
 
@@ -262,22 +261,22 @@ describe("list_peers — scopeFilterList symmetric audit", () => {
 
 	it("master scope: any row passes", () => {
 		const rows = [{ createdBy: "anyone" }];
-		expect(scopeFilterList(masterCtx() as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: peer with createdBy=Helios passes", () => {
 		const rows = [{ createdBy: "Helios" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: peer with createdBy=Victor passes", () => {
 		const rows = [{ createdBy: "Victor" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(1);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
 	it("non-master: peer with createdBy=Outsider is filtered out", () => {
 		const rows = [{ createdBy: "Outsider" }];
-		expect(scopeFilterList(ctx as any, rows)).toHaveLength(0);
+		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(0);
 	});
 
 	it("non-master: multiple peers, only TRIO members visible", () => {
@@ -287,7 +286,7 @@ describe("list_peers — scopeFilterList symmetric audit", () => {
 			{ createdBy: "Victor" },
 			{ createdBy: "ExternalBot" },
 		];
-		const filtered = scopeFilterList(ctx as any, rows);
+		const filtered = scopeFilterList(ctx as unknown as OAuthCtx, rows);
 		expect(filtered).toHaveLength(3);
 	});
 });

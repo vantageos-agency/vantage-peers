@@ -20,6 +20,7 @@ import {
 	type OAuthContext,
 } from "./auth.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
+import { listTasksGate } from "./list-tasks-gate.js";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
@@ -2042,18 +2043,14 @@ export function registerTools(
 			cursor,
 		}) => {
 			try {
-				// Non-master: must scope to own identity. If neither assignedTo
-				// nor createdBy matches the caller's userId, reject — otherwise
-				// the query would span the whole tenant table.
-				if (oauthCtx && !isMasterScope(oauthCtx)) {
-					const myId = oauthCtx.userId;
-					const scopedToSelf =
-						assignedTo === myId || createdBy === myId;
-					if (!scopedToSelf) {
-						return mcpError(
-							`Forbidden: list_tasks requires assignedTo='${myId}' or createdBy='${myId}' for non-master scope (current: ${oauthCtx.scopeProfile}).`,
-						);
-					}
+				// Non-master: filter must name an identity in the bearer's
+				// fromAllowList (case-insensitive). Using userId was wrong —
+				// orchestrators identify as "Helios"/"Clio"/etc., never as the
+				// profile name "helios-iris-rh". Fix mirrors check_messages
+				// L1383-1399 pattern (commit 24b39c5). Regression: 28db616.
+				{
+					const gateErr = listTasksGate(oauthCtx, assignedTo, createdBy);
+					if (gateErr !== null) return mcpError(gateErr);
 				}
 
 				// S3.3 B8 — decode opaque cursor → createdBefore anchor.
