@@ -632,6 +632,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 		previousScopeProfile: v.string(),
 		newScopeProfile: v.string(),
 		accessTokensRefreshed: v.number(),
+		refreshTokensRetargeted: v.number(),
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
@@ -686,6 +687,25 @@ export const patchClientScopeAndRefreshTokens = mutation({
 			refreshed++;
 		}
 
+		// CRITICAL — refresh tokens cache `scopeProfile` (used by /token
+		// refresh handler L789 via loadScopeProfile(record.scopeProfile)).
+		// If we leave the refresh token row stale, the next refresh-flow
+		// MINTS a NEW access token with the OLD profile's fromAllowList,
+		// silently re-introducing the stale identity. Patch all live
+		// refresh tokens for this client so the next mint reads the new
+		// profile.
+		const refreshTokens = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.collect();
+		let refreshTokensRetargeted = 0;
+		for (const r of refreshTokens) {
+			if (r.revokedAt !== undefined) continue;
+			if (r.expiresAt < now) continue;
+			await ctx.db.patch(r._id, { scopeProfile: args.newScopeProfile });
+			refreshTokensRetargeted++;
+		}
+
 		const auditLogId = await ctx.db.insert("oauth_audit_log", {
 			eventType: "patch_client_scope",
 			actorTokenHash: await sha256Hex(args.callerToken),
@@ -713,6 +733,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 			previousScopeProfile,
 			newScopeProfile: args.newScopeProfile,
 			accessTokensRefreshed: refreshed,
+			refreshTokensRetargeted,
 			auditLogId,
 		};
 	},
