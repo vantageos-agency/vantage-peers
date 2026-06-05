@@ -595,6 +595,130 @@ export const deleteClient = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// patchClientScopeAndRefreshTokens — Day 92 LIVE
+//
+// Re-target a client to a new scope_profile WITHOUT revoking its tokens, so
+// the bearer the user already pasted into their MCP host keeps working but
+// inherits the new profile's `fromAllowList` + namespace prefixes. The
+// access token row caches those three fields at mint time (see
+// createAccessToken); without this mutation the only way to apply a
+// profile change to an in-use token was to revoke + re-mint, which forces
+// the user to re-paste credentials.
+//
+// What this does (single transaction):
+//   1. Validate the target scope_profile exists in `oauth_scope_profiles`.
+//   2. Patch `oauth_clients[clientId].scopeProfile` to the new value.
+//   3. Walk every non-revoked row in `oauth_access_tokens` for that
+//      clientId and patch its `scopeProfile` + `fromAllowList` +
+//      `namespaceReadPrefixes` + `namespaceWritePrefixes` to the values
+//      from the new profile.
+//   4. Refresh tokens are intentionally NOT touched — they only carry
+//      clientId + userId + tokenHash, no cached scope, so the next
+//      refresh-flow will naturally observe the new client.scopeProfile.
+//   5. Append an `oauth_audit_log` row capturing the rename for forensic
+//      traceability (eventType="patch_client_scope").
+//
+// Master-gated. Idempotent on identical profile.
+// ─────────────────────────────────────────────────────────────────────────────
+export const patchClientScopeAndRefreshTokens = mutation({
+	args: {
+		callerToken: v.string(),
+		clientId: v.string(),
+		newScopeProfile: v.string(),
+		reason: v.string(),
+	},
+	returns: v.object({
+		clientPatched: v.boolean(),
+		previousScopeProfile: v.string(),
+		newScopeProfile: v.string(),
+		accessTokensRefreshed: v.number(),
+		auditLogId: v.id("oauth_audit_log"),
+	}),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+
+		if (args.reason.length < 20) {
+			throw new Error(
+				"reason must be at least 20 characters (operator audit trail)",
+			);
+		}
+
+		const client = await ctx.db
+			.query("oauth_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		if (!client) {
+			throw new Error(`client not found: ${args.clientId}`);
+		}
+		if (client.revokedAt !== undefined) {
+			throw new Error(`client is revoked: ${args.clientId}`);
+		}
+
+		const newProfile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.newScopeProfile))
+			.unique();
+		if (!newProfile) {
+			throw new Error(`scope_profile not found: ${args.newScopeProfile}`);
+		}
+
+		const previousScopeProfile = client.scopeProfile;
+		const now = Date.now();
+
+		// Patch the client itself.
+		await ctx.db.patch(client._id, { scopeProfile: args.newScopeProfile });
+
+		// Walk live access tokens and refresh the cached scope + prefixes.
+		const tokens = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.collect();
+		let refreshed = 0;
+		for (const t of tokens) {
+			if (t.revokedAt !== undefined) continue;
+			if (t.expiresAt < now) continue;
+			await ctx.db.patch(t._id, {
+				scopeProfile: args.newScopeProfile,
+				fromAllowList: newProfile.fromAllowList,
+				namespaceReadPrefixes: newProfile.namespaceReadPrefixes,
+				namespaceWritePrefixes: newProfile.namespaceWritePrefixes,
+			});
+			refreshed++;
+		}
+
+		const auditLogId = await ctx.db.insert("oauth_audit_log", {
+			eventType: "patch_client_scope",
+			actorTokenHash: await sha256Hex(args.callerToken),
+			targetProfileId: args.newScopeProfile,
+			previousState: {
+				profileId: previousScopeProfile,
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+			},
+			newState: {
+				profileId: args.newScopeProfile,
+				fromAllowList: newProfile.fromAllowList,
+				namespaceReadPrefixes: newProfile.namespaceReadPrefixes,
+				namespaceWritePrefixes: newProfile.namespaceWritePrefixes,
+			},
+			reason: args.reason,
+			cascadeRevokedCount: 0,
+			clientsRetargeted: 1,
+			createdAt: now,
+		});
+
+		return {
+			clientPatched: true,
+			previousScopeProfile,
+			newScopeProfile: args.newScopeProfile,
+			accessTokensRefreshed: refreshed,
+			auditLogId,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AUTHORIZATION CODES
 // ─────────────────────────────────────────────────────────────────────────────
 

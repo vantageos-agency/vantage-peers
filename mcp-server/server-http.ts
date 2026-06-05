@@ -1248,6 +1248,102 @@ admin.post("/oauth/access-tokens", async (c) => {
 	);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/clients/:clientId/patch-scope — Day 92 LIVE
+//
+// Wraps Convex mutation `oauth:patchClientScopeAndRefreshTokens`. Re-targets
+// the client to a new scope_profile and propagates the new
+// `fromAllowList` + namespace prefixes into every live access token row
+// for that clientId WITHOUT revoking refresh tokens — the bearer the
+// operator already pasted into their MCP host keeps working, immediately
+// gaining the new profile's allow list. Eliminates the customer
+// re-paste step that profile rotation would otherwise force.
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
+//
+// Body schema: { newScopeProfile: string, reason: string (≥20 chars) }
+//
+// Response (200): {
+//   clientPatched, previousScopeProfile, newScopeProfile,
+//   accessTokensRefreshed, auditLogId
+// }
+//
+// Error mapping (Convex throw → HTTP status):
+//   "client not found"      → 404
+//   "client is revoked"     → 410 (Gone — re-mint required)
+//   "scope_profile not found" → 400
+//   "reason must be at least 20" → 400
+//   anything else           → 500
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
+	const masterToken = process.env.BEARER_SECRET_MASTER;
+	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
+
+	const clientId = c.req.param("clientId");
+	if (!clientId) {
+		return c.json(
+			{ error: "invalid_request", detail: "missing :clientId" },
+			400,
+		);
+	}
+
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+
+	const newScopeProfile =
+		typeof body.newScopeProfile === "string" ? body.newScopeProfile : null;
+	const reason = typeof body.reason === "string" ? body.reason : null;
+	if (!newScopeProfile || !reason) {
+		return c.json(
+			{
+				error: "invalid_request",
+				detail: "newScopeProfile and reason are required",
+			},
+			400,
+		);
+	}
+
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:patchClientScopeAndRefreshTokens" as any,
+			{
+				callerToken: masterToken,
+				clientId,
+				newScopeProfile,
+				reason,
+			},
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (/client not found/i.test(message)) {
+			return c.json({ error: "not_found", detail: message }, 404);
+		}
+		if (/client is revoked/i.test(message)) {
+			return c.json({ error: "gone", detail: message }, 410);
+		}
+		if (/scope_profile not found/i.test(message)) {
+			return c.json({ error: "invalid_scope_profile", detail: message }, 400);
+		}
+		if (/reason must be at least/i.test(message)) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error(
+			"[admin] patchClientScopeAndRefreshTokens failed:",
+			message,
+		);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
+
 app.route("/admin", admin);
 
 // ─────────────────────────────────────────────────────────────────────────────
