@@ -19,6 +19,7 @@ import {
 	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
+import { validateTaskPayload } from "./validate-task-payload.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
@@ -6426,6 +6427,61 @@ export function registerTools(
 
 			return {
 				content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+			};
+		},
+	);
+
+	// ── validate_task_payload ────────────────────────────────────────────────────
+	//
+	// LECTURE — pure lint, no DB write. Runs all VP write-path validation axes
+	// at once and returns ALL failures in a single response. Orchestrators call
+	// this before the real create_task / update_task / complete_task /
+	// send_message to avoid the 2-3 sequential hook-rejection loops that
+	// Laurent Day 92 diagnosed ("tu échoue 2 ou 3 fois à chaque fois").
+	//
+	// Axes covered (replaces 5 retired PreToolUse hooks):
+	//   1. VERIFICATION: + TESTS: presence  → auto-inject-warn
+	//   2. delegation-triplet completeness  → hard-block if partial
+	//   3. evidence-bound completionNote    → hard-block on terminal status
+	//   4. friction_observed declaration   → auto-inject-warn
+	//   5. [STATUS]/task-ref on messages   → hard-block if missing
+	//   6. time/effort estimates anywhere  → hard-block always
+	//
+	// Retired hooks: enforce-task-quality.py, enforce-task-delegation.py,
+	//   enforce-no-task-in-message.py, enforce-evidence-bound-completion.py,
+	//   enforce-friction-field.py
+	//
+	// Day 92 F1 — mission k57a36y8w5t085bqr23dsmvb2d882506
+
+	server.tool(
+		"validate_task_payload",
+		"Dry-run lint for VP write-path tools. Runs ALL validation axes at once (VERIFICATION/TESTS presence, delegation-triplet, evidence-bound completionNote, friction_observed, task-ref in messages, time-estimate detection) and returns every failure with copy-paste fix snippets. Call this BEFORE the real create_task / update_task / complete_task / send_message to avoid sequential hook-rejection loops.",
+		{
+			tool_name: z
+				.enum(["create_task", "update_task", "complete_task", "send_message"])
+				.describe("The VP tool whose payload you want to validate."),
+			payload: z
+				.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string())]))
+				.describe("The tool_input object you intend to pass to tool_name. All values must be string, number, boolean, null, or string[]." ),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Validate task payload (lint dry-run)",
+		},
+		({ tool_name, payload }) => {
+			const result = validateTaskPayload(
+				tool_name as Parameters<typeof validateTaskPayload>[0],
+				payload as Record<string, unknown>,
+			);
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify(result, null, 2),
+					},
+				],
 			};
 		},
 	);
