@@ -73,27 +73,238 @@ Token re-issue after cascade revoke is **not** an admin-endpoint responsibility:
 
 ---
 
-## 4. S3.1 — scope-aware filter framework (D3)
+## 4. S3.1 — scope-aware filter framework (D3) — rewritten Day 92
 
-The scope-aware filter framework is the single chokepoint that translates an authenticated caller's OAuth scope set into a row-level predicate applied to every multi-tenant list/get path.
+The scope-aware filter framework is the single chokepoint that translates an authenticated caller's OAuth scope into row-level predicates applied to every multi-tenant list/get path. This section was rewritten on Day 92 to clarify three distinct concepts that had been conflated in prior implementations and caused production regressions (see §4.4).
 
-- **Implementation:** `mcp-server/src/scope-filter.ts`.
-- **Contract:** every list/get tool whose result set may span tenants composes its query through `scope-filter`. The filter rejects results the caller is not entitled to see, before they leave the server boundary.
+---
 
-### Wave A — initial surface (shipped, PR #624, main `251d183`)
+### §4.1 Three distinct concepts — DO NOT CONFLATE
 
-- `list_memories`
-- `get_memory`
+**EN — Three fields in a `scope_profile` document serve entirely different purposes. Conflating them causes security regressions.**
 
-Test report: `docs/test-reports/s3.1.a-scope-aware-filter-wave-a-2026-06-03.md`.
+| Concept | Type | Purpose | Never used as |
+|---|---|---|---|
+| `scope_profile.name` | `string` (opaque identifier) | Uniquely identifies a scope-profile record in the catalog. Human-readable slug (`helios-iris-rh`, `alpha-test-trio`). | Orchestrator ID, namespace prefix, identity filter value |
+| `scope_profile.fromAllowList[]` | `string[]` | Exhaustive list of orchestrator IDs authorized to appear as `assignedTo`, `createdBy`, `from`, `recipient`, `pilot` under this scope. | Namespace filter, profile name comparison |
+| `scope_profile.namespaceReadPrefixes[]` | `string[]` | Prefix list for namespace-scoped **READ** operations (`list_memories`, `recall`, `get_memory`). | Identity filter, write gate |
+| `scope_profile.namespaceWritePrefixes[]` | `string[]` | Prefix list for namespace-scoped **WRITE** operations (`store_memory`). | Identity filter, read gate |
 
-### Wave B — extended surface (shipped, PR #625, main `28db616`)
+**FR — Trois champs dans un document `scope_profile` ont des rôles entièrement distincts. Les confondre provoque des régressions de sécurité.**
 
-- `list_briefing_notes`
-- `list_messages`
-- `list_peers`
+| Concept | Type | Rôle | Ne jamais utiliser comme |
+|---|---|---|---|
+| `scope_profile.name` | `string` (identifiant opaque) | Identifie de manière unique un enregistrement scope-profile dans le catalogue. Slug lisible (`helios-iris-rh`, `alpha-test-trio`). | ID d'orchestrateur, préfixe de namespace, valeur de filtre d'identité |
+| `scope_profile.fromAllowList[]` | `string[]` | Liste exhaustive des IDs d'orchestrateurs autorisés à apparaître comme `assignedTo`, `createdBy`, `from`, `recipient`, `pilot` sous ce scope. | Filtre de namespace, comparaison de nom de profil |
+| `scope_profile.namespaceReadPrefixes[]` | `string[]` | Liste de préfixes pour les opérations de **LECTURE** par namespace (`list_memories`, `recall`, `get_memory`). | Filtre d'identité, verrou d'écriture |
+| `scope_profile.namespaceWritePrefixes[]` | `string[]` | Liste de préfixes pour les opérations d'**ÉCRITURE** par namespace (`store_memory`). | Filtre d'identité, verrou de lecture |
 
-Wave B extends the framework across the remaining Marie-impacted cross-tenant-reachable read paths. Test report: `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`.
+---
+
+### §4.2 Identity-filter tools — `fromAllowList[]` semantic
+
+**EN — For a non-master bearer, identity-filter tools MUST gate the request using `fromAllowList`, not `scope_profile.name`.**
+
+```typescript
+/**
+ * Returns true when the presented identity is authorized under the given scope.
+ * Reference: mcp-server/src/list-tasks-gate.ts (PR #654, commit 00b95f0)
+ */
+function canListByIdentity(scope: OAuthContext, presentedIdentity: string): boolean {
+  if (isMasterScope(scope)) return true;
+  const allowList = scope.fromAllowList ?? [];
+  if (allowList.length === 0) {
+    // Legacy fallback: no explicit list configured — compare against userId only.
+    return presentedIdentity === scope.userId;
+  }
+  // Case-insensitive match to handle Hélios / helios / HELIOS variants.
+  return allowList.some(allowed => allowed.toLowerCase() === presentedIdentity.toLowerCase());
+}
+```
+
+Reference implementation: `mcp-server/src/list-tasks-gate.ts` (PR #654, commit `00b95f0`). Identical pattern in `check_messages` (commit `24b39c5`). Phase C0 will mirror this for `list_messages`, `list_missions`, `list_briefing_notes`, `list_peers`.
+
+**FR — Pour un bearer non-master, les outils de filtre d'identité DOIVENT contrôler la requête via `fromAllowList`, et non via `scope_profile.name`.**
+
+L'implémentation de référence est `mcp-server/src/list-tasks-gate.ts` (PR #654, commit `00b95f0`). Le pattern identique existe dans `check_messages` (commit `24b39c5`). La phase C0 reproduira ce pattern pour `list_messages`, `list_missions`, `list_briefing_notes`, `list_peers`.
+
+---
+
+### §4.3 Namespace-filter tools — `namespace*Prefixes` semantic
+
+**EN — For a non-master bearer, namespace-scoped tools MUST filter against the relevant prefix list, not against `scope_profile.name`.**
+
+```typescript
+/**
+ * Returns true when the requested namespace falls within the scope's read prefixes.
+ */
+function canReadNamespace(scope: OAuthContext, namespace: string): boolean {
+  if (isMasterScope(scope)) return true;
+  const prefixes = scope.namespaceReadPrefixes ?? [];
+  // Exact match OR the namespace is nested under a configured prefix.
+  return prefixes.some(p => namespace === p || namespace.startsWith(p + "/"));
+}
+
+/**
+ * Returns true when the requested namespace falls within the scope's write prefixes.
+ */
+function canWriteNamespace(scope: OAuthContext, namespace: string): boolean {
+  if (isMasterScope(scope)) return true;
+  const prefixes = scope.namespaceWritePrefixes ?? [];
+  return prefixes.some(p => namespace === p || namespace.startsWith(p + "/"));
+}
+```
+
+**FR — Pour un bearer non-master, les outils filtrés par namespace DOIVENT filtrer contre la liste de préfixes appropriée, et non contre `scope_profile.name`.**
+
+Correspondance exacte ou hiérarchique : `project/iris-rh/sub` passe si le préfixe `project/iris-rh` est configuré.
+
+---
+
+### §4.4 Anti-patterns — REGRESSIONS TO AVOID
+
+**EN — The following patterns have caused production incidents. Do not reintroduce them.**
+
+| Code | Anti-pattern | Regression | Fix |
+|---|---|---|---|
+| A1 | `presentedIdentity === scope_profile.name` | PR #625 commit `28db616` — `list_tasks` blocked Hélios on `helios-iris-rh` | PR #654 commit `00b95f0` — `list-tasks-gate.ts` uses `fromAllowList` |
+| A2 | Case-sensitive identity match | Blocks `Helios` when `helios` is in `fromAllowList` | Always use `.toLowerCase()` on both sides |
+| A3 | NFC normalization absent at write time | `Hélios` (NFC composed) vs `Hélios` (NFD decomposed) mismatch | Normalize to NFC at insert time and at compare time |
+| A4 | `masterOnlyMiddleware` bypass missing | Master-only tools accidentally accessible to tenant bearers | Every admin-surface tool must pass through `guardMasterOnly` |
+| A5 | No auth check on write tools | 14 P0 tools identified in A1 matrix (Day 92) with zero-auth write surface | Phase C0 sub-batch will add `guardFrom` / `guardWrite` gates |
+
+**FR — Les patterns suivants ont causé des incidents de production. Ne pas les réintroduire.**
+
+| Code | Anti-pattern | Régression | Correctif |
+|---|---|---|---|
+| A1 | `presentedIdentity === scope_profile.name` | PR #625 commit `28db616` — `list_tasks` bloquait Hélios sur `helios-iris-rh` | PR #654 commit `00b95f0` — `list-tasks-gate.ts` utilise `fromAllowList` |
+| A2 | Comparaison d'identité sensible à la casse | Bloque `Helios` quand `helios` est dans `fromAllowList` | Toujours utiliser `.toLowerCase()` des deux côtés |
+| A3 | Normalisation NFC absente à l'écriture | `Hélios` (NFC composé) vs `Hélios` (NFD décomposé) ne correspondent pas | Normaliser en NFC à l'insertion et à la comparaison |
+| A4 | Absence du bypass `masterOnlyMiddleware` | Outils master-only accessibles aux bearers tenant | Chaque outil admin doit passer par `guardMasterOnly` |
+| A5 | Outils d'écriture sans vérification auth | 14 outils P0 identifiés dans la matrice A1 (Day 92) sans auth sur surface d'écriture | Le sous-batch Phase C0 ajoutera les verrous `guardFrom` / `guardWrite` |
+
+---
+
+### §4.5 Tool-by-tool reference table
+
+**EN — All 85+ Cloud MCP tools categorized by filter type. Source of truth: `docs/test-reports/day92-vp-mcp-audit-matrix.md` (PR #661).**
+
+#### Identity-filter tools (gate via `fromAllowList[]`)
+
+| Tool | Status | Notes |
+|---|---|---|
+| `list_tasks` | **Fixed** PR #654 commit `00b95f0` | `list-tasks-gate.ts` — reference implementation |
+| `check_messages` | **Fixed** commit `24b39c5` | Mirrors `list-tasks-gate` pattern |
+| `send_message` | **Fixed** Day 92 | `guardFrom` check wired |
+| `create_task` | **Pending C0** | `guardFrom` not yet enforced |
+| `list_messages` | **Pending C0** | `from` / `recipient` filter regression (commit `28db616`) |
+| `list_missions` | **Pending C0** | `pilot` filter regression (commit `28db616`) |
+| `list_briefing_notes` | **Pending C0** | `fromAllowList` gate TBD |
+| `list_peers` | **Pending C0** | `fromAllowList` gate TBD |
+
+#### Namespace-filter tools (gate via `namespace*Prefixes[]`)
+
+| Tool | Status | Notes |
+|---|---|---|
+| `list_memories` | Fixed — Wave A PR #624 `251d183` | `namespaceReadPrefixes` enforced |
+| `recall` | Fixed — Wave A PR #624 `251d183` | `namespaceReadPrefixes` enforced |
+| `get_memory` | Fixed — Wave A PR #624 `251d183` | `namespaceReadPrefixes` enforced |
+| `store_memory` | Fixed | `namespaceWritePrefixes` enforced |
+
+#### Master-only tools (gate via `guardMasterOnly`)
+
+`revokeAccessTokensOnly`, `patchScopeProfileEmergency`, `PATCH /admin/scope-profiles/:id`, and all `/admin/*` surface tools. See §2.
+
+**FR — Tous les outils Cloud MCP catégorisés par type de filtre. Source de vérité : `docs/test-reports/day92-vp-mcp-audit-matrix.md` (PR #661).**
+
+#### Outils à filtre d'identité (verrou via `fromAllowList[]`)
+
+`list_tasks` (corrigé PR #654), `check_messages` (corrigé commit `24b39c5`), `send_message` (corrigé Day 92). En attente C0 : `create_task`, `list_messages`, `list_missions`, `list_briefing_notes`, `list_peers`.
+
+#### Outils à filtre de namespace (verrou via `namespace*Prefixes[]`)
+
+`list_memories`, `recall`, `get_memory` (corrigés Wave A PR #624). `store_memory` (corrigé).
+
+#### Outils master-only
+
+`revokeAccessTokensOnly`, `patchScopeProfileEmergency`, et toute la surface `/admin/*`. Voir §2.
+
+---
+
+### §4.6 Concrete example — tenant Marie Iris RH / Hélios
+
+**EN — This example anchors the Day 92 live regression (visio blocked) and its resolution.**
+
+Tenant scope_profile `helios-iris-rh`:
+
+```json
+{
+  "name": "helios-iris-rh",
+  "fromAllowList": ["Hélios", "Helios", "helios", "hélios", "Clio", "clio", "Victor", "victor"],
+  "namespaceReadPrefixes": [
+    "orchestrator/Hélios", "orchestrator/Helios",
+    "orchestrator/Clio", "orchestrator/clio",
+    "orchestrator/Victor", "project/iris-rh"
+  ],
+  "namespaceWritePrefixes": [
+    "orchestrator/Hélios", "orchestrator/Helios",
+    "project/iris-rh"
+  ]
+}
+```
+
+**Correct flow (post PR #654):**
+
+- Hélios bearer calls `list_tasks assignedTo=Helios`
+  → `canListByIdentity`: `"Helios"` ∈ `fromAllowList` (case-insensitive) → **PASS**
+
+- Hélios bearer calls `list_tasks assignedTo=helios-iris-rh`
+  → `canListByIdentity`: `"helios-iris-rh"` ∉ `fromAllowList` → **FORBIDDEN** (correct)
+  *(This is the regression introduced by PR #625 commit `28db616`: the filter was matching against `scope_profile.name` instead of `fromAllowList`.)*
+
+- Hélios bearer calls `list_memories namespace=project/iris-rh`
+  → `canReadNamespace`: `"project/iris-rh"` exact-matches prefix `"project/iris-rh"` → **PASS**
+
+- Hélios bearer calls `list_memories namespace=project/other-tenant`
+  → `canReadNamespace`: no prefix matches → **FORBIDDEN** (correct)
+
+**FR — Cet exemple ancre la régression de production Day 92 (visio bloquée) et sa résolution.**
+
+Tenant scope_profile `helios-iris-rh` (voir JSON ci-dessus).
+
+Flux correct (après PR #654) :
+- Hélios appelle `list_tasks assignedTo=Helios` → `canListByIdentity` : `"Helios"` ∈ `fromAllowList` (insensible à la casse) → **PASS**.
+- Hélios appelle `list_tasks assignedTo=helios-iris-rh` → `"helios-iris-rh"` ∉ `fromAllowList` → **FORBIDDEN** (correct). C'est exactement la régression du commit `28db616` : le filtre comparait avec `scope_profile.name` au lieu de `fromAllowList`.
+- Hélios appelle `list_memories namespace=project/iris-rh` → correspondance exacte du préfixe → **PASS**.
+- Hélios appelle `list_memories namespace=project/other-tenant` → aucun préfixe ne correspond → **FORBIDDEN** (correct).
+
+---
+
+### §4.7 Wave history
+
+**EN — Shipped waves and pending phases.**
+
+| Wave | PR | Commit | Tools covered | Status |
+|---|---|---|---|---|
+| Wave A | PR #624 | `251d183` | `list_memories`, `get_memory` | Shipped |
+| Wave B | PR #625 | `28db616` | `list_briefing_notes`, `list_messages`, `list_peers` — namespace filter only; identity filter regressed | Shipped with regression |
+| list_tasks gate | PR #654 | `00b95f0` | `list_tasks` identity filter (`fromAllowList`) | Shipped — fixes Wave B regression |
+| check_messages gate | inline | `24b39c5` | `check_messages` identity filter | Shipped |
+| Phase C0 | pending | — | `list_messages.from`, `list_missions.pilot`, `list_briefing_notes`, `list_peers`, `create_task` identity gates | Pending |
+
+Day 92 Laurent doctrine (verbatim): *"on le fait pour un MCP d'abord, ensuite on reproduit sur l'autre, pour être cohérent et même standard"* — this document is the canonical spec Athena replicates on vCRM.
+
+**FR — Vagues livrées et phases en attente.**
+
+| Vague | PR | Commit | Outils couverts | Statut |
+|---|---|---|---|---|
+| Wave A | PR #624 | `251d183` | `list_memories`, `get_memory` | Livré |
+| Wave B | PR #625 | `28db616` | `list_briefing_notes`, `list_messages`, `list_peers` — filtre namespace uniquement ; filtre identité régressé | Livré avec régression |
+| list_tasks gate | PR #654 | `00b95f0` | `list_tasks` filtre identité (`fromAllowList`) | Livré — corrige la régression Wave B |
+| check_messages gate | inline | `24b39c5` | `check_messages` filtre identité | Livré |
+| Phase C0 | en attente | — | `list_messages.from`, `list_missions.pilot`, `list_briefing_notes`, `list_peers`, `create_task` verrous identité | En attente |
+
+Doctrine Day 92 Laurent (verbatim) : *"on le fait pour un MCP d'abord, ensuite on reproduit sur l'autre, pour être cohérent et même standard"* — ce document est la spécification canonique qu'Athena reproduit sur vCRM.
 
 ---
 
@@ -117,6 +328,9 @@ The envelope-safe cursor paging utility (`mcp-server/src/paging.ts`: `DEFAULT_LI
 - PR #621 — D6 + D7 hardening at `/token` and `/authorize`.
 - PR #622 — `patchScopeProfileEmergency` + `oauth_audit_log`.
 - PR #623 — D9 full cascade-update across `oauth_clients`.
-- PR #624 — S3.1 scope-aware filter Wave A.
-- PR #625 — S3.1 scope-aware filter Wave B.
-- Test reports: `docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md`, `docs/test-reports/s1.2-mutation-2026-06-03.md`, `docs/test-reports/s2.1-d9-cascade-clients-2026-06-03.md`, `docs/test-reports/s3.1.a-scope-aware-filter-wave-a-2026-06-03.md`, `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`.
+- PR #624 — S3.1 scope-aware filter Wave A (`251d183`).
+- PR #625 — S3.1 scope-aware filter Wave B (`28db616`) — Wave B regression introduced here.
+- PR #654 — `list-tasks-gate.ts` `fromAllowList` fix (`00b95f0`) — fixes Wave B identity-filter regression.
+- PR #661 — Day 92 A0+A1+A2+A3 stacked review — A1 audit matrix source of truth.
+- `mcp-server/src/list-tasks-gate.ts` — canonical `fromAllowList` gate reference implementation.
+- Test reports: `docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md`, `docs/test-reports/s1.2-mutation-2026-06-03.md`, `docs/test-reports/s2.1-d9-cascade-clients-2026-06-03.md`, `docs/test-reports/s3.1.a-scope-aware-filter-wave-a-2026-06-03.md`, `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`, `docs/test-reports/day92-vp-mcp-audit-matrix.md`.
