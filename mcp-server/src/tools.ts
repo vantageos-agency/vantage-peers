@@ -22,6 +22,7 @@ import {
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { listTasksGate } from "./list-tasks-gate.js";
+import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
@@ -1722,10 +1723,19 @@ export function registerTools(
 						? sessionDay
 						: deriveSessionDay();
 
+				// C2: normalize orchestrator-id fields at write time (B2 §6+§7).
+				// `channel` may be "broadcast", a role name, or "pi,tau" CSV —
+				// only normalize non-broadcast single-role values to preserve CSV
+				// splitting behaviour in the Convex layer.
+				const normFrom = normalizeOrchestratorId(from);
+				const normChannel =
+					channel === "broadcast" || channel.includes(",")
+						? channel
+						: normalizeOrchestratorId(channel);
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
-					from,
+					from: normFrom,
 					fromInstanceId,
-					channel,
+					channel: normChannel,
 					content,
 					sessionDay: derivedSessionDay,
 					tenantId,
@@ -1799,10 +1809,17 @@ export function registerTools(
 				// userId equality is preserved as a fallback when fromAllowList
 				// is empty (e.g. minted token without explicit allow list).
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
+					// C2 (Day 92): NFC + case-insensitive comparison per B2 §6+§7.
+					// Raw .includes() was exact-match only, rejecting "HELIOS" when
+					// fromAllowList contained "Helios". Now both sides are normalized.
+					const normRecipient = normalizeOrchestratorId(recipient);
 					const allowed =
 						(oauthCtx.fromAllowList?.length ?? 0) > 0
-							? oauthCtx.fromAllowList.includes(recipient)
-							: recipient === oauthCtx.userId;
+							? oauthCtx.fromAllowList.some(
+									(a) => normalizeOrchestratorId(a) === normRecipient,
+								)
+							: normRecipient ===
+								normalizeOrchestratorId(oauthCtx.userId);
 					if (!allowed) {
 						return mcpError(
 							`Forbidden: check_messages can only read messages addressed to an identity you are authorized to speak as (token userId='${oauthCtx.userId}', allowed senders=[${(oauthCtx.fromAllowList ?? []).join(", ")}]); requested recipient '${recipient}' is not in that set.`,
@@ -2356,12 +2373,13 @@ export function registerTools(
 				const assigneeDenied = guardFrom(assignedTo);
 				if (assigneeDenied) return assigneeDenied;
 
+				// C2: normalize orchestrator-id fields at write time (B2 §6+§7).
 				const taskId = await convex.mutation("tasks:create" as any, {
 					title,
 					description,
 					project,
 					tags: toArray(tags),
-					assignedTo,
+					assignedTo: normalizeOrchestratorId(assignedTo),
 					assignedToInstance,
 					priority,
 					status,
@@ -2369,7 +2387,7 @@ export function registerTools(
 					missionId: missionId as any,
 					estimatedMinutes,
 					dueDate,
-					createdBy,
+					createdBy: normalizeOrchestratorId(createdBy),
 				});
 
 				return {

@@ -1,5 +1,5 @@
 /**
- * list_tasks scope gate — fromAllowList case-insensitive check.
+ * list_tasks scope gate — fromAllowList case-insensitive + Unicode NFC check.
  *
  * Extracted from the tools.ts handler so the predicate is unit-testable
  * without bootstrapping the full McpServer.
@@ -8,24 +8,29 @@
  * Fixed regression: 28db616 (PR #625) compared assignedTo/createdBy against
  * oauthCtx.userId (profile name "helios-iris-rh") instead of fromAllowList.
  *
+ * C2 (Day 92): upgraded from raw .toLowerCase() to normalizeOrchestratorId()
+ * which applies NFC normalization before lowercasing. Decomposed NFD variants
+ * ("Hélios" NFD) now match composed NFC entries in the allow list.
+ * B2 standard §6 (case-insensitive) + §7 (Unicode NFC). PR #667.
+ *
  * Contract:
  *   - undefined oauthCtx (legacy bearer) → null (wildcard pass-through)
  *   - master scope                        → null (wildcard pass-through)
  *   - no filter provided                  → null (Convex layer applies
  *                                           fromAllowList intersection)
- *   - presented value ∈ fromAllowList     → null (case-insensitive)
- *     (case-insensitive so "Helios" matches "helios" etc.)
+ *   - presented value ∈ fromAllowList     → null (NFC + case-insensitive)
  *   - fromAllowList empty                 → legacy fallback: userId equality
  *   - otherwise                           → Forbidden error string
  */
 
 import { isMasterScope, type OAuthContext } from "./auth.js";
+import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 
 /**
  * Returns null when the list_tasks call is allowed, or a Forbidden error
  * string when it must be rejected.
  *
- * @param oauthCtx  - OAuth context from the request (undefined = legacy bearer)
+ * @param oauthCtx   - OAuth context from the request (undefined = legacy bearer)
  * @param assignedTo - caller-supplied assignedTo filter (may be undefined)
  * @param createdBy  - caller-supplied createdBy filter (may be undefined)
  */
@@ -40,15 +45,16 @@ export function listTasksGate(
 	// at the query layer (or return all rows the bearer can see via row filter).
 	if (assignedTo === undefined && createdBy === undefined) return null;
 
-	const presented = (assignedTo ?? createdBy)!;
+	const presented = assignedTo ?? createdBy ?? "";
 	const fromAllowList = oauthCtx.fromAllowList ?? [];
 
+	const normPresented = normalizeOrchestratorId(presented);
 	const allowed =
 		fromAllowList.length > 0
 			? fromAllowList.some(
-					(a) => a.toLowerCase() === presented.toLowerCase(),
+					(a) => normalizeOrchestratorId(a) === normPresented,
 				)
-			: presented === oauthCtx.userId; // legacy fallback: no explicit list
+			: normPresented === normalizeOrchestratorId(oauthCtx.userId); // legacy fallback
 
 	if (!allowed) {
 		const allowedDisplay =

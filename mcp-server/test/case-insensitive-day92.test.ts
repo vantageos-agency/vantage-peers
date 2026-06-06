@@ -17,9 +17,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  normalizeOrchestratorId,
-  isInAllowList,
-} from "../../convex/_helpers/normalizeOrchestratorId.js";
+	normalizeOrchestratorId,
+	isInAllowList,
+} from "../src/normalizeOrchestratorId.js";
 import { listTasksGate } from "../src/list-tasks-gate.js";
 import type { OAuthContext } from "../src/auth.js";
 
