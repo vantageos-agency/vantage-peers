@@ -6152,6 +6152,9 @@ export function registerTools(
 			githubRepo,
 			orchestrator,
 		}) => {
+			// C0.1: infrastructure-level — master scope only
+			const masterDenied = guardMasterOnly("add_deployment");
+			if (masterDenied) return masterDenied;
 			try {
 				const id = await convex.mutation("errorMonitor:addDeployment" as any, {
 					name,
@@ -6197,6 +6200,9 @@ export function registerTools(
 			title: "Remove deployment",
 		},
 		async ({ name }) => {
+			// C0.1: infrastructure-level — master scope only
+			const masterDenied = guardMasterOnly("remove_deployment");
+			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("errorMonitor:removeDeployment" as any, { name });
 				return {
