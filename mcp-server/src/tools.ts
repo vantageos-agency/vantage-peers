@@ -607,6 +607,373 @@ export const whoamiOutputSchema = z.object({
 		),
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C1 — Per-tool outputSchema exports (B2 §3 standard)
+//
+// One module-level Zod schema export per tool. Naming: <toolName>OutputSchema.
+// These describe the JSON structure inside content[0].text on success paths.
+// Error paths (isError: true) are not covered by these schemas.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// store_memory
+export const storeMemoryOutputSchema = z.object({
+	memoryId: z.string(),
+	namespace: z.string(),
+	type: z.enum(["user", "feedback", "project", "reference", "episode"]),
+	content: z.string(),
+});
+
+// soft_delete_memory
+export const softDeleteMemoryOutputSchema = z.object({
+	deleted: z.literal(true),
+	memoryId: z.string(),
+});
+
+// get_memory
+export const getMemoryOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// recall
+export const recallOutputSchema = z.array(z.record(z.string(), z.unknown()));
+
+// text_search
+export const textSearchOutputSchema = z.array(z.record(z.string(), z.unknown()));
+
+// hybrid_search
+export const hybridSearchOutputSchema = z.array(z.record(z.string(), z.unknown()));
+
+// store_episode
+export const storeEpisodeOutputSchema = z.object({
+	memoryId: z.string(),
+	type: z.literal("episode"),
+	severity: z.enum(["critical", "major", "minor"]),
+	namespace: z.string(),
+});
+
+// get_profile
+export const getProfileOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// update_profile
+export const updateProfileOutputSchema = z.object({
+	profileId: z.string(),
+	orchestratorId: z.string(),
+	name: z.string().optional(),
+});
+
+// list_memories
+export const listMemoriesOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable().optional(), _meta: z.record(z.string(), z.unknown()).optional(), page: z.array(z.record(z.string(), z.unknown())).optional() }),
+]);
+
+// send_message
+export const sendMessageOutputSchema = z.object({
+	messageId: z.string(),
+	from: z.string(),
+	channel: z.string(),
+});
+
+// check_messages
+export const checkMessagesOutputSchema = z.union([
+	z.array(z.object({ receiptId: z.string(), from: z.string(), fromInstanceId: z.string().optional(), channel: z.string().optional(), content: z.string(), createdAt: z.number() })),
+	z.string(),
+]);
+
+// mark_as_read
+export const markAsReadOutputSchema = z.object({ markedAsRead: z.number() });
+
+// delete_message
+export const deleteMessageOutputSchema = z.record(z.string(), z.unknown());
+
+// set_summary
+export const setSummaryOutputSchema = z.object({
+	orchestratorId: z.string(),
+	instanceId: z.string().optional(),
+	summary: z.string(),
+});
+
+// list_peers
+export const listPeersOutputSchema = z.union([
+	z.array(z.object({ _id: z.string(), _creationTime: z.number().optional(), id: z.string(), instanceId: z.string(), name: z.string().optional(), role: z.string(), workspace: z.string(), currentTask: z.string(), lastSeen: z.string(), sessionCount: z.number() })),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+]);
+
+// list_messages
+export const listMessagesOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+]);
+
+// list_broadcast_status
+export const listBroadcastStatusOutputSchema = z.array(z.record(z.string(), z.unknown()));
+
+// create_task
+export const createTaskOutputSchema = z.object({
+	taskId: z.string(),
+	title: z.string(),
+	assignedTo: z.string(),
+	priority: z.enum(["urgent", "high", "medium", "low"]),
+	status: z.enum(["todo", "in_progress", "review", "blocked", "done"]),
+});
+
+// list_tasks
+export const listTasksOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// update_task
+export const updateTaskOutputSchema = z.object({ taskId: z.string(), updated: z.literal(true) });
+
+// complete_task
+export const completeTaskOutputSchema = z.object({ taskId: z.string(), status: z.literal("done") });
+
+// start_task
+export const startTaskOutputSchema = z.object({ taskId: z.string(), status: z.literal("in_progress") });
+
+// checkout_task
+export const checkoutTaskOutputSchema = z.union([
+	z.object({ claimed: z.literal(true) }),
+	z.object({ claimed: z.literal(false), reason: z.string() }),
+]);
+
+// delete_task
+export const deleteTaskOutputSchema = z.record(z.string(), z.unknown());
+
+// block_task
+export const blockTaskOutputSchema = z.object({ taskId: z.string(), status: z.literal("blocked"), reason: z.string().optional() });
+
+// add_task_dependency
+export const addTaskDependencyOutputSchema = z.object({ taskId: z.string(), dependsOn: z.array(z.string()), updated: z.literal(true) });
+
+// list_tasks_by_mission
+export const listTasksByMissionOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+]);
+
+// create_mission
+export const createMissionOutputSchema = z.object({
+	missionId: z.string(),
+	name: z.string(),
+	project: z.string(),
+	pilot: z.string(),
+	status: z.enum(["brainstorm", "plan", "execute", "validate", "complete"]),
+});
+
+// list_missions
+export const listMissionsOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// get_mission
+export const getMissionOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// update_mission
+export const updateMissionOutputSchema = z.object({ missionId: z.string(), updated: z.literal(true) });
+
+// update_mission_status
+export const updateMissionStatusOutputSchema = z.object({ missionId: z.string(), status: z.enum(["brainstorm", "plan", "execute", "validate", "complete"]) });
+
+// write_diary
+export const writeDiaryOutputSchema = z.object({ diaryId: z.string(), date: z.string(), orchestrator: z.string() });
+
+// get_diary
+export const getDiaryOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// list_diaries
+export const listDiariesOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// create_briefing_note
+export const createBriefingNoteOutputSchema = z.object({ noteId: z.string(), title: z.string(), topic: z.string(), createdBy: z.string() });
+
+// update_briefing_note
+export const updateBriefingNoteOutputSchema = z.object({ noteId: z.string(), updated: z.literal(true) });
+
+// get_briefing_note
+export const getBriefingNoteOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// list_briefing_notes
+export const listBriefingNotesOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// register_component
+export const registerComponentOutputSchema = z.record(z.string(), z.unknown());
+
+// list_components
+export const listComponentsOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+]);
+
+// get_component
+export const getComponentOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// update_component
+export const updateComponentOutputSchema = z.object({ componentId: z.string(), updated: z.literal(true) });
+
+// delete_component
+export const deleteComponentOutputSchema = z.record(z.string(), z.unknown());
+
+// search_components
+export const searchComponentsOutputSchema = z.array(z.record(z.string(), z.unknown()));
+
+// create_recurring_task
+export const createRecurringTaskOutputSchema = z.object({ taskId: z.string(), cronExpression: z.string() });
+
+// list_recurring_tasks
+export const listRecurringTasksOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+]);
+
+// pause_recurring_task
+export const pauseRecurringTaskOutputSchema = z.record(z.string(), z.unknown());
+
+// resume_recurring_task
+export const resumeRecurringTaskOutputSchema = z.record(z.string(), z.unknown());
+
+// delete_recurring_task
+export const deleteRecurringTaskOutputSchema = z.record(z.string(), z.unknown());
+
+// update_recurring_task
+export const updateRecurringTaskOutputSchema = z.object({ recurringTaskId: z.string(), updated: z.literal(true) });
+
+// create_mandate
+export const createMandateOutputSchema = z.object({ mandateId: z.string(), requestedBy: z.string(), fulfilledBy: z.string(), service: z.string(), budget: z.number() });
+
+// accept_mandate
+export const acceptMandateOutputSchema = z.object({ mandateId: z.string(), status: z.literal("accepted") });
+
+// update_mandate
+export const updateMandateOutputSchema = z.object({ mandateId: z.string(), updated: z.literal(true) });
+
+// settle_mandate
+export const settleMandateOutputSchema = z.object({ mandateId: z.string(), status: z.literal("settled"), finalCost: z.number() });
+
+// validate_mandate_spending
+export const validateMandateSpendingOutputSchema = z.record(z.string(), z.unknown());
+
+// list_mandates
+export const listMandatesOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// create_bu
+export const createBuOutputSchema = z.object({ buId: z.string(), name: z.string(), orchestratorId: z.string(), status: z.enum(["idea", "building", "live", "revenue"]) });
+
+// update_bu
+export const updateBuOutputSchema = z.object({ buId: z.string(), updated: z.literal(true) });
+
+// get_bu
+export const getBuOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// list_bus
+export const listBusOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// delete_bu
+export const deleteBuOutputSchema = z.record(z.string(), z.unknown());
+
+// add_repo_mapping
+export const addRepoMappingOutputSchema = z.object({ id: z.string(), repo: z.string(), orchestrator: z.string(), project: z.string(), active: z.boolean().optional() });
+
+// list_repo_mappings
+export const listRepoMappingsOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+]);
+
+// remove_repo_mapping
+export const removeRepoMappingOutputSchema = z.record(z.string(), z.unknown());
+
+// list_issues
+export const listIssuesOutputSchema = z.object({
+	count: z.number(),
+	issues: z.array(z.record(z.string(), z.unknown())),
+	nextCursor: z.string().nullable().optional(),
+});
+
+// get_issue
+export const getIssueOutputSchema = z.union([
+	z.record(z.string(), z.unknown()),
+	z.object({ error: z.string() }),
+]).nullable();
+
+// update_issue_status
+export const updateIssueStatusOutputSchema = z.object({ repo: z.string(), issueNumber: z.number(), status: z.string(), updated: z.literal(true) });
+
+// link_commit_to_issue
+export const linkCommitToIssueOutputSchema = z.object({ repo: z.string(), issueNumber: z.number(), commitSha: z.string(), fixedBy: z.string(), linked: z.literal(true) });
+
+// verify_issue
+export const verifyIssueOutputSchema = z.object({ repo: z.string(), issueNumber: z.number(), verifiedBy: z.string(), verified: z.literal(true) });
+
+// issue_stats
+export const issueStatsOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// create_fix_pattern
+export const createFixPatternOutputSchema = z.object({ patternId: z.string(), created: z.literal(true) });
+
+// add_fix_attempt
+export const addFixAttemptOutputSchema = z.object({ attemptId: z.string(), patternId: z.string(), worked: z.boolean() });
+
+// validate_fix
+export const validateFixOutputSchema = z.object({ patternId: z.string(), validatedFix: z.string(), validated: z.literal(true) });
+
+// search_fix_patterns
+export const searchFixPatternsOutputSchema = z.array(z.record(z.string(), z.unknown()));
+
+// list_fix_patterns
+export const listFixPatternsOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// link_issue_to_pattern
+export const linkIssueToPatternOutputSchema = z.object({ patternId: z.string(), issueId: z.string(), linked: z.literal(true) });
+
+// get_mission_template
+export const getMissionTemplateOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// update_mission_template
+export const updateMissionTemplateOutputSchema = z.object({ templateId: z.string(), name: z.string(), stepCount: z.number() });
+
+// instantiate_template_into_mission
+export const instantiateTemplateIntoMissionOutputSchema = z.record(z.string(), z.unknown());
+
+// add_deployment
+export const addDeploymentOutputSchema = z.object({ id: z.string(), name: z.string(), deploymentUrl: z.string(), githubRepo: z.string(), orchestrator: z.string() });
+
+// remove_deployment
+export const removeDeploymentOutputSchema = z.object({ removed: z.string() });
+
+// list_errors
+export const listErrorsOutputSchema = z.union([
+	z.array(z.record(z.string(), z.unknown())),
+	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+]);
+
+// get_error
+export const getErrorOutputSchema = z.record(z.string(), z.unknown()).nullable();
+
+// validate_task_payload (F1 — Day 92)
+export const validateTaskPayloadOutputSchema = z.object({
+	valid: z.boolean(),
+	errors: z.array(z.string()),
+	warnings: z.array(z.string()),
+	payload: z.record(z.string(), z.unknown()).optional(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main export: register all tools against a server + convex client pair
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3783,6 +4150,9 @@ export function registerTools(
 			title: "Update component",
 		},
 		async ({ componentId, ...fields }) => {
+			// C0.2: no per-component identity field — master scope only
+			const masterDenied = guardMasterOnly("update_component");
+			if (masterDenied) return masterDenied;
 			let contentBytes = 0;
 			try {
 				if (typeof fields.content === "string") {
@@ -3834,6 +4204,9 @@ export function registerTools(
 			title: "Delete component",
 		},
 		async ({ componentId }) => {
+			// C0.2: no per-component identity field — master scope only
+			const masterDenied = guardMasterOnly("delete_component");
+			if (masterDenied) return masterDenied;
 			try {
 				const result = await convex.mutation("components:remove" as any, {
 					componentId: componentId as any,
