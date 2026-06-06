@@ -143,6 +143,13 @@ Une ligne `oauth_clients` par couple (utilisateur × surface). Chaque ligne port
 `clientId` (UUID), `clientSecretHash`, `scopeProfile` cible, `redirectUris` de
 la surface (Claude.ai, ChatGPT…), `tokenEndpointAuthMethod: "client_secret_post"`.
 
+Surfaces et leurs `redirectUris` canoniques :
+
+| Surface | `redirectUris` |
+|---|---|
+| Claude.ai | `https://claude.ai/api/mcp/auth_callback`, `https://claude.ai/api/organizations/oauth/callback` |
+| Connecteur custom ChatGPT | `https://chatgpt.com/connector/oauth/*` (wildcard) |
+
 #### 2.2 Révoquer les clients legacy
 
 Pour chaque ligne legacy qui représentait le même utilisateur sous l'ancien
@@ -159,7 +166,15 @@ référence `clientId`. Les lignes révoquées restent interrogeables via
 CONVEX_DEPLOY_KEY='<prod-deploy-key>' npx convex env list | grep -E '^BEARER_'
 
 # Pour chaque entrée qui n'est PAS BEARER_SECRET_MASTER, confirmer qu'elle
-# pointe vers un client révoqué (curl /mcp -> HTTP 401) puis purger :
+# pointe vers un client révoqué (curl /mcp avec ce bearer doit renvoyer HTTP 401) :
+curl -X POST https://<host>/mcp \
+  -H "Authorization: Bearer ${VALUE}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}' \
+  -w "\nHTTP %{http_code}\n" -sS | tail -3
+
+# Si 401, le bearer est stale. Purger :
 CONVEX_DEPLOY_KEY='<prod-deploy-key>' npx convex env remove BEARER_CHATGPT_<USER>_VP
 
 # Vérification : seul BEARER_SECRET_MASTER doit subsister.
