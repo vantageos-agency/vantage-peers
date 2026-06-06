@@ -207,10 +207,9 @@ const flexArrayOptional = flexArray.optional();
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const updateBriefingNoteDescription =
-	"Update an existing briefing note. Partial-update — only provided fields are patched. " +
-	"Arrays (decisions, linkedMemoryIds, participants) are FULL REPLACE, not append. " +
-	"RBAC : caller must be createdBy or 'system'. " +
-	"Sets updatedAt + updatedBy automatically.";
+	"Update an existing briefing note; only provided fields are patched (arrays are FULL REPLACE). " +
+	"WHEN: use to add decisions, fix content, or relink memories — RBAC: caller must be createdBy or system. " +
+	"EXAMPLE: update_briefing_note noteId='j57aaaaa...' callerOrchestrator='alpha' decisions=['Use hybrid_search first'].";
 
 export const updateBriefingNoteSchema = z.object({
 	noteId: z
@@ -1012,8 +1011,9 @@ export function registerTools(
 
 	server.tool(
 		"store_memory",
-		"Store a typed memory entry in VantagePeers. Supports user, feedback, project, and reference types. " +
-			"Optional relatesTo creates a graph relation (updates supersedes the target, extends adds detail, derives is an inference).",
+		"Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations. " +
+			"WHEN: use after any decision, rule, or lesson that must persist across sessions. " +
+			"EXAMPLE: store_memory namespace='global' type='feedback' content='Alpha prefers concise replies' createdBy='beta'.",
 		{
 			namespace: z
 				.string()
@@ -1102,8 +1102,9 @@ export function registerTools(
 
 	server.tool(
 		"soft_delete_memory",
-		"Soft-delete a memory — marks it as no longer latest so it stops appearing in recall results. " +
-			"The memory is preserved for audit but excluded from search.",
+		"Soft-delete a memory so it stops appearing in recall results while remaining in the audit log. " +
+			"WHEN: use to retire an outdated fact or superseded rule without permanent data loss. " +
+			"EXAMPLE: soft_delete_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
 			memoryId: z
 				.string()
@@ -1142,7 +1143,9 @@ export function registerTools(
 
 	server.tool(
 		"get_memory",
-		"Fetch a single memory by its ID. Returns full memory content including relations and episode data.",
+		"Fetch a single memory by its Convex document ID, including relations and episode metadata. " +
+			"WHEN: use when you have a specific memoryId from a prior recall/store and need the full record. " +
+			"EXAMPLE: get_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
 			memoryId: z.string().describe("Memory document ID"),
 		},
@@ -1177,8 +1180,9 @@ export function registerTools(
 
 	server.tool(
 		"recall",
-		"Semantic vector search over VantagePeers. Returns top K memories ranked by cosine similarity to the query. " +
-			"Optionally filter by namespace and/or type.",
+		"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+			"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. " +
+			"EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.",
 		{
 			query: z
 				.string()
@@ -1239,7 +1243,9 @@ export function registerTools(
 
 	server.tool(
 		"text_search",
-		"BM25 full-text keyword search over memories. Use for exact keyword matching when semantic recall isn't specific enough.",
+		"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+			"WHEN: use when recall returns too-broad results and you need a specific exact phrase or ID. " +
+			"EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.",
 		{
 			query: z.string().describe("Search query text"),
 			namespace: z
@@ -1290,7 +1296,9 @@ export function registerTools(
 
 	server.tool(
 		"hybrid_search",
-		"Combined vector + BM25 search using Reciprocal Rank Fusion (RRF). Best of both worlds: semantic understanding + keyword precision.",
+		"Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage. " +
+			"WHEN: use when neither recall nor text_search alone yields good results — highest recall quality. " +
+			"EXAMPLE: hybrid_search query='onboarding customer flow' namespace='project/vantage-peers' limit=20.",
 		{
 			query: z.string().describe("Search query text"),
 			namespace: z.string().optional().describe("Namespace filter"),
@@ -1352,9 +1360,9 @@ export function registerTools(
 
 	server.tool(
 		"store_episode",
-		"Store an episodic memory with structured context/goal/action/outcome/insight fields. " +
-			"Episodes are the 'other half' of memory — not just facts, but what happened and what was learned. " +
-			"Use severity=critical for lessons that should be shared across all orchestrators.",
+		"Store a structured episodic memory capturing context, goal, action, outcome, and insight from a past event. " +
+			"WHEN: use after completing a non-trivial task or encountering an unexpected failure or success. " +
+			"EXAMPLE: store_episode namespace='orchestrator/alpha' createdBy='alpha' severity='major' context='...' goal='...' action='...' outcome='...' insight='...'.",
 		{
 			namespace: z
 				.string()
@@ -1428,8 +1436,9 @@ export function registerTools(
 
 	server.tool(
 		"get_profile",
-		"Fetch an orchestrator profile (static identity + dynamic session state). " +
-			"Returns null if the profile does not exist yet — call update_profile to create it.",
+		"Fetch an orchestrator profile with static identity and dynamic session state fields. " +
+			"WHEN: use to check peer status, capabilities, or current task before assigning work. " +
+			"EXAMPLE: get_profile orchestratorId='gamma'.",
 		{
 			orchestratorId: z.string().describe("Orchestrator identifier"),
 		},
@@ -1467,9 +1476,9 @@ export function registerTools(
 
 	server.tool(
 		"update_profile",
-		"Create or update an orchestrator profile. Provide only the fields you want to change. " +
-			"static fields are stable identity facts (role, workspace, capabilities). " +
-			"dynamic fields are mutable session state (currentTask, lastSeen, sessionCount).",
+		"Create or update an orchestrator profile with static identity facts and dynamic session state. " +
+			"WHEN: call on each session start to update lastSeen/sessionCount, or when role/capabilities change. " +
+			"EXAMPLE: update_profile orchestratorId='alpha' dynamic=\{lastSeen: Date.now(), sessionCount: 5\}.",
 		{
 			orchestratorId: z.string().describe("Orchestrator identifier"),
 			name: z.string().optional().describe("Human-readable orchestrator name"),
@@ -1540,9 +1549,9 @@ export function registerTools(
 
 	server.tool(
 		"list_memories",
-		"List active memories for a namespace, ordered newest first. " +
-			"Only returns isLatest=true memories (superseded memories are excluded by default). " +
-			"Use type to filter to a specific memory category.",
+		"List active (isLatest=true) memories for a namespace, ordered newest first. " +
+			"WHEN: use to audit what a namespace contains or to paginate all entries without a query. " +
+			"EXAMPLE: list_memories namespace='project/vantage-peers' type='project' limit=20.",
 		{
 			namespace: z
 				.string()
@@ -1663,9 +1672,9 @@ export function registerTools(
 
 	server.tool(
 		"send_message",
-		"Send a message to one, many, or all orchestrators. " +
-			"channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
-			"Creates message + one receipt per recipient. Supersedes legacy send_message (pre-VantagePeers).",
+		"Send a message to one, many, or all orchestrators via channel routing (broadcast / role DM / instance DM). " +
+			"WHEN: use to notify peers of task completion, handoff, or decision; creates one receipt per recipient. " +
+			"EXAMPLE: send_message from='alpha' channel='beta' content='C3 descriptions PR ready for review'.",
 		{
 			from: creatorSchema.describe(
 				"Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)",
@@ -1756,9 +1765,9 @@ export function registerTools(
 
 	server.tool(
 		"check_messages",
-		"Check for unread messages. Returns messages with receiptIds for marking as read. " +
-			"If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
-			"Supersedes legacy check_messages (pre-VantagePeers).",
+		"Check for unread messages addressed to a recipient role, returning receiptIds for acknowledgment. " +
+			"WHEN: call at session start and after long pauses to drain the inbox before starting work. " +
+			"EXAMPLE: check_messages recipient='gamma' recipientInstanceId='gamma-vps'.",
 		{
 			recipient: creatorSchema.describe(
 				"Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)",
@@ -1862,7 +1871,9 @@ export function registerTools(
 
 	server.tool(
 		"mark_as_read",
-		"Mark one or more message receipts as read. Pass the receiptIds from check_messages.",
+		"Mark one or more message receipts as read using receiptIds from check_messages. " +
+			"WHEN: call immediately after processing each batch of messages returned by check_messages. " +
+			"EXAMPLE: mark_as_read receiptIds=['j57aaaaa...', 'j57bbbbb...'].",
 		{
 			receiptIds: z
 				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
@@ -1913,7 +1924,9 @@ export function registerTools(
 
 	server.tool(
 		"delete_message",
-		"Delete a message and all its receipts. Only the sender (or system) can delete a message.",
+		"Delete a message and all its receipts; only the original sender or system may delete. " +
+			"WHEN: use to retract a mistaken broadcast or sensitive content before recipients read it. " +
+			"EXAMPLE: delete_message messageId='j57dy3049btafda9m2f5d2ggk987ph3f' callerOrchestrator='alpha'.",
 		{
 			messageId: z
 				.string()
@@ -1958,9 +1971,9 @@ export function registerTools(
 
 	server.tool(
 		"set_summary",
-		"Set a brief summary of what you are currently working on. " +
-			"Visible to other orchestrators via list_peers. Uses the profiles table. " +
-			"Provide instanceId to register as a specific instance (e.g. 'pi-chromebook').",
+		"Update the current-work summary for an orchestrator instance, visible via list_peers. " +
+			"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
+			"EXAMPLE: set_summary orchestratorId='alpha' instanceId='alpha-vps' summary='Standardizing 86 tool descriptions for B2'.",
 		{
 			orchestratorId: z.string().describe("Orchestrator role"),
 			instanceId: z
@@ -2009,9 +2022,9 @@ export function registerTools(
 
 	server.tool(
 		"list_peers",
-		"List all orchestrator profiles with their current status and summary. " +
-			"Supersedes legacy list_peers (pre-VantagePeers). " +
-			"S3.3 B8 follow-up batch 3 FINAL — supports cursor paging via `cursor` arg.",
+		"List all orchestrator profiles with current status, summary, and session info, newest first. " +
+			"WHEN: use before assigning work or sending a DM to confirm who is active and what they are doing. " +
+			"EXAMPLE: list_peers limit=20 fields='lite'.",
 		{
 			limit: z
 				.number()
@@ -2115,8 +2128,9 @@ export function registerTools(
 
 	server.tool(
 		"list_messages",
-		"List message history. Filter by day or sender. For unread messages use check_messages instead. " +
-			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
+		"List historical messages filtered by session day or sender, newest first; use check_messages for unread. " +
+			"WHEN: use for audit, recap, or debugging a specific day's message traffic. " +
+			"EXAMPLE: list_messages sessionDay=92 from='alpha' limit=20.",
 		{
 			sessionDay: z
 				.number()
@@ -2234,7 +2248,9 @@ export function registerTools(
 
 	server.tool(
 		"list_broadcast_status",
-		"Show who read a broadcast message and who didn't. Pass the messageId from send_message.",
+		"Show read/unread receipt status for a broadcast message by messageId. " +
+			"WHEN: use after send_message to confirm all recipients acknowledged a critical announcement. " +
+			"EXAMPLE: list_broadcast_status messageId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
 			messageId: z
 				.string()
@@ -2292,8 +2308,9 @@ export function registerTools(
 
 	server.tool(
 		"create_task",
-		"Create a task in VantagePeers. Tasks are assigned to an orchestrator " +
-			"with priority and status tracking. Optionally link to a project or mission.",
+		"Create a task assigned to an orchestrator with priority, status tracking, and optional mission link. " +
+			"WHEN: use to delegate work, track a deliverable, or instantiate a step from a mission plan. " +
+			"EXAMPLE: create_task title='Standardize tool descriptions' assignedTo='beta' priority='high' createdBy='alpha'.",
 		{
 			title: z.string().describe("Task title"),
 			description: z.string().optional().describe("Detailed task description"),
@@ -2394,9 +2411,9 @@ export function registerTools(
 
 	server.tool(
 		"list_tasks",
-		"List tasks from VantagePeers with optional filters. " +
-			"Filter by assignee, instance, status, and/or project. Returns newest first. " +
-			"S3.3 B8 — supports cursor paging: pass `cursor` from a prior call's nextCursor to fetch the next page.",
+		"List tasks with optional filters by assignee, status, project, or creator, newest first. " +
+			"WHEN: use to check the backlog, review in-progress items, or audit a specific project's tasks. " +
+			"EXAMPLE: list_tasks assignedTo='gamma' status='in_progress' project='vantage-peers' limit=20.",
 		{
 			assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
 			assignedToInstance: z
@@ -2535,8 +2552,9 @@ export function registerTools(
 
 	server.tool(
 		"update_task",
-		"Update any mutable field on a task. Provide only the fields you want to change. " +
-			"updatedAt is set automatically.",
+		"Update any mutable field on a task; only provided fields are patched, updatedAt auto-set. " +
+			"WHEN: use to reassign, reprioritize, or add context to an existing task without recreating it. " +
+			"EXAMPLE: update_task taskId='k178d3ns...' status='review' callerOrchestrator='alpha'.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to update"),
 			title: z.string().optional().describe("New title"),
@@ -2643,9 +2661,9 @@ export function registerTools(
 
 	server.tool(
 		"complete_task",
-		"Mark a task as done. ALWAYS provide a completionNote describing what was actually done. " +
-			"This is mandatory — never complete a task without explaining the work. " +
-			"After completing, ALWAYS send_message to the task creator (check createdBy field) with a summary of what was done.",
+		"Mark a task as done with a mandatory completionNote; always notify the creator via send_message after. " +
+			"WHEN: call when all deliverables are committed or verified — never complete without a proof token in the note. " +
+			"EXAMPLE: complete_task taskId='k178d3ns...' completionNote='PR #667 merged, 86 descriptions updated' callerOrchestrator='beta'.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to complete"),
 			completionNote: z
@@ -2692,8 +2710,9 @@ export function registerTools(
 
 	server.tool(
 		"start_task",
-		"Start a task — sets status to in_progress and records startedAt timestamp. " +
-			"Use this when beginning work on a task to enable automatic duration tracking.",
+		"Set a task to in_progress and record the startedAt timestamp for duration tracking. " +
+			"WHEN: call as the first action when picking up a task to signal activity and enable metrics. " +
+			"EXAMPLE: start_task taskId='k178d3ns...' callerOrchestrator='gamma'.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to start"),
 			callerOrchestrator: creatorSchema
@@ -2736,8 +2755,9 @@ export function registerTools(
 
 	server.tool(
 		"checkout_task",
-		"Atomically claim a task. Only succeeds if task is in 'todo' status — prevents two orchestrators " +
-			"from claiming the same task. Returns {claimed: true} or {claimed: false, reason: '...'}.",
+		"Atomically claim a todo task, preventing race conditions when multiple orchestrators compete. " +
+			"WHEN: use before start_task in multi-orchestrator queues to ensure exclusive ownership. " +
+			"EXAMPLE: checkout_task taskId='k178d3ns...' callerOrchestrator='alpha' callerInstance='alpha-vps'.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to claim"),
 			callerOrchestrator: creatorSchema.describe(
@@ -2783,7 +2803,9 @@ export function registerTools(
 
 	server.tool(
 		"delete_task",
-		"Permanently delete a task. Only the creator (or system) can delete.",
+		"Permanently delete a task; only the creator or system role may delete. " +
+			"WHEN: use to remove erroneously created tasks or test artifacts — prefer complete_task for real work. " +
+			"EXAMPLE: delete_task taskId='k178d3ns...' callerOrchestrator='alpha'.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to delete"),
 			callerOrchestrator: creatorSchema
@@ -2826,7 +2848,9 @@ export function registerTools(
 
 	server.tool(
 		"block_task",
-		"Mark a task as blocked with an optional reason. Sets status to 'blocked' and records the blocker description.",
+		"Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked. " +
+			"WHEN: use when external dependency or missing input prevents progress — record the specific blocker. " +
+			"EXAMPLE: block_task taskId='k178d3ns...' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
 		{
 			taskId: z.string().describe("Convex document ID of the task to block"),
 			reason: z.string().optional().describe("Why the task is blocked"),
@@ -2885,8 +2909,9 @@ export function registerTools(
 
 	server.tool(
 		"add_task_dependency",
-		"Add a dependency to a task. The task cannot start until all dependencies are complete. " +
-			"Pass the IDs of tasks that must complete before this one can begin.",
+		"Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
+			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
+			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
 			taskId: z
 				.string()
@@ -2942,8 +2967,9 @@ export function registerTools(
 
 	server.tool(
 		"list_tasks_by_mission",
-		"List all tasks linked to a specific mission. Optionally filter by status. " +
-			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
+		"List all tasks linked to a mission, optionally filtered by status, newest first. " +
+			"WHEN: use to review mission progress or find blocked/open tasks within a specific mission. " +
+			"EXAMPLE: list_tasks_by_mission missionId='k57a36y8...' status='in_progress' limit=20.",
 		{
 			missionId: z.string().describe("Convex document ID of the mission"),
 			status: taskStatusFilterSchema
@@ -3045,8 +3071,9 @@ export function registerTools(
 
 	server.tool(
 		"create_mission",
-		"Create a mission in VantagePeers. Missions group related tasks under a project, " +
-			"with a pilot orchestrator and assigned agents. Track progress through lifecycle statuses.",
+		"Create a mission grouping related tasks under a project with a pilot orchestrator and agent list. " +
+			"WHEN: use when starting a multi-task initiative that needs lifecycle tracking and progress reporting. " +
+			"EXAMPLE: create_mission name='Day 92 C3' project='vantage-peers' pilot='alpha' agents=['beta','gamma'] priority='high' createdBy='alpha'.",
 		{
 			name: z.string().describe("Mission name"),
 			description: z.string().optional().describe("Mission description"),
@@ -3129,9 +3156,9 @@ export function registerTools(
 
 	server.tool(
 		"list_missions",
-		"List missions from VantagePeers with optional filters. " +
-			"Filter by project, pilot, and/or status. Returns newest first. " +
-			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
+		"List missions filtered by project, pilot, or status, newest first with cursor paging support. " +
+			"WHEN: use to audit active missions, find missions by pilot, or check cross-project progress. " +
+			"EXAMPLE: list_missions project='vantage-peers' status='execute' pilot='alpha' limit=20.",
 		{
 			project: z.string().optional().describe("Filter by project name"),
 			pilot: creatorSchema.optional().describe("Filter by pilot orchestrator"),
@@ -3246,7 +3273,9 @@ export function registerTools(
 
 	server.tool(
 		"get_mission",
-		"Fetch a single mission by ID. Returns full mission details including status, pilot, agents, progress, and dates.",
+		"Fetch a single mission by Convex ID with full details: status, pilot, agents, progress, and dates. " +
+			"WHEN: use before assigning tasks or reporting to get the canonical mission state. " +
+			"EXAMPLE: get_mission missionId='k57a36y8w5t085bqr23dsmvb2d882506'.",
 		{
 			missionId: z.string().describe("Convex document ID of the mission"),
 		},
@@ -3282,8 +3311,9 @@ export function registerTools(
 
 	server.tool(
 		"update_mission",
-		"Update any mutable field on a mission. Provide only the fields you want to change. " +
-			"updatedAt is set automatically.",
+		"Update any mutable field on a mission; only provided fields are patched, updatedAt auto-set. " +
+			"WHEN: use to advance status, update progress percentage, or change pilot/agents mid-flight. " +
+			"EXAMPLE: update_mission missionId='k57a36y8...' progress=75 status='validate'.",
 		{
 			missionId: z
 				.string()
@@ -3359,7 +3389,9 @@ export function registerTools(
 
 	server.tool(
 		"update_mission_status",
-		"Change a mission's status. Shortcut for updating only the status field.",
+		"Change a mission's lifecycle status in a single call without touching other fields. " +
+			"WHEN: use as a lightweight alternative to update_mission when only the status changes. " +
+			"EXAMPLE: update_mission_status missionId='k57a36y8...' status='complete'.",
 		{
 			missionId: z.string().describe("Convex document ID of the mission"),
 			status: missionStatusSchema.describe("New status"),
@@ -3399,8 +3431,9 @@ export function registerTools(
 
 	server.tool(
 		"write_diary",
-		"Write or update a diary entry for a specific date and orchestrator. " +
-			"If an entry already exists for that date+orchestrator, it will be updated (upsert).",
+		"Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
+			"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
+			"EXAMPLE: create_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
 		{
 			date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
 			orchestrator: creatorSchema.describe("Which orchestrator is writing"),
@@ -3463,7 +3496,9 @@ export function registerTools(
 
 	server.tool(
 		"get_diary",
-		"Fetch a diary entry for a specific date and orchestrator. Returns null if no entry exists.",
+		"Fetch a diary entry for a specific date and orchestrator, returning null if none exists. " +
+			"WHEN: use to review what an orchestrator did on a given day for recap or handoff briefing. " +
+			"EXAMPLE: get_diary date='2026-06-06' orchestrator='alpha'.",
 		{
 			date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
 			orchestrator: creatorSchema.describe(
@@ -3514,8 +3549,9 @@ export function registerTools(
 
 	server.tool(
 		"list_diaries",
-		"List diary entries, optionally filtered by orchestrator. Returns newest first. " +
-			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
+		"List diary entries filtered by orchestrator or author, newest first with cursor paging support. " +
+			"WHEN: use to review recent history across sessions or audit a period of activity. " +
+			"EXAMPLE: list_diaries orchestrator='beta' limit=10 fields='lite'.",
 		{
 			orchestrator: creatorSchema
 				.optional()
@@ -3626,11 +3662,9 @@ export function registerTools(
 
 	server.tool(
 		"create_briefing_note",
-		"Create a briefing note — a structured record of a topic discussion, with participants, " +
-			"content, optional decisions, and optional links to existing memories. " +
-			"linkedMemoryIds MUST contain IDs from the memories table only — NOT briefingNotes IDs or IDs from any other table. " +
-			"IMPORTANT: If you need to cross-link briefing notes together, use linkedBriefingIds (not yet shipped) — " +
-			"passing a briefingNotes document ID into linkedMemoryIds will produce an ArgumentValidationError at the Convex validator boundary.",
+		"Create a structured briefing note capturing a topic discussion with participants, decisions, and memory links. " +
+			"WHEN: use after key architectural, product, or operational discussions to record decisions durably. " +
+			"EXAMPLE: create_briefing_note title='C3 desc standard' topic='architecture' participants=['alpha','beta'] content='...' createdBy='gamma'.",
 		{
 			title: z.string().describe("Briefing note title"),
 			topic: z
@@ -3781,7 +3815,9 @@ export function registerTools(
 
 	server.tool(
 		"get_briefing_note",
-		"Fetch a single briefing note by its ID. Returns the full note (title, topic, participants, content, decisions, linkedMemoryIds, audit fields).",
+		"Fetch a single briefing note by ID with all fields: title, topic, participants, content, decisions, and links. " +
+			"WHEN: use when you have a specific noteId and need the full structured record for a handoff or recap. " +
+			"EXAMPLE: get_briefing_note noteId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
 			noteId: z.string().describe("Briefing note document ID"),
 		},
@@ -3813,7 +3849,9 @@ export function registerTools(
 
 	server.tool(
 		"list_briefing_notes",
-		"List briefing notes, optionally filtered by topic. Returns newest first.",
+		"List briefing notes filtered by topic, newest first, with cursor paging support. " +
+			"WHEN: use to review recent discussions on a topic or audit the full briefing history. " +
+			"EXAMPLE: list_briefing_notes topic='architecture' limit=10 fields='lite'.",
 		{
 			topic: z
 				.string()
@@ -3931,8 +3969,9 @@ export function registerTools(
 
 	server.tool(
 		"register_component",
-		"Register or update a component (agent, skill, hook, or plugin) in the registry. " +
-			"Upserts by name+type — if a component with the same name and type exists, it updates the content.",
+		"Register or upsert a component (agent/skill/hook/plugin) in the VantagePeers registry by name+type. " +
+			"WHEN: use when publishing a new version of an agent skill or hook so peers can discover and use it. " +
+			"EXAMPLE: register_component name='check-tasks' type='skill' version='1.2.0' createdBy='alpha' content='...'.",
 		{
 			name: z
 				.string()
@@ -4002,8 +4041,9 @@ export function registerTools(
 
 	server.tool(
 		"list_components",
-		"List registered components. Filter by type (agent/skill/hook/plugin) and/or team. " +
-			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
+		"List registered components filtered by type or team, newest first with cursor paging support. " +
+			"WHEN: use to discover available skills before building a workflow or to audit the registry. " +
+			"EXAMPLE: list_components type='skill' team='development' limit=20.",
 		{
 			type: componentTypeSchema.optional().describe("Filter by component type"),
 			team: z.string().optional().describe("Filter by team"),
@@ -4100,7 +4140,9 @@ export function registerTools(
 
 	server.tool(
 		"get_component",
-		"Fetch a single component by name and type. Returns the full content.",
+		"Fetch a single component by name and type, returning the full source content and metadata. " +
+			"WHEN: use before invoking a skill to read its interface, version, and implementation. " +
+			"EXAMPLE: get_component name='check-tasks' type='skill'.",
 		{
 			name: z.string().describe("Component name"),
 			type: componentTypeSchema,
@@ -4138,7 +4180,9 @@ export function registerTools(
 
 	server.tool(
 		"update_component",
-		"Update a component's fields. Provide only the fields you want to change.",
+		"Update a component's content, version, or team; only provided fields are patched. " +
+			"WHEN: use to bump a skill version or fix content without re-registering from scratch. " +
+			"EXAMPLE: update_component componentId='j57aaaaa...' version='1.3.0' content='...'.",
 		{
 			componentId: z.string().describe("Convex document ID of the component"),
 			name: z.string().optional().describe("New component name"),
@@ -4195,7 +4239,9 @@ export function registerTools(
 
 	server.tool(
 		"delete_component",
-		"Delete a component from the registry by ID.",
+		"Permanently delete a component from the registry by Convex document ID. " +
+			"WHEN: use to remove deprecated or test components that should no longer be discoverable. " +
+			"EXAMPLE: delete_component componentId='j57aaaaa...'.",
 		{
 			componentId: z
 				.string()
@@ -4234,7 +4280,9 @@ export function registerTools(
 		// anchor would skip high-relevance older matches in favor of newer
 		// low-relevance ones, breaking the search contract. Pagination on
 		// semantic search should be score-based (offset / topK), not time-based.
-		"Search components by name or team substring. Optionally filter by type.",
+		"Search components by name or team substring with optional type filter. " +
+			"WHEN: use before register_component to check if a similar component already exists in the registry. " +
+			"EXAMPLE: search_components query='check-tasks' type='skill' limit=10.",
 		{
 			query: z
 				.string()
@@ -4286,8 +4334,9 @@ export function registerTools(
 
 	server.tool(
 		"create_recurring_task",
-		"Create a recurring task that auto-creates tasks on a schedule. " +
-			"Uses cron expressions: '0 9 * * *' = daily 9am, '0 9 * * 1' = Monday 9am, '*/30 * * * *' = every 30min.",
+		"Create a recurring task template that auto-generates tasks on a cron schedule. " +
+			"WHEN: use for daily standups, weekly reviews, or any repeating work item pattern. " +
+			"EXAMPLE: create_recurring_task title='Daily standup' assignedTo='alpha' priority='medium' cronExpression='0 9 * * *' createdBy='alpha'.",
 		{
 			title: z
 				.string()
@@ -4360,8 +4409,9 @@ export function registerTools(
 
 	server.tool(
 		"list_recurring_tasks",
-		"List recurring task templates. Filter by assignee or active status. " +
-			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
+		"List recurring task templates filtered by assignee or active status, newest first. " +
+			"WHEN: use to audit which schedules are active or find templates to pause/resume/update. " +
+			"EXAMPLE: list_recurring_tasks assignedTo='beta' active=true limit=20.",
 		{
 			assignedTo: assigneeSchema.optional().describe("Filter by assignee"),
 			active: z.boolean().optional().describe("Filter by active status"),
@@ -4452,7 +4502,9 @@ export function registerTools(
 
 	server.tool(
 		"pause_recurring_task",
-		"Pause a recurring task — stops auto-creating tasks until resumed.",
+		"Pause a recurring task template to stop auto-creating tasks until explicitly resumed. " +
+			"WHEN: use during holidays, freezes, or when the assignee is unavailable for a period. " +
+			"EXAMPLE: pause_recurring_task taskId='j57aaaaa...'.",
 		{
 			taskId: z.string().describe("Recurring task ID"),
 		},
@@ -4484,7 +4536,9 @@ export function registerTools(
 
 	server.tool(
 		"resume_recurring_task",
-		"Resume a paused recurring task — recalculates next run time.",
+		"Resume a paused recurring task template and recalculate its next scheduled run time. " +
+			"WHEN: use after a pause period ends to re-enable automatic task generation. " +
+			"EXAMPLE: resume_recurring_task taskId='j57aaaaa...'.",
 		{
 			taskId: z.string().describe("Recurring task ID"),
 		},
@@ -4516,7 +4570,9 @@ export function registerTools(
 
 	server.tool(
 		"delete_recurring_task",
-		"Permanently delete a recurring task template.",
+		"Permanently delete a recurring task template, stopping all future scheduled task generation. " +
+			"WHEN: use when a recurring process is retired and should never generate tasks again. " +
+			"EXAMPLE: delete_recurring_task taskId='j57aaaaa...'.",
 		{
 			taskId: z.string().describe("Recurring task ID"),
 		},
@@ -4548,8 +4604,9 @@ export function registerTools(
 
 	server.tool(
 		"update_recurring_task",
-		"Update a recurring task's fields. Provide only the fields you want to change. " +
-			"If cronExpression is updated, nextRunAt is automatically recalculated.",
+		"Update a recurring task template's fields; cronExpression change auto-recalculates nextRunAt. " +
+			"WHEN: use to change assignee, schedule, or priority of an active recurring template. " +
+			"EXAMPLE: update_recurring_task recurringTaskId='j57aaaaa...' cronExpression='0 10 * * 1' priority='high'.",
 		{
 			recurringTaskId: z
 				.string()
@@ -4605,8 +4662,9 @@ export function registerTools(
 
 	server.tool(
 		"create_mandate",
-		"Create a cross-orchestrator service mandate. One orchestrator requests a service from another " +
-			"with an agreed token budget. The mandate lifecycle: requested → accepted → in_progress → delivered → settled.",
+		"Create a cross-orchestrator service mandate with agreed token budget and spending limits. " +
+			"WHEN: use when one orchestrator commissions work from another with formal budget accountability. " +
+			"EXAMPLE: create_mandate requestedBy='alpha' fulfilledBy='beta' service='code review' budget=5000.",
 		{
 			requestedBy: creatorSchema.describe("Orchestrator who needs the service"),
 			fulfilledBy: creatorSchema.describe(
@@ -4684,7 +4742,9 @@ export function registerTools(
 
 	server.tool(
 		"accept_mandate",
-		"Accept a mandate — sets status to 'accepted'. Only the fulfilledBy orchestrator (or system) can accept.",
+		"Accept a mandate by the fulfilledBy orchestrator, advancing status from requested to accepted. " +
+			"WHEN: call when the fulfiller confirms they can deliver the service within the agreed budget. " +
+			"EXAMPLE: accept_mandate mandateId='j57aaaaa...' callerOrchestrator='beta'.",
 		{
 			mandateId: z
 				.string()
@@ -4727,8 +4787,9 @@ export function registerTools(
 
 	server.tool(
 		"update_mandate",
-		"Update a mandate's status, tokensCost, or linkedTaskIds. " +
-			"Only the fulfilledBy orchestrator (or system) can update. Provide only fields you want to change.",
+		"Update a mandate's status, tokensCost, or linkedTaskIds; only fulfilledBy or system may update. " +
+			"WHEN: use to record spend progress, link created tasks, or advance status to delivered. " +
+			"EXAMPLE: update_mandate mandateId='j57aaaaa...' callerOrchestrator='beta' tokensCost=1200 status='delivered'.",
 		{
 			mandateId: z
 				.string()
@@ -4786,8 +4847,9 @@ export function registerTools(
 
 	server.tool(
 		"settle_mandate",
-		"Settle a mandate — confirms delivery and records the final token cost. " +
-			"Sets status to 'settled'. Only the requestedBy orchestrator (the payer) or system can settle.",
+		"Settle a mandate by confirming delivery and recording the final token cost; sets status to settled. " +
+			"WHEN: call after verifying the delivered work meets the mandate scope — closes the billing cycle. " +
+			"EXAMPLE: settle_mandate mandateId='j57aaaaa...' callerOrchestrator='alpha' finalCost=4800.",
 		{
 			mandateId: z
 				.string()
@@ -4836,7 +4898,9 @@ export function registerTools(
 
 	server.tool(
 		"validate_mandate_spending",
-		"Check if a proposed spend is within a mandate's AP2 spending limits. Returns within/exceeded status with details.",
+		"Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
+			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
+			"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
 		{
 			mandateId: z.string().describe("Mandate ID to validate against"),
 			proposedAmount: z
@@ -4868,9 +4932,9 @@ export function registerTools(
 
 	server.tool(
 		"list_mandates",
-		"List mandates with optional filters. Filter by requestedBy, fulfilledBy, and/or status. " +
-			"Returns newest first. Use to track service agreements between orchestrators. " +
-			"S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
+		"List mandates filtered by requestedBy, fulfilledBy, or status, newest first with cursor paging. " +
+			"WHEN: use to audit active service agreements or track billing between orchestrator pairs. " +
+			"EXAMPLE: list_mandates requestedBy='alpha' status='in_progress' limit=20.",
 		{
 			requestedBy: creatorSchema
 				.optional()
@@ -4974,8 +5038,9 @@ export function registerTools(
 
 	server.tool(
 		"create_bu",
-		"Create a new business unit. Captures strategy, business model, team, and KPIs. " +
-			"managementFee defaults to 10 (percentage of revenue).",
+		"Create a new business unit with strategy, business model, team composition, and KPIs. " +
+			"WHEN: use when launching a new revenue line or formalizing an existing product unit. " +
+			"EXAMPLE: create_bu name='VantagePeers' orchestratorId='alpha' status='building' purpose='...' businessModel='...' targetCustomers='...' services=['MCP'] pricing='...' revenueProjections=\{y1:0,y2:50000,y3:200000\} coreTeam=\{agents:['alpha'],skills:[],hooks:[],plugins:[]\} coreProcesses=['...'] dependencies=[] kpis=['ARR'].",
 		{
 			name: z.string().describe("Business unit name — e.g. 'VantagePeers'"),
 			description: z.string().describe("Short description of the BU"),
@@ -5072,8 +5137,9 @@ export function registerTools(
 
 	server.tool(
 		"update_bu",
-		"Update any mutable field on a business unit. Provide only the fields you want to change. " +
-			"updatedAt is set automatically.",
+		"Update any mutable field on a business unit; only provided fields are patched, updatedAt auto-set. " +
+			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. " +
+			"EXAMPLE: update_bu buId='j57aaaaa...' status='live' revenueProjections=\{y1:10000,y2:80000,y3:300000\}.",
 		{
 			buId: z
 				.string()
@@ -5166,7 +5232,9 @@ export function registerTools(
 
 	server.tool(
 		"get_bu",
-		"Fetch a single business unit by its Convex document ID. Returns null if not found.",
+		"Fetch a single business unit by Convex document ID, returning null if not found. " +
+			"WHEN: use before updating or reporting on a BU to get the current canonical state. " +
+			"EXAMPLE: get_bu buId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
 			buId: z.string().describe("Convex document ID of the business unit"),
 		},
@@ -5202,8 +5270,9 @@ export function registerTools(
 
 	server.tool(
 		"list_bus",
-		"List business units with optional filters. Filter by orchestratorId and/or status. " +
-			"Returns newest first. S3.3 B8 follow-up — supports cursor paging via `cursor` arg.",
+		"List business units filtered by orchestrator or status, newest first with cursor paging support. " +
+			"WHEN: use to get a portfolio overview or find BUs managed by a specific orchestrator. " +
+			"EXAMPLE: list_bus orchestratorId='alpha' status='live' limit=20.",
 		{
 			orchestratorId: z
 				.string()
@@ -5299,7 +5368,9 @@ export function registerTools(
 
 	server.tool(
 		"delete_bu",
-		"Delete a business unit by ID. This action is permanent.",
+		"Permanently delete a business unit by Convex document ID — this action is irreversible. " +
+			"WHEN: use only for test BUs or entities created in error; prefer status update for real BUs. " +
+			"EXAMPLE: delete_bu buId='j57aaaaa...'.",
 		{
 			buId: z
 				.string()
@@ -5338,7 +5409,9 @@ export function registerTools(
 
 	server.tool(
 		"add_repo_mapping",
-		"Add or update a GitHub repo → orchestrator mapping. Used by the webhook pipeline to route GitHub events to the right orchestrator.",
+		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
+			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
+			"EXAMPLE: register_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
 		{
 			repo: z
 				.string()
@@ -5395,8 +5468,9 @@ export function registerTools(
 
 	server.tool(
 		"list_repo_mappings",
-		"List all GitHub repo → orchestrator mappings. Shows which repos are monitored and which orchestrator handles each. " +
-			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
+		"List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support. " +
+			"WHEN: use to audit which repos are monitored and verify routing before adding new mappings. " +
+			"EXAMPLE: list_repo_mappings limit=20 fields='lite'.",
 		{
 			limit: z
 				.number()
@@ -5491,7 +5565,9 @@ export function registerTools(
 
 	server.tool(
 		"remove_repo_mapping",
-		"Remove a GitHub repo mapping by repo name. Stops routing webhook events for this repo.",
+		"Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
+			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
+			"EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.",
 		{
 			repo: z
 				.string()
@@ -5535,8 +5611,9 @@ export function registerTools(
 
 	server.tool(
 		"list_issues",
-		"List GitHub issues tracked in VantagePeers. Filter by project, status, or assigned orchestrator. " +
-			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
+		"List tracked GitHub issues filtered by project, status, or assigned orchestrator, newest first. " +
+			"WHEN: use to triage open issues, find in-progress fixes, or review a project's bug backlog. " +
+			"EXAMPLE: list_issues project='vantage-peers' status='open' limit=20.",
 		{
 			project: z
 				.string()
@@ -5678,7 +5755,9 @@ export function registerTools(
 
 	server.tool(
 		"get_issue",
-		"Get a single GitHub issue by repo and issue number.",
+		"Fetch a single GitHub issue by repo name and issue number, returning full tracking details. " +
+			"WHEN: use when routing a specific GitHub webhook event or verifying fix status on a known issue. " +
+			"EXAMPLE: get_issue repo='vantageos-agency/vantage-peers' issueNumber=667.",
 		{
 			repo: z
 				.string()
@@ -5722,7 +5801,9 @@ export function registerTools(
 
 	server.tool(
 		"update_issue_status",
-		"Update the status of a tracked GitHub issue.",
+		"Update the tracked status of a GitHub issue (open/in_progress/fixed/verified/closed). " +
+			"WHEN: use when work begins, a fix is committed, or QA confirms resolution. " +
+			"EXAMPLE: update_issue_status repo='vantageos-agency/vantage-peers' issueNumber=667 status='fixed'.",
 		{
 			repo: z
 				.string()
@@ -5771,7 +5852,9 @@ export function registerTools(
 
 	server.tool(
 		"link_commit_to_issue",
-		"Link a fix commit SHA to a GitHub issue. Records who fixed it and when.",
+		"Link a fix commit SHA to a GitHub issue, recording the fixer and time of resolution. " +
+			"WHEN: use immediately after pushing a fix commit so the issue has an auditable commit reference. " +
+			"EXAMPLE: link_commit_to_issue repo='vantageos-agency/vantage-peers' issueNumber=667 commitSha='abc1234' fixedBy='alpha'.",
 		{
 			repo: z
 				.string()
@@ -5819,7 +5902,9 @@ export function registerTools(
 
 	server.tool(
 		"verify_issue",
-		"Mark a GitHub issue as verified (fix confirmed). Sets status to 'verified'.",
+		"Mark a GitHub issue as verified, confirming the fix was tested and the issue is resolved. " +
+			"WHEN: use after QA or the reporter confirms the fix works in the target environment. " +
+			"EXAMPLE: verify_issue repo='vantageos-agency/vantage-peers' issueNumber=667 verifiedBy='gamma'.",
 		{
 			repo: z
 				.string()
@@ -5865,7 +5950,9 @@ export function registerTools(
 
 	server.tool(
 		"issue_stats",
-		"Get issue count statistics grouped by status. Optionally filter by project.",
+		"Get issue count statistics grouped by status, optionally scoped to a single project. " +
+			"WHEN: use for daily health checks or project retrospectives to measure issue throughput. " +
+			"EXAMPLE: issue_stats project='vantage-peers'.",
 		{
 			project: z
 				.string()
@@ -5904,7 +5991,9 @@ export function registerTools(
 
 	server.tool(
 		"create_fix_pattern",
-		"Create a fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search this BEFORE fixing to avoid repeating mistakes.",
+		"Create a fix pattern in the knowledge base documenting symptom, root cause, and optional validated fix. " +
+			"WHEN: use after resolving a non-trivial bug so future agents can find and reuse the solution. " +
+			"EXAMPLE: create_fix_pattern symptom='hydration mismatch' rootCause='SSR/CSR time skew' tags=['next.js'] stack=['next.js','convex'] sourceProject='vantage-starter' createdBy='alpha' severity='major'.",
 		{
 			symptom: z
 				.string()
@@ -5985,7 +6074,9 @@ export function registerTools(
 
 	server.tool(
 		"add_fix_attempt",
-		"Add a fix attempt to a pattern. Documents what was tried, whether it worked, and why. If worked=true and pattern has no validatedFix, auto-sets it.",
+		"Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
+			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
+			"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
 		{
 			patternId: z.string().describe("ID of the fix pattern"),
 			description: z.string().describe("What was tried — the fix approach"),
@@ -6035,7 +6126,9 @@ export function registerTools(
 
 	server.tool(
 		"validate_fix",
-		"Set or update the validated fix on a pattern. Use after confirming a fix works.",
+		"Set or update the validated fix description on a fix pattern after confirming it works. " +
+			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
+			"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
 		{
 			patternId: z.string().describe("ID of the fix pattern"),
 			validatedFix: z.string().describe("Description of the validated fix"),
@@ -6083,7 +6176,9 @@ export function registerTools(
 		// Rationale: backed by `convex.action("search:searchFixPatterns")` which
 		// runs an embedding-similarity ranker; cursor paging by `createdBefore`
 		// would corrupt relevance ordering. Same rationale as search_components.
-		"Semantic search over fix patterns. Use this BEFORE fixing a bug to check if it's been seen before. Returns patterns ranked by relevance.",
+		"Semantic search over fix patterns by symptom description, ranked by relevance. " +
+			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
+			"EXAMPLE: search_fix_patterns query='message disappears after sending on mobile' limit=5.",
 		{
 			query: z
 				.string()
@@ -6139,8 +6234,9 @@ export function registerTools(
 
 	server.tool(
 		"list_fix_patterns",
-		"List fix patterns, optionally filtered by project. Returns patterns sorted by creation date (newest first). " +
-			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
+		"List fix patterns filtered by source project, newest first with cursor paging support. " +
+			"WHEN: use to audit the knowledge base or review all patterns for a specific project. " +
+			"EXAMPLE: list_fix_patterns project='vantage-starter' limit=20.",
 		{
 			project: z
 				.string()
@@ -6250,7 +6346,9 @@ export function registerTools(
 
 	server.tool(
 		"link_issue_to_pattern",
-		"Link a VantagePeers issue to a fix pattern. Creates a bidirectional reference.",
+		"Link a VantagePeers issue to a fix pattern creating a bidirectional reference. " +
+			"WHEN: use after creating a fix pattern for an issue to connect the symptom record with the bug tracker. " +
+			"EXAMPLE: link_issue_to_pattern patternId='j57aaaaa...' issueId='j57bbbbb...'.",
 		{
 			patternId: z.string().describe("ID of the fix pattern"),
 			issueId: z.string().describe("VantagePeers issue ID to link"),
@@ -6293,8 +6391,9 @@ export function registerTools(
 
 	server.tool(
 		"get_mission_template",
-		"Fetch a mission template by name. Returns the template with all steps, or null if not found. " +
-			"Use 'issue-resolution-v2' for the default Issue Resolution Protocol.",
+		"Fetch a mission template by name with all steps, or null if not found. " +
+			"WHEN: use before instantiate_template_into_mission to inspect steps and verify the template exists. " +
+			"EXAMPLE: get_mission_template name='issue-resolution-v2'.",
 		{
 			name: z.string().describe("Template name — e.g. 'issue-resolution-v2'"),
 		},
@@ -6331,9 +6430,9 @@ export function registerTools(
 
 	server.tool(
 		"update_mission_template",
-		"Create or update a mission template by name. " +
-			"Each step has a title, description, and optional tags. " +
-			"If the template already exists it is overwritten (upsert by name).",
+		"Create or upsert a mission template by name; existing templates are overwritten. " +
+			"WHEN: use to define or refine reusable multi-step workflow blueprints for recurring mission types. " +
+			"EXAMPLE: update_mission_template name='issue-resolution-v2' steps=[\{title:'Triage',description:'...'\}] createdBy='alpha'.",
 		{
 			name: z
 				.string()
@@ -6426,7 +6525,9 @@ export function registerTools(
 
 	server.tool(
 		"instantiate_template_into_mission",
-		"Create N tasks from a mission template, one per step, each pre-assigned to the step's declared orchestrator (falling back to mission pilot when unset). Unblocks industrial cross-orchestrator workflows — replaces the fragile assign:X tag workaround.",
+		"Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator. " +
+			"WHEN: use after create_mission to fan out a standard workflow from a template in one call. " +
+			"EXAMPLE: instantiate_template_into_mission templateName='issue-resolution-v2' missionId='k57a36y8...' callerOrchestrator='alpha'.",
 		{
 			templateName: z
 				.string()
@@ -6514,9 +6615,9 @@ export function registerTools(
 
 	server.tool(
 		"add_deployment",
-		"Register a Convex deployment for proactive error monitoring. " +
-			"The deployKeyEnvVar must be the name of a Convex environment variable (not the key itself) " +
-			"holding the admin deploy key for that deployment. Once registered, the cron polls it every 5 minutes.",
+		"Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
+			"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
+			"EXAMPLE: register_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
 		{
 			name: z
 				.string()
@@ -6590,7 +6691,9 @@ export function registerTools(
 
 	server.tool(
 		"remove_deployment",
-		"Deactivate a monitored deployment. The deployment record is preserved but polling stops.",
+		"Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
+			"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
+			"EXAMPLE: delete_deployment name='vantage-prod'.",
 		{
 			name: z
 				.string()
@@ -6628,9 +6731,9 @@ export function registerTools(
 
 	server.tool(
 		"list_errors",
-		"List detected errors from monitored deployments, ordered newest first. " +
-			"Each entry includes deduplication count and the linked GitHub issue number if one was created. " +
-			"S3.3 B8 follow-up batch 2 — supports cursor paging via `cursor` arg.",
+		"List detected errors from monitored deployments with dedup counts and linked GitHub issue numbers. " +
+			"WHEN: use to triage production errors, identify recurring failures, or find the latest crash report. " +
+			"EXAMPLE: list_errors deployment='vantage-prod' limit=20 fields='full'.",
 		{
 			deployment: z
 				.string()
@@ -6729,7 +6832,9 @@ export function registerTools(
 
 	server.tool(
 		"get_error",
-		"Fetch a single error log entry by its Convex document ID, including stack trace and issue linkage.",
+		"Fetch a single error log entry by Convex document ID, including full stack trace and issue linkage. " +
+			"WHEN: use after list_errors to retrieve the full stack trace for a specific error entry. " +
+			"EXAMPLE: get_error errorId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
 			errorId: z.string().describe("Convex document ID of the errorLogs entry"),
 		},
@@ -6865,7 +6970,9 @@ export function registerTools(
 
 	server.tool(
 		"validate_task_payload",
-		"Dry-run lint for VP write-path tools. Runs ALL validation axes at once (VERIFICATION/TESTS presence, delegation-triplet, evidence-bound completionNote, friction_observed, task-ref in messages, time-estimate detection) and returns every failure with copy-paste fix snippets. Call this BEFORE the real create_task / update_task / complete_task / send_message to avoid sequential hook-rejection loops.",
+		"Dry-run lint for VP write-path tools — checks all validation axes and returns failures with fix snippets. " +
+			"WHEN: call before create_task / update_task / complete_task / send_message to catch all violations in one pass. " +
+			"EXAMPLE: validate_task_payload tool_name='complete_task' payload={taskId:'k...',completionNote:'PR #667 merged SHA abc1234'}.",
 		{
 			tool_name: z
 				.enum(["create_task", "update_task", "complete_task", "send_message"])
@@ -6893,6 +7000,271 @@ export function registerTools(
 					},
 				],
 			};
+		},
+	);
+
+	// === B2 §1 CANONICAL ALIASES — backward-compat legacy names retained ===
+
+	// register_repo_mapping → was add_repo_mapping [ALIAS of add_repo_mapping — C0.3 master-only]
+	server.tool(
+		"register_repo_mapping",
+		"[ALIAS of add_repo_mapping] Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
+		"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
+		"EXAMPLE: register_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
+		{
+			repo: z.string(),
+			orchestrator: z.string(),
+			project: z.string().optional(),
+		},
+		async ({ repo, orchestrator, project }) => {
+			const masterDenied = guardMasterOnly("register_repo_mapping");
+			if (masterDenied) return masterDenied;
+			try {
+				const result = await convex.mutation("githubRepoMapping:add" as any, {
+					repo,
+					orchestrator,
+					...(project !== undefined ? { project } : {}),
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// delete_repo_mapping → was remove_repo_mapping [ALIAS of remove_repo_mapping — C0.3 master-only]
+	server.tool(
+		"delete_repo_mapping",
+		"[ALIAS of remove_repo_mapping] Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
+		"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
+		"EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.",
+		{
+			repo: z.string(),
+		},
+		async ({ repo }) => {
+			const masterDenied = guardMasterOnly("delete_repo_mapping");
+			if (masterDenied) return masterDenied;
+			try {
+				const result = await convex.mutation("githubRepoMapping:remove" as any, { repo });
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// register_deployment → was add_deployment [ALIAS of add_deployment — C0.1 master-only]
+	server.tool(
+		"register_deployment",
+		"[ALIAS of add_deployment] Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
+		"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
+		"EXAMPLE: register_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
+		{
+			name: z.string(),
+			deploymentUrl: z.string(),
+			deployKeyEnvVar: z.string(),
+			githubRepo: z.string(),
+			orchestrator: z.string(),
+		},
+		async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
+			const masterDenied = guardMasterOnly("register_deployment");
+			if (masterDenied) return masterDenied;
+			try {
+				const result = await convex.mutation("errorMonitor:addDeployment" as any, {
+					name,
+					deploymentUrl,
+					deployKeyEnvVar,
+					githubRepo,
+					orchestrator,
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// delete_deployment → was remove_deployment [ALIAS of remove_deployment — C0.1 master-only]
+	server.tool(
+		"delete_deployment",
+		"[ALIAS of remove_deployment] Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
+		"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
+		"EXAMPLE: delete_deployment name='vantage-prod'.",
+		{
+			name: z.string(),
+		},
+		async ({ name }) => {
+			const masterDenied = guardMasterOnly("delete_deployment");
+			if (masterDenied) return masterDenied;
+			try {
+				const result = await convex.mutation("errorMonitor:removeDeployment" as any, { name });
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// check_mandate_spending → was validate_mandate_spending (not C0-gated — read-only check)
+	server.tool(
+		"check_mandate_spending",
+		"[ALIAS of validate_mandate_spending] Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
+		"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
+		"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
+		{
+			mandateId: z.string(),
+			proposedAmount: z.number(),
+		},
+		async ({ mandateId, proposedAmount }) => {
+			try {
+				const result = await convex.query("mandates:validateSpending" as any, {
+					mandateId,
+					proposedAmount,
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// check_fix → was validate_fix [ALIAS of validate_fix — C0.5 master-only]
+	server.tool(
+		"check_fix",
+		"[ALIAS of validate_fix] Set or update the validated fix description on a fix pattern after confirming it works. " +
+		"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
+		"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
+		{
+			patternId: z.string(),
+			validatedFix: z.string(),
+		},
+		async ({ patternId, validatedFix }) => {
+			const masterDenied = guardMasterOnly("check_fix");
+			if (masterDenied) return masterDenied;
+			try {
+				const result = await convex.mutation("fixPatterns:validate" as any, {
+					patternId,
+					validatedFix,
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// create_fix_attempt → was add_fix_attempt (not C0-gated — uses guardFrom(createdBy))
+	server.tool(
+		"create_fix_attempt",
+		"[ALIAS of add_fix_attempt] Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
+		"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
+		"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
+		{
+			patternId: z.string(),
+			description: z.string(),
+			worked: z.boolean(),
+			why: z.string().optional(),
+			commitSha: z.string().optional(),
+			createdBy: z.string(),
+		},
+		async ({ patternId, description, worked, why, commitSha, createdBy }) => {
+			const fromDenied = guardFrom(createdBy);
+			if (fromDenied) return fromDenied;
+			try {
+				const result = await convex.mutation("fixPatterns:addAttempt" as any, {
+					patternId,
+					description,
+					worked,
+					...(why !== undefined ? { why } : {}),
+					...(commitSha !== undefined ? { commitSha } : {}),
+					createdBy,
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// create_task_dependency → was add_task_dependency (not C0-gated — uses callerOrchestrator auth)
+	server.tool(
+		"create_task_dependency",
+		"[ALIAS of add_task_dependency] Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
+		"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
+		"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
+		{
+			taskId: z.string(),
+			dependsOn: z.array(z.string()),
+			callerOrchestrator: z.string(),
+		},
+		async ({ taskId, dependsOn, callerOrchestrator }) => {
+			try {
+				const result = await convex.mutation("tasks:update" as any, {
+					taskId,
+					dependsOn,
+					callerOrchestrator,
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// update_summary → was set_summary (not C0-gated — uses orchestratorId auth)
+	server.tool(
+		"update_summary",
+		"[ALIAS of set_summary] Update the current-work summary for an orchestrator instance, visible via list_peers. " +
+		"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
+		"EXAMPLE: update_summary orchestratorId='alpha' instanceId='alpha-vps' summary='Standardizing 86 tool descriptions for B2'.",
+		{
+			orchestratorId: z.string(),
+			instanceId: z.string().optional(),
+			summary: z.string(),
+		},
+		async ({ orchestratorId, instanceId, summary }) => {
+			try {
+				const result = await convex.mutation("profiles:updateDynamic" as any, {
+					orchestratorId,
+					...(instanceId !== undefined ? { instanceId } : {}),
+					dynamic: { summary },
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// create_diary → was write_diary (not C0-gated — uses guardFrom(author) when present)
+	server.tool(
+		"create_diary",
+		"[ALIAS of write_diary] Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
+		"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
+		"EXAMPLE: create_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
+		{
+			date: z.string(),
+			orchestrator: z.string(),
+			content: z.string(),
+			author: z.string().optional(),
+		},
+		async ({ date, orchestrator, content, author }) => {
+			assertContentSize(content, "content");
+			if (author !== undefined) {
+				const fromDenied = guardFrom(author);
+				if (fromDenied) return fromDenied;
+			}
+			try {
+				const result = await convex.mutation("diary:write" as any, {
+					date,
+					orchestrator,
+					content,
+					...(author !== undefined ? { author } : {}),
+				});
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
 		},
 	);
 }
