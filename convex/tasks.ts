@@ -218,6 +218,44 @@ export const get = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// getById — alias of get, exposed for /api/eta/verify-publish-token HTTP action
+// (Feature D spec requirement, hook v1.2.0).
+// ─────────────────────────────────────────────────────────────────────────────
+export const getById = query({
+	args: { taskId: v.id("tasks") },
+	returns: v.union(
+		v.object({
+			_id: v.id("tasks"),
+			_creationTime: v.number(),
+			title: v.string(),
+			description: v.optional(v.string()),
+			project: v.optional(v.string()),
+			tags: v.optional(v.array(v.string())),
+			assignedTo: assigneeValidator,
+			priority: priorityValidator,
+			status: statusValidator,
+			completionNote: v.optional(v.string()),
+			assignedToInstance: v.optional(v.string()),
+			claimedByInstance: v.optional(v.string()),
+			dependsOn: v.optional(v.array(v.id("tasks"))),
+			missionId: v.optional(v.id("missions")),
+			estimatedMinutes: v.optional(v.number()),
+			actualMinutes: v.optional(v.number()),
+			startedAt: v.optional(v.number()),
+			completedAt: v.optional(v.number()),
+			dueDate: v.optional(v.number()),
+			createdBy: creatorValidator,
+			createdAt: v.number(),
+			updatedAt: v.number(),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		return await ctx.db.get(args.taskId);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // list — list tasks with optional filters (assignedTo, status, project)
 //
 // New in v1.1:
