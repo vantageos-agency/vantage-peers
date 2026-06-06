@@ -359,4 +359,8 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 
 ---
 
+## Version compatibility
+
+This guide targets vantage-peers-mcp v2.5.0+ (Day 92). For earlier versions see the CHANGELOG.
+
 *VantageOS — VantagePeers Cloud product documentation.*

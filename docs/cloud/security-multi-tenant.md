@@ -2,7 +2,7 @@
 
 **Scope:** VantagePeers Cloud (multi-tenant). Self-host operations are documented separately under `docs/getting-started/`. The two products share the same security core but diverge on tenant isolation, emergency maintenance, and audit retention. Do not cross-apply runbooks.
 
-This document is the canonical reference for the v2.4.14 security baseline.
+This document is the canonical reference for the v2.5.0 security baseline.
 
 ---
 
@@ -69,7 +69,7 @@ Token re-issue after cascade revoke is **not** an admin-endpoint responsibility:
 - **Location:** `convex/schema.ts`.
 - **Shape:** `{ ts, actor, action, before, after, context }`. `before` / `after` are JSON snapshots of the affected row(s).
 - **Append-only:** there is no mutation path that updates or deletes rows in this table. Operationally this means the ledger is the system of record for every master-gated tenant change.
-- **Coverage:** at v2.4.14, the only writer is `patchScopeProfileEmergency`. Any future master-gated mutation must write a ledger row as part of the same transaction; PR review checks enforce this.
+- **Coverage:** at v2.5.0, the only writer is `patchScopeProfileEmergency`. Any future master-gated mutation must write a ledger row as part of the same transaction; PR review checks enforce this.
 
 ---
 
@@ -305,6 +305,8 @@ Day 92 Laurent doctrine (verbatim): *"on le fait pour un MCP d'abord, ensuite on
 | Phase C0 | en attente | — | `list_messages.from`, `list_missions.pilot`, `list_briefing_notes`, `list_peers`, `create_task` verrous identité | En attente |
 
 Doctrine Day 92 Laurent (verbatim) : *"on le fait pour un MCP d'abord, ensuite on reproduit sur l'autre, pour être cohérent et même standard"* — ce document est la spécification canonique qu'Athena reproduit sur vCRM.
+
+> Available in vantage-peers-mcp v2.5.0+ (Day 92 mission k57a36y8w5t085bqr23dsmvb2d882506). The `fromAllowList` + case-insensitive matching + NFC normalization described in this section are enforced as of v2.5.0.
 
 ---
 

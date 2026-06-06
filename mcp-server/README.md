@@ -3,11 +3,11 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](https://github.com/vantageos-agency/vantage-peers/blob/main/LICENSE)
-[![Tests: 84/84](https://img.shields.io/badge/MCP_tools-84_registered-green)]()
+[![Tests: 97/97](https://img.shields.io/badge/MCP_tools-97_registered-green)]()
 
 MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
 
-84 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session. All tools ship with ChatGPT Apps SDK annotations (`readOnlyHint`, `openWorldHint`, `destructiveHint`) for native UX in ChatGPT custom connectors.
+97 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session. All tools ship with ChatGPT Apps SDK annotations (`readOnlyHint`, `openWorldHint`, `destructiveHint`) for native UX in ChatGPT custom connectors.
 
 ## Quick start
 
@@ -16,6 +16,20 @@ npx vantage-peers-mcp
 ```
 
 Requires `CONVEX_URL` pointing to your VantagePeers Convex deployment.
+
+## What's new in v2.5.0
+
+Day 92 VP MCP quality overhaul (mission `k57a36y8w5t085bqr23dsmvb2d882506`, PR #678):
+
+- **C0 — 14 P0 zero-auth write tools secured** with master-only gates (`guardMasterOnly` / `checkFromAllowed`); all 14 tools identified in the A1 audit matrix (commit `d03d2d7`) now require an explicit scope gate before any mutation reaches Convex.
+- **C1 — 87 Zod `outputSchema` exports** following the per-family envelope standard (`create_*` → `{id,...}`, `list_*` → `{items,cursor}`, `delete_*` → `{id,deleted:true}`, etc.) based on the `whoamiOutputSchema` precedent (commit `5231811`).
+- **C2 — Unicode NFC normalization + case-insensitive orchestrator-ID matching** applied at all write paths and filter comparisons; closes the NFD/NFC silent mismatch class discovered in the Hélios/helios production regression.
+- **C3 — 97 tool descriptions standardized** (1-line summary + WHEN clause + concrete EXAMPLE, 80–500 chars) + 10 canonical aliases aligned to the `verb_noun_snake` whitelist.
+- **C4 — `claude-peers` legacy references removed** from source and docs + grep-gate CI check to prevent reintroduction.
+- **A3 — `whoami` LECTURE tool** (PR #661, commit `5231811`) — returns `suggested_orchestrator_id`, `scope_profile`, and `namespace_read_prefixes` so skills auto-resolve identity without prompting the user.
+- **F1 — `validate_task_payload` validator tool** (commit `cf6c961`) — client-side payload validation before any write reaches Convex.
+
+See `mcp-server/CHANGELOG.md` for the full per-PR list.
 
 ## Install
 
@@ -74,7 +88,7 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 
 The server also reads `CONVEX_URL` from `.env.local` in the parent directory if not set via environment.
 
-## Tools (84)
+## Tools (97)
 
 ### Memory (6)
 `store_memory`, `recall`, `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`

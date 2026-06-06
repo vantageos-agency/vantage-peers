@@ -165,11 +165,11 @@ server.tool(
 );
 ```
 
-**Current gap (A1 audit Day 92 commit `d03d2d7`):** 0/85 tools have `outputSchema` — 100% migration required.
+**Status as of v2.5.0 (Day 92 mission k57a36y8w5t085bqr23dsmvb2d882506):** 87 tools have `outputSchema` — enforced universally as of v2.5.0. Starting baseline audit (commit `d03d2d7`): 0/85 tools had `outputSchema`.
 
 ---
 
-**FR :** Chaque outil DOIT avoir un `outputSchema` Zod exporté en constante de module de premier niveau. Précédent canonique : `whoamiOutputSchema` à `tools.ts:576` (commit `5231811`). Enveloppes obligatoires par famille : `create_*` → `{id,...fields}`, `update_*` → `{id,updated:true}`, `delete_*` → `{id,deleted:true}`, `list_*` → `{items,cursor}`, `search_*` → `{results}`. Gap actuel : 0/85 outils ont un `outputSchema`.
+**FR :** Chaque outil DOIT avoir un `outputSchema` Zod exporté en constante de module de premier niveau. Précédent canonique : `whoamiOutputSchema` à `tools.ts:576` (commit `5231811`). Enveloppes obligatoires par famille : `create_*` → `{id,...fields}`, `update_*` → `{id,updated:true}`, `delete_*` → `{id,deleted:true}`, `list_*` → `{items,cursor}`, `search_*` → `{results}`. Statut v2.5.0 : 87 outils ont un `outputSchema` — application universelle à partir de v2.5.0.
 
 ---
 
@@ -550,7 +550,7 @@ it("update_component rejects non-master token without scope gate", async () => {
 
 **EN:** Any write tool (`ECRITURE`) that reaches production WITHOUT an explicit scope gate is a **P0 incident**. A non-master OAuth token can execute a write operation with zero identity or scope validation — any tenant with a valid bearer token can mutate data that does not belong to them.
 
-**14 P0 tools identified in A1 audit matrix (Day 92, commit `d03d2d7`):**
+**14 P0 tools identified in A1 audit matrix (Day 92, commit `d03d2d7`) — all 14 secured as of v2.5.0 (C0 sub-batch, PR #678):**
 
 | # | Tool | Domain | P0 reason |
 |---|------|--------|-----------|
@@ -707,4 +707,4 @@ server.tool(
 
 ---
 
-*VantageOS — Day 92. Standard version 1.0.0. Next review: post-C0 P0 fixes merge.*
+*VantageOS — Day 92. Standard version 1.0.0. C0 P0 fixes merged in v2.5.0 (PR #678). Next review: post-vCRM mechanical reproduction.*
