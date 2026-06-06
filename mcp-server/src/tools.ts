@@ -1298,7 +1298,7 @@ export function registerTools(
 		"send_message",
 		"Send a message to one, many, or all orchestrators. " +
 			"channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
-			"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
+			"Creates message + one receipt per recipient. Supersedes legacy send_message (pre-VantagePeers).",
 		{
 			from: creatorSchema.describe(
 				"Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)",
@@ -1391,7 +1391,7 @@ export function registerTools(
 		"check_messages",
 		"Check for unread messages. Returns messages with receiptIds for marking as read. " +
 			"If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
-			"Replaces claude-peers check_messages.",
+			"Supersedes legacy check_messages (pre-VantagePeers).",
 		{
 			recipient: creatorSchema.describe(
 				"Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)",
@@ -1643,7 +1643,7 @@ export function registerTools(
 	server.tool(
 		"list_peers",
 		"List all orchestrator profiles with their current status and summary. " +
-			"Replaces claude-peers list_peers. " +
+			"Supersedes legacy list_peers (pre-VantagePeers). " +
 			"S3.3 B8 follow-up batch 3 FINAL — supports cursor paging via `cursor` arg.",
 		{
 			limit: z
@@ -6153,6 +6153,9 @@ export function registerTools(
 			githubRepo,
 			orchestrator,
 		}) => {
+			// C0.1: infrastructure-level — master scope only
+			const masterDenied = guardMasterOnly("add_deployment");
+			if (masterDenied) return masterDenied;
 			try {
 				const id = await convex.mutation("errorMonitor:addDeployment" as any, {
 					name,
@@ -6198,6 +6201,9 @@ export function registerTools(
 			title: "Remove deployment",
 		},
 		async ({ name }) => {
+			// C0.1: infrastructure-level — master scope only
+			const masterDenied = guardMasterOnly("remove_deployment");
+			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("errorMonitor:removeDeployment" as any, { name });
 				return {
