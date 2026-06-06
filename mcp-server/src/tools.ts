@@ -5730,6 +5730,9 @@ export function registerTools(
 			title: "Update issue status",
 		},
 		async ({ repo, issueNumber, status }) => {
+			// C0.5: no orchestrator identity arg — master scope only
+			const masterDenied = guardMasterOnly("update_issue_status");
+			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("issues:updateStatus" as any, {
 					repo,
@@ -6035,6 +6038,9 @@ export function registerTools(
 			title: "Validate fix",
 		},
 		async ({ patternId, validatedFix }) => {
+			// C0.5: no identity field — master scope only
+			const masterDenied = guardMasterOnly("validate_fix");
+			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("fixPatterns:validate" as any, {
 					patternId: patternId as never,
@@ -6247,6 +6253,9 @@ export function registerTools(
 			title: "Link issue to fix pattern",
 		},
 		async ({ patternId, issueId }) => {
+			// C0.5: no identity field — master scope only
+			const masterDenied = guardMasterOnly("link_issue_to_pattern");
+			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("fixPatterns:linkIssue" as any, {
 					patternId: patternId as never,
