@@ -1,5 +1,44 @@
 # Changelog
 
+## [2.5.0] — 2026-06-06 — Day 92 VP MCP quality overhaul (mission k57a36y8)
+
+Day 92 mission `k57a36y8w5t085bqr23dsmvb2d882506` ships a fleet-wide VP MCP quality bump
+across audit, docs, hooks, security, and consistency dimensions. 15 PRs merged to main.
+
+### Phase A — Audit + new tools
+- **A1** Day 92 VP MCP tools audit matrix (85 tools, 14 P0 zero-auth gaps) — `docs/test-reports/day92-vp-mcp-audit-matrix.md`.
+- **A2** Consistency analysis report — `docs/test-reports/day92-vp-mcp-consistency-analysis.md`.
+- **A3** New `whoami` LECTURE tool — first per-tool `outputSchema` export precedent.
+- **A4** Consolidated gap matrix — `docs/test-reports/day92-vp-mcp-gap-matrix-consolidated.md`.
+
+### Phase B — Documentation
+- **B1** `docs/cloud/security-multi-tenant.md` §4 scope-aware filter framework rewrite.
+- **B2** `docs/cloud/tools-quality-standard.md` (NEW) — 12-section bilingual quality standard.
+- **B3** `docs/cloud/onboarding-customer.md` (NEW) — customer onboarding guide (bilingual FR+EN).
+
+### Phase C — Consistency
+- **C0** 14 P0 zero-auth write tools secured with `guardMasterOnly` (C0.1 → C0.6, 6 PRs).
+- **C1** 87 Zod `outputSchema` exports per per-family envelope standard (B2 §3).
+- **C2** Orchestrator-id NFC normalization + case-insensitive matching; idempotent prod migration `convex/migrations/c2-normalize-orchestrator-ids.ts` (7 tables).
+- **C3** 97 tool descriptions standardized + 10 canonical aliases gated through `guardMasterOnly` (security regression fixed in iter 2) + alias-c0-gate-coverage test (15/15 PASS).
+- **C4** Legacy `claude-peers` references removed repo-wide + `grep-gate` CI workflow.
+
+### Phase F — Hooks + plugin
+- **F1** New consolidated `validate_task_payload` MCP tool + TypeScript validator library (replaces 5 single-axis hooks).
+- **F2** Plugin propagation runbook + `plugin-vs-workspace-hooks.md` doctrine.
+
+### Scope-aware filtering
+- `list_tasks` `fromAllowList[]` + case-insensitive matching (PR #654, #661).
+- 3 admin endpoints reinstated for Marie cohort (prior session).
+
+### Tenant trio
+- Persistent test tenant trio (alpha/beta/gamma) seeded on prod with bearers, scope_profiles, and seed data for cross-orchestrator E2E.
+
+### Deploy authorization
+- `PI_AUTHORIZED_TASK_ID=k1751nfs27t9f9mpvg3ppd6xad884r59` (Day 82 doctrine).
+- Mission: `k57a36y8w5t085bqr23dsmvb2d882506`.
+- Branch: `release/v2.5.0` opened against `main` at HEAD `18a5530`.
+
 ## [2.4.13] — 2026-06-02 — Post-public republish: attribution + CHANGELOG day-numbers + RULE #7 narrative scrub
 
 Repository visibility flip to PUBLIC on 2026-06-02 (mission D62 `k57e4t21sr55rhz8ng554eseb987wvh3`). This patch republishes the npm package so the published README + CHANGELOG + attribution match the now-public source.
