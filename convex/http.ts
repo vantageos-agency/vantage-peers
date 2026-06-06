@@ -549,4 +549,121 @@ http.route({
 	}),
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/eta/verify-publish-token — Feature D backend validation for hook v1.2.0
+//
+// POST body: {"taskId": "k...", "expectedSha": "<sha>"}
+// Header:    Authorization: Bearer <BEARER_SECRET_MASTER>
+//
+// Hook enforce-eta-approval-before-npm-publish v1.2.0 calls this to verify
+// an Eta APPROVED token before allowing npm publish. Curl-able from any
+// orchestrator host (no CONVEX_DEPLOYMENT required — that's the point).
+//
+// Response 200 {valid: true, taskId, completedAt, noteExcerpt} when:
+//   - master bearer valid (constant-time compare)
+//   - task exists
+//   - task.assignedTo === "eta"
+//   - task.status === "done"
+//   - task.completionNote contains expectedSha (case-insensitive substring)
+//
+// Response 200 {valid: false, reason: "<machine-readable>"} when any check fails.
+//   reasons: bearer-invalid / invalid-body / missing-fields / task-not-found
+//            / wrong-assignee / wrong-status / sha-not-in-note
+//
+// Response 401 when no Authorization header.
+// Response 500 when BEARER_SECRET_MASTER env var is missing (server misconfig).
+//
+// Read-only + idempotent + leaks only the verification verdict + minimal
+// audit metadata (completedAt, first 200 chars of note).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function timingSafeEqualHttp(a: string, b: string): Promise<boolean> {
+	const encoder = new TextEncoder();
+	const aBytes = encoder.encode(a);
+	const bBytes = encoder.encode(b);
+	if (aBytes.length !== bBytes.length) {
+		const dummy = new Uint8Array(aBytes.length);
+		const aKey = await crypto.subtle.importKey(
+			"raw",
+			aBytes,
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["sign"],
+		);
+		await crypto.subtle.sign("HMAC", aKey, dummy);
+		return false;
+	}
+	let diff = 0;
+	for (let i = 0; i < aBytes.length; i++) {
+		diff |= aBytes[i] ^ bBytes[i];
+	}
+	return diff === 0;
+}
+
+http.route({
+	path: "/api/eta/verify-publish-token",
+	method: "POST",
+	handler: httpAction(async (ctx, request) => {
+		const authHeader = request.headers.get("Authorization") ?? "";
+		const presented = authHeader.replace(/^Bearer\s+/i, "").trim();
+		if (!presented) {
+			return new Response("missing-bearer", { status: 401 });
+		}
+		const masterSecret = process.env.BEARER_SECRET_MASTER ?? "";
+		if (!masterSecret) {
+			return new Response("server-misconfig", { status: 500 });
+		}
+		const valid = await timingSafeEqualHttp(presented, masterSecret);
+		if (!valid) {
+			return Response.json({ valid: false, reason: "bearer-invalid" });
+		}
+
+		let body: { taskId?: string; expectedSha?: string };
+		try {
+			body = await request.json();
+		} catch {
+			return Response.json({ valid: false, reason: "invalid-body" });
+		}
+		const { taskId, expectedSha } = body;
+		if (!taskId || !expectedSha) {
+			return Response.json({ valid: false, reason: "missing-fields" });
+		}
+
+		const task = await ctx.runQuery(api.tasks.getById, {
+			taskId: taskId as Id<"tasks">,
+		});
+		if (!task) {
+			return Response.json({ valid: false, reason: "task-not-found" });
+		}
+		if (task.assignedTo !== "eta") {
+			return Response.json({
+				valid: false,
+				reason: "wrong-assignee",
+				got: task.assignedTo,
+			});
+		}
+		if (task.status !== "done") {
+			return Response.json({
+				valid: false,
+				reason: "wrong-status",
+				got: task.status,
+			});
+		}
+		const note = task.completionNote ?? "";
+		if (!note.toLowerCase().includes(expectedSha.toLowerCase())) {
+			return Response.json({
+				valid: false,
+				reason: "sha-not-in-note",
+				hint: `expected SHA prefix '${expectedSha.slice(0, 12)}' not found in completionNote (first 200 chars: ${note.slice(0, 200)})`,
+			});
+		}
+		return Response.json({
+			valid: true,
+			taskId,
+			completedAt: task.completedAt ?? task.updatedAt,
+			noteExcerpt: note.slice(0, 200),
+		});
+	}),
+});
+
 export default http;
