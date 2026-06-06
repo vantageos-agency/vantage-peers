@@ -139,7 +139,7 @@ The skill must call `whoami`, return the `suggested_orchestrator_id`, and procee
 
 **Step 4 — Forbidden anti-pattern**
 
-Do NOT configure the skill to ask the user for their `orchestrator_id` at runtime. This pattern surfaced as a blocking UX friction during the Day 92 Iris RH scenario: users were interrupted mid-workflow by an identity prompt that the skill should have resolved automatically via `whoami`.
+Do NOT configure the skill to ask the user for their `orchestrator_id` at runtime. This pattern surfaced as a blocking UX friction during a pilot deployment: users were interrupted mid-workflow by an identity prompt that the skill should have resolved automatically via `whoami`.
 
 ```
 # BAD — prompts user at runtime
@@ -196,7 +196,7 @@ La skill doit appeler `whoami`, retourner le `suggested_orchestrator_id`, et con
 
 **Étape 4 — Anti-pattern interdit**
 
-Ne configurez PAS la skill pour demander à l'utilisateur son `orchestrator_id` à l'exécution. Ce pattern est apparu comme une friction UX bloquante lors du scénario Iris RH du Jour 92 : les utilisateurs étaient interrompus en plein flux de travail par une invite d'identité que la skill aurait dû résoudre automatiquement via `whoami`.
+Ne configurez PAS la skill pour demander à l'utilisateur son `orchestrator_id` à l'exécution. Ce pattern est apparu comme une friction UX bloquante lors d'un déploiement pilote : les utilisateurs étaient interrompus en plein flux de travail par une invite d'identité que la skill aurait dû résoudre automatiquement via `whoami`.
 
 ```
 # MAUVAIS — sollicite l'utilisateur à l'exécution
@@ -286,7 +286,7 @@ The client ID, client secret, and refresh token issued to you at onboarding are 
 - `POST /admin/oauth/clients/:id/revoke-access-tokens-only` — revokes active access tokens while preserving refresh tokens. Clients auto-re-authenticate on the next call. Shipped in commit `aaf7da2`.
 - `POST /admin/oauth/clients/:id/patch-scope` (via `patchClientScopeAndRefreshTokens`) — re-targets scope profile and refreshes tokens server-side without customer re-paste. Shipped in commit `a446517`.
 
-**Reference:** Day 92 Marie Iris RH scenario was successfully run end-to-end with zero customer re-paste, demonstrating these endpoints in production. The clio-iris-rh and helios-iris-rh scope profiles were active throughout without credential interruption.
+**Reference:** A production pilot was successfully run end-to-end with zero customer re-paste, demonstrating these endpoints in production. Multiple scope profiles were active throughout without credential interruption.
 
 ---
 
@@ -312,7 +312,7 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 - `POST /admin/oauth/clients/:id/revoke-access-tokens-only` — révoque les access tokens actifs tout en préservant les refresh tokens. Les clients se ré-authentifient automatiquement au prochain appel. Livré dans le commit `aaf7da2`.
 - `POST /admin/oauth/clients/:id/patch-scope` (via `patchClientScopeAndRefreshTokens`) — re-cible le scope profile et rafraîchit les tokens côté serveur sans re-paste côté client. Livré dans le commit `a446517`.
 
-**Référence :** Le scénario Marie Iris RH du Jour 92 a été exécuté de bout en bout avec zéro re-paste côté client, démontrant ces endpoints en production. Les scope profiles clio-iris-rh et helios-iris-rh étaient actifs tout au long sans interruption des identifiants.
+**Référence :** Un pilote de production a été exécuté de bout en bout avec zéro re-paste côté client, démontrant ces endpoints en production. Plusieurs scope profiles étaient actifs tout au long sans interruption des identifiants.
 
 ---
 
