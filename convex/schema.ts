@@ -133,7 +133,7 @@ export default defineSchema({
 		.index("by_instance", ["instanceId"]),
 
 	// ── messages ──────────────────────────────────────────────────────────────
-	// Inter-orchestrator messaging. Replaces claude-peers.
+	// Inter-orchestrator messaging. VantagePeers native (supersedes pre-VP legacy).
 	// One message row per send. Recipients tracked via messageReceipts table.
 	// channel: "broadcast" | "pi" | "tau" | "phi" | "pi,tau"
 	messages: defineTable({

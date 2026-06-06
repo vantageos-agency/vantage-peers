@@ -31,7 +31,7 @@ None provide task management. Task state gets encoded as memories (fragile) or l
 
 None provide daily diaries or structured reflection. Agents don't learn from their days. They don't synthesize.
 
-None handle cross-machine communication. claude-peers -- the closest thing to agent messaging in the MCP ecosystem -- binds to localhost:7899. Two agents on different machines cannot exchange a single message without an SSH tunnel.
+None handle cross-machine communication. Prior localhost-bound messaging tools bind to a single port (e.g. 7899). Two agents on different machines cannot exchange a single message without an SSH tunnel.
 
 The industry built the hippocampus and forgot the rest of the brain.
 
@@ -55,7 +55,7 @@ VantagePeers is one system where the industry uses five.
 
 **Inter-agent messaging with read receipts.** Send to a channel, a role, a specific instance, or broadcast to all. Every message generates per-recipient receipts with timestamps. You know who read what and when. No other MCP-native solution -- and no agent memory product surveyed -- provides this.
 
-**Cross-machine, multi-instance routing.** Two-tier delivery: role-level (all `pi` instances get the message) and instance-level (`pi-vps` only). An agent on your laptop and an agent on your VPS share the same inbox semantics without sharing a network. This is what claude-peers would be if it escaped localhost.
+**Cross-machine, multi-instance routing.** Two-tier delivery: role-level (all `pi` instances get the message) and instance-level (`pi-vps` only). An agent on your laptop and an agent on your VPS share the same inbox semantics without sharing a network. This is what a localhost-bound messaging tool would be if it escaped localhost.
 
 **Task management with dependencies and missions.** Create tasks, assign them, set priorities, define dependency chains. Group tasks into missions with lifecycle stages. Agents claim work, report completion with mandatory notes. The task board and the memory store are the same system.
 

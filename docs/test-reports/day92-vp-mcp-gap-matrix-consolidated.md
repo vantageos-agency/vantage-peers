@@ -85,12 +85,12 @@ One row per canonical tool (86 total). Severity reconciles A1's P0=14/P1=69/P2=2
 | 8 | `get_profile` | LECTURE | No | CS | scopeFilterGet | Yes | No | P1 | 18 | C1 | outputSchema + example |
 | 9 | `update_profile` | ECRITURE | No | CS | guardFrom | Yes | No | P1 | 18 | C1 | outputSchema + example |
 | 10 | `list_memories` | LECTURE | No | CS | guardRead + scopeFilterList | Yes | No | P1 | 20 | C1 | outputSchema + example; cursor paging |
-| 11 | `send_message` | ECRITURE | No | CS | guardFrom | Yes | Yes | P2 | 17 | C1 + C4 | outputSchema; stale claude-peers ref in description |
-| 12 | `check_messages` | LECTURE | No | CS | fromAllowList | Yes | No | P2 | 17 | C1 + C4 | outputSchema; stale claude-peers ref |
+| 11 | `send_message` | ECRITURE | No | CS | guardFrom | Yes | Yes | P2 | 17 | C1 + C4 | outputSchema; legacy ref removed in C4 |
+| 12 | `check_messages` | LECTURE | No | CS | fromAllowList | Yes | No | P2 | 17 | C1 + C4 | outputSchema; legacy ref removed in C4 |
 | 13 | `mark_as_read` | ECRITURE | No | N/A | None | Yes | No | P1 | 18 | C1 | outputSchema + example; no receipt ownership check |
 | 14 | `delete_message` | ECRITURE | No | CS | guardFrom (conditional) | Yes | No | P1 | 18 | C1 | outputSchema + example; conditional guard |
 | 15 | `set_summary` | ECRITURE | No | CS | guardFrom | No | Yes | P1 | 19 | C1 + C3 | outputSchema; naming → `update_summary` |
-| 16 | `list_peers` | LECTURE | No | N/A | scopeFilterList | Yes | No | P2 | 17 | C1 + C4 | outputSchema; stale claude-peers ref |
+| 16 | `list_peers` | LECTURE | No | N/A | scopeFilterList | Yes | No | P2 | 17 | C1 + C4 | outputSchema; legacy ref removed in C4 |
 | 17 | `list_messages` | LECTURE | No | CS | scopeFilterList only (no pre-gate on `from`) | Yes | No | P1 | 21 | C1 + C2 | FLAG: `from` filter lacks symmetric pre-gate (Eta retro PR #654); outputSchema + example + pre-gate fix |
 | 18 | `list_broadcast_status` | LECTURE | No | N/A | scopeFilterList | Yes | No | P1 | 18 | C1 | outputSchema + example |
 | 19 | `create_task` | ECRITURE | No | CS | dual guardFrom | Yes | No | P1 | 18 | C1 | outputSchema + example |
@@ -213,9 +213,9 @@ Breakdown by gap axis (multi-axis: one tool can have multiple P1 sub-gaps):
 
 | Tool | Issue |
 |------|-------|
-| `send_message` | Stale `claude-peers` ref in description (informational only, no behavioral impact) |
-| `check_messages` | Stale `claude-peers` ref in description |
-| `list_peers` | Stale `claude-peers` ref in description |
+| `send_message` | Legacy ref removed in C4 (was: pre-VP brand name in description) |
+| `check_messages` | Legacy ref removed in C4 |
+| `list_peers` | Legacy ref removed in C4 |
 
 > `validate_mandate_spending`: security axis is P2 (read-only, no sensitive data path — preserved from A1). Naming and outputSchema axes are P1. Tool is classified P1 in the remediation queue; P2 security-axis exception is noted in §1 row 57.
 
@@ -248,7 +248,7 @@ Estimates are per-tool marginal cost. They exclude shared scaffolding (helper ex
 | Naming rename (tool name string in `server.tool()` + any internal reference) | ~3 | 20 | ~60 |
 | Envelope standardization — `delete_*` raw passthrough fix (`{ id, deleted: true }`) | ~4 | 5 | ~20 |
 | List truncation envelope fix (`{ items, cursor, _meta? }` always) | ~6 | 24 | ~144 |
-| Stale claude-peers ref cleanup (description string edit, 1 line each) | ~1 | 3 | ~3 |
+| Legacy ref cleanup — DONE in C4 (description string edit, 1 line each) | ~1 | 3 | ~3 |
 
 ### Total LOC delta estimate
 
