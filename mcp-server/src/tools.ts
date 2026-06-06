@@ -4925,6 +4925,9 @@ export function registerTools(
 			title: "Delete BU",
 		},
 		async ({ buId }) => {
+			// C0.3: permanent BU deletion — master scope only
+			const masterDenied = guardMasterOnly("delete_bu");
+			if (masterDenied) return masterDenied;
 			try {
 				const result = await convex.mutation("businessUnits:remove" as any, {
 					buId: buId as any,
@@ -4972,6 +4975,9 @@ export function registerTools(
 			title: "Add repo mapping",
 		},
 		async ({ repo, orchestrator, project, active }) => {
+			// C0.3: infra webhook routing config — master scope only
+			const masterDenied = guardMasterOnly("add_repo_mapping");
+			if (masterDenied) return masterDenied;
 			try {
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
 					repo,
@@ -5113,6 +5119,9 @@ export function registerTools(
 			title: "Remove repo mapping",
 		},
 		async ({ repo }) => {
+			// C0.3: infra webhook routing config — master scope only
+			const masterDenied = guardMasterOnly("remove_repo_mapping");
+			if (masterDenied) return masterDenied;
 			try {
 				const result = await convex.mutation(
 					"githubRepoMapping:remove" as any,
