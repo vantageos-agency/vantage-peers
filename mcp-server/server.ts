@@ -601,7 +601,7 @@ server.tool(
 	"send_message",
 	"Send a message to one, many, or all orchestrators. " +
 		"channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
-		"Creates message + one receipt per recipient. Replaces claude-peers send_message.",
+		"Creates message + one receipt per recipient. Supersedes legacy send_message (pre-VantagePeers).",
 	{
 		from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
 		fromInstanceId: z
@@ -657,7 +657,7 @@ server.tool(
 	"check_messages",
 	"Check for unread messages. Returns messages with receiptIds for marking as read. " +
 		"If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
-		"Replaces claude-peers check_messages.",
+		"Supersedes legacy check_messages (pre-VantagePeers).",
 	{
 		recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
 		recipientInstanceId: z
@@ -822,7 +822,7 @@ server.tool(
 server.tool(
 	"list_peers",
 	"List all orchestrator profiles with their current status and summary. " +
-		"Replaces claude-peers list_peers.",
+		"Supersedes legacy list_peers (pre-VantagePeers).",
 	{},
 	async () => {
 		try {

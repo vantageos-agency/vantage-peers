@@ -11,7 +11,7 @@ VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
 
 ## Tool Inventory Matrix
 
-| # | Tool name | Category | Desc len (chars) | inputSchema present | outputSchema present | Case-sensitivity on orch-id fields | Scope-filter semantic | Symmetric pre-gate present | Naming convention (verb_noun_snake) | Example in description | Obsolete claude-peers ref | Severity | Notes |
+| # | Tool name | Category | Desc len (chars) | inputSchema present | outputSchema present | Case-sensitivity on orch-id fields | Scope-filter semantic | Symmetric pre-gate present | Naming convention (verb_noun_snake) | Example in description | Obsolete legacy-ref (fixed C4) | Severity | Notes |
 |---|-----------|----------|-----------------|--------------------|--------------------|------------------------------------|-----------------------|---------------------------|-------------------------------------|------------------------|--------------------------|----------|-------|
 | 1 | `store_memory` | ECRITURE | 159 | Yes | No | Case-sensitive (createdBy passthrough) | guardFrom(createdBy) + guardWrite(namespace) | Yes — guardFrom + guardWrite | Yes | No | No | P1 | outputSchema missing; content size guard present |
 | 2 | `soft_delete_memory` | ECRITURE | 129 | Yes | No | N/A (no orch-id filter arg) | guardMasterOnly | Yes — guardMasterOnly | Yes | No | No | P1 | outputSchema missing; master-only restriction |
@@ -23,12 +23,12 @@ VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
 | 8 | `get_profile` | LECTURE | 133 | Yes | No | Case-sensitive (orchestratorId) | scopeFilterGet | Yes — scopeFilterGet | Yes | No | No | P1 | outputSchema missing |
 | 9 | `update_profile` | ECRITURE | 201 | Yes | No | Case-sensitive (orchestratorId) | guardFrom(orchestratorId) | Yes — guardFrom | Yes | No | No | P1 | outputSchema missing |
 | 10 | `list_memories` | LECTURE | 203 | Yes | No | Case-sensitive (createdBy filter) | guardRead(namespace) + scopeFilterList | Yes — guardRead | Yes | No | No | P1 | outputSchema missing; cursor paging present |
-| 11 | `send_message` | ECRITURE | 215 | Yes | No | Case-sensitive (from) | guardFrom(from) | Yes — guardFrom | Yes | Yes ("broadcast") | Yes — "Replaces claude-peers send_message" | P2 | outputSchema missing; claude-peers ref is cosmetic stale label |
-| 12 | `check_messages` | LECTURE | 244 | Yes | No | Case-sensitive (recipient) | fromAllowList check (symmetric to send_message.from) | Yes — explicit fromAllowList gate | Yes | No | Yes — "Replaces claude-peers check_messages" | P2 | outputSchema missing; symmetric gate correct per Eta retro |
+| 11 | `send_message` | ECRITURE | 215 | Yes | No | Case-sensitive (from) | guardFrom(from) | Yes — guardFrom | Yes | Yes ("broadcast") | Yes — FIXED in C4 (was: legacy ref) | P2 | outputSchema missing; legacy ref removed in C4 |
+| 12 | `check_messages` | LECTURE | 244 | Yes | No | Case-sensitive (recipient) | fromAllowList check (symmetric to send_message.from) | Yes — explicit fromAllowList gate | Yes | No | Yes — FIXED in C4 (was: legacy ref) | P2 | outputSchema missing; symmetric gate correct per Eta retro |
 | 13 | `mark_as_read` | ECRITURE | 82 | Yes | No | N/A | None (no orch-id scoping) | N/A — no identity arg | Yes | No | No | P1 | outputSchema missing; no per-receipt ownership check |
 | 14 | `delete_message` | ECRITURE | 88 | Yes | No | Case-sensitive (callerOrchestrator optional) | guardFrom(callerOrchestrator) when provided | Partial — guard only when arg present | Yes | No | No | P1 | outputSchema missing; guardFrom conditional |
 | 15 | `set_summary` | ECRITURE | 186 | Yes | No | Case-sensitive (orchestratorId) | guardFrom(orchestratorId) | Yes — guardFrom | Yes | Yes ("pi-chromebook") | No | P1 | outputSchema missing |
-| 16 | `list_peers` | LECTURE | 145 | Yes | No | N/A | scopeFilterList (fromAllowList or namespaceReadPrefixes) | Yes — scopeFilterList | Yes | No | Yes — "Replaces claude-peers list_peers" | P2 | outputSchema missing; cursor paging present |
+| 16 | `list_peers` | LECTURE | 145 | Yes | No | N/A | scopeFilterList (fromAllowList or namespaceReadPrefixes) | Yes — scopeFilterList | Yes | No | Yes — FIXED in C4 (was: legacy ref) | P2 | outputSchema missing; cursor paging present |
 | 17 | `list_messages` | LECTURE | 166 | Yes | No | Case-sensitive (`from` filter arg) | scopeFilterList (post-query row filter) | **NO** — `from` filter arg has no pre-gate; scope collapse only post-query | Yes | No | No | **P1** | **FLAG: `list_messages.from` — sole identity-filter arg without symmetric pre-gate (Eta retro PR #654). Non-master client can pass any `from` value; filtering deferred to scopeFilterList post-query row filter, not pre-checked against fromAllowList.** |
 | 18 | `list_broadcast_status` | LECTURE | 104 | Yes | No | N/A | scopeFilterList | Yes — scopeFilterList | Yes | No | No | P1 | outputSchema missing; doctrine exception: single-object-shape-not-list (no cursor) |
 | 19 | `create_task` | ECRITURE | 133 | Yes | No | Case-sensitive (createdBy, assignedTo) | guardFrom(createdBy) + guardFrom(assignedTo) | Yes — dual guardFrom | Yes | No | No | P1 | outputSchema missing |
@@ -135,8 +135,8 @@ VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
     23. `complete_task` — conditional only
 - **P0 count: 14** (production write-without-auth bugs)
 - **P1 count: 69** (outputSchema missing across all 85 + identity-filter gaps)
-- **P2 count: 2** (validate_mandate_spending read-only no-guard; cosmetic claude-peers refs)
-- Obsolete claude-peers refs total: **3** (lines 1260, 1353, 1605 — in send_message, check_messages, list_peers descriptions)
+- **P2 count: 2** (validate_mandate_spending read-only no-guard; cosmetic legacy-refs (fixed in C4))
+- Obsolete legacy-ref (fixed C4)s total: **3** (lines 1260, 1353, 1605 — in send_message, check_messages, list_peers descriptions)
 
 ---
 
@@ -144,7 +144,7 @@ VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
 
 - **P0** = production bug live — a non-master OAuth token can execute a write operation with zero identity or scope validation. Any tenant with a valid (but non-master) bearer token can mutate data that does not belong to them. Examples: `update_component`, `delete_component`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `delete_bu`, `add_repo_mapping`, `remove_repo_mapping`, `update_issue_status`, `validate_fix`, `link_issue_to_pattern`, `add_deployment`, `remove_deployment`, `update_mission_status`. The scope-filter regression pattern seen in PR #654 can recur here.
 - **P1** = UX degraded — outputSchema missing on all 85 tools means MCP clients (Claude.ai, ChatGPT, etc.) cannot perform shape-checking on tool results. Clients receive raw text and must parse defensively. Also includes identity-filter args without symmetric pre-gate (`list_messages.from`, `list_missions.pilot`) that leak query scope.
-- **P2** = cosmétique — stale `claude-peers` references in tool descriptions (informational text only, no behavioral impact). `validate_mandate_spending` missing guard is P2 because it is a read-only query with no sensitive data path.
+- **P2** = cosmétique — stale legacy-refs in tool descriptions — FIXED in C4. `validate_mandate_spending` missing guard is P2 because it is a read-only query with no sensitive data path.
 
 ---
 
@@ -154,7 +154,7 @@ VantagePeers **Cloud** (multi-tenant) only. Never mix with Self-host.
 - **Count derivation:** `grep -c "server\.tool(" mcp-server/src/tools.ts` → **85**. Cross-checked against `mcp-server/dist/src/tools.js` (built artifact): also **85**. No tools missed.
 - **Cross-reference:** `convex/_generated/api.d.ts` reviewed for mutation/query names; all Convex calls use string-cast `as any` bypassing typed API — this is a separate debt item (no Convex typed API usage).
 - **outputSchema count:** `grep -c "outputSchema" mcp-server/src/tools.ts` → **0**. Confirmed: zero tools declare outputSchema.
-- **Obsolete claude-peers refs:** `grep -ic "claude-peers" mcp-server/src/tools.ts` → **3**. All in string descriptions (not code logic).
+- **Obsolete legacy-refs:** was 3 — FIXED in C4. `grep -ic "claude-peers" mcp-server/src/tools.ts` → **0**.
 - **symmetric pre-gate analysis:** manual scan of each handler body for `guardFrom`, `guardRead`, `guardWrite`, `guardMasterOnly`, `isMasterScope`, `fromAllowList`, `oauthCtx.userId` equality checks against the filter arg.
 - **Reproducibility:** Re-run with `grep -n 'server\.tool(' mcp-server/src/tools.ts | wc -l` to recount. Eta or Athena can re-run for vCRM by swapping the source path.
 

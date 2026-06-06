@@ -1,0 +1,47 @@
+name: Brand Grep Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  no-legacy-brand-refs:
+    name: "No legacy brand refs in src/ or docs/"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Fail if claude-peers appears in mcp-server/src/"
+        run: |
+          if grep -rn "claude-peers" mcp-server/src/; then
+            echo "ERROR: legacy 'claude-peers' reference found in mcp-server/src/"
+            echo "Replace with 'VantagePeers' — see C4 cleanup (mission k57a36y8w5t085bqr23dsmvb2d882506, task k1714377ewx12y2mefymayfh358830h4)"
+            exit 1
+          fi
+          echo "PASS: mcp-server/src/ is clean"
+
+      - name: "Fail if claude-peers appears in convex/ (excluding node_modules)"
+        run: |
+          if grep -rn "claude-peers" convex/; then
+            echo "ERROR: legacy 'claude-peers' reference found in convex/"
+            exit 1
+          fi
+          echo "PASS: convex/ is clean"
+
+      - name: "Fail if claude-peers appears in docs/why-vantagepeers.md"
+        run: |
+          if grep -n "claude-peers" docs/why-vantagepeers.md; then
+            echo "ERROR: legacy 'claude-peers' reference found in docs/why-vantagepeers.md"
+            exit 1
+          fi
+          echo "PASS: docs/why-vantagepeers.md is clean"
+
+      - name: "Fail if claude-peers appears in mcp-server/server.ts"
+        run: |
+          if grep -n "claude-peers" mcp-server/server.ts 2>/dev/null; then
+            echo "ERROR: legacy 'claude-peers' reference found in mcp-server/server.ts"
+            exit 1
+          fi
+          echo "PASS: mcp-server/server.ts is clean"
