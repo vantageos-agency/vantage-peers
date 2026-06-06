@@ -3371,6 +3371,10 @@ export function registerTools(
 			title: "Update mission status",
 		},
 		async ({ missionId, status }) => {
+			// C0.4: mission lifecycle = infrastructure-level — master scope only.
+			// No per-mission identity arg exists for fromAllowList delegation.
+			const masterDenied = guardMasterOnly("update_mission_status");
+			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("missions:updateStatus" as any, {
 					missionId: missionId as any,
