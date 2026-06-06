@@ -4085,6 +4085,9 @@ export function registerTools(
 			title: "Pause recurring task",
 		},
 		async ({ taskId }) => {
+			// C0.6: cron infrastructure — master scope only
+			const masterDenied = guardMasterOnly("pause_recurring_task");
+			if (masterDenied) return masterDenied;
 			try {
 				const result = await convex.mutation("recurringTasks:pause" as any, {
 					taskId: taskId as any,
@@ -4114,6 +4117,9 @@ export function registerTools(
 			title: "Resume recurring task",
 		},
 		async ({ taskId }) => {
+			// C0.6: cron infrastructure — master scope only
+			const masterDenied = guardMasterOnly("resume_recurring_task");
+			if (masterDenied) return masterDenied;
 			try {
 				const result = await convex.mutation("recurringTasks:resume" as any, {
 					taskId: taskId as any,
@@ -4143,6 +4149,9 @@ export function registerTools(
 			title: "Delete recurring task",
 		},
 		async ({ taskId }) => {
+			// C0.6: cron infrastructure — master scope only
+			const masterDenied = guardMasterOnly("delete_recurring_task");
+			if (masterDenied) return masterDenied;
 			try {
 				const result = await convex.mutation("recurringTasks:remove" as any, {
 					taskId: taskId as any,
