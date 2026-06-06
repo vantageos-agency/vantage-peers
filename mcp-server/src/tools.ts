@@ -567,6 +567,46 @@ export function mcpConvexError(error: unknown): {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// whoami output schema — module-level export so downstream tooling (C1 Workflow,
+// code-gen, client SDKs) can reference the type without re-declaring it.
+// First tool in the codebase with an exported outputSchema — precedent for C1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const whoamiOutputSchema = z.object({
+	scope_profile_name: z
+		.string()
+		.describe(
+			"The scope profile name of the current bearer (e.g. 'alpha-test-trio', 'master', 'legacy'). " +
+				"'legacy' indicates a pre-OAuth bearer with no scope profile.",
+		),
+	fromAllowList: z
+		.array(z.string())
+		.describe(
+			"Identities this bearer is authorized to act as (the `from` values for send_message / create_task). " +
+				"Empty for master scope (wildcard suppressed) and legacy bearers.",
+		),
+	namespaceReadPrefixes: z
+		.array(z.string())
+		.describe(
+			"Namespace prefixes this bearer may read from. Empty for master scope (wildcard suppressed) and legacy bearers.",
+		),
+	namespaceWritePrefixes: z
+		.array(z.string())
+		.describe(
+			"Namespace prefixes this bearer may write to. Empty for master scope (wildcard suppressed) and legacy bearers.",
+		),
+	suggested_orchestrator_id: z
+		.string()
+		.nullable()
+		.describe(
+			"The canonical orchestrator ID to use as `from` in send_message / create_task / create_mission. " +
+				"Derived from fromAllowList[0] (case preserved). " +
+				"Null when no fromAllowList is configured (DCR client-generic or legacy bearer). " +
+				"'master' for master-scope bearers (internal orchestrators only).",
+		),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main export: register all tools against a server + convex client pair
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -6306,6 +6346,87 @@ export function registerTools(
 			} catch (error: any) {
 				return mcpError(error.message ?? String(error));
 			}
+		},
+	);
+
+	// ── whoami ──────────────────────────────────────────────────────────────────
+	//
+	// LECTURE (read-only, no DB mutation). Returns the orchestrator identity baked
+	// into the current bearer's scope context. Use this on skill startup to avoid
+	// asking the user for their orchestrator_id. Example: a fresh Claude.ai
+	// connector calls whoami first, then uses suggested_orchestrator_id as `from`
+	// on all subsequent send_message / create_task calls.
+	//
+	// Customer friction closed: Marie Day 92 Iris RH skill had to ask the user
+	// for orchestrator_id because no programmatic discovery path existed from
+	// the bearer scope context. Mission k57a36y8w5t085bqr23dsmvb2d882506 A3.
+	//
+	// suggested_orchestrator_id derivation rule:
+	//   - master scope → "master"
+	//   - non-master with fromAllowList[0] present → fromAllowList[0] (case preserved)
+	//   - non-master with empty fromAllowList → null
+	//   - legacy bearer (no oauthCtx) → null
+
+	server.tool(
+		"whoami",
+		"Returns the orchestrator identity baked into the current bearer's scope context. " +
+			"WHEN: call this on skill startup to avoid asking the user for their orchestrator_id. " +
+			"EXAMPLE: a fresh Claude.ai connector calls whoami first, then uses suggested_orchestrator_id " +
+			"as `from` on all subsequent send_message / create_task calls.",
+		{},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Who am I (identity introspection)",
+		},
+		async () => {
+			// Derive suggested_orchestrator_id:
+			//   master scope → "master"
+			//   non-master with fromAllowList[0] → fromAllowList[0] (case preserved)
+			//   else → null
+			let scopeProfileName: string;
+			let fromAllowList: string[];
+			let namespaceReadPrefixes: string[];
+			let namespaceWritePrefixes: string[];
+			let suggestedOrchestratorId: string | null;
+
+			if (!oauthCtx) {
+				// Legacy bearer (pre-OAuth mcpTenants path) — no scope profile
+				scopeProfileName = "legacy";
+				fromAllowList = [];
+				namespaceReadPrefixes = [];
+				namespaceWritePrefixes = [];
+				suggestedOrchestratorId = null;
+			} else if (isMasterScope(oauthCtx)) {
+				// Master scope — expose neutral shape, suppress wildcard internals
+				scopeProfileName = "master";
+				fromAllowList = [];
+				namespaceReadPrefixes = [];
+				namespaceWritePrefixes = [];
+				suggestedOrchestratorId = "master";
+			} else {
+				// Tenant-scoped OAuth bearer
+				scopeProfileName = oauthCtx.scopeProfile;
+				fromAllowList = oauthCtx.fromAllowList ?? [];
+				namespaceReadPrefixes = oauthCtx.namespaceReadPrefixes ?? [];
+				namespaceWritePrefixes = oauthCtx.namespaceWritePrefixes ?? [];
+				// fromAllowList[0] is the canonical persona — case preserved per spec
+				suggestedOrchestratorId =
+					fromAllowList.length > 0 ? fromAllowList[0] : null;
+			}
+
+			const result = {
+				scope_profile_name: scopeProfileName,
+				fromAllowList,
+				namespaceReadPrefixes,
+				namespaceWritePrefixes,
+				suggested_orchestrator_id: suggestedOrchestratorId,
+			};
+
+			return {
+				content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+			};
 		},
 	);
 }

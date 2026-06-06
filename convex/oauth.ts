@@ -1218,3 +1218,279 @@ export const patchScopeProfileEmergency = mutation({
 		};
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// seedTestTenantTrio — Day 92 A0 persistent test infrastructure
+//
+// Creates 3 scope_profiles for the alpha/beta/gamma test orchestrator trio.
+// IDEMPOTENT: skips any profile that already exists by profileId.
+// Master-gated. Each profile grants symmetric read access to all 3 orchestrator
+// namespaces + project/mcp-test, and write access scoped to its own namespace.
+//
+// Profiles:
+//   alpha-test-trio — write: orchestrator/Alpha + orchestrator/alpha + project/mcp-test
+//   beta-test-trio  — write: orchestrator/Beta  + orchestrator/beta  + project/mcp-test
+//   gamma-test-trio — write: orchestrator/Gamma + orchestrator/gamma + project/mcp-test
+// All three share the same read prefixes (full trio + project/mcp-test).
+// fromAllowList includes all case variants of Alpha, Beta, Gamma for robustness.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const seedTestTenantTrio = mutation({
+	args: { callerToken: v.string() },
+	returns: v.object({
+		inserted: v.array(v.string()),
+		skipped: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+
+		const trioReadPrefixes = [
+			"orchestrator/Alpha",
+			"orchestrator/alpha",
+			"orchestrator/Beta",
+			"orchestrator/beta",
+			"orchestrator/Gamma",
+			"orchestrator/gamma",
+			"project/mcp-test",
+		];
+
+		const trioFromAllowList = [
+			"Alpha",
+			"alpha",
+			"Beta",
+			"beta",
+			"Gamma",
+			"gamma",
+			"ALPHA",
+			"BETA",
+			"GAMMA",
+		];
+
+		const profiles = [
+			{
+				profileId: "alpha-test-trio",
+				description:
+					"Alpha test orchestrator — day92 persistent test trio. Write: Alpha namespace. Read: full trio + project/mcp-test.",
+				fromAllowList: trioFromAllowList,
+				namespaceReadPrefixes: trioReadPrefixes,
+				namespaceWritePrefixes: [
+					"orchestrator/Alpha",
+					"orchestrator/alpha",
+					"project/mcp-test",
+				],
+			},
+			{
+				profileId: "beta-test-trio",
+				description:
+					"Beta test orchestrator — day92 persistent test trio. Write: Beta namespace. Read: full trio + project/mcp-test.",
+				fromAllowList: trioFromAllowList,
+				namespaceReadPrefixes: trioReadPrefixes,
+				namespaceWritePrefixes: [
+					"orchestrator/Beta",
+					"orchestrator/beta",
+					"project/mcp-test",
+				],
+			},
+			{
+				profileId: "gamma-test-trio",
+				description:
+					"Gamma test orchestrator — day92 persistent test trio. Write: Gamma namespace. Read: full trio + project/mcp-test.",
+				fromAllowList: trioFromAllowList,
+				namespaceReadPrefixes: trioReadPrefixes,
+				namespaceWritePrefixes: [
+					"orchestrator/Gamma",
+					"orchestrator/gamma",
+					"project/mcp-test",
+				],
+			},
+		];
+
+		const inserted: string[] = [];
+		const skipped: string[] = [];
+		const now = Date.now();
+		const actorTokenHash = await sha256Hex(args.callerToken);
+
+		for (const p of profiles) {
+			const existing = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", p.profileId))
+				.unique();
+
+			if (existing) {
+				skipped.push(p.profileId);
+				continue;
+			}
+
+			await ctx.db.insert("oauth_scope_profiles", {
+				...p,
+				createdAt: now,
+				updatedAt: now,
+			});
+
+			await ctx.db.insert("oauth_audit_log", {
+				eventType: "create_test_tenant_trio",
+				actorTokenHash,
+				targetProfileId: p.profileId,
+				previousState: {
+					profileId: "",
+					fromAllowList: [],
+					namespaceReadPrefixes: [],
+					namespaceWritePrefixes: [],
+				},
+				newState: {
+					profileId: p.profileId,
+					fromAllowList: p.fromAllowList,
+					namespaceReadPrefixes: p.namespaceReadPrefixes,
+					namespaceWritePrefixes: p.namespaceWritePrefixes,
+				},
+				reason:
+					"day92-mcp-quality-overhaul-mission-k57a36y8 — test tenant + 3 OAuth clients minted for persistent fleet-wide testing per Laurent doctrine 2026-06-05",
+				cascadeRevokedCount: 0,
+				clientsRetargeted: 0,
+				createdAt: now,
+			});
+
+			inserted.push(p.profileId);
+		}
+
+		return { inserted, skipped };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// createTestTenantTrioClients — Day 92 A0 persistent test infrastructure
+//
+// Creates 3 confidential OAuth clients, one per test-trio scope profile.
+// IDEMPOTENT: if a client with the given clientId already exists, skips it
+// and returns clientSecret=null for that entry (raw secret is a one-time value
+// returned at creation time — if you lost it, delete the client and recreate).
+//
+// Returns: array of { name, clientId, clientSecret | null } — clientSecret is
+// the raw secret for newly created clients, null for already-existing ones.
+// The caller MUST persist clientSecret before this call returns.
+// Master-gated.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const createTestTenantTrioClients = mutation({
+	args: { callerToken: v.string() },
+	returns: v.array(
+		v.object({
+			name: v.string(),
+			clientId: v.string(),
+			clientSecret: v.union(v.string(), v.null()),
+			scopeProfile: v.string(),
+			existed: v.boolean(),
+		}),
+	),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+
+		const clientDefs = [
+			{
+				name: "alpha-test-client",
+				clientId: "alpha-test-client",
+				scopeProfile: "alpha-test-trio",
+			},
+			{
+				name: "beta-test-client",
+				clientId: "beta-test-client",
+				scopeProfile: "beta-test-trio",
+			},
+			{
+				name: "gamma-test-client",
+				clientId: "gamma-test-client",
+				scopeProfile: "gamma-test-trio",
+			},
+		];
+
+		const results: Array<{
+			name: string;
+			clientId: string;
+			clientSecret: string | null;
+			scopeProfile: string;
+			existed: boolean;
+		}> = [];
+
+		for (const def of clientDefs) {
+			// Verify scope profile exists
+			const profile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", def.scopeProfile))
+				.unique();
+			if (!profile) {
+				throw new Error(
+					`scope_profile not found: ${def.scopeProfile} — run seedTestTenantTrio first`,
+				);
+			}
+
+			// IDEMPOTENT: skip if already exists
+			const existing = await ctx.db
+				.query("oauth_clients")
+				.withIndex("by_clientId", (q) => q.eq("clientId", def.clientId))
+				.unique();
+
+			if (existing) {
+				results.push({
+					name: def.name,
+					clientId: def.clientId,
+					clientSecret: null,
+					scopeProfile: def.scopeProfile,
+					existed: true,
+				});
+				continue;
+			}
+
+			// Generate a 32-byte random secret (64 hex chars)
+			const secretBytes = new Uint8Array(32);
+			crypto.getRandomValues(secretBytes);
+			const rawSecret = Array.from(secretBytes)
+				.map((b) => b.toString(16).padStart(2, "0"))
+				.join("");
+
+			const secretHash = await sha256Hex(rawSecret);
+
+			await ctx.db.insert("oauth_clients", {
+				clientId: def.clientId,
+				clientSecretHash: secretHash,
+				name: def.name,
+				redirectUris: ["http://localhost:8000/oauth/callback"],
+				scopeProfile: def.scopeProfile,
+				createdAt: Date.now(),
+				tokenEndpointAuthMethod: "client_secret_basic",
+			});
+
+			results.push({
+				name: def.name,
+				clientId: def.clientId,
+				clientSecret: rawSecret,
+				scopeProfile: def.scopeProfile,
+				existed: false,
+			});
+		}
+
+		return results;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listScopeProfiles — admin query (master-gated) to enumerate all profiles
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listScopeProfiles = query({
+	args: { callerToken: v.string() },
+	returns: v.array(scopeProfileShape),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+		const rows = await ctx.db
+			.query("oauth_scope_profiles")
+			.order("asc")
+			.collect();
+		return rows.map((r) => ({
+			profileId: r.profileId,
+			description: r.description,
+			fromAllowList: r.fromAllowList,
+			namespaceReadPrefixes: r.namespaceReadPrefixes,
+			namespaceWritePrefixes: r.namespaceWritePrefixes,
+		}));
+	},
+});
