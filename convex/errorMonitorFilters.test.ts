@@ -103,15 +103,84 @@ describe("evaluateFilter — should NOT be filtered (issue created)", () => {
 	});
 });
 
+// ─── Day 98 k17fzba8 Cat D — ConvexError typed business-error filter ───
+describe("D98 Cat D — Uncaught ConvexError: → log-only (no GH issue)", () => {
+	test("CLIENT_REVOKED typed ConvexError is log-only", () => {
+		const decision = evaluateFilter({
+			functionName: "oauthDcr:exchangeAuthCode",
+			errorMessage:
+				'Uncaught ConvexError: {"code":"CLIENT_REVOKED","message":"Client has been revoked"}',
+		});
+		expect(decision.severity).toBe("log-only");
+		expect(decision.shouldCreateIssue).toBe(false);
+		expect(decision.matchedRule?.reason).toContain("Typed ConvexError");
+	});
+
+	test("TASK_START_BLOCKED typed ConvexError is log-only", () => {
+		const decision = evaluateFilter({
+			functionName: "tasks:start",
+			errorMessage:
+				'Uncaught ConvexError: {"code":"TASK_START_BLOCKED","message":"Cannot start: dependency not done"}',
+		});
+		expect(decision.severity).toBe("log-only");
+		expect(decision.shouldCreateIssue).toBe(false);
+	});
+
+	test("TASK_DELETE_UNAUTHORIZED typed ConvexError is log-only", () => {
+		const decision = evaluateFilter({
+			functionName: "tasks:deleteTask",
+			errorMessage:
+				'Uncaught ConvexError: {"code":"TASK_DELETE_UNAUTHORIZED","message":"Not creator"}',
+		});
+		expect(decision.severity).toBe("log-only");
+		expect(decision.shouldCreateIssue).toBe(false);
+	});
+
+	test("Uncaught Error (non-ConvexError) still creates an issue — real crash", () => {
+		const decision = evaluateFilter({
+			functionName: "tasks:create",
+			errorMessage:
+				"Uncaught Error: Cannot read properties of undefined (reading 'foo')",
+		});
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.matchedRule).toBeNull();
+	});
+
+	test("Server Error envelope (D90) still wins over ConvexError rule via priority 100 > 90", () => {
+		// Both rules could match a "Server Error" wrapping a ConvexError, but
+		// the D90 transient classifier has priority 100, the D98 ConvexError
+		// classifier priority 90. D90 must win.
+		const decision = evaluateFilter({
+			functionName: "tasks:start",
+			errorMessage:
+				'Server Error\nRequest ID: deadbeef\nUncaught ConvexError: {"code":"TASK_START_BLOCKED"}',
+		});
+		expect(decision.severity).toBe("skip");
+		expect(decision.matchedRule?.reason).toContain("Transient");
+	});
+
+	test("Uncaught ConvexError on any function (wildcard *) matches", () => {
+		const decision = evaluateFilter({
+			functionName: "any:random:function:name",
+			errorMessage:
+				'Uncaught ConvexError: {"code":"WHATEVER","message":"test"}',
+		});
+		expect(decision.severity).toBe("log-only");
+	});
+});
+
 describe("DEFAULT_FILTER_RULES sanity", () => {
-	test("ships the acceptance-criteria rules + D90 transient classifier", () => {
-		// D90 added a third rule (functionName "*") for transient retry-class
-		// envelope errors (issue #632). Total expected: 3.
-		expect(DEFAULT_FILTER_RULES).toHaveLength(3);
+	test("ships the acceptance-criteria rules + D90 transient + D98 ConvexError classifier", () => {
+		// D90 added the transient retry-class wildcard rule (#632).
+		// D98 k17fzba8 Cat D added a fourth wildcard rule for "Uncaught
+		// ConvexError:" typed business errors. Total expected: 4.
+		expect(DEFAULT_FILTER_RULES).toHaveLength(4);
 		const fns = DEFAULT_FILTER_RULES.map((r) => r.functionName).sort();
-		expect(fns).toEqual(["*", "missions:update", "tasks:complete"]);
+		expect(fns).toEqual(["*", "*", "missions:update", "tasks:complete"]);
 		for (const r of DEFAULT_FILTER_RULES) {
-			expect(r.severity).toBe("skip");
+			// D98 Cat D introduces "log-only" severity in addition to "skip".
+			expect(["skip", "log-only"]).toContain(r.severity);
 			expect(r.errorMessageRegex).toBeInstanceOf(RegExp);
 			expect(r.reason.length).toBeGreaterThan(0);
 		}

@@ -116,6 +116,22 @@ export const DEFAULT_FILTER_RULES: ReadonlyArray<FilterRule> = [
 		severity: "skip",
 		priority: 100,
 	},
+	// Day 98 (k17fzba8) — ConvexError typed business-error filter. Audit Day 92
+	// surfaced 11 of 15 open auto-IRP issues as typed business errors (CLIENT_REVOKED,
+	// TASK_BLOCKED, TASK_UNAUTHORIZED, NOT_FOUND, reason-too-short, etc.). These are
+	// the contract's deliberate refusals — `throw new ConvexError({code,...})` shapes
+	// surfacing as "Uncaught ConvexError:" in the platform log — NOT real bugs and
+	// NOT crashes. They belong in audit logs + occurrence counters, not in the IRP
+	// cascade. Severity = "log-only" so the catalogue still receives the error row
+	// (for trend analysis), but no GitHub issue is created. "Uncaught Error:" (without
+	// "ConvexError") still produces an issue because that is a real unhandled crash.
+	{
+		functionName: "*",
+		errorMessageRegex: /Uncaught ConvexError:/,
+		reason: "Typed ConvexError business error — expected contract refusal, not a bug. Day 98 Cat D k17fzba8.",
+		severity: "log-only",
+		priority: 90,
+	},
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
