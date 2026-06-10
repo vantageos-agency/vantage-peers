@@ -230,8 +230,9 @@ describe("D98.a bundled-deploy dedup: prMergedAt vs lastDeployedAt", () => {
 			}),
 		);
 
+		// Day 98 F2 — recordDeployment is now an internalMutation.
 		const result = await t.mutation(
-			(await import("../_generated/api")).api.githubRepoMapping
+			(await import("../_generated/api")).internal.githubRepoMapping
 				.recordDeployment,
 			{
 				repo: "vantage-memory",
@@ -248,10 +249,41 @@ describe("D98.a bundled-deploy dedup: prMergedAt vs lastDeployedAt", () => {
 		expect(updated?.lastDeployedAt).toBe(1_000_000_000_000);
 	});
 
+	// Day 98 F1 — production rows key repo on the FULL path (e.g.
+	// "vantageos-agency/vantage-peers") while DEPLOY_TITLE_RE captures the
+	// project SLUG. PR #703 ship missed this — tests passed because seeds
+	// aligned repo == project. This test reproduces the prod mismatch.
+	test("F1 — bundled-deploy dedup finds mapping via project slug when repo is full path", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers", // full path (prod shape)
+				orchestrator: "sigma",
+				project: "vantage-memory", // slug (what task titles use)
+				active: true,
+				lastDeployedSHA: "664cf3da8e1196914b41527924b90da467f23098",
+				lastDeployedAt: 1_000_000_000_000,
+			});
+		});
+
+		// Title produced by http.ts uses the project slug, not the full path.
+		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			title: TITLE(703, "vantage-memory"),
+			description: "bundled",
+			assignedTo: "sigma",
+			priority: "urgent" as const,
+			createdBy: "system",
+			project: "vantage-memory",
+			tags: ["github", "deploy", "pr-merged"],
+			prMergedAt: 999_999_999_000,
+		});
+		expect(id).toBeNull();
+	});
+
 	test("recordDeployment on unknown repo returns null (no insert)", async () => {
 		const t = createTestConvex();
 		const result = await t.mutation(
-			(await import("../_generated/api")).api.githubRepoMapping
+			(await import("../_generated/api")).internal.githubRepoMapping
 				.recordDeployment,
 			{ repo: "nonexistent/repo", sha: "abc1234" },
 		);
@@ -383,6 +415,45 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 
 		const o = await t.run(async (ctx) => ctx.db.get(other));
 		expect(o?.status).toBe("todo");
+	});
+
+	// Day 98 F1 — production cron run found scanned=64 closed=0 because
+	// lookup was by repo (full path) while task titles use the project slug.
+	// Post-fix: cron resolves the mapping via project field.
+	test("F1 — cron closes Deploy tasks when mapping repo is full path + project is slug", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers", // full path (prod shape)
+				orchestrator: "sigma",
+				project: "vantage-memory", // slug (matches task title)
+				active: true,
+				lastDeployedSHA: "664cf3da8e1196914b41527924b90da467f23098",
+				lastDeployedAt: 1_000_000_000_000,
+			});
+		});
+		const stale = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(703, "vantage-memory"),
+				description: "stale prod-shape",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: ["github", "deploy", "pr-merged"],
+				status: "todo",
+				createdAt: 999_999_000_000, // before deploy
+				updatedAt: 999_999_000_000,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.scanned).toBe(1);
+		expect(result.closed).toBe(1);
+		expect(result.skipped).toBe(0);
+
+		const s = await t.run(async (ctx) => ctx.db.get(stale));
+		expect(s?.status).toBe("done");
 	});
 
 	test("skips Deploy tasks for repos with no mapping", async () => {

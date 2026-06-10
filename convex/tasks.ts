@@ -1043,11 +1043,17 @@ export const createDeployTaskWithDedup = internalMutation({
 		// If we have prMergedAt AND the repo has a lastDeployedAt newer than
 		// the PR merge, this PR was shipped as part of a bundled deploy chain
 		// (e.g. C5/Day93 release that bundled #683 + #684 + #685). No new task.
+		//
+		// Day 98 F1 — the slug captured by DEPLOY_TITLE_RE is the project name
+		// (e.g. "vantage-memory") because http.ts builds titles from
+		// `mapping.project`. Production githubRepoMapping rows are keyed by
+		// full path (`repo: "vantageos-agency/vantage-peers"`), so the prior
+		// withIndex by_repo lookup never matched — `lastDeployedAt` was
+		// effectively unreadable here. Fix: scan + filter by `project` field.
+		// Scan is O(rows) which is fine — there are ≲ 50 mappings fleet-wide.
 		if (args.prMergedAt !== undefined) {
-			const mapping = await ctx.db
-				.query("githubRepoMapping")
-				.withIndex("by_repo", (q) => q.eq("repo", repo))
-				.unique();
+			const allMappings = await ctx.db.query("githubRepoMapping").collect();
+			const mapping = allMappings.find((m) => m.project === repo) ?? null;
 			if (
 				mapping &&
 				mapping.lastDeployedAt !== undefined &&
@@ -1162,6 +1168,17 @@ export const resolveStaleDeployTasks = internalMutation({
 			{ lastDeployedAt: number | undefined; lastDeployedSHA: string | undefined } | null
 		>();
 
+		// Day 98 F1 — fleet-wide mapping snapshot indexed by project. Same key-
+		// mismatch root cause as (a): DEPLOY_TITLE_RE captures project slug, but
+		// githubRepoMapping rows key on full repo path. Single snapshot per tick
+		// is O(N) where N is mapping count (≲ 50 fleet-wide); per-task lookup
+		// becomes a Map.get.
+		const allMappings = await ctx.db.query("githubRepoMapping").collect();
+		const mappingsByProject = new Map<string, (typeof allMappings)[number]>();
+		for (const m of allMappings) {
+			if (!mappingsByProject.has(m.project)) mappingsByProject.set(m.project, m);
+		}
+
 		for (const status of OPEN_STATUSES) {
 			const batch = await ctx.db
 				.query("tasks")
@@ -1174,10 +1191,7 @@ export const resolveStaleDeployTasks = internalMutation({
 
 				let mapping = repoCache.get(parsed.repo);
 				if (mapping === undefined) {
-					const row = await ctx.db
-						.query("githubRepoMapping")
-						.withIndex("by_repo", (q) => q.eq("repo", parsed.repo))
-						.unique();
+					const row = mappingsByProject.get(parsed.repo) ?? null;
 					mapping = row
 						? {
 								lastDeployedAt: row.lastDeployedAt,
