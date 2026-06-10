@@ -58,4 +58,15 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 	{},
 );
 
+// PR C — (c1) Issue-closed external sweep.
+// GH issue closed externally → linked IRP missions + cascade tasks stay zombie.
+// Fix: sweep active missions with GH issue refs, close mission + tasks if
+// the GH issue is now state=closed. Runs every 6h aligned with c2 cron.
+crons.interval( // allow-time-estimate: polling interval — cron config
+	"issue closed sweep",
+	{ hours: 6 },
+	internal.issueClosedSweep.sweepIssueClosed,
+	{},
+);
+
 export default crons;
