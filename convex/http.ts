@@ -484,7 +484,13 @@ http.route({
 					content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Deploy to prod now: npx convex deploy --yes`,
 				});
 
-				// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede)
+				// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede +
+				// Day 98 k173yr5n1 Mechanism (a) bundled-deploy dedup by timestamp).
+				const mergedAtIso = pr.merged_at as string | undefined;
+				const prMergedAt =
+					mergedAtIso && !Number.isNaN(Date.parse(mergedAtIso))
+						? Date.parse(mergedAtIso)
+						: undefined;
 				await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
 					title: `[Deploy] PR #${pr.number as number} merged — deploy ${project} to prod`,
 					description: `PR #${pr.number as number} "${pr.title as string}" was merged by ${(pr.merged_by as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url as string}`,
@@ -493,6 +499,7 @@ http.route({
 					priority: "urgent",
 					createdBy: "system",
 					tags: ["github", "deploy", "pr-merged"],
+					prMergedAt,
 				});
 			}
 		}

@@ -1014,6 +1014,12 @@ export const createDeployTaskWithDedup = internalMutation({
 		priority: priorityValidator,
 		createdBy: creatorValidator,
 		tags: v.optional(v.array(v.string())),
+		// Day 98 (k173yr5n1) Mechanism (a) — PR merge timestamp (Unix ms).
+		// If githubRepoMapping.lastDeployedAt > prMergedAt, the PR was shipped
+		// via a bundled deploy that completed AFTER it merged; no per-PR Deploy
+		// task is created and null is returned. Omit to disable the dedup
+		// (preserves pre-Day 98 behavior for callers not yet plumbing mergedAt).
+		prMergedAt: v.optional(v.number()),
 	},
 	returns: v.union(v.id("tasks"), v.null()),
 	handler: async (ctx, args) => {
@@ -1021,8 +1027,10 @@ export const createDeployTaskWithDedup = internalMutation({
 		if (!parsed) {
 			// Unexpected title format — fall through to plain create with no dedup.
 			const now = Date.now();
+			// Strip Day 98 arg (not a task column).
+			const { prMergedAt: _ignored, ...taskArgs } = args;
 			return await ctx.db.insert("tasks", {
-				...args,
+				...taskArgs,
 				status: "todo" as const,
 				createdAt: now,
 				updatedAt: now,
@@ -1030,6 +1038,24 @@ export const createDeployTaskWithDedup = internalMutation({
 		}
 
 		const { prNumber, repo } = parsed;
+
+		// ── Day 98 Mechanism (a): bundled-deploy dedup by timestamp ───────────
+		// If we have prMergedAt AND the repo has a lastDeployedAt newer than
+		// the PR merge, this PR was shipped as part of a bundled deploy chain
+		// (e.g. C5/Day93 release that bundled #683 + #684 + #685). No new task.
+		if (args.prMergedAt !== undefined) {
+			const mapping = await ctx.db
+				.query("githubRepoMapping")
+				.withIndex("by_repo", (q) => q.eq("repo", repo))
+				.unique();
+			if (
+				mapping &&
+				mapping.lastDeployedAt !== undefined &&
+				mapping.lastDeployedAt > args.prMergedAt
+			) {
+				return null;
+			}
+		}
 
 		// ── Fix 1: pre-create dedup ───────────────────────────────────────────
 		// Scan open tasks with "by_status" index for statuses that are not done,
@@ -1062,8 +1088,10 @@ export const createDeployTaskWithDedup = internalMutation({
 
 		// ── Create the new deploy task ────────────────────────────────────────
 		const now = Date.now();
+		// Strip Day 98 arg (not a task column).
+		const { prMergedAt: _ignoredMergedAt, ...taskArgs } = args;
 		const newId = await ctx.db.insert("tasks", {
-			...args,
+			...taskArgs,
 			status: "todo" as const,
 			createdAt: now,
 			updatedAt: now,
