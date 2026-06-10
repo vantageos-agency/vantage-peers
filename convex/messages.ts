@@ -287,6 +287,10 @@ export const listMessages = query({
 			content: v.string(),
 			sessionDay: v.optional(v.number()),
 			createdAt: v.number(),
+			// Day 98 Cat A k17e611z4 fix — issues #655, #644, #643. Multi-tenant
+			// rows carry tenantId; returns shape must declare it or Convex
+			// emits ReturnsValidationError "extra field tenantId".
+			tenantId: v.optional(v.string()),
 		}),
 	),
 	handler: async (ctx, args) => {
