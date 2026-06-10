@@ -1127,3 +1127,91 @@ export const createDeployTaskWithDedup = internalMutation({
 		return newId;
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 98 (k173yr5n1) Mechanism (c2) — auto-resolver extension for Deploy tasks
+//
+// Cron entry: sweeps open `[Deploy] PR #N` tasks. For each, parses the title
+// to extract (repo, prNumber), then looks up the repo's lastDeployedAt in
+// githubRepoMapping. If lastDeployedAt > task.createdAt, the PR was shipped
+// via a bundled deploy after the task was created — close it with an
+// evidence-bound completionNote citing the deploy SHA + timestamp.
+//
+// Pair with Mechanism (a): (a) prevents NEW per-PR Deploy tasks from
+// spawning when a deploy already covered the PR. (c2) catches the residual
+// ones already created before the orchestrator called recordDeployment.
+//
+// Bounded by OPEN_STATUSES + same status-index pattern as Fix 1/3 dedup.
+// ─────────────────────────────────────────────────────────────────────────────
+export const resolveStaleDeployTasks = internalMutation({
+	args: {},
+	returns: v.object({
+		scanned: v.number(),
+		closed: v.number(),
+		skipped: v.number(),
+	}),
+	handler: async (ctx) => {
+		const OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
+		let scanned = 0;
+		let closed = 0;
+		let skipped = 0;
+
+		// Cache repoMapping lookups within a single cron tick.
+		const repoCache = new Map<
+			string,
+			{ lastDeployedAt: number | undefined; lastDeployedSHA: string | undefined } | null
+		>();
+
+		for (const status of OPEN_STATUSES) {
+			const batch = await ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+			for (const t of batch) {
+				const parsed = parseDeployTitle(t.title);
+				if (!parsed) continue;
+				scanned++;
+
+				let mapping = repoCache.get(parsed.repo);
+				if (mapping === undefined) {
+					const row = await ctx.db
+						.query("githubRepoMapping")
+						.withIndex("by_repo", (q) => q.eq("repo", parsed.repo))
+						.unique();
+					mapping = row
+						? {
+								lastDeployedAt: row.lastDeployedAt,
+								lastDeployedSHA: row.lastDeployedSHA,
+							}
+						: null;
+					repoCache.set(parsed.repo, mapping);
+				}
+
+				if (
+					!mapping ||
+					mapping.lastDeployedAt === undefined ||
+					mapping.lastDeployedAt <= t.createdAt
+				) {
+					skipped++;
+					continue;
+				}
+
+				const sha = mapping.lastDeployedSHA ?? "unknown-sha";
+				const at = new Date(mapping.lastDeployedAt).toISOString();
+				const now = Date.now();
+				await ctx.db.patch(t._id, {
+					status: "done" as const,
+					completedAt: now,
+					updatedAt: now,
+					completionNote: `Auto-resolved by Day 98 Mechanism (c2) — repo ${parsed.repo} deployed at ${sha} on ${at} (after task createdAt ${new Date(t.createdAt).toISOString()}). PR #${parsed.prNumber} shipped via bundled deploy chain.\nfriction_observed: per-PR Deploy task accumulated before Mechanism (a) was live — cron sweep closes residue.`,
+				});
+				closed++;
+			}
+		}
+
+		console.log(
+			`[Mechanism c2] resolveStaleDeployTasks scanned=${scanned} closed=${closed} skipped=${skipped}`,
+		);
+		return { scanned, closed, skipped };
+	},
+});
