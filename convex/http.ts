@@ -388,6 +388,41 @@ http.route({
 				);
 
 				if (!missionExists && issue.state !== "closed") {
+					// Day 98 F4 — Mechanism (b) multi-issue collapse extended to
+					// issue_comment.created. PR #703 + #704 Eta APPROVED comments
+					// fired this branch and spawned 14-task cascades each. If
+					// any open orchestrator task already references #N, spawn
+					// one [Bridge] task instead of the full cascade.
+					const commentCascadePrefix = `[#${issue.number as number}]`;
+					const openCascadeTasks = (await ctx.runQuery(api.tasks.list, {
+						status: ["todo", "in_progress", "review", "blocked"],
+						assignedTo: orchestrator,
+						limit: 200,
+						fields: "full",
+					})) as unknown as Doc<"tasks">[];
+					const commentCoveringTask = openCascadeTasks.find((t) => {
+						if (!t.description) return false;
+						if (!commentIssuePattern.test(t.description)) return false;
+						if (t.title.startsWith(commentCascadePrefix)) return false;
+						return true;
+					});
+					if (commentCoveringTask) {
+						await ctx.runMutation(api.tasks.create, {
+							title: `[Bridge #${issue.number as number}] covered by task ${commentCoveringTask._id}`,
+							description: `Comment-triggered IRP cascade for #${issue.number as number} "${issue.title as string}" suppressed by Day 98 F4 multi-issue collapse. Existing open task ${commentCoveringTask._id} ("${commentCoveringTask.title}") already references this issue.\n\nIssue: ${issue.html_url as string}\nRepo: ${repoFullName}`,
+							assignedTo: orchestratorAssignee,
+							project,
+							priority: "medium",
+							status: "todo",
+							createdBy: "system",
+							tags: ["github", "irp", "bridge", "day-98-collapse", "comment-trigger"],
+						});
+						console.log(
+							`[webhook.issue_comment.created] Day 98 F4 multi-issue collapse — Bridge task for #${issue.number as number} covered by ${commentCoveringTask._id}; cascade skipped.`,
+						);
+						return new Response("OK - bridged to existing task", { status: 200 });
+					}
+
 					try {
 						console.log(`Creating mission for issue #${issue.number as number} (triggered by comment)`);
 						const missionId: Id<"missions"> = await ctx.runMutation(

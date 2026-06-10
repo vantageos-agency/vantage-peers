@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 
 export const getByRepo = query({
 	args: { repo: v.string() },
@@ -84,9 +84,13 @@ export const remove = mutation({
 // skip per-PR Deploy task spawn when the PR was shipped via a bundled chain
 // that completed AFTER the PR merged.
 //
-// Public mutation so orchestrators can call from Bash/CI after deploy.
-// Idempotent: re-recording the same SHA is a no-op.
-export const recordDeployment = mutation({
+// Day 98 F2 — INTERNAL ONLY. Was public on first ship (PR #703) and Eta
+// flagged DoS risk: an attacker who could call the public mutation would set
+// lastDeployedAt = MAX and silently disable Deploy task spawn for the repo.
+// Now internalMutation — only callable via `npx convex run` with the CLI-
+// authenticated deploy key, or from another Convex function (cron, action).
+// Idempotent: re-recording the same SHA + timestamp is a no-op.
+export const recordDeployment = internalMutation({
 	args: {
 		repo: v.string(),
 		sha: v.string(),
