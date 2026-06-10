@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as _helpers_normalizeOrchestratorId from "../_helpers/normalizeOrchestratorId.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as components_ from "../components.js";
@@ -27,6 +28,7 @@ import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as gumroadWebhook from "../gumroadWebhook.js";
 import type * as http from "../http.js";
 import type * as iframeEmbedSessions from "../iframeEmbedSessions.js";
+import type * as issueClosedSweep from "../issueClosedSweep.js";
 import type * as issueStats from "../issueStats.js";
 import type * as issueStatsQueries from "../issueStatsQueries.js";
 import type * as issues from "../issues.js";
@@ -39,6 +41,7 @@ import type * as mcpTenants from "../mcpTenants.js";
 import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
+import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
 import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_stale_deploy_tasks.js";
 import type * as migrations_diary_backfill_createdBy from "../migrations/diary_backfill_createdBy.js";
 import type * as migrations_patch_marie_iris_rh_scope from "../migrations/patch_marie_iris_rh_scope.js";
@@ -64,6 +67,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "_helpers/normalizeOrchestratorId": typeof _helpers_normalizeOrchestratorId;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   components: typeof components_;
@@ -83,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   gumroadWebhook: typeof gumroadWebhook;
   http: typeof http;
   iframeEmbedSessions: typeof iframeEmbedSessions;
+  issueClosedSweep: typeof issueClosedSweep;
   issueStats: typeof issueStats;
   issueStatsQueries: typeof issueStatsQueries;
   issues: typeof issues;
@@ -95,6 +100,7 @@ declare const fullApi: ApiFromModules<{
   memories: typeof memories;
   messages: typeof messages;
   migrations: typeof migrations;
+  "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;
   "migrations/dedup_stale_deploy_tasks": typeof migrations_dedup_stale_deploy_tasks;
   "migrations/diary_backfill_createdBy": typeof migrations_diary_backfill_createdBy;
   "migrations/patch_marie_iris_rh_scope": typeof migrations_patch_marie_iris_rh_scope;
