@@ -1053,7 +1053,22 @@ export const createDeployTaskWithDedup = internalMutation({
 		// Scan is O(rows) which is fine — there are ≲ 50 mappings fleet-wide.
 		if (args.prMergedAt !== undefined) {
 			const allMappings = await ctx.db.query("githubRepoMapping").collect();
-			const mapping = allMappings.find((m) => m.project === repo) ?? null;
+			// Bug 5 tiebreaker: among all rows sharing the same project, pick the one
+			// with lastDeployedAt > 0 (most-recent wins). Fallback: newest _creationTime.
+			const projectMappings = allMappings.filter((m) => m.project === repo);
+			const withDeploy = projectMappings.filter(
+				(m) => m.lastDeployedAt !== undefined && m.lastDeployedAt > 0,
+			);
+			const mapping =
+				withDeploy.length > 0
+					? withDeploy.reduce((a, b) =>
+							(a.lastDeployedAt ?? 0) >= (b.lastDeployedAt ?? 0) ? a : b,
+						)
+					: projectMappings.length > 0
+						? projectMappings.reduce((a, b) =>
+								a._creationTime >= b._creationTime ? a : b,
+							)
+						: null;
 			if (
 				mapping &&
 				mapping.lastDeployedAt !== undefined &&
@@ -1174,9 +1189,31 @@ export const resolveStaleDeployTasks = internalMutation({
 		// is O(N) where N is mapping count (≲ 50 fleet-wide); per-task lookup
 		// becomes a Map.get.
 		const allMappings = await ctx.db.query("githubRepoMapping").collect();
-		const mappingsByProject = new Map<string, (typeof allMappings)[number]>();
+		// Bug 5 tiebreaker: group all rows by project, then pick the best one per project.
+		// Preference: row with lastDeployedAt > 0 (most-recent wins); fallback: newest _creationTime.
+		const projectGroups = new Map<string, (typeof allMappings)[number][]>();
 		for (const m of allMappings) {
-			if (!mappingsByProject.has(m.project)) mappingsByProject.set(m.project, m);
+			const group = projectGroups.get(m.project);
+			if (group) {
+				group.push(m);
+			} else {
+				projectGroups.set(m.project, [m]);
+			}
+		}
+		const mappingsByProject = new Map<string, (typeof allMappings)[number]>();
+		for (const [project, group] of projectGroups) {
+			const withDeploy = group.filter(
+				(m) => m.lastDeployedAt !== undefined && m.lastDeployedAt > 0,
+			);
+			const winner =
+				withDeploy.length > 0
+					? withDeploy.reduce((a, b) =>
+							(a.lastDeployedAt ?? 0) >= (b.lastDeployedAt ?? 0) ? a : b,
+						)
+					: group.reduce((a, b) =>
+							a._creationTime >= b._creationTime ? a : b,
+						);
+			mappingsByProject.set(project, winner);
 		}
 
 		for (const status of OPEN_STATUSES) {
