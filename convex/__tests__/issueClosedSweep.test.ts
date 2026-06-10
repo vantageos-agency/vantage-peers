@@ -121,7 +121,7 @@ describe("cascadeCloseMission", () => {
 		const taskIds = await insertTasksForMission(t, missionId, 3, "todo");
 
 		const result = await t.mutation(
-			internal.issueClosedSweep.cascadeCloseMission,
+			internal.issueClosedSweepDb.cascadeCloseMission,
 			{ missionId, issueRef: CLOSED_ISSUE_URL },
 		);
 
@@ -149,7 +149,7 @@ describe("cascadeCloseMission", () => {
 		const [openTaskId] = await insertTasksForMission(t, missionId, 1, "todo");
 
 		const result = await t.mutation(
-			internal.issueClosedSweep.cascadeCloseMission,
+			internal.issueClosedSweepDb.cascadeCloseMission,
 			{ missionId, issueRef: CLOSED_ISSUE_URL },
 		);
 
@@ -167,7 +167,7 @@ describe("cascadeCloseMission", () => {
 		await insertTasksForMission(t, missionId, 13, "todo");
 
 		const result = await t.mutation(
-			internal.issueClosedSweep.cascadeCloseMission,
+			internal.issueClosedSweepDb.cascadeCloseMission,
 			{ missionId, issueRef: CLOSED_ISSUE_URL },
 		);
 
