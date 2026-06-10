@@ -484,6 +484,164 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 	});
 });
 
+// ─── Bug 5: multiple-mappings-same-project tiebreaker ────────────────────────
+// When 2+ githubRepoMapping rows share the same `project` field, the snapshot
+// must pick the row with `lastDeployedAt > 0` (most-recent if multiple).
+// Fallback: most-recent `_creationTime`. Both createDeployTaskWithDedup (Mech a)
+// and resolveStaleDeployTasks (Mech c2) must use the tiebreaker logic.
+describe("Bug5 multiple-mappings-same-project tiebreaker", () => {
+	test("createDeployTaskWithDedup — picks mapping with lastDeployedAt when 2 rows share project", async () => {
+		const t = createTestConvex();
+		// Row A: stale, lacks lastDeployedAt
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers-old",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				// no lastDeployedAt
+			});
+		});
+		// Row B: has lastDeployedAt > prMergedAt → should win tiebreaker
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedSHA: "abc1234",
+				lastDeployedAt: 1_000_000_000_000, // bundled deploy time
+			});
+		});
+
+		// prMergedAt < lastDeployedAt → Mech (a) should skip task creation (returns null)
+		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			...deployArgs(800, "vantage-memory"),
+			prMergedAt: 999_999_999_000,
+		});
+		// Tiebreaker chose the row WITH lastDeployedAt — correctly returns null
+		expect(id).toBeNull();
+	});
+
+	test("createDeployTaskWithDedup — falls back to _creationTime when both rows lack lastDeployedAt", async () => {
+		const t = createTestConvex();
+		// Both rows missing lastDeployedAt — neither suppresses task creation
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers-old",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+			});
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers-new",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+			});
+		});
+
+		// No lastDeployedAt on either → prMergedAt check fails → task IS created
+		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			...deployArgs(801, "vantage-memory"),
+			prMergedAt: 1_000_000_000_000,
+		});
+		expect(id).not.toBeNull();
+	});
+
+	test("resolveStaleDeployTasks — picks mapping with lastDeployedAt when 2 rows share project", async () => {
+		const t = createTestConvex();
+		// Row A: stale, lacks lastDeployedAt
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers-old",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+			});
+		});
+		// Row B: lastDeployedAt is set → should win tiebreaker → cron should close task
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedSHA: "deadbeef",
+				lastDeployedAt: 1_000_000_000_000,
+			});
+		});
+
+		// Deploy task created BEFORE the deploy time → cron should close it
+		const staleId = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(802, "vantage-memory"),
+				description: "stale",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: ["github", "deploy"],
+				status: "todo",
+				createdAt: 999_999_000_000, // BEFORE deploy
+				updatedAt: 999_999_000_000,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.closed).toBe(1);
+
+		const task = await t.run(async (ctx) => ctx.db.get(staleId));
+		expect(task?.status).toBe("done");
+		expect(task?.completionNote).toContain("deadbeef");
+	});
+
+	test("resolveStaleDeployTasks — skips task when winning mapping has no lastDeployedAt", async () => {
+		const t = createTestConvex();
+		// Two rows for same project, neither has lastDeployedAt
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers-a",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+			});
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantageos-agency/vantage-peers-b",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+			});
+		});
+
+		const taskId = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(803, "vantage-memory"),
+				description: "should stay open",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: [],
+				status: "todo",
+				createdAt: 1,
+				updatedAt: 1,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.closed).toBe(0);
+		expect(result.skipped).toBe(1);
+
+		const task = await t.run(async (ctx) => ctx.db.get(taskId));
+		expect(task?.status).toBe("todo");
+	});
+});
+
 describe("A.6 superseded marker — Fix 3 race-condition defense", () => {
 	test("if a stale duplicate row exists pre-call (race), it is superseded with marker", async () => {
 		const t = createTestConvex();
