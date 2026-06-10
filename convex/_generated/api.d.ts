@@ -29,6 +29,7 @@ import type * as gumroadWebhook from "../gumroadWebhook.js";
 import type * as http from "../http.js";
 import type * as iframeEmbedSessions from "../iframeEmbedSessions.js";
 import type * as issueClosedSweep from "../issueClosedSweep.js";
+import type * as issueClosedSweepDb from "../issueClosedSweepDb.js";
 import type * as issueStats from "../issueStats.js";
 import type * as issueStatsQueries from "../issueStatsQueries.js";
 import type * as issues from "../issues.js";
@@ -88,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   iframeEmbedSessions: typeof iframeEmbedSessions;
   issueClosedSweep: typeof issueClosedSweep;
+  issueClosedSweepDb: typeof issueClosedSweepDb;
   issueStats: typeof issueStats;
   issueStatsQueries: typeof issueStatsQueries;
   issues: typeof issues;
