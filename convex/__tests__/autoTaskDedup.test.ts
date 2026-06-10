@@ -142,6 +142,277 @@ describe("A.6 createDeployTaskWithDedup — Fix 1 + Fix 3", () => {
 	});
 });
 
+// ─── Day 98 k173yr5n1 Mechanism (a) — bundled-deploy dedup by timestamp ───
+describe("D98.a bundled-deploy dedup: prMergedAt vs lastDeployedAt", () => {
+	test("PR shipped via bundled chain (lastDeployedAt > prMergedAt) returns null", async () => {
+		const t = createTestConvex();
+		// Seed a repo mapping with a deploy that landed AFTER the PR merged.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedSHA: "353ebcbcb09576469808b737f1e1e3fdcd475f3e",
+				lastDeployedAt: 1_000_000_000_000, // bundled deploy time
+			});
+		});
+
+		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			...deployArgs(600, "vantage-memory"),
+			prMergedAt: 999_999_999_000, // 1s before bundled deploy → covered
+		});
+		expect(id).toBeNull();
+
+		// No task row was created.
+		const tasks = await t.run(async (ctx) =>
+			ctx.db.query("tasks").collect(),
+		);
+		expect(tasks.length).toBe(0);
+	});
+
+	test("PR merged after last deploy still creates a Deploy task", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedSHA: "353ebcbcb09576469808b737f1e1e3fdcd475f3e",
+				lastDeployedAt: 1_000_000_000_000,
+			});
+		});
+
+		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			...deployArgs(601, "vantage-memory"),
+			prMergedAt: 1_000_000_001_000, // 1s AFTER bundled deploy → not covered
+		});
+		expect(id).not.toBeNull();
+	});
+
+	test("no repo mapping → falls back to original dedup (creates task)", async () => {
+		const t = createTestConvex();
+		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			...deployArgs(602, "vantage-memory"),
+			prMergedAt: 1_000_000_000_000,
+		});
+		expect(id).not.toBeNull();
+	});
+
+	test("prMergedAt omitted → preserves pre-Day 98 behavior (no SHA dedup)", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedAt: 9_999_999_999_999, // deploy "in the future"
+			});
+		});
+
+		const id = await t.mutation(
+			internal.tasks.createDeployTaskWithDedup,
+			deployArgs(603, "vantage-memory"), // no prMergedAt
+		);
+		expect(id).not.toBeNull(); // Task created because dedup is opt-in via prMergedAt.
+	});
+
+	test("githubRepoMapping.recordDeployment patches lastDeployedSHA+lastDeployedAt", async () => {
+		const t = createTestConvex();
+		const mapId = await t.run(async (ctx) =>
+			ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+			}),
+		);
+
+		const result = await t.mutation(
+			(await import("../_generated/api")).api.githubRepoMapping
+				.recordDeployment,
+			{
+				repo: "vantage-memory",
+				sha: "353ebcbcb09576469808b737f1e1e3fdcd475f3e",
+				deployedAt: 1_000_000_000_000,
+			},
+		);
+		expect(result).toBe(mapId);
+
+		const updated = await t.run(async (ctx) => ctx.db.get(mapId));
+		expect(updated?.lastDeployedSHA).toBe(
+			"353ebcbcb09576469808b737f1e1e3fdcd475f3e",
+		);
+		expect(updated?.lastDeployedAt).toBe(1_000_000_000_000);
+	});
+
+	test("recordDeployment on unknown repo returns null (no insert)", async () => {
+		const t = createTestConvex();
+		const result = await t.mutation(
+			(await import("../_generated/api")).api.githubRepoMapping
+				.recordDeployment,
+			{ repo: "nonexistent/repo", sha: "abc1234" },
+		);
+		expect(result).toBeNull();
+	});
+});
+
+// ─── Day 98 k173yr5n1 Mechanism (c2) — resolveStaleDeployTasks cron sweep ───
+describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () => {
+	test("closes Deploy tasks whose repo deployed after task createdAt", async () => {
+		const t = createTestConvex();
+		// Seed repo mapping with a recent deploy.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedSHA: "353ebcbcb09576469808b737f1e1e3fdcd475f3e",
+				lastDeployedAt: 1_000_000_000_000, // deploy time
+			});
+		});
+
+		// Two Deploy tasks created BEFORE the deploy time → should close.
+		const taskA = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(700, "vantage-memory"),
+				description: "stale 1",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: ["github", "deploy", "pr-merged"],
+				status: "todo",
+				createdAt: 999_999_000_000, // BEFORE deploy
+				updatedAt: 999_999_000_000,
+			}),
+		);
+		const taskB = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(701, "vantage-memory"),
+				description: "stale 2",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: ["github", "deploy", "pr-merged"],
+				status: "todo",
+				createdAt: 999_999_500_000, // BEFORE deploy
+				updatedAt: 999_999_500_000,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.scanned).toBe(2);
+		expect(result.closed).toBe(2);
+		expect(result.skipped).toBe(0);
+
+		const a = await t.run(async (ctx) => ctx.db.get(taskA));
+		expect(a?.status).toBe("done");
+		expect(a?.completionNote).toContain("Mechanism (c2)");
+		expect(a?.completionNote).toContain("353ebcbcb09576469808b737f1e1e3fdcd475f3e");
+		const b = await t.run(async (ctx) => ctx.db.get(taskB));
+		expect(b?.status).toBe("done");
+	});
+
+	test("preserves Deploy tasks created AFTER the last deploy", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedAt: 1_000_000_000_000,
+			});
+		});
+		const fresh = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(702, "vantage-memory"),
+				description: "fresh — not yet deployed",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: ["github", "deploy", "pr-merged"],
+				status: "todo",
+				createdAt: 1_000_000_500_000, // AFTER deploy
+				updatedAt: 1_000_000_500_000,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.scanned).toBe(1);
+		expect(result.closed).toBe(0);
+		expect(result.skipped).toBe(1);
+
+		const f = await t.run(async (ctx) => ctx.db.get(fresh));
+		expect(f?.status).toBe("todo");
+	});
+
+	test("ignores non-Deploy tasks (title doesn't parse as Deploy)", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "vantage-memory",
+				orchestrator: "sigma",
+				project: "vantage-memory",
+				active: true,
+				lastDeployedAt: 9_999_999_999_999, // always-in-the-future deploy
+			});
+		});
+		const other = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: "[VR BACKFILL] random non-deploy task",
+				description: "non-deploy",
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				createdBy: "sigma",
+				status: "todo",
+				createdAt: 1,
+				updatedAt: 1,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.scanned).toBe(0);
+		expect(result.closed).toBe(0);
+
+		const o = await t.run(async (ctx) => ctx.db.get(other));
+		expect(o?.status).toBe("todo");
+	});
+
+	test("skips Deploy tasks for repos with no mapping", async () => {
+		const t = createTestConvex();
+		// Note: DEPLOY_TITLE_RE only accepts [\w-]+ for the repo segment
+		// (no slash), so this test uses a single-token unmapped repo name.
+		const orphan = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: TITLE(703, "unmapped-repo"),
+				description: "no mapping",
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				tags: ["github", "deploy", "pr-merged"],
+				status: "todo",
+				createdAt: 1,
+				updatedAt: 1,
+			}),
+		);
+
+		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(result.scanned).toBe(1);
+		expect(result.closed).toBe(0);
+		expect(result.skipped).toBe(1);
+
+		const o = await t.run(async (ctx) => ctx.db.get(orphan));
+		expect(o?.status).toBe("todo");
+	});
+});
+
 describe("A.6 superseded marker — Fix 3 race-condition defense", () => {
 	test("if a stale duplicate row exists pre-call (race), it is superseded with marker", async () => {
 		const t = createTestConvex();

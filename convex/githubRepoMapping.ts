@@ -78,6 +78,40 @@ export const remove = mutation({
 	},
 });
 
+// Day 98 (k173yr5n1) — Mechanism (a) Deploy dedup by SHA.
+// Called after a successful `npx convex deploy --yes` to record the deployed
+// commit SHA + timestamp. createDeployTaskWithDedup uses lastDeployedAt to
+// skip per-PR Deploy task spawn when the PR was shipped via a bundled chain
+// that completed AFTER the PR merged.
+//
+// Public mutation so orchestrators can call from Bash/CI after deploy.
+// Idempotent: re-recording the same SHA is a no-op.
+export const recordDeployment = mutation({
+	args: {
+		repo: v.string(),
+		sha: v.string(),
+		// Optional override; defaults to Date.now(). Test convenience.
+		deployedAt: v.optional(v.number()),
+	},
+	returns: v.union(v.id("githubRepoMapping"), v.null()),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("githubRepoMapping")
+			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
+			.unique();
+		if (!existing) return null;
+		const at = args.deployedAt ?? Date.now();
+		if (existing.lastDeployedSHA === args.sha && existing.lastDeployedAt === at) {
+			return existing._id;
+		}
+		await ctx.db.patch(existing._id, {
+			lastDeployedSHA: args.sha,
+			lastDeployedAt: at,
+		});
+		return existing._id;
+	},
+});
+
 // Seed initial data — accepts an array of repo mappings so callers supply their own repos.
 // Example usage:
 //   convex.mutation("githubRepoMapping:seed", {

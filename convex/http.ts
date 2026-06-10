@@ -1,6 +1,6 @@
 import { httpRouter } from "convex/server";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
 
@@ -159,11 +159,52 @@ http.route({
 			});
 			const missionName = `Fix #${issue.number as number} — ${issue.title as string}`.slice(0, 100);
 			const issuePattern = new RegExp(`#${issue.number as number}\\b`);
+			const cascadeTitlePrefix = `[#${issue.number as number}]`;
 			const alreadyExists = existingMissions.some((m) =>
 				m.name ? issuePattern.test(m.name) : false
 			);
 			if (alreadyExists) {
 				return new Response("OK - mission exists", { status: 200 });
+			}
+
+			// 5b. Day 98 (k173yr5n1) Mechanism (b) — multi-issue collapse.
+			// If any open Sigma-class task already references #N in its
+			// description AND that task is NOT itself a cascade task (title
+			// would start with `[#N]`), the issue is covered by an existing
+			// bundled fix (e.g. Cat A k17e611z4 = "close issues #655, #644,
+			// #643, #642"). Spawn a single [Bridge] task instead of the full
+			// T0..T(N-1) cascade.
+			const openTasksRaw = await ctx.runQuery(api.tasks.list, {
+				status: ["todo", "in_progress", "review", "blocked"],
+				assignedTo: orchestrator,
+				limit: 200,
+				fields: "full",
+			});
+			// fields="full" guarantees Doc<"tasks"> shape at runtime; the return
+			// validator is omitted on api.tasks.list (see comment there) so we
+			// narrow here.
+			const openTasks = openTasksRaw as unknown as Doc<"tasks">[];
+			const coveringTask = openTasks.find((t) => {
+				if (!t.description) return false;
+				if (!issuePattern.test(t.description)) return false;
+				if (t.title.startsWith(cascadeTitlePrefix)) return false;
+				return true;
+			});
+			if (coveringTask) {
+				await ctx.runMutation(api.tasks.create, {
+					title: `[Bridge #${issue.number as number}] covered by task ${coveringTask._id}`,
+					description: `New GitHub issue #${issue.number as number} "${issue.title as string}" detected by webhook. Existing open task ${coveringTask._id} ("${coveringTask.title}") already references this issue in its scope — no T0..T(N-1) cascade spawned (Day 98 multi-issue collapse).\n\nWhen the covering task closes, manually verify this issue is resolved + close on GitHub. The auto-resolver (Mechanism c) will cascade-close this Bridge once the covering task is done AND the GH issue is closed.\n\nIssue: ${issue.html_url as string}\nIssue author: @${(issue.user as Record<string, unknown>).login as string}\nRepo: ${repoFullName}`,
+					assignedTo: orchestratorAssignee,
+					project,
+					priority,
+					status: "todo",
+					createdBy: "system",
+					tags: ["github", "irp", "bridge", "day-98-collapse"],
+				});
+				console.log(
+					`[webhook.issues.opened] Day 98 multi-issue collapse — Bridge task for #${issue.number as number} covered by ${coveringTask._id}; cascade skipped.`,
+				);
+				return new Response("OK - bridged to existing task", { status: 200 });
 			}
 
 			// 6. Create mission + tasks (must succeed before any notifications)
@@ -484,7 +525,13 @@ http.route({
 					content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Deploy to prod now: npx convex deploy --yes`,
 				});
 
-				// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede)
+				// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede +
+				// Day 98 k173yr5n1 Mechanism (a) bundled-deploy dedup by timestamp).
+				const mergedAtIso = pr.merged_at as string | undefined;
+				const prMergedAt =
+					mergedAtIso && !Number.isNaN(Date.parse(mergedAtIso))
+						? Date.parse(mergedAtIso)
+						: undefined;
 				await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
 					title: `[Deploy] PR #${pr.number as number} merged — deploy ${project} to prod`,
 					description: `PR #${pr.number as number} "${pr.title as string}" was merged by ${(pr.merged_by as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url as string}`,
@@ -493,6 +540,7 @@ http.route({
 					priority: "urgent",
 					createdBy: "system",
 					tags: ["github", "deploy", "pr-merged"],
+					prMergedAt,
 				});
 			}
 		}

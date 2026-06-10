@@ -402,11 +402,21 @@ export default defineSchema({
 
 	// ── githubRepoMapping ─────────────────────────────────────────────────────
 	// Maps GitHub repos to orchestrators. Used by webhook handler to route events.
+	//
+	// Day 98 (k173yr5n1) — auto-IRP cascade overhaul Mechanism (a):
+	//   lastDeployedSHA + lastDeployedAt track the most recent successful Convex
+	//   deploy of the repo. createDeployTaskWithDedup compares pr.mergedAt vs
+	//   lastDeployedAt — if a deploy completed AFTER the PR merged, the PR is
+	//   already shipped via a bundled chain and no per-PR Deploy task is spawned.
+	//   Recorded via githubRepoMapping.recordDeployment mutation after each
+	//   successful `npx convex deploy --yes`.
 	githubRepoMapping: defineTable({
 		repo: v.string(), // "myreeldream-ai/MyShortReel-beta"
 		orchestrator: v.string(), // "omega", "tau", "sigma", etc.
 		project: v.string(), // "myreeldream", "vantage-starter", etc.
 		active: v.boolean(),
+		lastDeployedSHA: v.optional(v.string()), // Day 98 — most recent prod-deployed commit OID
+		lastDeployedAt: v.optional(v.number()), // Day 98 — Unix ms timestamp of that deploy
 	}).index("by_repo", ["repo"]),
 
 	// ── businessUnits ─────────────────────────────────────────────────────────

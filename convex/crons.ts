@@ -47,4 +47,15 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 	{},
 );
 
+// Day 98 (k173yr5n1) Mechanism (c2) — auto-close per-PR Deploy tasks that
+// were already covered by a bundled deploy chain (recorded via
+// githubRepoMapping.recordDeployment). Pair with Mechanism (a) which
+// prevents new such tasks from spawning; this cron catches residue.
+crons.interval( // allow-time-estimate: polling interval — cron config
+	"resolve stale deploy tasks",
+	{ hours: 6 },
+	internal.tasks.resolveStaleDeployTasks,
+	{},
+);
+
 export default crons;
