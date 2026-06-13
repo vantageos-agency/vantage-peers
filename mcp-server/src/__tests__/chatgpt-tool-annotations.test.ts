@@ -116,6 +116,9 @@ const READ_ONLY_TOOLS = new Set([
 	"get_fix_pattern",
 	"get_mandate",
 	"get_repo_mapping",
+	// Day 100 — Phase 2b get_by_id surface additions (same task; episodes dropped — uses get_memory)
+	"get_message",
+	"get_recurring_task",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([
