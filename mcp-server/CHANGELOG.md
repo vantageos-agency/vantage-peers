@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.6.0] — 2026-06-13 — Day 100 get_by_id surface Phase 1 (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
+
+Pi reported get_<entity>_by_id MCP surface gaps observed during Day 100 fleet ops.
+Phase 1 adds 4 plumbing-only read tools mapping to pre-existing Convex queries:
+
+- **get_task** — `tasks:getById` plumbing. Fetch full task record (description, dependsOn,
+  missionId, completionNote, claimedByInstance, startedAt) by Convex doc ID.
+- **get_fix_pattern** — `fixPatterns:get` plumbing. Fetch fix pattern with full linked
+  fix attempts history.
+- **get_mandate** — `mandates:get` plumbing. Fetch spending mandate with limits, current
+  spend, approver chain for validateSpending/settleMandate pre-checks.
+- **get_repo_mapping** — `githubRepoMapping:getByRepo` plumbing. Fetch GitHub repo→VP project
+  mapping by repo slug.
+
+All 4 tools apply `scopeFilterGet(oauthCtx, row)` for scope-aware cross-tenant collapse,
+mirroring the existing `get_memory` / `get_briefing_note` pattern (Day 92 S3.1 wave).
+
+Annotations test (chatgpt-tool-annotations.test.ts) READ_ONLY_TOOLS set extended with
+the 4 new tools. Pre-existing 84/97 count mismatch in same test is unrelated (separate
+F-list track).
+
+Phase 2 (follow-on PR) will add get_message / get_episode / get_recurring_task
+(Convex query additions required).
+Phase 3 (separate mission) will audit deployment entity (table+queries+tool) and the
+cross-backend cloud proxy redeploy cadence.
+
 ## [2.5.0] — 2026-06-06 — Day 92 VP MCP quality overhaul (mission k57a36y8)
 
 Day 92 mission `k57a36y8w5t085bqr23dsmvb2d882506` ships a fleet-wide VP MCP quality bump

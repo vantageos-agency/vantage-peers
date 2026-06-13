@@ -111,6 +111,11 @@ const READ_ONLY_TOOLS = new Set([
 	"get_mission_template",
 	"list_errors",
 	"get_error",
+	// Day 100 — Phase 1 get_by_id surface additions (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
+	"get_task",
+	"get_fix_pattern",
+	"get_mandate",
+	"get_repo_mapping",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([
