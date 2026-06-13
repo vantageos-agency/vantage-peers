@@ -7285,4 +7285,138 @@ export function registerTools(
 			}
 		},
 	);
+
+	// ── get_task ────────────────────────────────────────────────────────────────
+	// Day 100 — Phase 1 get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq).
+	// Pi reported get_<entity>_by_id surface incomplete. Convex tasks:getById exists.
+	server.tool(
+		"get_task",
+		"Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note. " +
+			"WHEN: use when you have a specific taskId from list_tasks/create_task and need the full record (brief, VERIFICATION block, completionNote). " +
+			"EXAMPLE: get_task taskId='k172735brsw6bc3j2dkkkfxqrx88kkjq'.",
+		{
+			taskId: z.string().describe("Task document ID"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get task",
+		},
+		async ({ taskId }) => {
+			try {
+				const row = await convex.query("tasks:getById" as any, { taskId });
+				const filtered = scopeFilterGet(oauthCtx, row);
+				if (filtered === null) {
+					return mcpError(`Task not found: ${taskId}`);
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// ── get_fix_pattern ─────────────────────────────────────────────────────────
+	// Day 100 — Phase 1 get_by_id surface fix. Convex fixPatterns:get exists.
+	server.tool(
+		"get_fix_pattern",
+		"Fetch a single fix pattern by its Convex document ID, including all linked fix attempts. " +
+			"WHEN: use when you have a patternId from list_fix_patterns/search_fix_patterns and need the full record with attempts history. " +
+			"EXAMPLE: get_fix_pattern patternId='m9748paffd0emrbwyskj868e1x88kvhj'.",
+		{
+			patternId: z.string().describe("Fix pattern document ID"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get fix pattern",
+		},
+		async ({ patternId }) => {
+			try {
+				const row = await convex.query("fixPatterns:get" as any, { patternId });
+				const filtered = scopeFilterGet(oauthCtx, row);
+				if (filtered === null) {
+					return mcpError(`Fix pattern not found: ${patternId}`);
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// ── get_mandate ─────────────────────────────────────────────────────────────
+	// Day 100 — Phase 1 get_by_id surface fix. Convex mandates:get exists.
+	server.tool(
+		"get_mandate",
+		"Fetch a single spending mandate by its Convex document ID with limits, current spend, and approver chain. " +
+			"WHEN: use when you have a mandateId from list_mandates and need the full record before validateSpending/settleMandate. " +
+			"EXAMPLE: get_mandate mandateId='k57dy3049btafda9m2f5d2ggk987ph3f'.",
+		{
+			mandateId: z.string().describe("Mandate document ID"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get mandate",
+		},
+		async ({ mandateId }) => {
+			try {
+				const row = await convex.query("mandates:get" as any, { mandateId });
+				const filtered = scopeFilterGet(oauthCtx, row);
+				if (filtered === null) {
+					return mcpError(`Mandate not found: ${mandateId}`);
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
+
+	// ── get_repo_mapping ────────────────────────────────────────────────────────
+	// Day 100 — Phase 1 get_by_id surface fix. Convex githubRepoMapping:getByRepo exists.
+	// Lookup key is `repo` (string e.g. "vantageos-agency/vantage-peers-plugin"), not a doc ID.
+	server.tool(
+		"get_repo_mapping",
+		"Fetch a single GitHub repo→VP project mapping by repo slug (owner/name). " +
+			"WHEN: use when you have a repo identifier (e.g. from a webhook or PR URL) and need the canonical VP project mapping. " +
+			"EXAMPLE: get_repo_mapping repo='vantageos-agency/vantage-peers-plugin'.",
+		{
+			repo: z
+				.string()
+				.describe("GitHub repo slug in owner/name form (e.g. 'vantageos-agency/vantage-peers-plugin')"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get repo mapping",
+		},
+		async ({ repo }) => {
+			try {
+				const row = await convex.query("githubRepoMapping:getByRepo" as any, {
+					repo,
+				});
+				const filtered = scopeFilterGet(oauthCtx, row);
+				if (filtered === null) {
+					return mcpError(`Repo mapping not found: ${repo}`);
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpError(error.message ?? String(error));
+			}
+		},
+	);
 }

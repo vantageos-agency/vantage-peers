@@ -102,7 +102,7 @@ const convexUrl = loadConvexUrl();
 const convex = new ConvexHttpClient(convexUrl);
 const server = new McpServer({
     name: "vantage-peers",
-    version: "2.0.0",
+    version: "2.5.0",
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: structured error response for MCP tool handlers
@@ -493,7 +493,7 @@ server.tool("list_memories", "List active memories for a namespace, ordered newe
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("send_message", "Send a message to one, many, or all orchestrators. " +
     "channel: 'broadcast' = all, 'tau' = role DM, 'pi-vps' = instance DM, 'tau,phi' = multi. " +
-    "Creates message + one receipt per recipient. Replaces claude-peers send_message.", {
+    "Creates message + one receipt per recipient. Supersedes legacy send_message (pre-VantagePeers).", {
     from: creatorSchema.describe("Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
     fromInstanceId: z
         .string()
@@ -540,7 +540,7 @@ server.tool("send_message", "Send a message to one, many, or all orchestrators. 
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("check_messages", "Check for unread messages. Returns messages with receiptIds for marking as read. " +
     "If recipientInstanceId is provided, returns instance-targeted + role-level messages. " +
-    "Replaces claude-peers check_messages.", {
+    "Supersedes legacy check_messages (pre-VantagePeers).", {
     recipient: creatorSchema.describe("Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, or any custom role)"),
     recipientInstanceId: z
         .string()
@@ -679,7 +679,7 @@ server.tool("set_summary", "Set a brief summary of what you are currently workin
 // Tool: list_peers
 // ─────────────────────────────────────────────────────────────────────────────
 server.tool("list_peers", "List all orchestrator profiles with their current status and summary. " +
-    "Replaces claude-peers list_peers.", {}, async () => {
+    "Supersedes legacy list_peers (pre-VantagePeers).", {}, async () => {
     try {
         const profiles = await convex.query("profiles:listProfiles", {});
         const peers = profiles.map((p) => ({
