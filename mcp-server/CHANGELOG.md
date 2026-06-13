@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.7.0] — 2026-06-13 — Day 100 get_by_id surface Phase 2b (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
+
+Phase 2b wires 2 MCP wrappers calling the Phase 2a Convex queries deployed
+in commit 2ebdaba (PR #735 + hotfix 7f958d0):
+
+- **get_message** — `messages:getById` plumbing. Fetch full message row by
+  Convex doc ID (channel, sender, sessionDay, tenant scope) for read-receipt
+  audit, delete confirmation, or fix-pattern referencing.
+- **get_recurring_task** — `recurringTasks:getById` plumbing. Fetch
+  recurring task definition (cron schedule, prompt, assignee, last-fire
+  metadata) before pause/update/delete.
+
+Both follow the existing `get_memory` / `get_briefing_note` pattern:
+`scopeFilterGet(oauthCtx, row)` for scope-aware cross-tenant collapse,
+read-only annotations.
+
+**get_episode** was DROPPED from Phase 2b scope: episodes are stored as
+memories with episode metadata (no separate `episodes` table in
+`convex/schema.ts`). Use existing `get_memory` to fetch episode rows by
+their memory document ID. Hotfix 7f958d0 removed the invalid
+`episodes:getById` query that broke `convex deploy` typecheck.
+
+Phase 2a CHANGELOG entry deferred — Convex changes shipped in main repo
+CHANGELOG, not mcp-server.
+
+Total MCP `get_*` tools after Phase 2b: 16 (was 14 after Phase 1, 10 before
+Day 100 task).
+
 ## [2.6.0] — 2026-06-13 — Day 100 get_by_id surface Phase 1 (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
 
 Pi reported get_<entity>_by_id MCP surface gaps observed during Day 100 fleet ops.

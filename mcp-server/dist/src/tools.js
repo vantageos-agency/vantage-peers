@@ -5835,4 +5835,62 @@ export function registerTools(server, convex, oauthCtx) {
             return mcpError(error.message ?? String(error));
         }
     });
+    // ── get_message ─────────────────────────────────────────────────────────────
+    // Day 100 — Phase 2b get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq).
+    // Convex messages:getById landed in Phase 2a (PR #735, commit 2ebdaba).
+    // Note: episodes were dropped from Phase 2b scope — episodes are stored as
+    // memories with episode metadata (no separate table), use get_memory instead.
+    server.tool("get_message", "Fetch a single peer message by its Convex document ID with full body, channel, sender, sessionDay, and tenant scope. " +
+        "WHEN: use when you have a messageId from list_messages/check_messages and need the raw row (e.g. for read-receipt audit, delete confirmation, or referencing in a fix pattern). " +
+        "EXAMPLE: get_message messageId='jn7eg21wdaxzdcpdxwkvhaxqnh88jqg2'.", {
+        messageId: z.string().describe("Message document ID"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get message",
+    }, async ({ messageId }) => {
+        try {
+            const row = await convex.query("messages:getById", { messageId });
+            const filtered = scopeFilterGet(oauthCtx, row);
+            if (filtered === null) {
+                return mcpError(`Message not found: ${messageId}`);
+            }
+            return {
+                content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpError(error.message ?? String(error));
+        }
+    });
+    // ── get_recurring_task ──────────────────────────────────────────────────────
+    // Day 100 — Phase 2b get_by_id surface fix. Convex recurringTasks:getById
+    // landed in Phase 2a (PR #735, commit 2ebdaba).
+    server.tool("get_recurring_task", "Fetch a single recurring task definition by its Convex document ID with cron schedule, prompt, assignee, and last-fire metadata. " +
+        "WHEN: use when you have a recurringTaskId from list_recurring_tasks and need the full row before pause_recurring_task / update_recurring_task / delete_recurring_task. " +
+        "EXAMPLE: get_recurring_task recurringTaskId='k57dy3049btafda9m2f5d2ggk987ph3f'.", {
+        recurringTaskId: z.string().describe("Recurring task document ID"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get recurring task",
+    }, async ({ recurringTaskId }) => {
+        try {
+            const row = await convex.query("recurringTasks:getById", {
+                recurringTaskId,
+            });
+            const filtered = scopeFilterGet(oauthCtx, row);
+            if (filtered === null) {
+                return mcpError(`Recurring task not found: ${recurringTaskId}`);
+            }
+            return {
+                content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpError(error.message ?? String(error));
+        }
+    });
 }
