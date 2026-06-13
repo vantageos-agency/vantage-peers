@@ -421,3 +421,17 @@ export const listByChannel = query({
 		return await ctx.db.query("messages").order("desc").take(take);
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 100 — Phase 2 get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
+// Single-row read by Convex doc ID. Returns null on miss (MCP layer reshapes
+// to scope-aware "not found"). No validator on returns — schema for messages
+// rows varies by send variant; raw row is fine for read-by-id.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getById = query({
+	args: { messageId: v.id("messages") },
+	handler: async (ctx, args) => {
+		return await ctx.db.get(args.messageId);
+	},
+});
