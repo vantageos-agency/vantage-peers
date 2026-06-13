@@ -293,3 +293,15 @@ export const processDueTasks = internalMutation({
 		return { created };
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 100 — Phase 2 get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
+// Single-row read by Convex doc ID. MCP layer applies scope-aware filter.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getById = query({
+	args: { recurringTaskId: v.id("recurringTasks") },
+	handler: async (ctx, args) => {
+		return await ctx.db.get(args.recurringTaskId);
+	},
+});
