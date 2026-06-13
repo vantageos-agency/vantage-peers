@@ -186,14 +186,9 @@ export const getCriticalInsights = query({
   },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Day 100 — Phase 2 get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
-// Single-row read by Convex doc ID. MCP layer applies scope-aware filter.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const getById = query({
-	args: { episodeId: v.id("episodes") },
-	handler: async (ctx, args) => {
-		return await ctx.db.get(args.episodeId);
-	},
-});
+// Day 100 — Phase 2 get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq):
+// Episodes are stored as memories with an `episode` metadata field (no separate
+// "episodes" table — see convex/schema.ts:139+). The Phase 2a `episodes:getById`
+// query was invalid (table does not exist) and broke `convex deploy` typecheck.
+// Use the existing `memories:getMemory` from the MCP `get_memory` tool to fetch
+// episode rows by their memory document ID. No new episodes-side query needed.
