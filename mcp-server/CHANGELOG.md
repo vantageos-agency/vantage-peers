@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.9.0] — 2026-06-14 — Day 102 CRUD baseline PR-B: episode entity 5-op surface (mission k575kc1ryps0n8br95jw3q7d0x88m2v9)
+
+Mission `mcp-crud-baseline-standard` PR-B under T2. Second of 4 sub-PRs aligning the MCP surface with the Day 101 doctrine `j57dhrmkzjerjtssnr0z9ba57n88n7q7` ("5 ops per entity"). PR-B adds the missing read/list/search facades for the `episode` entity, completing the 5-op surface (the write side `store_episode` already existed since the 8-Sins doctrine).
+
+Architectural note: episodes are NOT a separate Convex table — per hotfix `7f958d0`, episodes are stored as memories with `type='episode'` (context/goal/action/outcome/insight + severity). The 4 new tools are thin wrappers that force `type='episode'` on the existing `memories:*` / `search:*` actions, so callers get an ergonomic episode-scoped surface without introducing a new backend table or duplicating index logic.
+
+### Added (4 canonical episode tools)
+
+- **`get_episode`** — fetch a single episode by memory ID. Calls `memories:getMemory` then asserts the returned row has `type='episode'`; otherwise returns a non-leaky "Episode not found" so wrong-type IDs do not leak existence of non-episode memories. Scope-aware via `scopeFilterGet`. Annotations: `readOnlyHint=true`, `openWorldHint=false`, `destructiveHint=false`.
+- **`list_episodes`** — list episodes ordered newest first. Calls `memories:listMemories` with `type='episode'` forced. Accepts `namespace?`, `createdBy?`, `limit?`, `fields?`, `cursor?` — same paging semantics as `list_memories`. Scope-aware via `scopeFilterList`. Envelope-capped via `capListResponseBytes("list_episodes")`.
+- **`search_episodes_by_keyword`** — BM25 search restricted to episodes. Calls `search:textSearch` with `type='episode'` forced. Same `guardRead` namespace gate, same 20-default / 200-cap limits.
+- **`search_episodes_by_semantic`** — semantic vector cosine search restricted to episodes. Calls `search:recall` with `type='episode'` forced. Same gate, same limits.
+
+All four are pure MCP-layer additions: no Convex schema change, no new index, no new action. tsc clean.
+
+### Why
+
+Episode = the 8-Sins / orchestrator-introspection memory type (severity + context/goal/action/outcome/insight). Until 2.9.0, recalling past episodes required `recall query='...' type='episode'` — discoverable only to callers who already knew the memory-side filter trick. Surfacing dedicated wrappers makes the episode lifecycle (write via `store_episode`, read via `get_episode`, browse via `list_episodes`, recall via the two search ops) consistent with the doctrine and self-documenting in any MCP client's tool list.
+
+`hybrid_search` remains entity-agnostic and is NOT mirrored for episodes (cross-cutting RRF tool per audit § 4).
+
+### Test fixture catch-up
+
+- `READ_ONLY_TOOLS` set in `mcp-server/src/__tests__/chatgpt-tool-annotations.test.ts` extended with the 4 new tool names.
+
+### Refs
+
+- Mission `k575kc1ryps0n8br95jw3q7d0x88m2v9` (MCP CRUD Baseline Standard, pilot Sigma + agents Sigma + Eta).
+- Pi authorization msg `jn74v2pkfz08agex4nfm2yfvfd88nzdw` — "chain T2 PR-B episode entity en autonomie scope mission".
+- Audit T1 deliverable: `analysis/mcp-crud-baseline-vp-audit-2026-06-14.md` row 7 (episode entity recommendation: add façade wrappers).
+- Architecture: hotfix `7f958d0` — episodes are memories with metadata, not a separate table.
+
 ## [2.8.0] — 2026-06-14 — Day 101 CRUD baseline PR-A: search_memories_by_keyword + search_memories_by_semantic (mission k575kc1ryps0n8br95jw3q7d0x88m2v9, task k1735qk9kx6agjjyt3e38rdvvh88mk0p)
 
 Mission `mcp-crud-baseline-standard` PR-A under T2 `[CRUD-T2] Implémentation gaps VP MCP`. First of 4 sub-PRs aligning the MCP surface with the Day 101 doctrine `j57dhrmkzjerjtssnr0z9ba57n88n7q7` ("5 ops per entity: get / list / search_by_keyword / search_by_semantic / create-or-upsert"). PR-A handles the convention drift on the `memories` entity — the only entity that already had both keyword + semantic search wired, but under non-canonical names.

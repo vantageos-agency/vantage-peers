@@ -1561,6 +1561,269 @@ export function registerTools(
 		},
 	);
 
+	// ── get_episode ────────────────────────────────────────────────────────────
+	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+	// Thin wrapper: episodes are stored as memories with type='episode'
+	// (no separate table — see hotfix 7f958d0). This calls memories:getMemory
+	// and asserts type='episode' so callers get a non-leaky 404 on wrong-type IDs.
+
+	server.tool(
+		"get_episode",
+		"Fetch a single episode by its memory document ID. Episodes are memories with type='episode' carrying context/goal/action/outcome/insight + severity. " +
+			"WHEN: use when you have an episodeId from store_episode or a prior search and need the full record. " +
+			"EXAMPLE: get_episode episodeId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
+		{
+			episodeId: z.string().describe("Episode (memory) document ID"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get episode",
+		},
+		async ({ episodeId }) => {
+			try {
+				const memory = await convex.query("memories:getMemory" as any, {
+					memoryId: episodeId,
+				});
+				const filtered = scopeFilterGet(oauthCtx, memory);
+				if (filtered === null) {
+					return mcpError(`Episode not found: ${episodeId}`);
+				}
+				if ((filtered as any)?.type !== "episode") {
+					return mcpError(`Episode not found: ${episodeId}`);
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── list_episodes ──────────────────────────────────────────────────────────
+	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+	// Thin wrapper on memories:listMemories with type='episode' forced.
+
+	server.tool(
+		"list_episodes",
+		"List episodes (memories with type='episode') ordered newest first. " +
+			"WHEN: use to enumerate episodes by namespace or creator before recall/audit. " +
+			"EXAMPLE: list_episodes namespace='orchestrator/sigma' limit=20.",
+		{
+			namespace: z
+				.string()
+				.optional()
+				.describe("Filter to a specific namespace — omit to list across all"),
+			createdBy: z
+				.string()
+				.optional()
+				.describe("Filter by creator role (e.g. 'sigma', 'pi')"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					"S3.3 B8 — opaque pagination cursor from a prior call's `nextCursor`.",
+				),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List episodes",
+		},
+		async ({ namespace, createdBy, limit, fields, cursor }) => {
+			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
+				let backendCursor: string | null | undefined;
+				if (cursor !== undefined && cursor !== "") {
+					try {
+						const decoded = decodeCursor(cursor);
+						if (decoded && "backendCursor" in decoded) {
+							backendCursor = decoded.backendCursor;
+						}
+					} catch (err: any) {
+						return mcpError(err?.message ?? "invalid cursor");
+					}
+				}
+				const effectiveLimit =
+					limit === undefined ? undefined : clampLimit(limit);
+
+				const queryArgs: Record<string, unknown> = {
+					namespace,
+					type: "episode",
+					createdBy,
+					limit: effectiveLimit ?? 20,
+					fields: fields ?? "lite",
+				};
+				if (backendCursor !== undefined) {
+					queryArgs.paginationOpts = {
+						numItems: effectiveLimit ?? 50,
+						cursor: backendCursor,
+					};
+				}
+
+				const memories = await convex.query(
+					"memories:listMemories" as any,
+					queryArgs,
+				);
+
+				const rawList = Array.isArray(memories)
+					? memories
+					: Array.isArray((memories as any)?.page)
+						? (memories as any).page
+						: [];
+
+				const filteredList = scopeFilterList(oauthCtx, rawList);
+				const filteredEnvelope = Array.isArray(memories)
+					? filteredList
+					: { ...(memories as any), page: filteredList };
+
+				const text = capListResponseBytes(
+					filteredEnvelope,
+					JSON.stringify(filteredEnvelope, null, 2),
+					"list_episodes",
+				);
+
+				return {
+					content: [{ type: "text", text }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_episodes_by_keyword ─────────────────────────────────────────────
+	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+	// Thin wrapper on search:textSearch with type='episode' forced.
+
+	server.tool(
+		"search_episodes_by_keyword",
+		"BM25 full-text keyword search restricted to episodes (memories with type='episode'). " +
+			"WHEN: use when search_episodes_by_semantic returns too-broad results and you need an exact phrase or ID inside an episode field. " +
+			"EXAMPLE: search_episodes_by_keyword query='convex deploy schema' namespace='orchestrator/sigma' limit=10.",
+		{
+			query: z.string().describe("Search query text"),
+			namespace: z
+				.string()
+				.optional()
+				.describe("Namespace filter (e.g. 'orchestrator/sigma')"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search episodes by keyword (BM25)",
+		},
+		async ({ query, namespace, limit, fields }) => {
+			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
+				const results = await convex.action("search:textSearch" as any, {
+					query,
+					namespace,
+					type: "episode",
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_episodes_by_semantic ────────────────────────────────────────────
+	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+	// Thin wrapper on search:recall with type='episode' forced.
+
+	server.tool(
+		"search_episodes_by_semantic",
+		"Semantic vector search restricted to episodes (memories with type='episode'), ranked by cosine similarity. " +
+			"WHEN: use to recall structured past events by intent — failure modes, lessons, similar contexts. " +
+			"EXAMPLE: search_episodes_by_semantic query='hook false positive blocked publish' namespace='orchestrator/sigma' limit=20.",
+		{
+			query: z
+				.string()
+				.describe("Natural language query to search for relevant episodes"),
+			namespace: z
+				.string()
+				.optional()
+				.describe("Filter to a specific namespace — omit to search all"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search episodes by semantic (vector cosine)",
+		},
+		async ({ query, namespace, limit, fields }) => {
+			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
+				const results = await convex.action("search:recall" as any, {
+					query,
+					namespace,
+					type: "episode",
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(results, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── get_profile ─────────────────────────────────────────────────────────────
 
 	server.tool(
