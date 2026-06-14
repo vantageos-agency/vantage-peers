@@ -1178,11 +1178,14 @@ export function registerTools(
 	);
 
 	// ── recall ──────────────────────────────────────────────────────────────────
+	// DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_semantic. Retained
+	// for one minor version as a back-compat shim. New callers should use
+	// `search_memories_by_semantic`. To be removed in 2.9.0.
 
 	server.tool(
 		"recall",
-		"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
-			"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. " +
+		"DEPRECATED ALIAS of search_memories_by_semantic — semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+			"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. New callers: use search_memories_by_semantic. " +
 			"EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.",
 		{
 			query: z
@@ -1241,11 +1244,14 @@ export function registerTools(
 	);
 
 	// ── text_search ─────────────────────────────────────────────────────────────
+	// DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_keyword. Retained
+	// for one minor version as a back-compat shim. New callers should use
+	// `search_memories_by_keyword`. To be removed in 2.9.0.
 
 	server.tool(
 		"text_search",
-		"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
-			"WHEN: use when recall returns too-broad results and you need a specific exact phrase or ID. " +
+		"DEPRECATED ALIAS of search_memories_by_keyword — BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+			"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. New callers: use search_memories_by_keyword. " +
 			"EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.",
 		{
 			query: z.string().describe("Search query text"),
@@ -1286,6 +1292,128 @@ export function registerTools(
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_memories_by_keyword ─────────────────────────────────────────────
+	// Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
+	// Mirrors text_search 1:1 (same Convex action `search:textSearch`).
+	// text_search is retained as a deprecated alias until 2.9.0.
+
+	server.tool(
+		"search_memories_by_keyword",
+		"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+			"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. " +
+			"EXAMPLE: search_memories_by_keyword query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.",
+		{
+			query: z.string().describe("Search query text"),
+			namespace: z
+				.string()
+				.optional()
+				.describe("Namespace filter (e.g. 'global', 'project/my-project')"),
+			type: memoryTypeSchema.optional().describe("Filter by memory type"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search memories by keyword (BM25)",
+		},
+		async ({ query, namespace, type, limit, fields }) => {
+			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
+				const results = await convex.action("search:textSearch" as any, {
+					query,
+					namespace,
+					type,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_memories_by_semantic ────────────────────────────────────────────
+	// Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
+	// Mirrors recall 1:1 (same Convex action `search:recall`).
+	// recall is retained as a deprecated alias until 2.9.0.
+
+	server.tool(
+		"search_memories_by_semantic",
+		"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+			"WHEN: use at session start or before decisions — prefer over search_memories_by_keyword for intent-based queries. " +
+			"EXAMPLE: search_memories_by_semantic query='Pi feedback rules' namespace='global' type='feedback' limit=20.",
+		{
+			query: z
+				.string()
+				.describe("Natural language query to search for relevant memories"),
+			namespace: z
+				.string()
+				.optional()
+				.describe("Filter to a specific namespace — omit to search all"),
+			type: memoryTypeSchema
+				.optional()
+				.describe("Filter to a specific memory type — omit to search all"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search memories by semantic (vector cosine)",
+		},
+		async ({ query, namespace, type, limit, fields }) => {
+			try {
+				const nsDenied = guardRead(namespace);
+				if (nsDenied) return nsDenied;
+
+				const results = await convex.action("search:recall" as any, {
+					query,
+					namespace,
+					type,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(results, null, 2),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
