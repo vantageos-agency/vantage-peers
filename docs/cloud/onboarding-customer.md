@@ -361,6 +361,6 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 
 ## Version compatibility
 
-This guide targets vantage-peers-mcp v2.9.0+ (Day 92 baseline + Day 102 CRUD baseline PR-B episode 5-op). For earlier versions see the CHANGELOG.
+This guide targets vantage-peers-mcp v2.10.0+ (Day 92 baseline + Day 102 CRUD baseline PR-C rename-only safe subset). For earlier versions see the CHANGELOG.
 
 *VantageOS — VantagePeers Cloud product documentation.*

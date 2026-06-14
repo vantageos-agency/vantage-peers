@@ -143,6 +143,9 @@ const READ_ONLY_TOOLS = new Set([
 	"list_episodes",
 	"search_episodes_by_keyword",
 	"search_episodes_by_semantic",
+	// Day 102 — CRUD baseline PR-C rename-only safe subset (mission k575kc1r)
+	"search_components_by_keyword",
+	"search_fix_patterns_by_semantic",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([

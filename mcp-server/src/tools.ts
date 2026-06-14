@@ -1179,8 +1179,9 @@ export function registerTools(
 
 	// ── recall ──────────────────────────────────────────────────────────────────
 	// DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_semantic. Retained
-	// for one minor version as a back-compat shim. New callers should use
-	// `search_memories_by_semantic`. To be removed in 2.9.0.
+	// as a back-compat shim. New callers should use `search_memories_by_semantic`.
+	// Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
+	// see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
 
 	server.tool(
 		"recall",
@@ -1245,8 +1246,9 @@ export function registerTools(
 
 	// ── text_search ─────────────────────────────────────────────────────────────
 	// DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_keyword. Retained
-	// for one minor version as a back-compat shim. New callers should use
-	// `search_memories_by_keyword`. To be removed in 2.9.0.
+	// as a back-compat shim. New callers should use `search_memories_by_keyword`.
+	// Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
+	// see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
 
 	server.tool(
 		"text_search",
@@ -1302,7 +1304,7 @@ export function registerTools(
 	// ── search_memories_by_keyword ─────────────────────────────────────────────
 	// Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
 	// Mirrors text_search 1:1 (same Convex action `search:textSearch`).
-	// text_search is retained as a deprecated alias until 2.9.0.
+	// text_search is retained as a deprecated alias (removal re-targeted 2.11.0).
 
 	server.tool(
 		"search_memories_by_keyword",
@@ -1358,7 +1360,7 @@ export function registerTools(
 	// ── search_memories_by_semantic ────────────────────────────────────────────
 	// Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
 	// Mirrors recall 1:1 (same Convex action `search:recall`).
-	// recall is retained as a deprecated alias until 2.9.0.
+	// recall is retained as a deprecated alias (removal re-targeted 2.11.0).
 
 	server.tool(
 		"search_memories_by_semantic",
@@ -4680,6 +4682,9 @@ export function registerTools(
 	);
 
 	// ── search_components ───────────────────────────────────────────────────────
+	// DEPRECATED (Day 102 v2.10.0) — alias of search_components_by_keyword.
+	// Retained for one minor version as a back-compat shim. New callers should
+	// use `search_components_by_keyword`. To be removed in 2.11.0.
 
 	server.tool(
 		"search_components",
@@ -4689,8 +4694,8 @@ export function registerTools(
 		// anchor would skip high-relevance older matches in favor of newer
 		// low-relevance ones, breaking the search contract. Pagination on
 		// semantic search should be score-based (offset / topK), not time-based.
-		"Search components by name or team substring with optional type filter. " +
-			"WHEN: use before register_component to check if a similar component already exists in the registry. " +
+		"DEPRECATED ALIAS of search_components_by_keyword — search components by name or team substring with optional type filter. " +
+			"WHEN: use before register_component to check if a similar component already exists in the registry. New callers: use search_components_by_keyword. " +
 			"EXAMPLE: search_components query='check-tasks' type='skill' limit=10.",
 		{
 			query: z
@@ -4718,6 +4723,62 @@ export function registerTools(
 		async ({ query, type, limit, fields }) => {
 			try {
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
+				const results = await convex.query("components:search" as any, {
+					query,
+					type,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
+				const filteredResults = scopeFilterList(
+					oauthCtx,
+					Array.isArray(results) ? results : [],
+				);
+				return {
+					content: [
+						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_components_by_keyword ───────────────────────────────────────────
+	// Day 102 v2.10.0 — canonical name under MCP CRUD baseline doctrine (PR-C).
+	// Mirrors search_components 1:1 (same Convex query `components:search`).
+	// search_components is retained as a deprecated alias until 2.11.0.
+
+	server.tool(
+		"search_components_by_keyword",
+		"BM25 / substring keyword search over components by name or team with optional type filter. " +
+			"WHEN: use before register_component to check if a similar component already exists in the registry. " +
+			"EXAMPLE: search_components_by_keyword query='check-tasks' type='skill' limit=10.",
+		{
+			query: z
+				.string()
+				.describe("Search term to match against component name or team"),
+			type: componentTypeSchema.optional().describe("Filter by component type"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search components by keyword",
+		},
+		async ({ query, type, limit, fields }) => {
+			try {
 				const results = await convex.query("components:search" as any, {
 					query,
 					type,
@@ -6577,6 +6638,10 @@ export function registerTools(
 	);
 
 	// ── search_fix_patterns ─────────────────────────────────────────────────────
+	// DEPRECATED (Day 102 v2.10.0) — alias of search_fix_patterns_by_semantic.
+	// Underlying behavior is embedding-similarity ranking (NOT BM25), hence
+	// "_by_semantic" is the canonical suffix per the CRUD baseline doctrine.
+	// To be removed in 2.11.0.
 
 	server.tool(
 		"search_fix_patterns",
@@ -6585,8 +6650,8 @@ export function registerTools(
 		// Rationale: backed by `convex.action("search:searchFixPatterns")` which
 		// runs an embedding-similarity ranker; cursor paging by `createdBefore`
 		// would corrupt relevance ordering. Same rationale as search_components.
-		"Semantic search over fix patterns by symptom description, ranked by relevance. " +
-			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
+		"DEPRECATED ALIAS of search_fix_patterns_by_semantic — semantic search over fix patterns by symptom description, ranked by relevance. " +
+			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. New callers: use search_fix_patterns_by_semantic. " +
 			"EXAMPLE: search_fix_patterns query='message disappears after sending on mobile' limit=5.",
 		{
 			query: z
@@ -6615,6 +6680,66 @@ export function registerTools(
 		async ({ query, limit, fields }) => {
 			try {
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
+				const results = await convex.action("search:searchFixPatterns" as any, {
+					query,
+					limit: limit ?? 20,
+					fields: fields ?? "lite",
+				});
+				const filteredResults = scopeFilterList(
+					oauthCtx,
+					Array.isArray(results) ? results : [],
+				);
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(filteredResults, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_fix_patterns_by_semantic ────────────────────────────────────────
+	// Day 102 v2.10.0 — canonical name under MCP CRUD baseline doctrine (PR-C).
+	// Mirrors search_fix_patterns 1:1 (same Convex action `search:searchFixPatterns`).
+	// search_fix_patterns is retained as a deprecated alias until 2.11.0.
+
+	server.tool(
+		"search_fix_patterns_by_semantic",
+		"Semantic vector search over fix patterns by symptom description, ranked by relevance. " +
+			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
+			"EXAMPLE: search_fix_patterns_by_semantic query='message disappears after sending on mobile' limit=5.",
+		{
+			query: z
+				.string()
+				.describe(
+					"Describe the problem — e.g. 'message disappears after sending'",
+				),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search fix patterns by semantic",
+		},
+		async ({ query, limit, fields }) => {
+			try {
 				const results = await convex.action("search:searchFixPatterns" as any, {
 					query,
 					limit: limit ?? 20,

@@ -165,7 +165,7 @@ server.tool(
 );
 ```
 
-**Status as of v2.9.0 (Day 102 CRUD baseline PR-B episode 5-op, building on Day 92 mission k57a36y8w5t085bqr23dsmvb2d882506):** 87 tools have `outputSchema` — enforced universally as of v2.5.0. Starting baseline audit (commit `d03d2d7`): 0/85 tools had `outputSchema`.
+**Status as of v2.10.0 (Day 102 CRUD baseline PR-C rename-only safe subset, building on Day 92 mission k57a36y8w5t085bqr23dsmvb2d882506):** 87 tools have `outputSchema` — enforced universally as of v2.5.0. Starting baseline audit (commit `d03d2d7`): 0/85 tools had `outputSchema`.
 
 ---
 

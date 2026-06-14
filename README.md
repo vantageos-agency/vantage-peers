@@ -194,7 +194,7 @@ See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full referenc
 
 ## Security & multi-tenant scope
 
-VantagePeers Cloud (multi-tenant) and Self-host both share the same OAuth 2.1 + scope enforcement core. The following controls form the v2.9.0 security baseline.
+VantagePeers Cloud (multi-tenant) and Self-host both share the same OAuth 2.1 + scope enforcement core. The following controls form the v2.10.0 security baseline.
 
 ### OAuth 2.1 hardening — D6 + D7
 

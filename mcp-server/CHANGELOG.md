@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.10.0] — 2026-06-14 — Day 102 CRUD baseline PR-C: rename-only safe subset (mission k575kc1ryps0n8br95jw3q7d0x88m2v9)
+
+Mission `mcp-crud-baseline-standard` PR-C under T2. Third of 4 sub-PRs aligning the MCP surface with the Day 101 doctrine `j57dhrmkzjerjtssnr0z9ba57n88n7q7`. Sigma autonomous default after arbitrage timeout on the original "13-entity search_by_keyword cluster" scope — that fuller scope requires a backend search-infrastructure decision (RAG-index per entity vs Convex `.searchIndex()` per table) that is NOT a thin-wrapper PR. PR-C ships the rename-only safe subset now to keep doctrine velocity; the full cluster is deferred to a backend-RFC mission.
+
+### Added (2 canonical search tools)
+
+- **`search_components_by_keyword`** — BM25 / substring search over components by name or team. Wire-identical to `search_components` (same Convex query `components:search` 1:1, same scope filter, same defaults). `readOnlyHint=true`.
+- **`search_fix_patterns_by_semantic`** — semantic embedding-similarity search over fix patterns. Wire-identical to `search_fix_patterns` (same Convex action `search:searchFixPatterns` 1:1, same scope filter, same defaults). `readOnlyHint=true`. Note: the canonical suffix is `_by_semantic` (NOT `_by_keyword`) because the underlying ranker is embedding-cosine, not BM25 — naming follows behavior, not entity convention.
+
+### Deprecated (alias-only, removal target 2.11.0)
+
+- **`search_components`** — alias of `search_components_by_keyword`. Description leads with `DEPRECATED ALIAS …`.
+- **`search_fix_patterns`** — alias of `search_fix_patterns_by_semantic`. Description leads with `DEPRECATED ALIAS …`.
+
+### Re-targeted deprecations (FOLLOW-UP from Eta PR #750 review)
+
+- **`text_search`** — 2.8.0 originally targeted removal at 2.9.0; episode-only PR-B did not include the removal. Source comments + this entry re-target removal to **2.11.0**.
+- **`recall`** — same re-target rationale, removal now **2.11.0**.
+
+Both `text_search` and `recall` remain wire-identical to their canonical successors (`search_memories_by_keyword` / `search_memories_by_semantic`). Closes FOLLOW-UP task `k1754apqtcjpre2vd5ghbkcmzn88mhwf`.
+
+### Scope NOT in this PR (deferred)
+
+The original PR-C "13-entity search_by_keyword cluster" required adding BM25 / search infrastructure to 10+ entities that currently have NO backend search index (`grep searchIndex convex/schema.ts` → zero hits; only `memories` is indexed, via `@convex-dev/rag`). Two backend paths exist:
+
+- **Path A** — extend RAG indexing to each entity (heavy: per-table embedding pipeline, RAG namespace per entity, vector cost; gets hybrid search for free).
+- **Path B** — Convex native `.searchIndex()` per table (lightweight: schema migration + one query per entity, BM25-only, no embeddings).
+
+Either path is a multi-day backend RFC, NOT a thin-wrapper PR. Sigma sent the arbitrage to Pi (msg `jn75zy4g7bhj95bhyz2zvv6n8d88na6s`) and defaulted to PR-C path C (rename-only) after 2 cron ticks of no reply. A follow-up mission to scope the backend search infrastructure is the next mission proposal.
+
+### Version sync
+
+- `mcp-server/server.ts:115` SERVER_VERSION 2.9.0 → 2.10.0
+- `mcp-server/package.json` → 2.10.0
+- README + 4 cloud docs bumped to 2.10.0 markers (`enforce-release-sync` v1.0.1 gate).
+
+### Test fixture catch-up
+
+- `READ_ONLY_TOOLS` set in `mcp-server/src/__tests__/chatgpt-tool-annotations.test.ts` extended with the 2 new canonical names.
+
+### Refs
+
+- Mission `k575kc1ryps0n8br95jw3q7d0x88m2v9` (MCP CRUD Baseline Standard).
+- Pi authorization msg `jn74q7twhr3s1s8dvqxbzvky9588msdd` ("next: T2-PR-C 13-entity search_by_keyword cluster post #750 merge").
+- Sigma arbitrage msg to Pi: `jn75zy4g7bhj95bhyz2zvv6n8d88na6s` (3 paths A/B/C).
+- FOLLOW-UP task: `k1754apqtcjpre2vd5ghbkcmzn88mhwf` (text_search/recall deprecation slipped).
+- Audit T1: `analysis/mcp-crud-baseline-vp-audit-2026-06-14.md` § 4.
+
 ## [2.9.0] — 2026-06-14 — Day 102 CRUD baseline PR-B: episode entity 5-op surface (mission k575kc1ryps0n8br95jw3q7d0x88m2v9)
 
 Mission `mcp-crud-baseline-standard` PR-B under T2. Second of 4 sub-PRs aligning the MCP surface with the Day 101 doctrine `j57dhrmkzjerjtssnr0z9ba57n88n7q7` ("5 ops per entity"). PR-B adds the missing read/list/search facades for the `episode` entity, completing the 5-op surface (the write side `store_episode` already existed since the 8-Sins doctrine).
