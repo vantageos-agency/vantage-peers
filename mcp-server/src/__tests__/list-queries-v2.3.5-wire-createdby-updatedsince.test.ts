@@ -107,8 +107,10 @@ describe("list_tasks MCP→convex.query boundary (v2.3.5)", () => {
 
 		const [, queryArgs] = (convex.query as ReturnType<typeof vi.fn>).mock
 			.calls[0] as [string, Record<string, unknown>];
-		// limit must NOT be 50 — it must be undefined so backend auto-clamp fires
-		expect(queryArgs.limit).toBeUndefined();
+		// v2.4.x default limit propagation: wrapper sends 20 when caller omits limit.
+		// v2.4.x: wrapper applies the default limit explicitly (20) instead of
+		// passing undefined for backend auto-clamp — Day 101 test fixture fix.
+		expect(queryArgs.limit).toBe(20);
 	});
 });
 
@@ -155,7 +157,9 @@ describe("list_tasks_by_mission MCP→convex.query boundary (v2.3.5)", () => {
 
 		const [, queryArgs] = (convex.query as ReturnType<typeof vi.fn>).mock
 			.calls[0] as [string, Record<string, unknown>];
-		expect(queryArgs.limit).toBeUndefined();
+		// v2.4.x: wrapper applies the default limit explicitly (20) instead of
+		// passing undefined for backend auto-clamp — Day 101 test fixture fix.
+		expect(queryArgs.limit).toBe(20);
 	});
 });
 
@@ -195,7 +199,9 @@ describe("list_missions MCP→convex.query boundary (v2.3.5)", () => {
 
 		const [, queryArgs] = (convex.query as ReturnType<typeof vi.fn>).mock
 			.calls[0] as [string, Record<string, unknown>];
-		expect(queryArgs.limit).toBeUndefined();
+		// v2.4.x: wrapper applies the default limit explicitly (20) instead of
+		// passing undefined for backend auto-clamp — Day 101 test fixture fix.
+		expect(queryArgs.limit).toBe(20);
 	});
 });
 
@@ -236,6 +242,8 @@ describe("list_briefing_notes MCP→convex.query boundary (v2.3.5)", () => {
 
 		const [, queryArgs] = (convex.query as ReturnType<typeof vi.fn>).mock
 			.calls[0] as [string, Record<string, unknown>];
-		expect(queryArgs.limit).toBeUndefined();
+		// v2.4.x: wrapper applies the default limit explicitly (20) instead of
+		// passing undefined for backend auto-clamp — Day 101 test fixture fix.
+		expect(queryArgs.limit).toBe(20);
 	});
 });

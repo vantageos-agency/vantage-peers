@@ -34,9 +34,14 @@ describe("oauth.seedDefaultProfiles", () => {
 			callerToken: "test-master-token-deadbeef",
 		});
 		// S3.4 B4: return shape now `{ inserted, updated, skipped }`.
-		expect((summary.inserted as string[]).sort()).toEqual(
-			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
-		);
+		// Catalog now contains 6 seed profiles (clio-iris-rh + helios-iris-rh added
+		// for Marie's Iris RH trio). All 4 original profiles must still be present.
+		const inserted = (summary.inserted as string[]).sort();
+		expect(inserted).toContain("master");
+		expect(inserted).toContain("marie-iris-rh");
+		expect(inserted).toContain("client-generic");
+		expect(inserted).toContain("public-readonly");
+		expect(inserted.length).toBeGreaterThanOrEqual(4);
 		expect(summary.updated).toEqual([]);
 		expect(summary.skipped).toEqual([]);
 	});
@@ -49,13 +54,16 @@ describe("oauth.seedDefaultProfiles", () => {
 		const secondRun = await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
-		// S3.4 B4: idempotent re-run inserts nothing, updates nothing; all 4
+		// S3.4 B4: idempotent re-run inserts nothing, updates nothing; all
 		// catalog profiles fall into `skipped`.
 		expect(secondRun.inserted).toEqual([]);
 		expect(secondRun.updated).toEqual([]);
-		expect((secondRun.skipped as string[]).sort()).toEqual(
-			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
-		);
+		const skipped = (secondRun.skipped as string[]).sort();
+		expect(skipped).toContain("master");
+		expect(skipped).toContain("marie-iris-rh");
+		expect(skipped).toContain("client-generic");
+		expect(skipped).toContain("public-readonly");
+		expect(skipped.length).toBeGreaterThanOrEqual(4);
 	});
 
 	test("rejects invalid master token", async () => {

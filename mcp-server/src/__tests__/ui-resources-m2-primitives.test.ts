@@ -37,6 +37,13 @@ describe("PRIMITIVES registry (M2)", () => {
 // messages-feed primitive
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Helper: extract the HTML content item from readUiResource result.
+// readUiResource returns { contents: [{ uri, mimeType, text, _meta }, { uri, mimeType: "text/markdown", text }] }.
+// The first content item is always the HTML payload (text/html;profile=mcp-app).
+function htmlText(r: Awaited<ReturnType<typeof readUiResource>>): string {
+	return (r.contents[0] as { text: string }).text;
+}
+
 describe("messages-feed primitive (M2)", () => {
 	it("renders empty state when backend returns no messages", async () => {
 		const fetchConvex = async () => [];
@@ -44,9 +51,9 @@ describe("messages-feed primitive (M2)", () => {
 			"ui://vp/v1/messages-feed?limit=5",
 			fetchConvex,
 		);
-		expect(r.mimeType).toBe("text/html");
-		expect(r.text).toContain("vp-messages-feed");
-		expect(r.text).toContain("No messages found");
+		expect(r.contents[0].mimeType).toContain("text/html");
+		expect(htmlText(r)).toContain("vp-messages-feed");
+		expect(htmlText(r)).toContain("No messages found");
 	});
 
 	it("renders populated messages table", async () => {
@@ -67,10 +74,10 @@ describe("messages-feed primitive (M2)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/messages-feed", fetchConvex);
-		expect(r.text).toContain("sigma");
-		expect(r.text).toContain("Hello world");
-		expect(r.text).toContain("ops");
-		expect(r.text).toContain("2 messages");
+		expect(htmlText(r)).toContain("sigma");
+		expect(htmlText(r)).toContain("Hello world");
+		expect(htmlText(r)).toContain("ops");
+		expect(htmlText(r)).toContain("2 messages");
 	});
 
 	it("renders French labels when lang=fr", async () => {
@@ -81,8 +88,8 @@ describe("messages-feed primitive (M2)", () => {
 			"ui://vp/v1/messages-feed?lang=fr",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Flux de messages");
-		expect(r.text).toContain("1 message");
+		expect(htmlText(r)).toContain("Flux de messages");
+		expect(htmlText(r)).toContain("1 message");
 	});
 
 	it("escapes XSS in message content", async () => {
@@ -95,9 +102,9 @@ describe("messages-feed primitive (M2)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/messages-feed", fetchConvex);
-		expect(r.text).not.toContain("<script>");
-		expect(r.text).toContain("&lt;script&gt;");
-		expect(r.text).not.toContain("<img onerror");
+		expect(htmlText(r)).not.toContain("<script>");
+		expect(htmlText(r)).toContain("&lt;script&gt;");
+		expect(htmlText(r)).not.toContain("<img onerror");
 	});
 
 	it("returns error div when backend throws", async () => {
@@ -105,8 +112,8 @@ describe("messages-feed primitive (M2)", () => {
 			throw new Error("messages backend down");
 		};
 		const r = await readUiResource("ui://vp/v1/messages-feed", fetchConvex);
-		expect(r.text).toContain("vp-messages-feed-error");
-		expect(r.text).toContain("messages backend down");
+		expect(htmlText(r)).toContain("vp-messages-feed-error");
+		expect(htmlText(r)).toContain("messages backend down");
 	});
 });
 
@@ -121,8 +128,8 @@ describe("diary-entry primitive (M2)", () => {
 			"ui://vp/v1/diary-entry?date=2026-05-28&orchestrator=sigma",
 			fetchConvex,
 		);
-		expect(r.text).toContain("vp-diary-entry");
-		expect(r.text).toContain("No diary entry found");
+		expect(htmlText(r)).toContain("vp-diary-entry");
+		expect(htmlText(r)).toContain("No diary entry found");
 	});
 
 	it("renders a single diary entry with highlights and blockers", async () => {
@@ -138,11 +145,11 @@ describe("diary-entry primitive (M2)", () => {
 			"ui://vp/v1/diary-entry?date=2026-05-28&orchestrator=sigma",
 			fetchConvex,
 		);
-		expect(r.text).toContain("sigma");
-		expect(r.text).toContain("2026-05-28");
-		expect(r.text).toContain("Day 84 wrap-up");
-		expect(r.text).toContain("M1 merged");
-		expect(r.text).toContain("DB migration pending");
+		expect(htmlText(r)).toContain("sigma");
+		expect(htmlText(r)).toContain("2026-05-28");
+		expect(htmlText(r)).toContain("Day 84 wrap-up");
+		expect(htmlText(r)).toContain("M1 merged");
+		expect(htmlText(r)).toContain("DB migration pending");
 	});
 
 	it("renders French labels when lang=fr", async () => {
@@ -158,8 +165,8 @@ describe("diary-entry primitive (M2)", () => {
 			"ui://vp/v1/diary-entry?lang=fr",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Journal VantagePeers");
-		expect(r.text).toContain("1 entr");
+		expect(htmlText(r)).toContain("Journal VantagePeers");
+		expect(htmlText(r)).toContain("1 entr");
 	});
 
 	it("escapes XSS in diary content", async () => {
@@ -172,8 +179,8 @@ describe("diary-entry primitive (M2)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/diary-entry", fetchConvex);
-		expect(r.text).not.toContain("<script>xss");
-		expect(r.text).toContain("&lt;script&gt;");
+		expect(htmlText(r)).not.toContain("<script>xss");
+		expect(htmlText(r)).toContain("&lt;script&gt;");
 	});
 
 	it("returns error div when backend throws", async () => {
@@ -181,8 +188,8 @@ describe("diary-entry primitive (M2)", () => {
 			throw new Error("diary unavailable");
 		};
 		const r = await readUiResource("ui://vp/v1/diary-entry", fetchConvex);
-		expect(r.text).toContain("vp-diary-entry-error");
-		expect(r.text).toContain("diary unavailable");
+		expect(htmlText(r)).toContain("vp-diary-entry-error");
+		expect(htmlText(r)).toContain("diary unavailable");
 	});
 });
 
@@ -194,8 +201,8 @@ describe("mission-timeline primitive (M2)", () => {
 	it("renders empty state when no missions found", async () => {
 		const fetchConvex = async () => [];
 		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
-		expect(r.text).toContain("vp-mission-timeline");
-		expect(r.text).toContain("No missions found");
+		expect(htmlText(r)).toContain("vp-mission-timeline");
+		expect(htmlText(r)).toContain("No missions found");
 	});
 
 	it("renders populated missions table with progress bar", async () => {
@@ -220,10 +227,10 @@ describe("mission-timeline primitive (M2)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
-		expect(r.text).toContain("Alpha mission");
-		expect(r.text).toContain("vp-mission-status-active");
-		expect(r.text).toContain("progressbar");
-		expect(r.text).toContain("2 missions");
+		expect(htmlText(r)).toContain("Alpha mission");
+		expect(htmlText(r)).toContain("vp-mission-status-active");
+		expect(htmlText(r)).toContain("progressbar");
+		expect(htmlText(r)).toContain("2 missions");
 	});
 
 	it("renders French labels when lang=fr", async () => {
@@ -234,8 +241,8 @@ describe("mission-timeline primitive (M2)", () => {
 			"ui://vp/v1/mission-timeline?lang=fr",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Missions VantagePeers");
-		expect(r.text).toContain("Statut");
+		expect(htmlText(r)).toContain("Missions VantagePeers");
+		expect(htmlText(r)).toContain("Statut");
 	});
 
 	it("escapes XSS in mission name", async () => {
@@ -243,8 +250,8 @@ describe("mission-timeline primitive (M2)", () => {
 			{ _id: "ms1", name: "<script>evil()</script>", status: "active" },
 		];
 		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
-		expect(r.text).not.toContain("<script>evil");
-		expect(r.text).toContain("&lt;script&gt;");
+		expect(htmlText(r)).not.toContain("<script>evil");
+		expect(htmlText(r)).toContain("&lt;script&gt;");
 	});
 
 	it("returns error div when backend throws", async () => {
@@ -252,8 +259,8 @@ describe("mission-timeline primitive (M2)", () => {
 			throw new Error("missions unavailable");
 		};
 		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
-		expect(r.text).toContain("vp-mission-timeline-error");
-		expect(r.text).toContain("missions unavailable");
+		expect(htmlText(r)).toContain("vp-mission-timeline-error");
+		expect(htmlText(r)).toContain("missions unavailable");
 	});
 });
 
@@ -265,8 +272,8 @@ describe("briefing-note primitive (M2)", () => {
 	it("renders empty state when no notes found", async () => {
 		const fetchConvex = async () => [];
 		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
-		expect(r.text).toContain("vp-briefing-note");
-		expect(r.text).toContain("No briefing notes found");
+		expect(htmlText(r)).toContain("vp-briefing-note");
+		expect(htmlText(r)).toContain("No briefing notes found");
 	});
 
 	it("renders a briefing note card with participants and content", async () => {
@@ -281,10 +288,10 @@ describe("briefing-note primitive (M2)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
-		expect(r.text).toContain("M2 design review");
-		expect(r.text).toContain("architecture");
-		expect(r.text).toContain("sigma");
-		expect(r.text).toContain("Reviewed M2 scope");
+		expect(htmlText(r)).toContain("M2 design review");
+		expect(htmlText(r)).toContain("architecture");
+		expect(htmlText(r)).toContain("sigma");
+		expect(htmlText(r)).toContain("Reviewed M2 scope");
 	});
 
 	it("renders French labels when lang=fr", async () => {
@@ -295,8 +302,8 @@ describe("briefing-note primitive (M2)", () => {
 			"ui://vp/v1/briefing-note?lang=fr",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Notes de briefing");
-		expect(r.text).toContain("Participants");
+		expect(htmlText(r)).toContain("Notes de briefing");
+		expect(htmlText(r)).toContain("Participants");
 	});
 
 	it("escapes XSS in note title", async () => {
@@ -309,8 +316,8 @@ describe("briefing-note primitive (M2)", () => {
 			},
 		];
 		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
-		expect(r.text).not.toContain('<img src=x onerror="alert(1)">');
-		expect(r.text).toContain("&lt;img");
+		expect(htmlText(r)).not.toContain('<img src=x onerror="alert(1)">');
+		expect(htmlText(r)).toContain("&lt;img");
 	});
 
 	it("returns error div when backend throws", async () => {
@@ -318,8 +325,8 @@ describe("briefing-note primitive (M2)", () => {
 			throw new Error("briefingNotes backend down");
 		};
 		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
-		expect(r.text).toContain("vp-briefing-note-error");
-		expect(r.text).toContain("briefingNotes backend down");
+		expect(htmlText(r)).toContain("vp-briefing-note-error");
+		expect(htmlText(r)).toContain("briefingNotes backend down");
 	});
 });
 
@@ -331,8 +338,8 @@ describe("memory-quote primitive (M2)", () => {
 	it("returns error when namespace param is missing", async () => {
 		const fetchConvex = async () => [];
 		const r = await readUiResource("ui://vp/v1/memory-quote", fetchConvex);
-		expect(r.text).toContain("vp-memory-quote-error");
-		expect(r.text).toContain("namespace");
+		expect(htmlText(r)).toContain("vp-memory-quote-error");
+		expect(htmlText(r)).toContain("namespace");
 	});
 
 	it("renders empty state when no memories found", async () => {
@@ -341,8 +348,8 @@ describe("memory-quote primitive (M2)", () => {
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
 		);
-		expect(r.text).toContain("vp-memory-quote");
-		expect(r.text).toContain("No memories found");
+		expect(htmlText(r)).toContain("vp-memory-quote");
+		expect(htmlText(r)).toContain("No memories found");
 	});
 
 	it("renders populated memory cards", async () => {
@@ -364,9 +371,9 @@ describe("memory-quote primitive (M2)", () => {
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Always verify evidence");
-		expect(r.text).toContain("feedback");
-		expect(r.text).toContain("2 memor");
+		expect(htmlText(r)).toContain("Always verify evidence");
+		expect(htmlText(r)).toContain("feedback");
+		expect(htmlText(r)).toContain("2 memor");
 	});
 
 	it("renders French labels when lang=fr", async () => {
@@ -382,8 +389,8 @@ describe("memory-quote primitive (M2)", () => {
 			"ui://vp/v1/memory-quote?namespace=sigma&lang=fr",
 			fetchConvex,
 		);
-		expect(r.text).toContain("Mémoires VantagePeers");
-		expect(r.text).toContain("1 mémoire");
+		expect(htmlText(r)).toContain("Mémoires VantagePeers");
+		expect(htmlText(r)).toContain("1 mémoire");
 	});
 
 	it("escapes XSS in memory content", async () => {
@@ -399,8 +406,8 @@ describe("memory-quote primitive (M2)", () => {
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
 		);
-		expect(r.text).not.toContain("<script>pwned");
-		expect(r.text).toContain("&lt;script&gt;");
+		expect(htmlText(r)).not.toContain("<script>pwned");
+		expect(htmlText(r)).toContain("&lt;script&gt;");
 	});
 
 	it("returns error div when backend throws", async () => {
@@ -411,8 +418,8 @@ describe("memory-quote primitive (M2)", () => {
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
 		);
-		expect(r.text).toContain("vp-memory-quote-error");
-		expect(r.text).toContain("memories unavailable");
+		expect(htmlText(r)).toContain("vp-memory-quote-error");
+		expect(htmlText(r)).toContain("memories unavailable");
 	});
 });
 
