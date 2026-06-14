@@ -2190,7 +2190,16 @@ export function registerTools(
 				.int()
 				.optional()
 				.describe(
-					"Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog.",
+					"Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog. Pair with the `nextSince` value returned in a previous truncated reply to page the backlog.",
+				),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(50)
+				.optional()
+				.describe(
+					"Max messages per call (1-50, default 20). Pair with `since=nextSince` from a previous truncated reply to page the backlog without hitting Claude Code's tool-response cap.",
 				),
 		},
 		{
@@ -2199,7 +2208,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Check messages",
 		},
-		async ({ recipient, recipientInstanceId, tenantId, since }) => {
+		async ({ recipient, recipientInstanceId, tenantId, since, limit }) => {
 			try {
 				// Non-master: caller may read messages addressed to any identity
 				// they are authorized to speak as, i.e. recipient ∈ fromAllowList.
@@ -2229,15 +2238,28 @@ export function registerTools(
 					}
 				}
 
-				const messages = await convex.query(
-					"messages:checkNewMessages" as any,
+				const result = await convex.query(
+					"messages:checkNewMessagesEnvelope" as any,
 					{
 						recipient,
 						recipientInstanceId,
 						tenantId,
 						since,
+						limit,
 					},
 				);
+				const { messages, truncated, nextSince } = result as {
+					messages: Array<{
+						receiptId: string;
+						from: string;
+						fromInstanceId?: string;
+						channel?: string;
+						content: string;
+						createdAt: number;
+					}>;
+					truncated: boolean;
+					nextSince: number | null;
+				};
 
 				if (messages.length === 0) {
 					return {
@@ -2245,29 +2267,25 @@ export function registerTools(
 					};
 				}
 
-				const payload = messages.map(
-					(m: {
-						receiptId: string;
-						from: string;
-						fromInstanceId?: string;
-						channel?: string;
-						content: string;
-						createdAt: number;
-					}) => ({
-						receiptId: m.receiptId,
-						from: m.from,
-						fromInstanceId: m.fromInstanceId,
-						channel: m.channel,
-						content: m.content,
-						createdAt: m.createdAt,
-					}),
-				);
+				const payload = messages.map((m) => ({
+					receiptId: m.receiptId,
+					from: m.from,
+					fromInstanceId: m.fromInstanceId,
+					channel: m.channel,
+					content: m.content,
+					createdAt: m.createdAt,
+				}));
+
+				const body = JSON.stringify(payload, null, 2);
+				const text = truncated
+					? `${body}\n— truncated. Resume with check_messages since=${nextSince}`
+					: body;
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(payload, null, 2),
+							text,
 						},
 					],
 				};

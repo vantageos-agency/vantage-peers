@@ -849,7 +849,7 @@ export function registerTools(server, convex, oauthCtx) {
                 createdBy,
                 errorMessage: error?.message ?? String(error),
             });
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── soft_delete_memory ──────────────────────────────────────────────────────
@@ -882,7 +882,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_memory ──────────────────────────────────────────────────────────────
@@ -912,12 +912,16 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── recall ──────────────────────────────────────────────────────────────────
-    server.tool("recall", "Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
-        "WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. " +
+    // DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_semantic. Retained
+    // as a back-compat shim. New callers should use `search_memories_by_semantic`.
+    // Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
+    // see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
+    server.tool("recall", "DEPRECATED ALIAS of search_memories_by_semantic — semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+        "WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. New callers: use search_memories_by_semantic. " +
         "EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.", {
         query: z
             .string()
@@ -967,12 +971,16 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── text_search ─────────────────────────────────────────────────────────────
-    server.tool("text_search", "BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
-        "WHEN: use when recall returns too-broad results and you need a specific exact phrase or ID. " +
+    // DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_keyword. Retained
+    // as a back-compat shim. New callers should use `search_memories_by_keyword`.
+    // Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
+    // see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
+    server.tool("text_search", "DEPRECATED ALIAS of search_memories_by_keyword — BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+        "WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. New callers: use search_memories_by_keyword. " +
         "EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.", {
         query: z.string().describe("Search query text"),
         namespace: z
@@ -1013,7 +1021,114 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_memories_by_keyword ─────────────────────────────────────────────
+    // Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
+    // Mirrors text_search 1:1 (same Convex action `search:textSearch`).
+    // text_search is retained as a deprecated alias (removal re-targeted 2.11.0).
+    server.tool("search_memories_by_keyword", "BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+        "WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. " +
+        "EXAMPLE: search_memories_by_keyword query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.", {
+        query: z.string().describe("Search query text"),
+        namespace: z
+            .string()
+            .optional()
+            .describe("Namespace filter (e.g. 'global', 'project/my-project')"),
+        type: memoryTypeSchema.optional().describe("Filter by memory type"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search memories by keyword (BM25)",
+    }, async ({ query, namespace, type, limit, fields }) => {
+        try {
+            const nsDenied = guardRead(namespace);
+            if (nsDenied)
+                return nsDenied;
+            const results = await convex.action("search:textSearch", {
+                query,
+                namespace,
+                type,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_memories_by_semantic ────────────────────────────────────────────
+    // Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
+    // Mirrors recall 1:1 (same Convex action `search:recall`).
+    // recall is retained as a deprecated alias (removal re-targeted 2.11.0).
+    server.tool("search_memories_by_semantic", "Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+        "WHEN: use at session start or before decisions — prefer over search_memories_by_keyword for intent-based queries. " +
+        "EXAMPLE: search_memories_by_semantic query='Pi feedback rules' namespace='global' type='feedback' limit=20.", {
+        query: z
+            .string()
+            .describe("Natural language query to search for relevant memories"),
+        namespace: z
+            .string()
+            .optional()
+            .describe("Filter to a specific namespace — omit to search all"),
+        type: memoryTypeSchema
+            .optional()
+            .describe("Filter to a specific memory type — omit to search all"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search memories by semantic (vector cosine)",
+    }, async ({ query, namespace, type, limit, fields }) => {
+        try {
+            const nsDenied = guardRead(namespace);
+            if (nsDenied)
+                return nsDenied;
+            const results = await convex.action("search:recall", {
+                query,
+                namespace,
+                type,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify(results, null, 2),
+                    },
+                ],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── hybrid_search ───────────────────────────────────────────────────────────
@@ -1070,7 +1185,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── store_episode ───────────────────────────────────────────────────────────
@@ -1124,7 +1239,226 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── get_episode ────────────────────────────────────────────────────────────
+    // Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+    // Thin wrapper: episodes are stored as memories with type='episode'
+    // (no separate table — see hotfix 7f958d0). This calls memories:getMemory
+    // and asserts type='episode' so callers get a non-leaky 404 on wrong-type IDs.
+    server.tool("get_episode", "Fetch a single episode by its memory document ID. Episodes are memories with type='episode' carrying context/goal/action/outcome/insight + severity. " +
+        "WHEN: use when you have an episodeId from store_episode or a prior search and need the full record. " +
+        "EXAMPLE: get_episode episodeId='j57dy3049btafda9m2f5d2ggk987ph3f'.", {
+        episodeId: z.string().describe("Episode (memory) document ID"),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Get episode",
+    }, async ({ episodeId }) => {
+        try {
+            const memory = await convex.query("memories:getMemory", {
+                memoryId: episodeId,
+            });
+            const filtered = scopeFilterGet(oauthCtx, memory);
+            if (filtered === null) {
+                return mcpError(`Episode not found: ${episodeId}`);
+            }
+            if (filtered?.type !== "episode") {
+                return mcpError(`Episode not found: ${episodeId}`);
+            }
+            return {
+                content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
+        }
+    });
+    // ── list_episodes ──────────────────────────────────────────────────────────
+    // Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+    // Thin wrapper on memories:listMemories with type='episode' forced.
+    server.tool("list_episodes", "List episodes (memories with type='episode') ordered newest first. " +
+        "WHEN: use to enumerate episodes by namespace or creator before recall/audit. " +
+        "EXAMPLE: list_episodes namespace='orchestrator/sigma' limit=20.", {
+        namespace: z
+            .string()
+            .optional()
+            .describe("Filter to a specific namespace — omit to list across all"),
+        createdBy: z
+            .string()
+            .optional()
+            .describe("Filter by creator role (e.g. 'sigma', 'pi')"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+        cursor: z
+            .string()
+            .optional()
+            .describe("S3.3 B8 — opaque pagination cursor from a prior call's `nextCursor`."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "List episodes",
+    }, async ({ namespace, createdBy, limit, fields, cursor }) => {
+        try {
+            const nsDenied = guardRead(namespace);
+            if (nsDenied)
+                return nsDenied;
+            let backendCursor;
+            if (cursor !== undefined && cursor !== "") {
+                try {
+                    const decoded = decodeCursor(cursor);
+                    if (decoded && "backendCursor" in decoded) {
+                        backendCursor = decoded.backendCursor;
+                    }
+                }
+                catch (err) {
+                    return mcpError(err?.message ?? "invalid cursor");
+                }
+            }
+            const effectiveLimit = limit === undefined ? undefined : clampLimit(limit);
+            const queryArgs = {
+                namespace,
+                type: "episode",
+                createdBy,
+                limit: effectiveLimit ?? 20,
+                fields: fields ?? "lite",
+            };
+            if (backendCursor !== undefined) {
+                queryArgs.paginationOpts = {
+                    numItems: effectiveLimit ?? 50,
+                    cursor: backendCursor,
+                };
+            }
+            const memories = await convex.query("memories:listMemories", queryArgs);
+            const rawList = Array.isArray(memories)
+                ? memories
+                : Array.isArray(memories?.page)
+                    ? memories.page
+                    : [];
+            const filteredList = scopeFilterList(oauthCtx, rawList);
+            const filteredEnvelope = Array.isArray(memories)
+                ? filteredList
+                : { ...memories, page: filteredList };
+            const text = capListResponseBytes(filteredEnvelope, JSON.stringify(filteredEnvelope, null, 2), "list_episodes");
+            return {
+                content: [{ type: "text", text }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_episodes_by_keyword ─────────────────────────────────────────────
+    // Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+    // Thin wrapper on search:textSearch with type='episode' forced.
+    server.tool("search_episodes_by_keyword", "BM25 full-text keyword search restricted to episodes (memories with type='episode'). " +
+        "WHEN: use when search_episodes_by_semantic returns too-broad results and you need an exact phrase or ID inside an episode field. " +
+        "EXAMPLE: search_episodes_by_keyword query='convex deploy schema' namespace='orchestrator/sigma' limit=10.", {
+        query: z.string().describe("Search query text"),
+        namespace: z
+            .string()
+            .optional()
+            .describe("Namespace filter (e.g. 'orchestrator/sigma')"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search episodes by keyword (BM25)",
+    }, async ({ query, namespace, limit, fields }) => {
+        try {
+            const nsDenied = guardRead(namespace);
+            if (nsDenied)
+                return nsDenied;
+            const results = await convex.action("search:textSearch", {
+                query,
+                namespace,
+                type: "episode",
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_episodes_by_semantic ────────────────────────────────────────────
+    // Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
+    // Thin wrapper on search:recall with type='episode' forced.
+    server.tool("search_episodes_by_semantic", "Semantic vector search restricted to episodes (memories with type='episode'), ranked by cosine similarity. " +
+        "WHEN: use to recall structured past events by intent — failure modes, lessons, similar contexts. " +
+        "EXAMPLE: search_episodes_by_semantic query='hook false positive blocked publish' namespace='orchestrator/sigma' limit=20.", {
+        query: z
+            .string()
+            .describe("Natural language query to search for relevant episodes"),
+        namespace: z
+            .string()
+            .optional()
+            .describe("Filter to a specific namespace — omit to search all"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search episodes by semantic (vector cosine)",
+    }, async ({ query, namespace, limit, fields }) => {
+        try {
+            const nsDenied = guardRead(namespace);
+            if (nsDenied)
+                return nsDenied;
+            const results = await convex.action("search:recall", {
+                query,
+                namespace,
+                type: "episode",
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify(results, null, 2),
+                    },
+                ],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── get_profile ─────────────────────────────────────────────────────────────
@@ -1157,7 +1491,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_profile ──────────────────────────────────────────────────────────
@@ -1215,7 +1549,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_memories ───────────────────────────────────────────────────────────
@@ -1316,7 +1650,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── send_message ────────────────────────────────────────────────────────────
@@ -1394,7 +1728,7 @@ export function registerTools(server, convex, oauthCtx) {
                 channel,
                 errorMessage: error?.message ?? String(error),
             });
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── check_messages ──────────────────────────────────────────────────────────
@@ -1414,13 +1748,20 @@ export function registerTools(server, convex, oauthCtx) {
             .number()
             .int()
             .optional()
-            .describe("Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog."),
+            .describe("Unix timestamp (ms). If provided, only messages with _creationTime > since are returned. Use for incremental polling — pass the timestamp of your last check to get only new messages. Omit for full unread backlog. Pair with the `nextSince` value returned in a previous truncated reply to page the backlog."),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(50)
+            .optional()
+            .describe("Max messages per call (1-50, default 20). Pair with `since=nextSince` from a previous truncated reply to page the backlog without hitting Claude Code's tool-response cap."),
     }, {
         readOnlyHint: true,
         openWorldHint: false,
         destructiveHint: false,
         title: "Check messages",
-    }, async ({ recipient, recipientInstanceId, tenantId, since }) => {
+    }, async ({ recipient, recipientInstanceId, tenantId, since, limit }) => {
         try {
             // Non-master: caller may read messages addressed to any identity
             // they are authorized to speak as, i.e. recipient ∈ fromAllowList.
@@ -1444,12 +1785,14 @@ export function registerTools(server, convex, oauthCtx) {
                     return mcpError(`Forbidden: check_messages can only read messages addressed to an identity you are authorized to speak as (token userId='${oauthCtx.userId}', allowed senders=[${(oauthCtx.fromAllowList ?? []).join(", ")}]); requested recipient '${recipient}' is not in that set.`);
                 }
             }
-            const messages = await convex.query("messages:checkNewMessages", {
+            const result = await convex.query("messages:checkNewMessagesEnvelope", {
                 recipient,
                 recipientInstanceId,
                 tenantId,
                 since,
+                limit,
             });
+            const { messages, truncated, nextSince } = result;
             if (messages.length === 0) {
                 return {
                     content: [{ type: "text", text: "No new messages." }],
@@ -1463,17 +1806,21 @@ export function registerTools(server, convex, oauthCtx) {
                 content: m.content,
                 createdAt: m.createdAt,
             }));
+            const body = JSON.stringify(payload, null, 2);
+            const text = truncated
+                ? `${body}\n— truncated. Resume with check_messages since=${nextSince}`
+                : body;
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(payload, null, 2),
+                        text,
                     },
                 ],
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── mark_as_read ────────────────────────────────────────────────────────────
@@ -1519,7 +1866,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── delete_message ──────────────────────────────────────────────────────────
@@ -1558,7 +1905,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── set_summary ─────────────────────────────────────────────────────────────
@@ -1597,7 +1944,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_peers ──────────────────────────────────────────────────────────────
@@ -1683,7 +2030,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_messages ───────────────────────────────────────────────────────────
@@ -1774,7 +2121,61 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_messages_by_keyword ─────────────────────────────────────────────
+    // Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+    // BM25 keyword search over message content. Backed by Convex
+    // `messages:searchMessagesByKeyword` using the `search_content` searchIndex.
+    server.tool("search_messages_by_keyword", "BM25 full-text keyword search over message content, ranked by relevance. " +
+        "WHEN: use for post-incident audit or to find peer DMs by topic — e.g. 'find messages about deploy' across the recent sessionDay window. " +
+        "EXAMPLE: search_messages_by_keyword query='convex deploy' from='pi' sessionDay=102 limit=10.", {
+        query: z.string().describe("Search term to match against message content"),
+        from: z.string().optional().describe("Filter by sender role"),
+        channel: z
+            .string()
+            .optional()
+            .describe("Filter by channel — e.g. 'sigma', 'broadcast'"),
+        sessionDay: z
+            .number()
+            .int()
+            .optional()
+            .describe("Filter to a specific session day"),
+        tenantId: z.string().optional().describe("Filter by tenant id"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search messages by keyword (BM25)",
+    }, async ({ query, from, channel, sessionDay, tenantId, limit, fields }) => {
+        try {
+            const results = await convex.query("messages:searchMessagesByKeyword", {
+                query,
+                from,
+                channel,
+                sessionDay,
+                tenantId,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── list_broadcast_status ───────────────────────────────────────────────────
@@ -1826,7 +2227,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── create_task ─────────────────────────────────────────────────────────────
@@ -1903,7 +2304,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_tasks ──────────────────────────────────────────────────────────────
@@ -2014,7 +2415,64 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_tasks_by_keyword ────────────────────────────────────────────────
+    // Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+    // BM25 keyword search over task titles. Backed by Convex `tasks:searchTasksByKeyword`
+    // which uses the `search_title` searchIndex. Filter axes: assignedTo, status,
+    // project, missionId — all pushed into the index for sub-linear scan.
+    server.tool("search_tasks_by_keyword", "BM25 full-text keyword search over task titles, ranked by relevance. " +
+        "WHEN: use to find tasks by topic/keyword when list_tasks filters are too broad — e.g. 'find tasks about hook' across all assignees. " +
+        "EXAMPLE: search_tasks_by_keyword query='hook PostToolUse' status='todo' limit=10.", {
+        query: z.string().describe("Search term to match against task title"),
+        assignedTo: z
+            .string()
+            .optional()
+            .describe("Filter by assignee role"),
+        status: z
+            .enum(["todo", "in_progress", "review", "blocked", "done"])
+            .optional()
+            .describe("Filter by status"),
+        project: z.string().optional().describe("Filter by project name"),
+        missionId: z
+            .string()
+            .optional()
+            .describe("Filter by mission Convex ID"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search tasks by keyword (BM25)",
+    }, async ({ query, assignedTo, status, project, missionId, limit, fields }) => {
+        try {
+            const results = await convex.query("tasks:searchTasksByKeyword", {
+                query,
+                assignedTo,
+                status,
+                project,
+                missionId,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── update_task ─────────────────────────────────────────────────────────────
@@ -2099,7 +2557,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── complete_task ───────────────────────────────────────────────────────────
@@ -2140,7 +2598,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── start_task ──────────────────────────────────────────────────────────────
@@ -2177,7 +2635,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── checkout_task ───────────────────────────────────────────────────────────
@@ -2215,7 +2673,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── delete_task ─────────────────────────────────────────────────────────────
@@ -2252,7 +2710,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── block_task ──────────────────────────────────────────────────────────────
@@ -2301,7 +2759,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── add_task_dependency ─────────────────────────────────────────────────────
@@ -2346,7 +2804,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_tasks_by_mission ───────────────────────────────────────────────────
@@ -2429,7 +2887,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── create_mission ──────────────────────────────────────────────────────────
@@ -2490,7 +2948,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_missions ───────────────────────────────────────────────────────────
@@ -2588,7 +3046,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_mission ─────────────────────────────────────────────────────────────
@@ -2618,7 +3076,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_mission ──────────────────────────────────────────────────────────
@@ -2675,7 +3133,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_mission_status ───────────────────────────────────────────────────
@@ -2710,7 +3168,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── write_diary ─────────────────────────────────────────────────────────────
@@ -2766,7 +3224,7 @@ export function registerTools(server, convex, oauthCtx) {
                 orchestrator,
                 errorMessage: error?.message ?? String(error),
             });
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_diary ───────────────────────────────────────────────────────────────
@@ -2809,7 +3267,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_diaries ────────────────────────────────────────────────────────────
@@ -2902,7 +3360,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── create_briefing_note ────────────────────────────────────────────────────
@@ -3041,7 +3499,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_briefing_notes ─────────────────────────────────────────────────────
@@ -3140,7 +3598,52 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_briefing_notes_by_keyword ────────────────────────────────────────
+    // Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+    // BM25 keyword search over briefing note content. Backed by Convex
+    // `briefingNotes:searchBriefingNotesByKeyword` using the `search_content` searchIndex.
+    server.tool("search_briefing_notes_by_keyword", "BM25 full-text keyword search over briefing note content, ranked by relevance. " +
+        "WHEN: use to recall briefings about a topic/decision when list_briefing_notes filters are too coarse — e.g. 'find briefings about migration plan'. " +
+        "EXAMPLE: search_briefing_notes_by_keyword query='migration plan' topic='daily' limit=10.", {
+        query: z
+            .string()
+            .describe("Search term to match against briefing note content"),
+        topic: z.string().optional().describe("Filter by topic"),
+        createdBy: z.string().optional().describe("Filter by creator role"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search briefing notes by keyword (BM25)",
+    }, async ({ query, topic, createdBy, limit, fields }) => {
+        try {
+            const results = await convex.query("briefingNotes:searchBriefingNotesByKeyword", {
+                query,
+                topic,
+                createdBy,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            return {
+                content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── register_component ──────────────────────────────────────────────────────
@@ -3202,7 +3705,7 @@ export function registerTools(server, convex, oauthCtx) {
                 createdBy,
                 errorMessage: error?.message ?? String(error),
             });
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_components ─────────────────────────────────────────────────────────
@@ -3280,7 +3783,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_component ───────────────────────────────────────────────────────────
@@ -3312,7 +3815,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_component ────────────────────────────────────────────────────────
@@ -3361,7 +3864,7 @@ export function registerTools(server, convex, oauthCtx) {
                 componentId,
                 errorMessage: error?.message ?? String(error),
             });
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── delete_component ────────────────────────────────────────────────────────
@@ -3390,10 +3893,13 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── search_components ───────────────────────────────────────────────────────
+    // DEPRECATED (Day 102 v2.10.0) — alias of search_components_by_keyword.
+    // Retained for one minor version as a back-compat shim. New callers should
+    // use `search_components_by_keyword`. To be removed in 2.11.0.
     server.tool("search_components", 
     // S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
     // @cursorPagingException relevance-ranked-not-chronological
@@ -3401,8 +3907,8 @@ export function registerTools(server, convex, oauthCtx) {
     // anchor would skip high-relevance older matches in favor of newer
     // low-relevance ones, breaking the search contract. Pagination on
     // semantic search should be score-based (offset / topK), not time-based.
-    "Search components by name or team substring with optional type filter. " +
-        "WHEN: use before register_component to check if a similar component already exists in the registry. " +
+    "DEPRECATED ALIAS of search_components_by_keyword — search components by name or team substring with optional type filter. " +
+        "WHEN: use before register_component to check if a similar component already exists in the registry. New callers: use search_components_by_keyword. " +
         "EXAMPLE: search_components query='check-tasks' type='skill' limit=10.", {
         query: z
             .string()
@@ -3441,7 +3947,53 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_components_by_keyword ───────────────────────────────────────────
+    // Day 102 v2.10.0 — canonical name under MCP CRUD baseline doctrine (PR-C).
+    // Mirrors search_components 1:1 (same Convex query `components:search`).
+    // search_components is retained as a deprecated alias until 2.11.0.
+    server.tool("search_components_by_keyword", "BM25 / substring keyword search over components by name or team with optional type filter. " +
+        "WHEN: use before register_component to check if a similar component already exists in the registry. " +
+        "EXAMPLE: search_components_by_keyword query='check-tasks' type='skill' limit=10.", {
+        query: z
+            .string()
+            .describe("Search term to match against component name or team"),
+        type: componentTypeSchema.optional().describe("Filter by component type"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search components by keyword",
+    }, async ({ query, type, limit, fields }) => {
+        try {
+            const results = await convex.query("components:search", {
+                query,
+                type,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            const filteredResults = scopeFilterList(oauthCtx, Array.isArray(results) ? results : []);
+            return {
+                content: [
+                    { type: "text", text: JSON.stringify(filteredResults, null, 2) },
+                ],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── create_recurring_task ───────────────────────────────────────────────────
@@ -3500,7 +4052,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_recurring_tasks ────────────────────────────────────────────────────
@@ -3573,7 +4125,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── pause_recurring_task ────────────────────────────────────────────────────
@@ -3600,7 +4152,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── resume_recurring_task ───────────────────────────────────────────────────
@@ -3627,7 +4179,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── delete_recurring_task ───────────────────────────────────────────────────
@@ -3654,7 +4206,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_recurring_task ───────────────────────────────────────────────────
@@ -3700,7 +4252,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── create_mandate ──────────────────────────────────────────────────────────
@@ -3759,7 +4311,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── accept_mandate ──────────────────────────────────────────────────────────
@@ -3794,7 +4346,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_mandate ──────────────────────────────────────────────────────────
@@ -3838,7 +4390,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── settle_mandate ──────────────────────────────────────────────────────────
@@ -3875,7 +4427,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── validate_mandate_spending ───────────────────────────────────────────────
@@ -3902,7 +4454,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_mandates ───────────────────────────────────────────────────────────
@@ -3988,7 +4540,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── create_bu ───────────────────────────────────────────────────────────────
@@ -4058,7 +4610,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_bu ───────────────────────────────────────────────────────────────
@@ -4127,7 +4679,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_bu ──────────────────────────────────────────────────────────────────
@@ -4157,7 +4709,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_bus ────────────────────────────────────────────────────────────────
@@ -4237,7 +4789,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── delete_bu ───────────────────────────────────────────────────────────────
@@ -4271,7 +4823,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── add_repo_mapping ────────────────────────────────────────────────────────
@@ -4319,7 +4871,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_repo_mappings ──────────────────────────────────────────────────────
@@ -4393,7 +4945,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── remove_repo_mapping ─────────────────────────────────────────────────────
@@ -4427,7 +4979,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_issues ─────────────────────────────────────────────────────────────
@@ -4547,7 +5099,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_issue ───────────────────────────────────────────────────────────────
@@ -4581,7 +5133,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_issue_status ─────────────────────────────────────────────────────
@@ -4621,7 +5173,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── link_commit_to_issue ────────────────────────────────────────────────────
@@ -4659,7 +5211,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── verify_issue ────────────────────────────────────────────────────────────
@@ -4695,7 +5247,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── issue_stats ─────────────────────────────────────────────────────────────
@@ -4728,7 +5280,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── create_fix_pattern ──────────────────────────────────────────────────────
@@ -4786,7 +5338,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── add_fix_attempt ─────────────────────────────────────────────────────────
@@ -4827,7 +5379,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── validate_fix ────────────────────────────────────────────────────────────
@@ -4861,18 +5413,22 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── search_fix_patterns ─────────────────────────────────────────────────────
+    // DEPRECATED (Day 102 v2.10.0) — alias of search_fix_patterns_by_semantic.
+    // Underlying behavior is embedding-similarity ranking (NOT BM25), hence
+    // "_by_semantic" is the canonical suffix per the CRUD baseline doctrine.
+    // To be removed in 2.11.0.
     server.tool("search_fix_patterns", 
     // S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
     // @cursorPagingException semantic-action-not-chronological
     // Rationale: backed by `convex.action("search:searchFixPatterns")` which
     // runs an embedding-similarity ranker; cursor paging by `createdBefore`
     // would corrupt relevance ordering. Same rationale as search_components.
-    "Semantic search over fix patterns by symptom description, ranked by relevance. " +
-        "WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
+    "DEPRECATED ALIAS of search_fix_patterns_by_semantic — semantic search over fix patterns by symptom description, ranked by relevance. " +
+        "WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. New callers: use search_fix_patterns_by_semantic. " +
         "EXAMPLE: search_fix_patterns query='message disappears after sending on mobile' limit=5.", {
         query: z
             .string()
@@ -4912,7 +5468,54 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
+        }
+    });
+    // ── search_fix_patterns_by_semantic ────────────────────────────────────────
+    // Day 102 v2.10.0 — canonical name under MCP CRUD baseline doctrine (PR-C).
+    // Mirrors search_fix_patterns 1:1 (same Convex action `search:searchFixPatterns`).
+    // search_fix_patterns is retained as a deprecated alias until 2.11.0.
+    server.tool("search_fix_patterns_by_semantic", "Semantic vector search over fix patterns by symptom description, ranked by relevance. " +
+        "WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
+        "EXAMPLE: search_fix_patterns_by_semantic query='message disappears after sending on mobile' limit=5.", {
+        query: z
+            .string()
+            .describe("Describe the problem — e.g. 'message disappears after sending'"),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+        fields: z
+            .enum(["lite", "full"])
+            .optional()
+            .describe("'lite' returns compact payload (less tokens), 'full' is default."),
+    }, {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        title: "Search fix patterns by semantic",
+    }, async ({ query, limit, fields }) => {
+        try {
+            const results = await convex.action("search:searchFixPatterns", {
+                query,
+                limit: limit ?? 20,
+                fields: fields ?? "lite",
+            });
+            const filteredResults = scopeFilterList(oauthCtx, Array.isArray(results) ? results : []);
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify(filteredResults, null, 2),
+                    },
+                ],
+            };
+        }
+        catch (error) {
+            return mcpConvexError(error);
         }
     });
     // ── list_fix_patterns ───────────────────────────────────────────────────────
@@ -5001,7 +5604,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── link_issue_to_pattern ───────────────────────────────────────────────────
@@ -5035,7 +5638,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_mission_template ────────────────────────────────────────────────────
@@ -5063,7 +5666,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── update_mission_template ─────────────────────────────────────────────────
@@ -5131,7 +5734,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── instantiate_template_into_mission ───────────────────────────────────────
@@ -5192,7 +5795,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── add_deployment ──────────────────────────────────────────────────────────
@@ -5242,7 +5845,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── remove_deployment ───────────────────────────────────────────────────────
@@ -5274,7 +5877,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── list_errors ─────────────────────────────────────────────────────────────
@@ -5353,7 +5956,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_error ───────────────────────────────────────────────────────────────
@@ -5383,7 +5986,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── whoami ──────────────────────────────────────────────────────────────────
@@ -5512,7 +6115,7 @@ export function registerTools(server, convex, oauthCtx) {
         repo: z.string(),
         orchestrator: z.string(),
         project: z.string().optional(),
-    }, async ({ repo, orchestrator, project }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Register repo mapping (alias)" }, async ({ repo, orchestrator, project }) => {
         const masterDenied = guardMasterOnly("register_repo_mapping");
         if (masterDenied)
             return masterDenied;
@@ -5525,7 +6128,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // delete_repo_mapping → was remove_repo_mapping [ALIAS of remove_repo_mapping — C0.3 master-only]
@@ -5533,7 +6136,7 @@ export function registerTools(server, convex, oauthCtx) {
         "WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
         "EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.", {
         repo: z.string(),
-    }, async ({ repo }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: true, title: "Delete repo mapping (alias)" }, async ({ repo }) => {
         const masterDenied = guardMasterOnly("delete_repo_mapping");
         if (masterDenied)
             return masterDenied;
@@ -5542,7 +6145,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // register_deployment → was add_deployment [ALIAS of add_deployment — C0.1 master-only]
@@ -5554,7 +6157,7 @@ export function registerTools(server, convex, oauthCtx) {
         deployKeyEnvVar: z.string(),
         githubRepo: z.string(),
         orchestrator: z.string(),
-    }, async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Register deployment (alias)" }, async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
         const masterDenied = guardMasterOnly("register_deployment");
         if (masterDenied)
             return masterDenied;
@@ -5569,7 +6172,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // delete_deployment → was remove_deployment [ALIAS of remove_deployment — C0.1 master-only]
@@ -5577,7 +6180,7 @@ export function registerTools(server, convex, oauthCtx) {
         "WHEN: use when a deployment is retired or moved to a different monitoring config. " +
         "EXAMPLE: delete_deployment name='vantage-prod'.", {
         name: z.string(),
-    }, async ({ name }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: true, title: "Delete deployment (alias)" }, async ({ name }) => {
         const masterDenied = guardMasterOnly("delete_deployment");
         if (masterDenied)
             return masterDenied;
@@ -5586,7 +6189,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // check_mandate_spending → was validate_mandate_spending (not C0-gated — read-only check)
@@ -5595,7 +6198,7 @@ export function registerTools(server, convex, oauthCtx) {
         "EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.", {
         mandateId: z.string(),
         proposedAmount: z.number(),
-    }, async ({ mandateId, proposedAmount }) => {
+    }, { readOnlyHint: true, openWorldHint: false, destructiveHint: false, title: "Check mandate spending (alias)" }, async ({ mandateId, proposedAmount }) => {
         try {
             const result = await convex.query("mandates:validateSpending", {
                 mandateId,
@@ -5604,7 +6207,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // check_fix → was validate_fix [ALIAS of validate_fix — C0.5 master-only]
@@ -5613,7 +6216,7 @@ export function registerTools(server, convex, oauthCtx) {
         "EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.", {
         patternId: z.string(),
         validatedFix: z.string(),
-    }, async ({ patternId, validatedFix }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Check/validate fix (alias)" }, async ({ patternId, validatedFix }) => {
         const masterDenied = guardMasterOnly("check_fix");
         if (masterDenied)
             return masterDenied;
@@ -5625,7 +6228,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // create_fix_attempt → was add_fix_attempt (not C0-gated — uses guardFrom(createdBy))
@@ -5638,7 +6241,7 @@ export function registerTools(server, convex, oauthCtx) {
         why: z.string().optional(),
         commitSha: z.string().optional(),
         createdBy: z.string(),
-    }, async ({ patternId, description, worked, why, commitSha, createdBy }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create fix attempt (alias)" }, async ({ patternId, description, worked, why, commitSha, createdBy }) => {
         const fromDenied = guardFrom(createdBy);
         if (fromDenied)
             return fromDenied;
@@ -5654,7 +6257,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // create_task_dependency → was add_task_dependency (not C0-gated — uses callerOrchestrator auth)
@@ -5664,7 +6267,7 @@ export function registerTools(server, convex, oauthCtx) {
         taskId: z.string(),
         dependsOn: z.array(z.string()),
         callerOrchestrator: z.string(),
-    }, async ({ taskId, dependsOn, callerOrchestrator }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create task dependency (alias)" }, async ({ taskId, dependsOn, callerOrchestrator }) => {
         try {
             const result = await convex.mutation("tasks:update", {
                 taskId,
@@ -5674,7 +6277,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // update_summary → was set_summary (not C0-gated — uses orchestratorId auth)
@@ -5684,7 +6287,7 @@ export function registerTools(server, convex, oauthCtx) {
         orchestratorId: z.string(),
         instanceId: z.string().optional(),
         summary: z.string(),
-    }, async ({ orchestratorId, instanceId, summary }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Update summary (alias)" }, async ({ orchestratorId, instanceId, summary }) => {
         try {
             const result = await convex.mutation("profiles:updateDynamic", {
                 orchestratorId,
@@ -5694,7 +6297,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // create_diary → was write_diary (not C0-gated — uses guardFrom(author) when present)
@@ -5705,7 +6308,7 @@ export function registerTools(server, convex, oauthCtx) {
         orchestrator: z.string(),
         content: z.string(),
         author: z.string().optional(),
-    }, async ({ date, orchestrator, content, author }) => {
+    }, { readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create diary entry (alias)" }, async ({ date, orchestrator, content, author }) => {
         assertContentSize(content, "content");
         if (author !== undefined) {
             const fromDenied = guardFrom(author);
@@ -5722,7 +6325,7 @@ export function registerTools(server, convex, oauthCtx) {
             return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_task ────────────────────────────────────────────────────────────────
@@ -5749,7 +6352,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_fix_pattern ─────────────────────────────────────────────────────────
@@ -5775,7 +6378,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_mandate ─────────────────────────────────────────────────────────────
@@ -5801,7 +6404,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_repo_mapping ────────────────────────────────────────────────────────
@@ -5832,7 +6435,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_message ─────────────────────────────────────────────────────────────
@@ -5861,7 +6464,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
     // ── get_recurring_task ──────────────────────────────────────────────────────
@@ -5890,7 +6493,7 @@ export function registerTools(server, convex, oauthCtx) {
             };
         }
         catch (error) {
-            return mcpError(error.message ?? String(error));
+            return mcpConvexError(error);
         }
     });
 }
