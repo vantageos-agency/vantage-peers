@@ -148,7 +148,14 @@ export default defineSchema({
 		.index("by_day", ["sessionDay"])
 		.index("by_from", ["from", "createdAt"])
 		.index("by_channel", ["channel", "createdAt"])
-		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"]),
+		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"])
+		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
+		// Convex native BM25 search on message body, with filterFields for the
+		// common audit narrowing axes (from, channel, sessionDay).
+		.searchIndex("search_content", {
+			searchField: "content",
+			filterFields: ["from", "channel", "sessionDay", "tenantId"],
+		}),
 
 	// ── messageReceipts ──────────────────────────────────────────────────────
 	// One row per recipient per message. Tracks read status.
@@ -246,7 +253,14 @@ export default defineSchema({
 		.index("by_status", ["status", "createdAt"])
 		.index("by_mission", ["missionId", "status"])
 		.index("by_instance", ["assignedToInstance", "status"])
-		.index("by_orgId", ["orgId"]),
+		.index("by_orgId", ["orgId"])
+		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
+		// Convex native BM25 search on task title, with filterFields for the
+		// common targeting axes (assignedTo, status, project, missionId).
+		.searchIndex("search_title", {
+			searchField: "title",
+			filterFields: ["assignedTo", "status", "project", "missionId", "orgId"],
+		}),
 
 	// ── diary ──────────────────────────────────────────────────────────────────
 	diary: defineTable({
@@ -287,7 +301,14 @@ export default defineSchema({
 	})
 		.index("by_topic", ["topic"])
 		.index("by_creator", ["createdBy", "createdAt"])
-		.index("by_orgId", ["orgId"]),
+		.index("by_orgId", ["orgId"])
+		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
+		// Convex native BM25 search on briefing body, with filterFields for the
+		// common narrowing axes (topic, createdBy).
+		.searchIndex("search_content", {
+			searchField: "content",
+			filterFields: ["topic", "createdBy", "orgId"],
+		}),
 
 	// ── components ──────────────────────────────────────────────────────────
 	// Registry of agents, skills, hooks, plugins — backup + inventory.

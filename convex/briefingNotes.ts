@@ -210,3 +210,45 @@ export const update = mutation({
 		return null;
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+// BM25 keyword search over briefing note content via Convex native .searchIndex().
+//
+// Backed by the `search_content` searchIndex declared in schema.ts.
+// Filter axes: topic, createdBy.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const searchBriefingNotesByKeyword = query({
+	args: {
+		query: v.string(),
+		topic: v.optional(v.string()),
+		createdBy: v.optional(creatorValidator),
+		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+	},
+	handler: async (ctx, args) => {
+		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
+		const lite = args.fields === "lite";
+
+		const results = await ctx.db
+			.query("briefingNotes")
+			.withSearchIndex("search_content", (q) => {
+				let qb = q.search("content", args.query);
+				if (args.topic !== undefined) qb = qb.eq("topic", args.topic);
+				if (args.createdBy !== undefined)
+					qb = qb.eq("createdBy", args.createdBy);
+				return qb;
+			})
+			.take(limit);
+
+		if (!lite) return results;
+		return results.map((b) => ({
+			_id: b._id,
+			title: b.title,
+			topic: b.topic,
+			createdBy: b.createdBy,
+			createdAt: b.createdAt,
+		}));
+	},
+});

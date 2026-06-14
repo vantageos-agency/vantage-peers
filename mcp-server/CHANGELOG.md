@@ -1,5 +1,59 @@
 # Changelog
 
+## [2.11.0] — 2026-06-14 — Day 102 CRUD baseline PR-C-bis option B: 3-entity Convex searchIndex (mission k575kc1ryps0n8br95jw3q7d0x88m2v9)
+
+Mission `mcp-crud-baseline-standard` PR-C-bis under T2. Pi-sequenced follow-up after PR-C (rename-only safe subset) — implements **option B SCOPED** per Pi arbitrage msg `jn7abynmghy5qdr9ga0b914wmh88n99w` ("GO option B SCOPED — démarre PR-C avec 3 entités prioritaires"): tasks + messages + briefingNotes get native Convex BM25 search via `.searchIndex()` schema additions + per-entity Convex queries + MCP tool wrappers.
+
+Backend choice (B over A): Convex native `.searchIndex()` is BM25-only, no embeddings, no RAG per-entity pipeline. Sub-linear scan stays in the same backend without spinning up an embedding pipeline per table. Hybrid/semantic per entity remains a future RFC.
+
+### Added — Convex schema searchIndex (3 tables)
+
+- `tasks` → `searchIndex("search_title", { searchField: "title", filterFields: ["assignedTo", "status", "project", "missionId", "orgId"] })`
+- `messages` → `searchIndex("search_content", { searchField: "content", filterFields: ["from", "channel", "sessionDay", "tenantId"] })`
+- `briefingNotes` → `searchIndex("search_content", { searchField: "content", filterFields: ["topic", "createdBy", "orgId"] })`
+
+### Added — Convex query functions
+
+- `tasks:searchTasksByKeyword` — BM25 over title with assignedTo/status/project/missionId filters + scope gate via `withOrgScope` + `filterByOrgScope` + `requireScope("view-own-tasks")`. Lite/full projection.
+- `messages:searchMessagesByKeyword` — BM25 over content with from/channel/sessionDay/tenantId filters.
+- `briefingNotes:searchBriefingNotesByKeyword` — BM25 over content with topic/createdBy filters.
+
+All three: 20-item default limit, 200 cap, lite projection on demand.
+
+### Added — MCP tool wrappers (3 canonical)
+
+- **`search_tasks_by_keyword`** — wires to `tasks:searchTasksByKeyword`. `readOnlyHint=true`.
+- **`search_messages_by_keyword`** — wires to `messages:searchMessagesByKeyword`. `readOnlyHint=true`.
+- **`search_briefing_notes_by_keyword`** — wires to `briefingNotes:searchBriefingNotesByKeyword`. `readOnlyHint=true`.
+
+### Why option B (and why scoped to 3)
+
+`grep searchIndex convex/schema.ts` previously returned zero hits; only `memories` had search infrastructure (via `@convex-dev/rag`). The original "13-entity cluster" full scope was deferred via PR-C (rename-only) after arbitrage timeout. Pi's arbitrage landed shortly after: **option B SCOPED to 3 priority entities** is the right blend of doctrine progress + bounded scope:
+- `tasks` — largest fleet audience (Eta T13 close-issue scan, dispatch-task-find, etc.).
+- `messages` — post-incident audit + messages-history skill demand.
+- `briefingNotes` — daily snapshot recall narrative.
+
+The remaining 10 entities (mission/mandate/fix_pattern/component/repo_mapping/bu/profile/deployment/diary/error/issue/recurring_task/summary) go to a per-entity RFC (mission walk-through scheduled Wed 17 June 15h with Laurent) — each entity decides B (searchIndex), A (RAG if semantic justified, e.g. episodes/diary), or N/A semantic documented (deployment/repo_mapping).
+
+### Version sync
+
+- `mcp-server/server.ts:115` SERVER_VERSION 2.10.0 → 2.11.0
+- `mcp-server/package.json` → 2.11.0
+- README + 4 cloud docs bumped to 2.11.0 markers (`enforce-release-sync` v1.0.1 gate).
+
+### Test fixture catch-up
+
+- `READ_ONLY_TOOLS` set in `mcp-server/src/__tests__/chatgpt-tool-annotations.test.ts` extended with the 3 new canonical tool names.
+
+### Refs
+
+- Mission `k575kc1ryps0n8br95jw3q7d0x88m2v9`.
+- Pi sequencing dispatch: msg `jn76360ckrrkwpqbfwa6tst7k588mpsh` ("(1) T2 PR-C-bis option B SCOPED 3 entities").
+- Pi arbitrage that selected option B: msg `jn7abynmghy5qdr9ga0b914wmh88n99w`.
+- Audit T1: `analysis/mcp-crud-baseline-vp-audit-2026-06-14.md` rows 1 (task), 3 (message), 4 (briefing_note).
+- Doctrine memory: `j57dhrmkzjerjtssnr0z9ba57n88n7q7` (5 ops per entity).
+- Predecessors: PR-A 2.8.0 (memories canonical), PR-B 2.9.0 (episode 5-op), PR-C 2.10.0 (rename-only safe subset).
+
 ## [2.10.0] — 2026-06-14 — Day 102 CRUD baseline PR-C: rename-only safe subset (mission k575kc1ryps0n8br95jw3q7d0x88m2v9)
 
 Mission `mcp-crud-baseline-standard` PR-C under T2. Third of 4 sub-PRs aligning the MCP surface with the Day 101 doctrine `j57dhrmkzjerjtssnr0z9ba57n88n7q7`. Sigma autonomous default after arbitrage timeout on the original "13-entity search_by_keyword cluster" scope — that fuller scope requires a backend search-infrastructure decision (RAG-index per entity vs Convex `.searchIndex()` per table) that is NOT a thin-wrapper PR. PR-C ships the rename-only safe subset now to keep doctrine velocity; the full cluster is deferred to a backend-RFC mission.

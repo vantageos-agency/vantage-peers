@@ -1266,3 +1266,73 @@ export const resolveStaleDeployTasks = internalMutation({
 		return { scanned, closed, skipped };
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+// BM25 keyword search over task titles via Convex native .searchIndex().
+//
+// Backed by the `search_title` searchIndex declared in schema.ts. Filter fields
+// (assignedTo, status, project, missionId) are pushed into the index so the
+// scoped + filtered query stays sub-linear at fleet scale (~2 - 30k tasks).
+
+export const searchTasksByKeyword = query({
+	args: {
+		query: v.string(),
+		assignedTo: v.optional(assigneeValidator),
+		status: v.optional(
+			v.union(
+				v.literal("todo"),
+				v.literal("in_progress"),
+				v.literal("review"),
+				v.literal("blocked"),
+				v.literal("done"),
+			),
+		),
+		project: v.optional(v.string()),
+		missionId: v.optional(v.id("missions")),
+		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+	},
+	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+		requireScope(scope, "view-own-tasks");
+
+		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
+		const lite = args.fields === "lite";
+
+		const results = await ctx.db
+			.query("tasks")
+			.withSearchIndex("search_title", (q) => {
+				let qb = q.search("title", args.query);
+				if (args.assignedTo !== undefined) {
+					qb = qb.eq("assignedTo", args.assignedTo);
+				}
+				if (args.status !== undefined) {
+					qb = qb.eq("status", args.status);
+				}
+				if (args.project !== undefined) {
+					qb = qb.eq("project", args.project);
+				}
+				if (args.missionId !== undefined) {
+					qb = qb.eq("missionId", args.missionId);
+				}
+				if (!scope.isMaster && scope.orgSlug !== null) {
+					qb = qb.eq("orgId", scope.orgSlug);
+				}
+				return qb;
+			})
+			.take(limit);
+
+		const filtered = filterByOrgScope(results, scope);
+
+		if (!lite) return filtered;
+		return filtered.map((t) => ({
+			_id: t._id,
+			title: t.title,
+			status: t.status,
+			priority: t.priority,
+			assignedTo: t.assignedTo,
+			missionId: t.missionId,
+		}));
+	},
+});
