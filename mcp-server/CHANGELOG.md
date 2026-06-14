@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.12.0] — 2026-06-14
+
+### Changed
+- `check_messages` now calls `messages:checkNewMessagesEnvelope` (Convex PR #759 mergeCommit `c03023fc85463fe16fc53948d3002420bc1c4547`) for bounded tool-response size. New optional `limit` arg (1-50, default 20). When the call is truncated, the text payload appends `— truncated. Resume with check_messages since=<nextSince>` so the orchestrator can page the backlog cleanly without busting Claude Code's tool-response cap.
+- `since` arg description amended with a "pair with `nextSince` from a previous truncated reply" hint.
+
+### Notes
+- Closes Pi BLOCKER VP task `k1702xaahb` (Day 102 — sigma-vps cron crash on a 36-message / 53 KB backlog).
+- Legacy `messages:checkNewMessages` Convex query left intact for vp-mcp <2.12.0 callers (no break).
+
 ## [2.11.0] — 2026-06-14 — Day 102 CRUD baseline PR-C-bis option B: 3-entity Convex searchIndex (mission k575kc1ryps0n8br95jw3q7d0x88m2v9)
 
 Mission `mcp-crud-baseline-standard` PR-C-bis under T2. Pi-sequenced follow-up after PR-C (rename-only safe subset) — implements **option B SCOPED** per Pi arbitrage msg `jn7abynmghy5qdr9ga0b914wmh88n99w` ("GO option B SCOPED — démarre PR-C avec 3 entités prioritaires"): tasks + messages + briefingNotes get native Convex BM25 search via `.searchIndex()` schema additions + per-entity Convex queries + MCP tool wrappers.
