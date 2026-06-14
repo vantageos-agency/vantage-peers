@@ -7034,6 +7034,7 @@ export function registerTools(
 			orchestrator: z.string(),
 			project: z.string().optional(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Register repo mapping (alias)" },
 		async ({ repo, orchestrator, project }) => {
 			const masterDenied = guardMasterOnly("register_repo_mapping");
 			if (masterDenied) return masterDenied;
@@ -7059,6 +7060,7 @@ export function registerTools(
 		{
 			repo: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: true, title: "Delete repo mapping (alias)" },
 		async ({ repo }) => {
 			const masterDenied = guardMasterOnly("delete_repo_mapping");
 			if (masterDenied) return masterDenied;
@@ -7084,6 +7086,7 @@ export function registerTools(
 			githubRepo: z.string(),
 			orchestrator: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Register deployment (alias)" },
 		async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
 			const masterDenied = guardMasterOnly("register_deployment");
 			if (masterDenied) return masterDenied;
@@ -7111,6 +7114,7 @@ export function registerTools(
 		{
 			name: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: true, title: "Delete deployment (alias)" },
 		async ({ name }) => {
 			const masterDenied = guardMasterOnly("delete_deployment");
 			if (masterDenied) return masterDenied;
@@ -7133,6 +7137,7 @@ export function registerTools(
 			mandateId: z.string(),
 			proposedAmount: z.number(),
 		},
+		{ readOnlyHint: true, openWorldHint: false, destructiveHint: false, title: "Check mandate spending (alias)" },
 		async ({ mandateId, proposedAmount }) => {
 			try {
 				const result = await convex.query("mandates:validateSpending" as any, {
@@ -7156,6 +7161,7 @@ export function registerTools(
 			patternId: z.string(),
 			validatedFix: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Check/validate fix (alias)" },
 		async ({ patternId, validatedFix }) => {
 			const masterDenied = guardMasterOnly("check_fix");
 			if (masterDenied) return masterDenied;
@@ -7185,6 +7191,7 @@ export function registerTools(
 			commitSha: z.string().optional(),
 			createdBy: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create fix attempt (alias)" },
 		async ({ patternId, description, worked, why, commitSha, createdBy }) => {
 			const fromDenied = guardFrom(createdBy);
 			if (fromDenied) return fromDenied;
@@ -7215,6 +7222,7 @@ export function registerTools(
 			dependsOn: z.array(z.string()),
 			callerOrchestrator: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create task dependency (alias)" },
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
 				const result = await convex.mutation("tasks:update" as any, {
@@ -7240,6 +7248,7 @@ export function registerTools(
 			instanceId: z.string().optional(),
 			summary: z.string(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Update summary (alias)" },
 		async ({ orchestratorId, instanceId, summary }) => {
 			try {
 				const result = await convex.mutation("profiles:updateDynamic" as any, {
@@ -7266,6 +7275,7 @@ export function registerTools(
 			content: z.string(),
 			author: z.string().optional(),
 		},
+		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create diary entry (alias)" },
 		async ({ date, orchestrator, content, author }) => {
 			assertContentSize(content, "content");
 			if (author !== undefined) {
