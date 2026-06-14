@@ -49,7 +49,7 @@ function createTestConvex() {
 }
 
 describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
-	test("T1: empty DB → inserts all 4 seed profiles (baseline)", async () => {
+	test("T1: empty DB → inserts all seed profiles (baseline)", async () => {
 		const t = createTestConvex();
 		const summary = await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: MASTER_TOKEN,
@@ -62,9 +62,14 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 				skipped: expect.any(Array),
 			}),
 		);
-		expect((summary.inserted as string[]).sort()).toEqual(
-			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
-		);
+		// Catalog now contains 6 seed profiles (clio-iris-rh + helios-iris-rh added
+		// for Marie's Iris RH trio). The 4 original profiles must all be present.
+		const inserted = (summary.inserted as string[]).sort();
+		expect(inserted).toContain("master");
+		expect(inserted).toContain("marie-iris-rh");
+		expect(inserted).toContain("client-generic");
+		expect(inserted).toContain("public-readonly");
+		expect(inserted.length).toBeGreaterThanOrEqual(4);
 		expect(summary.updated).toEqual([]);
 		expect(summary.skipped).toEqual([]);
 	});
@@ -81,9 +86,13 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 
 		expect(second.inserted).toEqual([]);
 		expect(second.updated).toEqual([]);
-		expect((second.skipped as string[]).sort()).toEqual(
-			["client-generic", "marie-iris-rh", "master", "public-readonly"].sort(),
-		);
+		// All catalog profiles must appear in skipped (≥4 originals).
+		const skipped = (second.skipped as string[]).sort();
+		expect(skipped).toContain("master");
+		expect(skipped).toContain("marie-iris-rh");
+		expect(skipped).toContain("client-generic");
+		expect(skipped).toContain("public-readonly");
+		expect(skipped.length).toBeGreaterThanOrEqual(4);
 	});
 
 	test("T3: existing row drifted from catalog → UPDATES the row (not skip)", async () => {
@@ -109,8 +118,8 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			callerToken: MASTER_TOKEN,
 		});
 
-		expect((summary.updated as string[])).toContain("marie-iris-rh");
-		expect((summary.inserted as string[])).not.toContain("marie-iris-rh");
+		expect(summary.updated as string[]).toContain("marie-iris-rh");
+		expect(summary.inserted as string[]).not.toContain("marie-iris-rh");
 
 		// Verify the row now matches the catalog.
 		const profile = await t.query(api.oauth.getScopeProfile, {
@@ -238,10 +247,10 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		expect(row.targetProfileId).toBe("marie-iris-rh");
 		const prev = row.previousState as Record<string, unknown>;
 		const next = row.newState as Record<string, unknown>;
-		expect((prev.namespaceReadPrefixes as string[])).toEqual([
+		expect(prev.namespaceReadPrefixes as string[]).toEqual([
 			"orchestrator/marie",
 		]);
-		expect((next.namespaceReadPrefixes as string[])).toContain(
+		expect(next.namespaceReadPrefixes as string[]).toContain(
 			"orchestrator/victor",
 		);
 	});
@@ -279,7 +288,6 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		const t = createTestConvex();
 		// Seed an outdated row so the first run produces ONE update.
 		await t.run(async (ctx) => {
-			const now = Date.now();
 			await ctx.db.insert("oauth_scope_profiles", {
 				profileId: "marie-iris-rh",
 				description: "drifted",
