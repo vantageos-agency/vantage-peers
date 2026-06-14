@@ -2,7 +2,7 @@
 
 **Scope:** VantagePeers Cloud (multi-tenant). Self-host operations are documented separately under `docs/getting-started/`. The two products share the same security core but diverge on tenant isolation, emergency maintenance, and audit retention. Do not cross-apply runbooks.
 
-This document is the canonical reference for the v2.10.0 security baseline.
+This document is the canonical reference for the v2.11.0 security baseline.
 
 ---
 

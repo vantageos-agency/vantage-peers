@@ -2647,6 +2647,70 @@ export function registerTools(
 		},
 	);
 
+	// ── search_messages_by_keyword ─────────────────────────────────────────────
+	// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+	// BM25 keyword search over message content. Backed by Convex
+	// `messages:searchMessagesByKeyword` using the `search_content` searchIndex.
+
+	server.tool(
+		"search_messages_by_keyword",
+		"BM25 full-text keyword search over message content, ranked by relevance. " +
+			"WHEN: use for post-incident audit or to find peer DMs by topic — e.g. 'find messages about deploy' across the recent sessionDay window. " +
+			"EXAMPLE: search_messages_by_keyword query='convex deploy' from='pi' sessionDay=102 limit=10.",
+		{
+			query: z.string().describe("Search term to match against message content"),
+			from: z.string().optional().describe("Filter by sender role"),
+			channel: z
+				.string()
+				.optional()
+				.describe("Filter by channel — e.g. 'sigma', 'broadcast'"),
+			sessionDay: z
+				.number()
+				.int()
+				.optional()
+				.describe("Filter to a specific session day"),
+			tenantId: z.string().optional().describe("Filter by tenant id"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search messages by keyword (BM25)",
+		},
+		async ({ query, from, channel, sessionDay, tenantId, limit, fields }) => {
+			try {
+				const results = await convex.query(
+					"messages:searchMessagesByKeyword" as any,
+					{
+						query,
+						from,
+						channel,
+						sessionDay,
+						tenantId,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
+					},
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── list_broadcast_status ───────────────────────────────────────────────────
 	// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
 	// @cursorPagingException single-object-shape-not-list
@@ -2952,6 +3016,73 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_tasks_by_keyword ────────────────────────────────────────────────
+	// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+	// BM25 keyword search over task titles. Backed by Convex `tasks:searchTasksByKeyword`
+	// which uses the `search_title` searchIndex. Filter axes: assignedTo, status,
+	// project, missionId — all pushed into the index for sub-linear scan.
+
+	server.tool(
+		"search_tasks_by_keyword",
+		"BM25 full-text keyword search over task titles, ranked by relevance. " +
+			"WHEN: use to find tasks by topic/keyword when list_tasks filters are too broad — e.g. 'find tasks about hook' across all assignees. " +
+			"EXAMPLE: search_tasks_by_keyword query='hook PostToolUse' status='todo' limit=10.",
+		{
+			query: z.string().describe("Search term to match against task title"),
+			assignedTo: z
+				.string()
+				.optional()
+				.describe("Filter by assignee role"),
+			status: z
+				.enum(["todo", "in_progress", "review", "blocked", "done"])
+				.optional()
+				.describe("Filter by status"),
+			project: z.string().optional().describe("Filter by project name"),
+			missionId: z
+				.string()
+				.optional()
+				.describe("Filter by mission Convex ID"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search tasks by keyword (BM25)",
+		},
+		async ({ query, assignedTo, status, project, missionId, limit, fields }) => {
+			try {
+				const results = await convex.query(
+					"tasks:searchTasksByKeyword" as any,
+					{
+						query,
+						assignedTo,
+						status,
+						project,
+						missionId,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
+					},
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -4369,6 +4500,61 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── search_briefing_notes_by_keyword ────────────────────────────────────────
+	// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+	// BM25 keyword search over briefing note content. Backed by Convex
+	// `briefingNotes:searchBriefingNotesByKeyword` using the `search_content` searchIndex.
+
+	server.tool(
+		"search_briefing_notes_by_keyword",
+		"BM25 full-text keyword search over briefing note content, ranked by relevance. " +
+			"WHEN: use to recall briefings about a topic/decision when list_briefing_notes filters are too coarse — e.g. 'find briefings about migration plan'. " +
+			"EXAMPLE: search_briefing_notes_by_keyword query='migration plan' topic='daily' limit=10.",
+		{
+			query: z
+				.string()
+				.describe("Search term to match against briefing note content"),
+			topic: z.string().optional().describe("Filter by topic"),
+			createdBy: z.string().optional().describe("Filter by creator role"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
+			fields: z
+				.enum(["lite", "full"])
+				.optional()
+				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Search briefing notes by keyword (BM25)",
+		},
+		async ({ query, topic, createdBy, limit, fields }) => {
+			try {
+				const results = await convex.query(
+					"briefingNotes:searchBriefingNotesByKeyword" as any,
+					{
+						query,
+						topic,
+						createdBy,
+						limit: limit ?? 20,
+						fields: fields ?? "lite",
+					},
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

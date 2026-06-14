@@ -435,3 +435,50 @@ export const getById = query({
 		return await ctx.db.get(args.messageId);
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
+// BM25 keyword search over message content via Convex native .searchIndex().
+//
+// Backed by the `search_content` searchIndex declared in schema.ts.
+// Filter axes: from, channel, sessionDay, tenantId (matches messages.list()).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const searchMessagesByKeyword = query({
+	args: {
+		query: v.string(),
+		from: v.optional(creatorValidator),
+		channel: v.optional(v.string()),
+		sessionDay: v.optional(v.number()),
+		tenantId: v.optional(v.string()),
+		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+	},
+	handler: async (ctx, args) => {
+		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
+		const lite = args.fields === "lite";
+
+		const results = await ctx.db
+			.query("messages")
+			.withSearchIndex("search_content", (q) => {
+				let qb = q.search("content", args.query);
+				if (args.from !== undefined) qb = qb.eq("from", args.from);
+				if (args.channel !== undefined) qb = qb.eq("channel", args.channel);
+				if (args.sessionDay !== undefined)
+					qb = qb.eq("sessionDay", args.sessionDay);
+				if (args.tenantId !== undefined) qb = qb.eq("tenantId", args.tenantId);
+				return qb;
+			})
+			.take(limit);
+
+		if (!lite) return results;
+		return results.map((m) => ({
+			_id: m._id,
+			from: m.from,
+			channel: m.channel,
+			content: m.content,
+			sessionDay: m.sessionDay,
+			createdAt: m.createdAt,
+		}));
+	},
+});

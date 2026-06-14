@@ -242,7 +242,7 @@ Example:
 ### Session (1)
 `set_summary`
 
-## Compact payloads and status aliases (v2.10.0 — feature since v2.3.0)
+## Compact payloads and status aliases (v2.11.0 — feature since v2.3.0)
 
 ### `fields=lite` — reduced token payloads
 
