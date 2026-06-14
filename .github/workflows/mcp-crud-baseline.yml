@@ -71,7 +71,10 @@ jobs:
           ALERT_CONTENT="[ALERT] CRUD-T3 smoke matrix FAILED on Railway PROD — branch: ${{ github.ref_name }}, run: ${{ github.run_id }}. ${FAILING_SUMMARY:0:200}"
 
           # Post DM to Pi
-          curl -s -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
+          # MCP Streamable-HTTP transport returns the session id in the
+          # response HEADER `Mcp-Session-Id`, NOT the JSON body.
+          # Use -D - to dump response headers to stdout, then extract the header.
+          INIT_HEADERS_AND_BODY=$(curl -s -D - -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
             -d "{
@@ -83,9 +86,10 @@ jobs:
                 \"capabilities\": {},
                 \"clientInfo\": { \"name\": \"gh-actions-alert\", \"version\": \"1.0\" }
               }
-            }" > /tmp/init_resp.json || true
+            }") || true
 
-          SESSION_ID=$(jq -r '.result // empty' /tmp/init_resp.json 2>/dev/null || echo "")
+          # HTTP/2 lower-cases headers; handle both cases with case-insensitive grep.
+          SESSION_ID=$(echo "${INIT_HEADERS_AND_BODY}" | grep -i '^mcp-session-id:' | sed 's/^[Mm][Cc][Pp]-[Ss][Ee][Ss][Ss][Ii][Oo][Nn]-[Ii][Dd]:[[:space:]]*//' | tr -d '\r\n' || echo "")
 
           curl -s -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
             -H "Content-Type: application/json" \

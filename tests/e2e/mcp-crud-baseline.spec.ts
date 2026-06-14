@@ -37,6 +37,15 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conditional test runner — use it.skip when PROD credentials are absent so
+// a credless local run reports "25 skipped / 0 passed" rather than "25 passed"
+// (which would be a false-positive: no PROD contact was made).
+// ─────────────────────────────────────────────────────────────────────────────
+const hasCreds =
+	!!process.env.VP_MCP_PROD_URL && !!process.env.VP_MCP_BEARER_TOKEN;
+const itc = hasCreds ? it : it.skip;
 import {
 	assertMcpResult,
 	type CreatedIds,
@@ -136,24 +145,12 @@ afterAll(async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: skip when no creds
-// ─────────────────────────────────────────────────────────────────────────────
-
-function maybeSkip() {
-	if (SKIP || !env) {
-		return true;
-	}
-	return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ENTITY 1 — TASKS (5 ops)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Entity: tasks — 5 ops", () => {
 	// op A — list
-	it("tasks op-A: list_tasks returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("tasks op-A: list_tasks returns HTTP 200 with content array", async () => {
 		const result = await callTool(env!, sessionId, "list_tasks", {
 			assignedTo: SMOKE_MARKER,
 			limit: 5,
@@ -163,8 +160,7 @@ describe("Entity: tasks — 5 ops", () => {
 	});
 
 	// op B — keyword search
-	it("tasks op-B: search_tasks_by_keyword returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("tasks op-B: search_tasks_by_keyword returns HTTP 200 with content array", async () => {
 		const result = await callTool(env!, sessionId, "search_tasks_by_keyword", {
 			query: SMOKE_MARKER,
 			limit: 5,
@@ -176,8 +172,7 @@ describe("Entity: tasks — 5 ops", () => {
 	// op C — semantic search MISSING in registry; substitute second keyword search
 	// WARNING: search_tasks_by_semantic does not exist in src/tools.ts as of v2.12.0.
 	// Substituting with a broader keyword query to maintain 25-cell total.
-	it("tasks op-C [SUBSTITUTED — no search_tasks_by_semantic]: search_tasks_by_keyword with alt query", async () => {
-		if (maybeSkip()) return;
+	itc("tasks op-C [SUBSTITUTED — no search_tasks_by_semantic]: search_tasks_by_keyword with alt query", async () => {
 		const result = await callTool(env!, sessionId, "search_tasks_by_keyword", {
 			query: "crud smoke baseline",
 			status: "todo",
@@ -188,8 +183,7 @@ describe("Entity: tasks — 5 ops", () => {
 	});
 
 	// op D — create
-	it("tasks op-D: create_task creates a dummy task and returns taskId", async () => {
-		if (maybeSkip()) return;
+	itc("tasks op-D: create_task creates a dummy task and returns taskId", async () => {
 		const result = await callTool(env!, sessionId, "create_task", {
 			title: `[crud-smoke] baseline matrix task ${Date.now()}`,
 			assignedTo: SMOKE_MARKER,
@@ -206,8 +200,7 @@ describe("Entity: tasks — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	it("tasks op-E: get_task reads back the created task by ID", async () => {
-		if (maybeSkip()) return;
+	itc("tasks op-E: get_task reads back the created task by ID", async () => {
 		expect(created.taskIds.length).toBeGreaterThan(0);
 		const taskId = created.taskIds[0];
 		const result = await callTool(env!, sessionId, "get_task", { taskId });
@@ -227,8 +220,7 @@ describe("Entity: tasks — 5 ops", () => {
 
 describe("Entity: messages — 5 ops", () => {
 	// op A — list
-	it("messages op-A: list_messages returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("messages op-A: list_messages returns HTTP 200 with content array", async () => {
 		const result = await callTool(env!, sessionId, "list_messages", {
 			from: SMOKE_CREATOR,
 			limit: 5,
@@ -238,8 +230,7 @@ describe("Entity: messages — 5 ops", () => {
 	});
 
 	// op B — keyword search
-	it("messages op-B: search_messages_by_keyword returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("messages op-B: search_messages_by_keyword returns HTTP 200 with content array", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -256,8 +247,7 @@ describe("Entity: messages — 5 ops", () => {
 	// op C — semantic search MISSING in registry; substitute second keyword search
 	// WARNING: search_messages_by_semantic does not exist in src/tools.ts as of v2.12.0.
 	// Substituting with a broader keyword query to maintain 25-cell total.
-	it("messages op-C [SUBSTITUTED — no search_messages_by_semantic]: search_messages_by_keyword with alt query", async () => {
-		if (maybeSkip()) return;
+	itc("messages op-C [SUBSTITUTED — no search_messages_by_semantic]: search_messages_by_keyword with alt query", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -272,8 +262,7 @@ describe("Entity: messages — 5 ops", () => {
 	});
 
 	// op D — create (send_message)
-	it("messages op-D: send_message creates a dummy message and returns messageId", async () => {
-		if (maybeSkip()) return;
+	itc("messages op-D: send_message creates a dummy message and returns messageId", async () => {
 		const result = await callTool(env!, sessionId, "send_message", {
 			from: SMOKE_CREATOR,
 			channel: SMOKE_MARKER,
@@ -292,8 +281,7 @@ describe("Entity: messages — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	it("messages op-E: get_message reads back the created message by ID", async () => {
-		if (maybeSkip()) return;
+	itc("messages op-E: get_message reads back the created message by ID", async () => {
 		expect(created.messageIds.length).toBeGreaterThan(0);
 		const messageId = created.messageIds[0];
 		const result = await callTool(env!, sessionId, "get_message", {
@@ -316,8 +304,7 @@ describe("Entity: messages — 5 ops", () => {
 
 describe("Entity: memories — 5 ops", () => {
 	// op A — list
-	it("memories op-A: list_memories returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("memories op-A: list_memories returns HTTP 200 with content array", async () => {
 		const result = await callTool(env!, sessionId, "list_memories", {
 			namespace: SMOKE_NS,
 			limit: 5,
@@ -327,8 +314,7 @@ describe("Entity: memories — 5 ops", () => {
 	});
 
 	// op B — keyword search
-	it("memories op-B: search_memories_by_keyword returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("memories op-B: search_memories_by_keyword returns HTTP 200 with content array", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -344,8 +330,7 @@ describe("Entity: memories — 5 ops", () => {
 	});
 
 	// op C — semantic search (EXISTS: search_memories_by_semantic)
-	it("memories op-C: search_memories_by_semantic returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("memories op-C: search_memories_by_semantic returns HTTP 200 with content array", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -361,8 +346,7 @@ describe("Entity: memories — 5 ops", () => {
 	});
 
 	// op D — store (store_memory)
-	it("memories op-D: store_memory creates a dummy memory and returns memoryId", async () => {
-		if (maybeSkip()) return;
+	itc("memories op-D: store_memory creates a dummy memory and returns memoryId", async () => {
 		const result = await callTool(env!, sessionId, "store_memory", {
 			namespace: SMOKE_NS,
 			type: "project",
@@ -376,8 +360,7 @@ describe("Entity: memories — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	it("memories op-E: get_memory reads back the created memory by ID", async () => {
-		if (maybeSkip()) return;
+	itc("memories op-E: get_memory reads back the created memory by ID", async () => {
 		expect(created.memoryIds.length).toBeGreaterThan(0);
 		const memoryId = created.memoryIds[0];
 		const result = await callTool(env!, sessionId, "get_memory", { memoryId });
@@ -397,8 +380,7 @@ describe("Entity: memories — 5 ops", () => {
 
 describe("Entity: briefingNotes — 5 ops", () => {
 	// op A — list
-	it("briefingNotes op-A: list_briefing_notes returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("briefingNotes op-A: list_briefing_notes returns HTTP 200 with content array", async () => {
 		const result = await callTool(env!, sessionId, "list_briefing_notes", {
 			topic: SMOKE_MARKER,
 			limit: 5,
@@ -408,8 +390,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 	});
 
 	// op B — keyword search
-	it("briefingNotes op-B: search_briefing_notes_by_keyword returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("briefingNotes op-B: search_briefing_notes_by_keyword returns HTTP 200 with content array", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -426,8 +407,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 	// op C — semantic search MISSING in registry; substitute second keyword search
 	// WARNING: search_briefing_notes_by_semantic does not exist in src/tools.ts as of v2.12.0.
 	// Substituting with a broader keyword query to maintain 25-cell total.
-	it("briefingNotes op-C [SUBSTITUTED — no search_briefing_notes_by_semantic]: search_briefing_notes_by_keyword with alt query", async () => {
-		if (maybeSkip()) return;
+	itc("briefingNotes op-C [SUBSTITUTED — no search_briefing_notes_by_semantic]: search_briefing_notes_by_keyword with alt query", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -442,8 +422,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 	});
 
 	// op D — create
-	it("briefingNotes op-D: create_briefing_note creates a dummy note and returns noteId", async () => {
-		if (maybeSkip()) return;
+	itc("briefingNotes op-D: create_briefing_note creates a dummy note and returns noteId", async () => {
 		const result = await callTool(env!, sessionId, "create_briefing_note", {
 			title: `[crud-smoke] baseline matrix briefing ${Date.now()}`,
 			topic: SMOKE_MARKER,
@@ -458,8 +437,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	it("briefingNotes op-E: get_briefing_note reads back the created note by ID", async () => {
-		if (maybeSkip()) return;
+	itc("briefingNotes op-E: get_briefing_note reads back the created note by ID", async () => {
 		expect(created.briefingNoteIds.length).toBeGreaterThan(0);
 		const noteId = created.briefingNoteIds[0];
 		const result = await callTool(env!, sessionId, "get_briefing_note", {
@@ -481,8 +459,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 
 describe("Entity: episodes — 5 ops", () => {
 	// op A — list
-	it("episodes op-A: list_episodes returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("episodes op-A: list_episodes returns HTTP 200 with content array", async () => {
 		const result = await callTool(env!, sessionId, "list_episodes", {
 			namespace: SMOKE_NS,
 			limit: 5,
@@ -492,8 +469,7 @@ describe("Entity: episodes — 5 ops", () => {
 	});
 
 	// op B — keyword search (EXISTS: search_episodes_by_keyword)
-	it("episodes op-B: search_episodes_by_keyword returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("episodes op-B: search_episodes_by_keyword returns HTTP 200 with content array", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -509,8 +485,7 @@ describe("Entity: episodes — 5 ops", () => {
 	});
 
 	// op C — semantic search (EXISTS: search_episodes_by_semantic)
-	it("episodes op-C: search_episodes_by_semantic returns HTTP 200 with content array", async () => {
-		if (maybeSkip()) return;
+	itc("episodes op-C: search_episodes_by_semantic returns HTTP 200 with content array", async () => {
 		const result = await callTool(
 			env!,
 			sessionId,
@@ -526,8 +501,7 @@ describe("Entity: episodes — 5 ops", () => {
 	});
 
 	// op D — store (store_episode)
-	it("episodes op-D: store_episode creates a dummy episode and returns episodeId", async () => {
-		if (maybeSkip()) return;
+	itc("episodes op-D: store_episode creates a dummy episode and returns episodeId", async () => {
 		const result = await callTool(env!, sessionId, "store_episode", {
 			namespace: SMOKE_NS,
 			createdBy: SMOKE_CREATOR,
@@ -547,8 +521,7 @@ describe("Entity: episodes — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	it("episodes op-E: get_episode reads back the created episode by ID", async () => {
-		if (maybeSkip()) return;
+	itc("episodes op-E: get_episode reads back the created episode by ID", async () => {
 		expect(created.episodeIds.length).toBeGreaterThan(0);
 		const episodeId = created.episodeIds[0];
 		const result = await callTool(env!, sessionId, "get_episode", {
