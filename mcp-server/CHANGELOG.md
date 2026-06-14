@@ -1,5 +1,40 @@
 # Changelog
 
+## [2.7.1] — 2026-06-14 — Day 101 FIX-B mcpError() → mcpConvexError() sweep (task k1744wk2gfgqt2gdqh41d4r91h88n410)
+
+Patch-level fix to make every tool wrapper surface structured ConvexError
+diagnostics instead of opaque `"Server Error [Request ID: ...]"` strings.
+
+**Problem (Day 101):** when a Convex mutation/query threw a `ConvexError`
+(e.g. `TASK_START_BLOCKED`, `COMPLETION_NOTE_REQUIRED`) or an
+`ArgumentValidationError`, the tool wrapper called
+`mcpError(error.message ?? String(error))` which returned a plain
+`Error: <message>` text payload. The MCP client (Claude Code) then often
+re-displayed this as a generic `Server Error [Request ID:...]`, masking the
+actual root cause and triggering misdiagnosis sprees (Pi msg
+`jn7c5tfj0347vaenyqgrezehk188mr11` mistakenly attributed the symptoms to
+a backend regression that did not exist — see Sigma report msg
+`jn773p8qnfp6ycb1f7gajhs8vn88m11a`).
+
+**Fix:** sweep all 99 occurrences of
+`return mcpError(error.message ?? String(error))` →
+`return mcpConvexError(error)`. The `mcpConvexError` helper (already
+present at `src/tools.ts:535`, shipped 2.4.x) parses ConvexError messages
+into a structured JSON `{ code, message, path, hint }` payload that
+surfaces the actual error code (`ArgumentValidationError`,
+`ConvexError`, `AuthorizationError`, `SchemaValidationError`, etc.)
+along with a path and a concise hint for ID-table mismatches.
+
+Total counts post-sweep: `grep mcpConvexError(` → 102 ; `grep
+mcpError(error.message` → 0.
+
+Type check: `npx tsc --noEmit` exits 0.
+
+Mission/refs: `k575kc1ryps0n8br95jw3q7d0x88m2v9` MCP CRUD Baseline Standard,
+task FIX-B `k1744wk2gfgqt2gdqh41d4r91h88n410`. Co-shipped with hook
+`enforce-friction-field.py` v1.1.0 STDERR clarification (Day 101 task
+FIX-A `k17ads7kh7qk7yxgfe0dh73ggx88ny9f`).
+
 ## [2.7.0] — 2026-06-13 — Day 100 get_by_id surface Phase 2b (task k172735brsw6bc3j2dkkkfxqrx88kkjq)
 
 Phase 2b wires 2 MCP wrappers calling the Phase 2a Convex queries deployed

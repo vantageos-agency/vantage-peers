@@ -1094,7 +1094,7 @@ export function registerTools(
 					createdBy,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1135,7 +1135,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1172,7 +1172,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1235,7 +1235,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1288,7 +1288,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1352,7 +1352,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1428,7 +1428,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1468,7 +1468,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1541,7 +1541,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1664,7 +1664,7 @@ export function registerTools(
 					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1766,7 +1766,7 @@ export function registerTools(
 					channel,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1879,7 +1879,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1932,7 +1932,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -1979,7 +1979,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2030,7 +2030,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2136,7 +2136,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2249,7 +2249,7 @@ export function registerTools(
 					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2316,7 +2316,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2420,7 +2420,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2561,7 +2561,7 @@ export function registerTools(
 					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2670,7 +2670,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2719,7 +2719,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2764,7 +2764,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2812,7 +2812,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2857,7 +2857,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2918,7 +2918,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -2976,7 +2976,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3080,7 +3080,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3165,7 +3165,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3282,7 +3282,7 @@ export function registerTools(
 					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3320,7 +3320,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3398,7 +3398,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3440,7 +3440,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3505,7 +3505,7 @@ export function registerTools(
 					orchestrator,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3558,7 +3558,7 @@ export function registerTools(
 					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3671,7 +3671,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3858,7 +3858,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -3978,7 +3978,7 @@ export function registerTools(
 					content: [{ type: "text", text }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4050,7 +4050,7 @@ export function registerTools(
 					createdBy,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4149,7 +4149,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4189,7 +4189,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4248,7 +4248,7 @@ export function registerTools(
 					componentId,
 					errorMessage: error?.message ?? String(error),
 				});
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4283,7 +4283,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4343,7 +4343,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4418,7 +4418,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4511,7 +4511,7 @@ export function registerTools(
 					content: [{ type: "text", text: capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_recurring_tasks") }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4545,7 +4545,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4579,7 +4579,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4613,7 +4613,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4671,7 +4671,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4751,7 +4751,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4796,7 +4796,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4856,7 +4856,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4907,7 +4907,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -4941,7 +4941,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5047,7 +5047,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5146,7 +5146,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5241,7 +5241,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5279,7 +5279,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5377,7 +5377,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5418,7 +5418,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5477,7 +5477,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5574,7 +5574,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5620,7 +5620,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5764,7 +5764,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5810,7 +5810,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5861,7 +5861,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5911,7 +5911,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -5959,7 +5959,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6000,7 +6000,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6083,7 +6083,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6135,7 +6135,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6180,7 +6180,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6243,7 +6243,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6355,7 +6355,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6400,7 +6400,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6439,7 +6439,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6534,7 +6534,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6624,7 +6624,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6700,7 +6700,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6740,7 +6740,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6841,7 +6841,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -6878,7 +6878,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7045,7 +7045,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7066,7 +7066,7 @@ export function registerTools(
 				const result = await convex.mutation("githubRepoMapping:remove" as any, { repo });
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7097,7 +7097,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7118,7 +7118,7 @@ export function registerTools(
 				const result = await convex.mutation("errorMonitor:removeDeployment" as any, { name });
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7141,7 +7141,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7166,7 +7166,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7199,7 +7199,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7224,7 +7224,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7249,7 +7249,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7281,7 +7281,7 @@ export function registerTools(
 				});
 				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7314,7 +7314,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7346,7 +7346,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7378,7 +7378,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7415,7 +7415,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7450,7 +7450,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
@@ -7485,7 +7485,7 @@ export function registerTools(
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
 				};
 			} catch (error: any) {
-				return mcpError(error.message ?? String(error));
+				return mcpConvexError(error);
 			}
 		},
 	);
