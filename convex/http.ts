@@ -553,30 +553,85 @@ http.route({
 		if (eventType === "pull_request" && action === "closed") {
 			const pr = payload.pull_request as Record<string, unknown>;
 			if (pr?.merged) {
-				// Notify orchestrator
-				await ctx.runMutation(api.messages.sendMessage, {
-					from: "system",
-					channel: orchestrator,
-					content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Deploy to prod now: npx convex deploy --yes`,
-				});
+				// Day 102 — gate auto-deploy task on whether the PR touched any
+				// convex/ file. Pure mcp-server PRs trigger a no-op convex deploy
+				// (doctrine satisfied but functionally pointless), accumulating
+				// dual-deploy noise (friction observed on PR #748 + #751 + #754
+				// timeframe). Resolution dispatched via Pi task k1746zhr669jf14dz2zbsetre188nam6.
+				//
+				// We fetch the changed files list from the GitHub API (the
+				// webhook payload only carries the COUNT in `changed_files`, not
+				// the list). When token is unavailable or fetch fails, we default
+				// to the legacy behaviour (create task) — fail-open is safer than
+				// missing a real prod deploy.
+				const prUrl = pr.url as string | undefined;
+				const githubToken = process.env.GITHUB_TOKEN;
+				let touchesConvex: boolean | null = null; // null = unknown
+				if (prUrl && githubToken) {
+					try {
+						const filesRes = await fetch(`${prUrl}/files?per_page=100`, {
+							headers: {
+								Accept: "application/vnd.github+json",
+								Authorization: `Bearer ${githubToken}`,
+								"User-Agent": "vantage-peers-webhook",
+							},
+						});
+						if (filesRes.ok) {
+							const files = (await filesRes.json()) as Array<{
+								filename?: string;
+							}>;
+							touchesConvex = files.some((f) => {
+								const name = f.filename ?? "";
+								return (
+									/^convex\//.test(name) ||
+									/^apps\/[^/]+\/convex\//.test(name)
+								);
+							});
+						} else {
+							console.warn(
+								`[githubWebhook] files fetch HTTP ${filesRes.status} on PR #${pr.number as number} — fail-open (create deploy task)`,
+							);
+						}
+					} catch (err) {
+						console.warn(
+							`[githubWebhook] files fetch threw on PR #${pr.number as number} — fail-open (create deploy task): ${String(err)}`,
+						);
+					}
+				}
 
-				// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede +
-				// Day 98 k173yr5n1 Mechanism (a) bundled-deploy dedup by timestamp).
-				const mergedAtIso = pr.merged_at as string | undefined;
-				const prMergedAt =
-					mergedAtIso && !Number.isNaN(Date.parse(mergedAtIso))
-						? Date.parse(mergedAtIso)
-						: undefined;
-				await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
-					title: `[Deploy] PR #${pr.number as number} merged — deploy ${project} to prod`,
-					description: `PR #${pr.number as number} "${pr.title as string}" was merged by ${(pr.merged_by as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url as string}`,
-					assignedTo: orchestratorAssignee,
-					project,
-					priority: "urgent",
-					createdBy: "system",
-					tags: ["github", "deploy", "pr-merged"],
-					prMergedAt,
-				});
+				// Fail-open: when touchesConvex is null (unknown) we still create
+				// the task. Only skip when we know for sure no convex/ file was
+				// touched.
+				if (touchesConvex === false) {
+					console.log(
+						`[githubWebhook] PR #${pr.number as number} merged — skipping deploy task + notify (no convex/ changes)`,
+					);
+				} else {
+					// Notify orchestrator
+					await ctx.runMutation(api.messages.sendMessage, {
+						from: "system",
+						channel: orchestrator,
+						content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Deploy to prod now: npx convex deploy --yes`,
+					});
+
+					// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede +
+					// Day 98 k173yr5n1 Mechanism (a) bundled-deploy dedup by timestamp).
+					const mergedAtIso = pr.merged_at as string | undefined;
+					const prMergedAt =
+						mergedAtIso && !Number.isNaN(Date.parse(mergedAtIso))
+							? Date.parse(mergedAtIso)
+							: undefined;
+					await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
+						title: `[Deploy] PR #${pr.number as number} merged — deploy ${project} to prod`,
+						description: `PR #${pr.number as number} "${pr.title as string}" was merged by ${(pr.merged_by as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url as string}`,
+						assignedTo: orchestratorAssignee,
+						project,
+						priority: "urgent",
+						createdBy: "system",
+						tags: ["github", "deploy", "pr-merged"],
+						prMergedAt,
+					});
+				}
 			}
 		}
 
