@@ -148,7 +148,7 @@ Top 5 capabilities, in order of impact:
 1. **Semantic memory + recall** — store typed facts; retrieve by meaning via 1536-dim vector search (`text-embedding-3-small`). Hybrid search (vector + BM25 + RRF fusion) available.
 2. **Inter-agent messaging** — real-time channel/DM/broadcast routing with per-recipient read receipts. Multi-instance aware (route to a role or a specific instance).
 3. **Task + mission orchestration** — typed task lifecycle with dependencies, atomic `checkout_task` for multi-instance conflict safety, missions for multi-step workflows (configurable templates: IRP, repo-fix, new-feature).
-4. **Fix-pattern KB** — every validated bug fix becomes a searchable pattern (symptom → root cause → fix). `search_fix_patterns` BEFORE debugging cuts repeat-mistake rate.
+4. **Fix-pattern KB** — every validated bug fix becomes a searchable pattern (symptom → root cause → fix). `search_fix_patterns_by_semantic` BEFORE debugging cuts repeat-mistake rate.
 5. **Proactive error monitoring** — hourly cron polls Convex deployments for new errors, dedups, auto-files GitHub issues. MTTR dropped from 4-day median to 28 minutes on the VantageOS fleet.
 
 <details>
@@ -262,7 +262,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | Tool | Description |
 |------|-------------|
 | `store_memory` | Store a typed memory entry with optional graph relations |
-| `recall` | Semantic vector search over memories, filtered by namespace/type |
+| `search_memories_by_semantic` (alias `recall`) | Semantic vector search over memories, filtered by namespace/type |
 | `list_memories` | List memories by namespace with optional type filter |
 | `soft_delete_memory` | Soft-delete a memory entry by ID |
 | `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
@@ -345,7 +345,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 <details>
 <summary><b>Components + Recurring + Mandates (18 tools)</b></summary>
 
-**Components (6):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components`
+**Components (6):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword` (alias `search_components`)
 
 **Recurring tasks (6):** `create_recurring_task`, `list_recurring_tasks`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
 
@@ -367,7 +367,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 <details>
 <summary><b>Search + Templates + Errors + Deployments (11 tools)</b></summary>
 
-**Search / RAG (3):** `search_fix_patterns`, `text_search`, `hybrid_search`
+**Search / RAG (3):** `search_fix_patterns_by_semantic` (alias `search_fix_patterns`), `search_memories_by_keyword` (alias `text_search`), `hybrid_search`
 
 **Mission templates (1):** `update_mission_template`
 
@@ -452,8 +452,8 @@ Memory types: `user` (facts about the user), `feedback` (behavioral corrections)
 
 Three search strategies via `@convex-dev/rag`:
 
-1. **Vector** — cosine similarity on 1536-dim embeddings (`text-embedding-3-small`). Used by `recall` and `search_fix_patterns`.
-2. **Text** — BM25 full-text matching. Exposed via `text_search`.
+1. **Vector** — cosine similarity on 1536-dim embeddings (`text-embedding-3-small`). Used by `search_memories_by_semantic` (alias `recall`) and `search_fix_patterns_by_semantic` (alias `search_fix_patterns`).
+2. **Text** — BM25 full-text matching. Exposed via `search_memories_by_keyword` (alias `text_search`).
 3. **Hybrid** — vector + text combined via Reciprocal Rank Fusion. Exposed via `hybrid_search`.
 
 Embedding is asynchronous — expect a 2-5s delay between `store_memory` and the entry becoming searchable.
@@ -486,10 +486,10 @@ Drop this into any agent's `CLAUDE.md` to enable the memory protocol:
 
 You have access to VantagePeers via MCP tools.
 
-1. On session start: `recall` your namespace for relevant context.
+1. On session start: `search_memories_by_semantic` your namespace for relevant context.
 2. After every failure: `store_episode` with context/goal/action/outcome/insight.
-3. Before repeating a mistake: `recall` similar past episodes.
-4. Before fixing a bug: `search_fix_patterns` to check if it's been seen before.
+3. Before repeating a mistake: `search_memories_by_semantic` similar past episodes.
+4. Before fixing a bug: `search_fix_patterns_by_semantic` to check if it's been seen before.
 5. Store non-obvious learnings via `store_memory`.
 6. Use `orchestrator/[name]` for personal namespace, `global` for shared.
 ```

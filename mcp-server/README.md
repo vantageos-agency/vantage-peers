@@ -91,7 +91,7 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ## Tools (97)
 
 ### Memory (6)
-`store_memory`, `recall`, `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
+`store_memory`, `search_memories_by_semantic` (alias `recall`), `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
 
 ### Profiles (3)
 `get_profile`, `update_profile`, `list_peers`
@@ -115,7 +115,7 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 `create_briefing_note`, `list_briefing_notes`
 
 ### Search / RAG (3)
-`search_fix_patterns`, `text_search`, `hybrid_search`
+`search_fix_patterns_by_semantic` (alias `search_fix_patterns`), `search_memories_by_keyword` (alias `text_search`), `hybrid_search`
 
 ### Issues (6)
 `get_issue`, `list_issues`, `update_issue_status`, `verify_issue`, `issue_stats`, `link_commit_to_issue`
@@ -231,7 +231,7 @@ Example:
 `create_bu`, `list_bus`, `get_bu`, `update_bu`, `delete_bu`
 
 ### Components (6)
-`register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components`
+`register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword` (alias `search_components`)
 
 ### Mandates (6)
 `create_mandate`, `list_mandates`, `accept_mandate`, `update_mandate`, `validate_mandate_spending`, `settle_mandate`
@@ -312,13 +312,13 @@ A fix pattern is a validated learning extracted from a resolved bug — symptom,
 
 The cycle runs as follows:
 
-1. **Agent encounters a bug.** Before touching any code, call `search_fix_patterns` with a plain-language description of the symptom. The KB returns ranked matches using semantic vector search.
+1. **Agent encounters a bug.** Before touching any code, call `search_fix_patterns_by_semantic` (alias `search_fix_patterns`) with a plain-language description of the symptom. The KB returns ranked matches using semantic vector search.
 2. **KB hit.** If a validated pattern is returned, apply the known fix directly. Log the reuse via `add_fix_attempt` (`worked: true`) so confidence scores stay current.
 3. **KB miss.** If no pattern matches, the agent fixes the bug manually using standard debugging. Once resolved, the learning is captured immediately via `create_fix_pattern` — symptom, root cause, severity, stack, and the working fix.
 4. **Validation.** After the fix holds in production (or after a second independent confirmation), call `validate_fix` to promote the pattern to validated status. This is the signal that downstream agents can trust the pattern without verification.
 5. **Issue linkage.** Call `link_issue_to_pattern` to attach the VantagePeers issue ID to the pattern. This creates a bidirectional reference: the issue record points to the pattern, and the pattern's `linkedIssueIds` list points back.
 
-The four tools that power this cycle are: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, and `link_issue_to_pattern`. The fifth tool, `search_fix_patterns`, is in the Search / RAG category and is the entry point agents should call first.
+The four tools that power this cycle are: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, and `link_issue_to_pattern`. The fifth tool, `search_fix_patterns_by_semantic` (alias `search_fix_patterns`), is in the Search / RAG category and is the entry point agents should call first.
 
 On the agent side, the `/capitalize-fix` skill and the `inject-fix-patterns` hook automate steps 3-5: the hook fires on task completion events and prompts the orchestrator to capture the learning before closing the task. The cycle is designed to be low-friction — one tool call per step, all via MCP, no `npx convex run` required.
 
