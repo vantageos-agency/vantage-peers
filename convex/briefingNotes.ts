@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
+import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // create — insert a new briefing note
@@ -228,6 +229,9 @@ export const searchBriefingNotesByKeyword = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
 	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+		requireScope(scope, "view-own-tasks");
+
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";
 
@@ -238,12 +242,23 @@ export const searchBriefingNotesByKeyword = query({
 				if (args.topic !== undefined) qb = qb.eq("topic", args.topic);
 				if (args.createdBy !== undefined)
 					qb = qb.eq("createdBy", args.createdBy);
+				if (!scope.isMaster && scope.orgSlug !== null) {
+					qb = qb.eq("orgId", scope.orgSlug);
+				}
 				return qb;
 			})
 			.take(limit);
 
-		if (!lite) return results;
-		return results.map((b) => ({
+		// Defense-in-depth: briefingNotes have no pilot/assignedTo so
+		// filterByOrgScope() does not fit. Enforce orgId match inline for
+		// non-master scopes — the index .eq("orgId", scope.orgSlug) above
+		// is the primary isolation; this is the belt-and-suspenders pass.
+		const filtered = scope.isMaster
+			? results
+			: results.filter((r) => r.orgId === scope.orgSlug);
+
+		if (!lite) return filtered;
+		return filtered.map((b) => ({
 			_id: b._id,
 			title: b.title,
 			topic: b.topic,
