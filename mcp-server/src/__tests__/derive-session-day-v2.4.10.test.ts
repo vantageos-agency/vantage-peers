@@ -7,7 +7,7 @@
 // All assertions use explicit Date.UTC(...) timestamps — no Date.now() in the
 // test body, so the suite is hermetic and time-frozen.
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { deriveSessionDay } from "../tools";
 
 describe("deriveSessionDay (A.7)", () => {
