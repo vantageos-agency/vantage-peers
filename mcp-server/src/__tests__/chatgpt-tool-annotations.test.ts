@@ -138,6 +138,11 @@ const READ_ONLY_TOOLS = new Set([
 	"whoami",
 	"validate_task_payload",
 	"check_mandate_spending",
+	// Day 102 — CRUD baseline PR-B episode 5-op surface (mission k575kc1r)
+	"get_episode",
+	"list_episodes",
+	"search_episodes_by_keyword",
+	"search_episodes_by_semantic",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([
