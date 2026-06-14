@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.8.0] — 2026-06-14 — Day 101 CRUD baseline PR-A: search_memories_by_keyword + search_memories_by_semantic (mission k575kc1ryps0n8br95jw3q7d0x88m2v9, task k1735qk9kx6agjjyt3e38rdvvh88mk0p)
+
+Mission `mcp-crud-baseline-standard` PR-A under T2 `[CRUD-T2] Implémentation gaps VP MCP`. First of 4 sub-PRs aligning the MCP surface with the Day 101 doctrine `j57dhrmkzjerjtssnr0z9ba57n88n7q7` ("5 ops per entity: get / list / search_by_keyword / search_by_semantic / create-or-upsert"). PR-A handles the convention drift on the `memories` entity — the only entity that already had both keyword + semantic search wired, but under non-canonical names.
+
+### Added (canonical names)
+
+- **`search_memories_by_keyword`** — BM25 full-text search over memories, identical wire to `text_search`. Calls `search:textSearch` Convex action 1:1, same params (`query`, `namespace?`, `type?`, `limit?`, `fields?`), same `guardRead` namespace gate, same 20-item default limit + 200 cap, same `mcpConvexError` error surface (2.7.1 sweep). Annotations: `readOnlyHint=true`, `openWorldHint=false`, `destructiveHint=false`, title `"Search memories by keyword (BM25)"`.
+- **`search_memories_by_semantic`** — semantic vector cosine search over memories, identical wire to `recall`. Calls `search:recall` Convex action 1:1, same params, same gate, same defaults. Annotations: `readOnlyHint=true`, `openWorldHint=false`, `destructiveHint=false`, title `"Search memories by semantic (vector cosine)"`.
+
+### Deprecated (alias-only, one minor window)
+
+- **`text_search`** — alias of `search_memories_by_keyword`. Description now leads with `DEPRECATED ALIAS`, source comment marks it for removal in `2.9.0`. Wire unchanged — existing callers continue to work for one minor.
+- **`recall`** — alias of `search_memories_by_semantic`. Description now leads with `DEPRECATED ALIAS`, source comment marks it for removal in `2.9.0`. Wire unchanged.
+
+### Why
+
+Per mission `k575kc1r` brief + Pi arbitrage `jn77rpx2msfy2v174sdqyjzp6n88m9bw` Q4 (RENAME CLEAN, optional one-minor dual-emit buffer if Sigma judges useful): the legacy `text_search` / `recall` pair predates the Day 101 CRUD baseline naming convention. Other entities will gain `search_<entity>s_by_keyword` / `search_<entity>s_by_semantic` in PR-C (cluster of 13) and PR-D (vectorIndex add for briefing_notes + diary). Aligning the `memories` entity FIRST means PR-C/D ship into a fleet that already understands the new naming, and skill / plugin / docs propagation (T-SKILLS, T-PLUGIN, T-DOC) has a single canonical truth to follow.
+
+`hybrid_search` is intentionally NOT renamed — it remains a cross-cutting RRF-fusion tool, not entity-scoped, per the audit `analysis/mcp-crud-baseline-vp-audit-2026-06-14.md` § 4.
+
+### Refs
+
+- Mission `k575kc1ryps0n8br95jw3q7d0x88m2v9` (MCP CRUD Baseline Standard, pilot Sigma + agents Sigma + Eta).
+- Task T2 `k1735qk9kx6agjjyt3e38rdvvh88mk0p`.
+- Audit T1 deliverable: `analysis/mcp-crud-baseline-vp-audit-2026-06-14.md` (140 lines, 53 table rows).
+- Doctrine memory: `j57dhrmkzjerjtssnr0z9ba57n88n7q7` (5 ops per entity).
+- Pi Q4 arbitrage: msg `jn77rpx2msfy2v174sdqyjzp6n88m9bw`.
+
 ## [2.7.1] — 2026-06-14 — Day 101 FIX-B mcpError() → mcpConvexError() sweep (task k1744wk2gfgqt2gdqh41d4r91h88n410)
 
 Patch-level fix to make every tool wrapper surface structured ConvexError

@@ -92,6 +92,8 @@ const READ_ONLY_TOOLS = new Set([
 	"get_memory",
 	"recall",
 	"text_search",
+	"search_memories_by_keyword",
+	"search_memories_by_semantic",
 	"hybrid_search",
 	"get_profile",
 	"list_memories",
