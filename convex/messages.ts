@@ -196,6 +196,170 @@ export const checkNewMessages = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// checkNewMessagesEnvelope — envelope-guarded variant of checkNewMessages.
+//
+// Day 102 — Pi BLOCKER task k1702xaahb: 36 unread messages = 53 KB of content
+// exceeded the Claude Code tool-response cap and crashed the cron. This variant
+// adds (a) a `limit` arg (default 20, clamp [1,50]), (b) a `maxBytes` arg
+// (default 40_000, clamp [1_000, 60_000]) summing JSON.stringify(projected)
+// per included row, (c) returns `{messages, truncated, nextSince}` so callers
+// can resume via `since=nextSince` on the next tick.
+//
+// The legacy `checkNewMessages` is intentionally left intact for vp-mcp
+// <2.12.0 consumers. New mcp-server >=2.12.0 calls THIS variant.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const checkNewMessagesEnvelope = query({
+	args: {
+		recipient: creatorValidator,
+		recipientInstanceId: v.optional(v.string()),
+		tenantId: v.optional(v.string()),
+		since: v.optional(v.number()),
+		limit: v.optional(v.number()),
+		maxBytes: v.optional(v.number()),
+	},
+	returns: v.object({
+		messages: v.array(
+			v.object({
+				receiptId: v.id("messageReceipts"),
+				messageId: v.id("messages"),
+				from: creatorValidator,
+				fromInstanceId: v.optional(v.string()),
+				channel: v.optional(v.string()),
+				content: v.string(),
+				createdAt: v.number(),
+			}),
+		),
+		truncated: v.boolean(),
+		nextSince: v.union(v.number(), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+		const maxBytes = Math.min(Math.max(args.maxBytes ?? 40_000, 1_000), 60_000);
+		const takeBudget = limit + 1;
+
+		let receipts: Doc<"messageReceipts">[];
+
+		if (args.recipientInstanceId !== undefined) {
+			const instanceReceipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_instance_unread", (q) =>
+					q.eq("recipientInstanceId", args.recipientInstanceId!),
+				)
+				.filter((q) => {
+					const base = q.eq(q.field("readAt"), undefined);
+					return args.since !== undefined
+						? q.and(base, q.gt(q.field("_creationTime"), args.since))
+						: base;
+				})
+				.take(takeBudget);
+
+			const roleReceipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_recipient_unread", (q) =>
+					q.eq("recipient", args.recipient),
+				)
+				.filter((q) => {
+					const base = q.and(
+						q.eq(q.field("readAt"), undefined),
+						q.eq(q.field("recipientInstanceId"), undefined),
+					);
+					return args.since !== undefined
+						? q.and(base, q.gt(q.field("_creationTime"), args.since))
+						: base;
+				})
+				.take(takeBudget);
+
+			const seen = new Set<string>();
+			receipts = [];
+			for (const r of [...instanceReceipts, ...roleReceipts]) {
+				if (!seen.has(r._id)) {
+					seen.add(r._id);
+					receipts.push(r);
+				}
+			}
+			if (args.tenantId !== undefined) {
+				receipts = receipts.filter((r) => r.tenantId === args.tenantId);
+			}
+		} else if (args.tenantId !== undefined) {
+			receipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_tenant_recipient_unread", (q) =>
+					q
+						.eq("tenantId", args.tenantId!)
+						.eq("recipient", args.recipient)
+						.eq("readAt", undefined),
+				)
+				.filter((q) =>
+					args.since !== undefined
+						? q.gt(q.field("_creationTime"), args.since)
+						: true,
+				)
+				.take(takeBudget);
+		} else {
+			receipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_recipient_unread", (q) =>
+					q.eq("recipient", args.recipient),
+				)
+				.filter((q) => {
+					const base = q.eq(q.field("readAt"), undefined);
+					return args.since !== undefined
+						? q.and(base, q.gt(q.field("_creationTime"), args.since))
+						: base;
+				})
+				.take(takeBudget);
+		}
+
+		receipts.sort((a, b) => a._creationTime - b._creationTime);
+
+		const messages: Array<{
+			receiptId: Doc<"messageReceipts">["_id"];
+			messageId: Doc<"messages">["_id"];
+			from: Doc<"messages">["from"];
+			fromInstanceId?: string;
+			channel?: string;
+			content: string;
+			createdAt: number;
+		}> = [];
+		let bytes = 0;
+		let truncated = false;
+
+		for (const receipt of receipts) {
+			if (messages.length >= limit) {
+				truncated = true;
+				break;
+			}
+			const message = await ctx.db.get(receipt.messageId);
+			if (message === null) continue;
+			const projected = {
+				receiptId: receipt._id,
+				messageId: receipt.messageId,
+				from: message.from,
+				fromInstanceId: message.fromInstanceId,
+				channel: message.channel,
+				content: message.content,
+				createdAt: message.createdAt,
+			};
+			const projectedBytes = JSON.stringify(projected).length;
+			if (messages.length > 0 && bytes + projectedBytes > maxBytes) {
+				truncated = true;
+				break;
+			}
+			messages.push(projected);
+			bytes += projectedBytes;
+		}
+
+		const nextSince =
+			truncated && messages.length > 0
+				? messages[messages.length - 1].createdAt
+				: null;
+
+		return { messages, truncated, nextSince };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // markAsRead — mark one or more receipts as read
 // ─────────────────────────────────────────────────────────────────────────────
 
