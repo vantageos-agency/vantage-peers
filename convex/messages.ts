@@ -324,6 +324,7 @@ export const checkNewMessagesEnvelope = query({
 		}> = [];
 		let bytes = 0;
 		let truncated = false;
+		let lastIncludedReceiptCreationTime: number | null = null;
 
 		for (const receipt of receipts) {
 			if (messages.length >= limit) {
@@ -348,12 +349,10 @@ export const checkNewMessagesEnvelope = query({
 			}
 			messages.push(projected);
 			bytes += projectedBytes;
+			lastIncludedReceiptCreationTime = receipt._creationTime;
 		}
 
-		const nextSince =
-			truncated && messages.length > 0
-				? messages[messages.length - 1].createdAt
-				: null;
+		const nextSince = truncated ? lastIncludedReceiptCreationTime : null;
 
 		return { messages, truncated, nextSince };
 	},
