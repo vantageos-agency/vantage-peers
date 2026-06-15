@@ -162,6 +162,48 @@ describe("listMessages — withOrgScope enforcement", () => {
 
 		expect(results.length).toBe(3);
 	});
+
+	// Test 8 — null-tenant dominance (Eta completeness edge, PR #775 verdict jn7563v34,
+	// task k176wgsrhha0fr0dxxahctvhw588q5a1). Before the fix, .take(limit) ran on
+	// by_day/default and consumed all slots with fleet rows, leaving 0 tenant-A rows
+	// after the post-filter. After the fix, by_tenant_created pushes tenantId=tenant-a
+	// BEFORE .take(limit), so all 5 tenant-A rows surface regardless of fleet volume.
+	test("null-tenant dominance: Clerk caller receives all tenant-A rows despite 50 fleet messages", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "tenant-a");
+
+		// Insert 50 fleet messages (no tenantId)
+		for (let i = 0; i < 50; i++) {
+			await seedMessage(t, { content: `fleet msg ${i}` });
+		}
+		// Insert 5 tenant-A messages
+		for (let i = 0; i < 5; i++) {
+			await seedMessage(t, {
+				content: `tenant-a msg ${i}`,
+				tenantId: "tenant-a",
+			});
+		}
+
+		// Clerk caller for tenant-A, limit=20
+		const tA = t.withIdentity({
+			subject: "user-tenant-a",
+			organizationId: "tenant-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const clerkResults = await tA.query(api.messages.listMessages, {
+			limit: 20,
+		});
+
+		// Must surface all 5 tenant-A messages — not 0 (which the old code would return).
+		expect(clerkResults.length).toBe(5);
+		expect(clerkResults.every((r) => r.tenantId === "tenant-a")).toBe(true);
+
+		// Master caller, limit=20: scan-all semantics — gets up to 20 rows (mix)
+		const masterResults = await t.query(api.messages.listMessages, {
+			limit: 20,
+		});
+		expect(masterResults.length).toBe(20);
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

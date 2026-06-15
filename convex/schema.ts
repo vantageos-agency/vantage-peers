@@ -149,6 +149,12 @@ export default defineSchema({
 		.index("by_from", ["from", "createdAt"])
 		.index("by_channel", ["channel", "createdAt"])
 		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"])
+		// Day 103 — tenant-scoped listing for Clerk callers (task k176wgsrhha0fr0dxxahctvhw588q5a1).
+		// by_tenant_created lets listMessages push tenantId BEFORE .take(limit) for
+		// non-master callers, preventing under-fill when fleet (null-tenant) traffic
+		// dominates the recent window. by_tenant_channel cannot be reused here because
+		// channel is a required equality field in that compound (can't skip to createdAt).
+		.index("by_tenant_created", ["tenantId", "createdAt"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on message body, with filterFields for the
 		// common audit narrowing axes (from, channel, sessionDay).
