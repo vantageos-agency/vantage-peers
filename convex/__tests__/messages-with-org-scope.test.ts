@@ -1,0 +1,254 @@
+/// <reference types="vite/client" />
+//
+// Security convergence: listMessages + searchMessagesByKeyword onto withOrgScope.
+//
+// Resolves VP task k177xdv5qn2vafcyhdj0k1qs1d88mvn0 (SECURITY-FOLLOWUP, Eta
+// advisory on PR #754). Both handlers were FAIL-OPEN: a Clerk client could pass
+// a foreign tenantId arg and read cross-tenant messages.
+//
+// Doctrines applied:
+//   m977mqck  — no-identity callers (MCP/CLI) → isMaster=true, all rows.
+//   m9748paff — Clerk callers are fail-CLOSED: foreign/omitted tenantId = 0 rows.
+//   k179fk0c  — per-tool tenancy doctrine, same pattern as tasks.list.
+
+import { convexTest } from "convex-test";
+import { describe, expect, test } from "vitest";
+import { api } from "../_generated/api";
+import schema from "../schema";
+
+const modules = Object.fromEntries(
+	Object.entries(import.meta.glob("../**/*.ts")).filter(
+		([path]) =>
+			!path.includes("ragSync") && !path.includes("backfill"),
+	),
+);
+
+const createT = () => convexTest(schema, modules);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function seedOrgMapping(
+	t: ReturnType<typeof createT>,
+	clerkOrgSlug: string,
+) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug,
+			allowedOrchestrators: ["sigma"],
+			scopes: ["view-own-tasks", "view-own-missions"],
+			displayName: clerkOrgSlug,
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+}
+
+async function seedMessage(
+	t: ReturnType<typeof createT>,
+	opts: {
+		from?: string;
+		content: string;
+		tenantId?: string;
+		channel?: string;
+	},
+) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("messages", {
+			from: opts.from ?? "sigma",
+			channel: opts.channel ?? "sigma",
+			content: opts.content,
+			tenantId: opts.tenantId,
+			createdAt: Date.now(),
+		});
+	});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listMessages tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("listMessages — withOrgScope enforcement", () => {
+	// Test 1: cross-tenant FORBIDDEN (read)
+	test("Clerk caller for tenant-A cannot read tenant-B messages", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "tenant-a");
+		await seedOrgMapping(t, "tenant-b");
+
+		await seedMessage(t, {
+			content: "tenant-a secret message",
+			tenantId: "tenant-a",
+		});
+		await seedMessage(t, {
+			content: "tenant-b secret message",
+			tenantId: "tenant-b",
+		});
+
+		const tA = t.withIdentity({
+			subject: "user-tenant-a",
+			organizationId: "tenant-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tA.query(api.messages.listMessages, {});
+
+		expect(results.length).toBe(1);
+		expect(results[0].content).toBe("tenant-a secret message");
+		expect(results.some((r) => r.content === "tenant-b secret message")).toBe(
+			false,
+		);
+	});
+
+	// Test 2: same-tenant allowed (read)
+	test("Clerk caller for tenant-A reads only tenant-A messages", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "tenant-a");
+
+		await seedMessage(t, {
+			content: "tenant-a msg 1",
+			tenantId: "tenant-a",
+		});
+		await seedMessage(t, {
+			content: "tenant-a msg 2",
+			tenantId: "tenant-a",
+		});
+		// Fleet message (no tenantId) — must NOT be visible to Clerk caller
+		await seedMessage(t, {
+			content: "fleet msg no tenant",
+		});
+
+		const tA = t.withIdentity({
+			subject: "user-tenant-a",
+			organizationId: "tenant-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tA.query(api.messages.listMessages, {});
+
+		expect(results.length).toBe(2);
+		expect(results.every((r) => r.tenantId === "tenant-a")).toBe(true);
+	});
+
+	// Test 3: omitted tenantId for Clerk caller — defaults to own tenant (fail-CLOSED)
+	test("Clerk caller with no tenantId arg still scoped to own org (fail-CLOSED)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "tenant-a");
+
+		await seedMessage(t, { content: "tenant-a msg", tenantId: "tenant-a" });
+		await seedMessage(t, { content: "tenant-b msg", tenantId: "tenant-b" });
+		await seedMessage(t, { content: "fleet msg" });
+
+		const tA = t.withIdentity({
+			subject: "user-tenant-a",
+			organizationId: "tenant-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		// No tenantId arg passed — must still only see tenant-a rows
+		const results = await tA.query(api.messages.listMessages, {});
+
+		expect(results.length).toBe(1);
+		expect(results[0].content).toBe("tenant-a msg");
+	});
+
+	// Test 4: internal/master scope — no identity (MCP/CLI) sees all rows
+	test("no-identity caller (MCP/CLI master scope) reads all messages", async () => {
+		const t = createT();
+
+		await seedMessage(t, { content: "tenant-a msg", tenantId: "tenant-a" });
+		await seedMessage(t, { content: "tenant-b msg", tenantId: "tenant-b" });
+		await seedMessage(t, { content: "fleet msg no tenant" });
+
+		// No identity — master path (m977mqck)
+		const results = await t.query(api.messages.listMessages, {});
+
+		expect(results.length).toBe(3);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// searchMessagesByKeyword tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("searchMessagesByKeyword — withOrgScope enforcement", () => {
+	// Test 5: search cross-tenant FORBIDDEN
+	test("Clerk caller for tenant-A cannot search tenant-B messages", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "tenant-a");
+		await seedOrgMapping(t, "tenant-b");
+
+		await seedMessage(t, {
+			content: "needle alpha bravo charlie",
+			tenantId: "tenant-a",
+		});
+		await seedMessage(t, {
+			content: "needle alpha bravo charlie",
+			tenantId: "tenant-b",
+		});
+
+		const tA = t.withIdentity({
+			subject: "user-tenant-a",
+			organizationId: "tenant-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tA.query(api.messages.searchMessagesByKeyword, {
+			query: "needle alpha bravo charlie",
+		});
+
+		// Only tenant-a row visible
+		expect(results.length).toBe(1);
+		expect(
+			results.every(
+				(r) => "tenantId" in r && (r as { tenantId?: string }).tenantId === "tenant-a",
+			),
+		).toBe(true);
+	});
+
+	// Test 6: search same-tenant allowed
+	test("Clerk caller for tenant-A finds own tenant messages via search", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "tenant-a");
+
+		await seedMessage(t, {
+			content: "unique search token xyzzy",
+			tenantId: "tenant-a",
+		});
+		// Fleet message with same keyword — must NOT be visible to Clerk caller
+		await seedMessage(t, {
+			content: "unique search token xyzzy",
+		});
+
+		const tA = t.withIdentity({
+			subject: "user-tenant-a",
+			organizationId: "tenant-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tA.query(api.messages.searchMessagesByKeyword, {
+			query: "unique search token xyzzy",
+		});
+
+		expect(results.length).toBe(1);
+	});
+
+	// Test 7: search master path — no identity sees all rows
+	test("no-identity caller (MCP/CLI master scope) searches across all tenants", async () => {
+		const t = createT();
+
+		await seedMessage(t, {
+			content: "master search token foobarbaz",
+			tenantId: "tenant-a",
+		});
+		await seedMessage(t, {
+			content: "master search token foobarbaz",
+			tenantId: "tenant-b",
+		});
+		await seedMessage(t, {
+			content: "master search token foobarbaz",
+		});
+
+		// No identity — master path (m977mqck)
+		const results = await t.query(api.messages.searchMessagesByKeyword, {
+			query: "master search token foobarbaz",
+		});
+
+		expect(results.length).toBe(3);
+	});
+});
