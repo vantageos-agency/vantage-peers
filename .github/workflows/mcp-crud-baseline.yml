@@ -1,0 +1,133 @@
+name: MCP CRUD Baseline Smoke Matrix
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CRUD-T3 — VantagePeers MCP PROD Railway smoke matrix
+#
+# Triggers:
+#   1. repository_dispatch event type "railway-deploy-success"
+#      → Wire Railway deploy notification → GitHub via Sigma's Railway webhook
+#        pointing at https://api.github.com/repos/<org>/<repo>/dispatches
+#        with event_type: "railway-deploy-success".
+#   2. workflow_dispatch — manual trigger from the Actions tab.
+#   3. schedule cron every 15 min — catch deploys not covered by webhook.
+#
+# Required secrets (set in GH repo Settings → Secrets → Actions):
+#   VP_MCP_PROD_URL       — PROD Railway MCP endpoint, e.g.
+#                           https://vantage-peers-production.up.railway.app/mcp
+#   VP_MCP_BEARER_TOKEN   — Master bearer token for the Railway HTTP transport
+#   VP_MCP_FLEET_BEARER   — (Optional) separate fleet-alert bearer; falls back
+#                           to VP_MCP_BEARER_TOKEN when absent
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  repository_dispatch:
+    types: [railway-deploy-success]
+
+  workflow_dispatch:
+
+  schedule:
+    # Every 15 minutes — fallback so no deploy is undetected for more than 15 min
+    - cron: "*/15 * * * *"
+
+jobs:
+  smoke:
+    name: CRUD baseline smoke (25-cell matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies (repo root)
+        run: bun install --frozen-lockfile
+
+      - name: Run CRUD baseline smoke matrix
+        id: smoke
+        env:
+          VP_MCP_PROD_URL: ${{ secrets.VP_MCP_PROD_URL }}
+          VP_MCP_BEARER_TOKEN: ${{ secrets.VP_MCP_BEARER_TOKEN }}
+        run: bun run test:e2e:mcp-crud
+
+      - name: Alert fleet on failure
+        if: failure()
+        env:
+          VP_MCP_PROD_URL: ${{ secrets.VP_MCP_PROD_URL }}
+          VP_MCP_FLEET_BEARER: ${{ secrets.VP_MCP_FLEET_BEARER || secrets.VP_MCP_BEARER_TOKEN }}
+        run: |
+          # Extract first failing test name + error from the vitest output.
+          # GH Actions captures stdout; we truncate to 200 chars as per spec.
+          FAILING_SUMMARY="${{ steps.smoke.outputs.summary || 'CRUD baseline smoke suite failed — see GH Actions run for details' }}"
+          ALERT_CONTENT="[ALERT] CRUD-T3 smoke matrix FAILED on Railway PROD — branch: ${{ github.ref_name }}, run: ${{ github.run_id }}. ${FAILING_SUMMARY:0:200}"
+
+          # Post DM to Pi
+          # MCP Streamable-HTTP transport returns the session id in the
+          # response HEADER `Mcp-Session-Id`, NOT the JSON body.
+          # Use -D - to dump response headers to stdout, then extract the header.
+          INIT_HEADERS_AND_BODY=$(curl -s -D - -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 1,
+              \"method\": \"initialize\",
+              \"params\": {
+                \"protocolVersion\": \"2024-11-05\",
+                \"capabilities\": {},
+                \"clientInfo\": { \"name\": \"gh-actions-alert\", \"version\": \"1.0\" }
+              }
+            }") || true
+
+          # HTTP/2 lower-cases headers; handle both cases with case-insensitive grep.
+          SESSION_ID=$(echo "${INIT_HEADERS_AND_BODY}" | grep -i '^mcp-session-id:' | sed 's/^[Mm][Cc][Pp]-[Ss][Ee][Ss][Ss][Ii][Oo][Nn]-[Ii][Dd]:[[:space:]]*//' | tr -d '\r\n' || echo "")
+
+          curl -s -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
+            ${SESSION_ID:+-H "mcp-session-id: ${SESSION_ID}"} \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 2,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"send_message\",
+                \"arguments\": {
+                  \"from\": \"sigma\",
+                  \"channel\": \"pi\",
+                  \"content\": $(echo "${ALERT_CONTENT}" | jq -Rs .)
+                }
+              }
+            }" || echo "[alert] DM to pi failed — continuing"
+
+          # Post DM to Sigma self-notification
+          curl -s -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
+            ${SESSION_ID:+-H "mcp-session-id: ${SESSION_ID}"} \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 3,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"send_message\",
+                \"arguments\": {
+                  \"from\": \"sigma\",
+                  \"channel\": \"sigma\",
+                  \"content\": $(echo "${ALERT_CONTENT}" | jq -Rs .)
+                }
+              }
+            }" || echo "[alert] DM to sigma failed — continuing"
+
+          echo "Fleet alert dispatched."
+          # Re-exit 1 so the job correctly shows as failed
+          exit 1
