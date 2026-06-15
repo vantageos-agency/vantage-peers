@@ -54,9 +54,17 @@ jobs:
 
       - name: Run CRUD baseline smoke matrix
         id: smoke
+        # Write ops (op-D create + op-E get): enabled on deploy-dispatch + manual
+        # triggers, disabled on the */15 cron schedule. Rationale: briefingNotes
+        # and episodes have no delete tool in the registry yet — 96 scheduled
+        # runs/day × 2 inert rows = 192/day accumulating in PROD namespace
+        # audit/crud-smoke. Gating to deploy moments keeps full write-path
+        # coverage where it matters (post-deploy correctness) with zero steady
+        # pollution.
         env:
           VP_MCP_PROD_URL: ${{ secrets.VP_MCP_PROD_URL }}
           VP_MCP_BEARER_TOKEN: ${{ secrets.VP_MCP_BEARER_TOKEN }}
+          CRUD_SMOKE_WRITE_OPS: ${{ github.event_name == 'schedule' && 'off' || 'on' }}
         run: bun run test:e2e:mcp-crud
 
       - name: Alert fleet on failure

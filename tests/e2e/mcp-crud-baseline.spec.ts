@@ -46,6 +46,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const hasCreds =
 	!!process.env.VP_MCP_PROD_URL && !!process.env.VP_MCP_BEARER_TOKEN;
 const itc = hasCreds ? it : it.skip;
+// Write-ops gate — when CRUD_SMOKE_WRITE_OPS=off (default for the */15 cron),
+// skip op-D (create) + op-E (get) so the scheduled run stays read-only and does
+// not accumulate inert briefingNotes/episodes (no delete tool yet) in PROD.
+// Deploy-triggered + manual runs (CRUD_SMOKE_WRITE_OPS=on) keep full coverage.
+const writeOpsAllowed = process.env.CRUD_SMOKE_WRITE_OPS !== "off";
+const itcW = hasCreds && writeOpsAllowed ? it : it.skip;
 import {
 	assertMcpResult,
 	type CreatedIds,
@@ -183,7 +189,7 @@ describe("Entity: tasks — 5 ops", () => {
 	});
 
 	// op D — create
-	itc("tasks op-D: create_task creates a dummy task and returns taskId", async () => {
+	itcW("tasks op-D: create_task creates a dummy task and returns taskId", async () => {
 		const result = await callTool(env!, sessionId, "create_task", {
 			title: `[crud-smoke] baseline matrix task ${Date.now()}`,
 			assignedTo: SMOKE_MARKER,
@@ -200,7 +206,7 @@ describe("Entity: tasks — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	itc("tasks op-E: get_task reads back the created task by ID", async () => {
+	itcW("tasks op-E: get_task reads back the created task by ID", async () => {
 		expect(created.taskIds.length).toBeGreaterThan(0);
 		const taskId = created.taskIds[0];
 		const result = await callTool(env!, sessionId, "get_task", { taskId });
@@ -262,7 +268,7 @@ describe("Entity: messages — 5 ops", () => {
 	});
 
 	// op D — create (send_message)
-	itc("messages op-D: send_message creates a dummy message and returns messageId", async () => {
+	itcW("messages op-D: send_message creates a dummy message and returns messageId", async () => {
 		const result = await callTool(env!, sessionId, "send_message", {
 			from: SMOKE_CREATOR,
 			channel: SMOKE_MARKER,
@@ -281,7 +287,7 @@ describe("Entity: messages — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	itc("messages op-E: get_message reads back the created message by ID", async () => {
+	itcW("messages op-E: get_message reads back the created message by ID", async () => {
 		expect(created.messageIds.length).toBeGreaterThan(0);
 		const messageId = created.messageIds[0];
 		const result = await callTool(env!, sessionId, "get_message", {
@@ -346,7 +352,7 @@ describe("Entity: memories — 5 ops", () => {
 	});
 
 	// op D — store (store_memory)
-	itc("memories op-D: store_memory creates a dummy memory and returns memoryId", async () => {
+	itcW("memories op-D: store_memory creates a dummy memory and returns memoryId", async () => {
 		const result = await callTool(env!, sessionId, "store_memory", {
 			namespace: SMOKE_NS,
 			type: "project",
@@ -360,7 +366,7 @@ describe("Entity: memories — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	itc("memories op-E: get_memory reads back the created memory by ID", async () => {
+	itcW("memories op-E: get_memory reads back the created memory by ID", async () => {
 		expect(created.memoryIds.length).toBeGreaterThan(0);
 		const memoryId = created.memoryIds[0];
 		const result = await callTool(env!, sessionId, "get_memory", { memoryId });
@@ -422,7 +428,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 	});
 
 	// op D — create
-	itc("briefingNotes op-D: create_briefing_note creates a dummy note and returns noteId", async () => {
+	itcW("briefingNotes op-D: create_briefing_note creates a dummy note and returns noteId", async () => {
 		const result = await callTool(env!, sessionId, "create_briefing_note", {
 			title: `[crud-smoke] baseline matrix briefing ${Date.now()}`,
 			topic: SMOKE_MARKER,
@@ -437,7 +443,7 @@ describe("Entity: briefingNotes — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	itc("briefingNotes op-E: get_briefing_note reads back the created note by ID", async () => {
+	itcW("briefingNotes op-E: get_briefing_note reads back the created note by ID", async () => {
 		expect(created.briefingNoteIds.length).toBeGreaterThan(0);
 		const noteId = created.briefingNoteIds[0];
 		const result = await callTool(env!, sessionId, "get_briefing_note", {
@@ -501,7 +507,7 @@ describe("Entity: episodes — 5 ops", () => {
 	});
 
 	// op D — store (store_episode)
-	itc("episodes op-D: store_episode creates a dummy episode and returns episodeId", async () => {
+	itcW("episodes op-D: store_episode creates a dummy episode and returns episodeId", async () => {
 		const result = await callTool(env!, sessionId, "store_episode", {
 			namespace: SMOKE_NS,
 			createdBy: SMOKE_CREATOR,
@@ -521,7 +527,7 @@ describe("Entity: episodes — 5 ops", () => {
 	});
 
 	// op E — get (reads back the row created in op D)
-	itc("episodes op-E: get_episode reads back the created episode by ID", async () => {
+	itcW("episodes op-E: get_episode reads back the created episode by ID", async () => {
 		expect(created.episodeIds.length).toBeGreaterThan(0);
 		const episodeId = created.episodeIds[0];
 		const result = await callTool(env!, sessionId, "get_episode", {
