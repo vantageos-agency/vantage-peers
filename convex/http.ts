@@ -387,104 +387,30 @@ http.route({
 				});
 			}
 
-			// Create IRP mission if none exists for this issue
-			const template = await ctx.runQuery(api.missionTemplates.getByName, {
-				name: "issue-resolution-v3",
-			});
-			if (template !== null && template.steps.length > 0) {
-				// Check if mission already exists by searching for matching name pattern
-				const existingMissions = await ctx.runQuery(api.missions.list, {
+			// Day 98 F4 (k177yhgmfk1101046wcv04dbfd88c8kz) — Bridge-only for issue comments.
+			// issue_comment.created on a true issue (not PR, not bot, not closed) MUST spawn
+			// ONLY a [Bridge] task — never the full T0–T12 IRP cascade. The issues.opened
+			// webhook is the authoritative cascade trigger; comment events are signals that
+			// the issue needs attention, not independent cascade triggers.
+			//
+			// Rationale: before this fix, comments on existing issues (including Eta APPROVED
+			// comments on associated PRs that leaked through) would spawn full 14-task cascades,
+			// producing ~56 stale tasks across 4 PRs (Day 99 friction harvest).
+			if (issue.state !== "closed") {
+				const commentIssueNumber = issue.number as number;
+				await ctx.runMutation(api.tasks.create, {
+					title: `[Bridge #${commentIssueNumber}] comment on issue "${(issue.title as string).slice(0, 60)}"`,
+					description: `New comment on GitHub issue #${commentIssueNumber} by ${(comment.user as Record<string, unknown>).login as string}.\n\nComment: ${commentBody.slice(0, 500)}${commentBody.length > 500 ? "..." : ""}\n\nIssue: ${issue.html_url as string}\nComment: ${comment.html_url as string}\nRepo: ${repoFullName}\n\n[Day 98 F4] Bridge task only — check if issue #${commentIssueNumber} is already covered by an existing IRP mission. If yes, close this task. If no, escalate to ${orchestrator}.`,
+					assignedTo: orchestratorAssignee,
 					project,
-					limit: 100,
+					priority: "medium",
+					status: "todo",
+					createdBy: "system",
+					tags: ["github", "irp", "bridge", "day-98-f4-comment-only"],
 				});
-				const commentIssuePattern = new RegExp(`#${issue.number as number}\\b`);
-				const missionExists = existingMissions.some(
-					(m) => m.name ? commentIssuePattern.test(m.name) : false
+				console.log(
+					`[webhook.issue_comment.created] Day 98 F4 Bridge-only — created Bridge task for #${commentIssueNumber} (no cascade).`,
 				);
-
-				if (!missionExists && issue.state !== "closed") {
-					// Day 98 F4 — Mechanism (b) multi-issue collapse extended to
-					// issue_comment.created. PR #703 + #704 Eta APPROVED comments
-					// fired this branch and spawned 14-task cascades each. If
-					// any open orchestrator task already references #N, spawn
-					// one [Bridge] task instead of the full cascade.
-					const commentCascadePrefix = `[#${issue.number as number}]`;
-					const openCascadeTasks = (await ctx.runQuery(api.tasks.list, {
-						status: ["todo", "in_progress", "review", "blocked"],
-						assignedTo: orchestrator,
-						limit: 200,
-						fields: "full",
-					})) as unknown as Doc<"tasks">[];
-					const commentCoveringTask = openCascadeTasks.find((t) => {
-						if (!t.description) return false;
-						if (!commentIssuePattern.test(t.description)) return false;
-						if (t.title.startsWith(commentCascadePrefix)) return false;
-						return true;
-					});
-					if (commentCoveringTask) {
-						await ctx.runMutation(api.tasks.create, {
-							title: `[Bridge #${issue.number as number}] covered by task ${commentCoveringTask._id}`,
-							description: `Comment-triggered IRP cascade for #${issue.number as number} "${issue.title as string}" suppressed by Day 98 F4 multi-issue collapse. Existing open task ${commentCoveringTask._id} ("${commentCoveringTask.title}") already references this issue.\n\nIssue: ${issue.html_url as string}\nRepo: ${repoFullName}`,
-							assignedTo: orchestratorAssignee,
-							project,
-							priority: "medium",
-							status: "todo",
-							createdBy: "system",
-							tags: ["github", "irp", "bridge", "day-98-collapse", "comment-trigger"],
-						});
-						console.log(
-							`[webhook.issue_comment.created] Day 98 F4 multi-issue collapse — Bridge task for #${issue.number as number} covered by ${commentCoveringTask._id}; cascade skipped.`,
-						);
-						return new Response("OK - bridged to existing task", { status: 200 });
-					}
-
-					try {
-						console.log(`Creating mission for issue #${issue.number as number} (triggered by comment)`);
-						const missionId: Id<"missions"> = await ctx.runMutation(
-							api.missions.create,
-							{
-								name: `Fix #${issue.number as number} — ${issue.title as string}`,
-								project,
-								pilot: orchestrator,
-								priority: "high",
-								createdBy: "system",
-								agents: [mapping.orchestrator],
-								status: "execute",
-							},
-						);
-						console.log("Mission created:", missionId);
-
-						for (let i = 0; i < template.steps.length; i++) {
-							const step = template.steps[i];
-							const isLastStep = i === template.steps.length - 1;
-							const stepAssignee: AssigneeLiteral = isLastStep ? "eta" : orchestratorAssignee;
-
-							await ctx.runMutation(api.tasks.create, {
-								title: `[#${issue.number as number}] T${i} — ${step.title}`,
-								description: `${step.description}\n\nIssue: ${issue.html_url as string}\nIssue author: @${((issue.user as Record<string, unknown>)?.login as string) || "unknown"}\nRepo: ${repoFullName}`,
-								assignedTo: stepAssignee,
-								project,
-								priority: "high",
-								status: "todo",
-								createdBy: "system",
-								missionId,
-								tags: [...(step.tags ?? []), "github", "irp"],
-							});
-						}
-
-						await ctx.runMutation(api.messages.sendMessage, {
-							from: "system",
-							channel: orchestrator,
-							content: `[GitHub] IRP mission created for #${issue.number as number} (triggered by new comment). ${template.steps.length} tasks assigned.`,
-						});
-					} catch (error) {
-						console.error("Mission creation failed:", error);
-						return new Response(
-							`Mission creation failed: ${error instanceof Error ? error.message : String(error)}`,
-							{ status: 500 },
-						);
-					}
-				}
 			}
 		}
 
