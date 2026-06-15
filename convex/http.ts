@@ -758,7 +758,7 @@ http.route({
 
 		let body: { taskId?: string; expectedSha?: string };
 		try {
-			body = await request.json();
+			body = (await request.json()) as { taskId?: string; expectedSha?: string };
 		} catch {
 			return Response.json({ valid: false, reason: "invalid-body" });
 		}
