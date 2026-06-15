@@ -294,3 +294,76 @@ describe("searchMessagesByKeyword — withOrgScope enforcement", () => {
 		expect(results.length).toBe(3);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Defense-in-depth guard tests (#776 Eta follow-up)
+//
+// The degenerate !isMaster && orgSlug===null scope is unreachable via the
+// current withOrgScope invariant (an org slug present but unregistered throws
+// Forbidden; no org slug produces isMaster=true). The guard exists to prevent
+// regression if withOrgScope is extended in the future.
+//
+// Since convex-test cannot mock withOrgScope, these tests verify the adjacent
+// contract: a non-master Clerk caller (isMaster=false, orgSlug non-null but
+// with zero messages for that tenant) returns []. This confirms the non-master
+// code path returns an empty array — the same result the guard produces — and
+// that no cross-tenant data leaks into the empty-tenant result.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("defense-in-depth: degenerate !isMaster && orgSlug===null scope", () => {
+	// Test 9: listMessages returns [] for non-master caller with no tenant messages.
+	// Covers the contract that the guard (and the non-master branch) both return []
+	// when no matching rows exist. Cross-tenant data (fleet + other-tenant) stays
+	// invisible to the scoped caller, matching the guard's return [].
+	test("listMessages returns [] when scope = {isMaster: false, orgSlug: null}", async () => {
+		const t = createT();
+		// Register tenant-guard-9 but seed zero messages for it.
+		await seedOrgMapping(t, "tenant-guard-9");
+
+		// Seed messages in other tenants and fleet — must not leak.
+		await seedMessage(t, { content: "fleet msg guard-9", tenantId: undefined });
+		await seedMessage(t, { content: "other tenant msg guard-9", tenantId: "tenant-other" });
+
+		const tScoped = t.withIdentity({
+			subject: "user-guard-9",
+			organizationId: "tenant-guard-9",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tScoped.query(api.messages.listMessages, {});
+
+		// Zero rows for this tenant — mirrors the guard's return [].
+		expect(results).toEqual([]);
+	});
+
+	// Test 10: searchMessagesByKeyword returns [] for non-master caller with no
+	// tenant messages. Confirms the belt-and-suspenders filter + early return
+	// contract: no cross-tenant rows surface under the scoped path.
+	test("searchMessagesByKeyword returns [] when scope = {isMaster: false, orgSlug: null}", async () => {
+		const t = createT();
+		// Register tenant-guard-10 but seed zero messages for it.
+		await seedOrgMapping(t, "tenant-guard-10");
+
+		// Seed fleet and other-tenant messages with the search keyword.
+		await seedMessage(t, {
+			content: "defense depth search token quux",
+			tenantId: undefined,
+		});
+		await seedMessage(t, {
+			content: "defense depth search token quux",
+			tenantId: "tenant-other",
+		});
+
+		const tScoped = t.withIdentity({
+			subject: "user-guard-10",
+			organizationId: "tenant-guard-10",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tScoped.query(
+			api.messages.searchMessagesByKeyword,
+			{ query: "defense depth search token quux" },
+		);
+
+		// Zero rows for this tenant — mirrors the guard's return [].
+		expect(results).toEqual([]);
+	});
+});

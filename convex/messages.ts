@@ -470,6 +470,10 @@ export const listMessages = query({
 
 		let rows: Doc<"messages">[];
 
+		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null
+		// is unreachable per withOrgScope invariant but explicit guard prevents regression.
+		if (!scope.isMaster && scope.orgSlug === null) return [];
+
 		if (!scope.isMaster && scope.orgSlug !== null) {
 			// ── Clerk (non-master) path — tenant-scoped index ─────────────────────
 			// Push tenantId equality BEFORE .take(limit) using by_tenant_created so
@@ -661,6 +665,10 @@ export const searchMessagesByKeyword = query({
 		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
 		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
+
+		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null
+		// is unreachable per withOrgScope invariant but explicit guard prevents regression.
+		if (!scope.isMaster && scope.orgSlug === null) return [];
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";
