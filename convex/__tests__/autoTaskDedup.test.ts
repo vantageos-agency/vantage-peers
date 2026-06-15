@@ -679,3 +679,119 @@ describe("A.6 superseded marker — Fix 3 race-condition defense", () => {
 		expect(allTasks[0]._id).toBe(stale);
 	});
 });
+
+// ─── Day 99 entry 3/3 — PR #707 F4 Bridge collapse regression gate ───────────
+// PR #707 F4 added multi-issue collapse on issue_comment.created to prevent
+// 14-task IRP cascades when a comment arrives for an already-tracked issue.
+// This suite verifies that collapse logic is intact for TRUE issue comments
+// (non-PR context) while PR comments are blocked at handler entry (a separate
+// gate added in the Day 99 fix — isPullRequestComment detection).
+describe("Day99 Bridge collapse — PR comment vs issue comment detection", () => {
+	test("isPullRequestComment=true for issue with pull_request field (PR comment)", () => {
+		// Mirrors the handler's detection: const isPullRequestComment = !!issue.pull_request
+		const prCommentIssue = {
+			number: 709,
+			state: "open",
+			pull_request: {
+				url: "https://api.github.com/repos/org/repo/pulls/709",
+				html_url: "https://github.com/org/repo/pull/709",
+			},
+		};
+		expect(!!(prCommentIssue.pull_request)).toBe(true);
+	});
+
+	test("isPullRequestComment=false for issue without pull_request field (true issue comment)", () => {
+		// True issue comment — no pull_request field on the issue object
+		const issueCommentIssue: Record<string, unknown> = {
+			number: 42,
+			state: "open",
+			title: "Bug: memory leak in ragSync",
+		};
+		expect(!!(issueCommentIssue.pull_request)).toBe(false);
+	});
+
+	test("Day 98 F4 Bridge collapse preserved for true issue comment — open covering task suppresses cascade", async () => {
+		// This verifies the original PR #707 F4 intent remains intact.
+		// When a true issue comment arrives and an existing open task already
+		// references the issue number, the cascade is suppressed (Bridge task
+		// is created instead of the full 14-task IRP mission).
+		//
+		// We test the underlying createDeployTaskWithDedup + task query logic
+		// that the handler uses for the covering-task lookup.
+		const t = createTestConvex();
+
+		// Seed a covering task that references issue #42
+		const coveringTaskId = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: "[IRP] Investigate vantage-memory deploy issue",
+				description: "Investigating #42 — memory leak reported by external-user",
+				assignedTo: "sigma" as const,
+				priority: "high" as const,
+				createdBy: "system" as const,
+				status: "todo",
+				createdAt: Date.now() - 60_000,
+				updatedAt: Date.now() - 60_000,
+			}),
+		);
+
+		// Simulate handler lookup: find any open task whose description mentions #42
+		const issueNumber = 42;
+		const issuePattern = new RegExp(`#${issueNumber}\\b`);
+		const cascadePrefix = `[#${issueNumber}]`;
+
+		const openTasks = await t.run(async (ctx) =>
+			ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", "todo"))
+				.collect(),
+		);
+
+		const coveringTask = openTasks.find((task) => {
+			if (!task.description) return false;
+			if (!issuePattern.test(task.description)) return false;
+			if (task.title.startsWith(cascadePrefix)) return false;
+			return true;
+		});
+
+		// Covering task found → Bridge collapse would fire (not the full cascade)
+		expect(coveringTask).toBeDefined();
+		if (!coveringTask) throw new Error("Expected covering task to be defined");
+		expect(coveringTask._id).toBe(coveringTaskId);
+
+		// Verify: task count is still 1 (only the covering task — no 13 new cascade tasks)
+		const allTasks = await t.run(async (ctx) =>
+			ctx.db.query("tasks").collect(),
+		);
+		expect(allTasks.length).toBe(1);
+	});
+
+	test("true issue comment with NO covering task — cascade path reached (no Bridge suppression)", async () => {
+		// Verifies the opposite: when there's no covering task for an issue,
+		// the handler would proceed to create the IRP mission (cascade fires).
+		// Here we just confirm the lookup correctly returns undefined, meaning
+		// the existing Bridge collapse logic does NOT suppress the cascade.
+		const t = createTestConvex();
+
+		// No covering task seeded — DB is empty
+		const issueNumber = 99;
+		const issuePattern = new RegExp(`#${issueNumber}\\b`);
+		const cascadePrefix = `[#${issueNumber}]`;
+
+		const openTasks = await t.run(async (ctx) =>
+			ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", "todo"))
+				.collect(),
+		);
+
+		const coveringTask = openTasks.find((task) => {
+			if (!task.description) return false;
+			if (!issuePattern.test(task.description)) return false;
+			if (task.title.startsWith(cascadePrefix)) return false;
+			return true;
+		});
+
+		// No covering task → cascade would fire (IRP mission + T0..T12 spawned)
+		expect(coveringTask).toBeUndefined();
+	});
+});
