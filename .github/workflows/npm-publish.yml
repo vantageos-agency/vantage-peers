@@ -1,8 +1,34 @@
 name: Publish to npm
 
+# Two trigger paths:
+#   1. release.published — legacy path, fires when a GitHub release is published.
+#   2. workflow_dispatch — manual path with Eta-approval inputs. Mirrors the
+#      Day 82 npm publish protocol (ETA_APPROVED_TASK_ID + ETA_APPROVED_COMMIT_SHA)
+#      so orchestrators can get OIDC --provenance attestation without publishing
+#      from a local sandbox (which refuses --provenance with "Automatic provenance
+#      generation not supported for provider: null").
+#
+# Validation order inside the dispatch path:
+#   a. checked-out SHA == inputs.eta_approved_commit_sha (single source of truth)
+#   b. Feature D HTTP action /api/eta/verify-publish-token verifies the VP task
+#      exists, is closed by eta with [ETA-APPROVED] marker, is ≤60 min old,
+#      and cites the same SHA. Same gate as the local enforce-eta-approval hook.
+#   c. Only then build + publish.
+
 on:
   release:
     types: [published]
+
+  workflow_dispatch:
+    inputs:
+      eta_approved_task_id:
+        description: 'VP task id closed by Eta with [ETA-APPROVED] marker (e.g. k177qvth538kvc8txt38zsdzzd88m7j8)'
+        required: true
+        type: string
+      eta_approved_commit_sha:
+        description: 'Git HEAD SHA at the time Eta issued the APPROVED verdict (must match workflow checkout)'
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -13,13 +39,55 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout (workflow_dispatch — at the Eta-approved SHA)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.eta_approved_commit_sha }}
+
+      - name: Checkout (release — at the release tag)
+        if: github.event_name == 'release'
+        uses: actions/checkout@v4
+
+      - name: Verify checked-out SHA matches Eta-approved SHA (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -eu
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          EXPECTED_SHA="${{ inputs.eta_approved_commit_sha }}"
+          echo "Actual HEAD     : ${ACTUAL_SHA}"
+          echo "Eta APPROVED SHA: ${EXPECTED_SHA}"
+          if [ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::SHA mismatch — checkout resolved ${ACTUAL_SHA} but Eta approved ${EXPECTED_SHA}."
+            exit 1
+          fi
+          echo "OK — SHA in lockstep with Eta verdict."
+
+      - name: Verify Eta approval via VP HTTP action (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CONVEX_URL: https://compassionate-goldfinch-737.convex.cloud
+          ETA_TASK: ${{ inputs.eta_approved_task_id }}
+          ETA_SHA: ${{ inputs.eta_approved_commit_sha }}
+        run: |
+          set -eu
+          BODY=$(jq -nc --arg t "$ETA_TASK" --arg s "$ETA_SHA" '{taskId:$t, expectedSha:$s}')
+          RESP=$(curl -sS -X POST "${CONVEX_URL}/api/eta/verify-publish-token" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          echo "Response: $RESP"
+          APPROVED=$(echo "$RESP" | jq -r '.approved // false')
+          if [ "$APPROVED" != "true" ]; then
+            REASON=$(echo "$RESP" | jq -r '.reason // "unknown"')
+            echo "::error::Eta approval rejected by Feature D — reason: ${REASON}"
+            exit 1
+          fi
+          echo "OK — Eta approval token valid."
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
@@ -30,6 +98,8 @@ jobs:
         working-directory: mcp-server
         run: npm run build
 
-      - name: Publish
+      - name: Publish (with OIDC provenance attestation)
         working-directory: mcp-server
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
