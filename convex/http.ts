@@ -564,29 +564,62 @@ http.route({
 				// the list). When token is unavailable or fetch fails, we default
 				// to the legacy behaviour (create task) — fail-open is safer than
 				// missing a real prod deploy.
+				//
+				// Pagination edge (Day 102 follow-up, task k1728cdf6n86svsxc8absakfgd88nbz4):
+				// GitHub returns max 100 files per page. PRs with >100 changed files
+				// where convex/ paths appear beyond file #100 would be mis-classified
+				// as "no convex/ changes" — a fail-CLOSED bug causing missed deploys.
+				//
+				// Strategy: SHORT-CIRCUIT + FAIL-OPEN ON CAP.
+				// • Short-circuit: return true (deploy) as soon as any convex/ path is
+				//   found in page 1.
+				// • If no match on page 1 AND the response length equals per_page (100),
+				//   there may be more pages — fail-open: return true (deploy anyway).
+				//   Rationale: the gate is designed to prevent missed deploys, not to
+				//   prevent spurious deploys. Fail-open matches Eta's endorsed semantics.
+				// • Only skip the deploy when page 1 has <100 files AND none match
+				//   (we have the complete file list and can be certain).
+				const PER_PAGE = 100;
 				const prUrl = pr.url as string | undefined;
 				const githubToken = process.env.GITHUB_TOKEN;
 				let touchesConvex: boolean | null = null; // null = unknown
 				if (prUrl && githubToken) {
 					try {
-						const filesRes = await fetch(`${prUrl}/files?per_page=100`, {
-							headers: {
-								Accept: "application/vnd.github+json",
-								Authorization: `Bearer ${githubToken}`,
-								"User-Agent": "vantage-peers-webhook",
+						const filesRes = await fetch(
+							`${prUrl}/files?per_page=${PER_PAGE}`,
+							{
+								headers: {
+									Accept: "application/vnd.github+json",
+									Authorization: `Bearer ${githubToken}`,
+									"User-Agent": "vantage-peers-webhook",
+								},
 							},
-						});
+						);
 						if (filesRes.ok) {
 							const files = (await filesRes.json()) as Array<{
 								filename?: string;
 							}>;
-							touchesConvex = files.some((f) => {
+							const hasConvex = files.some((f) => {
 								const name = f.filename ?? "";
 								return (
 									/^convex\//.test(name) ||
 									/^apps\/[^/]+\/convex\//.test(name)
 								);
 							});
+							if (hasConvex) {
+								// Short-circuit: convex/ path found on page 1 → deploy.
+								touchesConvex = true;
+							} else if (files.length >= PER_PAGE) {
+								// Page cap hit: more pages may exist with convex/ paths.
+								// Fail-open — deploy to avoid missing a real prod change.
+								console.warn(
+									`[githubWebhook] PR #${pr.number as number} — page 1 cap hit (${files.length} files), possible convex/ paths on later pages — fail-open (deploy)`,
+								);
+								touchesConvex = null; // null → fail-open path below
+							} else {
+								// Complete file list (<100 files) and no convex/ match → skip.
+								touchesConvex = false;
+							}
 						} else {
 							console.warn(
 								`[githubWebhook] files fetch HTTP ${filesRes.status} on PR #${pr.number as number} — fail-open (create deploy task)`,
