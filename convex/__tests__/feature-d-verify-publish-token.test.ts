@@ -68,6 +68,18 @@ afterEach(() => {
 	delete process.env.BEARER_SECRET_MASTER;
 });
 
+// ─── Response shape ───────────────────────────────────────────────────────────
+
+interface VerifyResponse {
+	valid: boolean;
+	reason?: string;
+	taskId?: string;
+	completedAt?: number;
+	noteExcerpt?: string;
+	hint?: string;
+	got?: string;
+}
+
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 /** POST to the verify-publish-token endpoint. */
@@ -108,7 +120,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		);
 
 		expect(response.status).toBe(200);
-		const data = await response.json();
+		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(true);
 		expect(data.taskId).toBe(taskId);
 		expect(typeof data.completedAt).toBe("number");
@@ -133,7 +145,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		);
 
 		expect(response.status).toBe(200);
-		const data = await response.json();
+		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
 		expect(data.reason).toBe("sha-not-in-note");
 		expect(data.hint).toContain("deadbeef0000");
@@ -159,7 +171,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		);
 
 		expect(response.status).toBe(200);
-		const data = await response.json();
+		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
 		expect(data.reason).toBe("task-not-found");
 	});
@@ -186,7 +198,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		);
 
 		expect(response.status).toBe(200);
-		const data = await response.json();
+		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
 		expect(data.reason).toBe("wrong-assignee");
 		expect(data.got).toBe("sigma");
@@ -214,7 +226,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		);
 
 		expect(response.status).toBe(200);
-		const data = await response.json();
+		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
 		expect(data.reason).toBe("wrong-status");
 		expect(data.got).toBe("todo");
@@ -253,7 +265,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		);
 
 		expect(response.status).toBe(200);
-		const data = await response.json();
+		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
 		expect(data.reason).toBe("bearer-invalid");
 	});
