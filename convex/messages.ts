@@ -469,34 +469,53 @@ export const listMessages = query({
 		const before = args.createdBefore;
 
 		let rows: Doc<"messages">[];
-		if (args.sessionDay !== undefined) {
+
+		if (!scope.isMaster && scope.orgSlug !== null) {
+			// ── Clerk (non-master) path — tenant-scoped index ─────────────────────
+			// Push tenantId equality BEFORE .take(limit) using by_tenant_created so
+			// fleet (null-tenant) traffic cannot crowd out tenant rows in the window.
+			// sessionDay and full-scan branches are intentionally merged here: Clerk
+			// callers have no business querying a specific sessionDay of fleet traffic,
+			// so we always use the tenant-scoped index and apply `from` as a post-index
+			// .filter() (acceptable: within a single tenant, volume is low compared to
+			// the full cross-tenant table). (task k176wgsrhha0fr0dxxahctvhw588q5a1,
+			// Eta completeness edge from PR #775 verdict jn7563v34)
+			const orgSlug = scope.orgSlug;
 			rows = await ctx.db
 				.query("messages")
-				.withIndex("by_day", (q) => q.eq("sessionDay", args.sessionDay!))
-				.order("asc")
-				.take(limit);
-		} else if (args.from !== undefined) {
-			rows = await ctx.db
-				.query("messages")
-				.withIndex("by_from", (q) => q.eq("from", args.from!))
+				.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
 				.order("desc")
+				.filter((q) =>
+					args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
+				)
 				.take(limit);
+
+			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
+			rows = rows.filter((r) => r.tenantId === orgSlug);
 		} else {
-			rows = await ctx.db.query("messages").order("desc").take(limit);
+			// ── Master path — existing index logic, unchanged ──────────────────────
+			if (args.sessionDay !== undefined) {
+				const sessionDay = args.sessionDay;
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_day", (q) => q.eq("sessionDay", sessionDay))
+					.order("asc")
+					.take(limit);
+			} else if (args.from !== undefined) {
+				const from = args.from;
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_from", (q) => q.eq("from", from))
+					.order("desc")
+					.take(limit);
+			} else {
+				rows = await ctx.db.query("messages").order("desc").take(limit);
+			}
 		}
 
 		// S3.3 B8 follow-up batch 2 — drop rows newer-or-equal to anchor.
 		if (before !== undefined) {
 			rows = rows.filter((r) => r._creationTime < before);
-		}
-
-		// Tenant scope enforcement (belt-and-suspenders).
-		// Master scope (isMaster=true): all rows returned unchanged (MCP/CLI path).
-		// Clerk scope (isMaster=false): only rows matching scope.orgSlug tenantId.
-		// Messages with no tenantId belong to the internal fleet — excluded for
-		// Clerk callers (fail-CLOSED per m9748paff).
-		if (!scope.isMaster) {
-			rows = rows.filter((r) => r.tenantId === scope.orgSlug);
 		}
 
 		return rows;
