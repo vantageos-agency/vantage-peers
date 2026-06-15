@@ -337,6 +337,21 @@ http.route({
 			const comment = payload.comment as Record<string, unknown>;
 			const issue = payload.issue as Record<string, unknown>;
 
+			// PR detection: GitHub fires issue_comment.created for both issues
+			// AND pull requests (PRs use the issues API). If the issue object has
+			// a pull_request field, this comment belongs to a PR — its lifecycle is
+			// already tracked via the Deploy task / IRP mission on the parent PR.
+			// Spawning a fresh 14-task IRP cascade here produced 56 stale tasks
+			// across 4 PRs (Day 99 friction harvest entry 3/3, task k17e4mhfn7psyag5dd3pmt5byn88fa1m).
+			// Option A: no-op for PR comments — return early before any cascade logic.
+			const isPullRequestComment = !!(issue.pull_request);
+			if (isPullRequestComment) {
+				console.log(
+					`[bridge] skipped PR comment, parent PR already tracked — issue #${issue.number as number}`,
+				);
+				return new Response("OK - PR comment skipped (parent PR tracked)", { status: 200 });
+			}
+
 			// Update githubUpdatedAt on the issue
 			const status = issue.state === "closed" ? "closed" : "open";
 			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status));
