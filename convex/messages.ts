@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
+import { withOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessage — send a message to one, many, or all orchestrators
@@ -457,6 +458,13 @@ export const listMessages = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// ── Identity-derived tenant scope ────────────────────────────────────────
+		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
+		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
+		// k179fk0c: same per-tool tenancy doctrine as tasks.list.
+		const scope = await withOrgScope(ctx);
+		requireScope(scope, "view-own-tasks");
+
 		const limit = args.limit ?? 100;
 		const before = args.createdBefore;
 
@@ -481,6 +489,16 @@ export const listMessages = query({
 		if (before !== undefined) {
 			rows = rows.filter((r) => r._creationTime < before);
 		}
+
+		// Tenant scope enforcement (belt-and-suspenders).
+		// Master scope (isMaster=true): all rows returned unchanged (MCP/CLI path).
+		// Clerk scope (isMaster=false): only rows matching scope.orgSlug tenantId.
+		// Messages with no tenantId belong to the internal fleet — excluded for
+		// Clerk callers (fail-CLOSED per m9748paff).
+		if (!scope.isMaster) {
+			rows = rows.filter((r) => r.tenantId === scope.orgSlug);
+		}
+
 		return rows;
 	},
 });
@@ -618,6 +636,13 @@ export const searchMessagesByKeyword = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
 	handler: async (ctx, args) => {
+		// ── Identity-derived tenant scope ────────────────────────────────────────
+		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
+		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
+		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
+		const scope = await withOrgScope(ctx);
+		requireScope(scope, "view-own-tasks");
+
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";
 
@@ -629,13 +654,28 @@ export const searchMessagesByKeyword = query({
 				if (args.channel !== undefined) qb = qb.eq("channel", args.channel);
 				if (args.sessionDay !== undefined)
 					qb = qb.eq("sessionDay", args.sessionDay);
-				if (args.tenantId !== undefined) qb = qb.eq("tenantId", args.tenantId);
+				// For Clerk callers: push scope.orgSlug into the search index filter
+				// (primary isolation). For master callers: use caller-supplied tenantId
+				// if provided (backward-compatible narrow by tenant for admin queries).
+				if (!scope.isMaster && scope.orgSlug !== null) {
+					qb = qb.eq("tenantId", scope.orgSlug);
+				} else if (args.tenantId !== undefined) {
+					qb = qb.eq("tenantId", args.tenantId);
+				}
 				return qb;
 			})
 			.take(limit);
 
-		if (!lite) return results;
-		return results.map((m) => ({
+		// Defense-in-depth: messages have no pilot/assignedTo so filterByOrgScope()
+		// does not fit. Enforce tenantId match inline for non-master scopes — the
+		// index .eq("tenantId", scope.orgSlug) above is the primary isolation; this
+		// is the belt-and-suspenders pass (mirrors briefingNotes pattern).
+		const filtered = !scope.isMaster
+			? results.filter((r) => r.tenantId === scope.orgSlug)
+			: results;
+
+		if (!lite) return filtered;
+		return filtered.map((m) => ({
 			_id: m._id,
 			from: m.from,
 			channel: m.channel,
