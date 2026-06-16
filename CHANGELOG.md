@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **Day 98 F4 — webhook `issue_comment` Bridge-only path** — `convex/http.ts` webhook handler for `issue_comment` events now routes exclusively through the Bridge tenant path. Prevents double-processing on multi-tenant deployments. PR #796, commit `f0c133c`.
+- **Day 98 F3 — stub-aware guard on webhook cron hook** — `convex/hooks.ts` cron now includes a stub-presence guard so stubs registered during tests do not fire production webhook paths. PR #796, commit `f0c133c`.
+- **DOCS-CONTEXT-LOOP (RULE #25)** — Docs-lockstep discipline now live on this repo. Any PR touching tools, API, or install paths must update `README.md` + `CHANGELOG.md` in the same PR. Exemptions require explicit `docs-skip: <reason>` in PR body.
+- **Tool count reaches 114** — 17 tools added since v2.5.0 including episodes API (`get_episode`, `list_episodes`, `search_episodes_by_keyword`, `search_episodes_by_semantic`), single-entity getters (`get_task`, `get_message`, `get_fix_pattern`, `get_mandate`, `get_recurring_task`, `get_repo_mapping`, `get_briefing_note`), search tools (`search_tasks_by_keyword`, `search_messages_by_keyword`, `search_briefing_notes_by_keyword`), template tool (`instantiate_template_into_mission`), identity tool (`whoami`), and validator tool (`validate_task_payload`). Aliases: `recall`, `text_search`, `update_summary`, `create_diary`, `create_task_dependency`, `create_fix_attempt`, `check_fix`, `check_mandate_spending`, `register_deployment`, `delete_deployment`, `register_repo_mapping`, `delete_repo_mapping`, `search_components`, `search_fix_patterns`.
+
+### Changed
+- **README HTTP/Railway transport** — Quick Start now documents both Option A (stdio) and Option B (HTTP/SSE via Railway) transports. HTTP transport is required for Claude.ai, ChatGPT, and any non-local MCP client.
+- **README tool count** — All occurrences updated from 97 to 114.
+
 ## [v2.5.0] — 2026-06-06 — Day 92 VP MCP quality overhaul (mission k57a36y8w5t085bqr23dsmvb2d882506)
 
 Day 92 delivered a comprehensive quality overhaul of the VP MCP server across fourteen deliverables (C0–C4, A1–A4, B1–B3, F1–F2). C0 closed all 14 P0 zero-auth write tools identified in the A1 audit matrix (commit `d03d2d7`) by wiring master-only gates (`guardMasterOnly`) or identity ownership checks (`checkFromAllowed`) into every affected handler. C1 shipped 87 Zod `outputSchema` exports following the per-family envelope standard (`whoamiOutputSchema` at `tools.ts:576` commit `5231811` as the canonical precedent). C2 enforced Unicode NFC normalization at all write paths and case-insensitive orchestrator-ID matching at all filter comparisons, closing the NFD/NFC mismatch class that caused the Hélios/helios production regression (PR #654, commit `00b95f0`). C3 standardized 97 tool descriptions (1-line summary + WHEN clause + concrete EXAMPLE, 80–500 chars each) and aligned 10 tool names to the `verb_noun_snake` whitelist. C4 removed all `claude-peers` legacy references from source and added a grep-gate CI check. A3 shipped the `whoami` LECTURE tool (PR #661, commit `5231811`) for automatic skill identity resolution. F1 shipped the `validate_task_payload` MCP validator tool (commit `cf6c961`). B1–B3 delivered the tools-quality-standard doc, scope-filter framework documentation, and onboarding-customer guide respectively.

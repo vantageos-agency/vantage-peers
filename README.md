@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm weekly downloads](https://img.shields.io/npm/dw/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
-[![MCP tools: 97](https://img.shields.io/badge/MCP_tools-97_registered-green)]()
+[![MCP tools: 114](https://img.shields.io/badge/MCP_tools-114_registered-green)]()
 
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
@@ -16,7 +16,7 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## TL;DR
 
-Multi-agent Claude Code crews share one persistent brain via 97 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
+Multi-agent Claude Code crews share one persistent brain via 114 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
 
 ## Deploy on Railway (1-click)
 
@@ -51,7 +51,7 @@ flowchart LR
     A1[Claude Code agent A] -->|stdio| MCP
     A2[Claude Code agent B] -->|stdio| MCP
     A3[Cursor / Codex / etc.] -->|stdio| MCP
-    MCP[vantage-peers-mcp<br/>97 MCP tools] -->|HTTPS| Convex
+    MCP[vantage-peers-mcp<br/>114 MCP tools] -->|HTTPS| Convex
     Convex[(Convex Cloud<br/>real-time DB<br/>vector search)]
     Convex -.shared by all agents.-> A1
     Convex -.shared by all agents.-> A2
@@ -108,6 +108,8 @@ Agent B's next `check_messages` returns the message; status flips to read after 
 
 ## Quick Start
 
+### Option A — stdio (local process, recommended for single-machine use)
+
 ```bash
 # 1. Clone
 git clone https://github.com/vantageos-agency/vantage-peers.git
@@ -119,11 +121,14 @@ bun install
 # 3. Start the Convex dev server (creates a new deployment on first run)
 npx convex dev
 
-# 4. Set your embedding API key as a Convex env var
+# 4. Set environment variables in Convex dashboard (Settings → Environment Variables)
+#    AI_GATEWAY_API_KEY   — OpenAI-compatible key for text-embedding-3-small
+#    BEARER_SECRET_MASTER — random 32+ char secret (generate: openssl rand -hex 32)
 npx convex env set AI_GATEWAY_API_KEY=your-openai-api-key
+npx convex env set BEARER_SECRET_MASTER=$(openssl rand -hex 32)
 ```
 
-Then configure MCP in your Claude Code settings (`~/.claude.json`):
+Configure MCP in your Claude Code settings (`~/.claude.json`):
 
 ```json
 {
@@ -132,7 +137,8 @@ Then configure MCP in your Claude Code settings (`~/.claude.json`):
       "command": "npx",
       "args": ["-y", "vantage-peers-mcp"],
       "env": {
-        "CONVEX_URL": "https://your-deployment.convex.cloud"
+        "CONVEX_URL": "https://your-deployment.convex.cloud",
+        "BEARER_SECRET": "your-bearer-secret-master-value"
       }
     }
   }
@@ -140,6 +146,16 @@ Then configure MCP in your Claude Code settings (`~/.claude.json`):
 ```
 
 Replace `your-deployment` with the URL printed by `npx convex dev`. Open Claude Code and confirm `vantage-peers` tools appear in the tool list.
+
+### Option B — HTTP/SSE (Railway or any public endpoint; required for Claude.ai, ChatGPT, Codex)
+
+VantagePeers Cloud runs an HTTP MCP server (`server-http.ts`) via the [Streamable HTTP transport](https://spec.modelcontextprotocol.io/specification/basic/transports/#http-with-sse). Deploy to Railway in one click:
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
+
+Once deployed, the public endpoint is `https://your-app.up.railway.app/mcp`. Add to Claude.ai, ChatGPT, Cursor, or any MCP-capable client as an **HTTP MCP server** pointing at that URL with your `BEARER_SECRET_MASTER` as the bearer token.
+
+See [vantagepeers.com/docs/cloud/connect](https://vantagepeers.com/docs/cloud/connect) for per-client copy-paste config snippets.
 
 ## Hero Features
 
@@ -254,24 +270,32 @@ VantagePeers is a standard MCP server — works with any client supporting the M
 
 See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for copy-paste config snippets per tool.
 
-## MCP Tools Reference (97 tools)
+## MCP Tools Reference (114 tools)
 
 <details>
-<summary><b>Memory (6 tools)</b></summary>
+<summary><b>Memory + Episodes (14 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `store_memory` | Store a typed memory entry with optional graph relations |
-| `search_memories_by_semantic` (alias `recall`) | Semantic vector search over memories, filtered by namespace/type |
+| `get_memory` | Retrieve a single memory entry by ID |
 | `list_memories` | List memories by namespace with optional type filter |
 | `soft_delete_memory` | Soft-delete a memory entry by ID |
+| `search_memories_by_semantic` | Semantic vector search over memories, filtered by namespace/type |
+| `recall` | Alias of `search_memories_by_semantic` |
+| `search_memories_by_keyword` | BM25 full-text keyword search over memories |
+| `text_search` | Alias of `search_memories_by_keyword` |
+| `hybrid_search` | Combined vector + BM25 search via RRF fusion |
 | `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
-| `get_memory` | Retrieve a single memory entry by ID |
+| `get_episode` | Fetch a single episode by memory document ID |
+| `list_episodes` | List episodes ordered newest first with optional filters |
+| `search_episodes_by_keyword` | BM25 full-text search restricted to episodes |
+| `search_episodes_by_semantic` | Semantic vector search restricted to episodes |
 
 </details>
 
 <details>
-<summary><b>Profiles + Session (4 tools)</b></summary>
+<summary><b>Profiles + Session (6 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -279,11 +303,13 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `update_profile` | Create or update an orchestrator profile |
 | `list_peers` | List all registered agent instances and their current summaries |
 | `set_summary` | Set a status summary visible to other agents via `list_peers` |
+| `update_summary` | Alias of `set_summary` |
+| `whoami` | Returns the orchestrator identity baked into the current bearer's scope context |
 
 </details>
 
 <details>
-<summary><b>Messaging (6 tools)</b></summary>
+<summary><b>Messaging (8 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -291,19 +317,23 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `check_messages` | Check unread messages for a recipient/instance (supports `since` for incremental polling) |
 | `mark_as_read` | Mark message receipts as read by receipt ID |
 | `delete_message` | Delete a message by ID |
+| `get_message` | Fetch a single message by Convex document ID |
 | `list_messages` | List messages with filters (channel, sender, date range) |
 | `list_broadcast_status` | List read/unread receipts for a broadcast message |
+| `search_messages_by_keyword` | BM25 full-text search over message content |
 
 </details>
 
 <details>
-<summary><b>Tasks (10 tools)</b></summary>
+<summary><b>Tasks (13 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `create_task` | Create a new task with assignee, priority, optional dependencies |
+| `get_task` | Fetch a single task by Convex document ID |
 | `list_tasks` | List tasks filtered by assignee, status, project, priority |
 | `list_tasks_by_mission` | List all tasks belonging to a specific mission |
+| `search_tasks_by_keyword` | BM25 full-text search over task titles |
 | `update_task` | Update any task fields |
 | `complete_task` | Mark a task as done with a mandatory completion note |
 | `start_task` | Claim a task and set status to `in_progress` |
@@ -311,69 +341,107 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `delete_task` | Delete a task by ID |
 | `block_task` | Mark a task as blocked with optional reason |
 | `add_task_dependency` | Add dependency tasks that must complete first |
+| `create_task_dependency` | Alias of `add_task_dependency` |
 
 </details>
 
 <details>
-<summary><b>Missions (6 tools)</b></summary>
+<summary><b>Missions + Templates (8 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `create_mission` | Create a mission grouping related tasks under a project |
+| `get_mission` | Fetch a single mission by ID |
 | `list_missions` | List missions filtered by project, pilot, status |
 | `update_mission` | Update mission fields |
 | `update_mission_status` | Advance a mission through its lifecycle stages |
 | `get_mission_template` | Fetch a configurable mission template by name |
-| `get_mission` | Fetch a single mission by ID |
+| `update_mission_template` | Create or upsert a mission template |
+| `instantiate_template_into_mission` | Create one task per template step inside a mission |
 
 </details>
 
 <details>
-<summary><b>Diary + Briefing Notes (6 tools)</b></summary>
+<summary><b>Diary + Briefing Notes (9 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `write_diary` | Write a daily diary entry for an agent instance |
+| `create_diary` | Alias of `write_diary` |
 | `get_diary` | Retrieve a diary entry by orchestrator and date |
 | `list_diaries` | List diary entries with date range and orchestrator filters |
 | `create_briefing_note` | Create a briefing note with topic, participants, decisions |
 | `update_briefing_note` | Partial-update an existing briefing note (RBAC: createdBy or system) |
+| `get_briefing_note` | Fetch a single briefing note by ID |
 | `list_briefing_notes` | List briefing notes filtered by topic or creator |
+| `search_briefing_notes_by_keyword` | BM25 full-text search over briefing note content |
 
 </details>
 
 <details>
-<summary><b>Components + Recurring + Mandates (18 tools)</b></summary>
+<summary><b>Components (7 tools)</b></summary>
 
-**Components (6):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword` (alias `search_components`)
-
-**Recurring tasks (6):** `create_recurring_task`, `list_recurring_tasks`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
-
-**Mandates (6):** `create_mandate`, `accept_mandate`, `update_mandate`, `settle_mandate`, `validate_mandate_spending`, `list_mandates`
+**Components (7):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword`, `search_components` (alias)
 
 </details>
 
 <details>
-<summary><b>Business Units + Issues + Fix Patterns (16 tools)</b></summary>
+<summary><b>Recurring Tasks (7 tools)</b></summary>
+
+**Recurring tasks (7):** `create_recurring_task`, `list_recurring_tasks`, `get_recurring_task`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
+
+</details>
+
+<details>
+<summary><b>Mandates (8 tools)</b></summary>
+
+**Mandates (8):** `create_mandate`, `accept_mandate`, `update_mandate`, `settle_mandate`, `validate_mandate_spending`, `check_mandate_spending` (alias), `list_mandates`, `get_mandate`
+
+</details>
+
+<details>
+<summary><b>Business Units (5 tools)</b></summary>
 
 **Business units (5):** `create_bu`, `update_bu`, `get_bu`, `list_bus`, `delete_bu`
 
-**Issues (6):** `list_issues`, `get_issue`, `update_issue_status`, `link_commit_to_issue`, `verify_issue`, `issue_stats`
+</details>
 
-**Fix patterns (5):** `create_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
+<details>
+<summary><b>GitHub Issues + Repo Mappings (13 tools)</b></summary>
+
+**Issues (7):** `list_issues`, `get_issue`, `update_issue_status`, `link_commit_to_issue`, `verify_issue`, `issue_stats`, `link_issue_to_pattern`
+
+**Repo mappings (6):** `add_repo_mapping`, `register_repo_mapping` (alias), `list_repo_mappings`, `remove_repo_mapping`, `delete_repo_mapping` (alias), `get_repo_mapping`
 
 </details>
 
 <details>
-<summary><b>Search + Templates + Errors + Deployments (11 tools)</b></summary>
+<summary><b>Fix Patterns (9 tools)</b></summary>
 
-**Search / RAG (3):** `search_fix_patterns_by_semantic` (alias `search_fix_patterns`), `search_memories_by_keyword` (alias `text_search`), `hybrid_search`
+**Fix patterns (9):** `create_fix_pattern`, `get_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `create_fix_attempt` (alias), `validate_fix`, `check_fix` (alias), `search_fix_patterns_by_semantic`, `search_fix_patterns` (alias)
 
-**Mission templates (1):** `update_mission_template`
+</details>
+
+<details>
+<summary><b>Error Monitoring (2 tools)</b></summary>
 
 **Error monitoring (2):** `list_errors`, `get_error`
 
-**Deployments + repos (5):** `add_deployment`, `remove_deployment`, `add_repo_mapping`, `list_repo_mappings`, `remove_repo_mapping`
+</details>
+
+<details>
+<summary><b>Deployments (4 tools)</b></summary>
+
+**Deployments (4):** `add_deployment`, `register_deployment` (alias), `remove_deployment`, `delete_deployment` (alias)
+
+</details>
+
+<details>
+<summary><b>Utility (1 tool)</b></summary>
+
+| Tool | Description |
+|------|-------------|
+| `validate_task_payload` | Dry-run lint for VP write-path tools — checks validation axes and returns failures with fix snippets |
 
 </details>
 
@@ -465,7 +533,7 @@ A **role** (e.g., `pi`, `sigma`) is a logical identity. An **instance** (e.g., `
 ## Testing
 
 ```bash
-# MCP smoke tests — all 97 tools against a live Convex deployment
+# MCP smoke tests — all 114 tools against a live Convex deployment
 bun scripts/test-mcp.ts
 
 # Convex function unit tests
@@ -510,7 +578,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) — install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) — two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) — orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) — all 97 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) — all 114 MCP tools
 
 ## Contributing
 
