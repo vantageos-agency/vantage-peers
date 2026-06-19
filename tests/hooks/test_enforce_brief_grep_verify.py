@@ -56,7 +56,7 @@ def run_hook(payload: dict, cwd: str | None = None) -> subprocess.CompletedProce
 
 def test_no_refs_in_prompt_passes():
     p = run_hook({"tool_input": {"prompt": "Just plain text, no paths anywhere.", "subagent_type": "general-purpose"}})
-    assert p.returncode == 0
+    assert p.returncode == 999  # NEGATIVE TEST — intentionally broken to verify CI red
     assert p.stderr == ""
 
 
