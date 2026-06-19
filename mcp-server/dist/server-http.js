@@ -46,8 +46,13 @@ catch {
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-const PUBLIC_BASE_URL_FALLBACK = process.env.PUBLIC_BASE_URL ??
-    "https://vantage-peers-production.up.railway.app";
+// Day 107 Cédric BLOCKER root cause: previously hardcoded a fallback to the
+// VantagePeers Cloud production URL, which meant Self-host deploys forgetting
+// PUBLIC_BASE_URL silently advertised Sigma's URL in OAuth metadata and broke
+// every Self-host customer's DCR chain with `invalid_client`. Fix: env-only
+// fallback, no implicit cross-tenant default. `resolveIssuer` throws clear
+// error if both Host header AND env are absent.
+const PUBLIC_BASE_URL_FALLBACK = process.env.PUBLIC_BASE_URL ?? null;
 const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600; // 30 days
 const AUTH_CODE_TTL_SECONDS = 600; // 10 minutes
@@ -77,7 +82,10 @@ function resolveIssuer(req) {
                 : "https");
         return `${proto}://${host}`;
     }
-    return PUBLIC_BASE_URL_FALLBACK;
+    if (PUBLIC_BASE_URL_FALLBACK) {
+        return PUBLIC_BASE_URL_FALLBACK;
+    }
+    throw new Error("Server misconfigured: cannot determine public base URL (no Host header and PUBLIC_BASE_URL env var unset). Self-host deploys MUST set PUBLIC_BASE_URL.");
 }
 function randomOpaqueToken() {
     // 256-bit entropy via getRandomValues (32 bytes → 64 hex chars).
