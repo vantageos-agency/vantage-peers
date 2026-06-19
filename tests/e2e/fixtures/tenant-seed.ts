@@ -8,7 +8,7 @@
  * missing, resolveTenantEnv() returns null and tests skip — no real PROD
  * leakage check possible without three live tenant tokens.
  *
- * Companion plan: decisions/s41-cross-tenant-playwright-plan.md
+ * Companion plan: decisions/s41-cross-tenant-e2e-plan.md
  */
 
 import { callTool, initSession, type McpEnv } from "./dummy-entity.js";

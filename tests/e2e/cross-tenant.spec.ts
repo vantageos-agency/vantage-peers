@@ -5,7 +5,7 @@
  * these as templates for S41-006..S41-040 (35 more). Theta implements
  * S41-041..S41-060 in the VCRM repo using the same pattern.
  *
- * Full scenario matrix: decisions/s41-cross-tenant-playwright-plan.md §5.
+ * Full scenario matrix: decisions/s41-cross-tenant-e2e-plan.md §5.
  *
  * Skip gate: requires VP_MCP_PROD_URL + VP_TEST_TOKEN_ALPHA/BETA/GAMMA.
  * Absent any → whole suite skips with 0 false-positives.

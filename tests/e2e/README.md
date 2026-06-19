@@ -40,7 +40,7 @@ Missing creds = skip, never silent pass. Tests use `it.skip` when env vars are a
 
 ## Adding scenarios (Sigma)
 
-1. Pick a scenario ID from the matrix in `decisions/s41-cross-tenant-playwright-plan.md` §5.
+1. Pick a scenario ID from the matrix in `decisions/s41-cross-tenant-e2e-plan.md` §5.
 2. Copy one of the 5 templates in `cross-tenant.spec.ts`.
 3. Swap `env<X>` / tenant / tool / assertion.
 4. Run locally with the 3 tokens.
@@ -62,7 +62,7 @@ Sigma owns S41-001..S41-040 (40 specs). 5 are scaffolded — 35 remain.
 
 **Pickup checklist:**
 
-1. Read this README + `decisions/s41-cross-tenant-playwright-plan.md` (§5 matrix, §6 handoff).
+1. Read this README + `decisions/s41-cross-tenant-e2e-plan.md` (§5 matrix, §6 handoff).
 2. Mirror this directory layout in the VCRM repo: `tests/e2e/cross-tenant-vcrm.spec.ts` + `tests/e2e/fixtures/tenant-seed-vcrm.ts`.
 3. Seed each test tenant with 3 contacts + 2 deals + 1 company (see plan §2).
 4. Implement 4 assertions per tool (positive, 2× negative leak checks, composition).
