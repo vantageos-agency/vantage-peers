@@ -115,9 +115,16 @@ export function registerExportOkfBundle(
 				// String FunctionReference cast mirrors the pattern used in tools.ts
 				// for newly-added Convex functions whose codegen has not yet run in
 				// the consumer worktree. Runtime resolution is by `<file>:<export>`.
-				// biome-ignore lint/suspicious/noExplicitAny: codegen-lag — see comment
+				// Eta REVISE fix-pattern m9781h39: action moved to okfBundleNode.ts
+				// (the V8-runtime module convex/okfBundle.ts only exports the
+				// internal queries / mutation + pure helpers).
+				//
+				// Typed via `Parameters<ConvexHttpClient["action"]>[0]` so we avoid
+				// `any` while still passing a string FunctionReference (Convex
+				// resolves by `<file>:<export>` at runtime).
+				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
-					"okfBundle:exportOkfBundle" as any,
+					"okfBundleNode:exportOkfBundle" as unknown as ActionRef,
 					{
 						namespace,
 						types: types ?? null,

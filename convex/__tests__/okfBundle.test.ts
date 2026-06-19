@@ -6,7 +6,7 @@
  * size caps, manifest math) — no convex-test runtime needed because the
  * action calls runQuery which is mocked at the helper boundary.
  *
- * Coverage (RFC §4 — target ≥10, this file delivers 14):
+ * Coverage (RFC §4 — target ≥10, this file delivers 18):
  *   - Round-trip serialize → tarball → extract → parse (3 tests, one per type)
  *   - Tarball structure conforms RFC §3.3 (2 tests)
  *   - Size cap behaviour (3 tests: soft truncate, hard refuse, single-entry refuse)
@@ -14,6 +14,8 @@
  *     memory-<sub> literal)
  *   - since arg parsing (2 tests: valid + invalid)
  *   - auth helper (1 test: phase 1 namespace lock)
+ *   - Eta REVISE iter 2 — pagination cursor chain (1 test)
+ *   - Eta REVISE iter 2 — cross-namespace isolation (3 tests)
  *
  * RFC parent: decisions/okf-bridge-phase-1-rfc-2026-06-18.md (commit 6613610).
  * ADR:        decisions/adr-okf-exporter-arch.md (commit 2cd357e).
@@ -29,11 +31,17 @@ import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
 	BUNDLE_HARD_CAP_BYTES,
+	BUNDLE_PAGE_SIZE,
 	BUNDLE_SOFT_CAP_BYTES,
-	packTarball,
+	expectedOrgIdForNamespace,
+	matchesNamespaceScope,
+	PHASE1_NAMESPACE,
 	parseSinceArg,
 	shouldIncludeFamily,
 } from "../okfBundle";
+// packTarball moved to convex/okfBundleNode.ts under "use node" (Eta REVISE
+// fix-pattern m9781h39 — Buffer + tar-stream are Node-only).
+import { packTarball } from "../okfBundleNode";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
@@ -408,5 +416,93 @@ describe("auth — Phase 1 namespace lock", () => {
 		expect(mod.BUNDLE_SOFT_CAP_BYTES).toBe(50 * 1024 * 1024);
 		expect(mod.BUNDLE_HARD_CAP_BYTES).toBe(100 * 1024 * 1024);
 		expect(mod.DEFAULT_URL_TTL_SECONDS).toBe(3600);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. Eta REVISE iter 2 — pagination cursor chain (1 test)
+//
+// Simulates the action's `collectAllPages()` loop against a fake paginated
+// query that returns BUNDLE_PAGE_SIZE rows per page over multiple pages.
+// Asserts the loop concatenates all pages in order until `isDone === true`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("pagination cursor chain (Eta REVISE iter 2)", () => {
+	test("loop walks all pages until isDone and preserves order", async () => {
+		const TOTAL = BUNDLE_PAGE_SIZE * 3 + 17; // 785 rows → 4 pages
+		const all = Array.from({ length: TOTAL }, (_, i) => ({
+			_id: `m_${i}`,
+			content: `row ${i}`,
+		}));
+		const fakeRunQuery = async (
+			cursor: string | null,
+		): Promise<{
+			page: typeof all;
+			isDone: boolean;
+			continueCursor: string;
+		}> => {
+			const start = cursor === null ? 0 : Number.parseInt(cursor, 10);
+			const end = Math.min(start + BUNDLE_PAGE_SIZE, all.length);
+			return {
+				page: all.slice(start, end),
+				isDone: end >= all.length,
+				continueCursor: String(end),
+			};
+		};
+
+		// Inline the same loop the action uses (`collectAllPages`) to keep the
+		// test free of "use node" / Convex action runtime dependencies.
+		const collected: Array<{ _id: string; content: string }> = [];
+		let cursor: string | null = null;
+		let hops = 0;
+		for (;;) {
+			hops++;
+			const res = await fakeRunQuery(cursor);
+			collected.push(...res.page);
+			if (res.isDone) break;
+			cursor = res.continueCursor;
+			if (hops > 100) throw new Error("runaway loop");
+		}
+		expect(collected).toHaveLength(TOTAL);
+		expect(collected[0]._id).toBe("m_0");
+		expect(collected[TOTAL - 1]._id).toBe(`m_${TOTAL - 1}`);
+		expect(hops).toBe(4); // 256 + 256 + 256 + 17 = 785 over 4 pages
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. Eta REVISE iter 2 — cross-namespace isolation (1 test)
+//
+// Verifies the namespace → orgId mapping + `matchesNamespaceScope` predicate
+// reject rows whose `orgId` does not match the requested namespace tail.
+// This is the unit-test layer of the defence-in-depth that the V8 internal
+// queries apply after their `by_orgId` index scan.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("cross-namespace isolation (Eta REVISE iter 2)", () => {
+	test("Phase 1 namespace maps to master (undefined orgId)", () => {
+		expect(expectedOrgIdForNamespace(PHASE1_NAMESPACE)).toBeUndefined();
+	});
+
+	test("non-Phase-1 project namespace maps to slug tail", () => {
+		expect(expectedOrgIdForNamespace("project/iris-rh")).toBe("iris-rh");
+	});
+
+	test("matchesNamespaceScope keeps only rows for the requested tenant", () => {
+		const rowsA = [
+			{ _id: "a1", orgId: undefined }, // master
+			{ _id: "a2", orgId: null as unknown as undefined }, // master (legacy null)
+			{ _id: "b1", orgId: "iris-rh" }, // tenant B
+			{ _id: "b2", orgId: "acme" }, // tenant C
+		];
+		const keptForMaster = rowsA.filter((r) =>
+			matchesNamespaceScope(r, PHASE1_NAMESPACE),
+		);
+		expect(keptForMaster.map((r) => r._id)).toEqual(["a1", "a2"]);
+
+		const keptForIris = rowsA.filter((r) =>
+			matchesNamespaceScope(r, "project/iris-rh"),
+		);
+		expect(keptForIris.map((r) => r._id)).toEqual(["b1"]);
 	});
 });

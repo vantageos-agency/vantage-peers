@@ -1,15 +1,23 @@
 /**
- * OKF v0.1 bundle exporter (Phase 1 — T3).
+ * OKF v0.1 bundle exporter — V8-runtime split (Phase 1 — T3 REVISE).
  *
- * Provides the public Convex `action` `exportOkfBundle` that:
- *   1. Authenticates the caller against the requested namespace (Phase 1
- *      verrouillé to `project/elpi-corp`).
- *   2. Fetches memories / briefing-notes / tasks via internal queries.
- *   3. Serializes each entry via T1 (`okfSerializer`).
- *   4. Packs entries into a tar archive via `tar-stream` (RFC §3.3 layout).
- *   5. Validates the in-memory bundle via T2 (`okfValidator`) before upload.
- *   6. Uploads the tarball to Convex storage and returns a signed download URL.
- *   7. Schedules a TTL-bound deletion of the storage object (default 3600 s).
+ * Runtime split (Eta REVISE verdict on PR #846):
+ *   - This module hosts the V8-runtime primitives: internal queries (DB reads
+ *     for memories / briefingNotes / tasks), the internal mutation for the
+ *     TTL-bound storage purge, and all pure helpers (`assembleBundle`,
+ *     `shouldIncludeFamily`, `applyMemorySubtypeFilter`, `parseSinceArg`,
+ *     `stripFrontmatterFence`). NO `"use node"` directive — these primitives
+ *     must run in the V8 runtime so `internalQuery` / `internalMutation`
+ *     remain valid Convex registrations.
+ *   - The public `exportOkfBundle` action + the `tar-stream` packer
+ *     (`packTarball`) + the auth helper live in `convex/okfBundleNode.ts`
+ *     under `"use node"`. They invoke the V8 primitives via
+ *     `ctx.runQuery(internal.okfBundle.*)` / `ctx.runMutation(internal.okfBundle.*)`.
+ *
+ * IMPORTANT — no Node globals:
+ *   `Buffer` is forbidden in this module (V8 runtime has no Buffer). UTF-8 byte
+ *   length is computed via `TextEncoder` (Web standard, available in both V8
+ *   and Node runtimes).
  *
  * Bundle layout (RFC §3.3):
  *   index.md
@@ -24,15 +32,8 @@
  *
  * URL TTL (ADR D5):
  *   - Default 3600 s, configurable via `urlTtl` arg.
- *   - Internal mutation `deleteBundleStorage` is scheduled at `now + urlTtl`
- *     to purge the storage object (true purge, not just URL expiry).
  *
- * Auth (RFC §4):
- *   - Caller identity resolved via `lib/auth.withOrgScope` (Clerk org / master).
- *   - Master scope: full access.
- *   - Non-master: namespace prefix must match `project/<orgSlug>` OR be in the
- *     caller's allowedOrchestrators set. Else throw `AUTH_NAMESPACE_DENIED`.
- *
+ * Eta fix-pattern reference: m9781h39qvcyy4hsphthz7eg5s88yc1f
  * RFC parent: decisions/okf-bridge-phase-1-rfc-2026-06-18.md (commit 6613610).
  * ADR:        decisions/adr-okf-exporter-arch.md (commit 2cd357e).
  *
@@ -40,61 +41,83 @@
  */
 
 import { v } from "convex/values";
-import { pack } from "tar-stream";
-import { internal as generatedInternal } from "./_generated/api";
-import { action, internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
 	type SerializedFile,
-	serializeBriefingNote,
 	serializeIndex,
 	serializeLog,
-	serializeMemory,
-	serializeTask,
 	type TaskDoc,
 } from "./okfSerializer";
-import { type BundleEntry, validateBundle } from "./okfValidator";
-
-// `internal.okfBundle.*` is populated by Convex codegen on the first
-// `npx convex dev` / deploy after this file lands. Until codegen has run in
-// the current worktree, the property is absent on the strongly-typed `internal`
-// object. We widen the type locally so this module compiles offline — Convex
-// resolves the FunctionReference at runtime by module path (`okfBundle:*`),
-// so behaviour is unchanged once codegen catches up.
-// biome-ignore lint/suspicious/noExplicitAny: codegen-lag workaround, see comment above
-const internal = generatedInternal as any;
+import type { BundleEntry } from "./okfValidator";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants (ADR D4 + D5)
+// Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const BUNDLE_SOFT_CAP_BYTES = 50 * 1024 * 1024; // 50 MB
 export const BUNDLE_HARD_CAP_BYTES = 100 * 1024 * 1024; // 100 MB
 export const DEFAULT_URL_TTL_SECONDS = 3600; // 1 hour
-const PHASE1_NAMESPACE = "project/elpi-corp";
+export const PHASE1_NAMESPACE = "project/elpi-corp";
+// Pagination batch size for V8 internal queries (Eta REVISE iter 2 fix).
+// Keeps each runQuery() return payload well under the Convex 16 MB
+// function-return cap that triggered the original failure
+// (`exportOkfBundle` 16 MB byte limit error on `.collect()` unfiltered reads).
+export const BUNDLE_PAGE_SIZE = 256;
 const TYPE_MEMORY_PREFIX = "memory-";
 const TYPE_BRIEFING = "briefing-note";
 const TYPE_TASK = "task";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public types
+// Namespace → org-scope mapping (Eta REVISE iter 2 — cross-namespace leak fix)
+//
+// Phase 1 locks every export to `project/elpi-corp` (master / internal Alpha
+// tenant). Per `convex/schema.ts` lines 252-254 + 304-306, briefingNotes and
+// tasks use `orgId` for multi-tenant scoping where `null`/`undefined` ==
+// master, and a Clerk org slug like `"iris-rh"` == client-scoped row.
+//
+// `memories` already has a first-class `namespace` column so it is filtered
+// directly by the existing `by_namespace` index (no extra mapping needed).
+//
+// For briefingNotes/tasks we derive the expected orgId from the requested
+// namespace:
+//   - `project/elpi-corp`           → `undefined` (master)
+//   - `project/<other>` (Phase 2)   → `<other>` (Clerk org slug)
+//
+// `matchesNamespaceScope` is applied as a belt-and-braces in-memory filter
+// after the index-bounded pagination scan to guarantee zero cross-namespace
+// leak even for legacy rows missing an orgId.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface ExportOkfBundleResult {
-	bundleUrl: string;
-	storageId: string;
-	size: number;
-	fileCount: number;
-	manifest: {
-		types: {
-			memoryCount: number;
-			briefingCount: number;
-			taskCount: number;
-		};
-		truncated: boolean;
-		urlExpiresAt: string; // ISO 8601
-	};
+export function expectedOrgIdForNamespace(
+	namespace: string,
+): string | undefined {
+	if (namespace === PHASE1_NAMESPACE) return undefined;
+	const tail = namespace.split("/").slice(1).join("/");
+	return tail === "" ? undefined : tail;
+}
+
+export function matchesNamespaceScope(
+	row: { orgId?: string | null | undefined },
+	namespace: string,
+): boolean {
+	const expected = expectedOrgIdForNamespace(namespace);
+	const actual = row.orgId ?? undefined;
+	return actual === expected;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V8-safe UTF-8 byte length (no Buffer).
+// TextEncoder is a Web standard available in both V8 and Node runtimes; it
+// yields identical results to `Buffer.byteLength(s, "utf8")` for arbitrary
+// JS strings. Allocating a Uint8Array per call is cheap relative to the
+// surrounding I/O and avoids the Buffer global which is undefined under V8.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UTF8 = new TextEncoder();
+function byteLengthUtf8(s: string): number {
+	return UTF8.encode(s).length;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,55 +126,116 @@ export interface ExportOkfBundleResult {
 // public `exportOkfBundle` action gates them behind the auth check.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// All three internal queries now return a paginated page (Eta REVISE iter 2
+// fix-pattern m978c0zyjav9tjmp4aq8b04j8n88zhwm). The Node-runtime action
+// drives the cursor loop via `collectAllPages()` in `okfBundleNode.ts`.
+//
+// Each query MUST scope its index lookup by the requested namespace and apply
+// `matchesNamespaceScope()` as a belt-and-braces post-filter to guarantee
+// zero cross-namespace leak. The `sinceMs` filter is applied last on the
+// already-scoped page (the original bug was that `.collect()` was unbounded
+// AND cross-namespace, defeating `assertCanExportNamespace`).
+//
+// Return shape mirrors `ctx.db.query().paginate(...)`:
+//   { page: T[], isDone: boolean, continueCursor: string }
+
+const PAGINATION_OPTS_VALIDATOR = v.object({
+	numItems: v.number(),
+	cursor: v.union(v.string(), v.null()),
+});
+
 export const _fetchMemoriesForBundle = internalQuery({
 	args: {
 		namespace: v.string(),
 		sinceMs: v.optional(v.number()),
+		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		const rows = await ctx.db
+		const result = await ctx.db
 			.query("memories")
 			.withIndex("by_namespace", (q) =>
 				q.eq("namespace", args.namespace).eq("isLatest", true),
 			)
-			.collect();
+			.paginate(args.paginationOpts);
 		const since = args.sinceMs;
-		if (since === undefined) return rows;
-		return rows.filter(
-			(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
-		);
+		// Defense-in-depth: re-assert namespace match (the by_namespace index
+		// already guarantees it, but we mirror the briefing/task guard for
+		// uniformity and to catch any future index-config regression).
+		const scoped = result.page.filter((r) => r.namespace === args.namespace);
+		const filtered =
+			since === undefined
+				? scoped
+				: scoped.filter(
+						(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
+					);
+		return {
+			page: filtered,
+			isDone: result.isDone,
+			continueCursor: result.continueCursor,
+		};
 	},
 });
 
 export const _fetchBriefingNotesForBundle = internalQuery({
 	args: {
+		namespace: v.string(),
 		sinceMs: v.optional(v.number()),
+		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		// briefingNotes do not carry a `namespace` column in Phase 1 schema;
-		// the table is treated as a single-tenant slice for `project/elpi-corp`.
-		const rows = await ctx.db.query("briefingNotes").collect();
+		const expectedOrgId = expectedOrgIdForNamespace(args.namespace);
+		// Use the `by_orgId` index for tenant-scoped reads. Convex treats
+		// `q.eq("orgId", undefined)` as matching rows where the field is unset
+		// (master tenant), which is the Phase 1 case for `project/elpi-corp`.
+		const result = await ctx.db
+			.query("briefingNotes")
+			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
+			.paginate(args.paginationOpts);
 		const since = args.sinceMs;
-		if (since === undefined) return rows;
-		return rows.filter(
-			(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
+		const scoped = result.page.filter((r) =>
+			matchesNamespaceScope(r, args.namespace),
 		);
+		const filtered =
+			since === undefined
+				? scoped
+				: scoped.filter(
+						(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
+					);
+		return {
+			page: filtered,
+			isDone: result.isDone,
+			continueCursor: result.continueCursor,
+		};
 	},
 });
 
 export const _fetchTasksForBundle = internalQuery({
 	args: {
+		namespace: v.string(),
 		sinceMs: v.optional(v.number()),
+		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		// tasks do not carry a `namespace` column either; same single-tenant
-		// assumption applies for Phase 1.
-		const rows = await ctx.db.query("tasks").collect();
+		const expectedOrgId = expectedOrgIdForNamespace(args.namespace);
+		const result = await ctx.db
+			.query("tasks")
+			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
+			.paginate(args.paginationOpts);
 		const since = args.sinceMs;
-		if (since === undefined) return rows;
-		return rows.filter(
-			(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
+		const scoped = result.page.filter((r) =>
+			matchesNamespaceScope(r, args.namespace),
 		);
+		const filtered =
+			since === undefined
+				? scoped
+				: scoped.filter(
+						(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
+					);
+		return {
+			page: filtered,
+			isDone: result.isDone,
+			continueCursor: result.continueCursor,
+		};
 	},
 });
 
@@ -165,7 +249,6 @@ export const _deleteBundleStorage = internalMutation({
 		try {
 			await ctx.storage.delete(args.storageId as never);
 		} catch (e) {
-			// Best-effort: log + swallow. The object may have been manually deleted.
 			console.warn(
 				`[okfBundle] TTL purge: storage.delete failed for ${args.storageId}`,
 				e instanceof Error ? e.message : String(e),
@@ -175,7 +258,7 @@ export const _deleteBundleStorage = internalMutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pure helpers (exported for unit tests)
+// Pure helpers (exported for unit tests + the Node-runtime action)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -275,7 +358,7 @@ export function assembleBundle(
 	let truncated = false;
 
 	const push = (f: SerializedFile): boolean => {
-		const size = Buffer.byteLength(f.content, "utf8");
+		const size = byteLengthUtf8(f.content);
 		if (size > caps.hardCap) {
 			throw new Error(
 				`OKF_BUNDLE_REFUSED: single entry ${f.filePath} (${size} B) exceeds hard cap ${caps.hardCap} B.`,
@@ -312,8 +395,8 @@ export function assembleBundle(
 	const logBody = stripFrontmatterFence(logFile.content);
 	entries.push({ path: indexFile.filePath, content: indexFile.content });
 	entries.push({ path: logFile.filePath, content: logBody });
-	bytes += Buffer.byteLength(indexFile.content, "utf8");
-	bytes += Buffer.byteLength(logBody, "utf8");
+	bytes += byteLengthUtf8(indexFile.content);
+	bytes += byteLengthUtf8(logBody);
 
 	const all: SerializedFile[] = [
 		...memoryFiles,
@@ -326,219 +409,3 @@ export function assembleBundle(
 
 	return { entries, bytes, truncated };
 }
-
-/**
- * Pack an in-memory bundle into a tar archive. Returns the full tarball as a
- * Buffer (Phase 1 bundle ≤50 MB → fits comfortably in memory). Uses
- * `tar-stream` entry-by-entry so we never hold two full copies in RAM.
- */
-export async function packTarball(
-	entries: readonly BundleEntry[],
-): Promise<Buffer> {
-	const tar = pack();
-	const chunks: Buffer[] = [];
-	const flushed = new Promise<void>((resolve, reject) => {
-		tar.on("data", (c: Buffer) => chunks.push(c));
-		tar.on("end", () => resolve());
-		tar.on("error", reject);
-	});
-
-	for (const e of entries) {
-		await new Promise<void>((resolve, reject) => {
-			tar.entry(
-				{ name: e.path, size: Buffer.byteLength(e.content, "utf8") },
-				e.content,
-				(err) => (err ? reject(err) : resolve()),
-			);
-		});
-	}
-	tar.finalize();
-	await flushed;
-	return Buffer.concat(chunks);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth helper (RFC §4)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Lightweight namespace authorization for Phase 1.
- *
- * Phase 1 is verrouillé to `project/elpi-corp`. We still enforce the contract
- * so Phase 2 (multi-namespace) inherits the gate.
- *
- * Rules:
- *   - Phase 1 caller MUST request `project/elpi-corp`. Any other namespace →
- *     `AUTH_NAMESPACE_DENIED` (anticipates Phase 2 rules).
- *   - Identity is resolved via `ctx.auth.getUserIdentity()`. Absence is
- *     permitted when running through the Convex CLI / deploy key (mirrors
- *     `lib/auth.withOrgScope` master-scope behaviour).
- *   - When an org slug is attached, it MUST match `elpi-corp` (the suffix of
- *     the requested namespace). Mismatch → `AUTH_NAMESPACE_DENIED`.
- */
-async function assertCanExportNamespace(
-	ctx: { auth: { getUserIdentity: () => Promise<unknown> } },
-	namespace: string,
-): Promise<void> {
-	if (namespace !== PHASE1_NAMESPACE) {
-		throw new Error(
-			`AUTH_NAMESPACE_DENIED: Phase 1 exporter is locked to "${PHASE1_NAMESPACE}", got "${namespace}".`,
-		);
-	}
-
-	const identity = (await ctx.auth.getUserIdentity()) as Record<
-		string,
-		unknown
-	> | null;
-	if (identity === null || identity === undefined) {
-		// No Clerk identity → master scope (Convex CLI / MCP server with deploy key).
-		return;
-	}
-	const orgSlug =
-		(identity.organizationId as string | undefined) ??
-		(identity.organizationSlug as string | undefined) ??
-		null;
-	if (orgSlug === null) {
-		// Internal master backwards-compat: no org → full access (mirrors lib/auth).
-		return;
-	}
-	const expectedSuffix = namespace.split("/").slice(1).join("/");
-	if (orgSlug !== expectedSuffix) {
-		throw new Error(
-			`AUTH_NAMESPACE_DENIED: caller org "${orgSlug}" cannot export namespace "${namespace}".`,
-		);
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public action
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const exportOkfBundle = action({
-	args: {
-		namespace: v.string(),
-		types: v.optional(v.union(v.array(v.string()), v.null())),
-		format: v.union(v.literal("tarball"), v.literal("tree")),
-		since: v.optional(v.union(v.string(), v.null())),
-		urlTtl: v.optional(v.number()),
-	},
-	handler: async (ctx, args): Promise<ExportOkfBundleResult> => {
-		// 1. Auth.
-		await assertCanExportNamespace(ctx, args.namespace);
-
-		// 2. Format gate — Phase 1 supports tarball only.
-		if (args.format !== "tarball") {
-			throw new Error(
-				`OKF_FORMAT_UNSUPPORTED: Phase 1 supports "tarball" only, got "${args.format}".`,
-			);
-		}
-
-		const sinceMs = parseSinceArg(args.since ?? undefined);
-		const typeFilter = args.types ?? null;
-
-		// 3. Fetch entries (only the families requested).
-		const memories = shouldIncludeFamily("memory", typeFilter)
-			? ((await ctx.runQuery(internal.okfBundle._fetchMemoriesForBundle, {
-					namespace: args.namespace,
-					sinceMs,
-				})) as MemoryDoc[])
-			: [];
-		const briefings = shouldIncludeFamily("briefing", typeFilter)
-			? ((await ctx.runQuery(internal.okfBundle._fetchBriefingNotesForBundle, {
-					sinceMs,
-				})) as BriefingNoteDoc[])
-			: [];
-		const tasks = shouldIncludeFamily("task", typeFilter)
-			? ((await ctx.runQuery(internal.okfBundle._fetchTasksForBundle, {
-					sinceMs,
-				})) as TaskDoc[])
-			: [];
-
-		// 4. Serialize.
-		const memoryFiles = applyMemorySubtypeFilter(
-			memories.map(serializeMemory),
-			memories,
-			typeFilter,
-		);
-		const briefingFiles = briefings.map(serializeBriefingNote);
-		const taskFiles = tasks.map(serializeTask);
-
-		// 5. Assemble + cap.
-		const { entries, bytes, truncated } = assembleBundle(
-			memoryFiles,
-			briefingFiles,
-			taskFiles,
-			memories,
-			briefings,
-			tasks,
-			{ softCap: BUNDLE_SOFT_CAP_BYTES, hardCap: BUNDLE_HARD_CAP_BYTES },
-		);
-
-		if (truncated) {
-			console.warn(
-				`[okfBundle] truncated bundle for namespace=${args.namespace}: ${bytes} B > ${BUNDLE_SOFT_CAP_BYTES} B`,
-			);
-		}
-
-		// 6. Validate (in-memory, before upload).
-		const validation = validateBundle({ entries });
-		if (!validation.pass) {
-			throw new Error(
-				`OKF_BUNDLE_INVALID: ${validation.errors.length} error(s) — first: ${validation.errors[0].rule} at ${validation.errors[0].path}`,
-			);
-		}
-
-		// 7. Pack tarball.
-		const tarball = await packTarball(entries);
-
-		// 8. Upload to Convex storage.
-		// Convert Node Buffer → Uint8Array view so Blob constructor accepts it
-		// across both DOM and Node runtimes (tar-stream returns Node Buffer in V8).
-		const tarBytes = new Uint8Array(
-			tarball.buffer,
-			tarball.byteOffset,
-			tarball.byteLength,
-		);
-		// Cast through BlobPart — the DOM lib in this tsconfig narrows the
-		// ArrayBuffer generic in a way that Uint8Array<ArrayBufferLike> does not
-		// satisfy, but at runtime it is a valid BlobPart in both Node and V8.
-		const blob = new Blob([tarBytes as unknown as BlobPart], {
-			type: "application/x-tar",
-		});
-		const storageId = await ctx.storage.store(blob);
-		const bundleUrl = await ctx.storage.getUrl(storageId);
-		if (bundleUrl === null) {
-			throw new Error(
-				`OKF_STORAGE_FAILED: storage.getUrl returned null for ${storageId}`,
-			);
-		}
-
-		// 9. Schedule TTL-bound purge.
-		const ttlSeconds = args.urlTtl ?? DEFAULT_URL_TTL_SECONDS;
-		if (ttlSeconds > 0) {
-			await ctx.scheduler.runAfter(
-				ttlSeconds * 1000,
-				internal.okfBundle._deleteBundleStorage,
-				{ storageId },
-			);
-		}
-		const urlExpiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-
-		// 10. Manifest.
-		return {
-			bundleUrl,
-			storageId,
-			size: tarball.byteLength,
-			fileCount: entries.length,
-			manifest: {
-				types: {
-					memoryCount: memoryFiles.length,
-					briefingCount: briefingFiles.length,
-					taskCount: taskFiles.length,
-				},
-				truncated,
-				urlExpiresAt,
-			},
-		};
-	},
-});

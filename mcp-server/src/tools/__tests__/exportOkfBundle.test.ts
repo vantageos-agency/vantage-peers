@@ -86,7 +86,8 @@ describe("export_okf_bundle MCP wrapper", () => {
 			format: "tarball",
 			// types omitted, since omitted → wrapper must coerce to null
 		});
-		expect(action).toHaveBeenCalledWith("okfBundle:exportOkfBundle", {
+		// Eta REVISE fix-pattern m9781h39: action moved to okfBundleNode.ts.
+		expect(action).toHaveBeenCalledWith("okfBundleNode:exportOkfBundle", {
 			namespace: "project/elpi-corp",
 			types: null,
 			format: "tarball",
