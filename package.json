@@ -26,7 +26,8 @@
     "node": ">=18.0.0"
   },
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "mcp-server"
   ],
   "scripts": {
     "test": "vitest run",
