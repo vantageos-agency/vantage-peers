@@ -163,8 +163,28 @@ export function bearerAuthMiddleware() {
         // the param MUST be `resource_metadata=` (not `resource=`). Claude.ai's OAuth
         // connector looks for `resource_metadata=` to bootstrap PRM discovery; with
         // `resource=` the entire DCR chain breaks before any token is issued.
-        const publicBaseUrl = process.env.PUBLIC_BASE_URL ??
-            "https://vantage-peers-production.up.railway.app";
+        //
+        // Day 107 Cédric BLOCKER root cause: a hardcoded fallback to the
+        // VantagePeers Cloud production URL ("vantage-peers-production.up.railway.app")
+        // meant Self-host deploys that forgot PUBLIC_BASE_URL silently advertised
+        // Sigma's PRM endpoint, breaking every Self-host customer's DCR chain with
+        // `invalid_client`. Fix: derive from the incoming request (RFC 8414 §2 —
+        // issuer MUST be the URL the client used). Fall back to PUBLIC_BASE_URL env
+        // only if Host header is absent (curl smoke). Fail closed if neither is set.
+        const host = c.req.header("host");
+        const xfProto = c.req.header("x-forwarded-proto");
+        const proto = xfProto ??
+            (host?.startsWith("localhost") || host?.startsWith("127.")
+                ? "http"
+                : "https");
+        const publicBaseUrl = host
+            ? `${proto}://${host}`
+            : (process.env.PUBLIC_BASE_URL ?? null);
+        if (!publicBaseUrl) {
+            return c.json({
+                error: "Server misconfigured: cannot determine public base URL (no Host header and PUBLIC_BASE_URL env var unset).",
+            }, 500);
+        }
         const wwwAuthHeader = `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
         const authHeader = c.req.header("Authorization");
         if (!authHeader?.startsWith("Bearer ")) {
