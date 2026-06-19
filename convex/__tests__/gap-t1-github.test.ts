@@ -11,7 +11,7 @@
 // Orchestrator: Sigma — VantagePeers | 2026-06-19
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -22,6 +22,13 @@ const modules = Object.fromEntries(
 );
 
 const createTestConvex = () => convexTest(schema, modules);
+
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 async function seedIssue(
 	t: ReturnType<typeof createTestConvex>,
@@ -199,7 +206,7 @@ describe("GAP-T1 link_issue_to_pattern — fixPatterns.linkIssue mutation", () =
 			expect(row?.linkedIssueIds).toContain("issue#777");
 		});
 
-		await t.finishInProgressScheduledFunctions();
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 
 	test("edge case — linking same issueId twice is idempotent (no duplicate)", async () => {
@@ -231,6 +238,6 @@ describe("GAP-T1 link_issue_to_pattern — fixPatterns.linkIssue mutation", () =
 			expect(matches.length).toBe(1);
 		});
 
-		await t.finishInProgressScheduledFunctions();
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 });

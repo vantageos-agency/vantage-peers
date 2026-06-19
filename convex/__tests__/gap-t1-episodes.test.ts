@@ -15,7 +15,7 @@
 // Orchestrator: Sigma — VantagePeers | 2026-06-19
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -26,6 +26,13 @@ const modules = Object.fromEntries(
 );
 
 const createTestConvex = () => convexTest(schema, modules);
+
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // store_episode — 8-Sins schema enforcement
@@ -59,7 +66,7 @@ describe("GAP-T1 store_episode — storeEpisode mutation", () => {
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
-		await t.finishInProgressScheduledFunctions();
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 
 	test("edge case — invalid severity literal rejected by Convex validator", async () => {
@@ -106,7 +113,7 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 		expect(row?.type).toBe("episode");
 		expect(row?.episode?.insight).toBe("insight");
 
-		await t.finishInProgressScheduledFunctions();
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 
 	test("edge case — getMemory returns null for non-existent id", async () => {
