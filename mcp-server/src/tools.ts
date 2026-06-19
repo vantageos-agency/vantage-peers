@@ -24,6 +24,7 @@ import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
+import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 
@@ -8219,4 +8220,9 @@ export function registerTools(
 			}
 		},
 	);
+
+	// ── export_okf_bundle (T3 — OKF Phase 1) ────────────────────────────────────
+	// Thin proxy to convex action `okfBundle:exportOkfBundle`. Registered last
+	// so its argument schema does not pollute other tool handlers' closures.
+	registerExportOkfBundle(server, convex);
 }

@@ -46,12 +46,14 @@
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.2.0",
     "openai": "^6.32.0",
+    "tar-stream": "^3.2.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.5.0",
+    "@types/tar-stream": "^3.1.4",
     "convex-test": "^0.0.44",
     "typescript": "^5.9.3",
     "vitest": "^4.1.1"
