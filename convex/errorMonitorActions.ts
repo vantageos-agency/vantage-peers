@@ -3,12 +3,14 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
+import { RECURRING_ESCALATION_TITLE_PREFIX } from "./errorMonitor";
 import {
 	deserializeRule,
 	evaluateFilter,
 	type FilterRule,
 	isTransientErrorMessage,
 } from "./errorMonitorFilters";
+import { computeGroupKey } from "./errorMonitorGroupKey";
 import {
 	assertKillSwitchHealth,
 	isKillSwitchActive,
@@ -41,6 +43,12 @@ export const createGitHubIssue = internalAction({
 		stackTrace: v.string(),
 		deployment: v.string(),
 		orchestrator: v.string(),
+		// Day 107 — set by upsertError when the error re-fires after the
+		// 24h cross-tick window has elapsed AND the previous IRP was already
+		// created. The mission title is prefixed with
+		// RECURRING_ESCALATION_TITLE_PREFIX so the orchestrator can route it
+		// as an escalation rather than a fresh report.
+		recurringEscalation: v.optional(v.boolean()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -111,9 +119,13 @@ export const createGitHubIssue = internalAction({
 					"User-Agent": "vantagepeers-bot/1.0",
 				},
 				body: JSON.stringify({
-					title: `[Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`,
+					title: args.recurringEscalation
+						? `${RECURRING_ESCALATION_TITLE_PREFIX} [Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`
+						: `[Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`,
 					body,
-					labels: ["bug", "auto-detected"],
+					labels: args.recurringEscalation
+						? ["bug", "auto-detected", "recurring-24h"]
+						: ["bug", "auto-detected"],
 				}),
 			},
 		);
@@ -219,7 +231,12 @@ export const pollDeploymentLogs = internalAction({
 				const moduleName = functionName.includes(":")
 					? functionName.split(":")[0]
 					: functionName;
-				const groupKey = `${moduleName}:${errorMessage}`;
+				// Day 107 refactor (fix-pattern m97cw4xf93qxgf3gg1f46fz4eh87xgfp).
+				// groupKey is now a TUPLE (module, validator_keyword) — see
+				// errorMonitorGroupKey.ts for the extraction rules. Tail variance
+				// (request IDs, timestamps, hex argument blobs) is collapsed so
+				// the same root cause produces a stable hash across log entries.
+				const groupKey = computeGroupKey(moduleName, errorMessage);
 
 				const existing = grouped.get(groupKey);
 				if (existing) {
