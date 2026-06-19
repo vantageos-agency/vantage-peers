@@ -794,4 +794,11 @@ describe("Day99 Bridge collapse — PR comment vs issue comment detection", () =
 		// No covering task → cascade would fire (IRP mission + T0..T12 spawned)
 		expect(coveringTask).toBeUndefined();
 	});
+
+	// NEGATIVE-TEST PROOF: mirror PR #869 pattern. Intentional fail to verify
+	// the vitest CI gate goes RED. Branch will be closed + deleted after CI
+	// shows red — never merged. Task k1748t5sy2z64tgp04318rr54n88yrpq.
+	test("[NEGATIVE-TEST] intentional fail to prove gate is load-bearing", () => {
+		expect(1).toBe(2);
+	});
 });
