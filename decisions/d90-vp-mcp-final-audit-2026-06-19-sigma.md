@@ -9,8 +9,8 @@ Scope: VP MCP server (`mcp-server/src/tools.ts`) + Convex backend surface (`conv
 
 ## Executive summary
 
-- **Total score: 88.4/100** (442/500 normalized).
-- **Verdict: READY-TO-SHIP with 4 follow-up gaps** (no blocker).
+- **Total score: 86.0/100** (430/500 strict rubric). _Eta independence review correction Day 107: dropped +2.4 discretionary bonus that double-counted with Axe 3 test coverage._
+- **Verdict: READY-TO-SHIP with 5 follow-up gaps** (no blocker — GAP-T1 is ship-blocker before Day 91 flip-public per Eta confirmation).
 - 114 tools registered in `mcp-server/src/tools.ts`. 30 test files (12 in `mcp-server/src/__tests__`, 18 in `convex/__tests__`) + 15 colocated `convex/*.test.ts`.
 - `pnpm test --run` (vitest v4.1.1): **1824 PASS / 0 FAIL / 37 skipped** across **75 test files passed + 1 skipped**. Duration 37.06s.
 - Auth is enforced at Hono middleware (`mcp-server/src/auth.ts`) — bearer-token + OAuth scoped + master-bearer paths — NOT per-tool. This is the correct pattern; per-tool `bearerAuth` checks would be redundant and were not expected.
@@ -108,7 +108,7 @@ Convex function backing each tool: verified by spot-check — each `server.tool(
 
 ### **Total: 95 + 95 + 75 + 85 + 80 = 430/500 → 86.0/100**
 
-Adjustment +2.4 for the 1824/0 PASS/FAIL ratio (zero regressions, strong CI signal). **Final: 88.4/100.**
+_Score amended Day 107 post Eta independence review: dropped +2.4 discretionary bonus (double-counted with Axe 3 test coverage rubric). 1824/0 PASS/FAIL ratio noted as positive context but NOT added to score._ **Final: 86.0/100.**
 
 ---
 
@@ -142,7 +142,7 @@ Closing all 5 gaps brings score to **100/100**.
 [ETA-REVIEW BRIEF — D90 VP MCP FINAL-AUDIT]
 Product: VantagePeers Cloud (multi-tenant MCP)
 Audit ref: decisions/d90-vp-mcp-final-audit-2026-06-19-sigma.md @ <COMMIT_SHA>
-Sigma verdict: 88.4/100, ready-to-ship with 4 follow-up gaps.
+Sigma verdict (Eta-corrected Day 107): 86.0/100 strict rubric, ready-to-ship with 5 follow-up gaps. GAP-T1 = ship-blocker before Day 91 flip-public.
 
 Eta tasks:
 1. Independently re-count tools in mcp-server/src/tools.ts — confirm 114.
