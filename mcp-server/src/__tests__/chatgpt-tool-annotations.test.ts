@@ -295,4 +295,12 @@ describe("ChatGPT Apps SDK tool annotations (Day 88)", () => {
 		}
 		expect(mismatches, mismatches.join("\n")).toEqual([]);
 	});
+
+	// NEGATIVE-TEST PROOF: mirror PRs #869 + #874. Intentional fail in
+	// mcp-server/src/__tests__/ — the subtree added to CI scope by PR
+	// #879. Verifies the expanded gate goes RED. Branch will be closed
+	// + deleted after CI shows red — never merged.
+	it("[NEGATIVE-TEST] intentional fail to prove expanded gate is load-bearing", () => {
+		expect(1).toBe(2);
+	});
 });
