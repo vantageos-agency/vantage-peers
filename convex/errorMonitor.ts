@@ -33,6 +33,33 @@ export const DEFAULT_RECURRENCE_THRESHOLD = 3;
  */
 export const AUTO_RESOLVE_QUIET_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+/**
+ * Day 107 — 24h cross-tick re-raise window for the auto-IRP generator.
+ *
+ * When an errorLog row is hit AGAIN after this many ms have elapsed since
+ * the previous `lastSeen`, AND the row already has `issueCreated=true`, the
+ * upsert path re-arms the issue-creation gate and schedules a NEW
+ * createGitHubIssue with `recurringEscalation=true`. The resulting mission
+ * is tagged `[RECURRING 24h+ — root cause not fixed]` so the orchestrator
+ * recognises it as an escalation, not a fresh report.
+ *
+ * Within this window, the existing `issueCreated` guard suppresses any
+ * duplicate scheduling — that is the "cross-tick dedup" behaviour we are
+ * preserving (and now have explicit test coverage for in
+ * convex/__tests__/auto-irp-dedup-tuple.test.ts).
+ *
+ * Reference: fix-pattern m97cw4xf93qxgf3gg1f46fz4eh87xgfp.
+ */
+export const AUTO_IRP_24H_RERAISE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Mission title prefix applied when `createGitHubIssue` is fired with
+ * `recurringEscalation=true`. Surfaced verbatim so downstream parsers
+ * (orchestrator dashboards, regex routers) can grep for this string.
+ */
+export const RECURRING_ESCALATION_TITLE_PREFIX =
+	"[RECURRING 24h+ — root cause not fixed]";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal mutations (called from actions)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,22 +85,43 @@ export const upsertError = internalMutation({
 			.unique();
 
 		const now = Date.now();
-		const threshold =
-			args.recurrenceThreshold ?? DEFAULT_RECURRENCE_THRESHOLD;
+		const threshold = args.recurrenceThreshold ?? DEFAULT_RECURRENCE_THRESHOLD;
 
 		if (existing) {
 			const newCount = existing.count + 1;
-			await ctx.db.patch(existing._id, {
+			// Day 107 — 24h cross-tick re-raise window. Capture the PREVIOUS
+			// lastSeen BEFORE patching. If the row already had an issue created
+			// AND we have not seen it for >= AUTO_IRP_24H_RERAISE_WINDOW_MS, the
+			// fix attempt evidently did not take — schedule a NEW mission with
+			// the `[RECURRING 24h+ — root cause not fixed]` escalation tag.
+			//
+			// Within the same 24h window, the existing `issueCreated` guard
+			// already prevents a duplicate mission (this is the original
+			// "cross-tick dedup" behaviour we are preserving).
+			const previousLastSeen = existing.lastSeen;
+			const isReRaise =
+				existing.issueCreated === true &&
+				now - previousLastSeen >= AUTO_IRP_24H_RERAISE_WINDOW_MS;
+
+			const patch: Partial<Doc<"errorLogs">> = {
 				lastSeen: now,
 				count: newCount,
-			});
+			};
+			if (isReRaise) {
+				// Re-arm the issue-creation gate so the next scheduled
+				// createGitHubIssue can land. We do NOT touch irpMissionId or
+				// issueNumber so the auto-resolver can still cascade-close the
+				// stale mission if needed.
+				patch.issueCreated = false;
+			}
+			await ctx.db.patch(existing._id, patch);
 
 			// Threshold check: if the GH issue has NOT been created yet and we
 			// have now crossed the recurrence threshold, schedule creation now.
 			// Guard `issueCreated` so we never double-fire even if the cron races.
-			const effectiveThreshold =
-				existing.recurrenceThreshold ?? threshold;
-			if (!existing.issueCreated && newCount >= effectiveThreshold) {
+			const effectiveThreshold = existing.recurrenceThreshold ?? threshold;
+			const issueGateOpen = isReRaise || !existing.issueCreated;
+			if (issueGateOpen && newCount >= effectiveThreshold) {
 				await ctx.scheduler.runAfter(
 					0,
 					internal.errorMonitorActions.createGitHubIssue,
@@ -85,6 +133,7 @@ export const upsertError = internalMutation({
 						stackTrace: args.stackTrace ?? "",
 						deployment: args.deployment,
 						orchestrator: args.orchestrator,
+						recurringEscalation: isReRaise,
 					},
 				);
 			}
@@ -435,7 +484,7 @@ export const listDeployments = query({
 
 export const listErrors = query({
 	args: {
-	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		deployment: v.optional(v.string()),
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
