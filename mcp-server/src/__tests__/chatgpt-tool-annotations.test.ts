@@ -150,6 +150,9 @@ const READ_ONLY_TOOLS = new Set([
 	"search_tasks_by_keyword",
 	"search_messages_by_keyword",
 	"search_briefing_notes_by_keyword",
+	// Day 107 — OKF Phase 1 T3 (PR #850): export action surfaces a tarball without
+	// mutating the namespace state; readOnlyHint=true at exportOkfBundle.ts:108.
+	"export_okf_bundle",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([
