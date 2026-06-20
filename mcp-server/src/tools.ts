@@ -10,6 +10,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
@@ -19,15 +20,15 @@ import {
 	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
-import { validateTaskPayload } from "./validate-task-payload.js";
-import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
-import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
+import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
+import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
+import { validateTaskPayload } from "./validate-task-payload.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VP_EMIT_UI_MARKERS gate
@@ -609,7 +610,6 @@ export const whoamiOutputSchema = z.object({
 		),
 });
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // C1 — Per-tool outputSchema exports (B2 §3 standard)
 //
@@ -633,16 +633,22 @@ export const softDeleteMemoryOutputSchema = z.object({
 });
 
 // get_memory
-export const getMemoryOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getMemoryOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // recall
 export const recallOutputSchema = z.array(z.record(z.string(), z.unknown()));
 
 // text_search
-export const textSearchOutputSchema = z.array(z.record(z.string(), z.unknown()));
+export const textSearchOutputSchema = z.array(
+	z.record(z.string(), z.unknown()),
+);
 
 // hybrid_search
-export const hybridSearchOutputSchema = z.array(z.record(z.string(), z.unknown()));
+export const hybridSearchOutputSchema = z.array(
+	z.record(z.string(), z.unknown()),
+);
 
 // store_episode
 export const storeEpisodeOutputSchema = z.object({
@@ -653,7 +659,9 @@ export const storeEpisodeOutputSchema = z.object({
 });
 
 // get_profile
-export const getProfileOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getProfileOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // update_profile
 export const updateProfileOutputSchema = z.object({
@@ -665,7 +673,12 @@ export const updateProfileOutputSchema = z.object({
 // list_memories
 export const listMemoriesOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable().optional(), _meta: z.record(z.string(), z.unknown()).optional(), page: z.array(z.record(z.string(), z.unknown())).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable().optional(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+		page: z.array(z.record(z.string(), z.unknown())).optional(),
+	}),
 ]);
 
 // send_message
@@ -677,7 +690,16 @@ export const sendMessageOutputSchema = z.object({
 
 // check_messages
 export const checkMessagesOutputSchema = z.union([
-	z.array(z.object({ receiptId: z.string(), from: z.string(), fromInstanceId: z.string().optional(), channel: z.string().optional(), content: z.string(), createdAt: z.number() })),
+	z.array(
+		z.object({
+			receiptId: z.string(),
+			from: z.string(),
+			fromInstanceId: z.string().optional(),
+			channel: z.string().optional(),
+			content: z.string(),
+			createdAt: z.number(),
+		}),
+	),
 	z.string(),
 ]);
 
@@ -696,18 +718,39 @@ export const setSummaryOutputSchema = z.object({
 
 // list_peers
 export const listPeersOutputSchema = z.union([
-	z.array(z.object({ _id: z.string(), _creationTime: z.number().optional(), id: z.string(), instanceId: z.string(), name: z.string().optional(), role: z.string(), workspace: z.string(), currentTask: z.string(), lastSeen: z.string(), sessionCount: z.number() })),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+	z.array(
+		z.object({
+			_id: z.string(),
+			_creationTime: z.number().optional(),
+			id: z.string(),
+			instanceId: z.string(),
+			name: z.string().optional(),
+			role: z.string(),
+			workspace: z.string(),
+			currentTask: z.string(),
+			lastSeen: z.string(),
+			sessionCount: z.number(),
+		}),
+	),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+	}),
 ]);
 
 // list_messages
 export const listMessagesOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+	}),
 ]);
 
 // list_broadcast_status
-export const listBroadcastStatusOutputSchema = z.array(z.record(z.string(), z.unknown()));
+export const listBroadcastStatusOutputSchema = z.array(
+	z.record(z.string(), z.unknown()),
+);
 
 // create_task
 export const createTaskOutputSchema = z.object({
@@ -721,17 +764,30 @@ export const createTaskOutputSchema = z.object({
 // list_tasks
 export const listTasksOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // update_task
-export const updateTaskOutputSchema = z.object({ taskId: z.string(), updated: z.literal(true) });
+export const updateTaskOutputSchema = z.object({
+	taskId: z.string(),
+	updated: z.literal(true),
+});
 
 // complete_task
-export const completeTaskOutputSchema = z.object({ taskId: z.string(), status: z.literal("done") });
+export const completeTaskOutputSchema = z.object({
+	taskId: z.string(),
+	status: z.literal("done"),
+});
 
 // start_task
-export const startTaskOutputSchema = z.object({ taskId: z.string(), status: z.literal("in_progress") });
+export const startTaskOutputSchema = z.object({
+	taskId: z.string(),
+	status: z.literal("in_progress"),
+});
 
 // checkout_task
 export const checkoutTaskOutputSchema = z.union([
@@ -743,15 +799,26 @@ export const checkoutTaskOutputSchema = z.union([
 export const deleteTaskOutputSchema = z.record(z.string(), z.unknown());
 
 // block_task
-export const blockTaskOutputSchema = z.object({ taskId: z.string(), status: z.literal("blocked"), reason: z.string().optional() });
+export const blockTaskOutputSchema = z.object({
+	taskId: z.string(),
+	status: z.literal("blocked"),
+	reason: z.string().optional(),
+});
 
 // add_task_dependency
-export const addTaskDependencyOutputSchema = z.object({ taskId: z.string(), dependsOn: z.array(z.string()), updated: z.literal(true) });
+export const addTaskDependencyOutputSchema = z.object({
+	taskId: z.string(),
+	dependsOn: z.array(z.string()),
+	updated: z.literal(true),
+});
 
 // list_tasks_by_mission
 export const listTasksByMissionOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+	}),
 ]);
 
 // create_mission
@@ -766,43 +833,79 @@ export const createMissionOutputSchema = z.object({
 // list_missions
 export const listMissionsOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // get_mission
-export const getMissionOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getMissionOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // update_mission
-export const updateMissionOutputSchema = z.object({ missionId: z.string(), updated: z.literal(true) });
+export const updateMissionOutputSchema = z.object({
+	missionId: z.string(),
+	updated: z.literal(true),
+});
 
 // update_mission_status
-export const updateMissionStatusOutputSchema = z.object({ missionId: z.string(), status: z.enum(["brainstorm", "plan", "execute", "validate", "complete"]) });
+export const updateMissionStatusOutputSchema = z.object({
+	missionId: z.string(),
+	status: z.enum(["brainstorm", "plan", "execute", "validate", "complete"]),
+});
 
 // write_diary
-export const writeDiaryOutputSchema = z.object({ diaryId: z.string(), date: z.string(), orchestrator: z.string() });
+export const writeDiaryOutputSchema = z.object({
+	diaryId: z.string(),
+	date: z.string(),
+	orchestrator: z.string(),
+});
 
 // get_diary
-export const getDiaryOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getDiaryOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // list_diaries
 export const listDiariesOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // create_briefing_note
-export const createBriefingNoteOutputSchema = z.object({ noteId: z.string(), title: z.string(), topic: z.string(), createdBy: z.string() });
+export const createBriefingNoteOutputSchema = z.object({
+	noteId: z.string(),
+	title: z.string(),
+	topic: z.string(),
+	createdBy: z.string(),
+});
 
 // update_briefing_note
-export const updateBriefingNoteOutputSchema = z.object({ noteId: z.string(), updated: z.literal(true) });
+export const updateBriefingNoteOutputSchema = z.object({
+	noteId: z.string(),
+	updated: z.literal(true),
+});
 
 // get_briefing_note
-export const getBriefingNoteOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getBriefingNoteOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // list_briefing_notes
 export const listBriefingNotesOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // register_component
@@ -811,68 +914,124 @@ export const registerComponentOutputSchema = z.record(z.string(), z.unknown());
 // list_components
 export const listComponentsOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+	}),
 ]);
 
 // get_component
-export const getComponentOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getComponentOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // update_component
-export const updateComponentOutputSchema = z.object({ componentId: z.string(), updated: z.literal(true) });
+export const updateComponentOutputSchema = z.object({
+	componentId: z.string(),
+	updated: z.literal(true),
+});
 
 // delete_component
 export const deleteComponentOutputSchema = z.record(z.string(), z.unknown());
 
 // search_components
-export const searchComponentsOutputSchema = z.array(z.record(z.string(), z.unknown()));
+export const searchComponentsOutputSchema = z.array(
+	z.record(z.string(), z.unknown()),
+);
 
 // create_recurring_task
-export const createRecurringTaskOutputSchema = z.object({ taskId: z.string(), cronExpression: z.string() });
+export const createRecurringTaskOutputSchema = z.object({
+	taskId: z.string(),
+	cronExpression: z.string(),
+});
 
 // list_recurring_tasks
 export const listRecurringTasksOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+	}),
 ]);
 
 // pause_recurring_task
 export const pauseRecurringTaskOutputSchema = z.record(z.string(), z.unknown());
 
 // resume_recurring_task
-export const resumeRecurringTaskOutputSchema = z.record(z.string(), z.unknown());
+export const resumeRecurringTaskOutputSchema = z.record(
+	z.string(),
+	z.unknown(),
+);
 
 // delete_recurring_task
-export const deleteRecurringTaskOutputSchema = z.record(z.string(), z.unknown());
+export const deleteRecurringTaskOutputSchema = z.record(
+	z.string(),
+	z.unknown(),
+);
 
 // update_recurring_task
-export const updateRecurringTaskOutputSchema = z.object({ recurringTaskId: z.string(), updated: z.literal(true) });
+export const updateRecurringTaskOutputSchema = z.object({
+	recurringTaskId: z.string(),
+	updated: z.literal(true),
+});
 
 // create_mandate
-export const createMandateOutputSchema = z.object({ mandateId: z.string(), requestedBy: z.string(), fulfilledBy: z.string(), service: z.string(), budget: z.number() });
+export const createMandateOutputSchema = z.object({
+	mandateId: z.string(),
+	requestedBy: z.string(),
+	fulfilledBy: z.string(),
+	service: z.string(),
+	budget: z.number(),
+});
 
 // accept_mandate
-export const acceptMandateOutputSchema = z.object({ mandateId: z.string(), status: z.literal("accepted") });
+export const acceptMandateOutputSchema = z.object({
+	mandateId: z.string(),
+	status: z.literal("accepted"),
+});
 
 // update_mandate
-export const updateMandateOutputSchema = z.object({ mandateId: z.string(), updated: z.literal(true) });
+export const updateMandateOutputSchema = z.object({
+	mandateId: z.string(),
+	updated: z.literal(true),
+});
 
 // settle_mandate
-export const settleMandateOutputSchema = z.object({ mandateId: z.string(), status: z.literal("settled"), finalCost: z.number() });
+export const settleMandateOutputSchema = z.object({
+	mandateId: z.string(),
+	status: z.literal("settled"),
+	finalCost: z.number(),
+});
 
 // validate_mandate_spending
-export const validateMandateSpendingOutputSchema = z.record(z.string(), z.unknown());
+export const validateMandateSpendingOutputSchema = z.record(
+	z.string(),
+	z.unknown(),
+);
 
 // list_mandates
 export const listMandatesOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // create_bu
-export const createBuOutputSchema = z.object({ buId: z.string(), name: z.string(), orchestratorId: z.string(), status: z.enum(["idea", "building", "live", "revenue"]) });
+export const createBuOutputSchema = z.object({
+	buId: z.string(),
+	name: z.string(),
+	orchestratorId: z.string(),
+	status: z.enum(["idea", "building", "live", "revenue"]),
+});
 
 // update_bu
-export const updateBuOutputSchema = z.object({ buId: z.string(), updated: z.literal(true) });
+export const updateBuOutputSchema = z.object({
+	buId: z.string(),
+	updated: z.literal(true),
+});
 
 // get_bu
 export const getBuOutputSchema = z.record(z.string(), z.unknown()).nullable();
@@ -880,19 +1039,32 @@ export const getBuOutputSchema = z.record(z.string(), z.unknown()).nullable();
 // list_bus
 export const listBusOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // delete_bu
 export const deleteBuOutputSchema = z.record(z.string(), z.unknown());
 
 // add_repo_mapping
-export const addRepoMappingOutputSchema = z.object({ id: z.string(), repo: z.string(), orchestrator: z.string(), project: z.string(), active: z.boolean().optional() });
+export const addRepoMappingOutputSchema = z.object({
+	id: z.string(),
+	repo: z.string(),
+	orchestrator: z.string(),
+	project: z.string(),
+	active: z.boolean().optional(),
+});
 
 // list_repo_mappings
 export const listRepoMappingsOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+	}),
 ]);
 
 // remove_repo_mapping
@@ -906,55 +1078,108 @@ export const listIssuesOutputSchema = z.object({
 });
 
 // get_issue
-export const getIssueOutputSchema = z.union([
-	z.record(z.string(), z.unknown()),
-	z.object({ error: z.string() }),
-]).nullable();
+export const getIssueOutputSchema = z
+	.union([z.record(z.string(), z.unknown()), z.object({ error: z.string() })])
+	.nullable();
 
 // update_issue_status
-export const updateIssueStatusOutputSchema = z.object({ repo: z.string(), issueNumber: z.number(), status: z.string(), updated: z.literal(true) });
+export const updateIssueStatusOutputSchema = z.object({
+	repo: z.string(),
+	issueNumber: z.number(),
+	status: z.string(),
+	updated: z.literal(true),
+});
 
 // link_commit_to_issue
-export const linkCommitToIssueOutputSchema = z.object({ repo: z.string(), issueNumber: z.number(), commitSha: z.string(), fixedBy: z.string(), linked: z.literal(true) });
+export const linkCommitToIssueOutputSchema = z.object({
+	repo: z.string(),
+	issueNumber: z.number(),
+	commitSha: z.string(),
+	fixedBy: z.string(),
+	linked: z.literal(true),
+});
 
 // verify_issue
-export const verifyIssueOutputSchema = z.object({ repo: z.string(), issueNumber: z.number(), verifiedBy: z.string(), verified: z.literal(true) });
+export const verifyIssueOutputSchema = z.object({
+	repo: z.string(),
+	issueNumber: z.number(),
+	verifiedBy: z.string(),
+	verified: z.literal(true),
+});
 
 // issue_stats
-export const issueStatsOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const issueStatsOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // create_fix_pattern
-export const createFixPatternOutputSchema = z.object({ patternId: z.string(), created: z.literal(true) });
+export const createFixPatternOutputSchema = z.object({
+	patternId: z.string(),
+	created: z.literal(true),
+});
 
 // add_fix_attempt
-export const addFixAttemptOutputSchema = z.object({ attemptId: z.string(), patternId: z.string(), worked: z.boolean() });
+export const addFixAttemptOutputSchema = z.object({
+	attemptId: z.string(),
+	patternId: z.string(),
+	worked: z.boolean(),
+});
 
 // validate_fix
-export const validateFixOutputSchema = z.object({ patternId: z.string(), validatedFix: z.string(), validated: z.literal(true) });
+export const validateFixOutputSchema = z.object({
+	patternId: z.string(),
+	validatedFix: z.string(),
+	validated: z.literal(true),
+});
 
 // search_fix_patterns
-export const searchFixPatternsOutputSchema = z.array(z.record(z.string(), z.unknown()));
+export const searchFixPatternsOutputSchema = z.array(
+	z.record(z.string(), z.unknown()),
+);
 
 // list_fix_patterns
 export const listFixPatternsOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // link_issue_to_pattern
-export const linkIssueToPatternOutputSchema = z.object({ patternId: z.string(), issueId: z.string(), linked: z.literal(true) });
+export const linkIssueToPatternOutputSchema = z.object({
+	patternId: z.string(),
+	issueId: z.string(),
+	linked: z.literal(true),
+});
 
 // get_mission_template
-export const getMissionTemplateOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getMissionTemplateOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // update_mission_template
-export const updateMissionTemplateOutputSchema = z.object({ templateId: z.string(), name: z.string(), stepCount: z.number() });
+export const updateMissionTemplateOutputSchema = z.object({
+	templateId: z.string(),
+	name: z.string(),
+	stepCount: z.number(),
+});
 
 // instantiate_template_into_mission
-export const instantiateTemplateIntoMissionOutputSchema = z.record(z.string(), z.unknown());
+export const instantiateTemplateIntoMissionOutputSchema = z.record(
+	z.string(),
+	z.unknown(),
+);
 
 // add_deployment
-export const addDeploymentOutputSchema = z.object({ id: z.string(), name: z.string(), deploymentUrl: z.string(), githubRepo: z.string(), orchestrator: z.string() });
+export const addDeploymentOutputSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	deploymentUrl: z.string(),
+	githubRepo: z.string(),
+	orchestrator: z.string(),
+});
 
 // remove_deployment
 export const removeDeploymentOutputSchema = z.object({ removed: z.string() });
@@ -962,11 +1187,17 @@ export const removeDeploymentOutputSchema = z.object({ removed: z.string() });
 // list_errors
 export const listErrorsOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
-	z.object({ items: z.array(z.record(z.string(), z.unknown())), nextCursor: z.string().nullable(), _meta: z.record(z.string(), z.unknown()).optional() }),
+	z.object({
+		items: z.array(z.record(z.string(), z.unknown())),
+		nextCursor: z.string().nullable(),
+		_meta: z.record(z.string(), z.unknown()).optional(),
+	}),
 ]);
 
 // get_error
-export const getErrorOutputSchema = z.record(z.string(), z.unknown()).nullable();
+export const getErrorOutputSchema = z
+	.record(z.string(), z.unknown())
+	.nullable();
 
 // validate_task_payload (F1 — Day 92)
 export const validateTaskPayloadOutputSchema = z.object({
@@ -1211,7 +1442,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1274,7 +1507,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1330,7 +1565,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1390,7 +1627,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1446,7 +1685,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			vectorWeight: z
 				.number()
 				.min(0)
@@ -1466,7 +1707,15 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Search memories (hybrid)",
 		},
-		async ({ query, namespace, type, limit, fields, vectorWeight, textWeight }) => {
+		async ({
+			query,
+			namespace,
+			type,
+			limit,
+			fields,
+			vectorWeight,
+			textWeight,
+		}) => {
 			try {
 				const nsDenied = guardRead(namespace);
 				if (nsDenied) return nsDenied;
@@ -1634,7 +1883,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -1737,7 +1988,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1793,7 +2046,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -1874,7 +2129,7 @@ export function registerTools(
 		"update_profile",
 		"Create or update an orchestrator profile with static identity facts and dynamic session state. " +
 			"WHEN: call on each session start to update lastSeen/sessionCount, or when role/capabilities change. " +
-			"EXAMPLE: update_profile orchestratorId='alpha' dynamic=\{lastSeen: Date.now(), sessionCount: 5\}.",
+			"EXAMPLE: update_profile orchestratorId='alpha' dynamic={lastSeen: Date.now(), sessionCount: 5}.",
 		{
 			orchestratorId: z.string().describe("Orchestrator identifier"),
 			name: z.string().optional().describe("Human-readable orchestrator name"),
@@ -1972,7 +2227,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -2043,7 +2300,11 @@ export function registerTools(
 					? filteredList
 					: { ...(memories as any), page: filteredList };
 
-				const baseText = capListResponseBytes(filteredEnvelope, JSON.stringify(filteredEnvelope, null, 2), "list_memories");
+				const baseText = capListResponseBytes(
+					filteredEnvelope,
+					JSON.stringify(filteredEnvelope, null, 2),
+					"list_memories",
+				);
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "memory-quote",
 					items: filteredList.map((m: any) => ({
@@ -2091,7 +2352,7 @@ export function registerTools(
 				.optional()
 				.describe(
 					"Day number (e.g. 88 for Day 88). If omitted, auto-derived from project epoch " +
-					"(Day 1 = 2026-03-06 UTC). Pass explicitly to override.",
+						"(Day 1 = 2026-03-06 UTC). Pass explicitly to override.",
 				),
 			tenantId: z
 				.string()
@@ -2123,9 +2384,7 @@ export function registerTools(
 				// Day 1 = 2026-03-06 UTC (Day 88 confirmed as 2026-06-01).
 				// Explicit args.sessionDay always wins (backward-compat).
 				const derivedSessionDay: number =
-					sessionDay !== undefined
-						? sessionDay
-						: deriveSessionDay();
+					sessionDay !== undefined ? sessionDay : deriveSessionDay();
 
 				// C2: normalize orchestrator-id fields at write time (B2 §6+§7).
 				// `channel` may be "broadcast", a role name, or "pi,tau" CSV —
@@ -2231,8 +2490,7 @@ export function registerTools(
 							? oauthCtx.fromAllowList.some(
 									(a) => normalizeOrchestratorId(a) === normRecipient,
 								)
-							: normRecipient ===
-								normalizeOrchestratorId(oauthCtx.userId);
+							: normRecipient === normalizeOrchestratorId(oauthCtx.userId);
 					if (!allowed) {
 						return mcpError(
 							`Forbidden: check_messages can only read messages addressed to an identity you are authorized to speak as (token userId='${oauthCtx.userId}', allowed senders=[${(oauthCtx.fromAllowList ?? []).join(", ")}]); requested recipient '${recipient}' is not in that set.`,
@@ -2466,7 +2724,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -2544,7 +2804,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(peersWithCursor, JSON.stringify(peersWithCursor, null, 2), "list_peers"),
+							text: capListResponseBytes(
+								peersWithCursor,
+								JSON.stringify(peersWithCursor, null, 2),
+								"list_peers",
+							),
 						},
 					],
 				};
@@ -2578,7 +2842,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -2646,7 +2912,11 @@ export function registerTools(
 						? { items: filteredMessages, nextCursor }
 						: filteredMessages;
 
-				const baseText = capListResponseBytes(messagesWithCursor, JSON.stringify(messagesWithCursor, null, 2), "list_messages");
+				const baseText = capListResponseBytes(
+					messagesWithCursor,
+					JSON.stringify(messagesWithCursor, null, 2),
+					"list_messages",
+				);
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "messages-feed",
 					items: filteredMessages.map((m: any) => ({
@@ -2678,7 +2948,9 @@ export function registerTools(
 			"WHEN: use for post-incident audit or to find peer DMs by topic — e.g. 'find messages about deploy' across the recent sessionDay window. " +
 			"EXAMPLE: search_messages_by_keyword query='convex deploy' from='pi' sessionDay=102 limit=10.",
 		{
-			query: z.string().describe("Search term to match against message content"),
+			query: z
+				.string()
+				.describe("Search term to match against message content"),
 			from: z.string().optional().describe("Filter by sender role"),
 			channel: z
 				.string()
@@ -2700,7 +2972,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -2759,7 +3033,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -2788,7 +3064,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(filteredStatus, JSON.stringify(filteredStatus, null, 2), "list_broadcast_status"),
+							text: capListResponseBytes(
+								filteredStatus,
+								JSON.stringify(filteredStatus, null, 2),
+								"list_broadcast_status",
+							),
 						},
 					],
 				};
@@ -2930,7 +3210,9 @@ export function registerTools(
 				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
-				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
+				.describe(
+					'Field projection ("lite"|"full"). Default "lite" (v2.4.9+).',
+				),
 			createdBy: assigneeSchema
 				.optional()
 				.describe(
@@ -3015,11 +3297,13 @@ export function registerTools(
 					}
 				}
 				const tasksWithCursor =
-					nextCursor !== null
-						? { items: tasksArr, nextCursor }
-						: tasks;
+					nextCursor !== null ? { items: tasksArr, nextCursor } : tasks;
 
-				const baseText = capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_tasks");
+				const baseText = capListResponseBytes(
+					tasksWithCursor,
+					JSON.stringify(tasksWithCursor, null, 2),
+					"list_tasks",
+				);
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "tasks-table",
 					items: Array.isArray(tasks)
@@ -3056,19 +3340,13 @@ export function registerTools(
 			"EXAMPLE: search_tasks_by_keyword query='hook PostToolUse' status='todo' limit=10.",
 		{
 			query: z.string().describe("Search term to match against task title"),
-			assignedTo: z
-				.string()
-				.optional()
-				.describe("Filter by assignee role"),
+			assignedTo: z.string().optional().describe("Filter by assignee role"),
 			status: z
 				.enum(["todo", "in_progress", "review", "blocked", "done"])
 				.optional()
 				.describe("Filter by status"),
 			project: z.string().optional().describe("Filter by project name"),
-			missionId: z
-				.string()
-				.optional()
-				.describe("Filter by mission Convex ID"),
+			missionId: z.string().optional().describe("Filter by mission Convex ID"),
 			limit: z
 				.number()
 				.int()
@@ -3079,7 +3357,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -3087,7 +3367,15 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Search tasks by keyword (BM25)",
 		},
-		async ({ query, assignedTo, status, project, missionId, limit, fields }) => {
+		async ({
+			query,
+			assignedTo,
+			status,
+			project,
+			missionId,
+			limit,
+			fields,
+		}) => {
 			try {
 				const results = await convex.query(
 					"tasks:searchTasksByKeyword" as any,
@@ -3563,7 +3851,15 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List tasks by mission",
 		},
-		async ({ missionId, status, limit, fields, createdBy, updatedSince, cursor }) => {
+		async ({
+			missionId,
+			status,
+			limit,
+			fields,
+			createdBy,
+			updatedSince,
+			cursor,
+		}) => {
 			try {
 				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
 				let createdBefore: number | undefined;
@@ -3619,7 +3915,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_tasks_by_mission"),
+							text: capListResponseBytes(
+								tasksWithCursor,
+								JSON.stringify(tasksWithCursor, null, 2),
+								"list_tasks_by_mission",
+							),
 						},
 					],
 				};
@@ -3736,7 +4036,9 @@ export function registerTools(
 				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
-				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
+				.describe(
+					'Field projection ("lite"|"full"). Default "lite" (v2.4.9+).',
+				),
 			updatedSince: updatedSinceSchema.optional(),
 			cursor: z
 				.string()
@@ -3802,11 +4104,13 @@ export function registerTools(
 					}
 				}
 				const missionsWithCursor =
-					nextCursor !== null
-						? { items: missionsArr, nextCursor }
-						: missions;
+					nextCursor !== null ? { items: missionsArr, nextCursor } : missions;
 
-				const baseText = capListResponseBytes(missionsWithCursor, JSON.stringify(missionsWithCursor, null, 2), "list_missions");
+				const baseText = capListResponseBytes(
+					missionsWithCursor,
+					JSON.stringify(missionsWithCursor, null, 2),
+					"list_missions",
+				);
 				const text = appendMarkerIfEnabled(baseText, () => ({
 					kind: "mission-timeline",
 					items: Array.isArray(missions)
@@ -4133,7 +4437,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -4202,15 +4508,17 @@ export function registerTools(
 					}
 				}
 				const entriesWithCursor =
-					nextCursor !== null
-						? { items: entriesArr, nextCursor }
-						: entries;
+					nextCursor !== null ? { items: entriesArr, nextCursor } : entries;
 
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(entriesWithCursor, JSON.stringify(entriesWithCursor, null, 2), "list_diaries"),
+							text: capListResponseBytes(
+								entriesWithCursor,
+								JSON.stringify(entriesWithCursor, null, 2),
+								"list_diaries",
+							),
 						},
 					],
 				};
@@ -4428,7 +4736,9 @@ export function registerTools(
 				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
 			fields: fieldsSchema
 				.optional()
-				.describe('Field projection ("lite"|"full"). Default "lite" (v2.4.9+).'),
+				.describe(
+					'Field projection ("lite"|"full"). Default "lite" (v2.4.9+).',
+				),
 			updatedSince: updatedSinceSchema.optional(),
 			cursor: z
 				.string()
@@ -4499,7 +4809,11 @@ export function registerTools(
 						? { items: filteredNotes, nextCursor }
 						: filteredNotes;
 
-				const baseText = capListResponseBytes(notesWithCursor, JSON.stringify(notesWithCursor, null, 2), "list_briefing_notes");
+				const baseText = capListResponseBytes(
+					notesWithCursor,
+					JSON.stringify(notesWithCursor, null, 2),
+					"list_briefing_notes",
+				);
 				const text = appendMarkerIfEnabled(baseText, () => {
 					const items = filteredNotes;
 					if (items.length === 0) return null;
@@ -4553,7 +4867,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -4674,7 +4990,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -4743,7 +5061,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(componentsWithCursor, JSON.stringify(componentsWithCursor, null, 2), "list_components"),
+							text: capListResponseBytes(
+								componentsWithCursor,
+								JSON.stringify(componentsWithCursor, null, 2),
+								"list_components",
+							),
 						},
 					],
 				};
@@ -4918,7 +5240,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -4975,7 +5299,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -5101,7 +5427,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -5166,7 +5494,16 @@ export function registerTools(
 						: filteredTasks;
 
 				return {
-					content: [{ type: "text", text: capListResponseBytes(tasksWithCursor, JSON.stringify(tasksWithCursor, null, 2), "list_recurring_tasks") }],
+					content: [
+						{
+							type: "text",
+							text: capListResponseBytes(
+								tasksWithCursor,
+								JSON.stringify(tasksWithCursor, null, 2),
+								"list_recurring_tasks",
+							),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5631,7 +5968,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -5700,7 +6039,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(mandatesWithCursor, JSON.stringify(mandatesWithCursor, null, 2), "list_mandates"),
+							text: capListResponseBytes(
+								mandatesWithCursor,
+								JSON.stringify(mandatesWithCursor, null, 2),
+								"list_mandates",
+							),
 						},
 					],
 				};
@@ -5716,7 +6059,7 @@ export function registerTools(
 		"create_bu",
 		"Create a new business unit with strategy, business model, team composition, and KPIs. " +
 			"WHEN: use when launching a new revenue line or formalizing an existing product unit. " +
-			"EXAMPLE: create_bu name='VantagePeers' orchestratorId='alpha' status='building' purpose='...' businessModel='...' targetCustomers='...' services=['MCP'] pricing='...' revenueProjections=\{y1:0,y2:50000,y3:200000\} coreTeam=\{agents:['alpha'],skills:[],hooks:[],plugins:[]\} coreProcesses=['...'] dependencies=[] kpis=['ARR'].",
+			"EXAMPLE: create_bu name='VantagePeers' orchestratorId='alpha' status='building' purpose='...' businessModel='...' targetCustomers='...' services=['MCP'] pricing='...' revenueProjections={y1:0,y2:50000,y3:200000} coreTeam={agents:['alpha'],skills:[],hooks:[],plugins:[]} coreProcesses=['...'] dependencies=[] kpis=['ARR'].",
 		{
 			name: z.string().describe("Business unit name — e.g. 'VantagePeers'"),
 			description: z.string().describe("Short description of the BU"),
@@ -5815,7 +6158,7 @@ export function registerTools(
 		"update_bu",
 		"Update any mutable field on a business unit; only provided fields are patched, updatedAt auto-set. " +
 			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. " +
-			"EXAMPLE: update_bu buId='j57aaaaa...' status='live' revenueProjections=\{y1:10000,y2:80000,y3:300000\}.",
+			"EXAMPLE: update_bu buId='j57aaaaa...' status='live' revenueProjections={y1:10000,y2:80000,y3:300000}.",
 		{
 			buId: z
 				.string()
@@ -5965,7 +6308,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -6030,7 +6375,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(busWithCursor, JSON.stringify(busWithCursor, null, 2), "list_bus"),
+							text: capListResponseBytes(
+								busWithCursor,
+								JSON.stringify(busWithCursor, null, 2),
+								"list_bus",
+							),
 						},
 					],
 				};
@@ -6158,7 +6507,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -6191,14 +6542,11 @@ export function registerTools(
 					limit === undefined ? undefined : clampLimit(limit);
 
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
-				const mappings = await convex.query(
-					"githubRepoMapping:list" as any,
-					{
-						limit: effectiveLimit ?? 20,
-						fields: fields ?? "lite",
-						createdBefore,
-					},
-				);
+				const mappings = await convex.query("githubRepoMapping:list" as any, {
+					limit: effectiveLimit ?? 20,
+					fields: fields ?? "lite",
+					createdBefore,
+				});
 				const filteredMappings = scopeFilterList(
 					oauthCtx,
 					Array.isArray(mappings) ? mappings : [],
@@ -6227,7 +6575,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(mappingsWithCursor, JSON.stringify(mappingsWithCursor, null, 2), "list_repo_mappings"),
+							text: capListResponseBytes(
+								mappingsWithCursor,
+								JSON.stringify(mappingsWithCursor, null, 2),
+								"list_repo_mappings",
+							),
 						},
 					],
 				};
@@ -6315,7 +6667,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -6875,7 +7229,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -6936,7 +7292,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default.",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -6992,7 +7350,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -7035,9 +7395,7 @@ export function registerTools(
 							nextCursor = encodeCursor({ createdBefore: last._creationTime });
 						}
 					}
-					return nextCursor !== null
-						? { items: rows, nextCursor }
-						: rows;
+					return nextCursor !== null ? { items: rows, nextCursor } : rows;
 				};
 
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
@@ -7057,7 +7415,16 @@ export function registerTools(
 					);
 					const payload = buildPayload(filteredResults);
 					return {
-						content: [{ type: "text", text: capListResponseBytes(payload, JSON.stringify(payload, null, 2), "list_fix_patterns") }],
+						content: [
+							{
+								type: "text",
+								text: capListResponseBytes(
+									payload,
+									JSON.stringify(payload, null, 2),
+									"list_fix_patterns",
+								),
+							},
+						],
 					};
 				}
 
@@ -7073,7 +7440,14 @@ export function registerTools(
 				const payload = buildPayload(filteredAll);
 				return {
 					content: [
-						{ type: "text", text: capListResponseBytes(payload, JSON.stringify(payload, null, 2), "list_fix_patterns") },
+						{
+							type: "text",
+							text: capListResponseBytes(
+								payload,
+								JSON.stringify(payload, null, 2),
+								"list_fix_patterns",
+							),
+						},
 					],
 				};
 			} catch (error: any) {
@@ -7172,7 +7546,7 @@ export function registerTools(
 		"update_mission_template",
 		"Create or upsert a mission template by name; existing templates are overwritten. " +
 			"WHEN: use to define or refine reusable multi-step workflow blueprints for recurring mission types. " +
-			"EXAMPLE: update_mission_template name='issue-resolution-v2' steps=[\{title:'Triage',description:'...'\}] createdBy='alpha'.",
+			"EXAMPLE: update_mission_template name='issue-resolution-v2' steps=[{title:'Triage',description:'...'}] createdBy='alpha'.",
 		{
 			name: z
 				.string()
@@ -7316,10 +7690,7 @@ export function registerTools(
 				const targetMission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
-				const filteredMission = scopeFilterGet(
-					oauthCtx,
-					targetMission as any,
-				);
+				const filteredMission = scopeFilterGet(oauthCtx, targetMission as any);
 				if (filteredMission == null) {
 					return mcpError(
 						"Mission not found or not accessible to current scope",
@@ -7491,7 +7862,9 @@ export function registerTools(
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
-				.describe("'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+."),
+				.describe(
+					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -7558,7 +7931,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(errorsWithCursor, JSON.stringify(errorsWithCursor, null, 2), "list_errors"),
+							text: capListResponseBytes(
+								errorsWithCursor,
+								JSON.stringify(errorsWithCursor, null, 2),
+								"list_errors",
+							),
 						},
 					],
 				};
@@ -7681,7 +8058,9 @@ export function registerTools(
 			};
 
 			return {
-				content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{ type: "text" as const, text: JSON.stringify(result, null, 2) },
+				],
 			};
 		},
 	);
@@ -7718,8 +8097,19 @@ export function registerTools(
 				.enum(["create_task", "update_task", "complete_task", "send_message"])
 				.describe("The VP tool whose payload you want to validate."),
 			payload: z
-				.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string())]))
-				.describe("The tool_input object you intend to pass to tool_name. All values must be string, number, boolean, null, or string[]." ),
+				.record(
+					z.string(),
+					z.union([
+						z.string(),
+						z.number(),
+						z.boolean(),
+						z.null(),
+						z.array(z.string()),
+					]),
+				)
+				.describe(
+					"The tool_input object you intend to pass to tool_name. All values must be string, number, boolean, null, or string[].",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -7749,14 +8139,19 @@ export function registerTools(
 	server.tool(
 		"register_repo_mapping",
 		"[ALIAS of add_repo_mapping] Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
-		"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
-		"EXAMPLE: register_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
+			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
+			"EXAMPLE: register_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
 		{
 			repo: z.string(),
 			orchestrator: z.string(),
 			project: z.string().optional(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Register repo mapping (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Register repo mapping (alias)",
+		},
 		async ({ repo, orchestrator, project }) => {
 			const masterDenied = guardMasterOnly("register_repo_mapping");
 			if (masterDenied) return masterDenied;
@@ -7766,7 +8161,9 @@ export function registerTools(
 					orchestrator,
 					...(project !== undefined ? { project } : {}),
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7777,18 +8174,28 @@ export function registerTools(
 	server.tool(
 		"delete_repo_mapping",
 		"[ALIAS of remove_repo_mapping] Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
-		"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
-		"EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.",
+			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
+			"EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.",
 		{
 			repo: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: true, title: "Delete repo mapping (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete repo mapping (alias)",
+		},
 		async ({ repo }) => {
 			const masterDenied = guardMasterOnly("delete_repo_mapping");
 			if (masterDenied) return masterDenied;
 			try {
-				const result = await convex.mutation("githubRepoMapping:remove" as any, { repo });
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				const result = await convex.mutation(
+					"githubRepoMapping:remove" as any,
+					{ repo },
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7799,8 +8206,8 @@ export function registerTools(
 	server.tool(
 		"register_deployment",
 		"[ALIAS of add_deployment] Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
-		"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
-		"EXAMPLE: register_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
+			"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
+			"EXAMPLE: register_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
 		{
 			name: z.string(),
 			deploymentUrl: z.string(),
@@ -7808,19 +8215,35 @@ export function registerTools(
 			githubRepo: z.string(),
 			orchestrator: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Register deployment (alias)" },
-		async ({ name, deploymentUrl, deployKeyEnvVar, githubRepo, orchestrator }) => {
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Register deployment (alias)",
+		},
+		async ({
+			name,
+			deploymentUrl,
+			deployKeyEnvVar,
+			githubRepo,
+			orchestrator,
+		}) => {
 			const masterDenied = guardMasterOnly("register_deployment");
 			if (masterDenied) return masterDenied;
 			try {
-				const result = await convex.mutation("errorMonitor:addDeployment" as any, {
-					name,
-					deploymentUrl,
-					deployKeyEnvVar,
-					githubRepo,
-					orchestrator,
-				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				const result = await convex.mutation(
+					"errorMonitor:addDeployment" as any,
+					{
+						name,
+						deploymentUrl,
+						deployKeyEnvVar,
+						githubRepo,
+						orchestrator,
+					},
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7831,18 +8254,28 @@ export function registerTools(
 	server.tool(
 		"delete_deployment",
 		"[ALIAS of remove_deployment] Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
-		"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
-		"EXAMPLE: delete_deployment name='vantage-prod'.",
+			"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
+			"EXAMPLE: delete_deployment name='vantage-prod'.",
 		{
 			name: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: true, title: "Delete deployment (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete deployment (alias)",
+		},
 		async ({ name }) => {
 			const masterDenied = guardMasterOnly("delete_deployment");
 			if (masterDenied) return masterDenied;
 			try {
-				const result = await convex.mutation("errorMonitor:removeDeployment" as any, { name });
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				const result = await convex.mutation(
+					"errorMonitor:removeDeployment" as any,
+					{ name },
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7853,20 +8286,27 @@ export function registerTools(
 	server.tool(
 		"check_mandate_spending",
 		"[ALIAS of validate_mandate_spending] Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
-		"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
-		"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
+			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
+			"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
 		{
 			mandateId: z.string(),
 			proposedAmount: z.number(),
 		},
-		{ readOnlyHint: true, openWorldHint: false, destructiveHint: false, title: "Check mandate spending (alias)" },
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Check mandate spending (alias)",
+		},
 		async ({ mandateId, proposedAmount }) => {
 			try {
 				const result = await convex.query("mandates:validateSpending" as any, {
 					mandateId,
 					proposedAmount,
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7877,13 +8317,18 @@ export function registerTools(
 	server.tool(
 		"check_fix",
 		"[ALIAS of validate_fix] Set or update the validated fix description on a fix pattern after confirming it works. " +
-		"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
-		"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
+			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
+			"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
 		{
 			patternId: z.string(),
 			validatedFix: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Check/validate fix (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Check/validate fix (alias)",
+		},
 		async ({ patternId, validatedFix }) => {
 			const masterDenied = guardMasterOnly("check_fix");
 			if (masterDenied) return masterDenied;
@@ -7892,7 +8337,9 @@ export function registerTools(
 					patternId,
 					validatedFix,
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7903,8 +8350,8 @@ export function registerTools(
 	server.tool(
 		"create_fix_attempt",
 		"[ALIAS of add_fix_attempt] Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
-		"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
-		"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
+			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
+			"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
 		{
 			patternId: z.string(),
 			description: z.string(),
@@ -7913,7 +8360,12 @@ export function registerTools(
 			commitSha: z.string().optional(),
 			createdBy: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create fix attempt (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create fix attempt (alias)",
+		},
 		async ({ patternId, description, worked, why, commitSha, createdBy }) => {
 			const fromDenied = guardFrom(createdBy);
 			if (fromDenied) return fromDenied;
@@ -7926,7 +8378,9 @@ export function registerTools(
 					...(commitSha !== undefined ? { commitSha } : {}),
 					createdBy,
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7937,14 +8391,19 @@ export function registerTools(
 	server.tool(
 		"create_task_dependency",
 		"[ALIAS of add_task_dependency] Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
-		"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
-		"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
+			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
+			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
 			taskId: z.string(),
 			dependsOn: z.array(z.string()),
 			callerOrchestrator: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create task dependency (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create task dependency (alias)",
+		},
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
 				const result = await convex.mutation("tasks:update" as any, {
@@ -7952,7 +8411,9 @@ export function registerTools(
 					dependsOn,
 					callerOrchestrator,
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7963,14 +8424,19 @@ export function registerTools(
 	server.tool(
 		"update_summary",
 		"[ALIAS of set_summary] Update the current-work summary for an orchestrator instance, visible via list_peers. " +
-		"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
-		"EXAMPLE: update_summary orchestratorId='alpha' instanceId='alpha-vps' summary='Standardizing 86 tool descriptions for B2'.",
+			"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
+			"EXAMPLE: update_summary orchestratorId='alpha' instanceId='alpha-vps' summary='Standardizing 86 tool descriptions for B2'.",
 		{
 			orchestratorId: z.string(),
 			instanceId: z.string().optional(),
 			summary: z.string(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Update summary (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Update summary (alias)",
+		},
 		async ({ orchestratorId, instanceId, summary }) => {
 			try {
 				const result = await convex.mutation("profiles:updateDynamic" as any, {
@@ -7978,7 +8444,9 @@ export function registerTools(
 					...(instanceId !== undefined ? { instanceId } : {}),
 					dynamic: { summary },
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -7989,15 +8457,20 @@ export function registerTools(
 	server.tool(
 		"create_diary",
 		"[ALIAS of write_diary] Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
-		"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
-		"EXAMPLE: create_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
+			"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
+			"EXAMPLE: create_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
 		{
 			date: z.string(),
 			orchestrator: z.string(),
 			content: z.string(),
 			author: z.string().optional(),
 		},
-		{ readOnlyHint: false, openWorldHint: false, destructiveHint: false, title: "Create diary entry (alias)" },
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Create diary entry (alias)",
+		},
 		async ({ date, orchestrator, content, author }) => {
 			assertContentSize(content, "content");
 			if (author !== undefined) {
@@ -8011,7 +8484,9 @@ export function registerTools(
 					content,
 					...(author !== undefined ? { author } : {}),
 				});
-				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
@@ -8126,7 +8601,9 @@ export function registerTools(
 		{
 			repo: z
 				.string()
-				.describe("GitHub repo slug in owner/name form (e.g. 'vantageos-agency/vantage-peers-plugin')"),
+				.describe(
+					"GitHub repo slug in owner/name form (e.g. 'vantageos-agency/vantage-peers-plugin')",
+				),
 		},
 		{
 			readOnlyHint: true,
@@ -8173,7 +8650,9 @@ export function registerTools(
 		},
 		async ({ messageId }) => {
 			try {
-				const row = await convex.query("messages:getById" as any, { messageId });
+				const row = await convex.query("messages:getById" as any, {
+					messageId,
+				});
 				const filtered = scopeFilterGet(oauthCtx, row);
 				if (filtered === null) {
 					return mcpError(`Message not found: ${messageId}`);
@@ -8232,4 +8711,10 @@ export function registerTools(
 	// validates bundle conformance per RFC §3.5 without importing it. Mission
 	// k5779qbxhwrfjmj02t31yvehns8911jp, task k1796g7g7y03gn9rd6z7psenk98910vt.
 	registerValidateOkfBundle(server, convex);
+
+	// ── import_okf_bundle (B2 — OKF Phase 2-B) ────────────────────────────────
+	// Thin proxy to convex action `okfBundleNode:importOkfBundle`. Mutation;
+	// imports memories+briefings+tasks into target namespace with dedup-by-content.
+	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17fja9v7pgnf25yvzkwrj5ch5891bb3.
+	registerImportOkfBundle(server, convex);
 }

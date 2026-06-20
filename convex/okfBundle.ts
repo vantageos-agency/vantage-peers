@@ -51,6 +51,7 @@ import {
 	type TaskDoc,
 } from "./okfSerializer";
 import type { BundleEntry } from "./okfValidator";
+import { creatorValidator, memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
@@ -409,3 +410,129 @@ export function assembleBundle(
 
 	return { entries, bytes, truncated };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B2 — import_okf_bundle internal queries + mutations (mission k5779qbxh)
+//
+// The Node-runtime action `okfBundleNode:importOkfBundle` orchestrates the
+// import pipeline (auth → fetch → unpack → validate → per-entry parse+insert)
+// and delegates DB writes to these V8-runtime helpers. Dedup strategy is
+// content-equality scoped to the target namespace (memories) or to a small
+// title+body lookup (briefings, tasks). First-cut O(N) per import — index
+// optimisation deferred to a separate PR.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const _findMemoryByContent = internalQuery({
+	args: { namespace: v.string(), content: v.string() },
+	handler: async (ctx, { namespace, content }) => {
+		const rows = await ctx.db
+			.query("memories")
+			.withIndex("by_namespace", (q) =>
+				q.eq("namespace", namespace).eq("isLatest", true),
+			)
+			.collect();
+		const hit = rows.find((r) => r.content === content);
+		return hit ? hit._id : null;
+	},
+});
+
+export const _findBriefingByTitleAndContent = internalQuery({
+	args: { title: v.string(), content: v.string() },
+	handler: async (ctx, { title, content }) => {
+		const rows = await ctx.db
+			.query("briefingNotes")
+			.withIndex("by_topic")
+			.collect();
+		const hit = rows.find((r) => r.title === title && r.content === content);
+		return hit ? hit._id : null;
+	},
+});
+
+export const _findTaskByTitleAndDescription = internalQuery({
+	args: { title: v.string(), description: v.string() },
+	handler: async (ctx, { title, description }) => {
+		const rows = await ctx.db.query("tasks").withIndex("by_status").collect();
+		const hit = rows.find(
+			(r) => r.title === title && (r.description ?? "") === description,
+		);
+		return hit ? hit._id : null;
+	},
+});
+
+export const _insertImportedMemory = internalMutation({
+	args: {
+		namespace: v.string(),
+		type: memoryTypeValidator,
+		content: v.string(),
+		createdBy: creatorValidator,
+		now: v.number(),
+	},
+	handler: async (ctx, args) => {
+		return await ctx.db.insert("memories", {
+			namespace: args.namespace,
+			type: args.type,
+			content: args.content,
+			createdBy: args.createdBy,
+			relations: [],
+			isLatest: true,
+			createdAt: args.now,
+			updatedAt: args.now,
+		});
+	},
+});
+
+export const _insertImportedBriefing = internalMutation({
+	args: {
+		title: v.string(),
+		topic: v.string(),
+		participants: v.array(v.string()),
+		content: v.string(),
+		createdBy: creatorValidator,
+		now: v.number(),
+	},
+	handler: async (ctx, args) => {
+		return await ctx.db.insert("briefingNotes", {
+			title: args.title,
+			topic: args.topic,
+			participants: args.participants,
+			content: args.content,
+			createdBy: args.createdBy,
+			createdAt: args.now,
+		});
+	},
+});
+
+export const _insertImportedTask = internalMutation({
+	args: {
+		title: v.string(),
+		description: v.optional(v.string()),
+		assignedTo: v.string(),
+		priority: v.union(
+			v.literal("urgent"),
+			v.literal("high"),
+			v.literal("medium"),
+			v.literal("low"),
+		),
+		status: v.union(
+			v.literal("todo"),
+			v.literal("in_progress"),
+			v.literal("review"),
+			v.literal("blocked"),
+			v.literal("done"),
+		),
+		createdBy: creatorValidator,
+		now: v.number(),
+	},
+	handler: async (ctx, args) => {
+		return await ctx.db.insert("tasks", {
+			title: args.title,
+			description: args.description,
+			assignedTo: args.assignedTo,
+			priority: args.priority,
+			status: args.status,
+			createdBy: args.createdBy,
+			createdAt: args.now,
+			updatedAt: args.now,
+		});
+	},
+});
