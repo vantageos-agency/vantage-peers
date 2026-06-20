@@ -397,22 +397,17 @@ describe("parseSinceArg", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. Auth helper smoke (1 test — Phase 1 namespace lock)
+// 6. Auth helper smoke — Phase 1 constants still consistent after B3 generalize.
+//
+// B3 (mission k5779qbxh, task k17f3407) dropped the `project/elpi-corp` hard
+// lock from `assertCanExportNamespace`. Behavioural coverage of the relaxed
+// gate lives in `okfBundleExportGeneralize.test.ts`; this suite only pins the
+// cap constants since they remain T3 contract.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("auth — Phase 1 namespace lock", () => {
-	test("non-Phase-1 namespace is rejected even for master scope", async () => {
-		// Import lazily to avoid hoisting issues; the helper is not exported,
-		// but its rule is observable through the action's behaviour. Here we
-		// reach into the module to test the contract in isolation by invoking
-		// the action with a no-identity ctx and asserting it throws on the
-		// non-Phase-1 namespace.
+describe("export constants — Phase 1 sizing pins", () => {
+	test("size + TTL constants unchanged after B3 generalize", async () => {
 		const mod = await import("../okfBundle");
-		// We rebuild a minimal ctx; the action only touches ctx.auth before
-		// throwing the AUTH_NAMESPACE_DENIED error for non-Phase-1 namespaces.
-		// We cannot easily invoke the wrapped `action` outside Convex, so we
-		// instead exercise the same contract by checking shouldIncludeFamily +
-		// the documented Phase 1 constant.
 		expect(mod.BUNDLE_SOFT_CAP_BYTES).toBe(50 * 1024 * 1024);
 		expect(mod.BUNDLE_HARD_CAP_BYTES).toBe(100 * 1024 * 1024);
 		expect(mod.DEFAULT_URL_TTL_SECONDS).toBe(3600);

@@ -37,7 +37,6 @@ import {
 	BUNDLE_PAGE_SIZE,
 	BUNDLE_SOFT_CAP_BYTES,
 	DEFAULT_URL_TTL_SECONDS,
-	PHASE1_NAMESPACE,
 	parseSinceArg,
 	shouldIncludeFamily,
 } from "./okfBundle";
@@ -168,24 +167,37 @@ export async function packTarball(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Lightweight namespace authorization for Phase 1.
+ * Lightweight namespace authorization (Phase 2 — B3 generalize).
  *
  * Rules:
- *   - Phase 1 caller MUST request `project/elpi-corp`. Any other namespace →
- *     `AUTH_NAMESPACE_DENIED` (anticipates Phase 2 rules).
+ *   - Namespace prefix is accepted as long as it is a non-empty string with no
+ *     path-traversal segments (`..`). The Phase 1 hard-lock to
+ *     `project/elpi-corp` was relaxed by B3 (mission k5779qbxh, task
+ *     k17f3407sg7cn6gswn5qs9j5b5891581) so multi-tenant `team/<orgId>/*`
+ *     and other namespaces can export their own bundles.
  *   - Identity is resolved via `ctx.auth.getUserIdentity()`. Absence is
  *     permitted when running through the Convex CLI / deploy key (mirrors
  *     `lib/auth.withOrgScope` master-scope behaviour).
- *   - When an org slug is attached, it MUST match `elpi-corp` (the suffix of
- *     the requested namespace). Mismatch → `AUTH_NAMESPACE_DENIED`.
+ *   - When an org slug is attached, it MUST match the tail of the requested
+ *     namespace (e.g. `team/abc-123` → org `abc-123`; `project/elpi-corp` →
+ *     org `elpi-corp`). Mismatch → `AUTH_NAMESPACE_DENIED`. Cross-tenant
+ *     export remains forbidden.
  */
-async function assertCanExportNamespace(
+export async function assertCanExportNamespace(
 	ctx: { auth: { getUserIdentity: () => Promise<unknown> } },
 	namespace: string,
 ): Promise<void> {
-	if (namespace !== PHASE1_NAMESPACE) {
+	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
-			`AUTH_NAMESPACE_DENIED: Phase 1 exporter is locked to "${PHASE1_NAMESPACE}", got "${namespace}".`,
+			`OKF_NAMESPACE_INVALID: namespace must be a non-empty string, got "${namespace}".`,
+		);
+	}
+	// Reject path-traversal sequences as a defence-in-depth — the V8 internal
+	// queries filter by prefix and would not surface "../foo" rows anyway, but
+	// rejecting here keeps the error surface localised.
+	if (namespace.includes("..")) {
+		throw new Error(
+			`OKF_NAMESPACE_INVALID: namespace "${namespace}" contains a path-traversal segment.`,
 		);
 	}
 
@@ -193,15 +205,41 @@ async function assertCanExportNamespace(
 		string,
 		unknown
 	> | null;
+
+	// Master-bypass allowlist. In production the MCP Cloud surface never calls
+	// setAuth on the Convex client, so `getUserIdentity()` is always null on the
+	// hot path. Eta REVISE iter-2 on PR #888 flagged this as a CRITICAL
+	// cross-tenant bypass: prior to this guard, a null identity authorized ANY
+	// namespace, so any tenant token could export any other tenant's data.
+	//
+	// The fix is fail-CLOSED on null/no-org identities for all but the legacy
+	// "self" namespace. CLI / deploy-key callers still get through because their
+	// invocations carry no identity AND target `project/elpi-corp` — which is
+	// what the Phase 1 contract (PR #850) actually meant by "master".
+	const isMasterNamespace = namespace === "project/elpi-corp";
+
 	if (identity === null || identity === undefined) {
-		return;
+		if (isMasterNamespace) {
+			return;
+		}
+		throw new Error(
+			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
+		);
 	}
 	const orgSlug =
 		(identity.organizationId as string | undefined) ??
 		(identity.organizationSlug as string | undefined) ??
 		null;
 	if (orgSlug === null) {
-		return;
+		// Identity attached but carries no org affiliation — same fail-closed
+		// posture as the null branch above. Only the legacy master namespace is
+		// allowed through (system:cron, deploy key with metadata, etc.).
+		if (isMasterNamespace) {
+			return;
+		}
+		throw new Error(
+			`AUTH_NO_ORG: caller without org affiliation cannot export non-master namespace "${namespace}".`,
+		);
 	}
 	const expectedSuffix = namespace.split("/").slice(1).join("/");
 	if (orgSlug !== expectedSuffix) {

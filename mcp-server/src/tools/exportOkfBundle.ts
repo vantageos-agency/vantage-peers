@@ -6,8 +6,11 @@
  * Claude Code, Codex, IDE…) via the public VantagePeers Cloud surface.
  *
  * **VantagePeers Cloud, multi-tenant**: this is the Cloud product (NOT
- * Self-host). Phase 1 namespace is verrouillé to `project/elpi-corp`; the
- * Convex action enforces the gate, the wrapper only forwards arguments.
+ * Self-host). The Convex action enforces auth — caller must match the
+ * namespace tail when an identity is attached (cross-tenant export
+ * forbidden). The Phase 1 hard lock to `project/elpi-corp` was relaxed by
+ * B3 (mission k5779qbxh, task k17f3407) so any `team/<orgId>/*` tenant can
+ * export their own bundle.
  *
  * RFC parent: decisions/okf-bridge-phase-1-rfc-2026-06-18.md (commit 6613610).
  * ADR:        decisions/adr-okf-exporter-arch.md (commit 2cd357e).
@@ -48,7 +51,11 @@ export const exportOkfBundleArgsSchema = {
 	namespace: z
 		.string()
 		.describe(
-			"OKF export namespace. Phase 1 verrouillé to 'project/elpi-corp'.",
+			"OKF export namespace prefix. Any prefix the caller has write scope on " +
+				"is accepted (e.g. 'project/elpi-corp', 'team/<orgId>', 'org/<slug>'). " +
+				"Identity-attached callers must match the namespace tail (cross-tenant " +
+				"export forbidden). The 'project/elpi-corp' Phase 1 hard lock was " +
+				"removed by B3 (mission k5779qbxh) for multi-tenant Cloud dashboards.",
 		),
 	types: z
 		.array(z.string())
