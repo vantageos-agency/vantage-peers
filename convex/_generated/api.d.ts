@@ -42,6 +42,7 @@ import type * as licenses from "../licenses.js";
 import type * as mandates from "../mandates.js";
 import type * as mcpTenants from "../mcpTenants.js";
 import type * as memories from "../memories.js";
+import type * as memoriesScoped from "../memoriesScoped.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
@@ -108,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   mandates: typeof mandates;
   mcpTenants: typeof mcpTenants;
   memories: typeof memories;
+  memoriesScoped: typeof memoriesScoped;
   messages: typeof messages;
   migrations: typeof migrations;
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;
