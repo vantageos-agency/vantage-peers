@@ -21,6 +21,7 @@
 import { validateMasterBearer } from "@vantageos/cloud-identity";
 import { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context types attached to Hono request
@@ -235,6 +236,55 @@ export function checkNamespaceWrite(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Clerk JWT verification — JWKS cache with 10-min TTL
+//
+// Architectural choice: Option A (direct Clerk JWT verification here) over
+// Option B (DCR→Clerk join via Convex query). Rationale: Clerk JWTs are
+// self-contained — no extra Convex round-trip needed. Option B would only be
+// required if DCR clients were the sole entry point, which they are not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CLERK_DOMAIN =
+	process.env.CLERK_DOMAIN ?? "https://sharp-sponge-67.clerk.accounts.dev";
+const CLERK_JWKS_URL = `${CLERK_DOMAIN}/.well-known/jwks.json`;
+
+// Lazy singleton — createRemoteJWKSet caches JWKS in-process (10-min TTL).
+let _clerkJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+function clerkJwks(): ReturnType<typeof createRemoteJWKSet> {
+	_clerkJwks ??= createRemoteJWKSet(new URL(CLERK_JWKS_URL), {
+		cacheMaxAge: 10 * 60 * 1000,
+	});
+	return _clerkJwks;
+}
+
+type ClerkPayload = { sub: string; org_id: string; exp: number };
+
+/**
+ * Attempts to verify `token` as a Clerk JWT.
+ * Returns the relevant claims on success, or null if the token is not a Clerk
+ * JWT (wrong issuer, bad signature, expired, missing org_id).
+ * Never throws — failures are treated as "not a Clerk token, try next layer".
+ */
+async function tryVerifyClerkJwt(token: string): Promise<ClerkPayload | null> {
+	try {
+		const { payload } = await jwtVerify(token, clerkJwks(), {
+			issuer: CLERK_DOMAIN,
+		});
+		// Org-session JWTs carry org_id; personal-session JWTs do not.
+		const orgId = payload.org_id as string | undefined;
+		if (!orgId) return null;
+		const sub = payload.sub;
+		if (!sub) return null;
+		const exp = payload.exp;
+		if (!exp) return null;
+		return { sub, org_id: orgId, exp };
+	} catch {
+		// Not a valid Clerk JWT — fall through to next auth layer
+		return null;
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Auth middleware
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -357,6 +407,42 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			});
 			c.set("oauthContext", {
 				...oauth,
+				isMaster: false,
+			});
+			await next();
+			return;
+		}
+
+		// ── (2.5) Clerk JWT — team/<orgId> scoped access ────────────────────────
+		// Verify against Clerk JWKS. On success, extract org_id and set
+		// scopeProfile="team-member" with namespace prefixes locked to team/<orgId>.
+		// Falls through silently if the token is not a valid Clerk JWT.
+		const clerkResult = await tryVerifyClerkJwt(token);
+		if (clerkResult !== null) {
+			const internalUrl = process.env.CONVEX_URL_INTERNAL;
+			if (!internalUrl) {
+				console.error(
+					"[auth] CONVEX_URL_INTERNAL not set — cannot route Clerk JWT",
+				);
+				return c.json(
+					{ error: "Server misconfigured: internal deployment URL missing" },
+					500,
+				);
+			}
+			const orgId = clerkResult.org_id;
+			c.set("tenant", {
+				tenantName: `clerk:${orgId}`,
+				convexUrl: internalUrl,
+			});
+			c.set("oauthContext", {
+				clientId: `dcr-clerk-${orgId}`,
+				userId: clerkResult.sub,
+				scopes: ["mcp:full"],
+				scopeProfile: "team-member",
+				fromAllowList: [],
+				namespaceReadPrefixes: [`team/${orgId}`],
+				namespaceWritePrefixes: [`team/${orgId}`],
+				expiresAt: clerkResult.exp * 1000,
 				isMaster: false,
 			});
 			await next();
