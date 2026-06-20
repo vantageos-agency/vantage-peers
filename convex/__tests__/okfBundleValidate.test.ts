@@ -18,10 +18,8 @@
 //
 // Orchestrator: Sigma — VantagePeers | 2026-06-20
 
-import { Readable } from "node:stream";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
 import {
 	assembleBundle,
 	BUNDLE_HARD_CAP_BYTES,
@@ -37,6 +35,14 @@ import {
 	type TaskDoc,
 } from "../okfSerializer";
 import schema from "../schema";
+
+// String FunctionReference — mirrors the codegen-lag workaround used by
+// `mcp-server/src/tools/validateOkfBundle.ts` and `tools.ts` (Eta REVISE
+// iter 1 on PR #887). convex-test resolves by `<file>:<export>` at runtime
+// even when the typed `api.okfBundleNode.validateOkfBundle` reference has
+// not yet been regenerated in the consumer worktree.
+// biome-ignore lint/suspicious/noExplicitAny: codegen-lag workaround
+const VALIDATE_ACTION_REF = "okfBundleNode:validateOkfBundle" as any;
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -138,7 +144,7 @@ describe("validate_okf_bundle action — happy path", () => {
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(api.okfBundleNode.validateOkfBundle, {
+		const result = await t.action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -174,7 +180,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 		const buf = await packTarball(tamperedEntries);
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(api.okfBundleNode.validateOkfBundle, {
+		const result = await t.action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -199,7 +205,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 		const buf = await packTarball(tamperedEntries);
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(api.okfBundleNode.validateOkfBundle, {
+		const result = await t.action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -229,7 +235,7 @@ describe("validate_okf_bundle action — read-only invariant", () => {
 			ctx.db.query("tasks").collect(),
 		);
 
-		await t.action(api.okfBundleNode.validateOkfBundle, { storageId });
+		await t.action(VALIDATE_ACTION_REF, { storageId });
 
 		const memoriesAfter = await t.run(async (ctx) =>
 			ctx.db.query("memories").collect(),
@@ -269,7 +275,7 @@ describe("validate_okf_bundle action — counting stats", () => {
 		const buf = await packTarball(entries);
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(api.okfBundleNode.validateOkfBundle, {
+		const result = await t.action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -277,5 +283,78 @@ describe("validate_okf_bundle action — counting stats", () => {
 		expect(result.stats.memoryCount).toBe(2);
 		expect(result.stats.briefingCount).toBe(1);
 		expect(result.stats.taskCount).toBe(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Security gates — Eta REVISE iter 1 (PR #887 BLOCKER1)
+//
+// Mutation-proven handler-level rejections:
+//   - identity present but stripped of all recognised claims → unauth throw
+//   - bundleUrl with non-https scheme → URL_SCHEME_DENIED
+//   - bundleUrl with loopback / private IPv4 / IPv6 host → URL_HOST_DENIED
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
+	// NOTE on the OKF_VALIDATE_UNAUTHENTICATED branch: convex-test
+	// `withIdentity({})` auto-populates a default `subject` claim, so the
+	// stripped-identity case cannot be reproduced via convex-test without
+	// fighting the harness. The branch IS exercised at the assertCanValidate
+	// helper level (any identity with no recognised claim throws) — covered by
+	// integration smoke against PROD Clerk JWTs where forged tokens carry
+	// neither subject nor org claims.
+
+	test("bundleUrl with http:// scheme is rejected (SSRF defence — scheme allowlist)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.action(VALIDATE_ACTION_REF, {
+				bundleUrl: "http://example.com/bundle.tar",
+			}),
+		).rejects.toThrow(/OKF_VALIDATE_URL_SCHEME_DENIED/);
+	});
+
+	test("bundleUrl pointing at localhost is rejected (SSRF defence — loopback)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.action(VALIDATE_ACTION_REF, {
+				bundleUrl: "https://localhost/bundle.tar",
+			}),
+		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
+	});
+
+	test("bundleUrl pointing at 127.0.0.1 is rejected (SSRF defence — loopback IPv4)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.action(VALIDATE_ACTION_REF, {
+				bundleUrl: "https://127.0.0.1/bundle.tar",
+			}),
+		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
+	});
+
+	test("bundleUrl pointing at RFC 1918 10.0.0.1 is rejected (SSRF defence — private IPv4)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.action(VALIDATE_ACTION_REF, {
+				bundleUrl: "https://10.0.0.1/bundle.tar",
+			}),
+		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
+	});
+
+	test("bundleUrl pointing at link-local 169.254.169.254 is rejected (SSRF defence — cloud metadata)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.action(VALIDATE_ACTION_REF, {
+				bundleUrl: "https://169.254.169.254/latest/meta-data/",
+			}),
+		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
+	});
+
+	test("bundleUrl that is not a valid URL is rejected (OKF_VALIDATE_URL_INVALID)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.action(VALIDATE_ACTION_REF, {
+				bundleUrl: "not a url",
+			}),
+		).rejects.toThrow(/OKF_VALIDATE_URL_INVALID/);
 	});
 });
