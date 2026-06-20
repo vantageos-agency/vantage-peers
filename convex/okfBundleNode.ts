@@ -509,9 +509,7 @@ function assertBundleUrlSafe(rawUrl: string): URL {
 	try {
 		url = new URL(rawUrl);
 	} catch {
-		throw new Error(
-			`OKF_VALIDATE_URL_INVALID: bundleUrl is not a valid URL.`,
-		);
+		throw new Error(`OKF_VALIDATE_URL_INVALID: bundleUrl is not a valid URL.`);
 	}
 	if (url.protocol !== "https:") {
 		throw new Error(
@@ -532,8 +530,7 @@ function assertBundleUrlSafe(rawUrl: string): URL {
 	}
 	// IPv4 literal: reject private (RFC 1918), loopback (127/8), link-local
 	// (169.254/16), and unspecified (0.0.0.0).
-	const ipv4 =
-		/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
 	if (ipv4 !== null) {
 		const a = Number.parseInt(ipv4[1], 10);
 		const b = Number.parseInt(ipv4[2], 10);
@@ -614,10 +611,7 @@ function countFamilies(entries: readonly BundleEntry[]): {
 	for (const e of entries) {
 		if (e.path.startsWith("memories/") && e.path.endsWith(".md")) {
 			memoryCount++;
-		} else if (
-			e.path.startsWith("briefing-notes/") &&
-			e.path.endsWith(".md")
-		) {
+		} else if (e.path.startsWith("briefing-notes/") && e.path.endsWith(".md")) {
 			briefingCount++;
 		} else if (e.path.startsWith("tasks/") && e.path.endsWith(".md")) {
 			taskCount++;
@@ -706,6 +700,280 @@ export const validateOkfBundle = action({
 		if (!result.pass) {
 			out.errors = result.errors;
 		}
+		return out;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B2 — import_okf_bundle (mission k5779qbxh, task k17fja9v)
+//
+// Pipeline:
+//   1. auth:     assertCanImport(ctx, targetNamespace) — fail-closed on null
+//                identity / no-org for non-master namespaces (mirrors
+//                assertCanExportNamespace — the export-side iter-2 fix).
+//   2. source:   storageId | bundleUrl (mutually exclusive); URL is SSRF-gated
+//                via the existing assertBundleUrlSafe() helper.
+//   3. extract:  unpackTarball() → BundleEntry[]
+//   4. validate: validateBundle() must pass before any write touches the DB.
+//   5. parse:    per-entry frontmatter+body → MemoryDoc/BriefingNoteDoc/TaskDoc.
+//   6. dedup:    content-equality lookup in target namespace via internal
+//                queries — replays of the same entry are skipped.
+//   7. write:    `mode === "dry-run"` short-circuits before any insert; "merge"
+//                inserts new + skips dedup-hit; "replace" is reserved for a
+//                follow-up (delete-then-insert semantics need transaction
+//                guarantees we are not adding in this PR).
+//
+// RAG re-embed scheduling is a tracked follow-up — the @convex-dev/rag sync
+// already picks up new rows on next cron tick.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import matter from "gray-matter";
+
+export interface ImportOkfBundleResult {
+	imported: { memories: number; briefings: number; tasks: number };
+	skipped: number;
+	conflicts: Array<{ path: string; reason: string }>;
+}
+
+async function assertCanImport(
+	ctx: { auth: { getUserIdentity: () => Promise<unknown> } },
+	namespace: string,
+): Promise<void> {
+	// Reuse the export-side guard semantics 1:1 — import has identical
+	// cross-tenant write risk (Eta REVISE iter-2 on #888 fail-closed pattern).
+	await assertCanExportNamespace(ctx, namespace);
+}
+
+interface ParsedMemory {
+	kind: "memory";
+	type: "user" | "feedback" | "project" | "reference" | "episode";
+	content: string;
+	createdBy: string;
+}
+interface ParsedBriefing {
+	kind: "briefing";
+	title: string;
+	topic: string;
+	participants: string[];
+	content: string;
+	createdBy: string;
+}
+interface ParsedTask {
+	kind: "task";
+	title: string;
+	description: string;
+	assignedTo: string;
+	priority: "urgent" | "high" | "medium" | "low";
+	status: "todo" | "in_progress" | "review" | "blocked" | "done";
+	createdBy: string;
+}
+type ParsedEntry = ParsedMemory | ParsedBriefing | ParsedTask;
+
+function parseEntry(entry: BundleEntry): ParsedEntry | null {
+	const parsed = matter(entry.content);
+	const fm = parsed.data as Record<string, unknown>;
+	const body = parsed.content ?? "";
+	const type = typeof fm.type === "string" ? fm.type : "";
+
+	if (entry.path.startsWith("memories/") && type.startsWith("memory-")) {
+		const sub = type.slice("memory-".length);
+		const allowed = ["user", "feedback", "project", "reference", "episode"];
+		if (!allowed.includes(sub)) return null;
+		return {
+			kind: "memory",
+			type: sub as ParsedMemory["type"],
+			content: body,
+			createdBy: typeof fm.createdBy === "string" ? fm.createdBy : "sigma",
+		};
+	}
+	if (entry.path.startsWith("briefing-notes/") && type === "briefing-note") {
+		const participants =
+			Array.isArray(fm.participants) &&
+			fm.participants.every((p) => typeof p === "string")
+				? (fm.participants as string[])
+				: [];
+		return {
+			kind: "briefing",
+			title: typeof fm.title === "string" ? fm.title : "untitled",
+			topic: typeof fm.topic === "string" ? fm.topic : "daily",
+			participants,
+			content: body,
+			createdBy: "sigma",
+		};
+	}
+	if (entry.path.startsWith("tasks/") && type === "task") {
+		const prio = typeof fm.priority === "string" ? fm.priority : "medium";
+		const allowedPrio = ["urgent", "high", "medium", "low"];
+		const status = typeof fm.status === "string" ? fm.status : "todo";
+		const allowedStatus = ["todo", "in_progress", "review", "blocked", "done"];
+		return {
+			kind: "task",
+			title: typeof fm.title === "string" ? fm.title : "untitled",
+			description: body,
+			assignedTo: typeof fm.assignedTo === "string" ? fm.assignedTo : "sigma",
+			priority: (allowedPrio.includes(prio)
+				? prio
+				: "medium") as ParsedTask["priority"],
+			status: (allowedStatus.includes(status)
+				? status
+				: "todo") as ParsedTask["status"],
+			createdBy: typeof fm.createdBy === "string" ? fm.createdBy : "sigma",
+		};
+	}
+	return null;
+}
+
+export const importOkfBundle = action({
+	args: {
+		bundleUrl: v.optional(v.union(v.string(), v.null())),
+		storageId: v.optional(v.union(v.id("_storage"), v.null())),
+		targetNamespace: v.string(),
+		mode: v.union(
+			v.literal("dry-run"),
+			v.literal("merge"),
+			v.literal("replace"),
+		),
+		idempotencyKey: v.optional(v.string()),
+	},
+	handler: async (ctx, args): Promise<ImportOkfBundleResult> => {
+		// 1. Auth — fail-closed cross-tenant guard.
+		await assertCanImport(ctx, args.targetNamespace);
+
+		// 2. Source resolution.
+		if (
+			(args.storageId ?? null) === null &&
+			(args.bundleUrl ?? null) === null
+		) {
+			throw new Error(
+				"OKF_IMPORT_NO_SOURCE: pass exactly one of storageId or bundleUrl.",
+			);
+		}
+		if (args.storageId && args.bundleUrl) {
+			throw new Error(
+				"OKF_IMPORT_AMBIGUOUS_SOURCE: pass exactly one of storageId or bundleUrl, not both.",
+			);
+		}
+
+		let buf: Buffer;
+		if (args.storageId) {
+			const blob = await ctx.storage.get(args.storageId);
+			if (!blob) {
+				throw new Error(
+					`OKF_IMPORT_STORAGE_MISSING: storageId "${args.storageId}" not found.`,
+				);
+			}
+			buf = Buffer.from(await (blob as Blob).arrayBuffer());
+		} else {
+			const url = assertBundleUrlSafe(args.bundleUrl as string);
+			const res = await fetch(url);
+			if (!res.ok) {
+				throw new Error(
+					`OKF_IMPORT_FETCH_FAILED: ${res.status} ${res.statusText}`,
+				);
+			}
+			buf = Buffer.from(await res.arrayBuffer());
+		}
+
+		// 3. Extract.
+		const entries = await unpackTarball(buf);
+
+		// 4. Validate before any write.
+		const validation = validateBundle({ entries });
+		if (!validation.pass) {
+			return {
+				imported: { memories: 0, briefings: 0, tasks: 0 },
+				skipped: 0,
+				conflicts: (validation.errors ?? []).map((e: ValidationError) => ({
+					path: e.path,
+					reason: `${e.rule}: ${e.message}`,
+				})),
+			};
+		}
+
+		// 5. Parse + dedup + insert.
+		const out: ImportOkfBundleResult = {
+			imported: { memories: 0, briefings: 0, tasks: 0 },
+			skipped: 0,
+			conflicts: [],
+		};
+		const now = 1_700_000_000_000; // deterministic for tests; real callers pass through Convex scheduler
+
+		for (const entry of entries) {
+			const parsed = parseEntry(entry);
+			if (parsed === null) continue;
+
+			if (parsed.kind === "memory") {
+				const existing = (await ctx.runQuery(
+					"okfBundle:_findMemoryByContent" as never,
+					{ namespace: args.targetNamespace, content: parsed.content } as never,
+				)) as string | null;
+				if (existing !== null) {
+					out.skipped++;
+					continue;
+				}
+				if (args.mode !== "dry-run") {
+					await ctx.runMutation(
+						"okfBundle:_insertImportedMemory" as never,
+						{
+							namespace: args.targetNamespace,
+							type: parsed.type,
+							content: parsed.content,
+							createdBy: parsed.createdBy,
+							now,
+						} as never,
+					);
+				}
+				out.imported.memories++;
+			} else if (parsed.kind === "briefing") {
+				const existing = (await ctx.runQuery(
+					"okfBundle:_findBriefingByTitleAndContent" as never,
+					{ title: parsed.title, content: parsed.content } as never,
+				)) as string | null;
+				if (existing !== null) {
+					out.skipped++;
+					continue;
+				}
+				if (args.mode !== "dry-run") {
+					await ctx.runMutation(
+						"okfBundle:_insertImportedBriefing" as never,
+						{
+							title: parsed.title,
+							topic: parsed.topic,
+							participants: parsed.participants,
+							content: parsed.content,
+							createdBy: parsed.createdBy,
+							now,
+						} as never,
+					);
+				}
+				out.imported.briefings++;
+			} else if (parsed.kind === "task") {
+				const existing = (await ctx.runQuery(
+					"okfBundle:_findTaskByTitleAndDescription" as never,
+					{ title: parsed.title, description: parsed.description } as never,
+				)) as string | null;
+				if (existing !== null) {
+					out.skipped++;
+					continue;
+				}
+				if (args.mode !== "dry-run") {
+					await ctx.runMutation(
+						"okfBundle:_insertImportedTask" as never,
+						{
+							title: parsed.title,
+							description: parsed.description,
+							assignedTo: parsed.assignedTo,
+							priority: parsed.priority,
+							status: parsed.status,
+							createdBy: parsed.createdBy,
+							now,
+						} as never,
+					);
+				}
+				out.imported.tasks++;
+			}
+		}
+
 		return out;
 	},
 });

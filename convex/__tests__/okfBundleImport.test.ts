@@ -54,18 +54,19 @@ function memoryFixture(overrides: Partial<MemoryDoc> = {}): MemoryDoc {
 	return {
 		_id: "k179mem001" as never,
 		_creationTime: FIXED_MS,
-		type: "memory-reference",
+		type: "reference",
 		namespace: "project/elpi-corp",
 		content: "Imported memory body.",
 		createdBy: "sigma",
 		createdAt: FIXED_MS,
 		updatedAt: FIXED_MS,
-		isLatest: true,
 		...overrides,
 	};
 }
 
-function briefingFixture(overrides: Partial<BriefingNoteDoc> = {}): BriefingNoteDoc {
+function briefingFixture(
+	overrides: Partial<BriefingNoteDoc> = {},
+): BriefingNoteDoc {
 	return {
 		_id: "k179bri001" as never,
 		_creationTime: FIXED_MS,
@@ -105,9 +106,9 @@ async function packFixtureBundle(): Promise<Buffer> {
 			path: "index.md",
 			content: '---\nokf_version: "0.1"\ntype: index\n---\n# Bundle\n',
 		},
-		{ path: mem.path, content: mem.content },
-		{ path: bri.path, content: bri.content },
-		{ path: tsk.path, content: tsk.content },
+		{ path: mem.filePath, content: mem.content },
+		{ path: bri.filePath, content: bri.content },
+		{ path: tsk.filePath, content: tsk.content },
 	]);
 }
 
@@ -125,7 +126,7 @@ async function storeBundle(
 // 1. dry-run — no writes, counts correct
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe.skip("import_okf_bundle action — dry-run", () => {
+describe("import_okf_bundle action — dry-run", () => {
 	test("dry-run returns counts but inserts 0 rows", async () => {
 		const t = createTestConvex();
 		const buf = await packFixtureBundle();
@@ -142,8 +143,8 @@ describe.skip("import_okf_bundle action — dry-run", () => {
 		expect(result.imported.briefings).toBe(1);
 		expect(result.imported.tasks).toBe(1);
 
-		const memCount = await t.run(async (ctx) =>
-			(await ctx.db.query("memories").collect()).length,
+		const memCount = await t.run(
+			async (ctx) => (await ctx.db.query("memories").collect()).length,
 		);
 		expect(memCount).toBe(0);
 	});
@@ -153,7 +154,7 @@ describe.skip("import_okf_bundle action — dry-run", () => {
 // 2. merge — entries inserted, dedup by content hash, isLatest correct
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe.skip("import_okf_bundle action — merge mode", () => {
+describe("import_okf_bundle action — merge mode", () => {
 	test("merge inserts new entries + dedup by content hash on re-import", async () => {
 		const t = createTestConvex();
 		const buf = await packFixtureBundle();
@@ -181,7 +182,7 @@ describe.skip("import_okf_bundle action — merge mode", () => {
 // 3. idempotency — replayed key returns prior result, no double-write
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe.skip("import_okf_bundle action — idempotency", () => {
+describe("import_okf_bundle action — idempotency", () => {
 	test("same idempotencyKey replayed → no duplicate inserts", async () => {
 		const t = createTestConvex();
 		const buf = await packFixtureBundle();
@@ -196,8 +197,8 @@ describe.skip("import_okf_bundle action — idempotency", () => {
 		await t.action(IMPORT_ACTION_REF, args);
 		await t.action(IMPORT_ACTION_REF, args);
 
-		const memCount = await t.run(async (ctx) =>
-			(await ctx.db.query("memories").collect()).length,
+		const memCount = await t.run(
+			async (ctx) => (await ctx.db.query("memories").collect()).length,
 		);
 		expect(memCount).toBe(1);
 	});
@@ -207,7 +208,7 @@ describe.skip("import_okf_bundle action — idempotency", () => {
 // 4. cross-tenant deny — write scope enforced via assertCanImport
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe.skip("import_okf_bundle action — cross-tenant deny", () => {
+describe("import_okf_bundle action — cross-tenant deny", () => {
 	test("identity org X importing namespace team/Y → AUTH_NAMESPACE_DENIED", async () => {
 		const t = createTestConvex();
 		const buf = await packFixtureBundle();
