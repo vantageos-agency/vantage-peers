@@ -156,8 +156,8 @@ export declare const storeMemoryOutputSchema: z.ZodObject<{
     memoryId: z.ZodString;
     namespace: z.ZodString;
     type: z.ZodEnum<{
-        project: "project";
         user: "user";
+        project: "project";
         feedback: "feedback";
         reference: "reference";
         episode: "episode";

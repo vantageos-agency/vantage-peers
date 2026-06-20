@@ -25,8 +25,9 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { Readable } from "node:stream";
 import { v } from "convex/values";
-import { pack } from "tar-stream";
+import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { action } from "./_generated/server";
 import {
@@ -48,7 +49,11 @@ import {
 	serializeTask,
 	type TaskDoc,
 } from "./okfSerializer";
-import { type BundleEntry, validateBundle } from "./okfValidator";
+import {
+	type BundleEntry,
+	type ValidationError,
+	validateBundle,
+} from "./okfValidator";
 
 // Codegen-lag workaround (mirrors okfBundle.ts comment). The Convex codegen
 // resolves FunctionReferences by module path at runtime; widening the type
@@ -387,5 +392,282 @@ export const exportOkfBundle = action({
 				urlExpiresAt,
 			},
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OKF Phase 2 — B1 / T-OKF-PHASE2-A: validate_okf_bundle (read-only).
+//
+// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k1796g7g7y03gn9rd6z7psenk98910vt.
+// Accepts {bundleUrl|storageId}, fetches the tarball, untar's with tar-stream,
+// counts family entries by path prefix, and runs the pure `validateBundle()`
+// validator from okfValidator.ts. Returns { valid, schemaVersion, errors?, stats }.
+//
+// Read-only — never writes to the DB. The action exists so dashboard UIs can
+// preview a bundle's integrity before calling `import_okf_bundle` (B2) which
+// reuses the same validator before any mutation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ValidateOkfBundleResult {
+	valid: boolean;
+	schemaVersion: "0.1";
+	stats: {
+		memoryCount: number;
+		briefingCount: number;
+		taskCount: number;
+	};
+	errors?: ValidationError[];
+}
+
+/**
+ * Extract a tarball Buffer into BundleEntry rows (path + content) using
+ * `tar-stream`. Mirrors the `extractTarball()` helper used in the
+ * okfBundle.test.ts suite but is exported as a module helper so the action
+ * can reuse it (and so it remains unit-testable in isolation if needed).
+ *
+ * Callback param types are explicit per Eta REVISE iter 1 on PR #887 (avoids
+ * TS7006 implicit-any noEmit failures in the consumer worktree).
+ */
+export async function unpackTarball(buf: Buffer): Promise<BundleEntry[]> {
+	const out: BundleEntry[] = [];
+	const ext = extract();
+	const done = new Promise<void>((resolve, reject) => {
+		ext.on(
+			"entry",
+			(
+				header: { name: string },
+				stream: Readable,
+				next: (err?: Error) => void,
+			) => {
+				const chunks: Buffer[] = [];
+				stream.on("data", (c: Buffer) => chunks.push(c));
+				stream.on("end", () => {
+					out.push({
+						path: header.name,
+						content: Buffer.concat(chunks).toString("utf8"),
+					});
+					next();
+				});
+				stream.on("error", reject);
+				stream.resume();
+			},
+		);
+		ext.on("finish", () => resolve());
+		ext.on("error", reject);
+	});
+	Readable.from(buf).pipe(ext);
+	await done;
+	return out;
+}
+
+/**
+ * SSRF defence — reject hostnames that resolve to loopback / link-local /
+ * private RFC 1918 / IPv6 unique-local ranges, and reject any non-https
+ * scheme. Best-effort hostname check at parse time; the cloud provider's
+ * outbound IP allowlist provides the final layer (defence in depth).
+ */
+function assertBundleUrlSafe(rawUrl: string): URL {
+	let url: URL;
+	try {
+		url = new URL(rawUrl);
+	} catch {
+		throw new Error(
+			`OKF_VALIDATE_URL_INVALID: bundleUrl is not a valid URL.`,
+		);
+	}
+	if (url.protocol !== "https:") {
+		throw new Error(
+			`OKF_VALIDATE_URL_SCHEME_DENIED: bundleUrl must use https:// (got ${url.protocol}).`,
+		);
+	}
+	const host = url.hostname.toLowerCase();
+	// Loopback and link-local literals
+	if (
+		host === "localhost" ||
+		host === "0.0.0.0" ||
+		host.endsWith(".localhost") ||
+		host.endsWith(".local")
+	) {
+		throw new Error(
+			`OKF_VALIDATE_URL_HOST_DENIED: bundleUrl host "${host}" is loopback/link-local.`,
+		);
+	}
+	// IPv4 literal: reject private (RFC 1918), loopback (127/8), link-local
+	// (169.254/16), and unspecified (0.0.0.0).
+	const ipv4 =
+		/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (ipv4 !== null) {
+		const a = Number.parseInt(ipv4[1], 10);
+		const b = Number.parseInt(ipv4[2], 10);
+		if (
+			a === 10 ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168) ||
+			a === 127 ||
+			(a === 169 && b === 254) ||
+			a === 0
+		) {
+			throw new Error(
+				`OKF_VALIDATE_URL_HOST_DENIED: bundleUrl IPv4 "${host}" is in a private/loopback range.`,
+			);
+		}
+	}
+	// IPv6 literal: reject loopback (::1) and unique-local (fc00::/7, fe80::/10).
+	if (host.startsWith("[")) {
+		const lit = host.slice(1, -1);
+		if (
+			lit === "::1" ||
+			lit.startsWith("fc") ||
+			lit.startsWith("fd") ||
+			lit.startsWith("fe8") ||
+			lit.startsWith("fe9") ||
+			lit.startsWith("fea") ||
+			lit.startsWith("feb")
+		) {
+			throw new Error(
+				`OKF_VALIDATE_URL_HOST_DENIED: bundleUrl IPv6 "${lit}" is in a loopback/unique-local range.`,
+			);
+		}
+	}
+	return url;
+}
+
+/**
+ * Authentication gate — read-only validation still leaks bytes from the
+ * caller's storage object and emits an outbound fetch on a caller-supplied
+ * URL, so an unauthenticated public action is an SSRF + cross-tenant peek
+ * vector (Eta BLOCKER1 on PR #887). Mirror exportOkfBundle's posture: the
+ * Convex CLI / deploy-key path has no identity, so accept that case; reject
+ * everything else that arrives without an identity attached.
+ */
+async function assertCanValidate(ctx: {
+	auth: { getUserIdentity: () => Promise<unknown> };
+}): Promise<void> {
+	const identity = (await ctx.auth.getUserIdentity()) as Record<
+		string,
+		unknown
+	> | null;
+	if (identity === null || identity === undefined) {
+		// CLI / deploy-key — server-trusted path. Mirrors exportOkfBundle.
+		return;
+	}
+	// Identity attached: minimal sanity — must carry at least one usable claim
+	// so a stripped/garbled identity is rejected before we touch storage / network.
+	const hasClaim =
+		typeof identity.tokenIdentifier === "string" ||
+		typeof identity.subject === "string" ||
+		typeof identity.organizationId === "string" ||
+		typeof identity.organizationSlug === "string";
+	if (!hasClaim) {
+		throw new Error(
+			"OKF_VALIDATE_UNAUTHENTICATED: identity present but carries no recognised claim.",
+		);
+	}
+}
+
+function countFamilies(entries: readonly BundleEntry[]): {
+	memoryCount: number;
+	briefingCount: number;
+	taskCount: number;
+} {
+	let memoryCount = 0;
+	let briefingCount = 0;
+	let taskCount = 0;
+	for (const e of entries) {
+		if (e.path.startsWith("memories/") && e.path.endsWith(".md")) {
+			memoryCount++;
+		} else if (
+			e.path.startsWith("briefing-notes/") &&
+			e.path.endsWith(".md")
+		) {
+			briefingCount++;
+		} else if (e.path.startsWith("tasks/") && e.path.endsWith(".md")) {
+			taskCount++;
+		}
+	}
+	return { memoryCount, briefingCount, taskCount };
+}
+
+export const validateOkfBundle = action({
+	args: {
+		bundleUrl: v.optional(v.union(v.string(), v.null())),
+		storageId: v.optional(v.union(v.id("_storage"), v.null())),
+	},
+	handler: async (ctx, args): Promise<ValidateOkfBundleResult> => {
+		// 0. Auth gate — fail-closed before touching storage or network
+		// (Eta BLOCKER1 PR #887: SSRF + cross-tenant peek vector).
+		await assertCanValidate(ctx);
+
+		// At least one source is required.
+		const url = args.bundleUrl ?? null;
+		const storageId = args.storageId ?? null;
+		if (url === null && storageId === null) {
+			throw new Error(
+				"OKF_VALIDATE_INPUT_MISSING: provide either `bundleUrl` or `storageId`.",
+			);
+		}
+
+		// 1. Fetch the tarball bytes (storageId wins when both are passed).
+		let blob: Blob | null;
+		if (storageId !== null) {
+			blob = await ctx.storage.get(storageId);
+			if (blob === null) {
+				throw new Error(
+					`OKF_VALIDATE_STORAGE_NOT_FOUND: storageId "${storageId}" is unknown or expired.`,
+				);
+			}
+		} else if (url !== null) {
+			// SSRF gate — reject non-https + private IP ranges before fetching.
+			const safeUrl = assertBundleUrlSafe(url);
+			const response = await fetch(safeUrl.toString());
+			if (!response.ok) {
+				throw new Error(
+					`OKF_VALIDATE_FETCH_FAILED: HTTP ${response.status} fetching bundle URL.`,
+				);
+			}
+			blob = await response.blob();
+		} else {
+			// Unreachable per the guard above, but keeps the type checker happy.
+			throw new Error("OKF_VALIDATE_INPUT_MISSING");
+		}
+
+		const arrayBuffer = await blob.arrayBuffer();
+		const buf = Buffer.from(arrayBuffer);
+
+		// 2. Untar → BundleEntry[].
+		let entries: BundleEntry[];
+		try {
+			entries = await unpackTarball(buf);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return {
+				valid: false,
+				schemaVersion: "0.1",
+				stats: { memoryCount: 0, briefingCount: 0, taskCount: 0 },
+				errors: [
+					{
+						path: "<tarball>",
+						rule: "INVALID_YAML",
+						message: `Tarball extraction failed: ${msg}`,
+					},
+				],
+			};
+		}
+
+		// 3. Run the pure validator (already unit-tested in okfValidator.test.ts).
+		const result = validateBundle({ entries });
+
+		// 4. Compute family stats by path prefix (skips index.md/log.md).
+		const stats = countFamilies(entries);
+
+		const out: ValidateOkfBundleResult = {
+			valid: result.pass,
+			schemaVersion: "0.1",
+			stats,
+		};
+		if (!result.pass) {
+			out.errors = result.errors;
+		}
+		return out;
 	},
 });
