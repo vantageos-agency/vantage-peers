@@ -26,6 +26,7 @@ import {
 	BUNDLE_SOFT_CAP_BYTES,
 } from "../okfBundle";
 import { packTarball } from "../okfBundleNode";
+import type { ValidationError } from "../okfValidator";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
@@ -129,7 +130,7 @@ async function storeBundle(
 ): Promise<string> {
 	// convex-test exposes ctx.storage.store via the test harness `t.run`.
 	return await t.run(async (ctx) => {
-		const blob = new Blob([buf]);
+		const blob = new Blob([new Uint8Array(buf)]);
 		return await ctx.storage.store(blob);
 	});
 }
@@ -186,7 +187,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toBeDefined();
-		expect(result.errors?.some((e) => e.rule === "MISSING_TYPE")).toBe(true);
+		expect(result.errors?.some((e: ValidationError) => e.rule === "MISSING_TYPE")).toBe(true);
 	});
 
 	test("entry with malformed YAML frontmatter → valid:false + INVALID_YAML", async () => {
@@ -211,7 +212,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toBeDefined();
-		expect(result.errors?.some((e) => e.rule === "INVALID_YAML")).toBe(true);
+		expect(result.errors?.some((e: ValidationError) => e.rule === "INVALID_YAML")).toBe(true);
 	});
 });
 
