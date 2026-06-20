@@ -55,18 +55,22 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).resolves.toBeUndefined();
 	});
 
-	test("no-identity caller (master/CLI/deploy key) bypasses tail-match for any namespace", async () => {
-		// No-identity used to be allowed only for project/elpi-corp; B3 generalizes
-		// to any namespace because the CLI/deploy-key path is server-trusted.
-		await expect(
-			assertCanExportNamespace(noIdentityCtx, "team/whatever-org"),
-		).resolves.toBeUndefined();
-		await expect(
-			assertCanExportNamespace(noIdentityCtx, "project/iris-rh"),
-		).resolves.toBeUndefined();
+	test("no-identity caller is allowed ONLY on the master namespace (project/elpi-corp)", async () => {
+		// Eta REVISE iter-2 #888: the MCP Cloud surface never calls setAuth, so
+		// `getUserIdentity()` is always null on the prod hot path. Pre-fix, that
+		// authorized ANY namespace → cross-tenant bypass. The fail-closed guard
+		// keeps `project/elpi-corp` (the legacy CLI/deploy-key path) and rejects
+		// every other namespace.
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "project/elpi-corp"),
 		).resolves.toBeUndefined();
+
+		await expect(
+			assertCanExportNamespace(noIdentityCtx, "team/whatever-org"),
+		).rejects.toThrow(/AUTH_NO_IDENTITY/);
+		await expect(
+			assertCanExportNamespace(noIdentityCtx, "project/iris-rh"),
+		).rejects.toThrow(/AUTH_NO_IDENTITY/);
 	});
 
 	test("identity with organizationSlug (not organizationId) is read identically", async () => {
@@ -94,10 +98,26 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).rejects.toThrow(/OKF_NAMESPACE_INVALID/);
 	});
 
-	test("identity present but with neither organizationId nor organizationSlug is treated as master (no tail-check)", async () => {
+	test("identity without orgId/orgSlug is allowed ONLY on the master namespace (fail-closed)", async () => {
+		// Same fail-closed posture as the null-identity branch: an identity that
+		// carries no org affiliation (system:cron, deploy key with metadata, etc.)
+		// can only touch the master namespace. Any tenant namespace is denied.
 		const ctx = ctxWithIdentity({ tokenIdentifier: "system:cron" });
 		await expect(
-			assertCanExportNamespace(ctx, "team/anyone"),
+			assertCanExportNamespace(ctx, "project/elpi-corp"),
 		).resolves.toBeUndefined();
+		await expect(
+			assertCanExportNamespace(ctx, "team/anyone"),
+		).rejects.toThrow(/AUTH_NO_ORG/);
+	});
+
+	test("runtime prod-path simulation — null identity + tenant namespace → AUTH_NO_IDENTITY (Eta iter-2 must-cover)", async () => {
+		// In production the MCP Cloud transport never calls `setAuth` on the
+		// Convex client, so `ctx.auth.getUserIdentity()` returns null on every
+		// hot-path call. This test exercises that exact branch — no withIdentity,
+		// no mock — and asserts the guard rejects any non-master namespace.
+		await expect(
+			assertCanExportNamespace(noIdentityCtx, "team/some-tenant"),
+		).rejects.toThrow(/AUTH_NO_IDENTITY: anonymous caller/);
 	});
 });

@@ -200,15 +200,41 @@ export async function assertCanExportNamespace(
 		string,
 		unknown
 	> | null;
+
+	// Master-bypass allowlist. In production the MCP Cloud surface never calls
+	// setAuth on the Convex client, so `getUserIdentity()` is always null on the
+	// hot path. Eta REVISE iter-2 on PR #888 flagged this as a CRITICAL
+	// cross-tenant bypass: prior to this guard, a null identity authorized ANY
+	// namespace, so any tenant token could export any other tenant's data.
+	//
+	// The fix is fail-CLOSED on null/no-org identities for all but the legacy
+	// "self" namespace. CLI / deploy-key callers still get through because their
+	// invocations carry no identity AND target `project/elpi-corp` — which is
+	// what the Phase 1 contract (PR #850) actually meant by "master".
+	const isMasterNamespace = namespace === "project/elpi-corp";
+
 	if (identity === null || identity === undefined) {
-		return;
+		if (isMasterNamespace) {
+			return;
+		}
+		throw new Error(
+			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
+		);
 	}
 	const orgSlug =
 		(identity.organizationId as string | undefined) ??
 		(identity.organizationSlug as string | undefined) ??
 		null;
 	if (orgSlug === null) {
-		return;
+		// Identity attached but carries no org affiliation — same fail-closed
+		// posture as the null branch above. Only the legacy master namespace is
+		// allowed through (system:cron, deploy key with metadata, etc.).
+		if (isMasterNamespace) {
+			return;
+		}
+		throw new Error(
+			`AUTH_NO_ORG: caller without org affiliation cannot export non-master namespace "${namespace}".`,
+		);
 	}
 	const expectedSuffix = namespace.split("/").slice(1).join("/");
 	if (orgSlug !== expectedSuffix) {
