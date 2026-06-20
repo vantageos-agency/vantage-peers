@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **B4 RAG namespace team/<orgId> tenant enforcement** — `bearerAuthMiddleware` gains a new layer 2.5: Clerk JWTs with an `org_id` claim are verified via JWKS (`CLERK_DOMAIN/.well-known/jwks.json`, 10-min in-process cache) and resolve to `scopeProfile="team-member"` with `namespaceRead/WritePrefixes=["team/<orgId>"]`. Cross-tenant namespace access is rejected before any Convex call. New `convex/memoriesScoped.ts` provides `listMemoriesScoped` / `storeMemoryScoped` Convex functions with identity-level `AUTH_NAMESPACE_DENIED` enforcement. Tests: `mcp-server/test/team-namespace-cross-tenant.test.ts` (16 predicate tests), `convex/__tests__/auth-namespace-deny.test.ts` (9 Convex-layer deny tests). Task `k17528bya5wnbxm0x3cebrf9vh8915n0`, mission `k5779qbxhwrfjmj02t31yvehns8911jp`.
+
 ### Fixed
 - **Day 108 — VP mutations no longer mask errors as generic "Server Error"** — `convex/tasks.ts` (14 throws) + `convex/lib/auth.ts` (2 throws) now emit `ConvexError("<CODE>: <message> :: <details-json>")` with string payload so the Convex cloud privacy guard no longer anonymizes to `errorMessage="Server Error"`. New codes: `TASK_NOT_FOUND`, `RBAC_DENIED`, `TASK_START_BLOCKED` (the Hephaistos `start_task` symptom — caller already has an in_progress task), `DEPENDENCY_NOT_DONE` (newly enforced — `start` previously allowed starting tasks whose `dependsOn` chain was unsatisfied), `COMPLETION_NOTE_REQUIRED`. Repro test in `convex/__tests__/tasksMutationConvexErrors.test.ts` (17/17 PASS) — asserts the original Hephaistos scenario surfaces `TASK_START_BLOCKED:` not "Server Error". Existing suite 541/541 PASS. Mission `k578wphazwhxamggbxnn2wr5r98911vr` (Sigma rattrapage Day 108). Follow-up queued: mcp-server `parseConvexError` / `mcpConvexError` cleanup so callers can move off string-prefix parsing.
 

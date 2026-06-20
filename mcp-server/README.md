@@ -80,6 +80,20 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 
 **Backward compatibility:** the `BEARER_SECRET_MASTER` env var still works unchanged. Claude Code and Claude Desktop users do not need to change anything — static bearer auth remains the default for those clients. OAuth 2.1 DCR is used exclusively when a client initiates the discovery flow (e.g. Claude.ai web).
 
+### Bearer auth layers (evaluation order)
+
+| Layer | Token type | scopeProfile | Namespace access |
+|-------|-----------|-------------|-----------------|
+| 1 | `BEARER_SECRET_MASTER` static token | `master` | Full — all namespaces |
+| 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `marie-iris-rh`) | Per-profile prefix list |
+| 2.5 | **Clerk JWT** (org session, `org_id` claim present) | `team-member` | `team/<orgId>/*` only |
+| 3 | DCR auto-registered client (`oauthTokens` table) | `client-generic` | Deny-by-default (empty prefixes) |
+| 4 | Legacy internal bearer (`mcpTenants` table) | unscoped | Tenant deployment URL routing |
+
+**Layer 2.5 (Clerk JWT / `team-member`):** Claude.ai clients that authenticate via the Clerk OIDC flow receive a `scopeProfile="team-member"` context. Their `namespaceReadPrefixes` and `namespaceWritePrefixes` are locked to `["team/<orgId>"]` — cross-tenant access is rejected at the middleware layer before any Convex call is made. The JWKS is fetched from `CLERK_DOMAIN/.well-known/jwks.json` (default: `https://sharp-sponge-67.clerk.accounts.dev`) and cached in-process with a 10-minute TTL.
+
+**`CLERK_DOMAIN` env var:** Override the default Clerk domain if you use a custom Clerk instance.
+
 ## Environment variables
 
 | Variable | Required | Description |

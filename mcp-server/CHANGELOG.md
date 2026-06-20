@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] — B4 RAG namespace team/<orgId> tenant enforcement
+
+### Added
+
+- **`team-member` scope profile** in `bearerAuthMiddleware` (layer 2.5): Clerk JWTs carrying an `org_id` claim are now verified against the Clerk JWKS (`CLERK_DOMAIN/.well-known/jwks.json`, cached 10 min) and resolve to `scopeProfile="team-member"` with `namespaceReadPrefixes=["team/<orgId>"]` and `namespaceWritePrefixes=["team/<orgId>"]`. Cross-tenant reads/writes are rejected by the existing `checkNamespaceRead` / `checkNamespaceWrite` predicates before any Convex call.
+- **`convex/memoriesScoped.ts`**: new `listMemoriesScoped` (query) and `storeMemoryScoped` (mutation) Convex functions that enforce `team/<orgId>` namespace isolation at the Convex layer using `ctx.auth.getUserIdentity()`. Clerk callers with `org_A` cannot read or write `team/org_B/*`.
+- **`jose`** (transitive, already present via `@modelcontextprotocol/sdk`) used for JWKS fetch and JWT verification. No new npm dep.
+- **`CLERK_DOMAIN` env var**: override the Clerk instance domain (default `https://sharp-sponge-67.clerk.accounts.dev`).
+
+### Security
+
+- Architectural choice: **Option A** (direct Clerk JWT verification in bearer middleware) over Option B (DCR→Clerk join via Convex query). Rationale: Clerk JWTs are self-contained — no extra Convex round-trip needed. Option B would be required only if DCR clients were the sole entry point.
+- Cross-tenant deny preserved for DCR `client-generic` (empty prefixes, unchanged) and unregistered orgs (fail-closed: `AUTH_NAMESPACE_DENIED`).
+
+### Tests
+
+- `mcp-server/test/team-namespace-cross-tenant.test.ts` — 16 predicate tests on `checkNamespaceRead/Write/isMasterScope` with team-member, master, and DCR-generic fixtures.
+- `convex/__tests__/auth-namespace-deny.test.ts` — 9 convex-test tests verifying `AUTH_NAMESPACE_DENIED` for cross-tenant access at the Convex layer.
+
 ## [2.12.0] — 2026-06-14
 
 ### Changed
