@@ -25,8 +25,9 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { Readable } from "node:stream";
 import { v } from "convex/values";
-import { pack } from "tar-stream";
+import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { action } from "./_generated/server";
 import {
@@ -48,7 +49,11 @@ import {
 	serializeTask,
 	type TaskDoc,
 } from "./okfSerializer";
-import { type BundleEntry, validateBundle } from "./okfValidator";
+import {
+	type BundleEntry,
+	type ValidationError,
+	validateBundle,
+} from "./okfValidator";
 
 // Codegen-lag workaround (mirrors okfBundle.ts comment). The Convex codegen
 // resolves FunctionReferences by module path at runtime; widening the type
@@ -387,5 +392,161 @@ export const exportOkfBundle = action({
 				urlExpiresAt,
 			},
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OKF Phase 2 — B1 / T-OKF-PHASE2-A: validate_okf_bundle (read-only).
+//
+// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k1796g7g7y03gn9rd6z7psenk98910vt.
+// Accepts {bundleUrl|storageId}, fetches the tarball, untar's with tar-stream,
+// counts family entries by path prefix, and runs the pure `validateBundle()`
+// validator from okfValidator.ts. Returns { valid, schemaVersion, errors?, stats }.
+//
+// Read-only — never writes to the DB. The action exists so dashboard UIs can
+// preview a bundle's integrity before calling `import_okf_bundle` (B2) which
+// reuses the same validator before any mutation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ValidateOkfBundleResult {
+	valid: boolean;
+	schemaVersion: "0.1";
+	stats: {
+		memoryCount: number;
+		briefingCount: number;
+		taskCount: number;
+	};
+	errors?: ValidationError[];
+}
+
+/**
+ * Extract a tarball Buffer into BundleEntry rows (path + content) using
+ * `tar-stream`. Mirrors the `extractTarball()` helper used in the
+ * okfBundle.test.ts suite but is exported as a module helper so the action
+ * can reuse it (and so it remains unit-testable in isolation if needed).
+ */
+export async function unpackTarball(buf: Buffer): Promise<BundleEntry[]> {
+	const out: BundleEntry[] = [];
+	const ext = extract();
+	const done = new Promise<void>((resolve, reject) => {
+		ext.on("entry", (header, stream, next) => {
+			const chunks: Buffer[] = [];
+			stream.on("data", (c: Buffer) => chunks.push(c));
+			stream.on("end", () => {
+				out.push({
+					path: header.name,
+					content: Buffer.concat(chunks).toString("utf8"),
+				});
+				next();
+			});
+			stream.on("error", reject);
+			stream.resume();
+		});
+		ext.on("finish", () => resolve());
+		ext.on("error", reject);
+	});
+	Readable.from(buf).pipe(ext);
+	await done;
+	return out;
+}
+
+function countFamilies(entries: readonly BundleEntry[]): {
+	memoryCount: number;
+	briefingCount: number;
+	taskCount: number;
+} {
+	let memoryCount = 0;
+	let briefingCount = 0;
+	let taskCount = 0;
+	for (const e of entries) {
+		if (e.path.startsWith("memories/") && e.path.endsWith(".md")) {
+			memoryCount++;
+		} else if (
+			e.path.startsWith("briefing-notes/") &&
+			e.path.endsWith(".md")
+		) {
+			briefingCount++;
+		} else if (e.path.startsWith("tasks/") && e.path.endsWith(".md")) {
+			taskCount++;
+		}
+	}
+	return { memoryCount, briefingCount, taskCount };
+}
+
+export const validateOkfBundle = action({
+	args: {
+		bundleUrl: v.optional(v.union(v.string(), v.null())),
+		storageId: v.optional(v.union(v.id("_storage"), v.null())),
+	},
+	handler: async (ctx, args): Promise<ValidateOkfBundleResult> => {
+		// At least one source is required.
+		const url = args.bundleUrl ?? null;
+		const storageId = args.storageId ?? null;
+		if (url === null && storageId === null) {
+			throw new Error(
+				"OKF_VALIDATE_INPUT_MISSING: provide either `bundleUrl` or `storageId`.",
+			);
+		}
+
+		// 1. Fetch the tarball bytes (storageId wins when both are passed).
+		let blob: Blob | null;
+		if (storageId !== null) {
+			blob = await ctx.storage.get(storageId);
+			if (blob === null) {
+				throw new Error(
+					`OKF_VALIDATE_STORAGE_NOT_FOUND: storageId "${storageId}" is unknown or expired.`,
+				);
+			}
+		} else if (url !== null) {
+			const response = await fetch(url);
+			if (!response.ok) {
+				throw new Error(
+					`OKF_VALIDATE_FETCH_FAILED: HTTP ${response.status} fetching bundle URL.`,
+				);
+			}
+			blob = await response.blob();
+		} else {
+			// Unreachable per the guard above, but keeps the type checker happy.
+			throw new Error("OKF_VALIDATE_INPUT_MISSING");
+		}
+
+		const arrayBuffer = await blob.arrayBuffer();
+		const buf = Buffer.from(arrayBuffer);
+
+		// 2. Untar → BundleEntry[].
+		let entries: BundleEntry[];
+		try {
+			entries = await unpackTarball(buf);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			return {
+				valid: false,
+				schemaVersion: "0.1",
+				stats: { memoryCount: 0, briefingCount: 0, taskCount: 0 },
+				errors: [
+					{
+						path: "<tarball>",
+						rule: "INVALID_YAML",
+						message: `Tarball extraction failed: ${msg}`,
+					},
+				],
+			};
+		}
+
+		// 3. Run the pure validator (already unit-tested in okfValidator.test.ts).
+		const result = validateBundle({ entries });
+
+		// 4. Compute family stats by path prefix (skips index.md/log.md).
+		const stats = countFamilies(entries);
+
+		const out: ValidateOkfBundleResult = {
+			valid: result.pass,
+			schemaVersion: "0.1",
+			stats,
+		};
+		if (!result.pass) {
+			out.errors = result.errors;
+		}
+		return out;
 	},
 });

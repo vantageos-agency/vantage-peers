@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **Day 108 OKF Phase 2 B1 — `validate_okf_bundle` MCP tool + Convex action (read-only)** — New action `okfBundleNode:validateOkfBundle` accepts `{bundleUrl|storageId}`, fetches and untar's the bundle, runs the pure `validateBundle()` validator from `convex/okfValidator.ts` (RFC §3.5), and returns `{ valid, schemaVersion, errors?, stats: {memoryCount, briefingCount, taskCount} }`. Read-only — never mutates the DB. Wired as MCP tool `validate_okf_bundle` (`readOnlyHint=true`) in `mcp-server/src/tools/validateOkfBundle.ts`. Unblocks import preview UX in the VP Cloud Dashboard (mission `k5779qbxhwrfjmj02t31yvehns8911jp`, task `k1796g7g7y03gn9rd6z7psenk98910vt`). Tests: `convex/__tests__/okfBundleValidate.test.ts` 5/5 PASS.
 - **Day 98 F4 — webhook `issue_comment` Bridge-only path** — `convex/http.ts` webhook handler for `issue_comment` events now routes exclusively through the Bridge tenant path. Prevents double-processing on multi-tenant deployments. PR #796, commit `f0c133c`.
 - **Day 98 F3 — stub-aware guard on webhook cron hook** — `convex/hooks.ts` cron now includes a stub-presence guard so stubs registered during tests do not fire production webhook paths. PR #796, commit `f0c133c`.
 - **DOCS-CONTEXT-LOOP (RULE #25)** — Docs-lockstep discipline now live on this repo. Any PR touching tools, API, or install paths must update `README.md` + `CHANGELOG.md` in the same PR. Exemptions require explicit `docs-skip: <reason>` in PR body.

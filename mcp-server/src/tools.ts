@@ -25,6 +25,7 @@ import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
+import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 
@@ -8225,4 +8226,10 @@ export function registerTools(
 	// Thin proxy to convex action `okfBundle:exportOkfBundle`. Registered last
 	// so its argument schema does not pollute other tool handlers' closures.
 	registerExportOkfBundle(server, convex);
+
+	// ── validate_okf_bundle (B1 — OKF Phase 2-A) ──────────────────────────────
+	// Thin proxy to convex action `okfBundleNode:validateOkfBundle`. Read-only;
+	// validates bundle conformance per RFC §3.5 without importing it. Mission
+	// k5779qbxhwrfjmj02t31yvehns8911jp, task k1796g7g7y03gn9rd6z7psenk98910vt.
+	registerValidateOkfBundle(server, convex);
 }
