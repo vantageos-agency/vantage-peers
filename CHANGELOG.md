@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Day 108 — VP mutations no longer mask errors as generic "Server Error"** — `convex/tasks.ts` (14 throws) + `convex/lib/auth.ts` (2 throws) now emit `ConvexError("<CODE>: <message> :: <details-json>")` with string payload so the Convex cloud privacy guard no longer anonymizes to `errorMessage="Server Error"`. New codes: `TASK_NOT_FOUND`, `RBAC_DENIED`, `TASK_START_BLOCKED` (the Hephaistos `start_task` symptom — caller already has an in_progress task), `DEPENDENCY_NOT_DONE` (newly enforced — `start` previously allowed starting tasks whose `dependsOn` chain was unsatisfied), `COMPLETION_NOTE_REQUIRED`. Repro test in `convex/__tests__/tasksMutationConvexErrors.test.ts` (17/17 PASS) — asserts the original Hephaistos scenario surfaces `TASK_START_BLOCKED:` not "Server Error". Existing suite 541/541 PASS. Mission `k578wphazwhxamggbxnn2wr5r98911vr` (Sigma rattrapage Day 108). Follow-up queued: mcp-server `parseConvexError` / `mcpConvexError` cleanup so callers can move off string-prefix parsing.
+
 ### Changed
 - **Day 108 OKF Phase 2 B3 — `export_okf_bundle` generalized (drop `project/elpi-corp` hard lock)** — `assertCanExportNamespace` in `convex/okfBundleNode.ts` no longer rejects non-Phase-1 namespaces; any non-empty prefix is accepted as long as identity-attached callers match the namespace tail (cross-tenant deny preserved). Path-traversal segments (`..`) are rejected for defence-in-depth. Multi-tenant `team/<orgId>/*` and other `org/<slug>` namespaces can now export their own bundles, unblocking VP Cloud Dashboard tenant Settings UI (F8). MCP tool `export_okf_bundle` description + Zod arg schema updated. Mission `k5779qbxhwrfjmj02t31yvehns8911jp`, task `k17f3407sg7cn6gswn5qs9j5b5891581`. Tests: `convex/__tests__/okfBundleExportGeneralize.test.ts` 8/8 PASS (including `project/elpi-corp` regression case).
 
