@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm weekly downloads](https://img.shields.io/npm/dw/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
-[![MCP tools: 115](https://img.shields.io/badge/MCP_tools-115_registered-green)]()
+[![MCP tools: 116](https://img.shields.io/badge/MCP_tools-116_registered-green)]()
 
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
@@ -16,7 +16,7 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## TL;DR
 
-Multi-agent Claude Code crews share one persistent brain via 115 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
+Multi-agent Claude Code crews share one persistent brain via 116 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
 
 ## Deploy on Railway (1-click)
 
@@ -51,7 +51,7 @@ flowchart LR
     A1[Claude Code agent A] -->|stdio| MCP
     A2[Claude Code agent B] -->|stdio| MCP
     A3[Cursor / Codex / etc.] -->|stdio| MCP
-    MCP[vantage-peers-mcp<br/>115 MCP tools] -->|HTTPS| Convex
+    MCP[vantage-peers-mcp<br/>116 MCP tools] -->|HTTPS| Convex
     Convex[(Convex Cloud<br/>real-time DB<br/>vector search)]
     Convex -.shared by all agents.-> A1
     Convex -.shared by all agents.-> A2
@@ -270,7 +270,7 @@ VantagePeers is a standard MCP server — works with any client supporting the M
 
 See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for copy-paste config snippets per tool.
 
-## MCP Tools Reference (115 tools)
+## MCP Tools Reference (116 tools)
 
 <details>
 <summary><b>Memory + Episodes (14 tools)</b></summary>
@@ -533,7 +533,7 @@ A **role** (e.g., `pi`, `sigma`) is a logical identity. An **instance** (e.g., `
 ## Testing
 
 ```bash
-# MCP smoke tests — all 115 tools against a live Convex deployment
+# MCP smoke tests — all 116 tools against a live Convex deployment
 bun scripts/test-mcp.ts
 
 # Convex function unit tests
@@ -578,7 +578,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) — install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) — two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) — orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) — all 115 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) — all 116 MCP tools
 
 ## Contributing
 
