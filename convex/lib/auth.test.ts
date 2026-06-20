@@ -138,7 +138,7 @@ describe("withOrgScope — org not in mapping", () => {
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
-			/Forbidden: org "unknown-org" not in client_org_mapping or inactive/,
+			/RBAC_DENIED:.*"unknown-org"/,
 		);
 	});
 });
@@ -204,7 +204,7 @@ describe("withOrgScope — inactive org mapping", () => {
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
-			/Forbidden: org "disabled-org" not in client_org_mapping or inactive/,
+			/RBAC_DENIED:.*"disabled-org"/,
 		);
 	});
 });
@@ -301,7 +301,7 @@ describe("requireScope", () => {
 	test("non-master scope + missing scope → throws Forbidden", () => {
 		expect(() =>
 			requireScope(irisRhScope, "view-stats-aggregated"),
-		).toThrow(/Forbidden: missing scope "view-stats-aggregated"/);
+		).toThrow(/RBAC_DENIED:.*view-stats-aggregated/);
 	});
 
 	test("non-master scope + granted scope → no throw", () => {

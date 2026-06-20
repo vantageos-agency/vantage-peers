@@ -452,11 +452,9 @@ export const update = mutation({
 		const { taskId, callerOrchestrator, ...fields } = args;
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
-			throw new ConvexError({
-				code: "TASK_NOT_FOUND",
-				message: `Task ${taskId} not found`,
-				taskId,
-			});
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
+			);
 		}
 		if (args.callerOrchestrator !== undefined) {
 			const isAuthorized =
@@ -464,12 +462,9 @@ export const update = mutation({
 				task.assignedTo === args.callerOrchestrator ||
 				args.callerOrchestrator === "system";
 			if (!isAuthorized) {
-				throw new ConvexError({
-					code: "TASK_UNAUTHORIZED",
-					message: `Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-					caller: args.callerOrchestrator,
-					taskId,
-				});
+				throw new ConvexError(
+					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, taskId })}`,
+				);
 			}
 		}
 
@@ -500,11 +495,9 @@ export const complete = mutation({
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
-			throw new ConvexError({
-				code: "TASK_NOT_FOUND",
-				message: `Task ${args.taskId} not found`,
-				taskId: args.taskId,
-			});
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
 		}
 		if (args.callerOrchestrator !== undefined) {
 			const isAuthorized =
@@ -512,21 +505,16 @@ export const complete = mutation({
 				task.assignedTo === args.callerOrchestrator ||
 				args.callerOrchestrator === "system";
 			if (!isAuthorized) {
-				throw new ConvexError({
-					code: "TASK_UNAUTHORIZED",
-					message: `Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-					caller: args.callerOrchestrator,
-					taskId: args.taskId,
-				});
+				throw new ConvexError(
+					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, taskId: args.taskId })}`,
+				);
 			}
 		}
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
-			throw new ConvexError({
-				code: "COMPLETION_NOTE_REQUIRED",
-				message: "completionNote is required. Describe what was actually done.",
-				taskId: args.taskId,
-			});
+			throw new ConvexError(
+				`COMPLETION_NOTE_REQUIRED: completionNote is required for task ${args.taskId}. Describe what was actually done (≥40 chars with verifiable proof token) — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
 		}
 
 		const now = Date.now();
@@ -727,11 +715,9 @@ export const start = mutation({
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
-			throw new ConvexError({
-				code: "TASK_NOT_FOUND",
-				message: `Task ${args.taskId} not found`,
-				taskId: args.taskId,
-			});
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
 		}
 		if (args.callerOrchestrator !== undefined) {
 			const isAuthorized =
@@ -739,12 +725,24 @@ export const start = mutation({
 				task.assignedTo === args.callerOrchestrator ||
 				args.callerOrchestrator === "system";
 			if (!isAuthorized) {
-				throw new ConvexError({
-					code: "TASK_UNAUTHORIZED",
-					message: `Unauthorized: ${args.callerOrchestrator} is not creator or assignee of this task`,
-					caller: args.callerOrchestrator,
-					taskId: args.taskId,
-				});
+				throw new ConvexError(
+					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, taskId: args.taskId })}`,
+				);
+			}
+		}
+
+		// Block if any dependsOn tasks are not yet done.
+		if (task.dependsOn && task.dependsOn.length > 0) {
+			const depDocs = await Promise.all(
+				task.dependsOn.map((depId) => ctx.db.get(depId)),
+			);
+			const blockers = depDocs
+				.filter((d): d is NonNullable<typeof d> => d !== null && d.status !== "done")
+				.map((d) => ({ taskId: d._id, title: d.title, status: d.status }));
+			if (blockers.length > 0) {
+				throw new ConvexError(
+					`DEPENDENCY_NOT_DONE: Cannot start task ${args.taskId} — ${blockers.length} dependency(ies) not yet done — ${JSON.stringify({ taskId: args.taskId, blockers })}`,
+				);
 			}
 		}
 
@@ -763,15 +761,9 @@ export const start = mutation({
 				inProgressTasks.length > 0 &&
 				inProgressTasks[0]._id !== args.taskId
 			) {
-				throw new ConvexError({
-					code: "TASK_START_BLOCKED",
-					message: `Cannot start task: you have an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first.`,
-					currentInProgress: {
-						taskId: inProgressTasks[0]._id,
-						title: inProgressTasks[0].title,
-					},
-					attemptedTaskId: args.taskId,
-				});
+				throw new ConvexError(
+					`TASK_START_BLOCKED: Cannot start task ${args.taskId} — caller ${callerOrc} has an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: inProgressTasks[0]._id, currentInProgressTitle: inProgressTasks[0].title, attemptedTaskId: args.taskId })}`,
+				);
 			}
 		}
 
@@ -830,24 +822,18 @@ export const deleteTask = mutation({
 	handler: async (ctx, args) => {
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
-			throw new ConvexError({
-				code: "TASK_NOT_FOUND",
-				message: "Task not found",
-				taskId: args.taskId,
-			});
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
 
 		if (
 			args.callerOrchestrator !== undefined &&
 			args.callerOrchestrator !== "system"
 		) {
 			if (task.createdBy !== args.callerOrchestrator) {
-				throw new ConvexError({
-					code: "TASK_DELETE_UNAUTHORIZED",
-					message: `Unauthorized: only ${task.createdBy} (creator) or system can delete this task`,
-					caller: args.callerOrchestrator,
-					creator: task.createdBy,
-					taskId: args.taskId,
-				});
+				throw new ConvexError(
+					`RBAC_DENIED: Only ${task.createdBy} (creator) or system can delete task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, creator: task.createdBy, taskId: args.taskId })}`,
+				);
 			}
 		}
 

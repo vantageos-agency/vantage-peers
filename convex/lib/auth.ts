@@ -1,4 +1,5 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
+import { ConvexError } from "convex/values";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrgScope — resolved auth + multi-tenant scope context
@@ -94,8 +95,8 @@ export async function withOrgScope(
 		.first();
 
 	if (!mapping || !mapping.isActive) {
-		throw new Error(
-			`Forbidden: org "${orgSlug}" not in client_org_mapping or inactive`,
+		throw new ConvexError(
+			`RBAC_DENIED: Org "${orgSlug}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug })}`,
 		);
 	}
 
@@ -134,6 +135,8 @@ export function filterByOrgScope<
 export function requireScope(scope: OrgScope, requiredScope: string): void {
 	if (scope.isMaster) return;
 	if (!scope.scopes.includes(requiredScope)) {
-		throw new Error(`Forbidden: missing scope "${requiredScope}"`);
+		throw new ConvexError(
+			`RBAC_DENIED: Missing scope "${requiredScope}" for org "${scope.orgSlug}" — ${JSON.stringify({ requiredScope, orgSlug: scope.orgSlug })}`,
+		);
 	}
 }
