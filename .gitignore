@@ -22,3 +22,4 @@ apps/
 .claude/*.lock
 .playwright-mcp/
 _archive/
+mcp-server/dist/
