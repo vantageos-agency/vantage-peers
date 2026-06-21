@@ -447,6 +447,21 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 
 ### List query projection + filters
 
+#### `list_bus` — envelope safety (PR-A)
+
+`list_bus` received strict defaults and an actual `fields=lite` projection in PR-A (branch `feat/vpmcp-a-list-bus-envelope`, commit `a7ac41c`), extending the S3.3 B8 follow-up batch 1 cursor rollout (which gave `list_bus` opaque cursor support) with hardened defaults and real projection logic:
+
+- **Default limit**: `20` (was `50`). **Cap**: `200` (was unbounded).
+- **`fields='lite'`**: projects to `{_id, _creationTime, name, status, orchestratorId}` — was a no-op since v2.4.12 (accepted the arg without applying projection). PR-A activates the actual server-side projection.
+- **Envelope**: returns `{ items, nextCursor }` (was flat array). `nextCursor` is `null` on the last page, opaque string otherwise.
+- **Cursor**: encodes `{creationTime, id}` to survive same-millisecond inserts.
+
+Full reference: [list_bus — MCP Tools Reference](https://vantagepeers.com/docs/cloud/mcp-tools/list-bus).
+
+Same envelope safety pattern will apply to `list_components` (PR-B) and `list_repo_mappings` (PR-C).
+
+#### General list query params (v2.3.x)
+
 All 4 list queries (`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`) support these params (v2.3.x):
 
 | Param | Type | Notes |
