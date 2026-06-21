@@ -26,11 +26,17 @@ Preuves vérifiables :
 
 ### VantagePeers Cloud (SaaS multi-tenant)
 
-**Pas encore.** Il reste un blocage critique de sécurité multi-tenant et plusieurs morceaux UI non livrés.
+**Pas encore en commercialisation automatique scalable**, mais des clients réels existent déjà et utilisent le produit en production sous accompagnement Pi.
 
-- **Blocage backend :** PR #915 (RAG namespace `team/<orgId>` tenant enforcement) est OPEN, MERGEABLE, tous checks CI verts, Eta APPROVED, mais pas mergé en main ni déployé en prod. Tant que cette PR n'est pas en prod, le RAG ne sépare pas strictement les données entre tenants — la doctrine multi-tenant Cloud n'est pas tenue.
+**Clients déjà onboardés (confirmé via recall VP) :**
+- **Cédric Delport / Trinity** — client payant Pro Support 99€/an grandfathered depuis Day 62 (mémoire `j572q1vg62by8sdkfagdvt3wy187npb6`). Mode self-host VantagePeers + vantage-peers-mcp Railway HTTP transport. Bloqué Day 86 sur doc HTTP transport incomplète → email demandant la procédure ; doctrine `doc-completeness = client onboarding gate` édictée en réponse.
+- **Marie Parrent / Iris RH** — cliente VIP T1, onboardée en visio LIVE Day 92 (mémoire friction `j57cesnanpg5ywn5ra445snnyh882sar`). Mode Cloud SaaS multi-tenant via workspace scope_profile `iris-rh`. Accès dédié `marie-command-center.vercel.app` (briefing `js7a7b86sj2e1vh32phx3qtdy588qz54`). Friction Day 92 : 4 re-paste credentials forcés en LIVE par snapshot architecture scope_profile + tokens → Laurent verbatim "honte du produit ... on ne dit plus à un user de changer les creds!". Doctrine pre-visio customer smoke test édictée fleet-wide en réponse (mémoire `j5719y7bvva5jy9hpr8zs25gmh883yr2`).
+
+**Ce qui reste pour commercialisation automatique scalable :**
+- **Blocage backend :** PR #915 (RAG namespace `team/<orgId>` tenant enforcement) est OPEN, MERGEABLE, tous checks CI verts, Eta APPROVED, mais pas mergé en main ni déployé en prod. Tant que cette PR n'est pas en prod, le RAG ne sépare pas strictement les données entre tenants pour de nouveaux clients hors workspace dédié.
 - **Blocage UI :** la couche frontend Knowledge Base (drag-drop d'upload + recherche) n'existe pas encore — F3 chez Kappa, gated sur le démarrage de B5 backend (lui-même gated sur la merge de #915).
-- **Chaîne d'activation client non testée end-to-end :** Gumroad → email → license key → bootstrap → premier appel MCP n'a pas été parcouru par un client réel (zéro screenshot dans `docs/cloud/img/`, le doc onboarding y fait référence comme placeholder).
+- **Chaîne d'activation client automatisée :** le tunnel Gumroad → email → license key → bootstrap auto → premier appel MCP n'a pas été testé sans intervention humaine. Cédric et Marie ont été accompagnés par Pi en direct ; pour scaler il faut que le tunnel marche sans intervention.
+- **Documentation client-facing complète** : runbook self-host HTTP transport (gap Cédric Day 86), screenshots ChatGPT custom connector (gap docs/cloud/img/), doctrine pre-visio smoke test à graver dans la doc opérationnelle.
 
 ---
 
@@ -73,19 +79,36 @@ Un utilisateur peut pointer son client MCP vers notre Convex de référence (`co
 
 Aucune intervention humaine VantageOS requise. C'est ce qu'on appelle PLG (product-led growth) sur le segment développeur solo.
 
-### Cloud SaaS — parcours cible (pas encore tenu)
+### Cloud SaaS — parcours actuel (manuel accompagné par Pi)
+
+Aujourd'hui, Cédric et Marie sont onboardés en mode artisanal :
+
+```
+1. Contact direct (email Cédric Day 62, visio Marie Day 92)
+2. Pi mint manuellement OAuth client_id + client_secret via admin/oauth/clients
+3. Pi crée le scope_profile workspace (iris-rh pour Marie)
+4. Pi envoie credentials au client (email pour Cédric, partage en visio pour Marie)
+5. Client configure son Claude.ai / Claude Code / ChatGPT custom connector
+6. Premier appel MCP en présence de Pi
+```
+
+Ce mode marche mais ne scale pas. Frictions documentées :
+- Day 86 Cédric : doc self-host HTTP transport incomplète → email demandant la procédure
+- Day 92 Marie : re-paste credentials 4× en LIVE → "honte du produit" (Laurent verbatim)
+
+### Cloud SaaS — parcours cible automatique (à terme)
 
 ```
 1. Achat Gumroad → email avec license key
 2. Inscription au dashboard client (n'existe pas — Kappa F1-F8 backlog)
 3. Création de l'organisation + invitation des membres
 4. Récupération de l'URL MCP Cloud + token via le dashboard
-5. Onboarding ChatGPT / Claude.ai / Claude Code via OAuth (doctype docs/cloud/onboarding-customer.md existe pour ChatGPT)
+5. Onboarding ChatGPT / Claude.ai / Claude Code via OAuth (doc docs/cloud/onboarding-customer.md existe pour ChatGPT)
 6. Upload de KB via dropzone (F3 frontend — pas livré)
 7. Utilisation multi-agents Claude/ChatGPT/Codex partagée sur namespace team/<orgId>
 ```
 
-Aucun parcours utilisateur SaaS n'a été parcouru end-to-end aujourd'hui.
+Aucun parcours utilisateur SaaS automatique n'a été parcouru end-to-end aujourd'hui — c'est le delta entre le mode manuel actuel (Cédric, Marie) et la commercialisation scalable.
 
 ---
 
@@ -125,15 +148,17 @@ Aucun parcours utilisateur SaaS n'a été parcouru end-to-end aujourd'hui.
 - Auth multi-couches : master token + DCR scopé + Clerk JWT (PR #890 mergée).
 - Sécurité OAuth durcie (D6 + D7 dans la PR #621, audit log append-only).
 - Documentation Self-host EN + FR de qualité production (437 lignes).
+- **2 clients réels en production** : Cédric Delport (Pro Support 99€/an depuis Day 62) en self-host ; Marie Parrent / Iris RH (cliente VIP T1) en Cloud SaaS workspace dédié depuis Day 92.
 - 21 PRs mergées dans la semaine — vélocité saine.
 - Mission Day 109 conformance fermée (RULE #30 ZÉRO DIVERGENCE sur les composants Sigma).
 
-### Ce qui bloque le lancement SaaS
+### Ce qui bloque la commercialisation SaaS scalable
 
-- PR #915 pas mergée → tenant enforcement RAG incomplet.
+- PR #915 pas mergée → tenant enforcement RAG incomplet pour de nouveaux clients hors workspace pré-mint.
 - B5 backend KB ingest non démarré.
 - F3 frontend KB non démarré.
-- Aucun client n'a parcouru le tunnel Gumroad → premier appel MCP.
+- Aucun client n'a parcouru le tunnel Gumroad → premier appel MCP **sans intervention humaine Pi**. Cédric et Marie ont été accompagnés en direct.
+- Documentation HTTP transport et screenshots ChatGPT manquants (gaps Day 86 Cédric + Day 92 Marie).
 
 ### Estimation honnête sans donner de date
 
@@ -168,4 +193,6 @@ Self-host est lançable maintenant. Cloud SaaS demande la fin de la chaîne B4�
 
 ---
 
-*Rapport produit suite à la directive Laurent du 2026-06-21 : focus sur les BUs qui délivrent, mise en sommeil des autres. Aucune affirmation dans ce rapport n'est non-vérifiée à l'instant de rédaction.*
+*Rapport produit suite à la directive Laurent du 2026-06-21 : focus sur les BUs qui délivrent, mise en sommeil des autres.*
+
+*Note de transparence : la v1 de ce rapport (commit `7a2f4299`) affirmait "aucun client n'a parcouru Gumroad→activation end-to-end" sans avoir fait de recall préalable dans VantagePeers. Cette affirmation était fausse — Cédric Delport (Pro Support 99€/an depuis Day 62) et Marie Parrent / Iris RH (cliente VIP T1 Cloud SaaS depuis Day 92) sont des clients réels en production sous accompagnement Pi. Corrigé en v2 (ce commit) après recall hybrid_search "Marie Iris RH client onboarding" → 10 hits VP.*
