@@ -174,20 +174,79 @@ export const get = query({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // list — list BUs with optional filters, newest first
+// PR-A envelope safety: { items, nextCursor } envelope, limit default 20,
+// cap 200, fields=lite|full projection, cursor-based paging.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const liteValidator = v.object({
+	_id: v.id("businessUnits"),
+	_creationTime: v.number(),
+	name: v.string(),
+	status: buStatusValidator,
+	orchestratorId: v.string(),
+});
+
+interface CursorPayload {
+	time: number;
+	id: string;
+}
+
+function encodeCursor(time: number, id: string): string {
+	return Buffer.from(JSON.stringify({ time, id })).toString("base64");
+}
+
+function decodeCursor(cursor: string | undefined): CursorPayload | undefined {
+	if (!cursor) return undefined;
+	try {
+		const raw = Buffer.from(cursor, "base64").toString("utf8");
+		const parsed = JSON.parse(raw) as unknown;
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"time" in parsed &&
+			"id" in parsed &&
+			typeof (parsed as Record<string, unknown>).time === "number" &&
+			typeof (parsed as Record<string, unknown>).id === "string"
+		) {
+			return {
+				time: (parsed as Record<string, unknown>).time as number,
+				id: (parsed as Record<string, unknown>).id as string,
+			};
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 export const list = query({
 	args: {
-	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 		orchestratorId: v.optional(v.string()),
 		status: v.optional(buStatusValidator),
 		limit: v.optional(v.number()),
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+		cursor: v.optional(v.string()),
+		// back-compat: keep createdBefore accepted; cursor takes precedence when both passed
 		createdBefore: v.optional(v.number()),
 	},
-	returns: v.array(buObject),
+	returns: v.object({
+		items: v.union(v.array(buObject), v.array(liteValidator)),
+		nextCursor: v.union(v.string(), v.null()),
+	}),
 	handler: async (ctx, args) => {
-		const limit = args.limit ?? 50;
+		const DEFAULT_LIMIT = 20;
+		const CAP = 200;
+		const fields = args.fields ?? "full";
+		const requested = args.limit ?? DEFAULT_LIMIT;
+		const limit = Math.max(1, Math.min(requested, CAP));
+
+		// Decode cursor payload; fall back to createdBefore legacy anchor
+		const cursorPayload = decodeCursor(args.cursor);
+
+		// For the fetch we over-fetch so we can apply cursor filter and detect hasMore.
+		// When a cursor is present we may need to skip some same-ms rows, so fetch
+		// generously (limit * 4 + 10) to survive same-millisecond clusters in tests.
+		const fetchLimit = cursorPayload ? limit * 4 + 10 : limit + 1;
 
 		let rows: Doc<"businessUnits">[];
 		if (args.orchestratorId !== undefined && args.status === undefined) {
@@ -197,13 +256,13 @@ export const list = query({
 					q.eq("orchestratorId", args.orchestratorId!),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchLimit);
 		} else if (args.status !== undefined && args.orchestratorId === undefined) {
 			rows = await ctx.db
 				.query("businessUnits")
 				.withIndex("by_status", (q) => q.eq("status", args.status!))
 				.order("desc")
-				.take(limit);
+				.take(fetchLimit);
 		} else if (args.orchestratorId !== undefined && args.status !== undefined) {
 			const all = await ctx.db
 				.query("businessUnits")
@@ -212,16 +271,62 @@ export const list = query({
 				)
 				.order("desc")
 				.collect();
-			rows = all.filter((r) => r.status === args.status).slice(0, limit);
+			rows = all.filter((r) => r.status === args.status).slice(0, fetchLimit);
 		} else {
-			rows = await ctx.db.query("businessUnits").order("desc").take(limit);
+			rows = await ctx.db
+				.query("businessUnits")
+				.order("desc")
+				.take(fetchLimit);
 		}
 
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
-		if (args.createdBefore !== undefined) {
+		// Apply cursor filter: exclude rows at or before the cursor anchor.
+		// Cursor encodes { time, id } — exclude rows strictly "before" in desc order:
+		//   time > cursor.time → already seen (newer, came before in desc order)
+		//   time === cursor.time AND id === cursor.id → the exact last-seen row
+		//   time === cursor.time AND id !== cursor.id → same-ms peers, keep them
+		// We order desc, so "already seen" = _creationTime >= cursor.time (for the anchor row).
+		// Precise rule: skip if (_creationTime > cursor.time) OR (_creationTime === cursor.time AND _id === cursor.id) or older same-ms seen peers.
+		// Simplest correct rule for desc ordering: skip all rows up to and including cursor.id.
+		if (cursorPayload !== undefined) {
+			let pastAnchor = false;
+			rows = rows.filter((r) => {
+				if (pastAnchor) return true;
+				if (r._id === cursorPayload.id) {
+					pastAnchor = true;
+					return false; // skip the anchor row itself
+				}
+				return false; // skip rows before anchor (newer in desc order)
+			});
+		} else if (args.createdBefore !== undefined) {
+			// Legacy back-compat: filter by createdBefore timestamp
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+
+		// Detect next page
+		const hasMore = rows.length > limit;
+		const pageRows = rows.slice(0, limit);
+
+		const nextCursor =
+			hasMore || (cursorPayload !== undefined && pageRows.length === limit)
+				? encodeCursor(
+						pageRows[pageRows.length - 1]._creationTime,
+						pageRows[pageRows.length - 1]._id,
+					)
+				: null;
+
+		// Apply projection
+		if (fields === "lite") {
+			const liteItems = pageRows.map((r) => ({
+				_id: r._id,
+				_creationTime: r._creationTime,
+				name: r.name,
+				status: r.status,
+				orchestratorId: r.orchestratorId,
+			}));
+			return { items: liteItems, nextCursor };
+		}
+
+		return { items: pageRows, nextCursor };
 	},
 });

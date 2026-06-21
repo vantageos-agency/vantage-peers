@@ -1,3 +1,46 @@
+import { z } from "zod";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-A envelope safety — shared schema + applyPagingDefaults helper
+// Reusable by list_bus, list_tasks (PR-B), list_memories (PR-C) etc.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const pagingArgsSchema = z.object({
+	limit: z.number().int().min(1).max(200).optional(),
+	cursor: z.string().optional(),
+	fields: z.enum(["lite", "full"]).optional(),
+});
+
+export type PagingArgs = z.infer<typeof pagingArgsSchema>;
+
+export interface PagingDefaults {
+	limit: number;
+	cap: number;
+	fields: "lite" | "full";
+}
+
+export const DEFAULT_PAGING: PagingDefaults = {
+	limit: 20,
+	cap: 200,
+	fields: "full",
+};
+
+export function applyPagingDefaults(
+	args: PagingArgs,
+	defaults: PagingDefaults = DEFAULT_PAGING,
+): { limit: number; cursor: string | undefined; fields: "lite" | "full" } {
+	const requested = args.limit ?? defaults.limit;
+	const clamped = Math.min(requested, defaults.cap);
+	const limit = Math.max(1, clamped);
+	return {
+		limit,
+		cursor: args.cursor,
+		fields: args.fields ?? defaults.fields,
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Shared paging utility for VP MCP `list_*` tools (S3.3 B8).
  *

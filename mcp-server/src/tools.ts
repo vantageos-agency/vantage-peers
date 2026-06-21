@@ -201,6 +201,25 @@ export const flexArray = z.union([z.array(z.string()), z.string()]);
 const flexArrayOptional = flexArray.optional();
 
 // ─────────────────────────────────────────────────────────────────────────────
+// list_bus — exported description + args schema (PR-A envelope safety)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const LIST_BUS_TOOL_DESCRIPTION =
+	"List business units with optional filters and pagination. " +
+	"Defaults: limit default 20, cap 200, fields=lite|full (default full). " +
+	"Pagination via cursor (opaque token returned as nextCursor). " +
+	"Use fields=lite to get compact projection {_id, name, status, orchestratorId, _creationTime} (~5KB for 100 BUs). " +
+	"EXAMPLE: list_bus orchestratorId='sigma' status='live' limit=20 fields='lite'.";
+
+export const listBusArgsSchema = z.object({
+	orchestratorId: z.string().optional(),
+	status: z.enum(["idea", "building", "live", "revenue"]).optional(),
+	limit: z.number().int().min(1).max(200).optional(),
+	cursor: z.string().optional(),
+	fields: z.enum(["lite", "full"]).optional(),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // update_briefing_note — Zod schema + description
 //
 // Mirrors `api.briefingNotes.update` Convex mutation. `noteId` is a permissive
@@ -6289,9 +6308,7 @@ export function registerTools(
 
 	server.tool(
 		"list_bus",
-		"List business units filtered by orchestrator or status, newest first with cursor paging support. " +
-			"WHEN: use to get a portfolio overview or find BUs managed by a specific orchestrator. " +
-			"EXAMPLE: list_bus orchestratorId='alpha' status='live' limit=20.",
+		LIST_BUS_TOOL_DESCRIPTION,
 		{
 			orchestratorId: z
 				.string()
@@ -6315,8 +6332,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
-						"Decoded to `createdBefore` (newest-first forward pagination).",
+					"Opaque pagination cursor from a prior call's `nextCursor` (newest-first forward pagination).",
 				),
 		},
 		{
@@ -6327,7 +6343,8 @@ export function registerTools(
 		},
 		async ({ orchestratorId, status, limit, fields, cursor }) => {
 			try {
-				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				// Decode opaque cursor → createdBefore anchor (legacy paging.ts format).
+				// Invalid cursor surfaces as user-facing error (no crash).
 				let createdBefore: number | undefined;
 				if (cursor !== undefined && cursor !== "") {
 					try {
@@ -6339,26 +6356,37 @@ export function registerTools(
 						return mcpError(err?.message ?? "invalid cursor");
 					}
 				}
-				const effectiveLimit =
-					limit === undefined ? undefined : clampLimit(limit);
+				const effectiveLimit = limit === undefined ? 20 : clampLimit(limit);
 
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
-				const bus = await convex.query("businessUnits:list" as any, {
+				// Convex query now returns { items, nextCursor } envelope (PR-A).
+				const envelope = await convex.query("businessUnits:list" as any, {
 					orchestratorId,
 					status,
-					limit: effectiveLimit ?? 20,
-					fields: fields ?? "lite",
+					limit: effectiveLimit,
+					fields: fields ?? "full",
 					createdBefore,
 				});
-				const filteredBus = scopeFilterList(
-					oauthCtx,
-					Array.isArray(bus) ? bus : [],
-				);
+				const rawItems = (
+					envelope && typeof envelope === "object" && "items" in envelope
+						? (envelope as { items: unknown[] }).items
+						: Array.isArray(envelope)
+							? envelope
+							: []
+				) as unknown[];
+				const backendNextCursor =
+					envelope &&
+					typeof envelope === "object" &&
+					"nextCursor" in envelope
+						? (envelope as { nextCursor: string | null }).nextCursor
+						: null;
 
-				// S3.3 B8 follow-up — emit nextCursor when page is full.
-				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (filteredBus.length >= requestedLimit && filteredBus.length > 0) {
+				const filteredBus = scopeFilterList(oauthCtx, rawItems as any);
+
+				// Re-compute nextCursor from filtered set (scope filter may shrink page)
+				let nextCursor: string | null = backendNextCursor;
+				if (filteredBus.length < rawItems.length && filteredBus.length > 0) {
+					// Scope filter dropped rows — recompute from last surviving row
 					const last = filteredBus[filteredBus.length - 1] as {
 						_creationTime?: number;
 					};
@@ -6366,17 +6394,18 @@ export function registerTools(
 						nextCursor = encodeCursor({ createdBefore: last._creationTime });
 					}
 				}
-				const busWithCursor =
-					nextCursor !== null
-						? { items: filteredBus, nextCursor }
-						: filteredBus;
+				if (filteredBus.length === 0) {
+					nextCursor = null;
+				}
+
+				const busWithCursor = { items: filteredBus, nextCursor };
 
 				return {
 					content: [
 						{
 							type: "text",
 							text: capListResponseBytes(
-								busWithCursor,
+								filteredBus,
 								JSON.stringify(busWithCursor, null, 2),
 								"list_bus",
 							),

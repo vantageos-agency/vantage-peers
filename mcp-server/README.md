@@ -230,6 +230,22 @@ Example:
 ### Business Units (5)
 `create_bu`, `list_bus`, `get_bu`, `update_bu`, `delete_bu`
 
+#### `list_bus` — args schema + defaults (PR-A)
+
+```
+list_bus(orchestratorId?, status?, limit?, cursor?, fields?)
+```
+
+| Arg | Type | Default | Notes |
+|-----|------|---------|-------|
+| `orchestratorId` | string | — | Filter by lead orchestrator (e.g. `"sigma"`). |
+| `status` | `"idea"\|"building"\|"live"\|"revenue"` | — | Filter by lifecycle status. |
+| `limit` | number 1–200 | `20` | Page size. Capped at `200` server-side. |
+| `cursor` | string | — | Opaque token from prior `nextCursor`. |
+| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, name, status, orchestratorId, _creationTime}`. `"full"` returns complete BU object (18+ keys). |
+
+Returns `{ items: BusinessUnit[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
+
 ### Components (6)
 `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword` (alias `search_components`)
 
@@ -246,7 +262,7 @@ Example:
 
 ### `fields=lite` — reduced token payloads
 
-`list_tasks`, `list_tasks_by_mission`, `list_missions`, and `list_briefing_notes` accept an optional `fields` parameter:
+`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, and `list_bus` accept an optional `fields` parameter:
 
 | Value | Behaviour |
 |-------|-----------|
@@ -260,6 +276,7 @@ Lite projections per entity:
 | `list_tasks` / `list_tasks_by_mission` | `_id`, `_creationTime`, `title`, `status`, `priority`, `assignedTo`, `missionId` |
 | `list_missions` | `_id`, `_creationTime`, `name`, `status`, `pilot`, `priority`, `project` |
 | `list_briefing_notes` | `_id`, `_creationTime`, `topic`, `title`, `participants`, `createdBy` |
+| `list_bus` | `_id`, `_creationTime`, `name`, `status`, `orchestratorId` — PR-A activated actual projection (was no-op since v2.4.12) |
 
 Example (tasks lite):
 ```json
