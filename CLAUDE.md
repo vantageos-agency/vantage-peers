@@ -100,21 +100,26 @@ Référence canonique : `decisions/doctrine-evidence-bound-done-2026-05-20.md` (
 
 ---
 
-## MUST-USE AGENTS + SKILLS + HOOKS — Sigma vantage-peers Cloud (Day 108)
+## MUST-USE AGENTS + SKILLS + HOOKS — Sigma vantage-peers Cloud (Day 109 conformance v1.7.0)
 
-Sigma operates the VantagePeers Cloud backend monorepo. Every backend PR (Convex, MCP server, Clerk auth, RAG, OKF, schema) MUST route through the catalog below. RULE #29 inheritance: fleet doctrine binds Sigma — no autonomous code-edit on backend paths without the matched specialist agent + skill wrapper. Audit honnête Day 108 (memory j572s2bh4e0n20n0ttxynwrnts891nb5) admitted Verification ≠ Activation gap on B-track — this section closes it.
+Sigma operates the VantagePeers Cloud backend monorepo. Every backend PR (Convex, MCP server, Clerk auth, RAG, OKF, schema) MUST route through the catalog below. RULE #29 inheritance: fleet doctrine binds Sigma — no autonomous code-edit on backend paths without the matched specialist agent + skill wrapper. Audit honnête Day 108 (memory j572s2bh4e0n20n0ttxynwrnts891nb5) admitted Verification ≠ Activation gap on B-track — this section closes it. Day 109 conformance mission `k576qvrcwm3c0jy96rjdp3kdcn8900cr` aligned this table strictly with NEEDS-MAP briefing `js78drs89p95tbbzje5z8dzxgs8902bp`.
 
-### Table — Action → Skill → Agent
+### Table — Action → Skill → Agent (12 BU-pertinent agents)
 
 | Action | Skill (wrapper) | Agent (specialist) |
 |---|---|---|
 | Schema / queries / mutations / actions on convex/ | `dispatch-subagent` | `dev-convex-expert` |
 | Clerk JWT / auth.ts / webhook / RBAC | `dispatch-subagent` | `dev-clerk-expert` |
 | Convex code review pre-PR | `dispatch-subagent` | `convex-reviewer` |
-| Security audit (OWASP / secrets / SSRF) | `dispatch-subagent` | `dev-sentinel` |
+| Security audit (OWASP / secrets / SSRF / cross-tenant deny) | `dispatch-subagent` | `dev-sentinel` |
 | Test suite + Playwright + e2e | `dispatch-subagent` | `dev-qa` |
 | Architecture decisions / cross-module refactor | `dispatch-subagent` | `dev-senior-dev` |
-| MCP server / Railway deploy | `dispatch-subagent` | `dev-railway-expert` |
+| MCP server / Railway deploy + healthcheck | `dispatch-subagent` | `dev-railway-expert` |
+| Polar.sh billing / `@convex-dev/polar` / fleet package payments | `dispatch-subagent` | `dev-polar-expert` |
+| Docs site / docs/cloud + docs/getting-started Fumadocs MDX | `dispatch-subagent` | `dev-fumadocs-expert` |
+| Tech research (jose JWKS, Clerk patterns, convex-test, changelogs) | `dispatch-subagent` | `dev-tech-researcher` |
+| New hook / agent / skill bootstrap for the BU | `dispatch-subagent` | `agent-creator` |
+| Generic PR code review pair (with `convex-reviewer`) | `dispatch-subagent` | `code-reviewer` |
 | Dispatch new task to peer | `dispatch-task-create` | (n/a — wrapper auto-injects VERIFICATION + TESTS blocks) |
 | Start dispatched task | `dispatch-task-start` | (n/a) |
 | Close task with evidence | `dispatch-task-complete` | (n/a — auto-formats friction_observed line) |
@@ -124,13 +129,16 @@ Sigma operates the VantagePeers Cloud backend monorepo. Every backend PR (Convex
 | Pre-compaction snapshot | `pre-compact` | (n/a) |
 | End-of-day close | `close-day` | (n/a — RULE #15 friction harvest enforced) |
 
-### BU-specific hooks (Day 108 T5 — Sigma authored)
+### BU-specific hooks (Day 108-109 — Sigma authored / pulled)
 
 | Hook | Triggers | Blocks |
 |---|---|---|
 | `enforce-clerk-jwt-smoke-prod.py` | PreToolUse Bash | `git push origin main` / `npx convex deploy --prod` / `npm publish` without `qa/clerk-jwt-smoke-<sha>.json` evidence file (override: `// allow-no-clerk-jwt-smoke: <reason>`) |
 | `enforce-rag-namespace-deny-test.py` | PreToolUse Bash (`git commit`) | Commits touching convex/auth.ts or convex/rag*/convex/okfBundle* without an AUTH_NAMESPACE_DENIED / cross-tenant deny test in convex/__tests__/ (override: `// allow-no-rag-deny-test: <reason>`) |
 | `enforce-mcp-tool-coverage-schema-mirror.py` | PreToolUse Bash (`git commit`) | Commits touching convex/schema.ts without a matching mcp-server/src/tools/* edit in same commit — enforces RULE #24 (override: `// allow-schema-mirror-skip: <reason>`) |
+| `enforce-no-flag-bypass.py` | PreToolUse Bash | `rm` / `unlink` / `truncate` on `/tmp/iter-pending-*.flag` / `/tmp/*-pending-*.flag` / `/tmp/.claude-*` — Day 71 incident class (override: `// allow-flag-bypass: <reason>`) |
+| `enforce-pr-mergeable-state.py` | PreToolUse Bash | `gh pr merge N` if `gh pr view` returns anything other than `{state: OPEN, mergeable: MERGEABLE, mergeStateStatus: CLEAN\|UNSTABLE\|HAS_HOOKS}` — Day 106 incident (`# laurent-direct-merge` override) |
+| `enforce-npm-publish-fleet-defaults.py` | PreToolUse Bash | `npm publish` for fleet packages (`@vantageos/*`, `@elpiarthera/*`, `vantage-*-mcp`, `@perello/*`) missing `license=FSL-1.1-Apache-2.0` / canonical LICENSE sha / explicit `--access public\|restricted` — Day 106 doctrine briefing `js73myh9` |
 
 ### Anti-patterns interdits (Sigma BU)
 
@@ -144,4 +152,14 @@ Sigma operates the VantagePeers Cloud backend monorepo. Every backend PR (Convex
 
 ### Inherited fleet doctrine (canonical CLAUDE.md fleet @ /root/coding/elpi-corp/CLAUDE.md)
 
-Sigma inherits RULE #1..#29 from fleet CLAUDE.md (SHA ccfa59a). Key Sigma-binding rules: #10 (Cloud vs Self-host), #15 (auto-amélioration + friction_observed), #19 (BUILD-PASS GATE), #21 (VERIFICATION ≠ ACTIVATION), #22 (tests = gate not advisory), #24 (MCP coverage = schema mirror), #25 (docs-context-loop — every PR updates docs + CHANGELOG), #26 (FLEET-BIBLE-CONSULT — cite VR before any new mission), #29 (Pi MUST-USE héritée fleet).
+Sigma inherits RULE #1..#30 from fleet CLAUDE.md. Key Sigma-binding rules: #10 (Cloud vs Self-host), #15 (auto-amélioration + friction_observed), #19 (BUILD-PASS GATE), #21 (VERIFICATION ≠ ACTIVATION), #22 (tests = gate not advisory), #24 (MCP coverage = schema mirror), #25 (docs-context-loop — every PR updates docs + CHANGELOG), #26 (FLEET-BIBLE-CONSULT — cite VR before any new mission), #29 (Pi MUST-USE héritée fleet), #30 (ZÉRO DIVERGENCE VR — Day 109 Laurent ultimatum).
+
+### RULES #27..#30 backfill (Day 109 — fleet bible canonical prompt `jh7ed6dqmz3xv7913mb5jz570s891dka`)
+
+**RULE #27 — PREREQUISITES-FIRST.** Toute mission liste + vérifie ses pré-requis AVANT T0. Day 106 verbatim Laurent : "à chaque fois c'est la même chose! les orchestrateurs sont bloqués parce qu'il manque qqchose". Section `PREREQUISITES:` obligatoire dans tout brief mission : (1) quoi (env var, token, MCP, SSH key) ; (2) qui provisionne ; (3) où ça doit atterrir ; (4) comment vérifier (commande non-secret). T-PREFLIGHT = premier task de chaque mission. Hook structurel `enforce-mission-preflight.py`. Override (rare) : `// allow-no-preflight: <reason>`.
+
+**RULE #28 — VPS PARTAGÉ.** Sigma tourne sur un VPS dédié `sigma-vps` (séparé du VPS partagé `code.vantageos.agency`). Pour les orchestrateurs sur le VPS partagé : commande canonique `ssh root@code.vantageos.agency`. JAMAIS `ssh code.vantageos.agency` sans préfixe (résolu en `laurentperello@` par défaut → Permission denied). Workspaces autres orchestrateurs vivent sous `/root/coding/<workspace-name>/`. Bannis : "theta-vps", "eta-vps" quand il s'agit du VPS partagé. Attendu : "le VPS" ou "code.vantageos.agency".
+
+**RULE #29 — PI MUST-USE AGENTS + SKILLS.** Day 108 verbatim Laurent : "on a passé +100 jours à bâtir vantage registry et on ne s'en sert pas! lamentable, à commencer par toi". Pour chaque action orchestrateur, l'outil obligatoire (voir la table « Action → Skill → Agent » plus haut pour le sous-ensemble Sigma BU). Bannis : "je code direct" pour tout livrable >10 LoC, claim DONE user-visible sans evidence clic preview, dispatch orchestrateur sans citer agent spécialiste attendu. Attendu : orchestrateur délègue à agent spécialisé via skill `dispatch-task-create`. Cite l'agent spécialiste attendu dans tout dispatch message.
+
+**RULE #30 — ZÉRO DIVERGENCE VR.** Day 109 verbatim Laurent : "je ne tolère plus aucune divergence. je supprime tout orchestrateur qui continue à diverger. toi y compris". Pour CHAQUE fichier dans `.claude/hooks/`, `.claude/agents/`, `.claude/skills/<slug>/SKILL.md` : `sha256(local_file) == VR.contentHash(slug)`. Source autoritaire = VR catalog uniquement via `get_hook_content` / `get_agent_content` / `get_skill_content` → Write local. JAMAIS `cp -L` depuis elpi-corp. Si VR null + local authoritative → `upsert_*_content` immédiat (publish-back). **Sub-agent ne peut PAS exécuter cette doctrine** — le serveur MCP VR n'est pas hérité par les sub-agents. Pull pattern canonique = orchestrateur scope direct, single-pass `get_*_content + Write`, aucun sha-cycle, aucun audit intermédiaire (briefing `js78drs89p95tbbzje5z8dzxgs8902bp` § 9). Sanction : suppression workspace + relance bootstrap from VR.
