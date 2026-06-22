@@ -249,6 +249,22 @@ Returns `{ items: BusinessUnit[], nextCursor: string | null }`. `nextCursor` is 
 ### Components (6)
 `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword` (alias `search_components`)
 
+#### `list_components` — args schema + defaults (PR-B)
+
+```
+list_components(type?, team?, limit?, cursor?, fields?)
+```
+
+| Arg | Type | Default | Notes |
+|-----|------|---------|-------|
+| `type` | `"agent"\|"skill"\|"hook"\|"plugin"` | — | Filter by component type. |
+| `team` | string | — | Filter by team (e.g. `"development"`). |
+| `limit` | number 1–200 | `20` | Page size. Capped at `200` server-side. |
+| `cursor` | string | — | Opaque token from prior `nextCursor`. |
+| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, _creationTime, name, type, team}`. `"full"` returns complete component object. |
+
+Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
+
 ### Mandates (6)
 `create_mandate`, `list_mandates`, `accept_mandate`, `update_mandate`, `validate_mandate_spending`, `settle_mandate`
 
@@ -262,7 +278,7 @@ Returns `{ items: BusinessUnit[], nextCursor: string | null }`. `nextCursor` is 
 
 ### `fields=lite` — reduced token payloads
 
-`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, and `list_bus` accept an optional `fields` parameter:
+`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `list_bus`, and `list_components` accept an optional `fields` parameter:
 
 | Value | Behaviour |
 |-------|-----------|
@@ -277,6 +293,7 @@ Lite projections per entity:
 | `list_missions` | `_id`, `_creationTime`, `name`, `status`, `pilot`, `priority`, `project` |
 | `list_briefing_notes` | `_id`, `_creationTime`, `topic`, `title`, `participants`, `createdBy` |
 | `list_bus` | `_id`, `_creationTime`, `name`, `status`, `orchestratorId` — PR-A activated actual projection (was no-op since v2.4.12) |
+| `list_components` | `_id`, `_creationTime`, `name`, `type`, `team` — PR-B activated actual projection (was no-op — returned full row) |
 
 Example (tasks lite):
 ```json

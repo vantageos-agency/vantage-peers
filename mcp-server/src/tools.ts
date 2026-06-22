@@ -201,6 +201,24 @@ export const flexArray = z.union([z.array(z.string()), z.string()]);
 const flexArrayOptional = flexArray.optional();
 
 // ─────────────────────────────────────────────────────────────────────────────
+// list_components — exported description + args schema (PR-B envelope safety)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const LIST_COMPONENTS_TOOL_DESCRIPTION =
+	"List registered components with optional filters and pagination. " +
+	"Defaults: limit default 20, cap 200, fields=lite|full (default full). " +
+	"Pagination via cursor (opaque token returned as nextCursor). " +
+	"Use fields=lite to get compact projection {_id, name, type, team, _creationTime} (~3KB for 100 components). " +
+	"EXAMPLE: list_components type='skill' team='development' limit=20 fields='lite'.";
+
+export const listComponentsArgsSchema = z.object({
+	type: z.enum(["agent", "skill", "hook", "plugin"]).optional(),
+	team: z.string().optional(),
+	limit: z.number().int().min(1).max(200).optional(),
+	cursor: z.string().optional(),
+	fields: z.enum(["lite", "full"]).optional(),
+});
+
 // list_bus — exported description + args schema (PR-A envelope safety)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -4993,9 +5011,7 @@ export function registerTools(
 
 	server.tool(
 		"list_components",
-		"List registered components filtered by type or team, newest first with cursor paging support. " +
-			"WHEN: use to discover available skills before building a workflow or to audit the registry. " +
-			"EXAMPLE: list_components type='skill' team='development' limit=20.",
+		LIST_COMPONENTS_TOOL_DESCRIPTION,
 		{
 			type: componentTypeSchema.optional().describe("Filter by component type"),
 			team: z.string().optional().describe("Filter by team"),
@@ -5010,14 +5026,13 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.describe(
-					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
+					"'lite' returns compact projection {_id, name, type, team, _creationTime} (less tokens), 'full' is default. v2.4.9+.",
 				),
 			cursor: z
 				.string()
 				.optional()
 				.describe(
-					"S3.3 B8 follow-up — opaque pagination cursor from a prior call's `nextCursor`. " +
-						"Decoded to `createdBefore` (newest-first forward pagination).",
+					"Opaque pagination cursor from a prior call's `nextCursor` (newest-first forward pagination).",
 				),
 		},
 		{
@@ -5028,42 +5043,55 @@ export function registerTools(
 		},
 		async ({ type, team, limit, fields, cursor }) => {
 			try {
-				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				const effectiveLimit = limit === undefined ? 20 : clampLimit(limit);
+
+				// Decode cursor: supports old paging.ts format { createdBefore } for
+				// back-compat, and new opaque format { time, id } passed directly to Convex.
 				let createdBefore: number | undefined;
+				let convexCursor: string | undefined;
 				if (cursor !== undefined && cursor !== "") {
 					try {
 						const decoded = decodeCursor(cursor);
 						if (decoded && "createdBefore" in decoded) {
 							createdBefore = decoded.createdBefore;
+						} else {
+							// New-format cursor — pass directly to Convex
+							convexCursor = cursor;
 						}
-					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+					} catch (err: unknown) {
+						const msg = err instanceof Error ? err.message : "invalid cursor";
+						return mcpError(msg);
 					}
 				}
-				const effectiveLimit =
-					limit === undefined ? undefined : clampLimit(limit);
 
-				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
-				const components = await convex.query("components:list" as any, {
+				// Convex query now returns { items, nextCursor } envelope (PR-B).
+				const envelope = await convex.query("components:list" as any, {
 					type,
 					team,
-					limit: effectiveLimit ?? 20,
-					fields: fields ?? "lite",
+					limit: effectiveLimit,
+					fields: fields ?? "full",
+					cursor: convexCursor,
 					createdBefore,
 				});
+				const rawItems = (
+					envelope && typeof envelope === "object" && "items" in envelope
+						? (envelope as { items: unknown[] }).items
+						: Array.isArray(envelope)
+							? envelope
+							: []
+				) as unknown[];
+				const backendNextCursor =
+					envelope &&
+					typeof envelope === "object" &&
+					"nextCursor" in envelope
+						? (envelope as { nextCursor: string | null }).nextCursor
+						: null;
 
-				const filteredComponents = scopeFilterList(
-					oauthCtx,
-					Array.isArray(components) ? components : [],
-				);
+				const filteredComponents = scopeFilterList(oauthCtx, rawItems as any);
 
-				// S3.3 B8 follow-up — emit nextCursor when page is full.
-				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (
-					filteredComponents.length >= requestedLimit &&
-					filteredComponents.length > 0
-				) {
+				// Re-compute nextCursor from filtered set (scope filter may shrink page)
+				let nextCursor: string | null = backendNextCursor;
+				if (filteredComponents.length < rawItems.length && filteredComponents.length > 0) {
 					const last = filteredComponents[filteredComponents.length - 1] as {
 						_creationTime?: number;
 					};
@@ -5071,17 +5099,18 @@ export function registerTools(
 						nextCursor = encodeCursor({ createdBefore: last._creationTime });
 					}
 				}
-				const componentsWithCursor =
-					nextCursor !== null
-						? { items: filteredComponents, nextCursor }
-						: filteredComponents;
+				if (filteredComponents.length === 0) {
+					nextCursor = null;
+				}
+
+				const componentsWithCursor = { items: filteredComponents, nextCursor };
 
 				return {
 					content: [
 						{
 							type: "text",
 							text: capListResponseBytes(
-								componentsWithCursor,
+								filteredComponents,
 								JSON.stringify(componentsWithCursor, null, 2),
 								"list_components",
 							),
