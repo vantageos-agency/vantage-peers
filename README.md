@@ -471,6 +471,17 @@ Same envelope safety pattern will apply to `list_components` (PR-B) and `list_re
 
 Full reference: [list_components — MCP Tools Reference](https://vantagepeers.com/docs/cloud/mcp-tools/list-components).
 
+#### `list_repo_mappings` — envelope safety (PR-C)
+
+`list_repo_mappings` received strict defaults and an actual `fields=lite` projection in PR-C (branch `feat/vpmcp-c-list-repo-mappings-envelope`, commit `4ddca2b`), reusing the shared `mcp-server/src/paging.ts` helper introduced in PR-A:
+
+- **Default limit**: `20` (was `50`). **Cap**: `200` (was unbounded).
+- **`fields='lite'`**: projects to `{_id, _creationTime, repo, orchestrator, project}` — excludes `active`, `lastDeployedSHA`, `lastDeployedAt`. PR-C activates the actual server-side projection.
+- **Envelope**: returns `{ items, nextCursor }` (was flat array). `nextCursor` is `null` on the last page, opaque string otherwise.
+- **Cursor**: encodes `{time, id}` to survive same-millisecond inserts. Hybrid decode preserves S3.3 B8 `{createdBefore}` cursors.
+
+Full reference: [list_repo_mappings — MCP Tools Reference](https://vantagepeers.com/docs/cloud/mcp-tools/list-repo-mappings).
+
 #### General list query params (v2.3.x)
 
 All 4 list queries (`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`) support these params (v2.3.x):

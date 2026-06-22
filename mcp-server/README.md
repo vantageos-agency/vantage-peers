@@ -227,6 +227,20 @@ Example:
 ### Deployments & Repos (5)
 `add_deployment`, `remove_deployment`, `list_repo_mappings`, `add_repo_mapping`, `remove_repo_mapping`
 
+#### `list_repo_mappings` — args schema + defaults (PR-C)
+
+```
+list_repo_mappings(limit?, cursor?, fields?)
+```
+
+| Arg | Type | Default | Notes |
+|-----|------|---------|-------|
+| `limit` | number 1–200 | `20` | Page size. Capped at `200` server-side. |
+| `cursor` | string | — | Opaque token from prior `nextCursor`. |
+| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, _creationTime, repo, orchestrator, project}`. `"full"` returns complete mapping object (including `active`, `lastDeployedSHA`, `lastDeployedAt`). |
+
+Returns `{ items: RepoMapping[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
+
 ### Business Units (5)
 `create_bu`, `list_bus`, `get_bu`, `update_bu`, `delete_bu`
 
@@ -278,7 +292,7 @@ Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `nu
 
 ### `fields=lite` — reduced token payloads
 
-`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `list_bus`, and `list_components` accept an optional `fields` parameter:
+`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `list_bus`, `list_components`, and `list_repo_mappings` accept an optional `fields` parameter:
 
 | Value | Behaviour |
 |-------|-----------|
@@ -294,6 +308,7 @@ Lite projections per entity:
 | `list_briefing_notes` | `_id`, `_creationTime`, `topic`, `title`, `participants`, `createdBy` |
 | `list_bus` | `_id`, `_creationTime`, `name`, `status`, `orchestratorId` — PR-A activated actual projection (was no-op since v2.4.12) |
 | `list_components` | `_id`, `_creationTime`, `name`, `type`, `team` — PR-B activated actual projection (was no-op — returned full row) |
+| `list_repo_mappings` | `_id`, `_creationTime`, `repo`, `orchestrator`, `project` — PR-C activated actual projection (excludes `active`, `lastDeployedSHA`, `lastDeployedAt`) |
 
 Example (tasks lite):
 ```json
