@@ -114,8 +114,44 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 ### Briefing Notes (2)
 `create_briefing_note`, `list_briefing_notes`
 
+#### `list_briefing_notes` — VP-Sources doctrine (PR-H)
+
+Exports `LIST_BRIEFING_NOTES_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
+
+Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
+
+#### `search_briefing_notes_by_keyword` — VP-Sources doctrine (PR-H)
+
+Exports `SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
+
+Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
+
 ### Search / RAG (3)
 `search_fix_patterns_by_semantic` (alias `search_fix_patterns`), `search_memories_by_keyword` (alias `text_search`), `hybrid_search`
+
+#### `recall` — VP-Sources doctrine (PR-H)
+
+Alias of `search_memories_by_semantic`. Exports `RECALL_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
+
+The description now embeds two advisory VP-Sources doctrine paragraphs appended after the existing text:
+
+> VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.
+>
+> Cite returned ids in the answer footer as 'VP-Sources: recall("\<q\>")→[ids] | none-needed:\<reason\>'.
+
+Doctrine is advisory-only — no hook blocks on absence. Client LLMs read the doctrine at tool-list time.
+
+#### `text_search` — VP-Sources doctrine (PR-H)
+
+Alias of `search_memories_by_keyword`. Exports `TEXT_SEARCH_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
+
+Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` above).
+
+#### `hybrid_search` — VP-Sources doctrine (PR-H)
+
+Exports `HYBRID_SEARCH_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
+
+Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` above).
 
 ### Issues (6)
 `get_issue`, `list_issues`, `update_issue_status`, `verify_issue`, `issue_stats`, `link_commit_to_issue`
