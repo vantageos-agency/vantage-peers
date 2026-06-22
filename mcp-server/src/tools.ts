@@ -237,6 +237,22 @@ export const listBusArgsSchema = z.object({
 	fields: z.enum(["lite", "full"]).optional(),
 });
 
+// list_repo_mappings — exported description + args schema (PR-C envelope safety)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const LIST_REPO_MAPPINGS_TOOL_DESCRIPTION =
+	"List GitHub repo to orchestrator webhook mappings, newest first with pagination. " +
+	"Defaults: limit default 20, cap 200, fields=lite|full (default full). " +
+	"Pagination via cursor (opaque token returned as nextCursor). " +
+	"Use fields=lite to get compact projection {_id, repo, orchestrator, project, _creationTime} (~2KB for 100 mappings). " +
+	"EXAMPLE: list_repo_mappings limit=20 fields='lite'.";
+
+export const listRepoMappingsArgsSchema = z.object({
+	limit: z.number().int().min(1).max(200).optional(),
+	cursor: z.string().optional(),
+	fields: z.enum(["lite", "full"]).optional(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // update_briefing_note — Zod schema + description
 //
@@ -6584,39 +6600,54 @@ export function registerTools(
 		},
 		async ({ limit, fields, cursor }) => {
 			try {
-				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
+				const effectiveLimit = limit === undefined ? 20 : clampLimit(limit);
+
+				// Hybrid cursor decode: supports old paging.ts format { createdBefore }
+				// for back-compat, and new opaque format { time, id } passed directly to Convex.
 				let createdBefore: number | undefined;
+				let convexCursor: string | undefined;
 				if (cursor !== undefined && cursor !== "") {
 					try {
 						const decoded = decodeCursor(cursor);
 						if (decoded && "createdBefore" in decoded) {
 							createdBefore = decoded.createdBefore;
+						} else {
+							// New-format cursor — pass directly to Convex
+							convexCursor = cursor;
 						}
-					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+					} catch (err: unknown) {
+						const msg = err instanceof Error ? err.message : "invalid cursor";
+						return mcpError(msg);
 					}
 				}
-				const effectiveLimit =
-					limit === undefined ? undefined : clampLimit(limit);
 
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
-				const mappings = await convex.query("githubRepoMapping:list" as any, {
-					limit: effectiveLimit ?? 20,
-					fields: fields ?? "lite",
+				// Convex query now returns { items, nextCursor } envelope (PR-C).
+				const envelope = await convex.query("githubRepoMapping:list" as any, {
+					limit: effectiveLimit,
+					fields: fields ?? "full",
+					cursor: convexCursor,
 					createdBefore,
 				});
-				const filteredMappings = scopeFilterList(
-					oauthCtx,
-					Array.isArray(mappings) ? mappings : [],
-				);
+				const rawItems = (
+					envelope && typeof envelope === "object" && "items" in envelope
+						? (envelope as { items: unknown[] }).items
+						: Array.isArray(envelope)
+							? envelope
+							: []
+				) as unknown[];
+				const backendNextCursor =
+					envelope &&
+					typeof envelope === "object" &&
+					"nextCursor" in envelope
+						? (envelope as { nextCursor: string | null }).nextCursor
+						: null;
 
-				// S3.3 B8 follow-up — emit nextCursor when page is full.
-				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (
-					filteredMappings.length >= requestedLimit &&
-					filteredMappings.length > 0
-				) {
+				const filteredMappings = scopeFilterList(oauthCtx, rawItems as any);
+
+				// Re-compute nextCursor from filtered set (scope filter may shrink page)
+				let nextCursor: string | null = backendNextCursor;
+				if (filteredMappings.length < rawItems.length && filteredMappings.length > 0) {
 					const last = filteredMappings[filteredMappings.length - 1] as {
 						_creationTime?: number;
 					};
@@ -6624,17 +6655,18 @@ export function registerTools(
 						nextCursor = encodeCursor({ createdBefore: last._creationTime });
 					}
 				}
-				const mappingsWithCursor =
-					nextCursor !== null
-						? { items: filteredMappings, nextCursor }
-						: filteredMappings;
+				if (filteredMappings.length === 0) {
+					nextCursor = null;
+				}
+
+				const mappingsWithCursor = { items: filteredMappings, nextCursor };
 
 				return {
 					content: [
 						{
 							type: "text",
 							text: capListResponseBytes(
-								mappingsWithCursor,
+								filteredMappings,
 								JSON.stringify(mappingsWithCursor, null, 2),
 								"list_repo_mappings",
 							),
