@@ -518,6 +518,68 @@ list_tasks createdBy="pi" status="review" fields="lite" limit=30
 
 Returns recently-completed Pi-dispatched tasks with compact projection — typically 5-10x smaller payload than the default.
 
+## Tool descriptions doctrine — VP-Sources (PR-H)
+
+### Pattern
+
+Tool descriptions can embed advisory doctrine substrings so that client LLMs read the citation contract inline at tool-list time — before any tool call is made. No hook enforces absence: the doctrine is advisory-only, intentionally so that client implementations can adopt it gradually.
+
+### Verbatim doctrine substrings
+
+Each covered tool appends two additional paragraphs (separated by a blank line) after its existing description:
+
+```
+VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.
+
+Cite returned ids in the answer footer as 'VP-Sources: recall("<q>")→[ids] | none-needed:<reason>'.
+```
+
+### Tools covered (PR-H, 2026-06-22)
+
+| Tool | Exported constant |
+|------|------------------|
+| `recall` | `RECALL_TOOL_DESCRIPTION` |
+| `hybrid_search` | `HYBRID_SEARCH_TOOL_DESCRIPTION` |
+| `text_search` | `TEXT_SEARCH_TOOL_DESCRIPTION` |
+| `list_briefing_notes` | `LIST_BRIEFING_NOTES_TOOL_DESCRIPTION` |
+| `search_briefing_notes_by_keyword` | `SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION` |
+
+All five constants are exported from `mcp-server/src/tools.ts` and consumed by the MCP server's tool registration block. Snapshot tests in `mcp-server/src/__tests__/tools-descriptions.test.ts` assert that both doctrine substrings are present in each constant.
+
+### Why inline in the tool description
+
+MCP clients receive the full tool list (names + descriptions) in a single response before the first tool call. Embedding the doctrine string there means any agent that calls one of these 5 tools has already been instructed about the citation obligation — no separate system-prompt injection is required.
+
+### Answer footer format
+
+When a search tool returns results the agent must cite them in the final answer footer:
+
+```
+VP-Sources: recall("Pi feedback rules")→[j57dy3049btafda9m2f5d2ggk987ph3f, j572s2bh4e0n20n0ttxynwrnts891nb5] | none-needed:trivial code edit
+```
+
+- `recall("<q>")` — the query string used, with the tool name.
+- `→[ids]` — comma-separated Convex document IDs returned by the search.
+- `none-needed:<reason>` — use when a search was not required (see below).
+
+### When `none-needed` is acceptable
+
+- Trivial mechanical code edit with no factual claim about system state.
+- Calling a tool that returns the answer directly (e.g. `get_task`, `whoami`).
+- Pure arithmetic or string formatting with no fleet-state dependency.
+- Iterative follow-up within the same tool-call chain where sources are already cited.
+
+### Canonical doctrine page
+
+[VP-Sources answer-footer doctrine](https://vantagepeers.com/docs/cloud/doctrine/vp-sources-footer) — full reference including worked examples and advisory-only rationale.
+
+### References
+
+- Doctrine source: Eta Q1 msg `k977bvf03qzas7v7g0zqca9c7n8937zh`
+- Mission: `k571gcctka8mq5jbkgpj0a0b2n892ctg` (VP-MCP top level Bloc A)
+- Audit sections 27+28.4
+- T-RED `0b4dc84`, T-GREEN `908fd67`
+
 ## Database Schema (20 tables)
 
 <details>

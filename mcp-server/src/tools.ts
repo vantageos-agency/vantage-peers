@@ -321,6 +321,48 @@ export const listTasksArgsSchema = z.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// VP-Sources doctrine — search/recall tool descriptions (PR-H T-GREEN)
+//
+// Each of the 5 search/recall tools embeds both VP-Sources doctrine substrings
+// so that client LLMs read the citation requirement inline at tool-list time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const RECALL_TOOL_DESCRIPTION =
+	"DEPRECATED ALIAS of search_memories_by_semantic — semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+	"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. New callers: use search_memories_by_semantic. " +
+	"EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.\n\n" +
+	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
+	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
+
+export const HYBRID_SEARCH_TOOL_DESCRIPTION =
+	"Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage. " +
+	"WHEN: use when neither recall nor text_search alone yields good results — highest recall quality. " +
+	"EXAMPLE: hybrid_search query='onboarding customer flow' namespace='project/vantage-peers' limit=20.\n\n" +
+	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
+	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
+
+export const TEXT_SEARCH_TOOL_DESCRIPTION =
+	"DEPRECATED ALIAS of search_memories_by_keyword — BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+	"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. New callers: use search_memories_by_keyword. " +
+	"EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.\n\n" +
+	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
+	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
+
+export const LIST_BRIEFING_NOTES_TOOL_DESCRIPTION =
+	"List briefing notes filtered by topic, newest first, with cursor paging support. " +
+	"WHEN: use to review recent discussions on a topic or audit the full briefing history. " +
+	"EXAMPLE: list_briefing_notes topic='architecture' limit=10 fields='lite'.\n\n" +
+	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
+	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
+
+export const SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION =
+	"BM25 full-text keyword search over briefing note content, ranked by relevance. " +
+	"WHEN: use to recall briefings about a topic/decision when list_briefing_notes filters are too coarse — e.g. 'find briefings about migration plan'. " +
+	"EXAMPLE: search_briefing_notes_by_keyword query='migration plan' topic='daily' limit=10.\n\n" +
+	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
+	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
+
+// ─────────────────────────────────────────────────────────────────────────────
 // update_briefing_note — Zod schema + description
 //
 // Mirrors `api.briefingNotes.update` Convex mutation. `noteId` is a permissive
@@ -1538,9 +1580,7 @@ export function registerTools(
 
 	server.tool(
 		"recall",
-		"DEPRECATED ALIAS of search_memories_by_semantic — semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
-			"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. New callers: use search_memories_by_semantic. " +
-			"EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.",
+		RECALL_TOOL_DESCRIPTION,
 		{
 			query: z
 				.string()
@@ -1607,9 +1647,7 @@ export function registerTools(
 
 	server.tool(
 		"text_search",
-		"DEPRECATED ALIAS of search_memories_by_keyword — BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
-			"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. New callers: use search_memories_by_keyword. " +
-			"EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.",
+		TEXT_SEARCH_TOOL_DESCRIPTION,
 		{
 			query: z.string().describe("Search query text"),
 			namespace: z
@@ -1788,9 +1826,7 @@ export function registerTools(
 
 	server.tool(
 		"hybrid_search",
-		"Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage. " +
-			"WHEN: use when neither recall nor text_search alone yields good results — highest recall quality. " +
-			"EXAMPLE: hybrid_search query='onboarding customer flow' namespace='project/vantage-peers' limit=20.",
+		HYBRID_SEARCH_TOOL_DESCRIPTION,
 		{
 			query: z.string().describe("Search query text"),
 			namespace: z.string().optional().describe("Namespace filter"),
@@ -4802,9 +4838,7 @@ export function registerTools(
 
 	server.tool(
 		"list_briefing_notes",
-		"List briefing notes filtered by topic, newest first, with cursor paging support. " +
-			"WHEN: use to review recent discussions on a topic or audit the full briefing history. " +
-			"EXAMPLE: list_briefing_notes topic='architecture' limit=10 fields='lite'.",
+		LIST_BRIEFING_NOTES_TOOL_DESCRIPTION,
 		{
 			topic: z
 				.string()
@@ -4931,9 +4965,7 @@ export function registerTools(
 
 	server.tool(
 		"search_briefing_notes_by_keyword",
-		"BM25 full-text keyword search over briefing note content, ranked by relevance. " +
-			"WHEN: use to recall briefings about a topic/decision when list_briefing_notes filters are too coarse — e.g. 'find briefings about migration plan'. " +
-			"EXAMPLE: search_briefing_notes_by_keyword query='migration plan' topic='daily' limit=10.",
+		SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION,
 		{
 			query: z
 				.string()
