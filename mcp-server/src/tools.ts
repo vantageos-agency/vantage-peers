@@ -393,6 +393,40 @@ export const SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION =
 	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// improvisation_digest — Zod schema + description (PR-I T-GREEN)
+//
+// Advisory-only read tool. Scans recent VP tasks + messages + memories for
+// durable artifacts that carry fleet/state tokens (SHA / PR# / VP id /
+// decisive verb) but NO VP-Sources footer — Eta heuristic proxy for
+// "claimed fleet state without recall upstream".
+//
+// Pi-approved Option C (msg jn779tfjpg68v01db67b4ht20c189c8yw-class).
+// Mission k571gcctka8mq5jbkgpj0a0b2n892ctg — Bloc A PR-I.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const IMPROVISATION_DIGEST_TOOL_NAME = "improvisation_digest";
+
+export const IMPROVISATION_DIGEST_TOOL_DESCRIPTION =
+	"Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer — Eta heuristic proxy for 'made a fleet-state claim without a recall upstream'. " +
+	"Returns aggregated counts by orchestrator and category plus up to 50 sample snippets. " +
+	"ADVISORY only — never blocks any action. " +
+	"WHEN: use to audit a sprint window, review an orchestrator's improvisation rate, or calibrate VP-Sources compliance. " +
+	"EXAMPLE: improvisation_digest windowDays=7 orchestrators=['sigma','pi'].";
+
+export const improvisationDigestArgsSchema = z.object({
+	windowDays: z
+		.number()
+		.default(7)
+		.describe("Number of days to look back (default 7)"),
+	orchestrators: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"Scope to these orchestrator roles only — e.g. ['sigma','pi']. Omit for all.",
+		),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // update_briefing_note — Zod schema + description
 //
 // Mirrors `api.briefingNotes.update` Convex mutation. `noteId` is a permissive
@@ -8942,4 +8976,37 @@ export function registerTools(
 	// imports memories+briefings+tasks into target namespace with dedup-by-content.
 	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17fja9v7pgnf25yvzkwrj5ch5891bb3.
 	registerImportOkfBundle(server, convex);
+
+	// ── improvisation_digest (PR-I — Bloc A T-GREEN) ──────────────────────────
+	// Advisory scan of VP tasks+messages+memories for fleet/state claims without
+	// VP-Sources footer (Eta heuristic, Pi-approved Option C).
+	// Mission k571gcctka8mq5jbkgpj0a0b2n892ctg.
+	server.tool(
+		IMPROVISATION_DIGEST_TOOL_NAME,
+		IMPROVISATION_DIGEST_TOOL_DESCRIPTION,
+		improvisationDigestArgsSchema.shape,
+		{
+			// readOnlyHint: true — improvisation_digest is a pure read query
+			// (improvisationDigest:scanWindow — no mutations). ADVISORY-only.
+			// READ_ONLY_TOOLS allowlist in chatgpt-tool-annotations.test.ts updated
+			// in the same PR-I commit to include "improvisation_digest".
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Improvisation digest",
+		},
+		async ({ windowDays, orchestrators }) => {
+			try {
+				const result = await convex.query(
+					"improvisationDigest:scanWindow" as any,
+					{ windowDays, orchestrators },
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
 }

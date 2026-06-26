@@ -404,6 +404,56 @@ Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `nu
 ### Session (1)
 `set_summary`
 
+### Observability (1)
+`improvisation_digest`
+
+#### `improvisation_digest` — weekly advisory digest (PR-I)
+
+Scans a rolling time window of VP tasks, messages, and memories for records carrying fleet/state tokens (commit SHA, PR#, VP id, decisive verb) with **no VP-Sources footer** — the Eta heuristic proxy for "made a fleet-state claim without a prior `recall` upstream".
+
+```
+improvisation_digest(windowDays?, orchestrators?)
+```
+
+| Arg | Type | Default | Notes |
+|-----|------|---------|-------|
+| `windowDays` | number | `7` | Days to look back. |
+| `orchestrators` | string[] | — | Scope to these roles only (e.g. `["sigma","pi"]`). Omit for all orchestrators. |
+
+**Returns:**
+
+```ts
+{
+  countsByOrch: Record<string, number>,      // hit count per orchestrator
+  countsByCategory: Record<string, number>,  // hit count per record type (task/message/memory)
+  samples: Array<{
+    id: string,
+    category: string,
+    orchestrator: string,
+    snippet: string
+  }>                                         // up to 50 representative snippets
+}
+```
+
+**ADVISORY-only.** Pure read query — never blocks any action. Results are informational: a high improvisation rate suggests a team should increase VP-Sources citation hygiene, but the tool itself takes no automated action.
+
+**V1 scope (Option C):** scans VP records (tasks + messages + memories) only. Per Pi Day-113 arbitration (msg `k97a0pp6kq1axkj6cmc4pecpy989ce1w`), fallback if V1 misses too many = **Option B** (new dedicated `sessions` Convex table), not Option A (JSONL replay).
+
+**Detection heuristic (Eta A5 scope filter):**
+- Flag condition 1: record body contains a durable-artifact token (7–40 hex SHA, `#NNN`, Convex ID prefix, or decisive verb `merged/deployed/approved/shipped/released/fixed`).
+- Flag condition 2: record body does NOT contain the `VP-Sources:` footer substring.
+- A5 scope: excludes `system`, `cron-*`, and webhook-sourced entries.
+
+Examples:
+
+```json
+// Default 7-day window, all orchestrators
+{ "tool": "improvisation_digest", "arguments": { "windowDays": 7 } }
+
+// Scoped to one orchestrator
+{ "tool": "improvisation_digest", "arguments": { "windowDays": 14, "orchestrators": ["sigma"] } }
+```
+
 ## Compact payloads and status aliases (v2.12.0 — feature since v2.3.0)
 
 ### `fields=lite` — reduced token payloads
