@@ -437,7 +437,7 @@ improvisation_digest(windowDays?, orchestrators?)
 
 **ADVISORY-only.** Pure read query — never blocks any action. Results are informational: a high improvisation rate suggests a team should increase VP-Sources citation hygiene, but the tool itself takes no automated action.
 
-**V1 scope (Option C):** scans VP records (tasks + messages + memories) only. V2 transcript-replay (Option A) is reserved if V1 misses too many improvisations.
+**V1 scope (Option C):** scans VP records (tasks + messages + memories) only. Per Pi Day-113 arbitration (msg `k97a0pp6kq1axkj6cmc4pecpy989ce1w`), fallback if V1 misses too many = **Option B** (new dedicated `sessions` Convex table), not Option A (JSONL replay).
 
 **Detection heuristic (Eta A5 scope filter):**
 - Flag condition 1: record body contains a durable-artifact token (7–40 hex SHA, `#NNN`, Convex ID prefix, or decisive verb `merged/deployed/approved/shipped/released/fixed`).

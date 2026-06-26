@@ -612,7 +612,7 @@ VP-Sources: recall("Pi feedback rules")→[j57dy3049btafda9m2f5d2ggk987ph3f, j57
 
 `improvisation_digest` scans a rolling time window of VP tasks, messages, and memories for records that carry durable-artifact fleet/state tokens (commit SHA, PR number, VP document ID, or decisive verb such as `merged`, `deployed`, `approved`) but have **no VP-Sources footer**. This is the Eta heuristic proxy for "an orchestrator made a fleet-state claim without a prior `recall` upstream."
 
-**V1 scope — Option C:** scans VP records only (tasks + messages + memories). V2 transcript-replay (Option A) is reserved if V1 misses too many improvisations.
+**V1 scope — Option C:** scans VP records only (tasks + messages + memories). Per Pi Day-113 arbitration (msg `k97a0pp6kq1axkj6cmc4pecpy989ce1w`), fallback if V1 misses too many = **Option B** (new dedicated `sessions` Convex table), not Option A (JSONL replay).
 
 ADVISORY-only — pure read query. The tool never blocks any action.
 
