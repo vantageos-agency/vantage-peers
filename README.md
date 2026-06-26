@@ -608,6 +608,65 @@ VP-Sources: recall("Pi feedback rules")→[j57dy3049btafda9m2f5d2ggk987ph3f, j57
 - Audit sections 27+28.4
 - T-RED `0b4dc84`, T-GREEN `908fd67`
 
+## Improvisation digest (advisory)
+
+`improvisation_digest` scans a rolling time window of VP tasks, messages, and memories for records that carry durable-artifact fleet/state tokens (commit SHA, PR number, VP document ID, or decisive verb such as `merged`, `deployed`, `approved`) but have **no VP-Sources footer**. This is the Eta heuristic proxy for "an orchestrator made a fleet-state claim without a prior `recall` upstream."
+
+**V1 scope — Option C:** scans VP records only (tasks + messages + memories). V2 transcript-replay (Option A) is reserved if V1 misses too many improvisations.
+
+ADVISORY-only — pure read query. The tool never blocks any action.
+
+### Args
+
+| Arg | Type | Default | Description |
+|-----|------|---------|-------------|
+| `windowDays` | number | `7` | Number of days to look back. |
+| `orchestrators` | string[] | — | Scope to these orchestrator roles (e.g. `["sigma","pi"]`). Omit for all. |
+
+### Returns envelope
+
+```ts
+{
+  countsByOrch: Record<string, number>,   // hit count per orchestrator
+  countsByCategory: Record<string, number>, // hit count per record type (task/message/memory)
+  samples: Array<{                         // up to 50 example snippets
+    id: string,
+    category: string,
+    orchestrator: string,
+    snippet: string
+  }>
+}
+```
+
+### Examples
+
+**Default 7-day window, all orchestrators:**
+
+```json
+{ "tool": "improvisation_digest", "arguments": { "windowDays": 7 } }
+```
+
+**Scoped to a single orchestrator:**
+
+```json
+{ "tool": "improvisation_digest", "arguments": { "windowDays": 14, "orchestrators": ["sigma"] } }
+```
+
+### Detection heuristic (Eta A5 scope)
+
+A record is flagged when both conditions hold:
+
+1. **Durable-artifact token present** — the record body contains at least one of: a 7–40 hex commit SHA, a `#NNN` PR/issue reference, a Convex document ID (`k1…` or `j…` prefix), or a decisive verb (`merged`, `deployed`, `approved`, `shipped`, `released`, `fixed`).
+2. **VP-Sources footer absent** — the record body does NOT contain the `VP-Sources:` footer substring.
+
+Eta A5 scope filter: only records authored by agents matching the orchestrator allowlist (excludes `system`, `cron-*`, and webhook-sourced entries).
+
+### References
+
+- Mission: `k571gcctka8mq5jbkgpj0a0b2n892ctg` (VP-MCP top level Bloc A)
+- T-RED commit `cd6cda3`, T-GREEN commit `b9414dc`
+- Site doc: [improvisation_digest — MCP Tools](https://vantagepeers.com/docs/cloud/mcp-tools/improvisation-digest)
+
 ## Database Schema (20 tables)
 
 <details>

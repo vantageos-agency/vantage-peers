@@ -157,6 +157,9 @@ const READ_ONLY_TOOLS = new Set([
 	// action runs the pure validator against a fetched tarball without
 	// touching the DB; readOnlyHint=true at validateOkfBundle.ts.
 	"validate_okf_bundle",
+	// PR-I — improvisation_digest is a pure read query (improvisationDigest:scanWindow),
+	// ADVISORY-only; readOnlyHint=true is semantically correct.
+	"improvisation_digest",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([

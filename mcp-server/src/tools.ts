@@ -8986,12 +8986,11 @@ export function registerTools(
 		IMPROVISATION_DIGEST_TOOL_DESCRIPTION,
 		improvisationDigestArgsSchema.shape,
 		{
-			// readOnlyHint: false — chatgpt-tool-annotations.test.ts uses a hardcoded
-			// READ_ONLY_TOOLS set that does not yet include improvisation_digest.
-			// The annotation test classifies any tool outside that set as "write"
-			// (readOnlyHint must be false). The tool is semantically read-only but
-			// the annotation must match the test's registry until the test is updated.
-			readOnlyHint: false,
+			// readOnlyHint: true — improvisation_digest is a pure read query
+			// (improvisationDigest:scanWindow — no mutations). ADVISORY-only.
+			// READ_ONLY_TOOLS allowlist in chatgpt-tool-annotations.test.ts updated
+			// in the same PR-I commit to include "improvisation_digest".
+			readOnlyHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Improvisation digest",
