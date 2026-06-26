@@ -47,6 +47,8 @@ export const get = query({
 			createdAt: v.number(),
 			updatedAt: v.optional(v.number()),
 			updatedBy: v.optional(creatorValidator),
+			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
+			orgId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
