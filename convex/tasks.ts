@@ -122,6 +122,8 @@ const taskFullValidator = v.object({
 	createdBy: creatorValidator,
 	createdAt: v.number(),
 	updatedAt: v.number(),
+	// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
+	orgId: v.optional(v.string()),
 });
 
 type TaskLite = {
@@ -209,6 +211,8 @@ export const get = query({
 			createdBy: creatorValidator,
 			createdAt: v.number(),
 			updatedAt: v.number(),
+			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
+			orgId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -247,6 +251,8 @@ export const getById = query({
 			createdBy: creatorValidator,
 			createdAt: v.number(),
 			updatedAt: v.number(),
+			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
+			orgId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
