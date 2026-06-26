@@ -24,14 +24,5 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Convex codegen (regenerate convex/_generated from sources)
-        # Convex's _generated/ tree is gitignored — without this step, api.d.ts
-        # in CI reflects whatever shape `bun install` postinstall produced, which
-        # can miss newly-added convex/<module>.ts files. Eta REVISE on PR #963
-        # day 113 surfaced this gap (api.improvisationDigest absent → TS2339 x7
-        # on convex/__tests__/improvisationDigest.test.ts). Codegen reads convex/
-        # directly, requires no auth, and rebuilds _generated/api.d.ts deterministically.
-        run: npx convex codegen --typecheck disable
-
       - name: TypeScript type check
         run: npx tsc --noEmit
