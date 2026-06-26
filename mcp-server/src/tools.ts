@@ -3481,7 +3481,7 @@ export function registerTools(
 		{
 			readOnlyHint: false,
 			openWorldHint: false,
-			destructiveHint: true,
+			destructiveHint: false,
 			title: "Bulk complete tasks",
 		},
 		async ({ filter, dryRun, completionNoteTemplate, callerOrchestrator }) => {
