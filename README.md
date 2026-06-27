@@ -14,6 +14,8 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-vantagepeers.com-green.svg)](https://vantagepeers.com/docs)
 
+**Quick links:** [npm — vantage-peers-mcp](https://www.npmjs.com/package/vantage-peers-mcp) · [Docs site](https://vantagepeers.com/docs) · [Pagination doctrine](#pagination--envelope-safety-day-114-doctrine) · [CHANGELOG](CHANGELOG.md)
+
 ## TL;DR
 
 Multi-agent Claude Code crews share one persistent brain via 116 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
@@ -99,6 +101,50 @@ Agent A pings Agent B directly:
 ```
 
 Agent B's next `check_messages` returns the message; status flips to read after `mark_as_read`.
+
+## Pagination & envelope safety (Day-114 doctrine)
+
+Every `list_*` MCP tool in VantagePeers follows one canonical pagination contract. The driver: Claude Code's tool-response cap is ~60 KB. A `list_memories` call against a busy namespace easily blows past that with full-row payloads, so every list tool ships with strict defaults (`limit` default 20, hard cap 200) and an opt-in `fields="lite"` projection that returns only 4–6 fields per row. Callers paginating large result sets always combine `fields="lite"` + cursor iteration.
+
+The canonical envelope contract is fleet-wide and non-negotiable:
+
+```typescript
+interface ListEnvelope<T> {
+  items:       T[];     // projected rows (lite or full)
+  nextCursor?: string;  // present IFF there are more pages; absent when done
+}
+```
+
+`nextCursor` is an **opaque base64url token** — callers must not parse it. The format may evolve (TTL, signature). To iterate, pass the returned `nextCursor` back as the `cursor` arg on the next call. When the field is absent, the caller MUST stop. There is no separate `isDone` flag in the wire format — absence of `nextCursor` IS the done signal.
+
+Concrete cursor loop (works identically for `list_tasks`, `list_memories`, `list_episodes`, `list_messages`, every `list_*`):
+
+```typescript
+async function drainList(tool: string, args: Record<string, unknown>) {
+  const all: unknown[] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const res = await mcpCall(tool, { ...args, fields: "lite", limit: 100, cursor });
+    const envelope = JSON.parse(res.content[0].text) as { items: unknown[]; nextCursor?: string };
+    all.push(...envelope.items);
+    if (!envelope.nextCursor) break;
+    cursor = envelope.nextCursor;
+  }
+  return all;
+}
+
+// usage
+const allOpenTasks = await drainList("list_tasks", { assignedTo: "sigma", status: "open" });
+```
+
+Forbidden patterns (each caused a Day-114 production incident): reading `.page` instead of `.value` from Convex `paginate()` returns (silent `items: []`), returning a flat array instead of `{items, nextCursor}` envelope, silent `MAX_LIMIT` clamp without `nextCursor` (caller stuck at page 1), per-tool divergent `MAX_LIMIT` constants, and envelope-coverage tests that only check wrapper shape (`hasProperty("items")` passes on `items: []`). Every `list_*` test MUST use the seeded-data assertion pattern (`items.length === N`) — wrapper-shape-only assertions are banned.
+
+Full doctrine: [`projects/vantage-peers/mcp-tools-standard-doctrine-v1.md`](projects/vantage-peers/mcp-tools-standard-doctrine-v1.md) (Sections 1–6: pattern obligatoire, anti-patterns, coverage matrix, fleet cross-reference, compliance gate, migration playbook). Cross-MCP fleet runbook: VR runbook `mcp-tools-standard-pagination-doctrine` (id `kd750j7z7tqre6hxqmfsa8s9ed89erng`). Day-114 audit matrix: [`projects/vantage-peers/mcp-pagination-audit-day114.md`](projects/vantage-peers/mcp-pagination-audit-day114.md) — 18 `list_*` tools audited (15 LOW, 2 HIGH fixed in PR #978, 1 documented EXCEPTION).
+
+### Day-114 fixes
+
+- **PR #978** (squash `0db28d5`) — `list_memories` + `list_episodes` silent `items:[]` fix. Root cause: handler read `memories?.page` instead of the actual Convex paginate return field `memories.value` (`{ value, continueCursor, isDone }`). The bug silently returned empty arrays on EVERY call regardless of seeded data — not only on subsequent pages. Present since the original `paginationOpts` wiring (S3.3 B8, v2.5.0). Fixed via the canonical handler pattern (extract `.value`, encode `continueCursor` via `encodeCursor`, emit `{items, nextCursor}`). Shipped as `vantage-peers-mcp@2.13.1` on npm.
+- **PR #980** (squash `d09fc5b`) — MCP Tools Standards doctrine v1 landed at `projects/vantage-peers/mcp-tools-standard-doctrine-v1.md`. Cross-MCP fleet canonical — every VantageOS MCP server (`vantage-peers-mcp`, `vantage-registry-mcp`, vCRM, doc-forge, architect, composer, frameworks) inherits the same `list_*` contract, anti-pattern ban list, and seeded-data test gate. Sister MCPs (Omega VR first) re-brick on this doctrine to eliminate divergence.
 
 ## Prerequisites
 
