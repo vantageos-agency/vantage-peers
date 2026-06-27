@@ -19,10 +19,11 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { api } from "../_generated/api";
 import schema from "../schema";
 
 // biome-ignore lint/suspicious/noExplicitAny: codegen-lag workaround — kb.ts is created post-RED
@@ -103,6 +104,7 @@ async function getChunksForDoc(
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("B5 KB ingest — PDF happy path", () => {
+	// PDF extraction falls back to stub in convex-test env — allow 15s for pdf-parse cold start
 	test("store_document_chunked with PDF → returns docId+chunkCount>0, chunks land at team/A/<docId>", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "team-a");
@@ -135,7 +137,7 @@ describe("B5 KB ingest — PDF happy path", () => {
 		for (const chunk of chunks) {
 			expect(chunk.namespace).toBe(`team/team-a/${result.docId}`);
 		}
-	});
+	}, 15_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -257,7 +259,7 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 		// team-b tries to read team-a's namespace via memoriesScoped
 		// Should throw AUTH_NAMESPACE_DENIED
 		await expect(
-			tB.query("memoriesScoped:listMemoriesScoped", {
+			tB.query(api.memoriesScoped.listMemoriesScoped, {
 				namespace: `team/team-a/${result.docId}`,
 			}),
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
