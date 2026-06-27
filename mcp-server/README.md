@@ -3,11 +3,18 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](https://github.com/vantageos-agency/vantage-peers/blob/main/LICENSE)
-[![Tests: 97/97](https://img.shields.io/badge/MCP_tools-97_registered-green)]()
+[![MCP tools: 116+](https://img.shields.io/badge/MCP_tools-116+-green)]()
+
+> **Package:** `vantage-peers-mcp` (plain — NOT `@vantageos/vantage-peers-mcp`)
+> **Current version:** `2.13.1` (Day-114 release — `list_memories` + `list_episodes` silent `items:[]` fix)
+> **License:** FSL-1.1-Apache-2.0
+> **Repo:** https://github.com/vantageos-agency/vantage-peers (full monorepo README at `/README.md`)
+> **Docs:** https://vantagepeers.com/docs
+> **Install:** `npm install -g vantage-peers-mcp` — or `npx vantage-peers-mcp`
 
 MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
 
-97 tools across 18 categories: memory, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, and session. All tools ship with ChatGPT Apps SDK annotations (`readOnlyHint`, `openWorldHint`, `destructiveHint`) for native UX in ChatGPT custom connectors.
+116+ tools across 20 categories: memory, episodes, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, OKF bundles, observability, and session. All tools ship with ChatGPT Apps SDK annotations (`readOnlyHint`, `openWorldHint`, `destructiveHint`) for native UX in ChatGPT custom connectors.
 
 ## Quick start
 
@@ -31,6 +38,97 @@ Day 92 VP MCP quality overhaul (mission `k57a36y8w5t085bqr23dsmvb2d882506`, PR #
 - **F1 — `validate_task_payload` validator tool** (commit `cf6c961`) — client-side payload validation before any write reaches Convex.
 
 See `mcp-server/CHANGELOG.md` for the full per-PR list.
+
+## Pagination & envelope safety (Day-114 doctrine)
+
+Every `list_*` tool in `vantage-peers-mcp` follows a single fleet-canonical pagination contract — the **MCP Tools Standard pagination doctrine v1** (source: `projects/vantage-peers/mcp-tools-standard-doctrine-v1.md` in this repo, VR runbook `mcp-tools-standard-pagination-doctrine` id `kd750j7z7tqre6hxqmfsa8s9ed89erng`).
+
+### Why envelope safety matters
+
+Claude Code, Claude.ai web, ChatGPT custom connectors and Codex all enforce a **~60 KB hard cap on tool-response payloads**. A list call that returns 200+ rows of `fields=full` documents will silently truncate, throw, or be rejected by the client runtime. The MCP server defends against this with three layered controls:
+
+1. `limit` default **20**, hard cap **200** (server-side `clampLimit`).
+2. `fields="lite"` projection — at most 6 fields per row (e.g. `{_id, _creationTime, title, status, ...}`).
+3. `enforceEnvelopeCap` — soft byte target of 50,000 bytes; halves the page if exceeded.
+
+When in doubt: pass `fields="lite"` and a small `limit`.
+
+### Canonical envelope shape
+
+Every `list_*` handler returns exactly this envelope and nothing else:
+
+```typescript
+interface ListEnvelope<T> {
+  items: T[];            // projected rows (lite or full)
+  nextCursor?: string;   // present IFF more pages; ABSENT (not null) when done
+}
+```
+
+### Cursor semantics
+
+- `cursor` is an **opaque** base64url-encoded token. Do not parse it. Do not construct it.
+- Pass the value of `nextCursor` from page N as the `cursor` argument on page N+1.
+- When `nextCursor` is **absent** from the response, you have reached the last page — stop iterating.
+- A `cursor` token from a previous deploy may decode-fail silently; treat that as "start over".
+
+### Copy-paste cursor loop (TypeScript)
+
+```ts
+let cursor: string | undefined = undefined;
+do {
+  const { items, nextCursor } = await mcp.list_tasks({ cursor, limit: 50 });
+  // process items
+  cursor = nextCursor;
+} while (cursor);
+```
+
+The same loop works verbatim for every `list_*` tool (`list_memories`, `list_episodes`, `list_missions`, `list_briefing_notes`, `list_bus`, `list_components`, `list_repo_mappings`, `list_messages`, `list_issues`, `list_fix_patterns`, `list_errors`, `list_mandates`, `list_recurring_tasks`, `list_diaries`, `list_peers`, `list_tasks_by_mission`, `list_broadcast_status`).
+
+### Status aliases (read this before flattening `status` to a CSV)
+
+`list_tasks`, `list_tasks_by_mission`, and `list_missions` accept `status` as:
+
+- a single enum value (`"todo"`),
+- an array (`["todo","in_progress"]`),
+- or an alias (`"open"`, `"active"`, `"all"`).
+
+**Never** a CSV string (`"todo,in_progress"`) — no handler parses it; the call will reject with `invalid_union`.
+
+### Day-114 fixes (shipped in v2.13.1)
+
+- **CRITICAL — `list_memories` + `list_episodes` were silently returning `items: []` on every call.** Both handlers read `memories?.page` from the Convex `listMemories` paginate-shape `{value, continueCursor, isDone}`. `.page` is `undefined`, so the envelope shipped empty regardless of seeded data — and `nextCursor` was never emitted. **Pre-2.13.1 callers consuming these two tools MUST upgrade**: any logic that branched on "no memories found" was wrong.
+  - **Patch:** anti-pattern `memories?.page` replaced with the canonical `memories.value` + `nextCursor` emitted via `encodeCursor({ backendCursor })`. Mirrors the PR-A/B/C/E precedent (shared `mcp-server/src/paging.ts`).
+  - **Tests:** new `mcp-server/src/__tests__/list_memories_episodes_pagination.test.ts` (11/11 PASS, seeded-data assertion pattern — `items.length === N` on inserted data, not just wrapper shape).
+  - **Reference:** PR #978 (squash `0db28d5`), audit `projects/vantage-peers/mcp-pagination-audit-day114.md`.
+- **2.13.0 → 2.13.1 chore release** — commit `55366f1`.
+- **MCP Tools Standard doctrine v1** published as the cross-fleet `list_*` pagination canonical (PR #980 squash `d09fc5b`). All future MCP servers in the VantageOS fleet (`vantage-registry-mcp`, etc.) mirror this contract.
+
+### Anti-pattern catalogue (banned)
+
+The doctrine document enumerates 7 banned patterns. Three relevant to library consumers:
+
+- **`memories?.page` shape misread** — read `.value`, not `.page` (Day-114 incident class).
+- **Flat-array return** — every `list_*` MUST wrap rows in `{ items, nextCursor? }`. A bare array breaks pagination chains.
+- **Raw Convex `continueCursor` exposed** — `nextCursor` must always pass through `encodeCursor` for opacity. The Convex cursor format is internal and may change.
+
+## Versioning
+
+`vantage-peers-mcp` follows **semver**:
+
+- **MAJOR** (e.g. `2.x.x → 3.0.0`) — breaking changes to tool input/output shape, removed tools, or removed args.
+- **MINOR** (e.g. `2.12.x → 2.13.0`) — additive tools, new optional args, new aliases, new annotations.
+- **PATCH** (e.g. `2.13.0 → 2.13.1`) — bug fixes, no-API-change envelope corrections, doc-only releases that ship in the tarball.
+
+Current line: **2.x.x**. Full per-version history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/blob/main/CHANGELOG.md) and the per-package [mcp-server/CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/blob/main/mcp-server/CHANGELOG.md).
+
+## Cross-links
+
+- **npm:** https://www.npmjs.com/package/vantage-peers-mcp
+- **Main repo README:** https://github.com/vantageos-agency/vantage-peers/blob/main/README.md
+- **Docs site:** https://vantagepeers.com/docs
+- **MCP Tools Standard doctrine v1:** https://github.com/vantageos-agency/vantage-peers/blob/main/projects/vantage-peers/mcp-tools-standard-doctrine-v1.md
+- **VR runbook id:** `kd750j7z7tqre6hxqmfsa8s9ed89erng` (`mcp-tools-standard-pagination-doctrine`)
+- **Day-114 audit:** https://github.com/vantageos-agency/vantage-peers/blob/main/projects/vantage-peers/mcp-pagination-audit-day114.md
 
 ## Install
 
@@ -89,16 +187,45 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 
 The server also reads `CONVEX_URL` from `.env.local` in the parent directory if not set via environment.
 
-## Tools (97)
+## Tools
 
-### Memory (6)
-`store_memory`, `search_memories_by_semantic` (alias `recall`), `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
+The full registered list ships in `mcp-server/src/tools.ts` and is enumerated below by domain. Counts may shift as additive PRs land; the doctrine guarantee is that **every `list_*` tool follows the envelope contract above** and **every tool exports a Zod input schema + ChatGPT Apps SDK annotations**.
+
+### Memory (8)
+- `store_memory` — write a memory to a namespace
+- `search_memories_by_semantic` (alias `recall`) — vector-search memories; VP-Sources doctrine applies
+- `search_memories_by_keyword` (alias `text_search`) — BM25 keyword search over memories
+- `list_memories` — page through memories in a namespace
+- `get_memory` — fetch a single memory by id
+- `soft_delete_memory` — mark a memory deleted (recoverable)
+- `store_episode` — write a structured episode record (multi-turn coherent event)
+- `get_episode` — fetch a single episode by id
+
+### Episodes (3)
+- `list_episodes` — page through episodes by namespace / orchestrator
+- `search_episodes_by_keyword` — BM25 keyword search over episodes
+- `search_episodes_by_semantic` — vector-search episodes
 
 ### Profiles (3)
-`get_profile`, `update_profile`, `list_peers`
+- `get_profile` — read an orchestrator profile
+- `update_profile` — mutate an orchestrator profile (master-gated)
+- `list_peers` — page through registered peers
 
-### Tasks (11)
-`create_task`, `list_tasks`, `list_tasks_by_mission`, `update_task`, `start_task`, `complete_task`, `checkout_task`, `delete_task`, `block_task`, `add_task_dependency`, `bulk_complete_tasks`
+### Tasks (14)
+- `create_task` — create a new task with VERIFICATION + TESTS blocks
+- `list_tasks` — page through tasks with filters + `excludeAutoGenerated`
+- `list_tasks_by_mission` — page through tasks for a single mission
+- `get_task` — fetch a single task by id
+- `update_task` — patch task fields
+- `start_task` — transition to `in_progress`
+- `complete_task` — close with evidence-bound `completionNote`
+- `checkout_task` — claim a task without starting
+- `delete_task` — destructive delete (master-gated; prefer `complete_task`)
+- `block_task` — mark blocked with reason
+- `add_task_dependency` (alias `create_task_dependency`) — add a predecessor
+- `bulk_complete_tasks` — dry-run-default bulk close (cron-spam cleanup)
+- `validate_task_payload` — client-side payload validation
+- `search_tasks_by_keyword` — BM25 keyword search over tasks
 
 #### `list_tasks` — args schema + `excludeAutoGenerated` filter (PR-E)
 
@@ -180,19 +307,39 @@ Returns `{ count, sampleIds, bulkRunId, executedAt? }`:
 - `dryRun=false` — `{ count, sampleIds, bulkRunId, executedAt }` — `bulkRunId` is the Day-76 evidence token; `executedAt` is the mutation epoch ms.
 
 ### Missions (6)
-`create_mission`, `list_missions`, `update_mission`, `update_mission_status`, `get_mission_template`, `get_mission`
+- `create_mission` — create a mission with `agents` + `createdBy` + `project` (all required)
+- `list_missions` — page through missions; accepts `status` array OR alias
+- `get_mission` — fetch a single mission by id
+- `update_mission` — patch mission fields
+- `update_mission_status` — transition mission state
+- `get_mission_template` — read a mission template
 
-### Mission Templates (1)
-`update_mission_template`
+### Mission Templates (2)
+- `update_mission_template` — patch a mission template
+- `instantiate_template_into_mission` — bootstrap a mission from a template
 
 ### Messages (6)
-`send_message`, `check_messages`, `mark_as_read`, `list_messages`, `delete_message`, `list_broadcast_status`
+- `send_message` — send to `channel=` (NEVER `recipient=`); see schema via `ToolSearch`
+- `check_messages` — pull inbox for a recipient
+- `mark_as_read` — ack messages by `receiptIds`
+- `list_messages` — page through messages with filters
+- `delete_message` — destructive delete (master-gated)
+- `list_broadcast_status` — fan-out status for a broadcast envelope
+- `get_message` — fetch a single message by id
+- `search_messages_by_keyword` — BM25 keyword search over messages
 
-### Diary (3)
-`write_diary`, `get_diary`, `list_diaries`
+### Diary (4)
+- `write_diary` (alias `create_diary`) — append a diary entry
+- `get_diary` — fetch a single diary entry
+- `list_diaries` — page through diary entries
+- `update_summary` (alias of `set_summary`) — update session summary
 
-### Briefing Notes (2)
-`create_briefing_note`, `list_briefing_notes`
+### Briefing Notes (4)
+- `create_briefing_note` — write a structured briefing note
+- `update_briefing_note` — patch a briefing note
+- `list_briefing_notes` — page through briefing notes; VP-Sources doctrine applies
+- `get_briefing_note` — fetch a single briefing note
+- `search_briefing_notes_by_keyword` — BM25 keyword search; VP-Sources doctrine applies
 
 #### `list_briefing_notes` — VP-Sources doctrine (PR-H)
 
@@ -206,8 +353,11 @@ Exports `SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION` from `mcp-server/src
 
 Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
 
-### Search / RAG (3)
-`search_fix_patterns_by_semantic` (alias `search_fix_patterns`), `search_memories_by_keyword` (alias `text_search`), `hybrid_search`
+### Search / RAG (4)
+- `search_fix_patterns_by_semantic` (alias `search_fix_patterns`) — vector-search fix patterns
+- `search_memories_by_keyword` (alias `text_search`) — BM25 keyword search; VP-Sources doctrine applies
+- `search_components_by_keyword` (alias `search_components`) — keyword search over components
+- `hybrid_search` — RRF-fused vector + BM25 search; VP-Sources doctrine applies
 
 #### `recall` — VP-Sources doctrine (PR-H)
 
@@ -234,10 +384,20 @@ Exports `HYBRID_SEARCH_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
 Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` above).
 
 ### Issues (6)
-`get_issue`, `list_issues`, `update_issue_status`, `verify_issue`, `issue_stats`, `link_commit_to_issue`
+- `get_issue` — fetch a single issue
+- `list_issues` — page through issues with filters
+- `update_issue_status` — patch issue status
+- `verify_issue` — independently confirm an issue resolution
+- `issue_stats` — aggregate stats by status / orchestrator / project
+- `link_commit_to_issue` — link a commit SHA to an issue
 
-### Fix Patterns (5)
-`create_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
+### Fix Patterns (6)
+- `create_fix_pattern` — write a validated fix pattern to the KB
+- `list_fix_patterns` — page through fix patterns
+- `get_fix_pattern` — fetch a single fix pattern
+- `add_fix_attempt` (alias `create_fix_attempt`) — log an attempt against a pattern
+- `validate_fix` (alias `check_fix`) — promote a candidate fix to validated
+- `link_issue_to_pattern` — link a VP issue id to a fix pattern
 
 #### `create_fix_pattern`
 Create a new fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search the KB before fixing to avoid repeating known mistakes.
@@ -338,10 +498,16 @@ Example:
 ```
 
 ### Error Monitoring (2)
-`list_errors`, `get_error`
+- `list_errors` — page through monitored errors
+- `get_error` — fetch a single error event
 
-### Deployments & Repos (5)
-`add_deployment`, `remove_deployment`, `list_repo_mappings`, `add_repo_mapping`, `remove_repo_mapping`
+### Deployments & Repos (6)
+- `add_deployment` (alias `register_deployment`) — register a deployment URL
+- `remove_deployment` (alias `delete_deployment`) — deregister a deployment
+- `list_repo_mappings` — page through orchestrator ↔ repo mappings
+- `add_repo_mapping` (alias `register_repo_mapping`) — register a repo mapping
+- `remove_repo_mapping` (alias `delete_repo_mapping`) — deregister a repo mapping
+- `get_repo_mapping` — fetch a single repo mapping
 
 #### `list_repo_mappings` — args schema + defaults (PR-C)
 
@@ -358,7 +524,11 @@ list_repo_mappings(limit?, cursor?, fields?)
 Returns `{ items: RepoMapping[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
 
 ### Business Units (5)
-`create_bu`, `list_bus`, `get_bu`, `update_bu`, `delete_bu`
+- `create_bu` — create a business unit
+- `list_bus` — page through business units; filter by `orchestratorId` / `status`
+- `get_bu` — fetch a single BU by id
+- `update_bu` — patch BU fields
+- `delete_bu` — destructive delete (master-gated)
 
 #### `list_bus` — args schema + defaults (PR-A)
 
@@ -377,7 +547,12 @@ list_bus(orchestratorId?, status?, limit?, cursor?, fields?)
 Returns `{ items: BusinessUnit[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
 
 ### Components (6)
-`register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword` (alias `search_components`)
+- `register_component` — register an agent / skill / hook / plugin
+- `list_components` — page through components; filter by `type` / `team`
+- `get_component` — fetch a single component
+- `update_component` — patch component fields
+- `delete_component` — destructive delete (master-gated)
+- `search_components_by_keyword` (alias `search_components`) — keyword search
 
 #### `list_components` — args schema + defaults (PR-B)
 
@@ -395,17 +570,37 @@ list_components(type?, team?, limit?, cursor?, fields?)
 
 Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
 
-### Mandates (6)
-`create_mandate`, `list_mandates`, `accept_mandate`, `update_mandate`, `validate_mandate_spending`, `settle_mandate`
+### Mandates (7)
+- `create_mandate` — create a delegated-spend mandate
+- `list_mandates` — page through mandates
+- `get_mandate` — fetch a single mandate
+- `accept_mandate` — counterparty acceptance
+- `update_mandate` — patch mandate fields
+- `validate_mandate_spending` (alias `check_mandate_spending`) — verify spend is within cap
+- `settle_mandate` — close a mandate with settlement note
 
 ### Recurring Tasks (6)
-`create_recurring_task`, `list_recurring_tasks`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
+- `create_recurring_task` — create a recurring task spec
+- `list_recurring_tasks` — page through recurring tasks
+- `get_recurring_task` — fetch a single recurring task
+- `pause_recurring_task` — pause without deletion
+- `resume_recurring_task` — resume a paused recurring task
+- `update_recurring_task` — patch fields
+- `delete_recurring_task` — destructive delete
+
+### OKF Bundles (3)
+- `validate_okf_bundle` — read-only bundle validation (RFC §3.5)
+- `import_okf_bundle` — dry-run / merge / replace import with idempotency key
+- `export_okf_bundle` — export a namespace bundle (multi-tenant; fail-closed identity guard)
+
+### Identity (1)
+- `whoami` — returns `suggested_orchestrator_id`, `scope_profile`, `namespace_read_prefixes` for skill auto-resolution
 
 ### Session (1)
-`set_summary`
+- `set_summary` (alias `update_summary`) — write the session summary
 
 ### Observability (1)
-`improvisation_digest`
+- `improvisation_digest` — weekly advisory scan for fleet-state claims missing VP-Sources footers
 
 #### `improvisation_digest` — weekly advisory digest (PR-I)
 
