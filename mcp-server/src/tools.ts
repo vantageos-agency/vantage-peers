@@ -25,6 +25,7 @@ import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
+import { registerKbIngestTools } from "./tools/kbIngest.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
@@ -8994,6 +8995,13 @@ export function registerTools(
 	// imports memories+briefings+tasks into target namespace with dedup-by-content.
 	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17fja9v7pgnf25yvzkwrj5ch5891bb3.
 	registerImportOkfBundle(server, convex);
+
+	// ── store_document_chunked + soft_delete_document (B5 — KB ingest) ─────────
+	// Thin proxies to convex actions `kb:storeDocumentChunked` and
+	// `kb:softDeleteDocument`. Ingest pipeline: upload binary → text extract →
+	// chunk → store at namespace team/<orgId>/<docId>. Requires Clerk JWT org_id.
+	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17bdmhr2hffhz2t96p65j70nh891wcp.
+	registerKbIngestTools(server, convex, oauthCtx);
 
 	// ── improvisation_digest (PR-I — Bloc A T-GREEN) ──────────────────────────
 	// Advisory scan of VP tasks+messages+memories for fleet/state claims without

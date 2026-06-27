@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **B5 KB ingest MCP tools** — `store_document_chunked` and `soft_delete_document` registered via `mcp-server/src/tools/kbIngest.ts`. `store_document_chunked` accepts `storageId` + `mimeType` + `filename` (+ optional `docId`) and proxies to `kb:storeDocumentChunked`; returns `{ docId, chunkCount, storageId }`. `soft_delete_document` accepts `docId` and proxies to `kb:softDeleteDocument`; returns `{ docId, markedCount }`. Both tools require Clerk JWT with `org_id` — no anonymous access. Exported: `STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION`, `storeDocumentChunkedArgsSchema`, `SOFT_DELETE_DOCUMENT_TOOL_DESCRIPTION`, `softDeleteDocumentArgsSchema`. Mission `k5779qbxhwrfjmj02t31yvehns8911jp`, task `k17bdmhr2hffhz2t96p65j70nh891wcp`.
+
 ## [Unreleased] — B4 RAG namespace team/<orgId> tenant enforcement
 
 ### Added
