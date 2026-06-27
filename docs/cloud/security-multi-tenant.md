@@ -159,6 +159,20 @@ function canWriteNamespace(scope: OAuthContext, namespace: string): boolean {
 
 Correspondance exacte ou hiérarchique : `project/iris-rh/sub` passe si le préfixe `project/iris-rh` est configuré.
 
+### §4.3.1 Built-in scope profiles — `team-member` (B4, 2026-06-20)
+
+**EN — `team-member` is the built-in scope profile issued to Clerk JWT callers that carry an `org_id` claim.**
+
+| Field | Value |
+|---|---|
+| `scopeProfile` | `"team-member"` |
+| `namespaceReadPrefixes` | `["team/<orgId>"]` |
+| `namespaceWritePrefixes` | `["team/<orgId>"]` |
+| `fromAllowList` | `[]` (no identity filter — team members write under their own userId) |
+| `isMaster` | `false` |
+
+Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `CLERK_DOMAIN/.well-known/jwks.json` (10-min in-process cache) and populates the above context. The Convex layer enforces the same boundary via `memoriesScoped.ts` (`assertNamespaceAllowed`). Cross-tenant reads and writes emit `AUTH_NAMESPACE_DENIED`. Unregistered or inactive orgs are also fail-closed with `AUTH_NAMESPACE_DENIED`.
+
 ---
 
 ### §4.4 Anti-patterns — REGRESSIONS TO AVOID
