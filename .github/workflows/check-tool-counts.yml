@@ -1,0 +1,26 @@
+name: Check tool counts
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  check-tool-counts:
+    name: scripts/check-tool-counts.mjs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Assert tool-count consistency
+        # Day-101 root-fix for fix-pattern m974527p6jbbb5kzj3jt2z636n89fddv.
+        # Asserts:
+        #  - mcp-server/README.md category integers match the bullet/inline
+        #    inventories under each `### Domain (N)` heading.
+        # Stdlib-only Node script — no `npm install` step required.
+        run: node scripts/check-tool-counts.mjs
