@@ -2,9 +2,9 @@ name: Check tool counts
 
 on:
   push:
-    branches:
-      - main
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check-tool-counts:
