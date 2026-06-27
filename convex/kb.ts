@@ -52,35 +52,44 @@ const CHUNK_TARGET_CHARS = 2000;
 const CHUNK_OVERLAP_CHARS = 50;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auth helper — extract orgId from Clerk JWT (strict, Node runtime)
-// Returns orgId string or throws AUTH_NO_ORG_ID.
-// No-identity (MCP/CLI) callers ARE rejected — this is a team-scoped action.
+// Auth: orgId + namespace are passed as explicit args by the MCP layer.
+//
+// B4 #915 pattern (auth.ts layer 2.5): the bearer middleware resolves the
+// Clerk JWT and mints oauthCtx.namespaceWritePrefixes = ["team/<orgId>"].
+// The MCP tool handler (kbIngest.ts) extracts orgId from that prefix and
+// passes it here as explicit args — NO ctx.auth call inside the action.
+//
+// Why: ConvexHttpClient (server-http.ts:1437) never calls setAuth, so
+// ctx.auth.getUserIdentity() is always null over HTTP.  Using ctx.auth here
+// produces a green-in-test / dead-in-prod bug (convex-test injects identity
+// via withIdentity, the real transport does not).
+//
+// Defense-in-depth: both actions still validate the incoming args and throw
+// AUTH_NO_ORG_ID on empty/malformed values — the MCP layer already gates,
+// but we do not trust the client.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function resolveOrgIdStrict(ctx: {
-	auth: { getUserIdentity: () => Promise<Record<string, unknown> | null> };
-}): Promise<string> {
-	const identity = await ctx.auth.getUserIdentity();
-
-	if (!identity) {
+/** Validate explicit orgId + namespace args (defense-in-depth). */
+function assertOrgArgs(orgId: string, namespace: string): void {
+	if (!orgId || typeof orgId !== "string" || orgId.trim().length === 0) {
 		throw new Error(
-			"AUTH_NO_ORG_ID: unauthenticated caller — store_document_chunked requires Clerk JWT with org_id claim",
+			"AUTH_NO_ORG_ID: orgId arg is empty — store_document_chunked requires a team org.",
 		);
 	}
-
-	const orgId =
-		(identity.organizationId as string | undefined) ??
-		(identity.organizationSlug as string | undefined) ??
-		null;
-
-	if (!orgId) {
+	const expectedPrefix = `team/${orgId}/`;
+	if (!namespace.startsWith("team/")) {
 		throw new Error(
-			"AUTH_NO_ORG_ID: Clerk JWT has no org_id claim — store_document_chunked requires a team org. " +
-				"No-org bearers cannot write to team/* namespace.",
+			"AUTH_NO_ORG_ID: namespace does not start with team/ — possible cross-tenant injection attempt.",
 		);
 	}
-
-	return orgId;
+	// namespace must be team/<orgId>/<docId> — the orgId segment must match
+	const parts = namespace.split("/");
+	if (parts.length < 3 || parts[1] !== orgId) {
+		throw new Error(
+			`AUTH_NO_ORG_ID: namespace '${namespace}' does not match orgId '${orgId}'.`,
+		);
+	}
+	void expectedPrefix; // consumed above
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +187,8 @@ export const storeDocumentChunked = action({
 		mimeType: v.string(),
 		filename: v.string(),
 		docId: v.optional(v.string()),
+		orgId: v.string(),
+		namespace: v.string(),
 	},
 	returns: v.object({
 		docId: v.string(),
@@ -185,12 +196,16 @@ export const storeDocumentChunked = action({
 		storageId: v.string(),
 	}),
 	handler: async (ctx, args) => {
-		// 1. Auth — strict org check, no master fallback
-		const orgId = await resolveOrgIdStrict(ctx);
+		// 1. Auth — orgId + namespace come from the MCP layer (oauthCtx→args pattern,
+		//    B4 #915). ctx.auth is always null over HTTP (ConvexHttpClient has no
+		//    setAuth call — server-http.ts:1437). Defense-in-depth: validate args.
+		//    namespace here is the team-prefix: "team/<orgId>" (without docId).
+		//    The full doc namespace is assembled below as team/<orgId>/<docId>.
+		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 
-		// 2. Resolve docId
+		// 2. Resolve docId and full namespace
 		const docId = args.docId ?? randomUUID();
-		const namespace = `team/${orgId}/${docId}`;
+		const namespace = `${args.namespace}/${docId}`;
 
 		// 3. Fetch binary from Convex storage
 		const blob = await ctx.storage.get(args.storageId);
@@ -258,14 +273,18 @@ export const storeDocumentChunked = action({
 export const softDeleteDocument = action({
 	args: {
 		docId: v.string(),
+		orgId: v.string(),
+		namespace: v.string(),
 	},
 	returns: v.object({
 		docId: v.string(),
 		markedCount: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		const orgId = await resolveOrgIdStrict(ctx);
-		const namespace = `team/${orgId}/${args.docId}`;
+		// Auth — same oauthCtx→args pattern as storeDocumentChunked (B4 #915).
+		// namespace is "team/<orgId>" prefix; full doc namespace is team/<orgId>/<docId>.
+		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
+		const namespace = `${args.namespace}/${args.docId}`;
 
 		const markedCount = (await ctx.runMutation(
 			internal.kbMutations.markDocSoftDeleted,

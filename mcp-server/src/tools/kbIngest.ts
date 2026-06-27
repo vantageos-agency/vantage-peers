@@ -35,6 +35,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import type { OAuthContext } from "../auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Return type shapes (mirror Convex action returns validators)
@@ -116,11 +117,44 @@ export const softDeleteDocumentArgsSchema = z.object({
 
 /**
  * Register store_document_chunked + soft_delete_document MCP tools.
+ *
+ * oauthCtx must be provided for tenant-scoped callers.  The Clerk JWT layer 2.5
+ * (auth.ts:443-444) mints oauthCtx.namespaceWritePrefixes = ["team/<orgId>"].
+ * We extract orgId + namespace from that prefix and pass them as explicit args
+ * to the Convex action — NO ctx.auth call inside the action.
+ *
+ * Why: ConvexHttpClient (server-http.ts:1437) is constructed without setAuth,
+ * so ctx.auth.getUserIdentity() is always null over HTTP.  The previous
+ * resolveOrgIdStrict pattern was green-in-test (convex-test withIdentity) but
+ * dead-in-production.  This aligns with the B4 #915 oauthCtx→args pattern.
  */
 export function registerKbIngestTools(
 	server: McpServer,
 	convex: ConvexHttpClient,
+	oauthCtx: OAuthContext | undefined,
 ): void {
+	// ── Resolve orgId + namespace prefix from oauthCtx (B4 #915 pattern) ───────
+	// Validate here, once, before registering handlers.  Both tools share the
+	// same org scope for the lifetime of this request.
+	const resolveOrgContext = (): { orgId: string; namespacePrefix: string } => {
+		if (!oauthCtx || oauthCtx.isMaster) {
+			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
+			throw new McpError(
+				ErrorCode.InvalidRequest,
+				"AUTH_NO_ORG_ID: store_document_chunked requires a Clerk JWT with org_id claim (team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.",
+			);
+		}
+		const prefix = oauthCtx.namespaceWritePrefixes[0];
+		if (!prefix || !/^team\/[^/]+$/.test(prefix)) {
+			throw new McpError(
+				ErrorCode.InvalidRequest,
+				`AUTH_NO_ORG_ID: oauthCtx.namespaceWritePrefixes[0] = '${prefix ?? ""}' does not match ^team\\/[^/]+$ — cannot derive orgId for KB ingest.`,
+			);
+		}
+		const orgId = prefix.slice("team/".length);
+		return { orgId, namespacePrefix: prefix };
+	};
+
 	// ── store_document_chunked ──────────────────────────────────────────────────
 	server.tool(
 		"store_document_chunked",
@@ -134,6 +168,7 @@ export function registerKbIngestTools(
 		},
 		async ({ storageId, mimeType, filename, docId }) => {
 			try {
+				const { orgId, namespacePrefix } = resolveOrgContext();
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
 					"kb:storeDocumentChunked" as unknown as ActionRef,
@@ -142,6 +177,8 @@ export function registerKbIngestTools(
 						mimeType,
 						filename,
 						docId: docId ?? undefined,
+						orgId,
+						namespace: namespacePrefix,
 					},
 				)) as StoreDocumentChunkedResult;
 
@@ -180,10 +217,11 @@ export function registerKbIngestTools(
 		},
 		async ({ docId }) => {
 			try {
+				const { orgId, namespacePrefix } = resolveOrgContext();
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
 					"kb:softDeleteDocument" as unknown as ActionRef,
-					{ docId },
+					{ docId, orgId, namespace: namespacePrefix },
 				)) as SoftDeleteDocumentResult;
 
 				return {

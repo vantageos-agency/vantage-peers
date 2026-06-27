@@ -9001,7 +9001,7 @@ export function registerTools(
 	// `kb:softDeleteDocument`. Ingest pipeline: upload binary → text extract →
 	// chunk → store at namespace team/<orgId>/<docId>. Requires Clerk JWT org_id.
 	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17bdmhr2hffhz2t96p65j70nh891wcp.
-	registerKbIngestTools(server, convex);
+	registerKbIngestTools(server, convex, oauthCtx);
 
 	// ── improvisation_digest (PR-I — Bloc A T-GREEN) ──────────────────────────
 	// Advisory scan of VP tasks+messages+memories for fleet/state claims without

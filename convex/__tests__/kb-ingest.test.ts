@@ -121,6 +121,8 @@ describe("B5 KB ingest — PDF happy path", () => {
 			storageId,
 			mimeType: "application/pdf",
 			filename: "sample.pdf",
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 
 		expect(result).toHaveProperty("docId");
@@ -166,6 +168,8 @@ describe("B5 KB ingest — Markdown happy path", () => {
 			storageId,
 			mimeType: "text/markdown",
 			filename: "doc.md",
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 
 		expect(result.chunkCount).toBeGreaterThan(0);
@@ -215,6 +219,8 @@ describe("B5 KB ingest — TXT happy path", () => {
 			storageId,
 			mimeType: "text/plain",
 			filename: "doc.txt",
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 
 		expect(result.chunkCount).toBeGreaterThan(0);
@@ -253,6 +259,8 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			storageId,
 			mimeType: "text/markdown",
 			filename: "secret.md",
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 		expect(result.chunkCount).toBeGreaterThan(0);
 
@@ -281,9 +289,14 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			storageId,
 			mimeType: "text/markdown",
 			filename: "private.md",
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 
-		// team-b direct action call targeting team-a's org namespace is denied
+		// team-b direct action call: must supply its OWN orgId + namespace.
+		// Even if team-b supplies the same docId, the namespace resolves to
+		// team/team-b/<docId> — not team-a's. Cross-tenant isolation is enforced
+		// by explicit args from the MCP layer (oauthCtx.namespaceWritePrefixes).
 		const mdB = textToArrayBuffer("Team B doc.\n");
 		const storageIdB = await t.run(async (ctx) => {
 			return await ctx.storage.store(
@@ -291,20 +304,17 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			);
 		});
 		const tB = withTeamIdentity(t, "team-b");
-		// team-b trying to ingest into team-a's namespace via explicit docId
 		await expect(
 			tB.action(KB_ACTION_REF, {
 				storageId: storageIdB,
 				mimeType: "text/markdown",
 				filename: "inject.md",
-				// team-b cannot force writing into team-a's docId
 				docId: result.docId,
-				// The action resolves orgId from JWT, so even if docId is supplied,
-				// the namespace will be team/team-b/<docId> — not team-a's namespace.
-				// Cross-tenant isolation is enforced by JWT orgId resolution, not docId.
+				orgId: "team-b",
+				namespace: "team/team-b",
 			}),
 		).resolves.toMatchObject({
-			// Should succeed but go into team-b's OWN namespace, not team-a's
+			// Succeeds into team-b's OWN namespace, not team-a's
 			chunkCount: expect.any(Number),
 		});
 
@@ -337,6 +347,8 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 			storageId,
 			mimeType: "text/plain",
 			filename: "to-delete.txt",
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 
 		// Verify chunks exist before delete
@@ -346,6 +358,8 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 		// Soft-delete the document
 		await tA.action(KB_SOFT_DELETE_REF, {
 			docId: result.docId,
+			orgId: "team-a",
+			namespace: "team/team-a",
 		});
 
 		// After soft-delete: isLatest=false, active recall returns 0
@@ -368,19 +382,18 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TEST 6 — No-org bearer denied: no master-fallback into team/* namespace
+// TEST 6 — Defense-in-depth: action rejects empty orgId arg
+//
+// In the B4 #915 oauthCtx→args pattern, the MCP layer (kbIngest.ts) gates
+// on oauthCtx.namespaceWritePrefixes before dispatching to the Convex action.
+// The action itself validates the explicit args as defense-in-depth — it does
+// NOT call ctx.auth (which is always null over HTTP, server-http.ts:1437).
+// This test exercises the action-level guard directly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("B5 KB ingest — no-org bearer denied", () => {
-	test("bearer without org_id → store_document_chunked rejects with explicit error", async () => {
+describe("B5 KB ingest — defense-in-depth: empty orgId rejected by action", () => {
+	test("store_document_chunked with empty orgId → throws AUTH_NO_ORG_ID (action-level guard)", async () => {
 		const t = createT();
-
-		// Clerk user with no org attached — no organizationId / organizationSlug
-		const tNoOrg = t.withIdentity({
-			subject: "user-no-org",
-			tokenIdentifier: "test|user-no-org",
-			// Explicitly no organizationId
-		} as Parameters<typeof t.withIdentity>[0]);
 
 		const mdBytes = textToArrayBuffer("Some content.\n");
 		const storageId = await t.run(async (ctx) => {
@@ -389,13 +402,18 @@ describe("B5 KB ingest — no-org bearer denied", () => {
 			);
 		});
 
+		// Call the action directly without any identity — simulates the
+		// ConvexHttpClient path (no setAuth, ctx.auth=null).  The guard fires on
+		// the empty orgId arg, not on ctx.auth.
 		await expect(
-			tNoOrg.action(KB_ACTION_REF, {
+			t.action(KB_ACTION_REF, {
 				storageId,
 				mimeType: "text/markdown",
 				filename: "test.md",
+				orgId: "",
+				namespace: "team/",
 			}),
-		).rejects.toThrow(/NO_ORG_ID|AUTH_NO_ORG|no org/i);
+		).rejects.toThrow(/AUTH_NO_ORG_ID/);
 	});
 });
 
@@ -427,6 +445,8 @@ describe("B5 KB ingest — chunking determinism", () => {
 				storageId,
 				mimeType: "text/plain",
 				filename: `doc-${suffix}.txt`,
+				orgId: "team-a",
+				namespace: "team/team-a",
 			});
 		}
 
@@ -475,6 +495,8 @@ describe("B5 KB ingest — idempotent re-ingest", () => {
 				mimeType: "text/plain",
 				filename: "test-idem.txt",
 				docId,
+				orgId: "team-a",
+				namespace: "team/team-a",
 			});
 		}
 
