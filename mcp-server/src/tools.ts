@@ -2158,20 +2158,30 @@ export function registerTools(
 					queryArgs,
 				);
 
-				const rawList = Array.isArray(memories)
-					? memories
-					: Array.isArray((memories as any)?.page)
-						? (memories as any).page
-						: [];
+				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
+				// Pre-fix bug: handler read memories?.page (undefined) → rawList = [] always.
+				const rawList = Array.isArray((memories as any)?.value)
+					? (memories as any).value
+					: [];
 
 				const filteredList = scopeFilterList(oauthCtx, rawList);
-				const filteredEnvelope = Array.isArray(memories)
-					? filteredList
-					: { ...(memories as any), page: filteredList };
+
+				// Encode continueCursor → opaque nextCursor token for the MCP caller.
+				const backendNextCursor = (memories as any)?.continueCursor ?? null;
+				const isDone = (memories as any)?.isDone ?? true;
+				const nextCursor =
+					!isDone && backendNextCursor !== null
+						? encodeCursor({ backendCursor: backendNextCursor })
+						: undefined;
+
+				const envelope = {
+					items: filteredList,
+					...(nextCursor !== undefined ? { nextCursor } : {}),
+				};
 
 				const text = capListResponseBytes(
-					filteredEnvelope,
-					JSON.stringify(filteredEnvelope, null, 2),
+					filteredList,
+					JSON.stringify(envelope, null, 2),
 					"list_episodes",
 				);
 
@@ -2505,25 +2515,33 @@ export function registerTools(
 					queryArgs,
 				);
 
-				const rawList = Array.isArray(memories)
-					? memories
-					: Array.isArray((memories as any)?.page)
-						? (memories as any).page
-						: [];
+				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
+				// Pre-fix bug: handler read memories?.page (undefined) → rawList = [] always.
+				const rawList = Array.isArray((memories as any)?.value)
+					? (memories as any).value
+					: [];
 
 				// S3.1.A Wave A — row-level scope filter on the post-query list.
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only rows whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const filteredList = scopeFilterList(oauthCtx, rawList);
-				// Preserve the original response shape (array vs {page} envelope)
-				// so downstream consumers don't need to special-case Wave A.
-				const filteredEnvelope = Array.isArray(memories)
-					? filteredList
-					: { ...(memories as any), page: filteredList };
+
+				// Encode continueCursor → opaque nextCursor token for the MCP caller.
+				const backendNextCursor = (memories as any)?.continueCursor ?? null;
+				const isDone = (memories as any)?.isDone ?? true;
+				const nextCursor =
+					!isDone && backendNextCursor !== null
+						? encodeCursor({ backendCursor: backendNextCursor })
+						: undefined;
+
+				const filteredEnvelope = {
+					items: filteredList,
+					...(nextCursor !== undefined ? { nextCursor } : {}),
+				};
 
 				const baseText = capListResponseBytes(
-					filteredEnvelope,
+					filteredList,
 					JSON.stringify(filteredEnvelope, null, 2),
 					"list_memories",
 				);
