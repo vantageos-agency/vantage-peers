@@ -91,7 +91,7 @@ The server also reads `CONVEX_URL` from `.env.local` in the parent directory if 
 
 ## Tools (97)
 
-### Memory (7)
+### Memory (6)
 `store_memory`, `search_memories_by_semantic` (alias `recall`), `list_memories`, `soft_delete_memory`, `get_memory`, `store_episode`
 
 ### Profiles (3)
