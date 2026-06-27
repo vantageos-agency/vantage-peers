@@ -318,7 +318,7 @@ Returns `{ count, sampleIds, bulkRunId, executedAt? }`:
 - `update_mission_template` — patch a mission template
 - `instantiate_template_into_mission` — bootstrap a mission from a template
 
-### Messages (6)
+### Messages (8)
 - `send_message` — send to `channel=` (NEVER `recipient=`); see schema via `ToolSearch`
 - `check_messages` — pull inbox for a recipient
 - `mark_as_read` — ack messages by `receiptIds`
@@ -334,7 +334,7 @@ Returns `{ count, sampleIds, bulkRunId, executedAt? }`:
 - `list_diaries` — page through diary entries
 - `update_summary` (alias of `set_summary`) — update session summary
 
-### Briefing Notes (4)
+### Briefing Notes (5)
 - `create_briefing_note` — write a structured briefing note
 - `update_briefing_note` — patch a briefing note
 - `list_briefing_notes` — page through briefing notes; VP-Sources doctrine applies
@@ -579,7 +579,7 @@ Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `nu
 - `validate_mandate_spending` (alias `check_mandate_spending`) — verify spend is within cap
 - `settle_mandate` — close a mandate with settlement note
 
-### Recurring Tasks (6)
+### Recurring Tasks (7)
 - `create_recurring_task` — create a recurring task spec
 - `list_recurring_tasks` — page through recurring tasks
 - `get_recurring_task` — fetch a single recurring task
