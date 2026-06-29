@@ -207,7 +207,16 @@ export const storeDocumentChunked = action({
 		const docId = args.docId ?? randomUUID();
 		const namespace = `${args.namespace}/${docId}`;
 
-		// 3. Fetch binary from Convex storage
+		// 3. TOFU storageId org-binding (M1 defense-in-depth, PR #992 follow-up).
+		//    Binds this storageId to args.orgId on first ingest; rejects cross-tenant
+		//    attempts on subsequent calls with AUTH_STORAGE_NOT_OWNED.
+		//    Must execute BEFORE ctx.storage.get() to close the attack vector.
+		await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
+			storageId: args.storageId,
+			orgId: args.orgId,
+		});
+
+		// 4. Fetch binary from Convex storage
 		const blob = await ctx.storage.get(args.storageId);
 		if (!blob) {
 			throw new Error(
@@ -217,10 +226,10 @@ export const storeDocumentChunked = action({
 		const arrayBuffer = await blob.arrayBuffer();
 		const buffer = Buffer.from(arrayBuffer);
 
-		// 4. Text extraction (Node runtime — pdf-parse for PDF, UTF-8 for text)
+		// 5. Text extraction (Node runtime — pdf-parse for PDF, UTF-8 for text)
 		const rawText = await extractText(args.mimeType, buffer);
 
-		// 5. Chunk
+		// 6. Chunk
 		const chunks = chunkText(rawText);
 		// Guarantee at least 1 chunk (stub/empty-doc case)
 		const effectiveChunks =
@@ -228,7 +237,7 @@ export const storeDocumentChunked = action({
 				? chunks
 				: [rawText.substring(0, CHUNK_TARGET_CHARS) || "[empty document]"];
 
-		// 6. Idempotent re-ingest: supersede prior chunks isLatest=false
+		// 7. Idempotent re-ingest: supersede prior chunks isLatest=false
 		const priorChunkIds = (await ctx.runQuery(
 			internal.kbMutations.listChunkIdsForDoc,
 			{ namespace },
@@ -240,7 +249,7 @@ export const storeDocumentChunked = action({
 			});
 		}
 
-		// 7. Insert new chunks as memories (type=reference, isLatest=true)
+		// 8. Insert new chunks as memories (type=reference, isLatest=true)
 		for (let i = 0; i < effectiveChunks.length; i++) {
 			await ctx.runMutation(internal.kbMutations.insertChunk, {
 				namespace,

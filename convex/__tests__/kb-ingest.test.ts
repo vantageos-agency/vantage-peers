@@ -470,6 +470,82 @@ describe("B5 KB ingest — chunking determinism", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEST 9 — TOFU binding: first ingest creates kbUploads row
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
+	test("TOFU binding created on first ingest — kbUploads row exists after storeDocumentChunked", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-A");
+		const tA = withTeamIdentity(t, "org-A");
+
+		const mdBytes = textToArrayBuffer("# TOFU test\n\nFirst ingest for org-A.\n");
+		const storageId = await t.run(async (ctx) => {
+			return await ctx.storage.store(
+				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
+			);
+		});
+
+		const result = await tA.action(KB_ACTION_REF, {
+			storageId,
+			mimeType: "text/markdown",
+			filename: "tofu.md",
+			orgId: "org-A",
+			namespace: "team/org-A",
+		});
+		expect(result.chunkCount).toBeGreaterThan(0);
+
+		// Verify the kbUploads row was created with the correct binding
+		const bindingRow = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("kbUploads")
+				.withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+				.unique();
+		});
+		expect(bindingRow).not.toBeNull();
+		if (bindingRow === null) throw new Error("bindingRow unexpectedly null");
+		expect(bindingRow.orgId).toBe("org-A");
+		expect(bindingRow.storageId).toBe(storageId);
+	});
+
+	test("cross-tenant second ingest rejects AUTH_STORAGE_NOT_OWNED", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-A");
+		await seedOrgMapping(t, "org-B");
+		const tA = withTeamIdentity(t, "org-A");
+		const tB = withTeamIdentity(t, "org-B");
+
+		const mdBytes = textToArrayBuffer("# Cross-tenant TOFU test\n\nOrg-A document.\n");
+		const storageId = await t.run(async (ctx) => {
+			return await ctx.storage.store(
+				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
+			);
+		});
+
+		// First call: org-A ingests successfully — TOFU binding created
+		const result = await tA.action(KB_ACTION_REF, {
+			storageId,
+			mimeType: "text/markdown",
+			filename: "secret.md",
+			orgId: "org-A",
+			namespace: "team/org-A",
+		});
+		expect(result.chunkCount).toBeGreaterThan(0);
+
+		// Second call: org-B attempts to ingest the SAME storageId — must be rejected
+		await expect(
+			tB.action(KB_ACTION_REF, {
+				storageId, // same storageId as org-A's
+				mimeType: "text/markdown",
+				filename: "inject.md",
+				orgId: "org-B",
+				namespace: "team/org-B",
+			}),
+		).rejects.toThrow(/AUTH_STORAGE_NOT_OWNED/);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TEST 8 — Idempotent re-ingest: second ingest supersedes first (isLatest flip)
 // ─────────────────────────────────────────────────────────────────────────────
 
