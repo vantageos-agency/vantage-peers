@@ -1,0 +1,101 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__vantage-peers__check_messages",
+      "mcp__vantage-peers__mark_as_read",
+      "mcp__vantage-peers__list_tasks",
+      "mcp__vantage-peers__start_task",
+      "mcp__vantage-peers__complete_task",
+      "mcp__vantage-peers__send_message",
+      "mcp__vantage-peers__set_summary",
+      "Skill(close-day)",
+      "Skill(close-day:*)",
+      "mcp__vantage-peers__write_diary",
+      "mcp__vantage-peers__create_task"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pr-docs-sync.py",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pi-authorization-before-pr-merge.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__create_mission",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-mission-preflight.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-vr-consult.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__list_tasks|mcp__vantage-peers__list_tasks_by_mission|mcp__vantage-peers__list_messages|mcp__vantage-peers__list_memories|mcp__vantage-peers__list_briefing_notes|mcp__vantage-peers__list_missions|mcp__vantage-peers__list_components|mcp__vantage-peers__list_diaries|mcp__vantage-peers__list_issues|mcp__vantage-peers__list_fix_patterns|mcp__vantage-peers__recall|mcp__vantage-peers__hybrid_search|mcp__vantage-peers__text_search|mcp__vantage-peers__search_components|mcp__vantage-peers__search_fix_patterns",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-plugin-skill-first.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-clerk-jwt-smoke-prod.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-rag-namespace-deny-test.py",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-mcp-tool-coverage-schema-mirror.py",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-no-buffer-in-v8-convex.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
