@@ -637,6 +637,23 @@ export default defineSchema({
 		.index("by_repo_date", ["repo", "date"])
 		.index("by_date", ["date"]),
 
+	// ── kbUploads ─────────────────────────────────────────────────────────────
+	// TOFU (trust-on-first-use) storage ownership binding table.
+	// Created by B5 M1 storageId org-binding defense-in-depth (mission k5779q).
+	//
+	// On first call to storeDocumentChunked for a given storageId, an entry is
+	// inserted binding that storageId to the calling org. Subsequent calls with
+	// the SAME storageId but a DIFFERENT orgId are rejected with
+	// AUTH_STORAGE_NOT_OWNED to close the cross-tenant attack vector identified
+	// by Eta iter-2 post-merge follow-up (PR #992, commit 16bb32d).
+	//
+	// Index: by_storageId — O(1) ownership lookup before ctx.storage.get().
+	kbUploads: defineTable({
+		storageId: v.id("_storage"),
+		orgId: v.string(),
+		createdAt: v.number(),
+	}).index("by_storageId", ["storageId"]),
+
 	// ── oauth_clients ─────────────────────────────────────────────────────────
 	// OAuth 2.0 Dynamic Client Registration (RFC 7591).
 	// One row per registered OAuth client (Claude.ai custom connector, Marie,

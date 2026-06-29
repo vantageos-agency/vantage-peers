@@ -1,5 +1,6 @@
 /**
  * convex/kbMutations.ts — B5 Knowledge Base ingest (V8 runtime).
+ * M1 addition: bindOrAssertStorageOwnership — TOFU org-binding guard (PR #992 follow-up).
  *
  * Runtime split (matches okfBundle.ts / okfBundleNode.ts pattern — see Eta
  * fix-pattern m9781h39qvcyy4hsphthz7eg5s88yc1f):
@@ -18,6 +19,54 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
+//
+// Called by kb:storeDocumentChunked BEFORE ctx.storage.get() to ensure a
+// storageId can only be ingested by the org that first used it.
+//
+// TOFU logic:
+//   No row exists → insert { storageId, orgId, createdAt } → ownership bound.
+//   Row exists + row.orgId === orgId → OK, return.
+//   Row exists + row.orgId !== orgId → throw AUTH_STORAGE_NOT_OWNED.
+//
+// V8 runtime — no 'use node' directive.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const bindOrAssertStorageOwnership = internalMutation({
+	args: {
+		storageId: v.id("_storage"),
+		orgId: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("kbUploads")
+			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
+			.unique();
+
+		if (existing === null) {
+			// First use — bind this storageId to the calling org (TOFU).
+			await ctx.db.insert("kbUploads", {
+				storageId: args.storageId,
+				orgId: args.orgId,
+				createdAt: Date.now(),
+			});
+			return null;
+		}
+
+		if (existing.orgId === args.orgId) {
+			// Same org — ownership confirmed.
+			return null;
+		}
+
+		// Different org — cross-tenant attempt: reject.
+		throw new Error(
+			"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+		);
+	},
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listChunkIdsForDoc — return active (isLatest=true) chunk IDs for a namespace
