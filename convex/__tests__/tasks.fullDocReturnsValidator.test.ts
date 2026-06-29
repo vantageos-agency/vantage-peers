@@ -245,3 +245,151 @@ describe("tasks.list — regression guard (summary projection unchanged)", () =>
 		}
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 116 investigation addendum (fleet blocker req 562c41d2 / task k177sjqk)
+//
+// Root-cause finding: the prod Server Errors for k176pkfx7r2y6nx5ms27dydwah89jeed
+// were ArgumentValidationError on .taskId (v.id("tasks") rejected the string)
+// — NOT a returns-validator drift as initially hypothesised.
+//
+// That ID does not pass v.id("tasks") because it belongs to a different table
+// or is a VantagePeers memory-system ID passed by mistake.
+//
+// T10 confirms ALL optional schema fields (missionId, assignedToInstance,
+// claimedByInstance, dependsOn, estimatedMinutes, actualMinutes, startedAt,
+// completedAt, dueDate, orgId) are covered by the returns-validator, so any
+// future schema drift will RED this test before reaching prod.
+//
+// T11 is the "full optional fields" sentinel: insert a task with every optional
+// field set, call get + getById, assert the document comes back intact.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift guard)", () => {
+
+	// ── T10: full optional fields — get ──────────────────────────────────────
+	test("T10: tasks.get returns complete doc when ALL optional fields are set", async () => {
+		const t = convexTest(schema, modules);
+		let taskId: string | undefined;
+
+		await t.run(async (ctx) => {
+			// Pre-seed a dependency task
+			const depId = await ctx.db.insert("tasks", {
+				title: "Dependency task",
+				assignedTo: "pi",
+				priority: "low" as const,
+				status: "done" as const,
+				createdBy: "pi",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+
+			// Seed a mission for missionId
+			const missionId = await ctx.db.insert("missions", {
+				name: "Test mission",
+				description: "Test",
+				project: "vantage-memory",
+				pilot: "sigma",
+				status: "execute" as const,
+				priority: "medium" as const,
+				agents: ["sigma"],
+				createdBy: "sigma",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+
+			const now = Date.now();
+			// Insert task with ALL optional fields populated
+			taskId = await ctx.db.insert("tasks", {
+				title: "Full optional fields task",
+				description: "Testing all optional fields",
+				project: "vantage-memory",
+				tags: ["regression", "day-116"],
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				status: "in_progress" as const,
+				completionNote: "partial note",
+				assignedToInstance: "sigma-vps",
+				claimedByInstance: "sigma-vps",
+				dependsOn: [depId as any],
+				missionId: missionId as any,
+				estimatedMinutes: 30,
+				actualMinutes: 15,
+				startedAt: now - 900_000,
+				completedAt: undefined,
+				dueDate: now + 86_400_000,
+				createdBy: "sigma",
+				createdAt: now,
+				updatedAt: now,
+				orgId: "iris-rh",
+			});
+		});
+
+		// tasks.get must return the full doc without returns-validator 500
+		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+
+		expect(result).not.toBeNull();
+		expect(result?.title).toBe("Full optional fields task");
+		expect(result?.description).toBe("Testing all optional fields");
+		expect(result?.project).toBe("vantage-memory");
+		expect(result?.tags).toEqual(["regression", "day-116"]);
+		expect(result?.assignedTo).toBe("sigma");
+		expect(result?.priority).toBe("urgent");
+		expect(result?.status).toBe("in_progress");
+		expect(result?.completionNote).toBe("partial note");
+		expect(result?.assignedToInstance).toBe("sigma-vps");
+		expect(result?.claimedByInstance).toBe("sigma-vps");
+		expect(result?.dependsOn).toHaveLength(1);
+		expect(result?.estimatedMinutes).toBe(30);
+		expect(result?.actualMinutes).toBe(15);
+		expect(typeof result?.startedAt).toBe("number");
+		expect(typeof result?.dueDate).toBe("number");
+		expect((result as any).orgId).toBe("iris-rh");
+	});
+
+	// ── T11: full optional fields — getById ──────────────────────────────────
+	test("T11: tasks.getById returns complete doc when ALL optional fields are set", async () => {
+		const t = convexTest(schema, modules);
+		let taskId: string | undefined;
+
+		await t.run(async (ctx) => {
+			const now = Date.now();
+			taskId = await ctx.db.insert("tasks", {
+				title: "Full optional fields via getById",
+				assignedTo: "eta",
+				priority: "high" as const,
+				status: "review" as const,
+				project: "vantage-peers",
+				tags: ["sentinel"],
+				completionNote: "review note",
+				assignedToInstance: "eta-vps",
+				claimedByInstance: "eta-vps",
+				estimatedMinutes: 60,
+				actualMinutes: 45,
+				startedAt: now - 2_700_000,
+				completedAt: now - 100,
+				dueDate: now + 3_600_000,
+				createdBy: "eta",
+				createdAt: now,
+				updatedAt: now,
+				orgId: "novalayer",
+			});
+		});
+
+		// tasks.getById must return the full doc including all optional fields
+		const result = await t.query(api.tasks.getById, { taskId: taskId as any });
+
+		expect(result).not.toBeNull();
+		expect(result?.title).toBe("Full optional fields via getById");
+		expect(result?.project).toBe("vantage-peers");
+		expect(result?.completionNote).toBe("review note");
+		expect(result?.assignedToInstance).toBe("eta-vps");
+		expect(result?.claimedByInstance).toBe("eta-vps");
+		expect(result?.estimatedMinutes).toBe(60);
+		expect(result?.actualMinutes).toBe(45);
+		expect(typeof result?.startedAt).toBe("number");
+		expect(typeof result?.completedAt).toBe("number");
+		expect(typeof result?.dueDate).toBe("number");
+		expect((result as any).orgId).toBe("novalayer");
+	});
+});
