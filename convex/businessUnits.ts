@@ -192,13 +192,13 @@ interface CursorPayload {
 }
 
 function encodeCursor(time: number, id: string): string {
-	return Buffer.from(JSON.stringify({ time, id })).toString("base64");
+	return btoa(JSON.stringify({ time, id }));
 }
 
 function decodeCursor(cursor: string | undefined): CursorPayload | undefined {
 	if (!cursor) return undefined;
 	try {
-		const raw = Buffer.from(cursor, "base64").toString("utf8");
+		const raw = atob(cursor);
 		const parsed = JSON.parse(raw) as unknown;
 		if (
 			typeof parsed === "object" &&
