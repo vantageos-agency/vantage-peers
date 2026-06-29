@@ -45,3 +45,33 @@ jobs:
             exit 1
           fi
           echo "PASS: mcp-server/server.ts is clean"
+
+  no-buffer-in-v8-convex:
+    name: "No Buffer global in non-use-node convex/*.ts (Day-101 root-fix k1706c5jf)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Fail if Buffer.(from|concat|byteLength|alloc) appears in V8-runtime convex/*.ts"
+        run: |
+          set -e
+          VIOLATIONS=""
+          for file in $(find convex -maxdepth 2 -name '*.ts' -not -path '*/_generated/*' -not -path '*/__tests__/*' 2>/dev/null); do
+            if head -10 "$file" | grep -qE '^\s*"use node"\s*;?'; then
+              continue
+            fi
+            # Match Buffer.* but skip lines that are pure comments (// or * leading) and lines with explicit override marker.
+            MATCHES=$(grep -nE '\bBuffer\.(from|concat|byteLength|alloc)\b' "$file" | grep -vE '^\s*[0-9]+:\s*(//|\*)' | grep -v 'allow-buffer-in-v8' || true)
+            if [ -n "$MATCHES" ]; then
+              VIOLATIONS="${VIOLATIONS}\n${file}:\n${MATCHES}"
+            fi
+          done
+          if [ -n "$VIOLATIONS" ]; then
+            echo "ERROR: Buffer used in V8-runtime convex/*.ts files (no 'use node' directive)"
+            echo "Buffer is a Node.js global — absent from Convex V8 isolate. Use btoa/atob or TextEncoder/TextDecoder."
+            printf "%b\n" "$VIOLATIONS"
+            echo "Reference: PR #1026 (Buffer→btoa/atob V8 cursor codec, 18d /dashboard outage)"
+            echo "Override (rare): add '// allow-buffer-in-v8: <reason>' inline on the offending line"
+            exit 1
+          fi
+          echo "PASS: no Buffer in V8-runtime convex/*.ts (Day-101 root-fix gate green)"
