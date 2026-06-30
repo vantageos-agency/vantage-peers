@@ -31,6 +31,7 @@ import {
 	ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -41,7 +42,6 @@ import {
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
-import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -1251,7 +1251,9 @@ admin.post("/oauth/access-tokens", async (c) => {
 			? body.clientId
 			: `admin-mint:${crypto.randomUUID()}`;
 	const scopes = Array.isArray(body.scopes)
-		? (body.scopes as unknown[]).filter((x) => typeof x === "string") as string[]
+		? ((body.scopes as unknown[]).filter(
+				(x) => typeof x === "string",
+			) as string[])
 		: ["mcp:full"];
 
 	const arrayOrProfile = (
@@ -1413,10 +1415,7 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 		if (/reason must be at least/i.test(message)) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}
-		console.error(
-			"[admin] patchClientScopeAndRefreshTokens failed:",
-			message,
-		);
+		console.error("[admin] patchClientScopeAndRefreshTokens failed:", message);
 		return c.json({ error: "server_error", detail: message }, 500);
 	}
 });
@@ -1438,57 +1437,54 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 // Body schema: { reason: string (≥20 chars) }
 // Response (200): { clientId, accessTokensRevoked, refreshTokensPreserved }
 // ─────────────────────────────────────────────────────────────────────────────
-admin.post(
-	"/oauth/clients/:clientId/revoke-access-tokens-only",
-	async (c) => {
-		const masterToken = process.env.BEARER_SECRET_MASTER;
-		if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
+admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
+	const masterToken = process.env.BEARER_SECRET_MASTER;
+	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
 
-		const clientId = c.req.param("clientId");
-		if (!clientId) {
-			return c.json(
-				{ error: "invalid_request", detail: "missing :clientId" },
-				400,
-			);
-		}
+	const clientId = c.req.param("clientId");
+	if (!clientId) {
+		return c.json(
+			{ error: "invalid_request", detail: "missing :clientId" },
+			400,
+		);
+	}
 
-		let body: Record<string, unknown> = {};
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json(
-				{ error: "invalid_request", detail: "body must be valid JSON" },
-				400,
-			);
-		}
-		const reason = typeof body.reason === "string" ? body.reason : null;
-		if (!reason) {
-			return c.json(
-				{ error: "invalid_request", detail: "reason is required" },
-				400,
-			);
-		}
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+	const reason = typeof body.reason === "string" ? body.reason : null;
+	if (!reason) {
+		return c.json(
+			{ error: "invalid_request", detail: "reason is required" },
+			400,
+		);
+	}
 
-		try {
-			const result = await internalClient().mutation(
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauth:revokeAccessTokensOnly" as any,
-				{ callerToken: masterToken, clientId, reason },
-			);
-			return c.json(result as Record<string, unknown>, 200);
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			if (/client not found/i.test(message)) {
-				return c.json({ error: "not_found", detail: message }, 404);
-			}
-			if (/reason must be at least/i.test(message)) {
-				return c.json({ error: "invalid_request", detail: message }, 400);
-			}
-			console.error("[admin] revokeAccessTokensOnly failed:", message);
-			return c.json({ error: "server_error", detail: message }, 500);
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:revokeAccessTokensOnly" as any,
+			{ callerToken: masterToken, clientId, reason },
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (/client not found/i.test(message)) {
+			return c.json({ error: "not_found", detail: message }, 404);
 		}
-	},
-);
+		if (/reason must be at least/i.test(message)) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error("[admin] revokeAccessTokensOnly failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
 
 app.route("/admin", admin);
 
