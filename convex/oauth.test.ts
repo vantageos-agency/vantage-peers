@@ -256,7 +256,7 @@ describe("oauth.registerPublicClient (DCR default-profile binding)", () => {
 			clientId,
 			clientSecretHash: "a".repeat(64),
 			name: "anonymous-dcr",
-			redirectUris: [],
+			redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
 			scopeProfile: "client-generic", // hardcoded by server-http.ts
 		});
 		const profile = await t.query(api.oauth.getScopeProfile, {

@@ -280,18 +280,12 @@ export const seedDefaultProfiles = mutation({
 				patch.fromAllowList = p.fromAllowList;
 			}
 			if (
-				!arraysEqual(
-					existing.namespaceReadPrefixes,
-					p.namespaceReadPrefixes,
-				)
+				!arraysEqual(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)
 			) {
 				patch.namespaceReadPrefixes = p.namespaceReadPrefixes;
 			}
 			if (
-				!arraysEqual(
-					existing.namespaceWritePrefixes,
-					p.namespaceWritePrefixes,
-				)
+				!arraysEqual(existing.namespaceWritePrefixes, p.namespaceWritePrefixes)
 			) {
 				patch.namespaceWritePrefixes = p.namespaceWritePrefixes;
 			}
@@ -327,8 +321,7 @@ export const seedDefaultProfiles = mutation({
 				targetProfileId: p.profileId,
 				previousState,
 				newState,
-				reason:
-					"seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
+				reason: "seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
 				cascadeRevokedCount: 0,
 				clientsRetargeted: 0,
 				createdAt: now,
@@ -451,6 +444,17 @@ export const registerPublicClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
+		// SECURITY: Defense-in-depth — reject empty redirectUris at the Convex
+		// layer so that non-HTTP callers (admin scripts, direct Convex calls) also
+		// cannot create zombie clients. The HTTP layer (server-http.ts POST /register)
+		// already blocks this, but Convex is the last line of defense.
+		if (args.redirectUris.length === 0) {
+			throw new Error(
+				"InvalidRedirectUris: redirectUris must be a non-empty array. " +
+					"Zombie clients with empty redirectUris fail every /authorize call.",
+			);
+		}
+
 		// SECURITY: Refuse master scope (and any future admin-only profiles) at the
 		// Convex layer. This is defense-in-depth: server-http.ts already hardcodes
 		// DEFAULT_PUBLIC_DCR_PROFILE, but a direct Convex call must also be safe.

@@ -1,95 +1,95 @@
 {
-  "name": "vantage-peers-mcp",
-  "version": "2.14.1",
-  "description": "MCP server for VantagePeers — shared memory, messaging, and task coordination for AI agent teams",
-  "type": "module",
-  "main": "./dist/server.js",
-  "exports": {
-    ".": "./dist/server.js",
-    "./api": {
-      "types": "./dist/api.d.ts",
-      "default": "./dist/api.js"
-    }
-  },
-  "bin": {
-    "vantage-peers-mcp": "./dist/server.js"
-  },
-  "files": [
-    "dist/",
-    "README.md",
-    "CHANGELOG.md"
-  ],
-  "scripts": {
-    "generate:api": "cd .. && npx convex-helpers ts-api-spec --prod --output-file mcp-server/api.ts",
-    "build": "tsc --project tsconfig.json",
-    "prepublishOnly": "npm run build",
-    "dev": "bun run server.ts",
-    "start": "bun run dist/server-http.js",
-    "dev:http": "bun run server-http.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/vantageos-agency/vantage-peers.git",
-    "directory": "mcp-server"
-  },
-  "homepage": "https://vantagepeers.com/docs",
-  "bugs": {
-    "url": "https://github.com/vantageos-agency/vantage-peers/issues"
-  },
-  "keywords": [
-    "mcp",
-    "claude",
-    "convex",
-    "ai-agents",
-    "memory",
-    "messaging",
-    "tasks",
-    "multi-agent",
-    "orchestration",
-    "vantagepeers",
-    "diary",
-    "episodes",
-    "mandates",
-    "knowledge-base",
-    "rag",
-    "vector-search"
-  ],
-  "author": "VantageOS AI Orchestrator Team",
-  "contributors": [
-    "Pi (π) — Lead orchestrator",
-    "Laurent Perello — Founder, supervisor",
-    "ElPi Corp"
-  ],
-  "license": "FSL-1.1-Apache-2.0",
-  "dependencies": {
-    "@mcp-ui/server": "^6.1.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@vantageos/cloud-identity": "^0.1.0",
-    "@vantageos/mosaic": "^0.1.2",
-    "convex": ">=1.0.0",
-    "dotenv": "^17.4.2",
-    "zod": "^4.3.6"
-  },
-  "peerDependencies": {
-    "convex": ">=1.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^24.12.2",
-    "@vitest/coverage-v8": "^4.1.8",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
-  },
-  "overrides": {
-    "path-to-regexp": "^8.4.0"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  }
+	"name": "vantage-peers-mcp",
+	"version": "2.14.2",
+	"description": "MCP server for VantagePeers — shared memory, messaging, and task coordination for AI agent teams",
+	"type": "module",
+	"main": "./dist/server.js",
+	"exports": {
+		".": "./dist/server.js",
+		"./api": {
+			"types": "./dist/api.d.ts",
+			"default": "./dist/api.js"
+		}
+	},
+	"bin": {
+		"vantage-peers-mcp": "./dist/server.js"
+	},
+	"files": [
+		"dist/",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"generate:api": "cd .. && npx convex-helpers ts-api-spec --prod --output-file mcp-server/api.ts",
+		"build": "tsc --project tsconfig.json",
+		"prepublishOnly": "npm run build",
+		"dev": "bun run server.ts",
+		"start": "bun run dist/server-http.js",
+		"dev:http": "bun run server-http.ts",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/vantageos-agency/vantage-peers.git",
+		"directory": "mcp-server"
+	},
+	"homepage": "https://vantagepeers.com/docs",
+	"bugs": {
+		"url": "https://github.com/vantageos-agency/vantage-peers/issues"
+	},
+	"keywords": [
+		"mcp",
+		"claude",
+		"convex",
+		"ai-agents",
+		"memory",
+		"messaging",
+		"tasks",
+		"multi-agent",
+		"orchestration",
+		"vantagepeers",
+		"diary",
+		"episodes",
+		"mandates",
+		"knowledge-base",
+		"rag",
+		"vector-search"
+	],
+	"author": "VantageOS AI Orchestrator Team",
+	"contributors": [
+		"Pi (π) — Lead orchestrator",
+		"Laurent Perello — Founder, supervisor",
+		"ElPi Corp"
+	],
+	"license": "FSL-1.1-Apache-2.0",
+	"dependencies": {
+		"@mcp-ui/server": "^6.1.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@vantageos/cloud-identity": "^0.1.0",
+		"@vantageos/mosaic": "^0.1.2",
+		"convex": ">=1.0.0",
+		"dotenv": "^17.4.2",
+		"zod": "^4.3.6"
+	},
+	"peerDependencies": {
+		"convex": ">=1.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.12.2",
+		"@vitest/coverage-v8": "^4.1.8",
+		"typescript": "^5.9.3",
+		"vitest": "^4.1.8"
+	},
+	"overrides": {
+		"path-to-regexp": "^8.4.0"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	}
 }

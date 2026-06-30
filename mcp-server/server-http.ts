@@ -31,6 +31,7 @@ import {
 	ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -41,7 +42,6 @@ import {
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
-import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -333,9 +333,76 @@ app.post("/register", async (c) => {
 	} catch {
 		// allow empty body — Claude sometimes posts nothing
 	}
-	const redirectUris = Array.isArray(body.redirect_uris)
-		? (body.redirect_uris as string[])
-		: [];
+	// RFC 7591 §2: redirect_uris is REQUIRED for authorization_code grant.
+	// RFC 7591 §3.2.2: invalid_redirect_uri is the canonical error code for
+	// bad, missing, or empty redirect_uris. Reject here so zombie clients
+	// (e.g. prod 87abdf5c-616b-4767-8a96-5ca04db88d9f) can never be created.
+	if (
+		!Array.isArray(body.redirect_uris) ||
+		(body.redirect_uris as unknown[]).length === 0
+	) {
+		return c.json(
+			{
+				error: "invalid_redirect_uri",
+				error_description:
+					"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+			},
+			400,
+		);
+	}
+	// Validate each URI: must be parseable and https: scheme (or http://localhost
+	// for dev). Reject file://, javascript:, data:, fragments, etc.
+	for (const uri of body.redirect_uris as unknown[]) {
+		if (typeof uri !== "string") {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+		let parsed: URL;
+		try {
+			parsed = new URL(uri);
+		} catch {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+		const isHttpsScheme = parsed.protocol === "https:";
+		const isLocalhostHttp =
+			parsed.protocol === "http:" &&
+			(parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+		if (!isHttpsScheme && !isLocalhostHttp) {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+		// Reject URIs with fragments (RFC 6749 §3.1.2)
+		if (parsed.hash) {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+	}
+	const redirectUris = body.redirect_uris as string[];
 	const clientId = crypto.randomUUID();
 	const clientSecret = randomOpaqueToken();
 	const clientSecretHash = await sha256Hex(clientSecret);
@@ -1184,7 +1251,9 @@ admin.post("/oauth/access-tokens", async (c) => {
 			? body.clientId
 			: `admin-mint:${crypto.randomUUID()}`;
 	const scopes = Array.isArray(body.scopes)
-		? (body.scopes as unknown[]).filter((x) => typeof x === "string") as string[]
+		? ((body.scopes as unknown[]).filter(
+				(x) => typeof x === "string",
+			) as string[])
 		: ["mcp:full"];
 
 	const arrayOrProfile = (
@@ -1346,10 +1415,7 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 		if (/reason must be at least/i.test(message)) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}
-		console.error(
-			"[admin] patchClientScopeAndRefreshTokens failed:",
-			message,
-		);
+		console.error("[admin] patchClientScopeAndRefreshTokens failed:", message);
 		return c.json({ error: "server_error", detail: message }, 500);
 	}
 });
@@ -1371,57 +1437,54 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 // Body schema: { reason: string (≥20 chars) }
 // Response (200): { clientId, accessTokensRevoked, refreshTokensPreserved }
 // ─────────────────────────────────────────────────────────────────────────────
-admin.post(
-	"/oauth/clients/:clientId/revoke-access-tokens-only",
-	async (c) => {
-		const masterToken = process.env.BEARER_SECRET_MASTER;
-		if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
+admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
+	const masterToken = process.env.BEARER_SECRET_MASTER;
+	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
 
-		const clientId = c.req.param("clientId");
-		if (!clientId) {
-			return c.json(
-				{ error: "invalid_request", detail: "missing :clientId" },
-				400,
-			);
-		}
+	const clientId = c.req.param("clientId");
+	if (!clientId) {
+		return c.json(
+			{ error: "invalid_request", detail: "missing :clientId" },
+			400,
+		);
+	}
 
-		let body: Record<string, unknown> = {};
-		try {
-			body = await c.req.json();
-		} catch {
-			return c.json(
-				{ error: "invalid_request", detail: "body must be valid JSON" },
-				400,
-			);
-		}
-		const reason = typeof body.reason === "string" ? body.reason : null;
-		if (!reason) {
-			return c.json(
-				{ error: "invalid_request", detail: "reason is required" },
-				400,
-			);
-		}
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+	const reason = typeof body.reason === "string" ? body.reason : null;
+	if (!reason) {
+		return c.json(
+			{ error: "invalid_request", detail: "reason is required" },
+			400,
+		);
+	}
 
-		try {
-			const result = await internalClient().mutation(
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauth:revokeAccessTokensOnly" as any,
-				{ callerToken: masterToken, clientId, reason },
-			);
-			return c.json(result as Record<string, unknown>, 200);
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			if (/client not found/i.test(message)) {
-				return c.json({ error: "not_found", detail: message }, 404);
-			}
-			if (/reason must be at least/i.test(message)) {
-				return c.json({ error: "invalid_request", detail: message }, 400);
-			}
-			console.error("[admin] revokeAccessTokensOnly failed:", message);
-			return c.json({ error: "server_error", detail: message }, 500);
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:revokeAccessTokensOnly" as any,
+			{ callerToken: masterToken, clientId, reason },
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (/client not found/i.test(message)) {
+			return c.json({ error: "not_found", detail: message }, 404);
 		}
-	},
-);
+		if (/reason must be at least/i.test(message)) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error("[admin] revokeAccessTokensOnly failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
 
 app.route("/admin", admin);
 

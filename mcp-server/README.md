@@ -171,7 +171,7 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 |--------|------|-------------|
 | `GET` | `/.well-known/oauth-authorization-server` | Authorization Server Metadata (RFC 8414) — advertises supported grant types, endpoints, and capabilities |
 | `GET` | `/.well-known/oauth-protected-resource` | Protected Resource Metadata (RFC 9728) — links back to the authorization server |
-| `POST` | `/register` | Dynamic Client Registration (RFC 7591) — Claude.ai registers itself automatically on first connect |
+| `POST` | `/register` | Dynamic Client Registration (RFC 7591) — Claude.ai registers itself automatically on first connect. `redirect_uris` MUST be a non-empty array of valid `https://` URIs (or `http://localhost` / `http://127.0.0.1` for dev); absent, empty, non-string, unparseable, non-https, or fragment-bearing entries are rejected with `invalid_redirect_uri` (RFC 7591 §3.2.2, commit `2f3e653`). |
 | `GET` | `/authorize` | Authorization endpoint — redirects the user to grant access |
 | `POST` | `/token` | Token endpoint — issues access tokens per OAuth 2.1 |
 

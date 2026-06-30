@@ -258,10 +258,11 @@ See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full referenc
 
 VantagePeers Cloud (multi-tenant) and Self-host both share the same OAuth 2.1 + scope enforcement core. The following controls form the v2.12.0 security baseline.
 
-### OAuth 2.1 hardening — D6 + D7
+### OAuth 2.1 hardening — D6 + D7 + D8
 
 - **D6 — confidential `client_secret` at `/token`** — `mcp-server/server-http.ts` L382-585. Confidential clients (issued at DCR) must present `client_secret` on every token exchange. Comparison uses `crypto.timingSafeEqual` (constant-time) to eliminate length/early-exit oracles. Public clients (no secret at registration) continue PKCE-only. Refusal returns `invalid_client` per RFC 6749 §5.2. Shipped PR #621, commit `5fd6354`.
 - **D7 — `redirect_uri` exact-match at `/authorize`** — `mcp-server/server-http.ts` L298-376. The authorization endpoint rejects any `redirect_uri` that is not byte-identical to one of the URIs registered for the `client_id`. No prefix match, no host-only match, no scheme normalization. Hard error before any consent screen. Shipped PR #621, commit `5fd6354`.
+- **D8 — DCR `redirect_uris` validation at `POST /register`** — `mcp-server/server-http.ts` L333-405. Rejects absent, empty-array, non-string, unparseable, non-https (except `http://localhost` / `http://127.0.0.1` for dev), and fragment-bearing URIs with `invalid_redirect_uri` (RFC 7591 §3.2.2). Defense-in-depth: Convex layer enforces the same guard in `registerPublicClient`. Closes zombie-client class. Commit `2f3e653`.
 
 ### Emergency tenant maintenance — `patchScopeProfileEmergency`
 

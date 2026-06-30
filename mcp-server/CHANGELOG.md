@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.14.2 — 2026-06-30
+
+- fix(oauth): DCR `/register` rejects empty/missing/malformed `redirect_uris` (RFC 7591 §3.2.2 `invalid_redirect_uri`). Closes zombie-client class — clients with empty `redirectUris` arrays can no longer be created. Defense-in-depth: same guard at Convex `registerPublicClient`. TDD-strict RED-then-GREEN.
+
 ## [Unreleased]
 
 ### Added

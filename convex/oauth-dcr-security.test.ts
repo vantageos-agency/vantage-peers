@@ -91,7 +91,7 @@ describe("DCR self-registration default scope enforcement", () => {
 				clientId: "attacker-escalation-attempt",
 				clientSecretHash: "b".repeat(64),
 				name: "evil-dcr-client",
-				redirectUris: [],
+				redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
 				scopeProfile: "master",
 			}),
 		).rejects.toThrow(/ScopeViolation/);
@@ -163,7 +163,7 @@ describe("DCR self-registration default scope enforcement", () => {
 			clientId: "self-reg-for-token",
 			clientSecretHash: "e".repeat(64),
 			name: "anon-dcr",
-			redirectUris: [],
+			redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
 			scopeProfile: "client-generic",
 		});
 
