@@ -333,9 +333,76 @@ app.post("/register", async (c) => {
 	} catch {
 		// allow empty body — Claude sometimes posts nothing
 	}
-	const redirectUris = Array.isArray(body.redirect_uris)
-		? (body.redirect_uris as string[])
-		: [];
+	// RFC 7591 §2: redirect_uris is REQUIRED for authorization_code grant.
+	// RFC 7591 §3.2.2: invalid_redirect_uri is the canonical error code for
+	// bad, missing, or empty redirect_uris. Reject here so zombie clients
+	// (e.g. prod 87abdf5c-616b-4767-8a96-5ca04db88d9f) can never be created.
+	if (
+		!Array.isArray(body.redirect_uris) ||
+		(body.redirect_uris as unknown[]).length === 0
+	) {
+		return c.json(
+			{
+				error: "invalid_redirect_uri",
+				error_description:
+					"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+			},
+			400,
+		);
+	}
+	// Validate each URI: must be parseable and https: scheme (or http://localhost
+	// for dev). Reject file://, javascript:, data:, fragments, etc.
+	for (const uri of body.redirect_uris as unknown[]) {
+		if (typeof uri !== "string") {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+		let parsed: URL;
+		try {
+			parsed = new URL(uri);
+		} catch {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+		const isHttpsScheme = parsed.protocol === "https:";
+		const isLocalhostHttp =
+			parsed.protocol === "http:" &&
+			(parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+		if (!isHttpsScheme && !isLocalhostHttp) {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+		// Reject URIs with fragments (RFC 6749 §3.1.2)
+		if (parsed.hash) {
+			return c.json(
+				{
+					error: "invalid_redirect_uri",
+					error_description:
+						"redirect_uris is required and must be a non-empty array of valid HTTPS URIs",
+				},
+				400,
+			);
+		}
+	}
+	const redirectUris = body.redirect_uris as string[];
 	const clientId = crypto.randomUUID();
 	const clientSecret = randomOpaqueToken();
 	const clientSecretHash = await sha256Hex(clientSecret);

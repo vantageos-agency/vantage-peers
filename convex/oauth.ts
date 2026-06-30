@@ -451,6 +451,17 @@ export const registerPublicClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
+		// SECURITY: Defense-in-depth — reject empty redirectUris at the Convex
+		// layer so that non-HTTP callers (admin scripts, direct Convex calls) also
+		// cannot create zombie clients. The HTTP layer (server-http.ts POST /register)
+		// already blocks this, but Convex is the last line of defense.
+		if (args.redirectUris.length === 0) {
+			throw new Error(
+				"InvalidRedirectUris: redirectUris must be a non-empty array. " +
+					"Zombie clients with empty redirectUris fail every /authorize call.",
+			);
+		}
+
 		// SECURITY: Refuse master scope (and any future admin-only profiles) at the
 		// Convex layer. This is defense-in-depth: server-http.ts already hardcodes
 		// DEFAULT_PUBLIC_DCR_PROFILE, but a direct Convex call must also be safe.
