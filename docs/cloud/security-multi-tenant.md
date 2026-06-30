@@ -28,6 +28,20 @@ VantagePeers Cloud implements OAuth 2.1 with Dynamic Client Registration (DCR). 
 - **Failure mode:** hard error returned to the user agent before any consent screen is rendered. No redirect is performed to an untrusted URI.
 - **Provenance:** PR #621, commit `5fd6354`.
 
+### D8 — DCR `redirect_uris` validation at `POST /register`
+
+- **Location:** `mcp-server/server-http.ts` L333-405.
+- **Rationale:** RFC 7591 §3.2.2 mandates `invalid_redirect_uri` as the canonical error when `redirect_uris` is absent, empty, or invalid. Without this guard, a client can be stored with an empty `redirectUris` array and subsequently bypass the D7 exact-match check (zombie-client class — e.g. prod client `87abdf5c-616b-4767-8a96-5ca04db88d9f`).
+- **Behavior — five rejection shapes (all return HTTP 400 `invalid_redirect_uri`):**
+  1. `redirect_uris` absent from body or not an array.
+  2. `redirect_uris` is an empty array (`length === 0`).
+  3. Any element is not a `string`.
+  4. Any element is not a parseable URL (`new URL(uri)` throws).
+  5. Any element has a scheme other than `https:` — or `http:` unless the host is `localhost` / `127.0.0.1` (dev exemption). Fragments (`#...`) are also rejected per RFC 6749 §3.1.2.
+- **Defense-in-depth:** the same guard is enforced at the Convex layer in `convex/oauth.ts` (`registerPublicClient`, which throws `InvalidRedirectUris` on an empty array), ensuring the contract holds even if the HTTP surface is bypassed.
+- **Failure mode:** `{ error: "invalid_redirect_uri", error_description: "redirect_uris is required and must be a non-empty array of valid HTTPS URIs" }` — no client row is persisted.
+- **Provenance:** commit `2f3e653` (TDD fix), biome cleanup `60f5f51`. Test coverage: RED-then-GREEN, unit suite in `convex/__tests__/`.
+
 ---
 
 ## 2. Emergency tenant maintenance — `patchScopeProfileEmergency`
