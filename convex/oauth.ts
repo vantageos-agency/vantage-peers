@@ -280,18 +280,12 @@ export const seedDefaultProfiles = mutation({
 				patch.fromAllowList = p.fromAllowList;
 			}
 			if (
-				!arraysEqual(
-					existing.namespaceReadPrefixes,
-					p.namespaceReadPrefixes,
-				)
+				!arraysEqual(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)
 			) {
 				patch.namespaceReadPrefixes = p.namespaceReadPrefixes;
 			}
 			if (
-				!arraysEqual(
-					existing.namespaceWritePrefixes,
-					p.namespaceWritePrefixes,
-				)
+				!arraysEqual(existing.namespaceWritePrefixes, p.namespaceWritePrefixes)
 			) {
 				patch.namespaceWritePrefixes = p.namespaceWritePrefixes;
 			}
@@ -327,8 +321,7 @@ export const seedDefaultProfiles = mutation({
 				targetProfileId: p.profileId,
 				previousState,
 				newState,
-				reason:
-					"seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
+				reason: "seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
 				cascadeRevokedCount: 0,
 				clientsRetargeted: 0,
 				createdAt: now,
