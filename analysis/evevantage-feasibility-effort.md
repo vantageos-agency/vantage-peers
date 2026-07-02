@@ -165,15 +165,29 @@ Real code verified:
   - `lib/db/schema.ts` — drop `user`, `session`, `account`, `verification` (4 of 6 pg tables; `chat`/`chatEvent` remain, feeds 8.1).
   - `lib/auth-hint.ts` (referenced by `route.ts`, not separately read) — cookie logic keyed on Better Auth's `better-auth.session_token` cookie name must be rewired to Clerk's session model.
   - `lib/setup.ts:getSetupStatus` (referenced by `route.ts`, not separately read) — `authReady`/`databaseSchemaReady` checks need rewrite for Clerk env vars instead of pg-schema checks.
-- No `@clerk/convex` package exists on npm (`npm view @clerk/convex` → 404). There is no official Clerk-Convex npm bridge package. **However**, our own stack already solves this exact problem in production: `convex/credentials.ts` + `convex/auth.config.ts` implement manual Clerk-JWT verification via JWKS discovery (no `@clerk/backend` dependency, per the in-code comment at `convex/credentials.ts:73`) — this is the Convex-documented pattern for third-party auth (`auth.config.ts` + `ctx.auth.getUserIdentity()`), and it is directly reusable for wiring Clerk into the eve-chat-template's Convex-backed chat data (8.1). This lowers the "manual/new" risk on the Convex side since the pattern is already battle-tested in this repo.
-- Mechanical vs manual:
-  - Mechanical: env var swap (`CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY` replacing `BETTER_AUTH_SECRET`/`NEXT_PUBLIC_VERCEL_APP_CLIENT_ID`/`VERCEL_APP_CLIENT_SECRET`); UI component swap to Clerk prebuilt components; server-side Convex JWT verification (reuse of existing in-house pattern).
-  - Manual / open: does Clerk support preserving "Sign in with Vercel" as the login method (currently the ONLY provider in the template, marketed scopes `openid email profile`), via a custom OIDC provider config, or does migrating force end-users onto Clerk's own auth methods (email, Google, etc.), losing the "signed in with your Vercel account" flow this template currently ships? **Not resolved in this pass** — requires a dedicated Clerk custom-OIDC-provider spike before committing to a PR count for that sub-item.
-- What breaks: `AUTH_HINT` cookie flow, `getSetupStatus()` pg-schema gating, the "Sign in with Vercel" OAuth flow (open question above).
-- No prior user data to migrate: per Day 119 architecture (section 3.1 of this doc), each Org gets a fresh per-Org Vercel deploy — this is greenfield per instance, no existing user base requiring a session/account migration path. This removes what would otherwise be the highest-risk sub-item of a Better-Auth-to-Clerk migration.
-- Effort: 3-4 PRs — 1 PR (medium) `lib/auth.ts` rewrite + Convex `auth.config.ts` wiring (reuse existing pattern); 1 PR (small) delete old route + add `middleware.ts`; 1 PR (medium) components/auth swap (4 files) + `auth-hint`/`setup.ts` rewire; 1 PR (small, conditional) — only if "Sign in with Vercel" preservation requires a custom OIDC provider (open question above unresolved → could add 1 medium-risk PR).
-- Risk: medium, concentrated in the unresolved "Sign in with Vercel" OIDC preservation question — not pre-judged easy or hard, per Laurent's correction.
-- Open: Clerk custom-OIDC-provider feasibility for "Sign in with Vercel" — needs a dedicated spike, not covered by this chiffrage pass.
+- **Correction 2026-07-02** (Laurent) : la version antérieure de cette section affirmait « no `@clerk/convex` package exists, custom in-house JWKS glue required » — c'était faux. L'intégration Clerk ↔ Convex est **officielle et documentée des deux côtés** :
+  - Convex : https://docs.convex.dev/auth/clerk (guide `Convex + Clerk`)
+  - Clerk : https://clerk.com/docs/guides/development/integrations/databases/convex (guide `Integrate Convex with Clerk`)
+
+  Le package npm n'est simplement pas nommé `@clerk/convex`. Le contrat officiel est :
+  - Frontend Next.js : `@clerk/nextjs` (déjà utilisé dans `vantage-peers`) + `<ClerkProvider>` racine + `<ConvexProviderWithClerk client={convex} useAuth={useAuth}>` (import depuis `convex/react-clerk`, submodule du package `convex` lui-même — aucun install séparé).
+  - Backend Convex : `convex/auth.config.ts` déclare l'issuer Clerk (`applicationID: "convex"` + `domain: <clerk-frontend-api>`). `ctx.auth.getUserIdentity()` renvoie le claim Clerk directement — pas de JWKS manuel à écrire.
+  - Middleware Next : `middleware.ts` avec `clerkMiddleware()` (nouveau fichier, aucun existant dans le template).
+
+  Notre `convex/credentials.ts` in-house n'est **plus** le pattern à copier pour eve-chat-template : c'est un vestige pré-`ConvexProviderWithClerk` (ou un choix délibéré côté vantage-peers, à confirmer séparément). Pour eve-chat-template, on utilise le pattern officiel.
+- Mechanical vs manual (mis à jour) :
+  - Mechanical : install `@clerk/nextjs` + swap `<Providers>` racine avec `<ClerkProvider>` + `<ConvexProviderWithClerk>` ; `convex/auth.config.ts` avec Clerk JWT template (guide Convex étape 2) ; env var swap (`CLERK_SECRET_KEY` + `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` remplacent `BETTER_AUTH_SECRET`/`NEXT_PUBLIC_VERCEL_APP_CLIENT_ID`/`VERCEL_APP_CLIENT_SECRET`) ; UI swap Clerk prebuilt `<SignIn/>`, `<UserButton/>`, `<SignedIn/>`/`<SignedOut/>`.
+  - Manual / open : préservation « Sign in with Vercel » (unique provider actuel du template). Clerk supporte custom OAuth providers, mais Vercel-as-OIDC-provider n'est pas un preset Clerk — nécessite config OIDC custom dans Clerk dashboard (URL discovery, client_id, client_secret Vercel). Faisable, pas trivial. Spike ciblé recommandé mais l'inconnue est étroitement scopée.
+- What breaks : `lib/auth.ts` (entier) + `app/api/auth/[...all]/route.ts` (delete) + `lib/auth-hint.ts` cookie logic (rewire vers session Clerk) + `lib/setup.ts:getSetupStatus` (checks Clerk env vars vs pg-schema).
+- No prior user data to migrate : par architecture Day 119 (§3.1), chaque Org = deploy Vercel greenfield — pas de base user existante à migrer. Retire le risque le plus haut d'une migration Better-Auth-to-Clerk classique.
+- Effort (recalculé avec pattern officiel Convex+Clerk) :
+  - 1 PR (small) — `convex/auth.config.ts` + wiring `<ConvexProviderWithClerk>` dans providers racine + env vars Clerk. Mechanical, guide Convex étape par étape.
+  - 1 PR (small) — delete `lib/auth.ts` + `app/api/auth/[...all]/route.ts` + add `middleware.ts` (`clerkMiddleware()`).
+  - 1 PR (medium) — swap 4 composants `components/auth/*` vers Clerk prebuilt (`<SignIn/>`, `<UserButton/>`, `<SignedIn/>`/`<SignedOut/>`) + rewire `lib/auth-hint.ts` + `lib/setup.ts`.
+  - 1 PR (small, conditional) — custom OIDC provider Clerk pour préserver « Sign in with Vercel ». Ouvre spike côté Clerk dashboard config + Vercel OAuth app enregistrée comme OIDC endpoint. Seulement si Laurent veut garder cette voie ; sinon on retire le composant.
+- Total : **3 PRs si on drop « Sign in with Vercel »**, **4 PRs si on préserve via custom OIDC**.
+- Risk : low-medium — le pattern Convex+Clerk est officiel + documenté, réduit le custom glue. Le seul risque restant est le spike OIDC Vercel (option, pas obligatoire).
+- Open : décision Laurent — drop « Sign in with Vercel » et utiliser les méthodes Clerk natives (email link, Google, etc.) OU préserver via custom OIDC provider.
 
 ### 8.7 Grand total quick-win MVP
 
@@ -184,12 +198,14 @@ Blocs 8.2 (auth-store, keep Better Auth) and 8.6 (Better Auth → Clerk) are **m
 - Bloc 8.3 rate-limit: 1 PR
 - Bloc 8.4 migrations: 0 PR (folded into 8.1)
 - Bloc 8.5 chat.eveSession: 0 PR (folded into 8.1)
-- Bloc 8.6 Better Auth → Clerk (alternative to 8.2): 3-4 PRs
+- Bloc 8.6 Better Auth → Clerk (alternative to 8.2): 3-4 PRs (recalculé avec pattern officiel Convex+Clerk, cf. correction 2026-07-02)
 
 **Path 1 — keep Better Auth (8.1 + 8.2 + 8.3):** 3 + 2 + 1 = **6 PRs**
-**Path 2 — migrate to Clerk (8.1 + 8.3 + 8.6):** 3 + 1 + (3 to 4) = **7 to 8 PRs**
+**Path 2 — migrate to Clerk (8.1 + 8.3 + 8.6):** 3 + 1 + (3 à 4) = **7 à 8 PRs**
 
-**Grand total quick-win = 6 PRs (Path 1) to 8 PRs (Path 2).**
+**Grand total quick-win = 6 PRs (Path 1) à 8 PRs (Path 2).**
+
+Le compte Path 2 reste dans la même fourchette qu'auparavant, mais le RISQUE baisse : le pattern Convex+Clerk officiel supprime le custom JWKS glue qu'on avait faussement estimé nécessaire. Le seul spike restant = préservation « Sign in with Vercel » via custom OIDC (optionnel, 1 PR conditionnel).
 
 Neutral phasing note: Laurent will decide the sequence AND the path (keep Better Auth vs. migrate to Clerk) AFTER this chiffrage. Both db-swap (8.1) and the Better-Auth-to-Clerk migration (8.6) are chiffrés at the same level of rigor — code-cited, no hours, no phase pre-ordering. Correction Laurent Day 119 applied: "Better Auth → Clerk chiffré au même titre, neutre."
 
