@@ -102,6 +102,98 @@ For each track, effort is expressed as:
 - Neon→Convex swap (defer to separate mission after MVP if scoped)
 - AI-SDK / Node upgrade on VP (only if we ever add eve in-repo, unlikely)
 
+## 8. Quick-Win — eve-chat-template adaptation effort (T3 Pi mission k57bs0hw3q)
+
+Source: `git clone --depth 1 https://github.com/vercel-labs/eve-chat-template` (verified 2026-07-02, extends and corrects Pi's initial reads).
+
+Real code verified:
+- `lib/db/client.ts` (72 lines) — `@neondatabase/serverless` + `drizzle-orm/neon-http`; `getDb()` throws if `DATABASE_URL` unset; also exports `isDatabaseSchemaReady()` which checks 6 pg tables via `to_regclass`.
+- `lib/db/schema.ts` (103 lines) — 6 pg tables confirmed: `user`, `session`, `account`, `verification` (Better Auth) + `chat`, `chatEvent`. `chat.eveSession` is `jsonb` typed `SessionState | null` from `eve/client`. `chatEvent.event` is `jsonb` typed `HandleMessageStreamEvent`, unique on `(chatId, eventIndex)`.
+- `lib/db/queries.ts` (409 lines) — **11 functions confirmed** (Pi's "~11" verified exact): `listChatsByUser`, `listChatsPageByUser` (cursor pagination via `updatedAt::id` string), `createChat`, `getChatForUser`, `markChatPendingMessage`, `clearChatPendingMessage`, `skipChatAuthorization`, `saveChatSessionState`, `appendChatEvent`, `saveChatSnapshot`, `deleteChatForUser`.
+- `lib/auth.ts` (62 lines) — `betterAuth({ database: drizzleAdapter(db, { provider: "pg" }) })`. Single social provider: "Sign in with Vercel" (OAuth, scopes `openid email profile`) — **no email/password provider configured**. `nextCookies()` plugin.
+- `lib/rate-limit.ts` (65 lines) — `@upstash/redis` `Redis` client, `enforceRateLimit()` via `incr`/`expire` on a windowed key.
+- `app/api/auth/[...all]/route.ts` — single catch-all Better Auth handler (not split by provider). **Correction to brief**: no `middleware.ts` file exists anywhere in this repo — the brief's assumption of an existing `middleware.ts` to update is wrong; a Clerk migration would ADD a new `middleware.ts` (`clerkMiddleware()`), not modify one.
+- `components/auth/` — 4 files, 278 lines total: `sign-in-modal.tsx` (50), `sign-in-button.tsx` (70), `auth-display.tsx` (60), `user-menu.tsx` (98).
+- `lib/db/migrations/` — 2 SQL files (`0000_sparkling_pestilence.sql`, `0001_tidy_hitman.sql`) + `meta/` journal (drizzle-kit generated).
+- `docs/setup-and-deploy.md` — confirms Neon + Upstash Redis provisioned via Vercel Marketplace as part of the one-click deploy; migrations run post-deploy via `vercel env run -e production -- pnpm db:migrate`.
+
+### 8.1 Bloc db-swap (Neon → Convex)
+- Files touched: `lib/db/client.ts:getDb/isDatabaseSchemaReady`, `lib/db/schema.ts:chat,chatEvent`, `lib/db/queries.ts` (11 functions).
+- Target in our stack: new `convex/chat.ts` module (queries + mutations, one per function) + additions to `convex/schema.ts` — new `chats` and `chatEvents` tables, indexed the same way as the existing `messages`/`messageReceipts` pair (`convex/schema.ts:139-179`). Cursor pagination (`listChatsPageByUser`) reuses the `btoa`/`atob` opaque-cursor codec already shipped in `convex/businessUnits.ts:198-201` (post commit `82b54d6`, V8 Buffer-free codec) rather than re-deriving one.
+- Effort:
+  - 1 PR (medium): schema additions (`chats`, `chatEvents`) + cursor codec reuse.
+  - 1 PR (medium): `convex/chat.ts` — port of the 11 functions as Convex queries/mutations.
+  - 1 PR (small): client-side swap — replace drizzle `db.*` calls in `app/(chat)/*` and `app/actions/*` with `useQuery`/`useMutation` (files not enumerated here — outside the read scope of this chiffrage, flagged as residual unknown).
+- Risk: medium — `eveSession`/`event` are `jsonb`-typed against `eve/client` SDK types (`SessionState`, `HandleMessageStreamEvent`); Convex requires an explicit validator or `v.any()`. Using `v.any()` loses type safety; deriving a matching Convex validator from the eve SDK types is extra, uncounted work if attempted.
+- Open: exact call sites in `app/(chat)/*` and `app/actions/*` not read in this pass — 1 additional small PR may surface once traced.
+
+### 8.2 Bloc auth-store (Better Auth sans Postgres)
+
+**Option 2a — official Convex component exists.** `npm view @convex-dev/better-auth` returns version **0.12.5**, published 2026-06-27, maintainers list includes 13 accounts with `@convex.dev` emails (Convex core team) plus the primary author `erquhart`. Peer deps: `better-auth: >=1.6.11 <1.7.0`, `convex: ^1.25.0`. This **directly answers** the brief's either/or: a Convex adapter for Better Auth EXISTS and is officially maintained — the "no official adapter, custom shim required" branch does NOT apply.
+- Files touched: `lib/auth.ts:betterAuth` config (swap `drizzleAdapter(db,{provider:"pg"})` for the `@convex-dev/better-auth` component per its install guide), `lib/db/schema.ts` (drop `user`/`session`/`account`/`verification`, folds into 8.4).
+- Effort: 1 PR (medium) — swap the adapter + wire the Convex component; 1 PR (small) — drop the 4 pg auth tables + migrations.
+- Risk: medium-low — actively maintained by the Convex team itself, but still pre-1.0 (0.12.5) — semver-unstable, breaking changes between minor versions are possible before a 1.0 tag. Verify current app compatibility with `better-auth 1.6.11-1.6.23` range before committing (our stack has no `better-auth` dependency today — greenfield add).
+
+**Option 2b — drop Better Auth entirely, use Clerk.** Merges with bloc 8.6 below; not counted separately here to avoid double-counting (2a and 8.6 are alternative paths, not additive).
+
+### 8.3 Bloc rate-limit (Upstash → Convex)
+- Files touched: `lib/rate-limit.ts:enforceRateLimit` (65 lines, Upstash `incr`/`expire` windowed key).
+- Target: Convex-native rate limit via an internal mutation + counters table. Precedent already exists in our own stack: `convex/credentials.ts` (header comment, line 12) already implements "Rate-limit: 5 req / min per clerkUserId" natively in Convex without any external Redis — same pattern is directly reusable.
+- Effort: 1 PR (small).
+- Risk: low — pattern already proven in production in this repo.
+
+### 8.4 Bloc migrations (Drizzle removed)
+- `lib/db/migrations/` (2 SQL files + `meta/` journal) — clean drop. Convex schema is code (`convex/schema.ts`), no separate migration tooling or files needed.
+- Effort: 0 additional PR — folded into the schema PR in 8.1/8.2.
+- Risk: none.
+
+### 8.5 chat.eveSession (Eve session state)
+- `chat.eveSession` (jsonb, `SessionState | null`) proposed target: new field on the `chats` table in `convex/schema.ts`, e.g. `eveSession: v.optional(v.any())` unless the `eve/client` `SessionState` type can be mirrored as an explicit Convex validator (extra, uncounted work — see 8.1 risk note).
+- Our stack has no existing precedent for storing arbitrary third-party-SDK JSON blobs in Convex (the closest analog, `messages.content`, is a typed string, not JSON) — this is a genuinely new pattern for this repo, not a copy-paste of an existing one.
+- Effort: 0 additional PR — folded into the `chats`/`chatEvents` schema PR (8.1).
+- Risk: low-medium — `v.any()` is safe to ship but forfeits schema validation on session state; flagged as an open design question for whoever picks up 8.1.
+
+### 8.6 Better Auth → Clerk migration (chiffrage neutre au même titre)
+
+**Correction Laurent Day 119** : chiffré ici au même titre que db-swap (8.1), sans supposer facile ni difficile.
+
+- Files touched:
+  - `lib/auth.ts` (62 lines) — full rewrite, drop `betterAuth()` config, wire Clerk (via `@clerk/nextjs`, latest `npm view @clerk/nextjs version` = **7.5.12**).
+  - `app/api/auth/[...all]/route.ts` — DELETE (Clerk does not use a generic catch-all handler).
+  - **New file** `middleware.ts` (`clerkMiddleware()`) — none exists today in this repo (correction: not a modification, an addition).
+  - `components/auth/sign-in-modal.tsx`, `sign-in-button.tsx`, `auth-display.tsx`, `user-menu.tsx` (4 files, 278 lines) — swap to Clerk prebuilt components (`<SignIn/>`, `<UserButton/>`, `<SignedIn/>`/`<SignedOut/>`).
+  - `lib/db/schema.ts` — drop `user`, `session`, `account`, `verification` (4 of 6 pg tables; `chat`/`chatEvent` remain, feeds 8.1).
+  - `lib/auth-hint.ts` (referenced by `route.ts`, not separately read) — cookie logic keyed on Better Auth's `better-auth.session_token` cookie name must be rewired to Clerk's session model.
+  - `lib/setup.ts:getSetupStatus` (referenced by `route.ts`, not separately read) — `authReady`/`databaseSchemaReady` checks need rewrite for Clerk env vars instead of pg-schema checks.
+- No `@clerk/convex` package exists on npm (`npm view @clerk/convex` → 404). There is no official Clerk-Convex npm bridge package. **However**, our own stack already solves this exact problem in production: `convex/credentials.ts` + `convex/auth.config.ts` implement manual Clerk-JWT verification via JWKS discovery (no `@clerk/backend` dependency, per the in-code comment at `convex/credentials.ts:73`) — this is the Convex-documented pattern for third-party auth (`auth.config.ts` + `ctx.auth.getUserIdentity()`), and it is directly reusable for wiring Clerk into the eve-chat-template's Convex-backed chat data (8.1). This lowers the "manual/new" risk on the Convex side since the pattern is already battle-tested in this repo.
+- Mechanical vs manual:
+  - Mechanical: env var swap (`CLERK_SECRET_KEY`/`CLERK_PUBLISHABLE_KEY` replacing `BETTER_AUTH_SECRET`/`NEXT_PUBLIC_VERCEL_APP_CLIENT_ID`/`VERCEL_APP_CLIENT_SECRET`); UI component swap to Clerk prebuilt components; server-side Convex JWT verification (reuse of existing in-house pattern).
+  - Manual / open: does Clerk support preserving "Sign in with Vercel" as the login method (currently the ONLY provider in the template, marketed scopes `openid email profile`), via a custom OIDC provider config, or does migrating force end-users onto Clerk's own auth methods (email, Google, etc.), losing the "signed in with your Vercel account" flow this template currently ships? **Not resolved in this pass** — requires a dedicated Clerk custom-OIDC-provider spike before committing to a PR count for that sub-item.
+- What breaks: `AUTH_HINT` cookie flow, `getSetupStatus()` pg-schema gating, the "Sign in with Vercel" OAuth flow (open question above).
+- No prior user data to migrate: per Day 119 architecture (section 3.1 of this doc), each Org gets a fresh per-Org Vercel deploy — this is greenfield per instance, no existing user base requiring a session/account migration path. This removes what would otherwise be the highest-risk sub-item of a Better-Auth-to-Clerk migration.
+- Effort: 3-4 PRs — 1 PR (medium) `lib/auth.ts` rewrite + Convex `auth.config.ts` wiring (reuse existing pattern); 1 PR (small) delete old route + add `middleware.ts`; 1 PR (medium) components/auth swap (4 files) + `auth-hint`/`setup.ts` rewire; 1 PR (small, conditional) — only if "Sign in with Vercel" preservation requires a custom OIDC provider (open question above unresolved → could add 1 medium-risk PR).
+- Risk: medium, concentrated in the unresolved "Sign in with Vercel" OIDC preservation question — not pre-judged easy or hard, per Laurent's correction.
+- Open: Clerk custom-OIDC-provider feasibility for "Sign in with Vercel" — needs a dedicated spike, not covered by this chiffrage pass.
+
+### 8.7 Grand total quick-win MVP
+
+Blocs 8.2 (auth-store, keep Better Auth) and 8.6 (Better Auth → Clerk) are **mutually exclusive alternative paths**, not additive — Laurent picks one after reading this chiffrage.
+
+- Bloc 8.1 db-swap: 3 PRs (+1 open, uncounted)
+- Bloc 8.2 auth-store (2a, keep Better Auth via official `@convex-dev/better-auth`): 2 PRs
+- Bloc 8.3 rate-limit: 1 PR
+- Bloc 8.4 migrations: 0 PR (folded into 8.1)
+- Bloc 8.5 chat.eveSession: 0 PR (folded into 8.1)
+- Bloc 8.6 Better Auth → Clerk (alternative to 8.2): 3-4 PRs
+
+**Path 1 — keep Better Auth (8.1 + 8.2 + 8.3):** 3 + 2 + 1 = **6 PRs**
+**Path 2 — migrate to Clerk (8.1 + 8.3 + 8.6):** 3 + 1 + (3 to 4) = **7 to 8 PRs**
+
+**Grand total quick-win = 6 PRs (Path 1) to 8 PRs (Path 2).**
+
+Neutral phasing note: Laurent will decide the sequence AND the path (keep Better Auth vs. migrate to Clerk) AFTER this chiffrage. Both db-swap (8.1) and the Better-Auth-to-Clerk migration (8.6) are chiffrés at the same level of rigor — code-cited, no hours, no phase pre-ordering. Correction Laurent Day 119 applied: "Better Auth → Clerk chiffré au même titre, neutre."
+
+
 ## 7. References
 - T1 findings: [analysis/t1-evevantage-6-questions-findings.md](./t1-evevantage-6-questions-findings.md)
 - Source doc corpus: `resources/eve/` (extracted from elpiarthera/ElPi-Corp)
