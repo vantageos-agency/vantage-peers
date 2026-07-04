@@ -29,8 +29,9 @@ Client                      MCP server              Convex
   │                              │  storageId}         │
 ```
 
-1. Call `generateUploadUrl` (Convex mutation, requires auth) to get a signed
-   upload URL.
+1. Call the `generate_upload_url` MCP tool (Convex mutation
+   `kbMutations:generateUploadUrl`, requires a Clerk JWT with `org_id` — no-org
+   bearers are rejected) to get a signed upload URL.
 2. `POST` the raw binary to that URL; Convex storage returns a `storageId`.
 3. Call `store_document_chunked` MCP tool with `storageId`, `mimeType`, and
    `filename`. An optional `docId` may be supplied for idempotent re-ingest.

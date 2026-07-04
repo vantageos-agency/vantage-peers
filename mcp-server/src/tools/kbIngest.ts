@@ -111,6 +111,18 @@ export const softDeleteDocumentArgsSchema = z.object({
 		),
 });
 
+export const GENERATE_UPLOAD_URL_TOOL_DESCRIPTION =
+	"Mint a Convex storage upload URL for the Knowledge Base ingest flow. " +
+	"The caller's org (from the Clerk JWT) is bound implicitly — no client args required. " +
+	"POST the file binary to the returned URL to obtain a storageId, then call " +
+	"store_document_chunked with that storageId. " +
+	"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
+	"Default limit: 1 URL per call. cap: 1 URL. " +
+	"Returns the upload URL as plain text. " +
+	"EXAMPLE: generate_upload_url (no args) → 'https://…convex.cloud/api/storage/upload?...'.";
+
+export const generateUploadUrlArgsSchema = z.object({});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,6 +249,45 @@ export function registerKbIngestTools(
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[soft_delete_document] action failed", {
 					docId,
+					errorMessage: message,
+				});
+				throw new McpError(ErrorCode.InternalError, message);
+			}
+		},
+	);
+
+	// ── generate_upload_url ─────────────────────────────────────────────────────
+	server.tool(
+		"generate_upload_url",
+		GENERATE_UPLOAD_URL_TOOL_DESCRIPTION,
+		generateUploadUrlArgsSchema.shape,
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Generate Knowledge Base upload URL",
+		},
+		async () => {
+			try {
+				const { orgId, namespacePrefix } = resolveOrgContext();
+				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
+				const url = (await convex.mutation(
+					"kbMutations:generateUploadUrl" as unknown as MutationRef,
+					{ orgId, namespace: namespacePrefix },
+				)) as string;
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: url,
+						},
+					],
+				};
+			} catch (error: unknown) {
+				if (error instanceof McpError) throw error;
+				const message = error instanceof Error ? error.message : String(error);
+				console.error("[generate_upload_url] mutation failed", {
 					errorMessage: message,
 				});
 				throw new McpError(ErrorCode.InternalError, message);

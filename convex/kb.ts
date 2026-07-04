@@ -40,9 +40,18 @@
 
 import { randomUUID } from "node:crypto";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { action } from "./_generated/server";
+import { assertOrgArgs } from "./kbShared";
+
+// NOTE: the upload-URL-minting mutation lives in convex/kbMutations.ts
+// (V8 runtime), NOT here. Convex rejects public mutations defined in a
+// "use node" file at deploy time (InvalidModules) — even via re-export,
+// since the bundler attributes a function to whichever module the export
+// statement appears in. This file intentionally has zero references to
+// that mutation; callers (e.g. the MCP layer) call the kbMutations module
+// path directly.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -69,28 +78,9 @@ const CHUNK_OVERLAP_CHARS = 50;
 // but we do not trust the client.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Validate explicit orgId + namespace args (defense-in-depth). */
-function assertOrgArgs(orgId: string, namespace: string): void {
-	if (!orgId || typeof orgId !== "string" || orgId.trim().length === 0) {
-		throw new Error(
-			"AUTH_NO_ORG_ID: orgId arg is empty — store_document_chunked requires a team org.",
-		);
-	}
-	const expectedPrefix = `team/${orgId}/`;
-	if (!namespace.startsWith("team/")) {
-		throw new Error(
-			"AUTH_NO_ORG_ID: namespace does not start with team/ — possible cross-tenant injection attempt.",
-		);
-	}
-	// namespace must be team/<orgId>/<docId> — the orgId segment must match
-	const parts = namespace.split("/");
-	if (parts.length < 3 || parts[1] !== orgId) {
-		throw new Error(
-			`AUTH_NO_ORG_ID: namespace '${namespace}' does not match orgId '${orgId}'.`,
-		);
-	}
-	void expectedPrefix; // consumed above
-}
+// assertOrgArgs now lives in ./kbShared (imported above) so it can be reused
+// by convex/kbMutations.ts (V8 runtime) without pulling node:crypto/pdf-parse
+// into that bundle. See kbShared.ts for the full validation logic.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Text extraction (Node runtime — pdf-parse available here)

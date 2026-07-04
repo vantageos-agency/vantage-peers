@@ -18,7 +18,8 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, mutation } from "./_generated/server";
+import { assertOrgArgs } from "./kbShared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
@@ -134,6 +135,34 @@ export const supersedePriorChunks = internalMutation({
 			await ctx.db.patch(id, { isLatest: false, updatedAt: now });
 		}
 		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateUploadUrl — mint a Convex storage upload URL, gated by org auth.
+//
+// Public MUTATION (V8 runtime — ctx.storage.generateUploadUrl requires a
+// mutation context, and mutations cannot live in kb.ts's "use node" file).
+// Re-exported from convex/kb.ts for callers that reference kb.generateUploadUrl;
+// the deployed function path is api.kbMutations.generateUploadUrl.
+//
+// Rationale for gating (plan §2, analysis/day123-kb-upload-url-plan.md):
+// ctx.storage.generateUploadUrl() returns a generic URL not bound to any org;
+// the org↔storageId binding (TOFU kbUploads) happens later in
+// bindOrAssertStorageOwnership (this file). Gating URL generation behind
+// org-auth prevents anonymous upload-URL minting (unauthenticated storage
+// fill attacks).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const generateUploadUrl = mutation({
+	args: {
+		orgId: v.string(),
+		namespace: v.string(),
+	},
+	returns: v.string(),
+	handler: async (ctx, args) => {
+		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
+		return await ctx.storage.generateUploadUrl();
 	},
 });
 
