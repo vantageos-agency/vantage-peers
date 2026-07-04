@@ -222,7 +222,7 @@ Top 5 capabilities, in order of impact:
 - Episodic learning records (context / goal / action / outcome / insight + severity)
 - Fix-pattern knowledge base with semantic search and per-attempt logging
 - Hybrid search (vector + BM25 with Reciprocal Rank Fusion)
-- Knowledge Base document ingest (`store_document_chunked`) — uploaded documents are chunked, embedded, and scheduled for RAG sync at write time, so they are searchable via recall/hybrid_search alongside other memories
+- Knowledge Base document ingest (`generate_upload_url` → `store_document_chunked`) — mint a signed upload URL, POST the binary, then the document is chunked, embedded, and scheduled for RAG sync per chunk at write time, so uploaded documents are searchable via recall/hybrid_search alongside other memories
 
 **Coordination**
 - Inter-agent messaging (channels, role DMs, instance DMs, broadcast)

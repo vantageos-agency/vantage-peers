@@ -373,7 +373,11 @@ Same two advisory VP-Sources doctrine paragraphs appended after the existing des
 - `search_components_by_keyword` (alias `search_components`) — keyword search over components
 - `hybrid_search` — RRF-fused vector + BM25 search; VP-Sources doctrine applies
 
-Knowledge Base documents ingested via `store_document_chunked` (see `docs/cloud/kb-ingest.md`) are chunked, embedded, and scheduled for RAG sync at write time — they are fully retrievable through `recall`, `text_search`, and `hybrid_search` like any other memory (Day 122 fix).
+Knowledge Base document upload is a two-step flow (see `docs/cloud/kb-ingest.md`):
+1. `generate_upload_url` — mints a signed Convex storage upload URL (Convex mutation `kbMutations:generateUploadUrl`, requires a Clerk JWT with `org_id`). `POST` the binary to that URL to obtain a `storageId`.
+2. `store_document_chunked` — with the `storageId`, extracts text, chunks (~512 tokens), and schedules RAG embedding per chunk at write time.
+
+Ingested documents are then fully retrievable through `recall`, `text_search`, and `hybrid_search` like any other memory (Day 122 indexing fix + Day 123 `generate_upload_url` — the previously-missing upload entrypoint that made the KB end-to-end usable).
 
 #### `recall` — VP-Sources doctrine (PR-H)
 
