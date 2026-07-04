@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -42,6 +42,13 @@ const modules = Object.fromEntries(
 );
 
 const createT = () => convexTest(schema, modules);
+
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -125,6 +132,9 @@ describe("B5 KB ingest — PDF happy path", () => {
 			namespace: "team/team-a",
 		});
 
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		expect(result).toHaveProperty("docId");
 		expect(result).toHaveProperty("chunkCount");
 		expect(result).toHaveProperty("storageId");
@@ -171,6 +181,9 @@ describe("B5 KB ingest — Markdown happy path", () => {
 			orgId: "team-a",
 			namespace: "team/team-a",
 		});
+
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
 		expect(result.chunkCount).toBeGreaterThan(0);
 
@@ -223,6 +236,9 @@ describe("B5 KB ingest — TXT happy path", () => {
 			namespace: "team/team-a",
 		});
 
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		expect(result.chunkCount).toBeGreaterThan(0);
 
 		const chunks = await getChunksForDoc(t, "team-a", result.docId);
@@ -262,6 +278,10 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			orgId: "team-a",
 			namespace: "team/team-a",
 		});
+
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		expect(result.chunkCount).toBeGreaterThan(0);
 
 		// team-b tries to read team-a's namespace via memoriesScoped
@@ -293,6 +313,9 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			namespace: "team/team-a",
 		});
 
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		// team-b direct action call: must supply its OWN orgId + namespace.
 		// Even if team-b supplies the same docId, the namespace resolves to
 		// team/team-b/<docId> — not team-a's. Cross-tenant isolation is enforced
@@ -317,6 +340,9 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			// Succeeds into team-b's OWN namespace, not team-a's
 			chunkCount: expect.any(Number),
 		});
+
+		// Drain scheduled RAG ingestion (team-b's ingest) so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
 		// Verify team-a's doc is untouched
 		const teamAChunks = await getChunksForDoc(t, "team-a", result.docId);
@@ -350,6 +376,9 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 			orgId: "team-a",
 			namespace: "team/team-a",
 		});
+
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
 		// Verify chunks exist before delete
 		const beforeDelete = await getChunksForDoc(t, "team-a", result.docId);
@@ -453,6 +482,9 @@ describe("B5 KB ingest — chunking determinism", () => {
 		const r1 = await ingest("det1");
 		const r2 = await ingest("det2");
 
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		// Same chunk count
 		expect(r1.chunkCount).toBe(r2.chunkCount);
 
@@ -493,6 +525,9 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 			orgId: "org-A",
 			namespace: "team/org-A",
 		});
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
 		expect(result.chunkCount).toBeGreaterThan(0);
 
 		// Verify the kbUploads row was created with the correct binding
@@ -542,6 +577,9 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 				namespace: "team/org-B",
 			}),
 		).rejects.toThrow(/AUTH_STORAGE_NOT_OWNED/);
+
+		// Drain scheduled RAG ingestion (org-A's successful ingest) so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 });
 
@@ -581,6 +619,9 @@ describe("B5 KB ingest — idempotent re-ingest", () => {
 
 		const r2 = await ingestVersion(text2);
 		expect(r2.docId).toBe(docId);
+
+		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
 		// Active chunks (isLatest=true) should only be from v2
 		const activeChunks = await getChunksForDoc(t, "team-a", docId);

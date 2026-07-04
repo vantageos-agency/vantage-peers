@@ -373,6 +373,8 @@ Same two advisory VP-Sources doctrine paragraphs appended after the existing des
 - `search_components_by_keyword` (alias `search_components`) — keyword search over components
 - `hybrid_search` — RRF-fused vector + BM25 search; VP-Sources doctrine applies
 
+Knowledge Base documents ingested via `store_document_chunked` (see `docs/cloud/kb-ingest.md`) are chunked, embedded, and scheduled for RAG sync at write time — they are fully retrievable through `recall`, `text_search`, and `hybrid_search` like any other memory (Day 122 fix).
+
 #### `recall` — VP-Sources doctrine (PR-H)
 
 Alias of `search_memories_by_semantic`. Exports `RECALL_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.

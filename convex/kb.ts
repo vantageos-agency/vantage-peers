@@ -250,22 +250,29 @@ export const storeDocumentChunked = action({
 		}
 
 		// 8. Insert new chunks as memories (type=reference, isLatest=true)
+		// and schedule RAG embedding + indexing for each chunk — mirrors the
+		// pattern in memories.ts:storeMemory (scheduler.runAfter(0, addRagEntry)).
 		for (let i = 0; i < effectiveChunks.length; i++) {
-			await ctx.runMutation(internal.kbMutations.insertChunk, {
-				namespace,
+			const chunkMemoryId = await ctx.runMutation(
+				internal.kbMutations.insertChunk,
+				{
+					namespace,
+					content: effectiveChunks[i],
+					filename: args.filename,
+					mimeType: args.mimeType,
+					chunkIndex: i,
+					storageId: args.storageId,
+					docId,
+				},
+			);
+
+			await ctx.scheduler.runAfter(0, internal.ragSync.addRagEntry, {
+				memoryId: chunkMemoryId,
 				content: effectiveChunks[i],
-				filename: args.filename,
-				mimeType: args.mimeType,
-				chunkIndex: i,
-				storageId: args.storageId,
-				docId,
+				namespace,
+				type: "reference",
 			});
 		}
-
-		// NOTE: RAG embedding (ragSync.addRagEntry) is intentionally NOT scheduled
-		// here — convex-test does not support the scheduler. In production,
-		// a follow-up action or the MCP tool wrapper can schedule RAG indexing.
-		// Matches the scheduler-free pattern in memoriesScoped.ts (line 135).
 
 		return {
 			docId,
