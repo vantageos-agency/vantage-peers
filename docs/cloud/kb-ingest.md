@@ -34,6 +34,10 @@ Client                      MCP server              Convex
 2. `POST` the raw binary to that URL; Convex storage returns a `storageId`.
 3. Call `store_document_chunked` MCP tool with `storageId`, `mimeType`, and
    `filename`. An optional `docId` may be supplied for idempotent re-ingest.
+4. Each stored chunk schedules a `ragSync.addRagEntry` job, embedding the chunk
+   for vector search. Ingested documents are therefore searchable via
+   `recall`, `text_search`, and `hybrid_search` — not just retrievable by
+   direct namespace lookup (Day 122 fix).
 
 ## Chunk strategy
 
