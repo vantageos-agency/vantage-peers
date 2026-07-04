@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **fix(kb): document chunks now embedded + searchable** — `store_document_chunked` (`convex/kb.ts` `storeDocumentChunked`) inserted each chunk into the `memories` table but never scheduled `ragSync.addRagEntry`, so uploaded KB documents were stored yet **invisible to `recall` / `text_search` / `hybrid_search`**. Reproduced live Day 122 on prod `compassionate-goldfinch-737` (sentinel via `storeMemory` found; sentinel via document path invisible even by exact token). Root cause: the chunk-insert loop lacked the `ctx.scheduler.runAfter(0, internal.ragSync.addRagEntry, …)` call that `storeMemory` (`convex/memories.ts:84`) and `storeEpisode` (`convex/episodes.ts:70`) already have; the justifying comment ("convex-test does not support the scheduler") was obsolete (convex-test ^0.0.44 supports it). Fix schedules `addRagEntry` per chunk (mirror of `storeMemory`), `type="reference"`. **Backend Convex only — `mcp-server/` unchanged, no npm republish required.** Strict TDD: `convex/__tests__/kb.document-indexing.test.ts` (new) asserts N `addRagEntry` scheduled = chunkCount via the `_scheduled_functions` system table (real embedding retrieval covered by prod e2e, not unit-testable without seeded embeddings); `convex/__tests__/kb-ingest.test.ts` upgraded with scheduler-drain (`vi.useFakeTimers` + `finishAllScheduledFunctions`) to absorb the newly-scheduled jobs. Tests: kb.document-indexing 2/2, kb-ingest 11/11 (0 unhandled). Mission `k57dh3jjaz1n3hgd0wdwyvmx8189w1z0`.
+
 ### Chores
 - chore(oauth): clean inherited biome violations in mcp-server/server-http.ts (touch-it-clean-it discipline)
 
