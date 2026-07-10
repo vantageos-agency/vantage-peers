@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
+import { requireId } from "./lib/ids";
 import {
 	internalMutation,
 	internalQuery,
@@ -532,7 +533,7 @@ export const listErrors = query({
 });
 
 export const getError = query({
-	args: { errorId: v.id("errorLogs") },
+	args: { errorId: v.string() },
 	returns: v.union(
 		v.object({
 			_id: v.id("errorLogs"),
@@ -555,6 +556,13 @@ export const getError = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.errorId);
+		const errorId = requireId(
+			ctx,
+			"errorLogs",
+			args.errorId,
+			"errorId",
+			"Use the full 32-char errorId returned by list_errors.",
+		);
+		return await ctx.db.get(errorId);
 	},
 });
