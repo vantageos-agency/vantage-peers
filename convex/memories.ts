@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
+import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeMemory
@@ -97,7 +98,7 @@ export const storeMemory = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getMemory = query({
-  args: { memoryId: v.id("memories") },
+  args: { memoryId: v.string() },
   returns: v.union(
     v.object({
       _id: v.id("memories"),
@@ -130,7 +131,14 @@ export const getMemory = query({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.memoryId);
+    const memoryId = requireId(
+      ctx,
+      "memories",
+      args.memoryId,
+      "memoryId",
+      "Use the full 32-char memoryId returned by recall or store_memory.",
+    );
+    return await ctx.db.get(memoryId);
   },
 });
 
@@ -305,19 +313,27 @@ export const listMemories = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const softDeleteMemory = mutation({
-  args: { memoryId: v.id("memories") },
+  args: { memoryId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const memory = await ctx.db.get(args.memoryId);
+    const memoryId = requireId(
+      ctx,
+      "memories",
+      args.memoryId,
+      "memoryId",
+      "Use the full 32-char memoryId returned by recall or store_memory.",
+    );
+
+    const memory = await ctx.db.get(memoryId);
     if (memory === null) {
-      throw new Error(`Memory ${args.memoryId} not found`);
+      throw new Error(`Memory ${memoryId} not found`);
     }
 
-    await ctx.db.patch(args.memoryId, { isLatest: false, updatedAt: Date.now() });
+    await ctx.db.patch(memoryId, { isLatest: false, updatedAt: Date.now() });
 
     // Schedule async RAG filter update — marks entry as no longer latest
     await ctx.scheduler.runAfter(0, internal.ragSync.markRagEntrySuperseded, {
-      memoryId: args.memoryId,
+      memoryId,
       content: memory.content,
       namespace: memory.namespace,
       type: memory.type,
