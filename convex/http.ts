@@ -3,6 +3,10 @@ import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
+import {
+	buildDeployTaskPayload,
+	prTouchesDeployableConvex,
+} from "./githubDeployGate";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -540,13 +544,9 @@ http.route({
 							const files = (await filesRes.json()) as Array<{
 								filename?: string;
 							}>;
-							const hasConvex = files.some((f) => {
-								const name = f.filename ?? "";
-								return (
-									/^convex\//.test(name) ||
-									/^apps\/[^/]+\/convex\//.test(name)
-								);
-							});
+							const hasConvex = prTouchesDeployableConvex(
+								files.map((f) => f.filename ?? ""),
+							);
 							if (hasConvex) {
 								// Short-circuit: convex/ path found on page 1 → deploy.
 								touchesConvex = true;
@@ -585,7 +585,7 @@ http.route({
 					await ctx.runMutation(api.messages.sendMessage, {
 						from: "system",
 						channel: orchestrator,
-						content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Deploy to prod now: npx convex deploy --yes`,
+						content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Diff touche convex/ — deploy PROD a arbitrer, token [PROD-DEPLOY-AUTHORIZED] requis.`,
 					});
 
 					// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede +
@@ -595,12 +595,22 @@ http.route({
 						mergedAtIso && !Number.isNaN(Date.parse(mergedAtIso))
 							? Date.parse(mergedAtIso)
 							: undefined;
-					await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
-						title: `[Deploy] PR #${pr.number as number} merged — deploy ${project} to prod`,
-						description: `PR #${pr.number as number} "${pr.title as string}" was merged by ${(pr.merged_by as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nAction required: deploy to production.\n\n\`\`\`bash\ngit checkout main && git pull && npx convex deploy --yes\n\`\`\`\n\nURL: ${pr.html_url as string}`,
-						assignedTo: orchestratorAssignee,
+					const deployTaskPayload = buildDeployTaskPayload({
+						prNumber: pr.number as number,
+						prTitle: pr.title as string,
+						mergedBy:
+							((pr.merged_by as Record<string, unknown>)?.login as
+								| string
+								| undefined) ?? "unknown",
+						htmlUrl: pr.html_url as string,
 						project,
-						priority: "urgent",
+					});
+					await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
+						title: deployTaskPayload.title,
+						description: deployTaskPayload.description,
+						assignedTo: deployTaskPayload.assignedTo,
+						project,
+						priority: deployTaskPayload.priority,
 						createdBy: "system",
 						tags: ["github", "deploy", "pr-merged"],
 						prMergedAt,
