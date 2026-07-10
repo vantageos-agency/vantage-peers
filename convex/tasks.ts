@@ -6,6 +6,7 @@ import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -217,7 +218,12 @@ export const get = query({
 // (Feature D spec requirement, hook v1.2.0).
 // ─────────────────────────────────────────────────────────────────────────────
 export const getById = query({
-	args: { taskId: v.id("tasks") },
+	// Accept a raw string, not `v.id("tasks")`: the v.id() validator runs BEFORE
+	// the handler, so a wrong-table ID is rejected with a message Convex redacts
+	// in prod (`Server Error`, `error.data` undefined — measured). Narrowing
+	// inside the handler via requireId() throws a ConvexError whose payload
+	// survives redaction. Same contract as PR #1069 (markAsRead), on a read.
+	args: { taskId: v.string() },
 	returns: v.union(
 		v.object({
 			_id: v.id("tasks"),
@@ -248,7 +254,15 @@ export const getById = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.taskId);
+		const taskId = requireId(
+			ctx,
+			"tasks",
+			args.taskId,
+			"taskId",
+			"Use the full 32-char taskId returned by list_tasks or create_task.",
+		);
+		// A well-formed tasks ID pointing at a deleted doc stays a null return.
+		return await ctx.db.get(taskId);
 	},
 });
 
