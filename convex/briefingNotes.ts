@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // create — insert a new briefing note
@@ -32,7 +33,13 @@ export const create = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { noteId: v.id("briefingNotes") },
+	// Accept a raw string, not `v.id("briefingNotes")`: the v.id() validator
+	// runs BEFORE the handler, so a wrong-table ID is rejected with a message
+	// Convex redacts in prod (`Server Error`, `error.data` undefined —
+	// measured). Narrowing inside the handler via requireId() throws a
+	// ConvexError whose payload survives redaction. Same contract as PR #1072
+	// (tasks.getById).
+	args: { noteId: v.string() },
 	returns: v.union(
 		v.object({
 			_id: v.id("briefingNotes"),
@@ -53,7 +60,14 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.noteId);
+		const noteId = requireId(
+			ctx,
+			"briefingNotes",
+			args.noteId,
+			"noteId",
+			"Use the full 32-char noteId returned by list_briefing_notes or create_briefing_note.",
+		);
+		return await ctx.db.get(noteId);
 	},
 });
 
