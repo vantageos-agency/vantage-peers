@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -165,10 +166,23 @@ export const remove = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { buId: v.id("businessUnits") },
+	// Accept a raw string, not `v.id("businessUnits")`: the v.id() validator
+	// runs BEFORE the handler, so a wrong-table ID is rejected with a message
+	// Convex redacts in prod (`Server Error`, `error.data` undefined —
+	// measured). Narrowing inside the handler via requireId() throws a
+	// ConvexError whose payload survives redaction. Same contract as PR #1072
+	// (tasks.getById).
+	args: { buId: v.string() },
 	returns: v.union(buObject, v.null()),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.buId);
+		const buId = requireId(
+			ctx,
+			"businessUnits",
+			args.buId,
+			"buId",
+			"Use the full 32-char buId returned by businessUnits.list or businessUnits.create.",
+		);
+		return await ctx.db.get(buId);
 	},
 });
 
