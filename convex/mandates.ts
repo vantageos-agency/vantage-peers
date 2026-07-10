@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,10 +249,17 @@ export const list = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { mandateId: v.id("mandates") },
+	args: { mandateId: v.string() },
 	returns: v.union(mandateObject, v.null()),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.mandateId);
+		const mandateId = requireId(
+			ctx,
+			"mandates",
+			args.mandateId,
+			"mandateId",
+			"Use the full 32-char mandateId returned by list_mandates or create_mandate.",
+		);
+		return await ctx.db.get(mandateId);
 	},
 });
 
