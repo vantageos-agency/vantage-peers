@@ -35,6 +35,12 @@ const modules = Object.fromEntries(
 
 const createT = () => convexTest(schema, modules);
 
+// Literal copy of the hint passed by `tasks:getById` to `requireId`. Deliberately
+// NOT imported from the source: an imported constant follows the mutant, and the
+// assertion would prove nothing. If this string and the call-site drift apart, the
+// test must fail — that is the point.
+const HINT = "Use the full 32-char taskId returned by list_tasks or create_task.";
+
 type WrongTablePayload = {
 	path?: string;
 	expectedTable?: string;
@@ -84,6 +90,15 @@ describe("tasks:getById — wrong-table ID (issue #1064, reads)", () => {
 		expect(payload?.receivedId).toBe(messageId);
 		expect(payload?.message).toContain("taskId");
 		expect(payload?.message).toContain("tasks");
+		// The hint is the ONLY sentence that tells the caller what to do, and it is
+		// the last one — so a `toContain("taskId")` assertion is already satisfied by
+		// the prefix `taskId is not a valid tasks ID.` and cannot see the hint vanish.
+		// Eta's finding on #1072: dropping the hint left 4/4 green. Asserted here as a
+		// LITERAL, not against an imported constant — a constant would move with the
+		// mutant and the assertion would be tautological.
+		expect(payload?.message).toContain(HINT);
+		// And the message must be strictly richer than the bare label.
+		expect(payload?.message).not.toBe("taskId is not a valid tasks ID.");
 	});
 
 	test("negative control: an ID from a THIRD table is also named, with its own value", async () => {
