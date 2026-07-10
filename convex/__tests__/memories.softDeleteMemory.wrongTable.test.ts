@@ -13,7 +13,7 @@
 
 import { convexTest } from "convex-test";
 import { ConvexError } from "convex/values";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -28,6 +28,18 @@ const modules = Object.fromEntries(
 );
 
 const createT = () => convexTest(schema, modules);
+
+// `storeMemory` / `softDeleteMemory` schedule `ragSync` functions via
+// `ctx.scheduler.runAfter`. `ragSync` is excluded from `modules` above, so on
+// REAL timers those scheduled jobs fire after the test and reject with "Could
+// not find module for: ragSync" as UNHANDLED errors — green assertions, red CI
+// job. Fake timers keep the scheduler under test control (same as kb-ingest).
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 type WrongTablePayload = {
 	path?: string;
