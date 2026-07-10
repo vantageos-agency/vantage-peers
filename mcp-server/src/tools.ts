@@ -784,7 +784,22 @@ export function mcpConvexError(error: unknown): {
 	content: Array<{ type: "text"; text: string }>;
 	isError: true;
 } {
-	const rawMessage = error instanceof Error ? error.message : String(error);
+	// Empirical probe (Day 127, 2026-07-10 — Sigma): Convex redacts
+	// `error.message` to a bare "[Request ID: ...] Server Error" string for
+	// ConvexError throws, but the ACTUAL actionable payload passed to
+	// `throw new ConvexError(...)` server-side survives on `error.data`
+	// (string or arbitrary JSON-serialisable value). Prefer `.data` when
+	// present so callers see e.g. "TASK_START_BLOCKED: ..." instead of the
+	// opaque redacted message.
+	const data = (error as { data?: unknown } | null)?.data;
+	const rawMessage =
+		data !== undefined && data !== null
+			? typeof data === "string"
+				? data
+				: JSON.stringify(data)
+			: error instanceof Error
+				? error.message
+				: String(error);
 
 	const parsed = parseConvexError(rawMessage);
 
