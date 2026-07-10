@@ -183,6 +183,26 @@ export const memoryIdSchema = z
 		"Invalid memory ID format (expected 32-char Convex ID)",
 	);
 
+/** Build a strict Convex document-ID schema with a field-named error message. */
+const convexIdSchema = (field: string) =>
+	z.string().regex(
+		convexIdPattern,
+		`${field} must be a 32-char lowercase alphanumeric Convex ID`,
+	);
+
+export const taskIdSchema = convexIdSchema("taskId");
+export const missionIdSchema = convexIdSchema("missionId");
+export const messageIdSchema = convexIdSchema("messageId");
+export const noteIdSchema = convexIdSchema("noteId");
+export const componentIdSchema = convexIdSchema("componentId");
+export const mandateIdSchema = convexIdSchema("mandateId");
+export const patternIdSchema = convexIdSchema("patternId");
+export const errorIdSchema = convexIdSchema("errorId");
+export const recurringTaskIdSchema = convexIdSchema("recurringTaskId");
+export const buIdSchema = convexIdSchema("buId");
+export const episodeIdSchema = convexIdSchema("episodeId");
+export const diaryIdSchema = convexIdSchema("diaryId");
+
 const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
 	.describe("Memory classification type");
@@ -443,9 +463,7 @@ export const updateBriefingNoteDescription =
 	"EXAMPLE: update_briefing_note noteId='j57aaaaa...' callerOrchestrator='alpha' decisions=['Use hybrid_search first'].";
 
 export const updateBriefingNoteSchema = z.object({
-	noteId: z
-		.string()
-		.describe("Convex document ID of the briefing note to update"),
+	noteId: noteIdSchema.describe("Convex document ID of the briefing note to update"),
 	callerOrchestrator: creatorSchema.describe(
 		"Orchestrator role making the update — must match createdBy or be 'system' (RBAC deny-by-default)",
 	),
@@ -1488,9 +1506,9 @@ export function registerTools(
 			createdBy: creatorSchema,
 			relatesTo: z
 				.object({
-					targetId: z
-						.string()
-						.describe("ID of the memory this relates to (Convex document ID)"),
+					targetId: memoryIdSchema.describe(
+						"ID of the memory this relates to (Convex document ID)",
+					),
 					type: z
 						.enum(["updates", "extends", "derives"])
 						.describe(
@@ -1567,9 +1585,9 @@ export function registerTools(
 			"WHEN: use to retire an outdated fact or superseded rule without permanent data loss. " +
 			"EXAMPLE: soft_delete_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			memoryId: z
-				.string()
-				.describe("Convex document ID of the memory to soft-delete"),
+			memoryId: memoryIdSchema.describe(
+				"Convex document ID of the memory to soft-delete",
+			),
 		},
 		{
 			readOnlyHint: false,
@@ -1608,7 +1626,7 @@ export function registerTools(
 			"WHEN: use when you have a specific memoryId from a prior recall/store and need the full record. " +
 			"EXAMPLE: get_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			memoryId: z.string().describe("Memory document ID"),
+			memoryId: memoryIdSchema.describe("Memory document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -2047,7 +2065,7 @@ export function registerTools(
 			"WHEN: use when you have an episodeId from store_episode or a prior search and need the full record. " +
 			"EXAMPLE: get_episode episodeId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			episodeId: z.string().describe("Episode (memory) document ID"),
+			episodeId: episodeIdSchema.describe("Episode (memory) document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -2857,9 +2875,7 @@ export function registerTools(
 			"WHEN: use to retract a mistaken broadcast or sensitive content before recipients read it. " +
 			"EXAMPLE: delete_message messageId='j57dy3049btafda9m2f5d2ggk987ph3f' callerOrchestrator='alpha'.",
 		{
-			messageId: z
-				.string()
-				.describe("Convex document ID of the message to delete"),
+			messageId: messageIdSchema.describe("Convex document ID of the message to delete"),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be the sender or system"),
@@ -3263,9 +3279,7 @@ export function registerTools(
 			"EXAMPLE: list_broadcast_status messageId='j57dy3049btafda9m2f5d2ggk987ph3f'. " +
 			"Default limit 20. cap 200.",
 		{
-			messageId: z
-				.string()
-				.describe("Convex document ID of the broadcast message"),
+			messageId: messageIdSchema.describe("Convex document ID of the broadcast message"),
 			limit: z
 				.number()
 				.int()
@@ -3346,11 +3360,10 @@ export function registerTools(
 			priority: prioritySchema,
 			status: taskStatusSchema.default("todo"),
 			dependsOn: z
-				.array(z.string())
+				.array(taskIdSchema)
 				.optional()
 				.describe("Task IDs that must be completed before this task can start"),
-			missionId: z
-				.string()
+			missionId: missionIdSchema
 				.optional()
 				.describe("Convex document ID of the parent mission"),
 			estimatedMinutes: z
@@ -3582,7 +3595,7 @@ export function registerTools(
 				.optional()
 				.describe("Filter by status"),
 			project: z.string().optional().describe("Filter by project name"),
-			missionId: z.string().optional().describe("Filter by mission Convex ID"),
+			missionId: missionIdSchema.optional().describe("Filter by mission Convex ID"),
 			limit: z
 				.number()
 				.int()
@@ -3642,7 +3655,7 @@ export function registerTools(
 			"WHEN: use to reassign, reprioritize, or add context to an existing task without recreating it. " +
 			"EXAMPLE: update_task taskId='k178d3ns...' status='review' callerOrchestrator='alpha'.",
 		{
-			taskId: z.string().describe("Convex document ID of the task to update"),
+			taskId: taskIdSchema.describe("Convex document ID of the task to update"),
 			title: z.string().optional().describe("New title"),
 			description: z.string().optional().describe("New description"),
 			project: z.string().optional().describe("New project"),
@@ -3651,11 +3664,10 @@ export function registerTools(
 			priority: prioritySchema.optional().describe("New priority"),
 			status: taskStatusSchema.optional().describe("New status"),
 			dependsOn: z
-				.array(z.string())
+				.array(taskIdSchema)
 				.optional()
 				.describe("Task IDs that must be completed before this task can start"),
-			missionId: z
-				.string()
+			missionId: missionIdSchema
 				.optional()
 				.describe("Link to a mission (Convex document ID)"),
 			estimatedMinutes: z
@@ -3751,7 +3763,7 @@ export function registerTools(
 			"WHEN: call when all deliverables are committed or verified — never complete without a proof token in the note. " +
 			"EXAMPLE: complete_task taskId='k178d3ns...' completionNote='PR #667 merged, 86 descriptions updated' callerOrchestrator='beta'.",
 		{
-			taskId: z.string().describe("Convex document ID of the task to complete"),
+			taskId: taskIdSchema.describe("Convex document ID of the task to complete"),
 			completionNote: z
 				.string()
 				.describe("What was actually done — summary of work completed"),
@@ -3800,7 +3812,7 @@ export function registerTools(
 			"WHEN: call as the first action when picking up a task to signal activity and enable metrics. " +
 			"EXAMPLE: start_task taskId='k178d3ns...' callerOrchestrator='gamma'.",
 		{
-			taskId: z.string().describe("Convex document ID of the task to start"),
+			taskId: taskIdSchema.describe("Convex document ID of the task to start"),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -3845,7 +3857,7 @@ export function registerTools(
 			"WHEN: use before start_task in multi-orchestrator queues to ensure exclusive ownership. " +
 			"EXAMPLE: checkout_task taskId='k178d3ns...' callerOrchestrator='alpha' callerInstance='alpha-vps'.",
 		{
-			taskId: z.string().describe("Convex document ID of the task to claim"),
+			taskId: taskIdSchema.describe("Convex document ID of the task to claim"),
 			callerOrchestrator: creatorSchema.describe(
 				"Orchestrator claiming the task (e.g. sigma, pi)",
 			),
@@ -3893,7 +3905,7 @@ export function registerTools(
 			"WHEN: use to remove erroneously created tasks or test artifacts — prefer complete_task for real work. " +
 			"EXAMPLE: delete_task taskId='k178d3ns...' callerOrchestrator='alpha'.",
 		{
-			taskId: z.string().describe("Convex document ID of the task to delete"),
+			taskId: taskIdSchema.describe("Convex document ID of the task to delete"),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or system"),
@@ -3938,10 +3950,10 @@ export function registerTools(
 			"WHEN: use when external dependency or missing input prevents progress — record the specific blocker. " +
 			"EXAMPLE: block_task taskId='k178d3ns...' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
 		{
-			taskId: z.string().describe("Convex document ID of the task to block"),
+			taskId: taskIdSchema.describe("Convex document ID of the task to block"),
 			reason: z.string().optional().describe("Why the task is blocked"),
 			blockedBy: z
-				.array(z.string())
+				.array(taskIdSchema)
 				.optional()
 				.describe("Task IDs that are blocking this task"),
 			callerOrchestrator: creatorSchema
@@ -3999,11 +4011,9 @@ export function registerTools(
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
 			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
-			taskId: z
-				.string()
-				.describe("Convex document ID of the task that depends on others"),
+			taskId: taskIdSchema.describe("Convex document ID of the task that depends on others"),
 			dependsOn: z
-				.array(z.string())
+				.array(taskIdSchema)
 				.describe("Task IDs that must complete first"),
 			callerOrchestrator: creatorSchema
 				.optional()
@@ -4058,7 +4068,7 @@ export function registerTools(
 			"EXAMPLE: list_tasks_by_mission missionId='k57a36y8...' status='in_progress' limit=20. " +
 			"Default limit 20. cap 200.",
 		{
-			missionId: z.string().describe("Convex document ID of the mission"),
+			missionId: missionIdSchema.describe("Convex document ID of the mission"),
 			status: taskStatusFilterSchema
 				.optional()
 				.describe("Filter by task status (single, alias, or array)"),
@@ -4381,7 +4391,7 @@ export function registerTools(
 			"WHEN: use before assigning tasks or reporting to get the canonical mission state. " +
 			"EXAMPLE: get_mission missionId='k57a36y8w5t085bqr23dsmvb2d882506'.",
 		{
-			missionId: z.string().describe("Convex document ID of the mission"),
+			missionId: missionIdSchema.describe("Convex document ID of the mission"),
 		},
 		{
 			readOnlyHint: true,
@@ -4419,9 +4429,7 @@ export function registerTools(
 			"WHEN: use to advance status, update progress percentage, or change pilot/agents mid-flight. " +
 			"EXAMPLE: update_mission missionId='k57a36y8...' progress=75 status='validate'.",
 		{
-			missionId: z
-				.string()
-				.describe("Convex document ID of the mission to update"),
+			missionId: missionIdSchema.describe("Convex document ID of the mission to update"),
 			name: z.string().optional().describe("New name"),
 			description: z.string().optional().describe("New description"),
 			project: z.string().optional().describe("New project"),
@@ -4497,7 +4505,7 @@ export function registerTools(
 			"WHEN: use as a lightweight alternative to update_mission when only the status changes. " +
 			"EXAMPLE: update_mission_status missionId='k57a36y8...' status='complete'.",
 		{
-			missionId: z.string().describe("Convex document ID of the mission"),
+			missionId: missionIdSchema.describe("Convex document ID of the mission"),
 			status: missionStatusSchema.describe("New status"),
 		},
 		{
@@ -4928,7 +4936,7 @@ export function registerTools(
 			"WHEN: use when you have a specific noteId and need the full structured record for a handoff or recap. " +
 			"EXAMPLE: get_briefing_note noteId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			noteId: z.string().describe("Briefing note document ID"),
+			noteId: noteIdSchema.describe("Briefing note document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -5369,7 +5377,7 @@ export function registerTools(
 			"WHEN: use to bump a skill version or fix content without re-registering from scratch. " +
 			"EXAMPLE: update_component componentId='j57aaaaa...' version='1.3.0' content='...'.",
 		{
-			componentId: z.string().describe("Convex document ID of the component"),
+			componentId: componentIdSchema.describe("Convex document ID of the component"),
 			name: z.string().optional().describe("New component name"),
 			team: z.string().optional().describe("New team name"),
 			content: z.string().optional().describe("New content/source code"),
@@ -5428,9 +5436,7 @@ export function registerTools(
 			"WHEN: use to remove deprecated or test components that should no longer be discoverable. " +
 			"EXAMPLE: delete_component componentId='j57aaaaa...'.",
 		{
-			componentId: z
-				.string()
-				.describe("Convex document ID of the component to delete"),
+			componentId: componentIdSchema.describe("Convex document ID of the component to delete"),
 		},
 		{
 			readOnlyHint: false,
@@ -5766,7 +5772,7 @@ export function registerTools(
 			"WHEN: use during holidays, freezes, or when the assignee is unavailable for a period. " +
 			"EXAMPLE: pause_recurring_task taskId='j57aaaaa...'.",
 		{
-			taskId: z.string().describe("Recurring task ID"),
+			taskId: recurringTaskIdSchema.describe("Recurring task ID"),
 		},
 		{
 			readOnlyHint: false,
@@ -5800,7 +5806,7 @@ export function registerTools(
 			"WHEN: use after a pause period ends to re-enable automatic task generation. " +
 			"EXAMPLE: resume_recurring_task taskId='j57aaaaa...'.",
 		{
-			taskId: z.string().describe("Recurring task ID"),
+			taskId: recurringTaskIdSchema.describe("Recurring task ID"),
 		},
 		{
 			readOnlyHint: false,
@@ -5834,7 +5840,7 @@ export function registerTools(
 			"WHEN: use when a recurring process is retired and should never generate tasks again. " +
 			"EXAMPLE: delete_recurring_task taskId='j57aaaaa...'.",
 		{
-			taskId: z.string().describe("Recurring task ID"),
+			taskId: recurringTaskIdSchema.describe("Recurring task ID"),
 		},
 		{
 			readOnlyHint: false,
@@ -5868,9 +5874,7 @@ export function registerTools(
 			"WHEN: use to change assignee, schedule, or priority of an active recurring template. " +
 			"EXAMPLE: update_recurring_task recurringTaskId='j57aaaaa...' cronExpression='0 10 * * 1' priority='high'.",
 		{
-			recurringTaskId: z
-				.string()
-				.describe("Convex document ID of the recurring task"),
+			recurringTaskId: recurringTaskIdSchema.describe("Convex document ID of the recurring task"),
 			title: z.string().optional().describe("New title"),
 			description: z.string().optional().describe("New description"),
 			assignedTo: creatorSchema.optional().describe("New assignee"),
@@ -6006,9 +6010,7 @@ export function registerTools(
 			"WHEN: call when the fulfiller confirms they can deliver the service within the agreed budget. " +
 			"EXAMPLE: accept_mandate mandateId='j57aaaaa...' callerOrchestrator='beta'.",
 		{
-			mandateId: z
-				.string()
-				.describe("Convex document ID of the mandate to accept"),
+			mandateId: mandateIdSchema.describe("Convex document ID of the mandate to accept"),
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the fulfilledBy orchestrator or system",
 			),
@@ -6051,9 +6053,7 @@ export function registerTools(
 			"WHEN: use to record spend progress, link created tasks, or advance status to delivered. " +
 			"EXAMPLE: update_mandate mandateId='j57aaaaa...' callerOrchestrator='beta' tokensCost=1200 status='delivered'.",
 		{
-			mandateId: z
-				.string()
-				.describe("Convex document ID of the mandate to update"),
+			mandateId: mandateIdSchema.describe("Convex document ID of the mandate to update"),
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the fulfilledBy orchestrator or system",
 			),
@@ -6111,9 +6111,7 @@ export function registerTools(
 			"WHEN: call after verifying the delivered work meets the mandate scope — closes the billing cycle. " +
 			"EXAMPLE: settle_mandate mandateId='j57aaaaa...' callerOrchestrator='alpha' finalCost=4800.",
 		{
-			mandateId: z
-				.string()
-				.describe("Convex document ID of the mandate to settle"),
+			mandateId: mandateIdSchema.describe("Convex document ID of the mandate to settle"),
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the requestedBy orchestrator or system",
 			),
@@ -6162,7 +6160,7 @@ export function registerTools(
 			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
 			"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
 		{
-			mandateId: z.string().describe("Mandate ID to validate against"),
+			mandateId: mandateIdSchema.describe("Mandate ID to validate against"),
 			proposedAmount: z
 				.number()
 				.describe("Proposed token spend amount to validate"),
@@ -6408,9 +6406,7 @@ export function registerTools(
 			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. " +
 			"EXAMPLE: update_bu buId='j57aaaaa...' status='live' revenueProjections={y1:10000,y2:80000,y3:300000}.",
 		{
-			buId: z
-				.string()
-				.describe("Convex document ID of the business unit to update"),
+			buId: buIdSchema.describe("Convex document ID of the business unit to update"),
 			name: z.string().optional().describe("New name"),
 			description: z.string().optional().describe("New description"),
 			purpose: z.string().optional().describe("New purpose"),
@@ -6503,7 +6499,7 @@ export function registerTools(
 			"WHEN: use before updating or reporting on a BU to get the current canonical state. " +
 			"EXAMPLE: get_bu buId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			buId: z.string().describe("Convex document ID of the business unit"),
+			buId: buIdSchema.describe("Convex document ID of the business unit"),
 		},
 		{
 			readOnlyHint: true,
@@ -6655,9 +6651,7 @@ export function registerTools(
 			"WHEN: use only for test BUs or entities created in error; prefer status update for real BUs. " +
 			"EXAMPLE: delete_bu buId='j57aaaaa...'.",
 		{
-			buId: z
-				.string()
-				.describe("Convex document ID of the business unit to delete"),
+			buId: buIdSchema.describe("Convex document ID of the business unit to delete"),
 		},
 		{
 			readOnlyHint: false,
@@ -7384,7 +7378,7 @@ export function registerTools(
 			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
 			"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
 		{
-			patternId: z.string().describe("ID of the fix pattern"),
+			patternId: patternIdSchema.describe("ID of the fix pattern"),
 			description: z.string().describe("What was tried — the fix approach"),
 			worked: z.boolean().describe("Did this fix the issue?"),
 			why: z.string().describe("Why it worked or didn't — the reasoning"),
@@ -7436,7 +7430,7 @@ export function registerTools(
 			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
 			"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
 		{
-			patternId: z.string().describe("ID of the fix pattern"),
+			patternId: patternIdSchema.describe("ID of the fix pattern"),
 			validatedFix: z.string().describe("Description of the validated fix"),
 		},
 		{
@@ -7741,7 +7735,7 @@ export function registerTools(
 			"WHEN: use after creating a fix pattern for an issue to connect the symptom record with the bug tracker. " +
 			"EXAMPLE: link_issue_to_pattern patternId='j57aaaaa...' issueId='j57bbbbb...'.",
 		{
-			patternId: z.string().describe("ID of the fix pattern"),
+			patternId: patternIdSchema.describe("ID of the fix pattern"),
 			issueId: z.string().describe("VantagePeers issue ID to link"),
 		},
 		{
@@ -7923,9 +7917,7 @@ export function registerTools(
 			templateName: z
 				.string()
 				.describe("Name of the mission template to instantiate"),
-			missionId: z
-				.string()
-				.describe("Convex document ID of the target mission"),
+			missionId: missionIdSchema.describe("Convex document ID of the target mission"),
 			context: z
 				.record(z.string(), z.string())
 				.optional()
@@ -8231,7 +8223,7 @@ export function registerTools(
 			"WHEN: use after list_errors to retrieve the full stack trace for a specific error entry. " +
 			"EXAMPLE: get_error errorId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			errorId: z.string().describe("Convex document ID of the errorLogs entry"),
+			errorId: errorIdSchema.describe("Convex document ID of the errorLogs entry"),
 		},
 		{
 			readOnlyHint: true,
@@ -8567,7 +8559,7 @@ export function registerTools(
 			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
 			"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
 		{
-			mandateId: z.string(),
+			mandateId: mandateIdSchema,
 			proposedAmount: z.number(),
 		},
 		{
@@ -8598,7 +8590,7 @@ export function registerTools(
 			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
 			"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
 		{
-			patternId: z.string(),
+			patternId: patternIdSchema,
 			validatedFix: z.string(),
 		},
 		{
@@ -8631,7 +8623,7 @@ export function registerTools(
 			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
 			"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
 		{
-			patternId: z.string(),
+			patternId: patternIdSchema,
 			description: z.string(),
 			worked: z.boolean(),
 			why: z.string().optional(),
@@ -8672,8 +8664,8 @@ export function registerTools(
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
 			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
-			taskId: z.string(),
-			dependsOn: z.array(z.string()),
+			taskId: taskIdSchema,
+			dependsOn: z.array(taskIdSchema),
 			callerOrchestrator: z.string(),
 		},
 		{
@@ -8780,7 +8772,7 @@ export function registerTools(
 			"WHEN: use when you have a specific taskId from list_tasks/create_task and need the full record (brief, VERIFICATION block, completionNote). " +
 			"EXAMPLE: get_task taskId='k172735brsw6bc3j2dkkkfxqrx88kkjq'.",
 		{
-			taskId: z.string().describe("Task document ID"),
+			taskId: taskIdSchema.describe("Task document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -8812,7 +8804,7 @@ export function registerTools(
 			"WHEN: use when you have a patternId from list_fix_patterns/search_fix_patterns and need the full record with attempts history. " +
 			"EXAMPLE: get_fix_pattern patternId='m9748paffd0emrbwyskj868e1x88kvhj'.",
 		{
-			patternId: z.string().describe("Fix pattern document ID"),
+			patternId: patternIdSchema.describe("Fix pattern document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -8844,7 +8836,7 @@ export function registerTools(
 			"WHEN: use when you have a mandateId from list_mandates and need the full record before validateSpending/settleMandate. " +
 			"EXAMPLE: get_mandate mandateId='k57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			mandateId: z.string().describe("Mandate document ID"),
+			mandateId: mandateIdSchema.describe("Mandate document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -8918,7 +8910,7 @@ export function registerTools(
 			"WHEN: use when you have a messageId from list_messages/check_messages and need the raw row (e.g. for read-receipt audit, delete confirmation, or referencing in a fix pattern). " +
 			"EXAMPLE: get_message messageId='jn7eg21wdaxzdcpdxwkvhaxqnh88jqg2'.",
 		{
-			messageId: z.string().describe("Message document ID"),
+			messageId: messageIdSchema.describe("Message document ID"),
 		},
 		{
 			readOnlyHint: true,
@@ -8953,7 +8945,7 @@ export function registerTools(
 			"WHEN: use when you have a recurringTaskId from list_recurring_tasks and need the full row before pause_recurring_task / update_recurring_task / delete_recurring_task. " +
 			"EXAMPLE: get_recurring_task recurringTaskId='k57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			recurringTaskId: z.string().describe("Recurring task document ID"),
+			recurringTaskId: recurringTaskIdSchema.describe("Recurring task document ID"),
 		},
 		{
 			readOnlyHint: true,
