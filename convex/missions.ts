@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -136,7 +137,7 @@ export const create = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { missionId: v.id("missions") },
+	args: { missionId: v.string() },
 	returns: v.union(
 		v.object({
 			_id: v.id("missions"),
@@ -161,7 +162,14 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.missionId);
+		const missionId = requireId(
+			ctx,
+			"missions",
+			args.missionId,
+			"missionId",
+			"Use the full 32-char missionId returned by list_missions or create_mission.",
+		);
+		return await ctx.db.get(missionId);
 	},
 });
 
