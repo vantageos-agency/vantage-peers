@@ -12,8 +12,8 @@
 // merely "it throws" — convex/tests.test.ts:757 already asserts throw-only,
 // and that is precisely its insufficiency (see brief issue #1064).
 
-import { convexTest } from "convex-test";
 import { ConvexError } from "convex/values";
+import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -37,14 +37,49 @@ type WrongTablePayload = {
 	message?: string;
 };
 
-// `ConvexError.data` arrives as a JSON STRING here, not as the object that was
-// thrown — measured, not assumed. Typing the generic as an object compiles fine
-// and still yields `undefined` on every field at runtime. mcpConvexError
-// (mcp-server/src/tools.ts) already tolerates both shapes, so accept both.
+// `ConvexError.data` has TWO shapes, and which one you get depends on the
+// runtime — both measured, neither assumed:
+//
+//   • under `convex-test` (this suite, CI) → a JSON **string**
+//   • against prod `compassionate-goldfinch-737` via `ConvexHttpClient`
+//     → the **object** that was thrown
+//
+// Getting this wrong is easy: typing the generic as an object compiles fine and
+// still yields `undefined` on every field under convex-test. Sigma and Eta each
+// probed exactly one runtime and concluded the opposite of one another (PR #1069
+// review, finding F1) — each right about the surface they measured, each wrong to
+// generalise. `mcpConvexError` (mcp-server/src/tools.ts) tolerates both; so does
+// this decoder. Both branches are exercised by the tests below — the object
+// branch has no live caller in this suite, so nothing but a test can cover it.
 const decodePayload = (caught: unknown): WrongTablePayload => {
 	const raw = (caught as ConvexError<string | WrongTablePayload>).data;
 	return typeof raw === "string" ? (JSON.parse(raw) as WrongTablePayload) : raw;
 };
+
+// The prod payload, captured verbatim from a real `ConvexHttpClient` call
+// against `compassionate-goldfinch-737` after the #1069 deploy (2600380).
+const PROD_PAYLOAD: WrongTablePayload = {
+	expectedTable: "messageReceipts",
+	message:
+		"receiptIds[0] is not a valid messageReceipts ID. Use the receiptId returned by check_messages, not a messageId.",
+	path: "receiptIds[0]",
+	receivedId: "jn7d01yxmwes20jxaxwd95x5qx8a9qcj",
+};
+
+describe("decodePayload — both runtime shapes of ConvexError.data", () => {
+	test("string branch: convex-test hands back a JSON string", () => {
+		const caught = new ConvexError(JSON.stringify(PROD_PAYLOAD));
+		expect(typeof caught.data).toBe("string");
+		expect(decodePayload(caught)).toEqual(PROD_PAYLOAD);
+	});
+
+	test("object branch: prod hands back the thrown object", () => {
+		const caught = new ConvexError(PROD_PAYLOAD);
+		expect(typeof caught.data).toBe("object");
+		// No JSON.parse must happen here — parsing an object throws.
+		expect(decodePayload(caught)).toEqual(PROD_PAYLOAD);
+	});
+});
 
 describe("markAsRead — wrong-table ID (issue #1064)", () => {
 	test("rejects a messages-table ID at position [1] with an actionable ConvexError payload", async () => {
