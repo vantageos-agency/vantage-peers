@@ -1,9 +1,10 @@
-import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
+import { requireScope, withOrgScope } from "./lib/auth";
+import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import { withOrgScope, requireScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessage — send a message to one, many, or all orchestrators
@@ -42,7 +43,9 @@ export const sendMessage = mutation({
 		if (args.channel === "broadcast") {
 			// Dynamic: get all registered orchestrators from profiles
 			const profiles = await ctx.db.query("profiles").collect();
-			const orchestratorIds = [...new Set(profiles.map((p) => p.orchestratorId))];
+			const orchestratorIds = [
+				...new Set(profiles.map((p) => p.orchestratorId)),
+			];
 			recipients = orchestratorIds.filter((o) => o !== args.from);
 		} else {
 			recipients = args.channel
@@ -142,9 +145,7 @@ export const checkNewMessages = query({
 
 			// No tenant+instance index — JS filter is acceptable for instance-targeted messages (low volume)
 			if (args.tenantId !== undefined) {
-				receipts = receipts.filter(
-					(r) => r.tenantId === args.tenantId,
-				);
+				receipts = receipts.filter((r) => r.tenantId === args.tenantId);
 			}
 		} else {
 			// Role-level: get all unread for this role
@@ -152,7 +153,10 @@ export const checkNewMessages = query({
 				receipts = await ctx.db
 					.query("messageReceipts")
 					.withIndex("by_tenant_recipient_unread", (q) =>
-						q.eq("tenantId", args.tenantId).eq("recipient", args.recipient).eq("readAt", undefined),
+						q
+							.eq("tenantId", args.tenantId)
+							.eq("recipient", args.recipient)
+							.eq("readAt", undefined),
 					)
 					.filter((q) =>
 						args.since !== undefined
@@ -375,18 +379,15 @@ export const markAsRead = mutation({
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
-		const normalizedIds = args.receiptIds.map((raw, index) => {
-			const normalized = ctx.db.normalizeId("messageReceipts", raw);
-			if (normalized === null) {
-				throw new ConvexError({
-					path: `receiptIds[${index}]`,
-					expectedTable: "messageReceipts",
-					receivedId: raw,
-					message: `receiptIds[${index}] is not a valid messageReceipts ID. Use the receiptId returned by check_messages, not a messageId.`,
-				});
-			}
-			return normalized;
-		});
+		const normalizedIds = args.receiptIds.map((raw, index) =>
+			requireId(
+				ctx,
+				"messageReceipts",
+				raw,
+				`receiptIds[${index}]`,
+				"Use the full 32-char receiptId returned by check_messages.",
+			),
+		);
 
 		const now = Date.now();
 		let count = 0;
@@ -452,7 +453,7 @@ export const deleteMessage = mutation({
 
 export const listMessages = query({
 	args: {
-	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		sessionDay: v.optional(v.number()),
 		from: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
@@ -653,9 +654,23 @@ export const listByChannel = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getById = query({
-	args: { messageId: v.id("messages") },
+	// A wrong-table but well-formed 32-char id passes the `v.id("messages")`
+	// validator's format check yet fails table membership, and that rejection
+	// happens BEFORE the handler, so a wrong-table ID is rejected with a message
+	// Convex redacts in prod (`Server Error`, `error.data` undefined — measured).
+	// Narrowing inside the handler via requireId() throws a ConvexError whose
+	// payload survives redaction. Same contract as PR #1069 (markAsRead) and
+	// #1072 (tasks:getById), on a read.
+	args: { messageId: v.string() },
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.messageId);
+		const messageId = requireId(
+			ctx,
+			"messages",
+			args.messageId,
+			"messageId",
+			"Use the full 32-char messageId returned by list_messages or checkNewMessages.",
+		);
+		return await ctx.db.get(messageId);
 	},
 });
 
