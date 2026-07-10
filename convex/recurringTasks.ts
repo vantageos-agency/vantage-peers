@@ -3,6 +3,12 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
+import { requireId } from "./lib/ids";
+
+// Issue #1064 slice-6 (FINAL) — same hint for all five single-id handlers
+// below, all reads/writes on the recurringTasks table.
+const RECURRING_TASK_ID_HINT =
+	"Use the full 32-char id returned by list_recurring_tasks or create_recurring_task.";
 
 // Open string — any orchestrator name accepted (issue #132)
 const assigneeValidator = v.string();
@@ -166,7 +172,7 @@ export const list = query({
 
 export const update = mutation({
 	args: {
-		recurringTaskId: v.id("recurringTasks"),
+		recurringTaskId: v.string(),
 		title: v.optional(v.string()),
 		description: v.optional(v.string()),
 		assignedTo: v.optional(assigneeValidator),
@@ -177,7 +183,14 @@ export const update = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db.get(args.recurringTaskId);
+		const recurringTaskId = requireId(
+			ctx,
+			"recurringTasks",
+			args.recurringTaskId,
+			"recurringTaskId",
+			RECURRING_TASK_ID_HINT,
+		);
+		const existing = await ctx.db.get(recurringTaskId);
 		if (!existing) throw new Error("Recurring task not found");
 
 		const patch: Record<string, any> = { updatedAt: Date.now() };
@@ -192,8 +205,8 @@ export const update = mutation({
 			patch.nextRunAt = getNextRunTime(args.cronExpression, Date.now());
 		}
 
-		await ctx.db.patch(args.recurringTaskId, patch);
-		return args.recurringTaskId;
+		await ctx.db.patch(recurringTaskId, patch);
+		return recurringTaskId;
 	},
 });
 
@@ -202,10 +215,17 @@ export const update = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const pause = mutation({
-	args: { taskId: v.id("recurringTasks") },
+	args: { taskId: v.string() },
 	handler: async (ctx, args) => {
-		await ctx.db.patch(args.taskId, { active: false, updatedAt: Date.now() });
-		return { taskId: args.taskId, active: false };
+		const taskId = requireId(
+			ctx,
+			"recurringTasks",
+			args.taskId,
+			"taskId",
+			RECURRING_TASK_ID_HINT,
+		);
+		await ctx.db.patch(taskId, { active: false, updatedAt: Date.now() });
+		return { taskId, active: false };
 	},
 });
 
@@ -214,18 +234,25 @@ export const pause = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const resume = mutation({
-	args: { taskId: v.id("recurringTasks") },
+	args: { taskId: v.string() },
 	handler: async (ctx, args) => {
-		const task = await ctx.db.get(args.taskId);
+		const taskId = requireId(
+			ctx,
+			"recurringTasks",
+			args.taskId,
+			"taskId",
+			RECURRING_TASK_ID_HINT,
+		);
+		const task = await ctx.db.get(taskId);
 		if (!task) throw new Error("Recurring task not found");
 
 		const nextRunAt = getNextRunTime(task.cronExpression, Date.now());
-		await ctx.db.patch(args.taskId, {
+		await ctx.db.patch(taskId, {
 			active: true,
 			nextRunAt,
 			updatedAt: Date.now(),
 		});
-		return { taskId: args.taskId, active: true, nextRunAt };
+		return { taskId, active: true, nextRunAt };
 	},
 });
 
@@ -234,9 +261,16 @@ export const resume = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const remove = mutation({
-	args: { taskId: v.id("recurringTasks") },
+	args: { taskId: v.string() },
 	handler: async (ctx, args) => {
-		await ctx.db.delete(args.taskId);
+		const taskId = requireId(
+			ctx,
+			"recurringTasks",
+			args.taskId,
+			"taskId",
+			RECURRING_TASK_ID_HINT,
+		);
+		await ctx.db.delete(taskId);
 		return { deleted: true };
 	},
 });
@@ -300,8 +334,15 @@ export const processDueTasks = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getById = query({
-	args: { recurringTaskId: v.id("recurringTasks") },
+	args: { recurringTaskId: v.string() },
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.recurringTaskId);
+		const recurringTaskId = requireId(
+			ctx,
+			"recurringTasks",
+			args.recurringTaskId,
+			"recurringTaskId",
+			RECURRING_TASK_ID_HINT,
+		);
+		return await ctx.db.get(recurringTaskId);
 	},
 });
