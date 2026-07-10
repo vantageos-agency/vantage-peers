@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ export const linkIssue = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { patternId: v.id("fixPatterns") },
+	args: { patternId: v.string() },
 	returns: v.union(
 		v.object({
 			_id: v.id("fixPatterns"),
@@ -199,12 +200,19 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		const pattern = await ctx.db.get(args.patternId);
+		const patternId = requireId(
+			ctx,
+			"fixPatterns",
+			args.patternId,
+			"patternId",
+			"Use the full 32-char patternId returned by list_fix_patterns or search_fix_patterns.",
+		);
+		const pattern = await ctx.db.get(patternId);
 		if (pattern === null) return null;
 
 		const attempts = await ctx.db
 			.query("fixAttempts")
-			.withIndex("by_pattern", (q) => q.eq("patternId", args.patternId))
+			.withIndex("by_pattern", (q) => q.eq("patternId", patternId))
 			.order("asc")
 			.take(100);
 
