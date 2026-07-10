@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
@@ -365,13 +365,32 @@ export const checkNewMessagesEnvelope = query({
 
 export const markAsRead = mutation({
 	args: {
-		receiptIds: v.array(v.id("messageReceipts")),
+		// Accept raw strings (not v.id("messageReceipts")) so we can normalize
+		// each element ourselves and throw an actionable ConvexError instead of
+		// letting the v.id() validator reject before the handler runs. Convex
+		// prod REDACTS non-ConvexError validator messages before they reach the
+		// client (issue #1064) — only an explicitly-thrown ConvexError's .data
+		// payload survives the wire.
+		receiptIds: v.array(v.string()),
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
+		const normalizedIds = args.receiptIds.map((raw, index) => {
+			const normalized = ctx.db.normalizeId("messageReceipts", raw);
+			if (normalized === null) {
+				throw new ConvexError({
+					path: `receiptIds[${index}]`,
+					expectedTable: "messageReceipts",
+					receivedId: raw,
+					message: `receiptIds[${index}] is not a valid messageReceipts ID. Use the receiptId returned by check_messages, not a messageId.`,
+				});
+			}
+			return normalized;
+		});
+
 		const now = Date.now();
 		let count = 0;
-		for (const receiptId of args.receiptIds) {
+		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
 			if (receipt !== null && receipt.readAt === undefined) {
 				await ctx.db.patch(receiptId, { readAt: now });
