@@ -138,7 +138,19 @@ jobs:
 
       - name: Install dependencies
         working-directory: mcp-server
-        run: npm ci
+        # NOT `npm ci`. The root package.json declares `workspaces: ["apps/*",
+        # "mcp-server"]`, so npm resolves mcp-server as a workspace CHILD and
+        # looks for the lockfile at the workspace ROOT — which has only
+        # `bun.lock`. `mcp-server/package-lock.json` is therefore ignored, and
+        # `npm ci` dies with EUSAGE ("can only install with an existing
+        # package-lock.json"). Measured with a control: the ONLY difference
+        # between failure and success is the presence of the root package.json.
+        # Committing a root package-lock.json would fix `npm ci` (verified: 320
+        # entries, both `npm ci` paths exit 0) but `.gitignore:5` deliberately
+        # ignores package-lock.json — bun.lock is this repo's source of truth.
+        # Flipping that is a policy call, not a workflow patch. See task
+        # k1760430nv0z96ptzjg00685e18a9avz.
+        run: npm install --no-audit --no-fund
 
       - name: Build
         working-directory: mcp-server
