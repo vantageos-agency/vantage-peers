@@ -452,14 +452,19 @@ http.route({
 
 			const actionLabel = action === "opened" ? "New PR" : "PR updated";
 
-			// Create review task for Eta
-			await ctx.runMutation(api.tasks.create, {
-				title: `[Review] ${repoFullName} PR #${pr.number as number}: ${pr.title as string}`,
+			// Create-or-update review task for Eta. Day 127 fix: dedup key is
+			// (repoFullName, prNumber) — a repeat `synchronize` on the same PR
+			// UPDATES the existing open review task in place instead of spawning
+			// a duplicate (measured live: PR #1073 had 4 copies from 1 open + 3
+			// pushes before this fix).
+			await ctx.runMutation(internal.tasks.createOrUpdateReviewTask, {
+				repoFullName,
+				prNumber: pr.number as number,
+				prTitle: pr.title as string,
 				description: `${actionLabel} by ${(pr.user as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nBranch: ${(pr.head as Record<string, unknown>)?.ref as string}\nDiff: ${pr.html_url as string}/files\nURL: ${pr.html_url as string}\n\nReview required: check for bugs, conventions, test coverage, security.`,
 				assignedTo: "eta",
 				project,
 				priority: "high",
-				status: "todo",
 				createdBy: "system",
 				tags: ["github", "pr-review", action as string],
 			});
@@ -494,9 +499,26 @@ http.route({
 			});
 		}
 
-		// --- Pull request merged ---
+		// --- Pull request closed (merged or not) → close the matching [Review] task ---
 		if (eventType === "pull_request" && action === "closed") {
 			const pr = payload.pull_request as Record<string, unknown>;
+
+			// Day 127 fix: close the [Review] task(s) for this PR regardless of
+			// merge outcome. Merged -> review is done, superseded by the separate
+			// Deploy-task flow below. Closed-without-merge -> the review no
+			// longer has a purpose, so there is nothing to keep it open for
+			// either. Previously the review task was NEVER closed here, and
+			// corpses accumulated indefinitely (measured: ~20/28 dead reviews on
+			// a real Eta queue).
+			const closeNote = pr?.merged
+				? `[PR-MERGED] ${pr.html_url as string}`
+				: `[PR-CLOSED-NO-MERGE] ${pr.html_url as string}`;
+			await ctx.runMutation(internal.tasks.closeReviewTasksForPr, {
+				repoFullName,
+				prNumber: pr.number as number,
+				completionNote: closeNote,
+			});
+
 			if (pr?.merged) {
 				// Day 102 — gate auto-deploy task on whether the PR touched any
 				// convex/ file. Pure mcp-server PRs trigger a no-op convex deploy
