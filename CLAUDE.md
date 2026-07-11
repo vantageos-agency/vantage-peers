@@ -128,7 +128,7 @@ Sigma operates the VantagePeers Cloud backend monorepo. Every backend PR (Convex
 
 | Hook | Triggers | Blocks |
 |---|---|---|
-| `enforce-clerk-jwt-smoke-prod.py` | PreToolUse Bash | `git push origin main` / `npx convex deploy --prod` / `npm publish` without `qa/clerk-jwt-smoke-<sha>.json` evidence file (override: `// allow-no-clerk-jwt-smoke: <reason>`) |
+| `enforce-clerk-jwt-smoke-prod.py` | PreToolUse Bash | `git push origin main` / `npx convex deploy --yes` / `npm publish` without `qa/clerk-jwt-smoke-<sha>.json` evidence file (override: `// allow-no-clerk-jwt-smoke: <reason>`) |
 | `enforce-rag-namespace-deny-test.py` | PreToolUse Bash (`git commit`) | Commits touching convex/auth.ts or convex/rag*/convex/okfBundle* without an AUTH_NAMESPACE_DENIED / cross-tenant deny test in convex/__tests__/ (override: `// allow-no-rag-deny-test: <reason>`) |
 | `enforce-mcp-tool-coverage-schema-mirror.py` | PreToolUse Bash (`git commit`) | Commits touching convex/schema.ts without a matching mcp-server/src/tools/* edit in same commit — enforces RULE #24 (override: `// allow-schema-mirror-skip: <reason>`) |
 
