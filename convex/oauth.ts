@@ -106,19 +106,17 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "marie-iris-rh",
 				description:
-					"Marie (Iris RH) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
+					"Tenant-scoped client profile — send_message under its own orchestrator alias only; read/write limited to its own orchestrator + project namespaces. Deliberately excludes the shared `global` namespace: `global` carries fleet-internal facts that a tenant-scoped client must never read or write.",
 				fromAllowList: ["marie"],
 				namespaceReadPrefixes: [
 					"orchestrator/marie",
 					"orchestrator/victor",
 					"project/marie",
-					"global",
 				],
 				namespaceWritePrefixes: [
 					"orchestrator/marie",
 					"orchestrator/victor",
 					"project/marie",
-					"global",
 				],
 			},
 			// Iris RH trio (Clio + Hélios + Victor) — Marie's 3 dual-host
