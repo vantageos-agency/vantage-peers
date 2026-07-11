@@ -318,7 +318,7 @@ export const list = query({
 		// withOrgScope returns isMaster=true for Laurent's no-org session →
 		// filterByOrgScope returns full data unchanged (Alpha backwards-compat).
 		// Client orgs are filtered to their allowedOrchestrators.
-		const scope = await withOrgScope(ctx);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		requireScope(scope, "view-own-tasks");
 
 		const statuses = expandTaskStatuses(args.status);
@@ -497,7 +497,7 @@ export const listPaginated = query({
 		continueCursor: v.string(),
 	}),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		requireScope(scope, "view-own-tasks");
 
 		type TaskRow = Doc<"tasks">;
@@ -1589,7 +1589,7 @@ export const searchTasksByKeyword = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

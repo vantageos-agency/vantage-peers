@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
+import { withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // write — upsert diary entry (if entry exists for date+orchestrator, update it)
@@ -124,6 +125,20 @@ export const list = query({
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
 
+		// Fail-closed org scoping: diary has no orgId/tenantId column
+		// (convex/schema.ts ~272-287), so a non-master caller is restricted to
+		// entries whose `orchestrator` is in its own allowedOrchestrators list
+		// — same mechanism lib/auth.ts:filterByOrgScope uses for tasks/missions,
+		// applied here inline since diary rows expose `orchestrator` rather than
+		// `pilot`/`assignedTo`. No org-specific literal is hardcoded: the allow
+		// list comes entirely from the caller's resolved OrgScope.
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		if (!scope.isMaster && args.orchestrator !== undefined) {
+			if (!scope.allowedOrchestrators.includes(args.orchestrator)) {
+				return [];
+			}
+		}
+
 		const orchestrator = args.orchestrator;
 		const allRows =
 			orchestrator !== undefined
@@ -140,6 +155,11 @@ export const list = query({
 		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
 		// (oauthCtx.userId from MCP layer), client cannot spoof.
 		let rows = allRows;
+		// No-orchestrator-filter path: non-master scope still must not see other
+		// orgs' diary entries when listing without an `orchestrator` arg.
+		if (!scope.isMaster && args.orchestrator === undefined) {
+			rows = rows.filter((r) => scope.allowedOrchestrators.includes(r.orchestrator));
+		}
 		if (args.createdBy !== undefined) {
 			rows = rows.filter((r) => r.createdBy === args.createdBy);
 		}

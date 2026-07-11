@@ -558,3 +558,116 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 		);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TDD: Legacy internal bearer (path 4 — mcpTenants table) must be fail-closed.
+//
+// Task k17dt8pq4zkafsvt162z9qzgsn8abs0r. Audited hole: auth.ts path (4) resolves
+// a tenant via mcpTenants:getTenantByTokenHash and calls c.set("tenant", ...)
+// but NEVER calls c.set("oauthContext", ...). Every guard in tools.ts
+// (guardRead/guardWrite/guardMasterOnly) and every checkNamespace*/checkFromAllowed
+// predicate in this file treats oauthContext===undefined as "unscoped — allow
+// everything" (legacy Pi/Tau/Phi trust model). That means a legacy bearer token
+// today bypasses namespace isolation AND all 20+ master-only tools.
+//
+// mcpTenants schema (convex/schema.ts) carries no namespacePrefixes field, so
+// there is no per-tenant scope config to honor — deny-by-default is the only
+// defensible fix. This test asserts oauthContext IS set on the legacy path with
+// an empty (deny-by-default) scope. Before the fix in auth.ts this test FAILS
+// (oauthContext stays undefined and the exposed predicates report "allowed").
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Legacy internal bearer (path 4 — mcpTenants) must be fail-closed", () => {
+	beforeEach(() => {
+		vi.stubEnv("CONVEX_URL_INTERNAL", "https://example.convex.cloud");
+		vi.stubEnv("BEARER_SECRET_MASTER", "test-master-not-used-here");
+	});
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		_setInternalClientForTest(null);
+	});
+
+	function buildMockConvexForLegacyTenant(): ConvexHttpClient {
+		const queryFn = vi.fn(async (name: string) => {
+			if (name === "oauth:getAccessTokenByHash") return null;
+			if (name === "oauthDcr:validateAccessToken") return null;
+			if (name === "mcpTenants:getTenantByTokenHash") {
+				return {
+					tenantName: "legacy-test-tenant",
+					convexUrl: "https://legacy-tenant.convex.cloud",
+					enabled: true,
+				};
+			}
+			return null;
+		});
+		return {
+			query: queryFn,
+			mutation: vi.fn().mockResolvedValue(null),
+			action: vi.fn().mockResolvedValue(null),
+		} as unknown as ConvexHttpClient;
+	}
+
+	async function resolveLegacyOauthContext(): Promise<OAuthContext | undefined> {
+		_setInternalClientForTest(buildMockConvexForLegacyTenant());
+
+		const app = new Hono();
+		app.use("*", bearerAuthMiddleware());
+		let captured: OAuthContext | undefined;
+		app.get("/protected", (c) => {
+			captured = c.get("oauthContext");
+			return c.json({ ok: true });
+		});
+
+		const res = await app.request("/protected", {
+			headers: { Authorization: "Bearer legacy-tenant-bearer-token" },
+		});
+		expect(res.status).toBe(200);
+		return captured;
+	}
+
+	it("sets a deny-by-default oauthContext on the legacy bearer path (was: undefined)", async () => {
+		const ctx = await resolveLegacyOauthContext();
+
+		// The exact regression: before the fix, ctx is undefined here, which
+		// makes every downstream guard in tools.ts a no-op.
+		expect(ctx).toBeDefined();
+		expect(ctx?.isMaster).toBe(false);
+		expect(ctx?.scopeProfile).not.toBe("master");
+	});
+
+	it("legacy bearer with the fixed oauthContext CANNOT read an arbitrary namespace (fail-closed)", async () => {
+		const ctx = await resolveLegacyOauthContext();
+
+		// This is the concrete exploit: today a legacy bearer can recall() any
+		// namespace across every tenant because checkNamespaceRead(undefined, x)
+		// returns null (allowed). After the fix, the same call must be denied
+		// unless the tenant carries explicit read prefixes (none exist in the
+		// current mcpTenants schema, so this must be Forbidden).
+		expect(checkNamespaceRead(ctx, "orchestrator/pi")).toMatch(/Forbidden/);
+		expect(checkNamespaceRead(ctx, "project/secret")).toMatch(/Forbidden/);
+	});
+
+	it("legacy bearer with the fixed oauthContext CANNOT write an arbitrary namespace (fail-closed)", async () => {
+		const ctx = await resolveLegacyOauthContext();
+		expect(checkNamespaceWrite(ctx, "global")).toMatch(/Forbidden/);
+		expect(checkNamespaceWrite(ctx, "orchestrator/pi")).toMatch(/Forbidden/);
+	});
+
+	it("legacy bearer with the fixed oauthContext is NOT master scope", () => {
+		// Static assertion mirroring the resolved context shape below — kept
+		// separate from the async tests so isMasterScope's pure logic is
+		// exercised directly.
+		const deniedLegacyCtx: OAuthContext = {
+			clientId: "legacy:legacy-test-tenant",
+			userId: "legacy:legacy-test-tenant",
+			scopes: [],
+			scopeProfile: "legacy-tenant-generic",
+			fromAllowList: [],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+			expiresAt: now + 3600_000,
+			isMaster: false,
+		};
+		expect(isMasterScope(deniedLegacyCtx)).toBe(false);
+	});
+});

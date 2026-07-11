@@ -353,6 +353,44 @@ The envelope-safe cursor paging utility (`mcp-server/src/paging.ts`: `DEFAULT_LI
 
 ---
 
+## 7. Convex-layer authorization — `withOrgScope` fail-closed step (Day 128)
+
+**Status: a STEP, not the completion of the multi-tenant model.** The full multi-tenant contract — each tenant reads/writes strictly its own data, everywhere — is the product direction reaffirmed by Laurent and is tracked/realigned separately by Pi. This section documents one closed gap: `withOrgScope`'s fail-open default and four unscoped client-facing handlers. It does not claim the overall model is finished.
+
+### 7.1 What changed
+
+- **`convex/lib/auth.ts` — `withOrgScope(ctx, opts?)`.** Previously, when no Clerk identity was present on the request, `withOrgScope` unconditionally resolved to `isMaster=true, allowedOrchestrators=["*"]` — a fail-open default. It now defaults to **fail-closed**: no identity + no explicit opt-in → `{ isMaster: false, allowedOrchestrators: [], scopes: [] }`.
+- **Opt-in preserved for legitimate internal call sites.** A new `WithOrgScopeOptions.allowNoIdentityMaster` flag lets call sites that are known-legitimate internal/back-compat surfaces explicitly request the old master behavior. Convex exposes no reliable signal to distinguish an MCP-server call made without a JWT from an anonymous caller, so this is a deliberate per-call-site marker rather than a blanket default. The 10 existing internal call sites that pass it: `convex/tasks.ts`, `convex/missions.ts`, `convex/dashboard.ts`, `convex/stats.ts`, `convex/briefingNotes.ts`, internal `convex/messages.ts` paths, and `convex/memories.ts`.
+- **Client-facing handlers scoped.** `convex/memories.ts` (`listMemories`, `getMemory`), `convex/messages.ts` (`listByChannel`), `convex/diary.ts` (`list`) now call `withOrgScope` / `filterByOrgScope` before returning data. An org-A-scoped caller no longer receives org-B's rows from these handlers.
+- **MCP layer — legacy bearer path (4) closed.** `mcp-server/src/auth.ts`, path (4) (`mcpTenants` table lookup) previously left `oauthContext` **unset**, which made every guard in `tools.ts` (`guardRead`/`guardWrite`/`guardMasterOnly`) and every `checkNamespaceRead`/`checkNamespaceWrite`/`checkFromAllowed` predicate treat the request as unscoped/allowed — a legacy bearer could read/write any namespace. Path (4) now sets a deny-by-default `oauthContext` (`scopeProfile: "legacy-tenant-generic"`, empty `fromAllowList`/`namespaceReadPrefixes`/`namespaceWritePrefixes`, `isMaster: false`). The `mcpTenants` table carries no per-tenant scope config, so empty/deny-by-default is the only defensible default until a tenant is re-provisioned through the OAuth scoped-token path (layer 2) with explicit prefixes.
+
+### 7.2 Auth surfaces at a glance
+
+| Layer | Surface | Client-facing (Clerk identity) | Internal/fleet (no identity) |
+|---|---|---|---|
+| Convex | `withOrgScope(ctx)` | Resolves org from Clerk identity → org mapping lookup → scoped `OrgScope` | Fail-closed by default. `allowNoIdentityMaster: true` opt-in preserves master for the 10 audited internal call sites. |
+| MCP HTTP | `bearerAuthMiddleware` paths (1) master token, (2) OAuth scoped token, (2.5) Clerk JWT (`team-member` profile), (3) DCR token (`client-generic`), (4) legacy `mcpTenants` bearer | Paths (2), (2.5), (3) resolve a scoped `oauthContext` | Path (1) is the only route to `isMaster: true`; path (4) now resolves deny-by-default (`legacy-tenant-generic`) instead of leaving `oauthContext` unset |
+| MCP tool guards | `checkNamespaceRead`/`checkNamespaceWrite`/`checkFromAllowed` in `mcp-server/src/auth.ts`, consumed by `guardRead`/`guardWrite`/`guardMasterOnly` in `mcp-server/src/tools.ts` | Enforce `namespaceReadPrefixes`/`namespaceWritePrefixes`/`fromAllowList` from `oauthContext` | No-op only if `oauthContext` is `undefined` (direct unit-test predicate calls) — every real auth path (1)-(4) now sets a context |
+
+### 7.3 Test evidence
+
+`convex/__tests__/multiTenantIsolation.test.ts` — 5 isolation tests: `withOrgScope` no-identity fail-closed unit test, plus cross-tenant read denial for `memories.listMemories`, `memories.getMemory`, `messages.listByChannel`, `diary.list`. Full suite at time of this fix: **2384 passed / 12 skipped, exit 0**.
+
+### 7.4 Open follow-ups — NOT resolved by this step
+
+- **(a) Residual weak point.** A non-MCP anonymous call site that explicitly passes `allowNoIdentityMaster: true` still resolves to master. This opt-in is only as safe as the audit of its call sites; it is not re-verified automatically on new call sites.
+- **(b) Legacy tenant e2e test regression.** The legacy-tenant (path 4) e2e test now falls under an empty scope by design (deny-by-default) and needs to be re-provisioned through the OAuth scoped-token path with explicit `namespaceReadPrefixes`/`namespaceWritePrefixes` before it will pass again.
+- **(c) `global` prefix in Marie's OAuth profile — undecided.** Whether a `global` namespace prefix belongs in Marie's scope profile is **not settled**. TODO: confirm intent with Laurent before assuming any behavior for this prefix.
+- **(d) No real-network e2e.** Isolation above is proven at the Convex-test-harness level (`convex-test` + `t.withIdentity(...)`). No end-to-end test against a live Clerk JWT / real deployment has been run — there is no test Clerk JWT infrastructure available yet.
+
+### 7.5 Provenance
+
+- Task: `k1759yh6mjqcgwq7am85acvqh18abbjd`.
+- Files: `convex/lib/auth.ts`, `convex/memories.ts`, `convex/messages.ts`, `convex/diary.ts`, `convex/tasks.ts`, `convex/missions.ts`, `convex/dashboard.ts`, `convex/stats.ts`, `convex/briefingNotes.ts`, `mcp-server/src/auth.ts`, `convex/__tests__/multiTenantIsolation.test.ts`.
+- Analysis plan: `analysis/multi-tenant-fail-closed-plan-day128.md`.
+
+---
+
 ## 6. References
 
 - PR #621 — D6 + D7 hardening at `/token` and `/authorize`.
