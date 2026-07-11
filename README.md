@@ -291,6 +291,10 @@ Wave A (initial surface) shipped PR #624, merged at main `251d183`. Wave B (exte
 
 `convex/schema.ts` defines `oauth_audit_log` as an append-only table. Every emergency mutation (`patchScopeProfileEmergency`, future master-gated paths) writes a row capturing actor, action, before/after, and timestamp. No mutation path updates or deletes existing rows. This is the auditable record of every out-of-band tenant operation.
 
+### Convex-layer authorization — `withOrgScope` fail-closed step
+
+`convex/lib/auth.ts`'s `withOrgScope` now fails closed by default when no Clerk identity is present (previously fail-open to master/wildcard access); a per-call-site `allowNoIdentityMaster` opt-in preserves the old behavior for audited internal call sites. Four client-facing handlers (`memories.listMemories`, `memories.getMemory`, `messages.listByChannel`, `diary.list`) are now org-scoped, and the MCP legacy bearer path no longer leaves guards unenforced. This closes one fail-open gap — it is **a step, not the completion** of the multi-tenant model, which remains tracked separately. Full detail, auth-surface table, and open follow-ups: `docs/cloud/security-multi-tenant.md` §7.
+
 ### Doctrine separation — Cloud vs Self-host
 
 VantagePeers Cloud (multi-tenant SaaS) and VantagePeers Self-host are two distinct products. Runbooks are split: Cloud operations live under `docs/cloud/`, Self-host operations under `docs/getting-started/`. Security controls above apply to both products; tenant-specific cascade and audit semantics are documented in `docs/cloud/security-multi-tenant.md`.

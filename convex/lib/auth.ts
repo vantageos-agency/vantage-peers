@@ -28,39 +28,69 @@ export interface OrgScope {
 }
 
 /**
+ * Options controlling withOrgScope's fail-open/fail-closed behaviour when no
+ * Clerk identity is present on the request.
+ *
+ * `allowNoIdentityMaster` MUST be explicitly opted into by call sites that are
+ * known-legitimate internal/back-compat surfaces (MCP server deploy-key calls,
+ * Convex CLI, existing Alpha handlers migrated pre-Beta). It is a deliberate,
+ * per-call-site marker — not a blanket default — so that new/unaudited call
+ * sites fail closed by default (Day 108 fail-closed multi-tenant doctrine).
+ */
+export interface WithOrgScopeOptions {
+	allowNoIdentityMaster?: boolean;
+}
+
+/**
  * Resolves the caller's auth identity into an OrgScope.
  *
- * - No Clerk identity → isMaster=true (MCP server / Convex CLI / internal callers)
- * - No org attached   → isMaster=true (existing Alpha callers, Laurent)
- * - Org slug present  → looks up client_org_mapping; throws if missing/inactive
+ * - No Clerk identity, opts.allowNoIdentityMaster=true → isMaster=true
+ *   (legacy/internal call sites that explicitly opt in: MCP server / Convex
+ *   CLI / pre-Beta Alpha handlers preserved for backwards compatibility).
+ * - No Clerk identity, opts.allowNoIdentityMaster not set (default) →
+ *   FAIL-CLOSED: isMaster=false, allowedOrchestrators=[], scopes=[]. This is
+ *   the default for any new or client-facing call site — absence of identity
+ *   on a client-facing surface must never resolve to full access.
+ * - No org attached (identity present) → isMaster=true (existing Alpha
+ *   callers, Laurent — unchanged, distinct from the no-identity case above).
+ * - Org slug present → looks up client_org_mapping; throws if missing/inactive.
  *
  * Call this at the top of any query/mutation that serves dashboard Beta clients.
- *
- * Note on no-identity → master:
- * MCP server callers authenticate via deploy key (no Clerk JWT) and Convex CLI
- * runs server-side without identity. Both must retain full Alpha behaviour.
- * Beta dashboard security is preserved: Clerk-authenticated requests still hit
- * the org mapping lookup below and receive Forbidden if missing/inactive.
  */
 export async function withOrgScope(
 	ctx: QueryCtx | MutationCtx,
+	opts?: WithOrgScopeOptions,
 ): Promise<OrgScope> {
 	const identity = await ctx.auth.getUserIdentity();
 
-	// No Clerk identity (MCP server, Convex CLI, internal callers) → master scope
+	// No Clerk identity — behaviour depends on explicit per-call-site opt-in.
 	if (!identity) {
+		if (opts?.allowNoIdentityMaster) {
+			// Legacy/internal call sites (MCP server, Convex CLI, pre-Beta Alpha
+			// handlers) that have explicitly opted into preserving full access
+			// when no Clerk identity is present.
+			return {
+				userId: "internal",
+				orgSlug: null,
+				allowedOrchestrators: ["*"],
+				scopes: [
+					"cross-tenant-read",
+					"view-own-tasks",
+					"view-own-missions",
+					"view-stats-aggregated",
+					"view-orchestrator-summary",
+				],
+				isMaster: true,
+			};
+		}
+
+		// Fail-closed default: no identity, no explicit opt-in → deny/empty scope.
 		return {
-			userId: "internal",
+			userId: "anonymous",
 			orgSlug: null,
-			allowedOrchestrators: ["*"],
-			scopes: [
-				"cross-tenant-read",
-				"view-own-tasks",
-				"view-own-missions",
-				"view-stats-aggregated",
-				"view-orchestrator-summary",
-			],
-			isMaster: true,
+			allowedOrchestrators: [],
+			scopes: [],
+			isMaster: false,
 		};
 	}
 

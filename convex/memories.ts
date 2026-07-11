@@ -3,6 +3,24 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
+import { withOrgScope, type OrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-scope namespace enforcement (Day 108 fail-closed multi-tenant fix,
+// task k176d9q9h6b33e8y1qgwnnx2x18aa40s).
+//
+// Master scope (no identity with legacy opt-in, or identity with no Clerk org)
+// retains unrestricted access — preserves Alpha/internal behaviour unchanged.
+// A Clerk-org-scoped caller may only read namespaces under its own
+// "team/<orgSlug>" prefix; anything else is denied (never leaked cross-tenant).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isNamespaceAllowedForScope(scope: OrgScope, namespace: string): boolean {
+  if (scope.isMaster) return true;
+  if (scope.orgSlug === null) return false;
+  const ownPrefix = `team/${scope.orgSlug}`;
+  return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeMemory
@@ -138,7 +156,11 @@ export const getMemory = query({
       "memoryId",
       "Use the full 32-char memoryId returned by recall or store_memory.",
     );
-    return await ctx.db.get(memoryId);
+    const doc = await ctx.db.get(memoryId);
+    if (doc === null) return null;
+    const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+    if (!isNamespaceAllowedForScope(scope, doc.namespace)) return null;
+    return doc;
   },
 });
 
@@ -201,6 +223,10 @@ export const listMemories = query({
   },
   returns: listMemoriesResultValidator,
   handler: async (ctx, args) => {
+    const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+      return { value: [], continueCursor: null, isDone: true };
+    }
     const isLatest = args.includeSuperseded === true ? undefined : true;
     const numItems = args.paginationOpts?.numItems ?? args.limit ?? 50;
     const cursor = args.paginationOpts?.cursor ?? null;

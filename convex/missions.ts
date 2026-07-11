@@ -198,7 +198,7 @@ export const list = query({
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		const scope = await withOrgScope(ctx);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		requireScope(scope, "view-own-missions");
 
 		const statuses = expandMissionStatuses(args.status);

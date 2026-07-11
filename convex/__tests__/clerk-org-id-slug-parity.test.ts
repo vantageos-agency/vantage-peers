@@ -371,7 +371,7 @@ describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-or
 		expect(checkNamespaceWrite(masterCtx, "team/org_any_tenant")).toBeNull();
 	});
 
-	test("Convex-direct: no identity (MCP/CLI deploy-key path) also resolves to isMaster=true", async () => {
+	test("Convex-direct: no identity (MCP/CLI deploy-key path) resolves to isMaster=true ONLY via explicit opt-in", async () => {
 		const t = createT();
 
 		await t.run(async (ctx) => {
@@ -382,13 +382,25 @@ describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-or
 				},
 			};
 
-			const scope = await withOrgScope(
+			// Day 108 fail-closed multi-tenant fix (task k176d9q9h6b33e8y1qgwnnx2x18aa40s):
+			// no-identity no longer resolves to master by default. Legacy/internal
+			// call sites (MCP server, Convex CLI, pre-Beta Alpha handlers) must
+			// explicitly opt in via { allowNoIdentityMaster: true } to preserve
+			// this behaviour — see convex/lib/auth.ts withOrgScope.
+			const scopeOptedIn = await withOrgScope(
+				mockCtx as unknown as Parameters<typeof withOrgScope>[0],
+				{ allowNoIdentityMaster: true },
+			);
+			expect(scopeOptedIn.isMaster).toBe(true);
+			expect(scopeOptedIn.userId).toBe("internal");
+
+			// Default (no opt-in) is now fail-closed: no identity, no explicit
+			// legacy marker → deny, not master.
+			const scopeDefault = await withOrgScope(
 				mockCtx as unknown as Parameters<typeof withOrgScope>[0],
 			);
-
-			// No identity → master scope (internal MCP server path)
-			expect(scope.isMaster).toBe(true);
-			expect(scope.userId).toBe("internal");
+			expect(scopeDefault.isMaster).toBe(false);
+			expect(scopeDefault.allowedOrchestrators).not.toEqual(["*"]);
 		});
 	});
 

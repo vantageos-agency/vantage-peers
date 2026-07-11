@@ -482,7 +482,7 @@ export const listMessages = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.list.
-		const scope = await withOrgScope(ctx);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -635,14 +635,38 @@ export const listByChannel = query({
 	),
 	handler: async (ctx, { channel, limit }) => {
 		const take = limit ?? 100;
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+
+		// Fail-closed channel scoping: messages carry no orgId/tenantId column
+		// (schema.ts), so channel-name proximity to the caller's own scope is the
+		// only generic (non-hardcoded) signal available. A non-master, org-scoped
+		// caller may only read: "broadcast" (universally shared), a channel
+		// exactly matching one of its allowedOrchestrators, or one prefixed with
+		// its own "team/<orgSlug>/" convention. Anything else is denied.
+		const isChannelAllowed = (ch: string): boolean => {
+			if (scope.isMaster) return true;
+			if (ch === "broadcast") return true;
+			if (scope.orgSlug !== null && ch.startsWith(`team/${scope.orgSlug}`)) {
+				return true;
+			}
+			return scope.allowedOrchestrators.includes(ch);
+		};
+
 		if (channel !== undefined) {
+			if (!isChannelAllowed(channel)) return [];
 			return await ctx.db
 				.query("messages")
 				.withIndex("by_channel", (q) => q.eq("channel", channel))
 				.order("desc")
 				.take(take);
 		}
-		return await ctx.db.query("messages").order("desc").take(take);
+
+		if (scope.isMaster) {
+			return await ctx.db.query("messages").order("desc").take(take);
+		}
+
+		const rows = await ctx.db.query("messages").order("desc").take(take);
+		return rows.filter((r) => isChannelAllowed(r.channel));
 	},
 });
 
@@ -697,7 +721,7 @@ export const searchMessagesByKeyword = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
-		const scope = await withOrgScope(ctx);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		requireScope(scope, "view-own-tasks");
 
 		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null

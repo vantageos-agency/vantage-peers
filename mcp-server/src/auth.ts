@@ -12,7 +12,11 @@
  *      middleware also sets the tenant to the internal deployment because
  *      OAuth tokens always target the VantagePeers core deployment.
  *   3. Legacy bearer — falls through to mcpTenants table lookup (Pi/Tau/Phi
- *      internal orchestrators on their own Convex deployments).
+ *      internal orchestrators on their own Convex deployments). Resolves a
+ *      deny-by-default oauthContext (scopeProfile="legacy-tenant-generic",
+ *      empty allowlist/prefixes) — the mcpTenants table has no per-tenant
+ *      scope config, so this is fail-closed until a tenant is provisioned
+ *      through the OAuth scoped-token path with explicit prefixes.
  *
  * 401 is returned with a WWW-Authenticate header per RFC 6750 §3 so Claude.ai's
  * OAuth connector can bootstrap discovery.
@@ -161,14 +165,18 @@ export function isMasterScope(ctx: OAuthContext | undefined): boolean {
  * Checks that `from` is allowed by the current OAuth context.
  * Returns null when allowed, an error message string otherwise.
  *
- * If no oauthContext is set (legacy bearer from mcpTenants), all `from` values
- * are allowed — legacy path is unscoped.
+ * `ctx` is only undefined in tests that call these predicates directly
+ * without going through bearerAuthMiddleware — every real auth path
+ * (master, OAuth, Clerk, DCR, legacy mcpTenants bearer) sets an oauthContext.
+ * The legacy mcpTenants bearer path resolves to a deny-by-default
+ * "legacy-tenant-generic" scope (empty allowlist/prefixes) — see auth.ts
+ * path (4).
  */
 export function checkFromAllowed(
 	ctx: OAuthContext | undefined,
 	from: string,
 ): string | null {
-	if (!ctx) return null; // legacy bearer — unscoped
+	if (!ctx) return null; // no context (direct predicate call, e.g. unit tests)
 	if (isMasterScope(ctx)) return null;
 	if (ctx.fromAllowList.includes(from)) return null;
 	// Day 88 friction capitalize: surface the allowed values so the LLM caller
@@ -544,6 +552,27 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		c.set("tenant", {
 			tenantName: tenant.tenantName,
 			convexUrl: tenant.convexUrl,
+		});
+
+		// SECURITY FIX (k17dt8pq4zkafsvt162z9qzgsn8abs0r): legacy bearer tokens
+		// used to leave oauthContext unset, which made every guard in tools.ts
+		// (guardRead/guardWrite/guardMasterOnly) and every checkNamespace*/
+		// checkFromAllowed predicate here treat the request as unscoped/allowed.
+		// A legacy bearer could therefore read/write any namespace and call any
+		// master-only tool. The mcpTenants table carries no per-tenant scope
+		// config (no namespacePrefixes field), so there is nothing to honor —
+		// deny-by-default (empty prefixes/allowlist) is the only defensible
+		// scope until tenants are re-provisioned with explicit prefixes.
+		c.set("oauthContext", {
+			clientId: `legacy:${tenant.tenantName}`,
+			userId: `legacy:${tenant.tenantName}`,
+			scopes: [],
+			scopeProfile: "legacy-tenant-generic",
+			fromAllowList: [],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+			expiresAt: Date.now() + 3600 * 1000,
+			isMaster: false,
 		});
 
 		// Fire-and-forget lastUsedAt update (non-blocking)
