@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { mutation, internalMutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
@@ -1628,5 +1629,169 @@ export const searchTasksByKeyword = query({
 			assignedTo: t.assignedTo,
 			missionId: t.missionId,
 		}));
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REVIEW TASK LIFECYCLE — Day 127 (repo /root/coding/vantage-memory)
+//
+// Measured bug: on a real Eta queue of 28 "[Review]" todo tasks, ~20 were dead
+// (their PR already MERGED, task never closed) and 6 were strict duplicates
+// (PR #1073 x4 — 1 opened + 3 pushes; #1075/#1076/#1078/#1071/#250 x2 each).
+//
+// Title pattern created by convex/http.ts on pull_request opened/synchronize:
+//   "[Review] <repoFullName> PR #<prNumber>: <prTitle>"
+//
+// This mirrors the createDeployTaskWithDedup mechanism (Fix 1 pre-create
+// dedup) but with a DIFFERENT resolution on repeat events: rather than
+// superseding (create-new + mark-old-done), a repeat synchronize UPDATES the
+// existing open review task in place (new title/description/tags) — a review
+// task represents "please review the current state of PR #N", not a series
+// of independent events, so there is nothing to supersede, only to refresh.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// repoFullName may contain "/" (e.g. "org/repo"); prTitle may contain
+// arbitrary text including ":" — greedy `.+` naturally backtracks to the
+// rightmost " PR #<digits>: " split point, which matches how the title was
+// built (repoFullName is always the first token group, with no user-supplied
+// wildcards ahead of " PR #").
+const REVIEW_TITLE_RE = /^\[Review\] (.+) PR #(\d+): ([\s\S]*)$/;
+
+/**
+ * Parse a "[Review] <repoFullName> PR #<prNumber>: <prTitle>" task title.
+ * Returns null if the title does not match the expected pattern.
+ */
+function parseReviewTitle(
+	title: string,
+): { repoFullName: string; prNumber: number; prTitle: string } | null {
+	const m = REVIEW_TITLE_RE.exec(title);
+	if (!m) return null;
+	return { repoFullName: m[1], prNumber: parseInt(m[2], 10), prTitle: m[3] };
+}
+
+const REVIEW_OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
+
+/**
+ * Find all currently-open "[Review]" tasks matching a (repoFullName,
+ * prNumber) tuple. Scans the by_status index per open status (bounded to 4
+ * scans), then filters in memory by parsing the title — same pattern as
+ * createDeployTaskWithDedup's Fix 1/Fix 3 scans.
+ */
+async function findOpenReviewTasks(
+	ctx: MutationCtx,
+	repoFullName: string,
+	prNumber: number,
+): Promise<Doc<"tasks">[]> {
+	const matches: Doc<"tasks">[] = [];
+	for (const status of REVIEW_OPEN_STATUSES) {
+		const batch = await ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", status))
+			.collect();
+		for (const t of batch) {
+			const p = parseReviewTitle(t.title);
+			if (p && p.repoFullName === repoFullName && p.prNumber === prNumber) {
+				matches.push(t);
+			}
+		}
+	}
+	return matches;
+}
+
+/**
+ * createOrUpdateReviewTask — dedup key is (repoFullName, prNumber), NOT
+ * prNumber alone (fixes cross-repo collisions on shared PR numbers).
+ *
+ * - No open review task for this tuple -> insert a new one.
+ * - An open review task already exists -> UPDATE it in place (new title,
+ *   description, tags, updatedAt) instead of creating a duplicate. This is
+ *   what makes repeated `synchronize` events on the same PR collapse to a
+ *   single row.
+ */
+export const createOrUpdateReviewTask = internalMutation({
+	args: {
+		repoFullName: v.string(),
+		prNumber: v.number(),
+		prTitle: v.string(),
+		description: v.optional(v.string()),
+		assignedTo: assigneeValidator,
+		project: v.optional(v.string()),
+		priority: priorityValidator,
+		createdBy: creatorValidator,
+		tags: v.optional(v.array(v.string())),
+	},
+	returns: v.id("tasks"),
+	handler: async (ctx, args) => {
+		const title = `[Review] ${args.repoFullName} PR #${args.prNumber}: ${args.prTitle}`;
+		const now = Date.now();
+
+		const existing = await findOpenReviewTasks(
+			ctx,
+			args.repoFullName,
+			args.prNumber,
+		);
+
+		if (existing.length > 0) {
+			// Update the most-recently-created open review task in place.
+			const target = existing.reduce((a, b) =>
+				a.createdAt > b.createdAt ? a : b,
+			);
+			await ctx.db.patch(target._id, {
+				title,
+				description: args.description,
+				tags: args.tags,
+				priority: args.priority,
+				updatedAt: now,
+			});
+			return target._id;
+		}
+
+		return await ctx.db.insert("tasks", {
+			title,
+			description: args.description,
+			project: args.project,
+			assignedTo: args.assignedTo,
+			priority: args.priority,
+			status: "todo" as const,
+			createdBy: args.createdBy,
+			tags: args.tags,
+			createdAt: now,
+			updatedAt: now,
+		});
+	},
+});
+
+/**
+ * closeReviewTasksForPr — closes every OPEN "[Review]" task matching
+ * (repoFullName, prNumber). Called from convex/http.ts on `pull_request`
+ * `closed`, REGARDLESS of whether the PR was merged: once the PR is closed,
+ * there is nothing left to review either way (merged -> covered by the
+ * separate Deploy-task flow; closed-without-merge -> review is moot).
+ */
+export const closeReviewTasksForPr = internalMutation({
+	args: {
+		repoFullName: v.string(),
+		prNumber: v.number(),
+		completionNote: v.string(),
+	},
+	returns: v.object({ closed: v.number() }),
+	handler: async (ctx, args) => {
+		const now = Date.now();
+		const matches = await findOpenReviewTasks(
+			ctx,
+			args.repoFullName,
+			args.prNumber,
+		);
+
+		for (const t of matches) {
+			await ctx.db.patch(t._id, {
+				status: "done" as const,
+				completedAt: now,
+				updatedAt: now,
+				completionNote: args.completionNote,
+			});
+		}
+
+		return { closed: matches.length };
 	},
 });
