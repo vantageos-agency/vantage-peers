@@ -162,3 +162,5 @@ file (Convex constraint); they live in `convex/kbMutations.ts` (V8 runtime).
 - `convex/memoriesScoped.ts` — `listMemoriesScoped` / `storeMemoryScoped` (B4)
 - `docs/cloud/security-multi-tenant.md` — namespace isolation doctrine
 - Mission `k5779qbxhwrfjmj02t31yvehns8911jp` — VP Cloud Dashboard OKF Phase 2
+
+<!-- smoke Day 127: prod activation probe for the [Review] task lifecycle fix (#1083). This branch is opened, pushed twice, then closed WITHOUT merging. Deleted immediately after. -->

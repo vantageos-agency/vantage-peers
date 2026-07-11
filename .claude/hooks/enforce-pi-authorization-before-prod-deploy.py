@@ -39,6 +39,13 @@ recursively (eval is the shell sibling of bash -c — survivor A), heredoc
 bodies are stripped (data, not commands). Residual boundary, stated: a
 heredoc piped INTO an interpreter as a script is not analyzed.
 
+Fix Day 128 (SURVIVOR C — Eta BLOCKER, reproduced by Pi against the canonical
+@26a4bb26 that had been reviewed, approved AND propagated fleet-wide): shell
+COMMENTS were not stripped, so a `# --dev` in a comment — or any prose
+containing `--dev` — disarmed the bare-deploy negative lookahead entirely and a
+REAL production deploy passed WITHOUT Pi authorization. See strip_comments().
+The contentHash proved the file's IDENTITY, never its CORRECTNESS.
+
 Override discipline: PI_AUTHORIZED_TASK_ID is meant for one-shot pre-validated
 deploy. Set, run command once, unset. Never persist in shell rc.
 
@@ -167,13 +174,64 @@ def strip_heredocs(command: str) -> str:
     return HEREDOC_RE.sub("<<HEREDOC_STRIPPED", command)
 
 
+def strip_comments(command: str) -> str:
+    """Remove shell comments (# ...) OUTSIDE quotes — they are INERT text, never
+    an action the shell runs.
+
+    SURVIVOR C — Day 128 BLOCKER (Eta, reproduced by Pi against this very canonical
+    @26a4bb26…). The bare-deploy patterns carry a negative lookahead
+    `(?![^|;&]*--dev\\b)` that scans the WHOLE line. is_prod_deploy stripped heredocs
+    and quoted strings but NOT comments, so:
+
+        npx convex deploy --yes # --dev                     -> exit 0   BYPASS
+        convex deploy # --dev                               -> exit 0   BYPASS
+        npx convex deploy --yes # ...do not use --dev here  -> exit 0   BYPASS
+
+    Any comment — or any PROSE — containing `--dev` disarmed the lookahead, and a REAL
+    production deploy passed WITHOUT Pi authorization. Same class as the `# convex dev`
+    bypass fixed in block-deploy-without-qa the same day: DECIDING ON TEXT, NOT ACTION.
+
+    Applied ONLY inside is_prod_deploy. The authorization markers (`# pi-authorized: k…`,
+    `# laurent-direct-deploy`) live in comments too, but are read by has_pi_authorization
+    / has_laurent_override on the RAW command — stripping here does not blind them.
+    """
+    out, quote = [], None
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            out.append(ch)
+            if ch == quote and (i == 0 or command[i - 1] != "\\"):
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            out.append(ch)
+        elif ch == "#":
+            # Comment: the rest of the line is inert. Keep any newline so that
+            # chained commands after a line break are still analyzed.
+            nl = command.find("\n", i)
+            if nl == -1:
+                break
+            out.append("\n")
+            i = nl + 1
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def is_prod_deploy(command: str) -> bool:
     """Returns True if command triggers a Convex prod deployment.
 
     Quoted strings are stripped to ignore prose (commit messages), EXCEPT the
     quoted argument of an interpreter (`bash -c '...'`): that string IS the
     command that runs, so it is scanned recursively before stripping erases it.
+
+    Comments are stripped FIRST (survivor C, Day 128): they are inert text, and a
+    `--dev` written in a comment used to disarm the bare-deploy lookahead entirely.
     """
+    command = strip_comments(command)
     command = strip_heredocs(command)
     for groups in INTERPRETER_C_RE.findall(command):
         for quoted in (groups if isinstance(groups, tuple) else (groups,)):
