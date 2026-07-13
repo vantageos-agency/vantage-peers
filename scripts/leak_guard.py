@@ -41,6 +41,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from client_identity_config import (  # noqa: E402
+    ClientIdentityConfigError,
+    resolve_client_data_patterns,
+    resolve_config_path,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # =============================================================================
@@ -53,6 +61,19 @@ TIER_CLIENT_DATA = "CLIENT_DATA"
 TIER_INTERNAL_ID = "INTERNAL_ID"
 
 # --- TIER 1: REAL CLIENT DATA. Hard block, always, everywhere. ---------------
+# Day 130 (Eta review, PR #1090): a hand-typed list like the one below rots at
+# every new client -- the next one is always the one nobody remembered to add,
+# and it printed PASSED straight through the gap. As of this fix, the LIVE
+# client vocabulary is RESOLVED at run time from a host-side config (see
+# client_identity_config.py) and merged in via `extra_client_patterns` in
+# `main()`. `main()` FAILS LOUDLY, and never prints PASSED, if that config
+# cannot be resolved. Do NOT add any new client identifier to the literal
+# list below -- new clients go in the host config, never in this file.
+#
+# The entries still hard-coded below are the small, already-reviewed,
+# pre-Day-130 set (kept for the regression tests pinned against them); they
+# are not where new client vocabulary belongs going forward.
+#
 # Third-party client organisations and their contact persons. This is client
 # confidentiality: never sync, never publish, no exceptions, no baselining.
 # Exactly ONE VR canonical carries this today: `session-start`
@@ -295,11 +316,30 @@ def repo_wide_baseline(ref: str = None, paths: list[Path] | None = None, git_roo
     return out
 
 
-def scan_text(text: str, source: str) -> list[LeakFinding]:
-    """Return every leak finding in `text`. Empty list == clean."""
+def scan_text(
+    text: str,
+    source: str,
+    extra_client_patterns: list[tuple[str, str]] | None = None,
+) -> list[LeakFinding]:
+    """Return every leak finding in `text`. Empty list == clean.
+
+    `extra_client_patterns` -- (regex, reason) pairs, TIER_CLIENT_DATA -- lets
+    callers merge in the RESOLVED, host-config-derived client vocabulary
+    (see client_identity_config.py) on top of the small set of historical,
+    already-reviewed literals in `CLIENT_DATA_PATTERNS` below. `main()` is the
+    only caller that is REQUIRED to pass a resolved set (and fails loudly,
+    never PASSED, if it cannot resolve one) -- direct `scan_text` callers
+    (tests, `vr_plugin_parity.py`) may omit it when they are only exercising
+    the pre-existing, already-reviewed pattern set.
+    """
+    patterns = ALL_PATTERNS
+    if extra_client_patterns:
+        patterns = ALL_PATTERNS + [
+            (p, r, TIER_CLIENT_DATA) for p, r in extra_client_patterns
+        ]
     findings: list[LeakFinding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
-        for pattern, reason, category in ALL_PATTERNS:
+        for pattern, reason, category in patterns:
             if re.search(pattern, line, flags=re.IGNORECASE):
                 findings.append(
                     LeakFinding(
@@ -314,8 +354,15 @@ def scan_text(text: str, source: str) -> list[LeakFinding]:
     return findings
 
 
-def scan_file(path: Path) -> list[LeakFinding]:
-    return scan_text(path.read_text(encoding="utf-8", errors="replace"), str(path))
+def scan_file(
+    path: Path,
+    extra_client_patterns: list[tuple[str, str]] | None = None,
+) -> list[LeakFinding]:
+    return scan_text(
+        path.read_text(encoding="utf-8", errors="replace"),
+        str(path),
+        extra_client_patterns=extra_client_patterns,
+    )
 
 
 BASELINE_REF = os.environ.get("LEAK_GUARD_BASELINE_REF", "origin/main")
@@ -383,6 +430,23 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # RESOLVE THE CLIENT VOCABULARY FIRST, before anything else. A guard that
+    # scans files and only discovers afterwards that it never had a resolved
+    # client vocabulary is one bad refactor away from silently downgrading
+    # "I could not resolve the vocabulary" into "found nothing" -> PASSED.
+    # Fail here, loudly, before any scanning happens, and before any code
+    # path that could reach the PASSED print at the bottom of this function.
+    try:
+        resolved_client_patterns = resolve_client_data_patterns()
+    except ClientIdentityConfigError as exc:
+        print(
+            "FAIL: could not resolve the client-identity vocabulary -- "
+            "refusing to report PASSED without it.\n"
+            f"  {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
     skipped: list[InventoryItem] = []
     git_root: Path | None = None
 
@@ -429,7 +493,7 @@ def main() -> int:
     baseline = repo_wide_baseline(paths=targets if not args.paths else None, git_root=git_root)
 
     for t in targets:
-        found = scan_file(t)
+        found = scan_file(t, extra_client_patterns=resolved_client_patterns)
         cd = client_data(found)
         new_ids = new_internal_ids(found, baseline)
         pre_existing = [f for f in internal_ids(found) if f not in new_ids]
@@ -490,8 +554,10 @@ def main() -> int:
 
     if exit_code == 0:
         print(
-            f"\nLEAK GUARD PASSED — no client data, no new internal identifiers "
-            f"across {len(targets)} packaged file(s)."
+            f"\nLEAK GUARD PASSED — client vocabulary RESOLVED "
+            f"({len(resolved_client_patterns)} identity pattern(s) from "
+            f"{resolve_config_path()}); no client data, no new internal "
+            f"identifiers across {len(targets)} packaged file(s)."
         )
     return exit_code
 
