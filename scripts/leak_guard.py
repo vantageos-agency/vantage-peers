@@ -233,20 +233,37 @@ def packaged_paths(root: Path = None) -> list[Path]:
 # for one of these reasons is reported as SKIPPED, never simply absent.
 EXCLUDED_DIR_NAMES: dict[str, str] = {
     ".git": "version-control internals, never shipped as package content",
-    "__pycache__": "compiled bytecode cache, not source, never shipped",
     "node_modules": "third-party dependency tree, not first-party package content",
+    # __pycache__ is deliberately NOT excluded any more. It used to be, with the
+    # reason "never shipped" -- which was simply untrue: the .pyc was committed,
+    # published, and carried client names in its bytecode. An exclusion is a claim
+    # about reality; when the claim is wrong, the exclusion becomes the hiding
+    # place. If a __pycache__ is present in a shipped tree, that is itself the
+    # finding, and the guard must be able to say so.
 }
 
-# File extensions treated as binary/non-text -- scanned-for-presence only
-# (never opened as text, since decoding binary as utf-8 with errors="replace"
-# would silently corrupt the leak search rather than fail it). None of these
-# extensions are present in the artifact as of Day 130 (verified: `find
-# vantage-peers -type f | grep -E '\.(png|jpg|jpeg|gif|ico|pdf|zip)$'` is
-# empty), but the list exists so a future binary asset is SKIPPED-with-reason
-# instead of silently falling through utf-8 decoding.
-BINARY_EXTENSIONS: frozenset[str] = frozenset(
-    {".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".woff", ".woff2", ".ttf"}
-)
+# NOTHING IS SKIPPED FOR BEING BINARY. Every shipped file is read as BYTES.
+#
+# The previous version skipped binary extensions "not scanned as text", and
+# excluded __pycache__ with the comment "compiled bytecode cache, not source,
+# never shipped". Both were false, and together they hid a live leak:
+# scripts/__pycache__/leak_guard.cpython-312.pyc was COMMITTED and PUBLISHED on
+# the public repo, and `strings` on its bytecode returned 6 client-name hits.
+# The .pyc of the leak guard was leaking the very identifiers the leak guard
+# exists to catch, and the guard could not see it because it refused to open it.
+#
+# Purging a name from the SOURCE does not remove it from a compiled artifact:
+# string constants survive in bytecode. And a directory-copy distribution ships
+# whatever sits in the tree, tracked or not. This repo's own plugin CHANGELOG had
+# already written the lesson down -- "the bytecode has to actually be absent from
+# the directory" -- and this guard did not apply it.
+#
+# So: bytes, always. Decoding is latin-1, which cannot raise and maps every byte
+# to exactly one character, so ASCII identifiers embedded in any container --
+# bytecode, archives, images with metadata -- are still found. Scanning a binary
+# for a name yields at worst a harmless false-positive line number; NOT scanning
+# it yields a silent leak. Those two failure modes are not comparable.
+BINARY_EXTENSIONS: frozenset[str] = frozenset()
 
 
 def _claudepluginignore_patterns(root: Path) -> list[str]:
@@ -358,8 +375,14 @@ def scan_file(
     path: Path,
     extra_client_patterns: list[tuple[str, str]] | None = None,
 ) -> list[LeakFinding]:
+    # BYTES, not text. latin-1 cannot raise and maps every byte to exactly one
+    # character, so ASCII identifiers embedded in ANY container -- Python
+    # bytecode, an archive, image metadata -- are still found. utf-8 with
+    # errors="replace" would mangle those regions into U+FFFD and quietly lose
+    # the very strings we are hunting: the search would come back clean, which is
+    # the one answer a leak scanner must never give by accident.
     return scan_text(
-        path.read_text(encoding="utf-8", errors="replace"),
+        path.read_bytes().decode("latin-1"),
         str(path),
         extra_client_patterns=extra_client_patterns,
     )

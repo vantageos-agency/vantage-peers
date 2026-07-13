@@ -5,6 +5,7 @@ client/person identifiers or internal infrastructure paths. See
 scripts/leak_guard.py for the full rationale.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -204,10 +205,19 @@ def test_derive_inventory_missing_root_raises():
 
 
 def test_derived_inventory_excludes_dirs_with_written_reason(tmp_path):
-    """`.git` and `__pycache__` are the only silent-skip surface, and even
-    they are not silent: they must never be enumerated as CHECKED, and any
-    OTHER excluded content must carry a written skip_reason, never a bare
-    absence.
+    """`.git` is excluded. `__pycache__` is NOT — and that reversal is the point.
+
+    This test used to assert the opposite: that `__pycache__` contents "must
+    never be enumerated at all", on the stated ground that bytecode is "not
+    source, never shipped". Both halves were false. The .pyc was committed AND
+    published, and `strings` on its bytecode returned six client-name hits. The
+    exclusion was not a safe optimisation, it was the hiding place — and this
+    test was pinning it there.
+
+    An exclusion is a CLAIM ABOUT REALITY. When the claim is wrong, the guard
+    goes blind exactly where the leak is. So a __pycache__ inside a shipped tree
+    is now enumerated and scanned like anything else; its presence is itself a
+    finding, not a reason to look away.
     """
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
@@ -220,8 +230,42 @@ def test_derived_inventory_excludes_dirs_with_written_reason(tmp_path):
     inventory = derive_inventory(tmp_path)
     paths = {item.path for item in inventory}
     assert not any(".git" in p.parts for p in paths), ".git contents must never be enumerated at all"
-    assert not any("__pycache__" in p.parts for p in paths), "__pycache__ contents must never be enumerated at all"
+    assert any("__pycache__" in p.parts for p in paths), (
+        "a __pycache__ sitting in a shipped tree MUST be enumerated — skipping it "
+        "is how a .pyc carrying purged identifiers in its bytecode goes unseen"
+    )
     assert (skill_dir / "SKILL.md") in {item.path for item in inventory if item.checked}
+
+
+def test_leak_inside_compiled_bytecode_is_caught(tmp_path, monkeypatch):
+    """A client identity surviving in a .pyc's bytecode must be FOUND.
+
+    Purging a name from the SOURCE does not remove it from a compiled artifact:
+    string constants live on in bytecode. This is the case that was live on the
+    public repo — the leak guard's own .pyc, published, carrying the very
+    identifiers the guard exists to catch, invisible to it because it refused to
+    open binary files. Fictitious identity only.
+    """
+    cfg = tmp_path / "identities.json"
+    cfg.write_text(json.dumps({
+        "organizations": ["Zorblatt Holdings"], "contacts": [], "commercial_names": [], "aliases": [],
+    }), encoding="utf-8")
+    monkeypatch.setenv("VANTAGE_CLIENT_IDENTITIES", str(cfg))
+
+    pkg = tmp_path / "pkg"
+    (pkg / "__pycache__").mkdir(parents=True)
+    # A real .pyc is a binary container with UTF-8 string constants inside.
+    (pkg / "__pycache__" / "mod.cpython-312.pyc").write_bytes(
+        b"\xcb\x0d\x0d\x0a\x00\x00\x00\x00" + b"Zorblatt Holdings" + b"\x00\x01\x02\xff"
+    )
+
+    findings = [f for item in derive_inventory(pkg) if item.checked
+                for f in scan_file(item.path, extra_client_patterns=resolve_client_data_patterns())]
+    assert any(f.category == "CLIENT_DATA" for f in findings), (
+        "a client identity embedded in compiled bytecode must be caught — "
+        "a guard that cannot read what it ships cannot vouch for it"
+    )
+    assert any(".pyc" in f.source for f in findings), "the finding must NAME the .pyc"
 
 
 # =============================================================================
