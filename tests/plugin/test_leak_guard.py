@@ -22,6 +22,12 @@ from leak_guard import (  # noqa: E402
     scan_file,
     scan_text,
 )
+from client_identity_config import (  # noqa: E402
+    ClientIdentityConfigError,
+    derive_organizations_from_bu_registry,
+    load_raw_config,
+    resolve_client_data_patterns,
+)
 
 # Benign terms that MUST NOT match. A prior fleet purge used substring matching
 # and renamed "summaries" because it contains "marie" -- these pin that we do
@@ -216,3 +222,155 @@ def test_derived_inventory_excludes_dirs_with_written_reason(tmp_path):
     assert not any(".git" in p.parts for p in paths), ".git contents must never be enumerated at all"
     assert not any("__pycache__" in p.parts for p in paths), "__pycache__ contents must never be enumerated at all"
     assert (skill_dir / "SKILL.md") in {item.path for item in inventory if item.checked}
+
+
+# =============================================================================
+# Day 130 T? — host-resolved client vocabulary. Eta review (PR #1090) found the
+# hand-typed CLIENT_DATA_PATTERNS list missing an ACTIVE client identity: a
+# guard that prints PASSED without ever having resolved a client vocabulary is
+# worse than no guard. These tests are 100% OFFLINE and use ONLY FICTITIOUS
+# identities via a throwaway tmp_path config -- never a real client name.
+# =============================================================================
+
+FICTIVE_CONFIG = {
+    "organizations": ["Zorblatt Holdings"],
+    "contacts": ["Zara Quinlin"],
+    "commercial_names": [],
+    "aliases": ["FICTIVE_PERSON_ZARA_QUINLIN"],
+}
+
+
+def _write_config(tmp_path, data):
+    import json
+
+    path = tmp_path / "fictive-client-identities.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def test_missing_config_fails_loud_not_passed(tmp_path):
+    """THE test that proves the guard can no longer lie: an absent config must
+    raise, never silently resolve to zero patterns (which would look identical
+    to 'the package is clean')."""
+    missing = tmp_path / "does-not-exist.json"
+    with pytest.raises(ClientIdentityConfigError, match=r"not found"):
+        load_raw_config(missing)
+
+
+def test_empty_config_fails_loud(tmp_path):
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(ClientIdentityConfigError, match=r"EMPTY"):
+        load_raw_config(empty)
+
+    # A config with all-empty lists (valid JSON, zero identities) must also
+    # fail loud -- zero identities is indistinguishable from a broken config.
+    zero_identities = tmp_path / "zero.json"
+    zero_identities.write_text(
+        '{"organizations": [], "contacts": [], "commercial_names": [], "aliases": []}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ClientIdentityConfigError, match=r"ZERO identities"):
+        load_raw_config(zero_identities)
+
+
+def test_malformed_config_fails_loud(tmp_path):
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(ClientIdentityConfigError, match=r"not valid JSON"):
+        load_raw_config(bad_json)
+
+    missing_key = tmp_path / "missing-key.json"
+    missing_key.write_text('{"organizations": ["x"]}', encoding="utf-8")
+    with pytest.raises(ClientIdentityConfigError, match=r"missing required key"):
+        load_raw_config(missing_key)
+
+
+def test_resolved_fictive_identity_caught_outside_old_globs(tmp_path):
+    """A FICTITIOUS identity resolved from a throwaway config, shipped in a
+    file OUTSIDE the old two-glob surface (under docs/), must be caught and
+    NAMED with its file + line. This is the test that proves the vocabulary
+    is actually RESOLVED and used, not just documented."""
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    leak_dir = tmp_path / "pkg" / "docs"
+    leak_dir.mkdir(parents=True)
+    leak_file = leak_dir / "example.md"
+    leak_file.write_text(
+        "A worked example featuring Zorblatt Holdings as the client contact.\n",
+        encoding="utf-8",
+    )
+
+    findings = client_data(scan_file(leak_file, extra_client_patterns=patterns))
+    assert findings, "MISSED LEAK: fictitious resolved-config identity was not flagged"
+    assert findings[0].source == str(leak_file)
+    assert findings[0].line_no == 1
+
+
+def test_resolved_fictive_identity_caught_in_skill_references(tmp_path):
+    """Same fictitious identity, this time under skills/*/references/ -- the
+    second surface Eta's probes hit."""
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    ref_dir = tmp_path / "pkg" / "skills" / "some-skill" / "references"
+    ref_dir.mkdir(parents=True)
+    leak_file = ref_dir / "notes.md"
+    leak_file.write_text(
+        "Onboarding notes for contact Zara Quinlin.\n", encoding="utf-8"
+    )
+
+    findings = client_data(scan_file(leak_file, extra_client_patterns=patterns))
+    assert findings, "MISSED LEAK: fictitious resolved-config contact name was not flagged"
+
+
+def test_resolved_client_patterns_do_not_flag_legitimate_example(tmp_path):
+    """Zero false positives: a legitimate pedagogical example (guineapig-77,
+    DEPLOY_KEY_GUINEAPIG) must stay green even with a resolved client
+    vocabulary merged in. Over-purging is the symmetric failure to missing
+    real leaks."""
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    skill_dir = tmp_path / "pkg" / "skills" / "deploy-track"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "User: track convex deployment guineapig-77 at "
+        "https://guineapig-77.convex.cloud, key in env var DEPLOY_KEY_GUINEAPIG.\n",
+        encoding="utf-8",
+    )
+
+    findings = client_data(scan_file(skill_file, extra_client_patterns=patterns))
+    assert not findings, (
+        f"FALSE POSITIVE with resolved client vocabulary merged in: "
+        f"{[f.render() for f in findings]}"
+    )
+
+
+def test_build_client_data_patterns_rejects_blank_entry(tmp_path):
+    cfg_path = _write_config(
+        tmp_path,
+        {"organizations": ["  "], "contacts": [], "commercial_names": [], "aliases": []},
+    )
+    with pytest.raises(ClientIdentityConfigError):
+        load_raw_config(cfg_path)
+
+
+def test_derive_organizations_from_bu_registry_is_supplementary_only():
+    """The BU registry can only ever supply ElPi Corp's OWN product/BU names
+    (schema has no client-org/contact field) -- this pins that the helper does
+    exactly that and nothing more, so it can never be mistaken for a
+    substitute for the host client-identity config."""
+    bu_entries = [
+        {"name": "VantagePeers", "orchestratorId": "sigma"},
+        {"name": "VantageRegistry", "orchestratorId": "pi"},
+        {"orchestratorId": "no-name-field"},
+    ]
+    names = derive_organizations_from_bu_registry(bu_entries)
+    assert names == ["VantagePeers", "VantageRegistry"]
+    # None of these are client org/contact names -- the function's docstring
+    # is the load-bearing artifact here, not a runtime assertion, but this
+    # pins that it never fabricates a name it wasn't given.
+    assert "Zorblatt Holdings" not in names
