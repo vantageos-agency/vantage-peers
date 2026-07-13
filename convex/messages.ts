@@ -5,6 +5,15 @@ import { mutation, query } from "./_generated/server";
 import { requireScope, withOrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
+import { computeStaleInProgress } from "./lib/taskClosureGate";
+
+const staleInProgressValidator = v.array(
+	v.object({
+		taskId: v.id("tasks"),
+		title: v.string(),
+		age: v.number(),
+	}),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessage — send a message to one, many, or all orchestrators
@@ -95,6 +104,13 @@ export const checkNewMessages = query({
 			createdAt: v.number(),
 		}),
 	),
+	// FROZEN CONTRACT — do not change this return shape. checkNewMessages is
+	// intentionally left as a bare array for vp-mcp <2.12.0 callers ("no
+	// break" — see mcp-server/CHANGELOG.md:40). The MCP server only calls
+	// checkNewMessagesEnvelope in practice (mcp-server/src/tools.ts:2776);
+	// staleInProgress (Day 130) is delivered there, not here. Protected by
+	// convex/__tests__/staleInProgress.test.ts
+	// "checkNewMessages frozen contract — returns a bare array".
 	// tenantId filtering: when provided, only returns messages for that tenant.
 	// When omitted, returns all messages (backward-compatible single-tenant mode).
 	// This is intentional — omitting tenantId = admin/legacy access, not a bypass.
@@ -237,6 +253,7 @@ export const checkNewMessagesEnvelope = query({
 		),
 		truncated: v.boolean(),
 		nextSince: v.union(v.number(), v.null()),
+		staleInProgress: staleInProgressValidator,
 	}),
 	handler: async (ctx, args) => {
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
@@ -359,7 +376,18 @@ export const checkNewMessagesEnvelope = query({
 
 		const nextSince = truncated ? lastIncludedReceiptCreationTime : null;
 
-		return { messages, truncated, nextSince };
+		// Day 130 closure gate — surface the recipient's own overdue
+		// in_progress work on every check_messages call, no extra cron. This
+		// is the ONLY path staleInProgress is delivered on: mcp-server calls
+		// exclusively checkNewMessagesEnvelope (tools.ts:2776); the legacy
+		// checkNewMessages array contract stays frozen (see its own comment).
+		const staleInProgress = await computeStaleInProgress(
+			ctx,
+			args.recipient,
+			Date.now(),
+		);
+
+		return { messages, truncated, nextSince, staleInProgress };
 	},
 });
 

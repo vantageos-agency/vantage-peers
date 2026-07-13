@@ -157,6 +157,9 @@ const READ_ONLY_TOOLS = new Set([
 	// action runs the pure validator against a fetched tarball without
 	// touching the DB; readOnlyHint=true at validateOkfBundle.ts.
 	"validate_okf_bundle",
+	// Day 130 (k17dhcmzqafve1ayzvh833kf558ae019) — billing consolidation query,
+	// pure read over tasks:billingSummaryByProject, no mutation.
+	"billing_summary_by_project",
 	// PR-I — improvisation_digest is a pure read query (improvisationDigest:scanWindow),
 	// ADVISORY-only; readOnlyHint=true is semantically correct.
 	"improvisation_digest",

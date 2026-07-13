@@ -894,6 +894,16 @@ describe("Tasks", () => {
 	test("complete task sets status=done, completedAt, and completionNote", async () => {
 		const t = createTestConvex();
 
+		// Day 130 closure gate — seed billableProjects config (empty: this
+		// task's project "vantage-peers" is not a billable client project).
+		await t.run(async (ctx) => {
+			await ctx.db.insert("taskClosureConfig", {
+				key: "billableProjects",
+				value: [],
+				updatedAt: Date.now(),
+			});
+		});
+
 		const taskId = await t.mutation(api.tasks.create, sampleTask);
 
 		// Start first so we can test actualMinutes calculation
