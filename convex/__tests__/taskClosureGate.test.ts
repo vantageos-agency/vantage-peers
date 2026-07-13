@@ -193,3 +193,84 @@ describe("task closure gate — tasks.bulkComplete (Day 130, second closure path
 		).rejects.toThrow(/TASK_NEVER_STARTED_BILLABLE/);
 	});
 });
+
+// Eta review of PR #1086: the `update` path was GATED but never PROVEN to bite —
+// deleting its gate reddened nothing. Gating three paths while only testing two
+// reproduces, one level down, the very coverage blind spot this gate exists to
+// close. `update` is the generic status:"done" patch, i.e. the MCP update_task
+// call — the closure path most reachable by a human.
+describe("task closure gate — tasks.update (Day 130, third closure path)", () => {
+	test("(i) billable task with startedAt null → REJECTED via update({status:'done'})", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "Billable task closed via generic update",
+			project: BILLABLE_PROJECT,
+			assignedTo: "sigma",
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: "sigma",
+		});
+
+		await expect(
+			t.mutation(api.tasks.update, {
+				taskId,
+				status: "done" as const,
+				callerOrchestrator: "sigma",
+				completionNote: "Closing straight through update_task, never started",
+			}),
+		).rejects.toThrow(/TASK_NEVER_STARTED_BILLABLE/);
+	});
+
+	test("(j) billable task with startedAt present → PASSES via update, actualMinutes derived", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "Billable task properly started, closed via update",
+			project: BILLABLE_PROJECT,
+			assignedTo: "sigma",
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: "sigma",
+		});
+
+		await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" });
+
+		await t.mutation(api.tasks.update, {
+			taskId,
+			status: "done" as const,
+			callerOrchestrator: "sigma",
+			completionNote: "Done — PR #1086",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+		expect(task?.actualMinutes).toBeDefined();
+	});
+
+	test("(k) non-billable task with startedAt null → PASSES via update (no false positive)", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "Internal task, never started, closed via update",
+			project: "internal-fleet",
+			assignedTo: "sigma",
+			priority: "low" as const,
+			status: "todo" as const,
+			createdBy: "sigma",
+		});
+
+		await t.mutation(api.tasks.update, {
+			taskId,
+			status: "done" as const,
+			callerOrchestrator: "sigma",
+			completionNote: "Internal chore, not billable",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+	});
+});
