@@ -105,17 +105,27 @@ export async function enforceClosureGate(
 		if (hasTimeLineOverride(completionNote)) {
 			return { actualMinutes: undefined };
 		}
-		// Automation-created tasks (createdBy: "system", e.g. the GitHub-webhook
-		// [Review] tasks minted by upsertReviewTask) are never billable work in
-		// the first place — they are internal process bookkeeping, not a
-		// timed engagement performed for a client. Nothing ever calls
-		// start_task on them by construction (the webhook inserts them
-		// directly at status:"todo"), so demanding a startedAt here would be
-		// requiring proof of a clock that structurally never runs. This is a
-		// definite "not billable" answer, not a guess — it does not weaken
-		// the gate for human-authored work, where a missing startedAt still
-		// means "nobody can vouch for how long this actually took."
-		if (task.createdBy === "system") {
+		// Automation-created tasks (origin: "automation", e.g. the
+		// GitHub-webhook [Review] tasks minted by createOrUpdateReviewTask)
+		// are never billable work in the first place — they are internal
+		// process bookkeeping, not a timed engagement performed for a
+		// client. Nothing ever calls start_task on them by construction (the
+		// webhook inserts them directly at status:"todo"), so demanding a
+		// startedAt here would be requiring proof of a clock that
+		// structurally never runs. This is a definite "not billable" answer,
+		// not a guess — it does not weaken the gate for human-authored work,
+		// where a missing startedAt still means "nobody can vouch for how
+		// long this actually took."
+		//
+		// Day 130 follow-up #2 (Eta REVISE, PR #1089): this MUST read
+		// `task.origin`, never `task.createdBy`. `createdBy` is a
+		// caller-supplied string argument on the PUBLIC `tasks.create`
+		// mutation — any MCP caller could forge `createdBy: "system"` to
+		// permanently exempt a billable task from this gate. `origin` is not
+		// accepted as an arg on any public mutation; only the internal
+		// webhook path writes it, which makes it inforgeable from the
+		// client-facing surface.
+		if (task.origin === "automation") {
 			return { actualMinutes: undefined };
 		}
 		throw new ConvexError(

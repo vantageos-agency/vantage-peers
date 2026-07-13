@@ -5,7 +5,7 @@ import { mutation, internalMutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { creatorValidator } from "./schema";
+import { creatorValidator, taskOriginValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { enforceClosureGate } from "./lib/taskClosureGate";
@@ -118,6 +118,8 @@ const taskFullValidator = v.object({
 	updatedAt: v.number(),
 	// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 	orgId: v.optional(v.string()),
+	// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
+	origin: v.optional(taskOriginValidator),
 });
 
 type TaskLite = {
@@ -166,6 +168,21 @@ export const create = mutation({
 	},
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
+		// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
+		// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
+		// it reads `origin`, which this public mutation never accepts as an
+		// arg and never writes — only the internal webhook path
+		// (createOrUpdateReviewTask) can write it. `createdBy: "system"` is
+		// intentionally still accepted here because it is used elsewhere in
+		// this codebase as a plain non-billing convention (RBAC-bypass
+		// semantics on update/complete/bulkComplete/start/deleteTask, and as
+		// a generic creator string in stats/bridge-automation flows) — see
+		// convex/__tests__/tasksMutationConvexErrors.test.ts and
+		// convex/stats.test.ts. An earlier attempt to reject it outright
+		// here regressed 44 pre-existing tests; that reservation attempt
+		// was scoped back out. The billing-bypass vulnerability itself is
+		// fully closed by the `origin`-based gate, independent of this
+		// value.
 		const now = Date.now();
 		return await ctx.db.insert("tasks", {
 			...args,
@@ -207,6 +224,8 @@ export const get = query({
 			updatedAt: v.number(),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
+			origin: v.optional(taskOriginValidator),
 		}),
 		v.null(),
 	),
@@ -252,6 +271,8 @@ export const getById = query({
 			updatedAt: v.number(),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
+			origin: v.optional(taskOriginValidator),
 		}),
 		v.null(),
 	),
@@ -1878,6 +1899,10 @@ export const createOrUpdateReviewTask = internalMutation({
 			tags: args.tags,
 			createdAt: now,
 			updatedAt: now,
+			// Day 130 follow-up #2 — the inforgeable automation signal. This
+			// internalMutation is the ONLY code path that writes `origin`;
+			// it is unreachable from the public MCP surface (webhook-only).
+			origin: "automation" as const,
 		});
 	},
 });
