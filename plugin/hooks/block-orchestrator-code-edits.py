@@ -4,7 +4,7 @@ Universal orchestrator hook — deploy to EVERY orchestrator (Pi, Tau, Phi, etc.
 PreToolUse on Edit/Write: Orchestrators delegate. They never write code.
 
 Allowed:
-- .md files in context, knowledge, memory, templates, resources, diary, etc.
+- .md / .mdx files in context, knowledge, memory, templates, resources, diary, etc.
 - ALL files in .claude/ (settings, hooks, skills, rules = infrastructure)
 - /tmp
 Blocked: everything else (code files, components, etc.)
@@ -36,6 +36,11 @@ ALLOWED_ALL_DIRS = [
     ".claude/",
 ]
 
+# Repos Pi manages directly (no dedicated orchestrator) — all edits allowed
+PI_MANAGED_REPOS = [
+    "/home/laurentperello/coding/vantage-studio/",
+]
+
 # Flag file set by enforce-brief-template.py when a subagent is launched
 SUBAGENT_FLAG = "/tmp/.claude-subagent-active"
 
@@ -54,13 +59,19 @@ try:
     if file_path.startswith("/tmp"):
         sys.exit(0)
 
+    # Allow all edits in repos Pi manages directly (no orchestrator)
+    for repo in PI_MANAGED_REPOS:
+        if file_path.startswith(repo):
+            sys.exit(0)
+
     # Allow all files in infrastructure dirs (.claude/)
     for allowed_dir in ALLOWED_ALL_DIRS:
         if ("/" + allowed_dir) in file_path:
             sys.exit(0)
 
-    # Allow .md files in allowed directories
-    if file_path.endswith(".md"):
+    # Allow .md / .mdx content files in allowed directories
+    # (.mdx = markdown content, e.g. diary entries — authored content, not code)
+    if file_path.endswith((".md", ".mdx")):
         for allowed_dir in ALLOWED_MD_DIRS:
             if ("/" + allowed_dir) in file_path:
                 sys.exit(0)

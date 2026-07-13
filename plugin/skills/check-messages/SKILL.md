@@ -5,76 +5,70 @@ description: >
   Use this skill whenever the user says "check messages", "read messages",
   "any messages", "peers", "inbox", "new messages" --
   even if they don't say "check-messages" explicitly.
+allowed-tools: mcp__vantage-peers__* Bash Read
 metadata:
-  version: "4.0.0"
-user-invocable: true
+  version: "3.1.0"
+  user-invocable: true
 license: Proprietary
 ---
 
-Check for unread messages in VantagePeers and, if running autonomously, auto-pick the next todo task.
+Check unread VantagePeers messages and, in autonomous mode, auto-pick the next unblocked todo task. Sellable as `vantage-memory` plugin.
 
-V4 PRINCIPLE: this skill READS and DISPLAYS messages only. It NEVER calls `mark_as_read` and NEVER writes to any `inbox-archive` namespace. `mark_as_read` is an EXPLICIT action the orchestrator (or human) takes AFTER processing — when they have decided what to do (act, respond, ignore). This restores the original semantic that worked for weeks and eliminates the V3 token-burn loop where cron ticks re-fetched ever-growing archives.
+## SILENCE CONTRACT (Day 127 — read this first)
+
+A cron firing that finds NOTHING NEW produces **ZERO text output. Not one word.** No "court", no "ok", no "standby", no summary, no echo of any style instruction. Text costs quota at every cron firing, around the clock, across the whole fleet. The ONLY legal outputs of this skill are: (a) displayed messages when messages exist, (b) a standby block when the blocked/queue STATE CHANGED since the previous firing, (c) task execution output. Everything else is silence.
+
+Incident Day 127: orchestrators emitted a literal one-word reply ("court") on every cron firing, some in endless self-chaining loops — pure quota burn observed fleet-wide by Laurent.
 
 ## WORKFLOW
 
-**Step 1 — Detect mode (human vs autonomous)**
+**Step 1 — Detect mode**
 
-Check orchestrator identity:
-- Read the first 20 lines of `CLAUDE.md` in the current workspace (if available).
-- If CLAUDE.md header says "You are Pi" AND current workspace path is `/home/laurentperello/coding/ElPi Corp` (Chromebook) → **HUMAN MODE**.
-- Else (any VPS orchestrator: sigma, alpha, lambda, victor, tau, phi, omega, eta, zeta, proxima, verify, scan, etc.) → **AUTONOMOUS MODE**.
-- If in doubt, default to autonomous mode.
+- Read first 20 lines of `CLAUDE.md`. If "You are Pi" + workspace `/home/laurentperello/coding/ElPi Corp` → **HUMAN MODE**.
+- Else (any VPS orchestrator) → **AUTONOMOUS MODE**. Default to autonomous if in doubt.
 
-**Step 2 — Read + display messages (no side effects)**
+**Step 2 — Check messages**
 
-1. Detect your orchestrator role and instanceId from CLAUDE.md / hostname.
-2. Call `mcp__vantage-peers__check_messages` with recipient={role}, recipientInstanceId={instance}.
-3. If no messages: continue to Step 3 (autonomous) or say "No new messages" (human).
+1. Detect role + instanceId from CLAUDE.md / hostname.
+2. `mcp__vantage-peers__check_messages` with recipient + recipientInstanceId.
+3. If no messages → Step 3 (autonomous) or say "No new messages" (human).
 4. If messages exist:
-   - Display each message: `[from] ({fromInstanceId}): {content}`
-   - DO NOT call `mark_as_read` from inside this skill.
-   - DO NOT call `store_memory` to any `inbox-archive` namespace.
-   - For each message that requires a response, respond via `mcp__vantage-peers__send_message`.
-   - If a message contains task instructions for you, it should already exist as a VantagePeers task (the emitter is responsible for creating tasks — see memory j575x33mx14k47eevh3vq3gwc185c685). Do not duplicate.
+   - Display each as `[from] (fromInstanceId): content`.
+   - `mcp__vantage-peers__mark_as_read` all receiptIds.
+   - Respond via `send_message` to any that ask a question or request action.
+   - Never duplicate a task from message content — emitter owns task creation (memory `j575x33mx14k47eevh3vq3gwc185c685`).
 
-**Step 3 — Process + mark_as_read (explicit, post-decision)**
+**Step 2.5 — HUMAN MODE only: pull completed dispatched tasks**
 
-After you have READ the messages and decided what to do with each (act on it, respond, ignore, or pick up the next task), call `mcp__vantage-peers__mark_as_read` with the receiptIds of every message you have finished processing.
+After Step 2, also pull:
+- `list_tasks createdBy="pi" status="review"`
+- `list_tasks createdBy="pi" status="done"`
 
-This applies to BOTH human and autonomous modes. The marking is an action you take as the orchestrator, not a side effect of fetching. If you have not finished processing a message (e.g. it depends on an external answer), leave its receipt unread and re-evaluate next cycle.
+Filter to tasks completed since the previous check cycle (recent `completedAt`/`updatedAt`), dedup by taskId vs already surfaced. Display `[completed] <title> — <assignedTo> — <completionNote>` and act on each as if the assignee had messaged.
 
-**Step 4 — Autonomous mode: auto-pick + execute next task**
+Why pull-not-push, plus anti-patterns, in `references/pi-pull-doctrine.md`.
 
-(Skip this step in human mode.)
+**Step 3 — AUTONOMOUS MODE only: auto-pick + execute next task**
 
-After processing messages and marking them read:
+1. `list_tasks assignedTo=<role> status=todo` (no limit, or 50).
+2. `list_tasks assignedTo=<role> status=in_progress` — close any actually done via `complete_task` + completionNote (stale cleanup).
+3. Sort by priority (urgent > high > medium > low) then `_creationTime` oldest first. Pick FIRST task whose `dependsOn` are all `done` (or empty).
+4. `start_task`. Execute per its `description`/`VERIFICATION`/`TESTS` blocks.
+5. On completion: `complete_task` with detailed completionNote. **Chain at most ONCE per cron firing**: re-invoke `/check-messages` only if the completed task plausibly unblocked another (a dependsOn now satisfied). NEVER re-invoke when the todo queue was empty at Step 3.1 — the next cron firing covers it. Self-chaining on an empty queue is the endless-loop failure (Day 127).
 
-1. Call `mcp__vantage-peers__list_tasks` with:
-   - `assignedTo=<your role>`
-   - `status=todo`
-   - No limit (or 50)
-2. Also call `list_tasks` with `status=in_progress` and `assignedTo=<role>`. For each task actually done but not closed, call `complete_task` with completionNote (stale task cleanup).
-3. From the todo list, sort by `priority` (urgent > high > medium > low) then by `_creationTime` (oldest first). Pick the FIRST task whose dependencies (`dependsOn`) are all `status=done` (or whose `dependsOn` is empty).
-4. Call `start_task` with that taskId.
-5. Execute the task per its description/brief/VERIFICATION/TESTS blocks.
-6. On completion: `complete_task` with a detailed completionNote + re-invoke this skill (`/check-messages`) to chain to the next.
+**Step 4 — Fallback if no todo task**
 
-**Step 5 — Fallback if no todo task**
-
-If the todo queue is empty (or all blocked on dependencies):
-1. Produce a 3-line standby summary (role, instance, "queue empty, awaiting dispatch" or "blocked on: [list of dependencies]").
-2. Do NOT ask Laurent or Pi for next steps. Do NOT invent work.
-3. Exit silently. The cron `check_messages every 5 minutes` (or next message trigger) will re-fire and detect new work.
+Empty queue or all blocked on deps:
+1. Compare to the PREVIOUS firing (memory of the session): if the blocked-list and queue state are IDENTICAL, output NOTHING and stop — see SILENCE CONTRACT.
+2. Only if the state CHANGED (new blocker, task newly frozen/unfrozen): output the 3-line standby block (role, instance, "blocked on: [list]").
+3. Do NOT ask Laurent/Pi what to do next. Do NOT invent work. Do NOT re-invoke this skill.
 
 ## RULES
 
-- This skill is READ-ONLY on the messages table. It never calls `mark_as_read` and never writes to any `inbox-archive` namespace.
-- `mark_as_read` is an EXPLICIT orchestrator action taken AFTER processing a message — not a side effect of reading.
-- Respond immediately to any message that asks a question or requests action.
-- In autonomous mode: NEVER produce output asking Laurent/Pi what to do next. Pick a task or standby.
-- In human mode (Pi Chromebook): display messages, respond if needed, mark_as_read after processing. Do NOT auto-pick tasks (Pi is interactive with Laurent).
-- Never duplicate tasks from message content (emitter owns task creation per memory j575x33mx14k47eevh3vq3gwc185c685).
-
-## SELLABLE AS
-
-`vantage-memory` plugin — persistent memory, messaging, and task management for Claude Code agents via MCP. V2 adds autonomous auto-pick for agent swarms. V4 restores the explicit-mark_as_read semantic and removes the V3 inbox-archive over-complexification: cron ticks no longer re-fetch ever-growing archives, eliminating token burn while preserving message delivery reliability.
+- Always mark messages as read after displaying.
+- Respond immediately to any message asking a question / requesting action.
+- AUTONOMOUS: NEVER produce output asking Laurent/Pi what to do next. Pick a task or standby.
+- AUTONOMOUS: a no-change firing is SILENT (zero text). Echoing a style instruction ("court", "ok", "noté") as the whole reply is banned — it is quota burn, not compliance.
+- AUTONOMOUS: never re-invoke /check-messages from a firing that found an empty queue. One firing = at most one chain, and only on a plausible unblock.
+- HUMAN: display + mark read + respond if needed. Do NOT auto-pick (Pi is interactive).
+- HUMAN: always run Step 2.5. Pi never relies on a peer push to learn a dispatched task is done — pull is the source of truth.
