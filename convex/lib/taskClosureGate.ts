@@ -105,6 +105,19 @@ export async function enforceClosureGate(
 		if (hasTimeLineOverride(completionNote)) {
 			return { actualMinutes: undefined };
 		}
+		// Automation-created tasks (createdBy: "system", e.g. the GitHub-webhook
+		// [Review] tasks minted by upsertReviewTask) are never billable work in
+		// the first place — they are internal process bookkeeping, not a
+		// timed engagement performed for a client. Nothing ever calls
+		// start_task on them by construction (the webhook inserts them
+		// directly at status:"todo"), so demanding a startedAt here would be
+		// requiring proof of a clock that structurally never runs. This is a
+		// definite "not billable" answer, not a guess — it does not weaken
+		// the gate for human-authored work, where a missing startedAt still
+		// means "nobody can vouch for how long this actually took."
+		if (task.createdBy === "system") {
+			return { actualMinutes: undefined };
+		}
 		throw new ConvexError(
 			`TASK_NEVER_STARTED_BILLABLE: task ${task._id} (project="${task.project}") has no startedAt — it was never actually started via start_task, so actualMinutes is uncomputable and billing would be false. Call start_task first, or add "// allow-no-time-line: <reason>" (≥6 chars) to completionNote if this task is genuinely non-billable.`,
 		);

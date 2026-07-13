@@ -274,3 +274,80 @@ describe("task closure gate — tasks.update (Day 130, third closure path)", () 
 		expect(task?.status).toBe("done");
 	});
 });
+
+// Eta (reviewer, on the ground) reported PR #1086's gate over-blocks: GitHub-
+// webhook auto-created review tasks (createdBy: "system") on billable
+// projects can never have startedAt — nobody calls start_task on them by
+// construction — so every review closure was rejected. AUTO-1/AUTO-2 prove
+// the fix; AUTO-3 proves the fix does NOT simply disarm the gate for
+// human-created work (must stay RED/rejecting before and after the fix).
+describe("task closure gate — automation-created tasks exempt (Day 130 follow-up)", () => {
+	test("(AUTO-1) system-created billable task with no startedAt → PASSES via complete, no override needed", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "[Review] elpiarthera/vantage-immo PR #234",
+			project: BILLABLE_PROJECT,
+			assignedTo: "eta",
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: "system",
+		});
+
+		await t.mutation(api.tasks.complete, {
+			taskId,
+			callerOrchestrator: "eta",
+			completionNote: "Reviewed and approved, PR #234 merged",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+	});
+
+	test("(AUTO-2) system-created billable task with no startedAt → PASSES via update({status:'done'})", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "[Review] elpiarthera/vantage-immo PR #235",
+			project: BILLABLE_PROJECT,
+			assignedTo: "eta",
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: "system",
+		});
+
+		await t.mutation(api.tasks.update, {
+			taskId,
+			status: "done" as const,
+			callerOrchestrator: "eta",
+			completionNote: "Reviewed and approved, PR #235 merged",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+	});
+
+	test("(AUTO-3, non-regression) human-created billable task with no startedAt → STILL REJECTED", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "Billable work never started, human-authored",
+			project: BILLABLE_PROJECT,
+			assignedTo: "sigma",
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: "sigma",
+		});
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma",
+				completionNote: "Did the work, forgot to call start_task first",
+			}),
+		).rejects.toThrow(/TASK_NEVER_STARTED_BILLABLE/);
+	});
+});
