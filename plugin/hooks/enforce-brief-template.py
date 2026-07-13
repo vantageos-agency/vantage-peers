@@ -4,6 +4,8 @@ Universal orchestrator hook — deploy to EVERY orchestrator (Pi, Tau, Phi, etc.
 PreToolUse on Agent: Two enforcement rules:
 1. Every delegation must reference a brief template.
 2. Non-blocking agents MUST run in background (run_in_background: true).
+3. [SIMPLE-DELEGATION] tag is an accepted lightweight bypass for trivial delegations
+   that have no complex template need — but MUST_BACKGROUND enforcement still applies.
 
 Exit 0 = allow
 Exit 2 = block
@@ -41,6 +43,10 @@ TEMPLATE_MARKERS = [
     "agent-brief-template.md",
 ]
 
+# Lightweight bypass tag for trivial delegations (no multi-section template needed).
+# Deliberate opt-in; greppable; does NOT skip run_in_background enforcement.
+SIMPLE_DELEGATION_TAG = "[SIMPLE-DELEGATION]"
+
 # Agent types exempt from brief template requirement (non-delegation uses)
 EXEMPT_AGENTS = [
     "Explore",
@@ -62,6 +68,8 @@ try:
         sys.exit(0)
 
     # Enforce background execution for non-blocking agents
+    # NOTE: this check runs BEFORE the [SIMPLE-DELEGATION] bypass so that
+    # the bypass cannot be used to sneak past the background-execution rule.
     run_in_background = tool_input.get("run_in_background", False)
     if agent_type in MUST_BACKGROUND and not run_in_background:
         print(
@@ -71,6 +79,17 @@ try:
             file=sys.stderr,
         )
         sys.exit(2)
+
+    # Lightweight bypass: [SIMPLE-DELEGATION] tag satisfies the template requirement
+    # for trivial delegations (e.g. "seed taxonomy from 2 .md files").
+    # MUST_BACKGROUND check already ran above — this path is safe.
+    if SIMPLE_DELEGATION_TAG in prompt:
+        try:
+            with open(SUBAGENT_FLAG, "w") as f:
+                f.write(str(os.getpid()))
+        except Exception:
+            pass
+        sys.exit(0)
 
     # Check if any template marker is present in the prompt
     prompt_lower = prompt.lower()

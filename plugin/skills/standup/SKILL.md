@@ -1,12 +1,15 @@
 ---
 name: standup
 description: >
-  Daily standup report -- what was done, what's in progress, blockers, git status.
+  Daily standup report — what was done, what's in progress, blockers, git status.
   Use this skill whenever the user says "standup", "status report", "daily report",
   "what did you do", "progress report", "sitrep", "report", "where are you",
-  or asks about current work status -- even if they don't say "standup" explicitly.
-user-invocable: true
-allowed-tools: Read, Bash(git *), Bash(date)
+  or asks about current work status — even if they don't say "standup" explicitly.
+allowed-tools: Read Bash(git *) Bash(date)
+metadata:
+  version: "1.0.0"
+  user-invocable: true
+license: Proprietary
 ---
 
 # Standup
@@ -16,26 +19,26 @@ Generate a structured standup report and file it as a briefing note in VantagePe
 ## WORKFLOW
 
 1. Detect orchestrator role and instanceId from CLAUDE.md
-2. Get current date: `date +%Y-%m-%d`
+2. Get current date: !`date +%Y-%m-%d`
 3. Fetch all tasks: `mcp__vantage-peers__list_tasks` assignedTo={role}
 4. Get git state: `git status --short` and `git log --oneline -10`
 5. Build the report (see format below)
 6. File: `mcp__vantage-peers__create_briefing_note` title="Standup {role} {date}", topic="standup", participants=["{role}"], createdBy="{role}"
-7. Ping: `mcp__vantage-peers__send_message` from="{role}", channel="pi-chromebook", content="Standup filed -- {summary}"
+7. Ping: `mcp__vantage-peers__send_message` from="{role}", channel="pi-chromebook", content="Standup filed — {summary}"
 
 ## OUTPUT FORMAT
 
 ```
-STANDUP -- {role} ({instanceId}) -- {date}
+STANDUP — {role} ({instanceId}) — {date}
 
 DONE (since last standup):
-- [task title] -- [completionNote]
+- [task title] — [completionNote]
 
 IN PROGRESS:
-- [task title] -- [status, % estimate]
+- [task title] — [status, % estimate]
 
 BLOCKERS:
-- [description] -- [what's needed]
+- [description] — [what's needed]
 
 GIT:
 - Branch: {branch}
@@ -52,3 +55,7 @@ GIT:
 - If nothing done, say so. No padding.
 - The briefing note is the permanent record. The message is just a ping.
 - 5 lines beats 50.
+
+## SELLABLE AS
+
+`perello-executive` plugin — daily standup automation for AI-managed teams.

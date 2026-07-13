@@ -1,0 +1,32 @@
+name: Plugin <-> VantageRegistry parity gate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  plugin-vr-parity:
+    name: pytest tests/plugin/ (packaged plugin sources vs VR canonical)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest
+
+      # SECRECY > PARITY. The leak guard runs FIRST and needs no network: a
+      # packaged file carrying client/person identifiers is a live disclosure
+      # in a PUBLIC package, and must fail the build even if VR is down.
+      - name: Leak guard (no client/person identifiers in the public package)
+        run: pytest tests/plugin/test_leak_guard.py -v
+
+      - name: VR parity gate (with secrecy-suspension)
+        env:
+          VANTAGE_REGISTRY_TOKEN: ${{ secrets.VANTAGE_REGISTRY_TOKEN }}
+        run: pytest tests/plugin/test_vr_parity.py -v
