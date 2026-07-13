@@ -19,6 +19,15 @@ export const memoryTypeValidator = v.union(
 // New orchestrators can be added without schema changes (see issue #132).
 export const creatorValidator = v.string();
 
+// Day 130 follow-up #2 (Eta REVISE, PR #1089) — inforgeable automation
+// signal. `createdBy` is a caller-supplied string on the PUBLIC
+// `tasks.create` mutation, so it can be forged (e.g. `createdBy: "system"`)
+// to escape the billing closure gate. `origin` is NOT accepted as an
+// argument on any public mutation — only the internal webhook path
+// (createOrUpdateReviewTask) writes it. The closure gate reads `origin`,
+// never `createdBy`, to decide whether a task is automation-created.
+export const taskOriginValidator = v.literal("automation");
+
 export const relationTypeValidator = v.union(
 	v.literal("updates"),
 	v.literal("extends"),
@@ -252,6 +261,12 @@ export default defineSchema({
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
 		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
 		orgId: v.optional(v.string()),
+		// Day 130 follow-up #2 — inforgeable automation signal. ONLY the
+		// internal webhook mutation (createOrUpdateReviewTask) writes this;
+		// the public `tasks.create` mutation does not accept it as an arg.
+		// The billing closure gate reads this field, never `createdBy`
+		// (which is a caller-supplied, forgeable string on a public mutation).
+		origin: v.optional(taskOriginValidator),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])
