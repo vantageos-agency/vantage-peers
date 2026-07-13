@@ -403,6 +403,36 @@ def _git_toplevel(start: Path) -> Path | None:
     return Path(proc.stdout.strip())
 
 
+class BaselineUnresolvableError(RuntimeError):
+    """The baseline ref itself could not be resolved. Never silently empty."""
+
+
+_REF_RESOLVED: set[tuple[str, str]] = set()
+
+
+def _assert_ref_resolvable(ref: str, root: Path) -> None:
+    """Fail loudly if `ref` does not exist in `root`. Cached per (ref, root)."""
+    key = (ref, str(root))
+    if key in _REF_RESOLVED:
+        return
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise BaselineUnresolvableError(
+            f"baseline ref {ref!r} does not resolve in {root}. Without it the guard "
+            f"cannot tell a PRE-EXISTING identifier from a NEW one, and would report "
+            f"every already-public token as a fresh regression. Fetch the ref "
+            f"(e.g. `git fetch origin main`, and in CI check out with fetch-depth: 0), "
+            f"or set LEAK_GUARD_BASELINE_REF to a ref that exists. "
+            f"Refusing to judge a diff against a baseline it cannot read."
+        )
+    _REF_RESOLVED.add(key)
+
+
 def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = None) -> list[LeakFinding]:
     """Scan the SAME file as it exists on `ref` (default origin/main) of the git
     repo that CONTAINS `path` (`git_root`, auto-detected from `path` when not
@@ -421,6 +451,29 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = N
         rel = path.resolve().relative_to(root)
     except ValueError:
         return []
+    # THE REF MUST RESOLVE BEFORE ANY FILE IS JUDGED AGAINST IT.
+    #
+    # This used to `git show <ref>:<file>` and treat ANY non-zero exit as "absent
+    # from the baseline -> born-clean rule". That collapsed two completely
+    # different facts into one output:
+    #
+    #   (a) the ref resolves, and this FILE is genuinely new  -> empty baseline is
+    #       correct: a new file must be born clean.
+    #   (b) THE REF ITSELF does not resolve (a fresh CI clone with no origin/main,
+    #       a shallow clone, a detached fetch) -> `git show` fails for EVERY file,
+    #       every baseline comes back empty, and every PRE-EXISTING identifier is
+    #       reported as a brand-new regression.
+    #
+    # (b) is what turned a green local run into a CI failure claiming "29 NEW
+    # internal identifier(s)" against files the branch never touched. "I could not
+    # read the baseline" and "the baseline is empty" printed the same thing --
+    # the same defect class this guard exists to prosecute, in the guard itself.
+    #
+    # So the ref is resolved ONCE, up front, and an unresolvable ref is a LOUD
+    # failure, never a silent empty baseline. A guard that cannot see what is
+    # already public cannot tell you what is new.
+    _assert_ref_resolvable(ref, root)
+
     proc = subprocess.run(
         ["git", "show", f"{ref}:{rel.as_posix()}"],
         cwd=root,
@@ -428,7 +481,7 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = N
         text=True,
     )
     if proc.returncode != 0:
-        return []  # absent from baseline -> born-clean rule applies
+        return []  # ref resolves, file absent from it -> born-clean rule applies
     return scan_text(proc.stdout, f"{ref}:{rel.as_posix()}")
 
 

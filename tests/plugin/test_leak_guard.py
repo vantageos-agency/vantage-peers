@@ -6,6 +6,7 @@ scripts/leak_guard.py for the full rationale.
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from leak_guard import (  # noqa: E402
+    BaselineUnresolvableError,
+    scan_baseline,
     client_data,
     derive_inventory,
     new_internal_ids,
@@ -418,3 +421,34 @@ def test_derive_organizations_from_bu_registry_is_supplementary_only():
     # is the load-bearing artifact here, not a runtime assertion, but this
     # pins that it never fabricates a name it wasn't given.
     assert "Zorblatt Holdings" not in names
+
+
+def test_unresolvable_baseline_ref_fails_loud_never_empty(tmp_path):
+    """An unresolvable baseline ref must RAISE, never yield an empty baseline.
+
+    scan_baseline() used to treat ANY `git show` failure as "file absent from
+    the baseline -> born-clean rule". That collapsed two different facts:
+
+      (a) the ref resolves and the FILE is new        -> empty baseline is right
+      (b) THE REF ITSELF does not resolve (fresh CI clone, shallow clone)
+                                                       -> EVERY baseline empty
+
+    Under (b) every already-public identifier is reported as a brand-new
+    regression. That is exactly what turned a green local run into a CI failure
+    claiming "29 NEW internal identifier(s)" against files the branch never
+    touched -- and it is the same defect class this guard exists to prosecute,
+    committed by the guard itself: "I could not read the baseline" and "the
+    baseline is empty" printed the same thing.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    f = repo / "packaged.md"
+    f.write_text("workspace: /home/laurentperello/coding/x\n", encoding="utf-8")
+
+    with pytest.raises(BaselineUnresolvableError) as exc:
+        scan_baseline(f, ref="origin/nope", git_root=repo)
+
+    msg = str(exc.value)
+    assert "does not resolve" in msg, "the failure must NAME what it could not resolve"
+    assert "origin/nope" in msg
