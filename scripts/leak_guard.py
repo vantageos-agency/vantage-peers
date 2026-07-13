@@ -71,6 +71,21 @@ CLIENT_DATA_PATTERNS: list[tuple[str, str]] = [
     (r"\bmini[\s\-]?mondes\b", "real client org name"),
     (r"\bminimondesdemarie\b", "real client org/domain"),
     (r"\balsachimie\b", "real client org name"),
+    # Real Convex deployment slugs are a CLIENT's live production infrastructure
+    # identifier, not an internal operator detail -- Day 130 finding: the
+    # vantage-immo prod slug `proper-alligator-8` shipped verbatim in a public
+    # CHANGELOG. Listed by literal value, ON PURPOSE, NOT by a generic
+    # adjective-animal-number shape regex: measured against the packaged
+    # artifact, a shape-based `\b[a-z]+-[a-z]+-\d+\b` pattern hits 39 unrelated
+    # hyphenated identifiers (hook names like `enforce-ship-24`, example CSS
+    # classes like `bg-gray-900`, decision-doc slugs like `hook-postmortem-2026`
+    # -- none of them Convex deployments) for the one real slug it is meant to
+    # catch. A pattern with that false-positive ratio is exactly the kind of
+    # guard that gets ripped out after mutilating a doc it shouldn't have
+    # touched. Real slugs must be added here explicitly as they are confirmed;
+    # `guineapig-77` (skills/deploy-track/SKILL.md) is a pedagogical worked
+    # example, not client data, and MUST stay off this list.
+    (r"\bproper-alligator-8\b", "real client production Convex deployment slug"),
 ]
 
 # --- TIER 2: INTERNAL IDENTIFIERS ONLY. Tracked, not hard-blocked. -----------
@@ -94,6 +109,12 @@ INTERNAL_ID_PATTERNS: list[tuple[str, str]] = [
     (r"\bperello[\s\-]?consulting\b", "operator's own org name (not a client)"),
     (r"\b[a-z]+-vps\b", "internal VPS instance identifier"),
     (r"\bpi-chromebook\b", "internal operator machine identifier"),
+    # The maintainer's own first name -- Day 130 T3 finding: it ships verbatim
+    # in 10 packaged files. This is the operator's own identity, not a client's
+    # (that distinction is what keeps this TIER 2, not TIER 1): still real PII
+    # in a PUBLIC package, tracked and regression-gated like every other
+    # internal identifier above.
+    (r"\blaurent\b", "operator's own first name"),
 ]
 
 ALL_PATTERNS: list[tuple[str, str, str]] = [
@@ -175,15 +196,102 @@ def packaged_paths(root: Path = None) -> list[Path]:
     )
 
 
-def repo_wide_baseline(ref: str = None) -> list["LeakFinding"]:
+# --- Derived, full-artifact inventory ---------------------------------------
+# Day 130 T2 finding: the two hand-written globs above (`skills/*/SKILL.md`,
+# `hooks/*.py`) see 53 of 284 files in a real published package -- 19%
+# coverage. Anything under `references/`, `evals/`, `docs/`, `templates/`, a
+# nested `agents/` tree, etc. is invisible to them. `derive_inventory` below
+# is the replacement: it walks the artifact directory from disk (never a
+# hand-maintained list) so CHECKED + SKIPPED always sums to 100% of what is
+# actually shipped. This is the same discipline `vr_plugin_parity.py` already
+# uses (`Path.iterdir()` there) -- applied here to the whole tree, not just
+# two subfolders.
+
+# Directories excluded from scanning, WITH a written reason each. This is the
+# only silent-skip surface allowed, and it is not silent: every path skipped
+# for one of these reasons is reported as SKIPPED, never simply absent.
+EXCLUDED_DIR_NAMES: dict[str, str] = {
+    ".git": "version-control internals, never shipped as package content",
+    "__pycache__": "compiled bytecode cache, not source, never shipped",
+    "node_modules": "third-party dependency tree, not first-party package content",
+}
+
+# File extensions treated as binary/non-text -- scanned-for-presence only
+# (never opened as text, since decoding binary as utf-8 with errors="replace"
+# would silently corrupt the leak search rather than fail it). None of these
+# extensions are present in the artifact as of Day 130 (verified: `find
+# vantage-peers -type f | grep -E '\.(png|jpg|jpeg|gif|ico|pdf|zip)$'` is
+# empty), but the list exists so a future binary asset is SKIPPED-with-reason
+# instead of silently falling through utf-8 decoding.
+BINARY_EXTENSIONS: frozenset[str] = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".woff", ".woff2", ".ttf"}
+)
+
+
+def _claudepluginignore_patterns(root: Path) -> list[str]:
+    ignore_file = root / ".claudepluginignore"
+    if not ignore_file.is_file():
+        return []
+    lines = ignore_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+
+
+@dataclass
+class InventoryItem:
+    path: Path
+    skip_reason: str | None = None  # None == CHECKED; set == SKIPPED-with-reason
+
+    @property
+    def checked(self) -> bool:
+        return self.skip_reason is None
+
+
+def derive_inventory(root: Path) -> list[InventoryItem]:
+    """Walk `root` on disk and classify every shipped file as CHECKED or
+    SKIPPED-with-a-written-reason. CHECKED ∪ SKIPPED == 100% of `root`'s files,
+    by construction (every file yielded by the walk gets exactly one
+    InventoryItem). Never a hand-written file list.
+    """
+    if not root.is_dir():
+        raise FileNotFoundError(f"leak guard inventory root does not exist or is not a directory: {root}")
+
+    ignore_patterns = _claudepluginignore_patterns(root)
+    items: list[InventoryItem] = []
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIR_NAMES]
+        dpath = Path(dirpath)
+        for fname in sorted(filenames):
+            fpath = dpath / fname
+            rel = fpath.relative_to(root).as_posix()
+
+            reason = None
+            if fpath.suffix.lower() in BINARY_EXTENSIONS:
+                reason = f"binary file extension {fpath.suffix!r}, not scanned as text"
+            else:
+                for pat in ignore_patterns:
+                    if fpath.match(pat) or rel == pat or rel.startswith(pat.rstrip("/") + "/"):
+                        reason = f".claudepluginignore pattern {pat!r}"
+                        break
+
+            items.append(InventoryItem(path=fpath, skip_reason=reason))
+
+    return items
+
+
+def repo_wide_baseline(ref: str = None, paths: list[Path] | None = None, git_root: Path | None = None) -> list["LeakFinding"]:
     """Every internal identifier already public across the packaged artifact on `ref`.
 
-    Derived from git + the packaged directories, never hand-maintained.
+    Derived from git + the packaged directories, never hand-maintained. `paths`
+    defaults to `packaged_paths()` (this script's own two-glob artifact) for
+    backward compatibility with existing callers/tests; `main()` passes the
+    DERIVED inventory + the target artifact's own `git_root` when scanning an
+    external package.
     """
     ref = ref or BASELINE_REF
     out: list[LeakFinding] = []
-    for p in packaged_paths():
-        out.extend(scan_baseline(p, ref))
+    for p in (paths if paths is not None else packaged_paths()):
+        out.extend(scan_baseline(p, ref, git_root=git_root))
     return out
 
 
@@ -213,8 +321,24 @@ def scan_file(path: Path) -> list[LeakFinding]:
 BASELINE_REF = os.environ.get("LEAK_GUARD_BASELINE_REF", "origin/main")
 
 
-def scan_baseline(path: Path, ref: str = BASELINE_REF) -> list[LeakFinding]:
-    """Scan the SAME file as it exists on `ref` (default origin/main).
+def _git_toplevel(start: Path) -> Path | None:
+    """Return the git repo root containing `start`, or None if it isn't one."""
+    proc = subprocess.run(
+        ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return Path(proc.stdout.strip())
+
+
+def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = None) -> list[LeakFinding]:
+    """Scan the SAME file as it exists on `ref` (default origin/main) of the git
+    repo that CONTAINS `path` (`git_root`, auto-detected from `path` when not
+    given explicitly -- this is what makes the baseline correct when scanning
+    an external artifact, e.g. a clone of the published plugin repo, instead of
+    this script's own repo).
 
     This is the TIER 2 baseline: what is already public. Derived from git, never
     hand-maintained -- a hand-written allowlist is the same disease one level up.
@@ -222,13 +346,14 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF) -> list[LeakFinding]:
     so every internal identifier in it counts as new -> build fails. That is the
     correct default: new files must be born clean.
     """
+    root = git_root or _git_toplevel(path.resolve().parent) or REPO_ROOT
     try:
-        rel = path.resolve().relative_to(REPO_ROOT)
+        rel = path.resolve().relative_to(root)
     except ValueError:
         return []
     proc = subprocess.run(
         ["git", "show", f"{ref}:{rel.as_posix()}"],
-        cwd=REPO_ROOT,
+        cwd=root,
         capture_output=True,
         text=True,
     )
@@ -240,16 +365,39 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF) -> list[LeakFinding]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "paths", nargs="*", help="files to scan (default: the packaged plugin artifact)"
+        "paths",
+        nargs="*",
+        help=(
+            "explicit files to scan. If omitted, the inventory is DERIVED "
+            "(os.walk, never hand-written globs) from --root."
+        ),
+    )
+    parser.add_argument(
+        "--root",
+        default=str(REPO_ROOT / "plugin"),
+        help=(
+            "root directory of the shipped artifact to walk when no explicit "
+            "paths are given (default: %(default)s). Point this at any "
+            "published/packaged copy, e.g. a clone of the public plugin repo."
+        ),
     )
     args = parser.parse_args()
+
+    skipped: list[InventoryItem] = []
+    git_root: Path | None = None
 
     if args.paths:
         targets = [Path(p) for p in args.paths]
     else:
-        skills = sorted((REPO_ROOT / "plugin" / "skills").glob("*/SKILL.md"))
-        hooks = sorted((REPO_ROOT / "plugin" / "hooks").glob("*.py"))
-        targets = skills + hooks
+        root = Path(args.root)
+        try:
+            inventory = derive_inventory(root)
+        except FileNotFoundError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 2
+        targets = [item.path for item in inventory if item.checked]
+        skipped = [item for item in inventory if not item.checked]
+        git_root = _git_toplevel(root)
 
     if not targets:
         print(
@@ -259,11 +407,26 @@ def main() -> int:
         )
         return 2
 
+    if skipped:
+        print(f"SKIPPED (with reason) — {len(skipped)} file(s):")
+        for item in skipped:
+            print(f"  {item.path}: {item.skip_reason}")
+        print("-" * 90)
+
+    total_enumerated = len(targets) + len(skipped)
+    print(
+        f"Derived inventory: {total_enumerated} file(s) total "
+        f"({len(targets)} CHECKED, {len(skipped)} SKIPPED-with-reason)."
+    )
+    print("-" * 90)
+
     fatal_client: list[LeakFinding] = []
     regressions: list[LeakFinding] = []
     tracked: list[LeakFinding] = []
 
-    baseline = repo_wide_baseline()  # what is ALREADY public in the package
+    # What is ALREADY public in the package, per the ARTIFACT'S OWN git history
+    # (not this script's repo) when scanning a derived, external inventory.
+    baseline = repo_wide_baseline(paths=targets if not args.paths else None, git_root=git_root)
 
     for t in targets:
         found = scan_file(t)
