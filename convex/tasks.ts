@@ -8,6 +8,7 @@ import { internal } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
+import { enforceClosureGate } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -603,6 +604,26 @@ export const update = mutation({
 			}
 		}
 
+		// Day 130 closure gate — `update` is a second path that can also
+		// transition status to "done" (e.g. generic MCP update_task call).
+		// Gate it the same way as `complete` so billable-project closures
+		// can't bypass the machine-timestamp requirement via this path.
+		if (patch.status === "done") {
+			const now = Date.now();
+			const { actualMinutes } = await enforceClosureGate(
+				ctx,
+				task,
+				patch.completionNote ?? task.completionNote,
+				now,
+			);
+			if (patch.completedAt === undefined) {
+				patch.completedAt = now;
+			}
+			if (actualMinutes !== undefined && patch.actualMinutes === undefined) {
+				patch.actualMinutes = actualMinutes;
+			}
+		}
+
 		await ctx.db.patch(taskId, patch);
 		return null;
 	},
@@ -645,6 +666,18 @@ export const complete = mutation({
 		}
 
 		const now = Date.now();
+
+		// Day 130 closure gate — billable-project tasks must carry a
+		// machine-recorded startedAt (or an explicit structured override)
+		// before they can close. Billing derives actualMinutes from
+		// startedAt→completedAt, never a hand-typed time line.
+		const { actualMinutes } = await enforceClosureGate(
+			ctx,
+			task,
+			args.completionNote,
+			now,
+		);
+
 		const patch: Record<string, any> = {
 			status: "done",
 			completedAt: now,
@@ -655,9 +688,8 @@ export const complete = mutation({
 			patch.completionNote = args.completionNote;
 		}
 
-		// Calculate actualMinutes if startedAt exists
-		if (task.startedAt) {
-			patch.actualMinutes = Math.round((now - task.startedAt) / 60_000);
+		if (actualMinutes !== undefined) {
+			patch.actualMinutes = actualMinutes;
 		}
 
 		await ctx.db.patch(args.taskId, patch);
@@ -1549,16 +1581,105 @@ export const bulkComplete = mutation({
 			"bulk-cleanup: cron-spam day {{day}} runId={{bulkRunId}} executedAt={{executedAt}}";
 		const note = renderTemplate(template, { day, bulkRunId, executedAt });
 
-		for (const task of cappedResults) {
+		// Day 130 closure gate — bulkComplete is the SECOND closure path
+		// (tasks.complete is the first). Gate every matched task the same
+		// way, up front, so a single billable-but-never-started task in the
+		// batch aborts the whole bulk operation loudly rather than silently
+		// closing it with a false actualMinutes.
+		const gateResults = await Promise.all(
+			cappedResults.map((task) => enforceClosureGate(ctx, task, note, now)),
+		);
+
+		for (let i = 0; i < cappedResults.length; i++) {
+			const task = cappedResults[i];
+			const { actualMinutes } = gateResults[i];
 			await ctx.db.patch(task._id, {
 				status: "done" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: note,
+				...(actualMinutes !== undefined ? { actualMinutes } : {}),
 			});
 		}
 
 		return { count, sampleIds, bulkRunId, executedAt };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// billingSummaryByProject — Day 130 (k17dhcmzqafve1ayzvh833kf558ae019)
+// deliverable #6: refacturation base. Sums `actualMinutes` (machine-derived
+// startedAt→completedAt, never a hand-typed line) grouped by `project` for
+// tasks completed within [startDate, endDate].
+//
+// Bounded scan: uses `by_status` index to fetch "done" tasks, capped at
+// BILLING_SUMMARY_SCAN_CAP to stay within Convex's per-query read budget.
+// If the cap is hit, `truncated: true` is returned so the caller can narrow
+// the period and re-query rather than silently under-reporting billing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BILLING_SUMMARY_SCAN_CAP = 5000;
+
+export const billingSummaryByProject = query({
+	args: {
+		startDate: v.number(), // Unix ms, inclusive
+		endDate: v.number(), // Unix ms, inclusive
+	},
+	returns: v.object({
+		byProject: v.array(
+			v.object({
+				project: v.string(),
+				totalMinutes: v.number(),
+				taskCount: v.number(),
+			}),
+		),
+		unattributedTaskCount: v.number(), // done tasks in range with no project or no actualMinutes
+		truncated: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		if (args.endDate < args.startDate) {
+			throw new ConvexError(
+				`INVALID_RANGE: endDate (${args.endDate}) must be >= startDate (${args.startDate})`,
+			);
+		}
+
+		const doneTasks = await ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", "done"))
+			.take(BILLING_SUMMARY_SCAN_CAP + 1);
+
+		const truncated = doneTasks.length > BILLING_SUMMARY_SCAN_CAP;
+		const capped = doneTasks.slice(0, BILLING_SUMMARY_SCAN_CAP);
+
+		const totals = new Map<string, { totalMinutes: number; taskCount: number }>();
+		let unattributedTaskCount = 0;
+
+		for (const task of capped) {
+			if (
+				task.completedAt === undefined ||
+				task.completedAt < args.startDate ||
+				task.completedAt > args.endDate
+			) {
+				continue;
+			}
+			if (task.project === undefined || task.actualMinutes === undefined) {
+				unattributedTaskCount++;
+				continue;
+			}
+			const existing = totals.get(task.project) ?? {
+				totalMinutes: 0,
+				taskCount: 0,
+			};
+			existing.totalMinutes += task.actualMinutes;
+			existing.taskCount += 1;
+			totals.set(task.project, existing);
+		}
+
+		const byProject = Array.from(totals.entries())
+			.map(([project, agg]) => ({ project, ...agg }))
+			.sort((a, b) => b.totalMinutes - a.totalMinutes);
+
+		return { byProject, unattributedTaskCount, truncated };
 	},
 });
 

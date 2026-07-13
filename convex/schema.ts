@@ -953,6 +953,26 @@ export default defineSchema({
 		updatedAt: v.number(),
 	}).index("by_key", ["key"]),
 
+	// ── taskClosureConfig ────────────────────────────────────────────────────
+	// Day 130 (k17dhcmzqafve1ayzvh833kf558ae019) — server-side closure gate
+	// config. Key-value store, mirrors errorMonitorConfig pattern.
+	// Doctrine: no-hardcoded-business-knowledge — billable project list and
+	// stale-in-progress threshold live here, never as a code constant.
+	//
+	// Known keys:
+	//   "billableProjects"       — string[] of `task.project` values that
+	//     require a machine-timestamped startedAt before closure (billing
+	//     source = actualMinutes derived from startedAt→completedAt).
+	//     Seeded with ["vantage-immo"] — add client projects here, not in code.
+	//   "staleInProgressThresholdMs" — number encoded as a single-element
+	//     string[] (["86400000"]) — age (ms) after which an in_progress task
+	//     is surfaced as staleInProgress in check_messages. Default 24h.
+	taskClosureConfig: defineTable({
+		key: v.string(),
+		value: v.array(v.string()),
+		updatedAt: v.number(),
+	}).index("by_key", ["key"]),
+
 	// ── client_org_mapping ───────────────────────────────────────────────────
 	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex

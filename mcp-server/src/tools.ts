@@ -370,6 +370,41 @@ export const bulkCompleteTasksArgsSchema = z.object({
 	callerOrchestrator: z.string().optional(),
 });
 
+// billing_summary_by_project — Day 130 (k17dhcmzqafve1ayzvh833kf558ae019)
+// closure-gate mission, deliverable #6: refacturation base. Backed by
+// Convex `tasks:billingSummaryByProject`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const BILLING_SUMMARY_BY_PROJECT_TOOL_NAME = "billing_summary_by_project";
+
+export const BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION =
+	"Billing/refacturation base — sums MACHINE-derived actualMinutes (startedAt→completedAt, never a hand-typed time line) grouped by project for tasks completed within [from, to]. " +
+	"WHEN: use to build the refacturation base for a client or period, or to audit billed time before invoicing. " +
+	"project is optional — omit to get every project, or pass one to filter the returned rows to a single project. " +
+	"from/to are optional Unix ms bounds — omit both for an effectively unbounded window (defaults to epoch..now). " +
+	"NEVER hides truncation: if the underlying scan hit its cap, `truncated: true` is returned — treat that as a signal to narrow the period and re-query, not as a complete total. " +
+	"EXAMPLE: billing_summary_by_project project='vantage-immo' from=1783000000000 to=1783949200149. " +
+	"Returns {byProject: [{project, totalMinutes, taskCount}], unattributedTaskCount, truncated}.";
+
+export const billingSummaryByProjectArgsSchema = z.object({
+	project: z
+		.string()
+		.optional()
+		.describe(
+			"Filter the result to a single project. Omit to return every project's totals.",
+		),
+	from: z
+		.number()
+		.int()
+		.optional()
+		.describe("Unix ms, inclusive period start. Omit for epoch (0)."),
+	to: z
+		.number()
+		.int()
+		.optional()
+		.describe("Unix ms, inclusive period end. Omit for now (Date.now())."),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // VP-Sources doctrine — search/recall tool descriptions (PR-H T-GREEN)
 //
@@ -3655,6 +3690,57 @@ export function registerTools(
 				);
 				return {
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── billing_summary_by_project ─────────────────────────────────────────────
+	// Day 130 (k17dhcmzqafve1ayzvh833kf558ae019) — refacturation base. Backed by
+	// Convex `tasks:billingSummaryByProject`; sums machine-derived actualMinutes
+	// grouped by project. `project` filters client-side (the Convex query always
+	// returns every project's totals; filtering here keeps the query itself
+	// simple/cacheable and matches the tool's optional-filter contract).
+
+	server.tool(
+		BILLING_SUMMARY_BY_PROJECT_TOOL_NAME,
+		BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION,
+		billingSummaryByProjectArgsSchema.shape,
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Billing summary by project",
+		},
+		async ({ project, from, to }) => {
+			try {
+				const result: any = await convex.query(
+					"tasks:billingSummaryByProject" as any,
+					{
+						startDate: from ?? 0,
+						endDate: to ?? Date.now(),
+					},
+				);
+				const byProject = project
+					? result.byProject.filter((r: any) => r.project === project)
+					: result.byProject;
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify(
+								{
+									byProject,
+									unattributedTaskCount: result.unattributedTaskCount,
+									truncated: result.truncated,
+								},
+								null,
+								2,
+							),
+						},
+					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
