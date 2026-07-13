@@ -3,7 +3,7 @@
  *
  * These tests cover the pure predicate logic (checkFromAllowed,
  * checkNamespacePrefix, checkNamespaceRead, checkNamespaceWrite, isMasterScope)
- * and the master-vs-marie-vs-legacy branching that drives every MCP tool guard
+ * and the master-vs-alice-vs-legacy branching that drives every MCP tool guard
  * in src/tools.ts. HTTP/end-to-end flow tests live in the OAuth integration
  * harness (spun up separately against a Bun server + convex-test fixture).
  */
@@ -36,14 +36,14 @@ const masterCtx: OAuthContext = {
 	isMaster: true,
 };
 
-const marieCtx: OAuthContext = {
-	clientId: "marie-client-id",
-	userId: "marie",
+const aliceCtx: OAuthContext = {
+	clientId: "alice-client-id",
+	userId: "alice",
 	scopes: ["vantage:read", "vantage:write"],
-	scopeProfile: "marie-iris-rh",
-	fromAllowList: ["marie"],
-	namespaceReadPrefixes: ["orchestrator/victor", "project/marie", "global"],
-	namespaceWritePrefixes: ["orchestrator/victor", "project/marie", "global"],
+	scopeProfile: "alice-acme-hr",
+	fromAllowList: ["alice"],
+	namespaceReadPrefixes: ["orchestrator/victor", "project/alice", "global"],
+	namespaceWritePrefixes: ["orchestrator/victor", "project/alice", "global"],
 	expiresAt: now + 3600_000,
 	isMaster: false,
 };
@@ -65,8 +65,8 @@ describe("isMasterScope", () => {
 		expect(isMasterScope(masterCtx)).toBe(true);
 	});
 
-	it("treats Marie context as scoped (not master)", () => {
-		expect(isMasterScope(marieCtx)).toBe(false);
+	it("treats Alice context as scoped (not master)", () => {
+		expect(isMasterScope(aliceCtx)).toBe(false);
 	});
 
 	it("treats missing context (legacy bearer) as non-master", () => {
@@ -74,28 +74,28 @@ describe("isMasterScope", () => {
 	});
 
 	it("treats wildcard fromAllowList as master", () => {
-		const c = { ...marieCtx, fromAllowList: ["*"] };
+		const c = { ...aliceCtx, fromAllowList: ["*"] };
 		expect(isMasterScope(c)).toBe(true);
 	});
 });
 
 describe("checkFromAllowed", () => {
-	it("Marie cannot impersonate pi", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	it("Alice cannot impersonate pi", () => {
+		expect(checkFromAllowed(aliceCtx, "pi")).toMatch(/Forbidden/);
 	});
 
-	it("Marie can send as marie", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("Alice can send as alice", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
 	});
 
 	it("master can send as any orchestrator", () => {
-		expect(checkFromAllowed(masterCtx, "marie")).toBeNull();
+		expect(checkFromAllowed(masterCtx, "alice")).toBeNull();
 		expect(checkFromAllowed(masterCtx, "pi")).toBeNull();
 		expect(checkFromAllowed(masterCtx, "random-new-client")).toBeNull();
 	});
 
 	it("generic deny-by-default rejects everyone", () => {
-		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(genericCtx, "alice")).toMatch(/Forbidden/);
 	});
 
 	it("legacy bearer (no oauthContext) bypasses from enforcement", () => {
@@ -103,16 +103,16 @@ describe("checkFromAllowed", () => {
 		expect(checkFromAllowed(undefined, "anything")).toBeNull();
 	});
 
-	// Day 88 capitalize — Marie onboarding friction (2026-06-01).
+	// Day 88 capitalize — Alice onboarding friction (2026-06-01).
 	it("error message surfaces the allowlist so the LLM can self-correct", () => {
-		const err = checkFromAllowed(marieCtx, "pi");
+		const err = checkFromAllowed(aliceCtx, "pi");
 		expect(err).not.toBeNull();
-		expect(err).toContain("Allowed: marie");
-		expect(err).toContain("scope_profile=marie-iris-rh");
+		expect(err).toContain("Allowed: alice");
+		expect(err).toContain("scope_profile=alice-acme-hr");
 	});
 
 	it("error message handles empty allowlist (deny-by-default) gracefully", () => {
-		const err = checkFromAllowed(genericCtx, "marie");
+		const err = checkFromAllowed(genericCtx, "alice");
 		expect(err).not.toBeNull();
 		expect(err).toContain("none");
 	});
@@ -141,33 +141,33 @@ describe("checkNamespacePrefix", () => {
 	});
 
 	it("rejects unmatched namespaces", () => {
-		expect(checkNamespacePrefix(["project/marie"], "project/other")).toBe(
+		expect(checkNamespacePrefix(["project/alice"], "project/other")).toBe(
 			false,
 		);
 	});
 });
 
 describe("checkNamespaceRead", () => {
-	it("Marie CAN read orchestrator/victor", () => {
-		expect(checkNamespaceRead(marieCtx, "orchestrator/victor")).toBeNull();
+	it("Alice CAN read orchestrator/victor", () => {
+		expect(checkNamespaceRead(aliceCtx, "orchestrator/victor")).toBeNull();
 	});
 
-	it("Marie CAN read project/marie", () => {
-		expect(checkNamespaceRead(marieCtx, "project/marie")).toBeNull();
+	it("Alice CAN read project/alice", () => {
+		expect(checkNamespaceRead(aliceCtx, "project/alice")).toBeNull();
 	});
 
-	it("Marie CAN read global", () => {
-		expect(checkNamespaceRead(marieCtx, "global")).toBeNull();
+	it("Alice CAN read global", () => {
+		expect(checkNamespaceRead(aliceCtx, "global")).toBeNull();
 	});
 
-	it("Marie CANNOT read orchestrator/tau", () => {
-		expect(checkNamespaceRead(marieCtx, "orchestrator/tau")).toMatch(
+	it("Alice CANNOT read orchestrator/tau", () => {
+		expect(checkNamespaceRead(aliceCtx, "orchestrator/tau")).toMatch(
 			/Forbidden/,
 		);
 	});
 
-	it("Marie CANNOT read orchestrator/pi", () => {
-		expect(checkNamespaceRead(marieCtx, "orchestrator/pi")).toMatch(
+	it("Alice CANNOT read orchestrator/pi", () => {
+		expect(checkNamespaceRead(aliceCtx, "orchestrator/pi")).toMatch(
 			/Forbidden/,
 		);
 	});
@@ -191,11 +191,11 @@ describe("checkNamespaceRead", () => {
 	// every non-master scope.
 	// ─────────────────────────────────────────────────────────────────────────
 
-	it("Day 88 P0: Marie CANNOT call a read tool with namespace=undefined", () => {
-		const err = checkNamespaceRead(marieCtx, undefined);
+	it("Day 88 P0: Alice CANNOT call a read tool with namespace=undefined", () => {
+		const err = checkNamespaceRead(aliceCtx, undefined);
 		expect(err).toMatch(/Forbidden/);
 		expect(err).toMatch(/explicit namespace argument/);
-		expect(err).toMatch(/marie-iris-rh/);
+		expect(err).toMatch(/alice-acme-hr/);
 		// the error must hint at which prefixes the client may use
 		expect(err).toMatch(/orchestrator\/victor/);
 	});
@@ -216,12 +216,12 @@ describe("checkNamespaceRead", () => {
 });
 
 describe("checkNamespaceWrite", () => {
-	it("Marie CAN write project/marie", () => {
-		expect(checkNamespaceWrite(marieCtx, "project/marie")).toBeNull();
+	it("Alice CAN write project/alice", () => {
+		expect(checkNamespaceWrite(aliceCtx, "project/alice")).toBeNull();
 	});
 
-	it("Marie CANNOT write project/secret", () => {
-		expect(checkNamespaceWrite(marieCtx, "project/secret")).toMatch(
+	it("Alice CANNOT write project/secret", () => {
+		expect(checkNamespaceWrite(aliceCtx, "project/secret")).toMatch(
 			/Forbidden/,
 		);
 	});
@@ -241,43 +241,43 @@ describe("checkNamespaceWrite", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Combined smoke flow: Marie end-to-end scope decisions (what the brief asked)
+// Combined smoke flow: Alice end-to-end scope decisions (what the brief asked)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Marie smoke flow (scope decisions)", () => {
-	it("send_message(from=marie) → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+describe("Alice smoke flow (scope decisions)", () => {
+	it("send_message(from=alice) → OK", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
 	});
 
 	it("send_message(from=pi) → 403", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(aliceCtx, "pi")).toMatch(/Forbidden/);
 	});
 
 	it("recall(namespace=orchestrator/tau) → 403", () => {
-		expect(checkNamespaceRead(marieCtx, "orchestrator/tau")).toMatch(
+		expect(checkNamespaceRead(aliceCtx, "orchestrator/tau")).toMatch(
 			/Forbidden/,
 		);
 	});
 
 	it("recall(namespace=orchestrator/victor) → OK", () => {
-		expect(checkNamespaceRead(marieCtx, "orchestrator/victor")).toBeNull();
+		expect(checkNamespaceRead(aliceCtx, "orchestrator/victor")).toBeNull();
 	});
 
-	it("store_memory(namespace=project/marie, createdBy=marie) → OK on both guards", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkNamespaceWrite(marieCtx, "project/marie")).toBeNull();
+	it("store_memory(namespace=project/alice, createdBy=alice) → OK on both guards", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
+		expect(checkNamespaceWrite(aliceCtx, "project/alice")).toBeNull();
 	});
 
-	it("store_memory(namespace=orchestrator/pi, createdBy=marie) → 403 on namespace", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkNamespaceWrite(marieCtx, "orchestrator/pi")).toMatch(
+	it("store_memory(namespace=orchestrator/pi, createdBy=alice) → 403 on namespace", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
+		expect(checkNamespaceWrite(aliceCtx, "orchestrator/pi")).toMatch(
 			/Forbidden/,
 		);
 	});
 
 	it("master flow: any from + any namespace → OK (backward compat)", () => {
 		expect(checkFromAllowed(masterCtx, "pi")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "marie")).toBeNull();
+		expect(checkFromAllowed(masterCtx, "alice")).toBeNull();
 		expect(checkNamespaceRead(masterCtx, "orchestrator/pi")).toBeNull();
 		expect(checkNamespaceWrite(masterCtx, "project/internal")).toBeNull();
 	});
@@ -285,55 +285,55 @@ describe("Marie smoke flow (scope decisions)", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Extended MCP-tool coverage (Eta high-severity non-blocker)
-// Verifies that the guard pattern applied in tools.ts will reject Marie-scope
+// Verifies that the guard pattern applied in tools.ts will reject Alice-scope
 // attempts on the newly-guarded tools (tasks, missions, diaries, briefings,
 // mandates, BUs, profiles, recurring tasks, components, fix patterns).
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Extended tool guard coverage (newly guarded tools)", () => {
-	it("create_task(assignedTo='pi', createdBy='marie') → 403 on assignee check", () => {
-		// createdBy=marie passes, but assignedTo=pi does not.
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	it("create_task(assignedTo='pi', createdBy='alice') → 403 on assignee check", () => {
+		// createdBy=alice passes, but assignedTo=pi does not.
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
+		expect(checkFromAllowed(aliceCtx, "pi")).toMatch(/Forbidden/);
 	});
 
-	it("write_diary(orchestrator='tau') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+	it("write_diary(orchestrator='tau') from Alice → 403", () => {
+		expect(checkFromAllowed(aliceCtx, "tau")).toMatch(/Forbidden/);
 	});
 
-	it("update_profile(orchestratorId='victor') from Marie → 403", () => {
-		// Marie's allowlist is ['marie'] — she cannot write to Victor's profile
+	it("update_profile(orchestratorId='victor') from Alice → 403", () => {
+		// Alice's allowlist is ['alice'] — she cannot write to Victor's profile
 		// identity even though she can read the victor namespace.
-		expect(checkFromAllowed(marieCtx, "victor")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(aliceCtx, "victor")).toMatch(/Forbidden/);
 	});
 
-	it("set_summary(orchestratorId='marie') from Marie → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("set_summary(orchestratorId='alice') from Alice → OK", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
 	});
 
-	it("create_mandate(requestedBy='marie', fulfilledBy='pi') from Marie → 403 on fulfilledBy", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	it("create_mandate(requestedBy='alice', fulfilledBy='pi') from Alice → 403 on fulfilledBy", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
+		expect(checkFromAllowed(aliceCtx, "pi")).toMatch(/Forbidden/);
 	});
 
-	it("create_bu(orchestratorId='sigma') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "sigma")).toMatch(/Forbidden/);
+	it("create_bu(orchestratorId='sigma') from Alice → 403", () => {
+		expect(checkFromAllowed(aliceCtx, "sigma")).toMatch(/Forbidden/);
 	});
 
-	it("register_component(createdBy='marie') from Marie → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("register_component(createdBy='alice') from Alice → OK", () => {
+		expect(checkFromAllowed(aliceCtx, "alice")).toBeNull();
 	});
 
-	it("accept_mandate(callerOrchestrator='pi') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	it("accept_mandate(callerOrchestrator='pi') from Alice → 403", () => {
+		expect(checkFromAllowed(aliceCtx, "pi")).toMatch(/Forbidden/);
 	});
 
-	it("create_fix_pattern(createdBy='tau') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+	it("create_fix_pattern(createdBy='tau') from Alice → 403", () => {
+		expect(checkFromAllowed(aliceCtx, "tau")).toMatch(/Forbidden/);
 	});
 
 	it("generic deny-by-default client: every tool-guard-relevant from rejected", () => {
-		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(genericCtx, "alice")).toMatch(/Forbidden/);
 		expect(checkFromAllowed(genericCtx, "pi")).toMatch(/Forbidden/);
 		expect(checkFromAllowed(genericCtx, "anonymous-dcr-hijack")).toMatch(
 			/Forbidden/,
@@ -495,7 +495,7 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 		expect(checkNamespaceRead(dcrAutoCtx, "orchestrator/pi")).toMatch(
 			/Forbidden/,
 		);
-		expect(checkNamespaceRead(dcrAutoCtx, "orchestrator/marie")).toMatch(
+		expect(checkNamespaceRead(dcrAutoCtx, "orchestrator/alice")).toMatch(
 			/Forbidden/,
 		);
 		expect(checkNamespaceRead(dcrAutoCtx, "project/secret")).toMatch(
@@ -512,7 +512,7 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 
 	it("DCR auto-flow client cannot impersonate any orchestrator (from=*)", () => {
 		expect(checkFromAllowed(dcrAutoCtx, "pi")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(dcrAutoCtx, "marie")).toMatch(/Forbidden/);
+		expect(checkFromAllowed(dcrAutoCtx, "alice")).toMatch(/Forbidden/);
 		expect(checkFromAllowed(dcrAutoCtx, "external")).toMatch(/Forbidden/);
 	});
 
@@ -544,7 +544,7 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 		expect(checkNamespaceRead(publicReadonlyCtx, "orchestrator/pi")).toMatch(
 			/Forbidden/,
 		);
-		expect(checkNamespaceRead(publicReadonlyCtx, "project/marie")).toMatch(
+		expect(checkNamespaceRead(publicReadonlyCtx, "project/alice")).toMatch(
 			/Forbidden/,
 		);
 	});

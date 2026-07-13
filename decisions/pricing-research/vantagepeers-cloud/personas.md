@@ -209,7 +209,7 @@ Notion (team wiki), Slack (comms), Linear (engineering), GitHub (code), Figma (d
 - **Revenue profile**: €150–€500/hour per coach; retainers €2,000–€6,000/month per high-value client
 
 ### Tools currently used
-Notion or Obsidian (session notes), Calendly (booking), Zoom (sessions), ChatGPT Plus or Claude Pro (prep, summaries), Delenta or CoachAccountable (practice management), WhatsApp Business (client comms), Google Drive (document sharing).
+Notion or Obsidian (session notes), Calendly (booking), Zoom (sessions), ChatGPT Plus or Claude Pro (prep, recaps), Delenta or CoachAccountable (practice management), WhatsApp Business (client comms), Google Drive (document sharing).
 
 ### Top 3 pains relevant to memory/context across agent sessions
 

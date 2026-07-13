@@ -76,7 +76,7 @@ const TYPE_TASK = "task";
 // Phase 1 locks every export to `project/elpi-corp` (master / internal Alpha
 // tenant). Per `convex/schema.ts` lines 252-254 + 304-306, briefingNotes and
 // tasks use `orgId` for multi-tenant scoping where `null`/`undefined` ==
-// master, and a Clerk org slug like `"iris-rh"` == client-scoped row.
+// master, and a Clerk org slug like `"acme-hr"` == client-scoped row.
 //
 // `memories` already has a first-class `namespace` column so it is filtered
 // directly by the existing `by_namespace` index (no extra mapping needed).

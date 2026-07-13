@@ -28,20 +28,16 @@ function createTestConvex() {
 }
 
 describe("oauth.seedDefaultProfiles", () => {
-	test("seeds master, marie-iris-rh, client-generic, public-readonly on first run", async () => {
+	test("seeds master, client-generic, public-readonly on first run (public catalog is generic-only)", async () => {
 		const t = createTestConvex();
 		const summary = await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
-		// S3.4 B4: return shape now `{ inserted, updated, skipped }`.
-		// Catalog now contains 6 seed profiles (clio-iris-rh + helios-iris-rh added
-		// for Marie's Iris RH trio). All 4 original profiles must still be present.
+		// Day 128 (mission k5775bf67eg4202ccy23m976q98aacnc): the PUBLIC catalog
+		// must contain ONLY generic, non-identifying profiles. Named-tenant
+		// profiles are provisioned separately via seedPrivateScopeProfiles.
 		const inserted = (summary.inserted as string[]).sort();
-		expect(inserted).toContain("master");
-		expect(inserted).toContain("marie-iris-rh");
-		expect(inserted).toContain("client-generic");
-		expect(inserted).toContain("public-readonly");
-		expect(inserted.length).toBeGreaterThanOrEqual(4);
+		expect(inserted).toEqual(["client-generic", "master", "public-readonly"]);
 		expect(summary.updated).toEqual([]);
 		expect(summary.skipped).toEqual([]);
 	});
@@ -59,11 +55,7 @@ describe("oauth.seedDefaultProfiles", () => {
 		expect(secondRun.inserted).toEqual([]);
 		expect(secondRun.updated).toEqual([]);
 		const skipped = (secondRun.skipped as string[]).sort();
-		expect(skipped).toContain("master");
-		expect(skipped).toContain("marie-iris-rh");
-		expect(skipped).toContain("client-generic");
-		expect(skipped).toContain("public-readonly");
-		expect(skipped.length).toBeGreaterThanOrEqual(4);
+		expect(skipped).toEqual(["client-generic", "master", "public-readonly"]);
 	});
 
 	test("rejects invalid master token", async () => {
@@ -77,19 +69,33 @@ describe("oauth.seedDefaultProfiles", () => {
 });
 
 describe("oauth.getScopeProfile", () => {
-	test("returns the Marie scope profile after seeding", async () => {
+	test("returns a tenant-scoped profile after direct insert (synthetic, no public-catalog dependency)", async () => {
 		const t = createTestConvex();
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
+		await t.run(async (ctx) => {
+			const now = Date.now();
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "test-tenant-profile",
+				description: "Synthetic tenant-scoped profile for unit tests.",
+				fromAllowList: ["tenant"],
+				namespaceReadPrefixes: ["orchestrator/tenant-peer"],
+				namespaceWritePrefixes: ["project/tenant"],
+				createdAt: now,
+				updatedAt: now,
+			});
+		});
 
 		const profile = await t.query(api.oauth.getScopeProfile, {
-			profileId: "marie-iris-rh",
+			profileId: "test-tenant-profile",
 		});
 		expect(profile).not.toBeNull();
-		expect(profile?.fromAllowList).toEqual(["marie"]);
-		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/victor");
-		expect(profile?.namespaceWritePrefixes).toContain("project/marie");
+		expect(profile?.fromAllowList).toEqual(["tenant"]);
+		expect(profile?.namespaceReadPrefixes).toContain(
+			"orchestrator/tenant-peer",
+		);
+		expect(profile?.namespaceWritePrefixes).toContain("project/tenant");
 	});
 
 	test("returns null for unknown profile", async () => {
@@ -101,21 +107,40 @@ describe("oauth.getScopeProfile", () => {
 	});
 });
 
+async function insertSyntheticTenantProfile(
+	t: ReturnType<typeof createTestConvex>,
+	profileId = "test-tenant-profile",
+): Promise<void> {
+	await t.run(async (ctx) => {
+		const now = Date.now();
+		await ctx.db.insert("oauth_scope_profiles", {
+			profileId,
+			description: "Synthetic tenant-scoped profile for unit tests.",
+			fromAllowList: ["tenant"],
+			namespaceReadPrefixes: ["orchestrator/tenant-peer"],
+			namespaceWritePrefixes: ["project/tenant"],
+			createdAt: now,
+			updatedAt: now,
+		});
+	});
+}
+
 describe("oauth.createClient + listClients + deleteClient", () => {
 	test("admin creates a client and lists it", async () => {
 		const t = createTestConvex();
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
+		await insertSyntheticTenantProfile(t);
 
 		const clientId = "test-client-uuid";
 		await t.mutation(api.oauth.createClient, {
 			callerToken: "test-master-token-deadbeef",
 			clientId,
 			clientSecretHash: "a".repeat(64),
-			name: "marie-test",
+			name: "tenant-test",
 			redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "test-tenant-profile",
 		});
 
 		const rows = await t.query(api.oauth.listClients, {
@@ -123,7 +148,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 		});
 		expect(rows).toHaveLength(1);
 		expect(rows[0].clientId).toBe(clientId);
-		expect(rows[0].scopeProfile).toBe("marie-iris-rh");
+		expect(rows[0].scopeProfile).toBe("test-tenant-profile");
 	});
 
 	test("rejects unknown scope_profile", async () => {
@@ -164,6 +189,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: "test-master-token-deadbeef",
 		});
+		await insertSyntheticTenantProfile(t);
 		const clientId = "client-for-delete";
 		await t.mutation(api.oauth.createClient, {
 			callerToken: "test-master-token-deadbeef",
@@ -171,7 +197,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			clientSecretHash: "a".repeat(64),
 			name: "delete-me",
 			redirectUris: [],
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "test-tenant-profile",
 		});
 
 		// Seed an access token + refresh token against this client
@@ -179,12 +205,12 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			callerToken: "test-master-token-deadbeef",
 			tokenHash: "b".repeat(64),
 			clientId,
-			userId: "marie",
+			userId: "tenant-user",
 			scopes: ["vantage:read"],
-			scopeProfile: "marie-iris-rh",
-			fromAllowList: ["marie"],
-			namespaceReadPrefixes: ["global"],
-			namespaceWritePrefixes: ["global"],
+			scopeProfile: "test-tenant-profile",
+			fromAllowList: ["tenant"],
+			namespaceReadPrefixes: ["project/tenant"],
+			namespaceWritePrefixes: ["project/tenant"],
 			expiresAt: Date.now() + 3600_000,
 			refreshTokenHash: "c".repeat(64),
 		});
@@ -192,8 +218,8 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			callerToken: "test-master-token-deadbeef",
 			tokenHash: "c".repeat(64),
 			clientId,
-			userId: "marie",
-			scopeProfile: "marie-iris-rh",
+			userId: "tenant-user",
+			scopeProfile: "test-tenant-profile",
 			expiresAt: Date.now() + 30 * 24 * 3600_000,
 		});
 
@@ -223,7 +249,7 @@ describe("oauth.createAuthorizationCode + consumeAuthorizationCode", () => {
 			redirectUri: "https://claude.ai/cb",
 			codeChallenge: "challenge",
 			scope: "vantage:read vantage:write",
-			userId: "marie",
+			userId: "tenant-user",
 			expiresAt: Date.now() + 600_000,
 		});
 
@@ -242,7 +268,7 @@ describe("oauth.createAuthorizationCode + consumeAuthorizationCode", () => {
 });
 
 describe("oauth.registerPublicClient (DCR default-profile binding)", () => {
-	test("DCR client created with client-generic has no scope — Marie-style chain blocked (Blocker 2)", async () => {
+	test("DCR client created with client-generic has no scope — anonymous chain blocked (Blocker 2)", async () => {
 		// This reproduces the HTTP server's public /register behaviour: the
 		// handler hardcodes scopeProfile=client-generic regardless of body.
 		// An access_token minted off this client has fromAllowList=[] and
@@ -274,20 +300,20 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 		await t.mutation(api.oauth.createAccessToken, {
 			callerToken: "test-master-token-deadbeef",
 			tokenHash,
-			clientId: "marie-client",
-			userId: "marie",
+			clientId: "tenant-client",
+			userId: "tenant-user",
 			scopes: ["vantage:read", "vantage:write"],
-			scopeProfile: "marie-iris-rh",
-			fromAllowList: ["marie"],
-			namespaceReadPrefixes: ["orchestrator/victor", "global"],
+			scopeProfile: "test-tenant-profile",
+			fromAllowList: ["tenant"],
+			namespaceReadPrefixes: ["orchestrator/tenant-peer", "global"],
 			namespaceWritePrefixes: ["global"],
 			expiresAt: Date.now() + 3600_000,
 		});
 
 		const row = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
 		expect(row).not.toBeNull();
-		expect(row?.scopeProfile).toBe("marie-iris-rh");
-		expect(row?.fromAllowList).toEqual(["marie"]);
+		expect(row?.scopeProfile).toBe("test-tenant-profile");
+		expect(row?.fromAllowList).toEqual(["tenant"]);
 	});
 
 	test("rejects createAccessToken without a valid callerToken (Blocker 1)", async () => {

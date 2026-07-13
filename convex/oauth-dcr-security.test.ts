@@ -250,7 +250,7 @@ describe("DCR self-registration default scope enforcement", () => {
 		// Cross-tenant namespaces are NOT in the read prefix list.
 		const reads = profile?.namespaceReadPrefixes ?? [];
 		expect(reads).not.toContain("orchestrator/pi");
-		expect(reads).not.toContain("orchestrator/marie");
+		expect(reads).not.toContain("orchestrator/alice");
 		expect(reads).not.toContain("project/secret");
 		expect(reads).not.toContain("*");
 		// Only "global" (matching exact + nested global/X) is allowed

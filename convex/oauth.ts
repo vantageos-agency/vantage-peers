@@ -14,6 +14,7 @@
  */
 
 import { v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,13 +78,141 @@ const scopeProfileShape = v.object({
 // (no DB write, no audit log). When no row exists, the seed is inserted.
 //
 // Rows present in the DB but NOT in the catalog (operator-created profiles,
-// post-D9 rename survivors like `iris-rh`) are PRESERVED — this seed mutation
-// is never destructive. This obsoletes the bespoke catalog-drift migration
-// pattern shown in `convex/migrations/patch_marie_iris_rh_scope.ts`.
+// private-catalog tenant profiles provisioned via seedPrivateScopeProfiles,
+// post-rename survivors) are PRESERVED — this seed mutation is never
+// destructive. This obsoletes bespoke catalog-drift migrations for one-off
+// named-profile remediation.
 //
 // Return shape: `{ inserted, updated, skipped }` arrays of profileId strings.
 // Master preserves full-access semantics of the BEARER_SECRET_MASTER path.
 // ─────────────────────────────────────────────────────────────────────────────
+
+type ScopeProfileCatalogEntry = {
+	profileId: string;
+	description: string;
+	fromAllowList: string[];
+	namespaceReadPrefixes: string[];
+	namespaceWritePrefixes: string[];
+};
+
+const arraysEqual = (a: string[], b: string[]): boolean => {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// upsertScopeProfileCatalog — shared patch-on-diff seed logic (S3.4 B4 doctrine)
+//
+// Used by BOTH the PUBLIC catalog (seedDefaultProfiles, generic profiles only,
+// safe to ship in the public repo) and the PRIVATE catalog (seedPrivateScopeProfiles,
+// named-tenant profiles sourced from an out-of-repo env var — see Day 128
+// tenant-name confidentiality fix, mission k5775bf67eg4202ccy23m976q98aacnc).
+//
+// Rows present in the DB but NOT in the supplied catalog are PRESERVED — this
+// upsert is never destructive.
+// ─────────────────────────────────────────────────────────────────────────────
+async function upsertScopeProfileCatalog(
+	ctx: MutationCtx,
+	callerToken: string,
+	catalog: ScopeProfileCatalogEntry[],
+	auditReason: string,
+): Promise<{ inserted: string[]; updated: string[]; skipped: string[] }> {
+	const inserted: string[] = [];
+	const updated: string[] = [];
+	const skipped: string[] = [];
+
+	// actorTokenHash is computed lazily (only when we know we'll write an
+	// audit row) so the no-op idempotent path stays a pure read.
+	let actorTokenHashCache: string | null = null;
+	const getActorTokenHash = async (): Promise<string> => {
+		if (actorTokenHashCache === null) {
+			actorTokenHashCache = await sha256Hex(callerToken);
+		}
+		return actorTokenHashCache;
+	};
+
+	for (const p of catalog) {
+		const existing = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", p.profileId))
+			.unique();
+
+		const now = Date.now();
+
+		if (!existing) {
+			await ctx.db.insert("oauth_scope_profiles", {
+				...p,
+				createdAt: now,
+				updatedAt: now,
+			});
+			inserted.push(p.profileId);
+			continue;
+		}
+
+		// Build the patch: only fields whose persisted value diverges from
+		// the catalog. _creationTime + createdAt are preserved.
+		const patch: Record<string, unknown> = {};
+		if (existing.description !== p.description) {
+			patch.description = p.description;
+		}
+		if (!arraysEqual(existing.fromAllowList, p.fromAllowList)) {
+			patch.fromAllowList = p.fromAllowList;
+		}
+		if (
+			!arraysEqual(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)
+		) {
+			patch.namespaceReadPrefixes = p.namespaceReadPrefixes;
+		}
+		if (
+			!arraysEqual(existing.namespaceWritePrefixes, p.namespaceWritePrefixes)
+		) {
+			patch.namespaceWritePrefixes = p.namespaceWritePrefixes;
+		}
+
+		if (Object.keys(patch).length === 0) {
+			skipped.push(p.profileId);
+			continue;
+		}
+
+		patch.updatedAt = now;
+		await ctx.db.patch(existing._id, patch);
+
+		// Audit log: capture the constrained {profileId, fromAllowList,
+		// namespaceReadPrefixes, namespaceWritePrefixes} snapshots required
+		// by the oauth_audit_log schema. Description drift, while patched,
+		// is not part of the forensic schema and is intentionally omitted
+		// from the audit row.
+		const previousState = {
+			profileId: existing.profileId,
+			fromAllowList: existing.fromAllowList,
+			namespaceReadPrefixes: existing.namespaceReadPrefixes,
+			namespaceWritePrefixes: existing.namespaceWritePrefixes,
+		};
+		const newState = {
+			profileId: p.profileId,
+			fromAllowList: p.fromAllowList,
+			namespaceReadPrefixes: p.namespaceReadPrefixes,
+			namespaceWritePrefixes: p.namespaceWritePrefixes,
+		};
+		await ctx.db.insert("oauth_audit_log", {
+			eventType: "seed_upsert",
+			actorTokenHash: await getActorTokenHash(),
+			targetProfileId: p.profileId,
+			previousState,
+			newState,
+			reason: auditReason,
+			cascadeRevokedCount: 0,
+			clientsRetargeted: 0,
+			createdAt: now,
+		});
+		updated.push(p.profileId);
+	}
+
+	return { inserted, updated, skipped };
+}
 
 export const seedDefaultProfiles = mutation({
 	args: { callerToken: v.string() },
@@ -95,111 +224,21 @@ export const seedDefaultProfiles = mutation({
 	handler: async (ctx, args) => {
 		await requireMasterAuth(args.callerToken);
 
-		const defaults = [
+		// SECURITY (Day 128, mission k5775bf67eg4202ccy23m976q98aacnc): this
+		// catalog ships in the PUBLIC repo (vantageos-agency/vantage-peers).
+		// It MUST contain only generic, non-identifying profiles. Named-tenant
+		// profiles (e.g. a specific client's orchestrator personas) are
+		// PRIVATE and must be provisioned via `seedPrivateScopeProfiles`
+		// (reads OAUTH_PRIVATE_SCOPE_PROFILES_JSON, an out-of-repo Convex env
+		// var) or via `scripts/provision-oauth-client.ts` against an
+		// already-existing private profile. NEVER add a client name here.
+		const defaults: ScopeProfileCatalogEntry[] = [
 			{
 				profileId: "master",
 				description: "Full admin access — reserved for Pi and internal ops.",
 				fromAllowList: ["*"],
 				namespaceReadPrefixes: ["*"],
 				namespaceWritePrefixes: ["*"],
-			},
-			{
-				profileId: "marie-iris-rh",
-				description:
-					"Tenant-scoped client profile — send_message under its own orchestrator alias only; read/write limited to its own orchestrator + project namespaces. Deliberately excludes the shared `global` namespace: `global` carries fleet-internal facts that a tenant-scoped client must never read or write.",
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-				],
-			},
-			// Iris RH trio (Clio + Hélios + Victor) — Marie's 3 dual-host
-			// orchestrator personas share a workspace (project/iris-rh) and
-			// every profile lists the other two's case variants in
-			// `fromAllowList` + their orchestrator namespaces in both prefix
-			// arrays so each persona can switch hosts and continue the
-			// conversation without re-paste of credentials. The
-			// `recipient ∈ fromAllowList` doctrine (commit 24b39c5) gives
-			// each persona symmetric read access to the others' inbox.
-			{
-				profileId: "clio-iris-rh",
-				description:
-					"Clio (Marie / Iris RH ChatGPT orchestrator) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
-				fromAllowList: [
-					"Clio",
-					"clio",
-					"Hélios",
-					"Helios",
-					"helios",
-					"hélios",
-					"Victor",
-					"victor",
-				],
-				namespaceReadPrefixes: [
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
-			},
-			{
-				profileId: "helios-iris-rh",
-				description:
-					"Hélios (Marie / Iris RH Claude.ai orchestrator) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
-				fromAllowList: [
-					"Hélios",
-					"Helios",
-					"helios",
-					"hélios",
-					"Clio",
-					"clio",
-					"Victor",
-					"victor",
-				],
-				namespaceReadPrefixes: [
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
 			},
 			{
 				profileId: "client-generic",
@@ -228,106 +267,147 @@ export const seedDefaultProfiles = mutation({
 			},
 		];
 
-		const inserted: string[] = [];
-		const updated: string[] = [];
-		const skipped: string[] = [];
+		return await upsertScopeProfileCatalog(
+			ctx,
+			args.callerToken,
+			defaults,
+			"seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
+		);
+	},
+});
 
-		const arraysEqual = (a: string[], b: string[]): boolean => {
-			if (a.length !== b.length) return false;
-			for (let i = 0; i < a.length; i++) {
-				if (a[i] !== b[i]) return false;
-			}
-			return true;
-		};
+// ─────────────────────────────────────────────────────────────────────────────
+// seedPrivateScopeProfiles — Day 128 (mission k5775bf67eg4202ccy23m976q98aacnc)
+//
+// Provisions named-tenant OAuth scope profiles WITHOUT ever storing the
+// tenant/client names in the public repo. The catalog is read from the Convex
+// environment variable `OAUTH_PRIVATE_SCOPE_PROFILES_JSON` — set via the
+// Convex dashboard (Settings → Environment Variables) or
+// `npx convex env set OAUTH_PRIVATE_SCOPE_PROFILES_JSON '<json>'`, NEVER
+// committed to git. Expected shape: a JSON array of objects with
+// { profileId, description, fromAllowList, namespaceReadPrefixes,
+// namespaceWritePrefixes }.
+//
+// D4 enforcement: any entry whose profileId !== "master" MUST NOT contain
+// "global" or "*" in either prefix list — same invariant enforced by
+// patchScopeProfileEmergency. This closes the exact hole that leaked
+// client namespaces into the shared `global` fleet workspace (Day 90/128).
+//
+// Master-gated, idempotent (patch-on-diff via upsertScopeProfileCatalog).
+// ─────────────────────────────────────────────────────────────────────────────
+export const seedPrivateScopeProfiles = mutation({
+	args: { callerToken: v.string() },
+	returns: v.object({
+		inserted: v.array(v.string()),
+		updated: v.array(v.string()),
+		skipped: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
 
-		// actorTokenHash is computed lazily (only when we know we'll write an
-		// audit row) so the no-op idempotent path stays a pure read.
-		let actorTokenHashCache: string | null = null;
-		const getActorTokenHash = async (): Promise<string> => {
-			if (actorTokenHashCache === null) {
-				actorTokenHashCache = await sha256Hex(args.callerToken);
-			}
-			return actorTokenHashCache;
-		};
-
-		for (const p of defaults) {
-			const existing = await ctx.db
-				.query("oauth_scope_profiles")
-				.withIndex("by_profileId", (q) => q.eq("profileId", p.profileId))
-				.unique();
-
-			const now = Date.now();
-
-			if (!existing) {
-				await ctx.db.insert("oauth_scope_profiles", {
-					...p,
-					createdAt: now,
-					updatedAt: now,
-				});
-				inserted.push(p.profileId);
-				continue;
-			}
-
-			// Build the patch: only fields whose persisted value diverges from
-			// the catalog. _creationTime + createdAt are preserved.
-			const patch: Record<string, unknown> = {};
-			if (existing.description !== p.description) {
-				patch.description = p.description;
-			}
-			if (!arraysEqual(existing.fromAllowList, p.fromAllowList)) {
-				patch.fromAllowList = p.fromAllowList;
-			}
-			if (
-				!arraysEqual(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)
-			) {
-				patch.namespaceReadPrefixes = p.namespaceReadPrefixes;
-			}
-			if (
-				!arraysEqual(existing.namespaceWritePrefixes, p.namespaceWritePrefixes)
-			) {
-				patch.namespaceWritePrefixes = p.namespaceWritePrefixes;
-			}
-
-			if (Object.keys(patch).length === 0) {
-				skipped.push(p.profileId);
-				continue;
-			}
-
-			patch.updatedAt = now;
-			await ctx.db.patch(existing._id, patch);
-
-			// Audit log: capture the constrained {profileId, fromAllowList,
-			// namespaceReadPrefixes, namespaceWritePrefixes} snapshots required
-			// by the oauth_audit_log schema. Description drift, while patched,
-			// is not part of the forensic schema and is intentionally omitted
-			// from the audit row.
-			const previousState = {
-				profileId: existing.profileId,
-				fromAllowList: existing.fromAllowList,
-				namespaceReadPrefixes: existing.namespaceReadPrefixes,
-				namespaceWritePrefixes: existing.namespaceWritePrefixes,
-			};
-			const newState = {
-				profileId: p.profileId,
-				fromAllowList: p.fromAllowList,
-				namespaceReadPrefixes: p.namespaceReadPrefixes,
-				namespaceWritePrefixes: p.namespaceWritePrefixes,
-			};
-			await ctx.db.insert("oauth_audit_log", {
-				eventType: "seed_upsert",
-				actorTokenHash: await getActorTokenHash(),
-				targetProfileId: p.profileId,
-				previousState,
-				newState,
-				reason: "seedDefaultProfiles upsert — catalog drift patched (S3.4 B4)",
-				cascadeRevokedCount: 0,
-				clientsRetargeted: 0,
-				createdAt: now,
-			});
-			updated.push(p.profileId);
+		const raw = process.env.OAUTH_PRIVATE_SCOPE_PROFILES_JSON;
+		if (!raw) {
+			throw new Error(
+				"OAUTH_PRIVATE_SCOPE_PROFILES_JSON env var is not configured — " +
+					"no private scope profiles to provision. Set it via " +
+					"`npx convex env set OAUTH_PRIVATE_SCOPE_PROFILES_JSON '<json>'` " +
+					"with a JSON array of {profileId, description, fromAllowList, " +
+					"namespaceReadPrefixes, namespaceWritePrefixes} objects.",
+			);
 		}
 
-		return { inserted, updated, skipped };
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch (err) {
+			throw new Error(
+				`OAUTH_PRIVATE_SCOPE_PROFILES_JSON is not valid JSON: ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+		}
+
+		if (!Array.isArray(parsed)) {
+			throw new Error(
+				"OAUTH_PRIVATE_SCOPE_PROFILES_JSON must be a JSON array of profile objects",
+			);
+		}
+
+		const catalog: ScopeProfileCatalogEntry[] = parsed.map((entry, i) => {
+			if (typeof entry !== "object" || entry === null) {
+				throw new Error(
+					`OAUTH_PRIVATE_SCOPE_PROFILES_JSON[${i}] must be an object`,
+				);
+			}
+			const e = entry as Record<string, unknown>;
+			const profileId = e.profileId;
+			const description = e.description;
+			const fromAllowList = e.fromAllowList;
+			const namespaceReadPrefixes = e.namespaceReadPrefixes;
+			const namespaceWritePrefixes = e.namespaceWritePrefixes;
+
+			if (typeof profileId !== "string" || profileId.length === 0) {
+				throw new Error(
+					`OAUTH_PRIVATE_SCOPE_PROFILES_JSON[${i}].profileId must be a non-empty string`,
+				);
+			}
+			if (typeof description !== "string") {
+				throw new Error(
+					`OAUTH_PRIVATE_SCOPE_PROFILES_JSON[${i}].description must be a string`,
+				);
+			}
+			if (
+				!Array.isArray(fromAllowList) ||
+				!fromAllowList.every((s) => typeof s === "string")
+			) {
+				throw new Error(
+					`OAUTH_PRIVATE_SCOPE_PROFILES_JSON[${i}].fromAllowList must be a string array`,
+				);
+			}
+			if (
+				!Array.isArray(namespaceReadPrefixes) ||
+				!namespaceReadPrefixes.every((s) => typeof s === "string")
+			) {
+				throw new Error(
+					`OAUTH_PRIVATE_SCOPE_PROFILES_JSON[${i}].namespaceReadPrefixes must be a string array`,
+				);
+			}
+			if (
+				!Array.isArray(namespaceWritePrefixes) ||
+				!namespaceWritePrefixes.every((s) => typeof s === "string")
+			) {
+				throw new Error(
+					`OAUTH_PRIVATE_SCOPE_PROFILES_JSON[${i}].namespaceWritePrefixes must be a string array`,
+				);
+			}
+
+			// D4 enforcement: non-master private profiles must never carry
+			// `global` or `*` — the exact invariant this fix restores.
+			if (profileId !== "master") {
+				for (const p of [...namespaceReadPrefixes, ...namespaceWritePrefixes]) {
+					if (p === "global" || p === "*") {
+						throw new Error(
+							`D4 violation: private profile "${profileId}" cannot include "${p}" in namespace prefixes`,
+						);
+					}
+				}
+			}
+
+			return {
+				profileId,
+				description,
+				fromAllowList: fromAllowList as string[],
+				namespaceReadPrefixes: namespaceReadPrefixes as string[],
+				namespaceWritePrefixes: namespaceWritePrefixes as string[],
+			};
+		});
+
+		return await upsertScopeProfileCatalog(
+			ctx,
+			args.callerToken,
+			catalog,
+			"seedPrivateScopeProfiles upsert — private tenant catalog from OAUTH_PRIVATE_SCOPE_PROFILES_JSON",
+		);
 	},
 });
 
@@ -464,7 +544,8 @@ export const registerPublicClient = mutation({
 		}
 
 		// Enforce a strict default profile for anonymous DCR — no admin required,
-		// but the profile MUST exist and be safe (deny-by-default or marie flow).
+		// but the profile MUST exist and be safe (deny-by-default or a vetted
+		// tenant-scoped private profile).
 		const profile = await ctx.db
 			.query("oauth_scope_profiles")
 			.withIndex("by_profileId", (q) => q.eq("profileId", args.scopeProfile))
@@ -1041,7 +1122,8 @@ async function sha256Hex(input: string): Promise<string> {
 //     where scopeProfile = oldName OR newName
 //   - Append-only audit log: previousState + newState + actorTokenHash + reason
 //
-// Day 90 use-case: drops `global` from `marie-iris-rh`, renames to `iris-rh`.
+// Day 90 use-case: drop `global` from a leaked tenant-scoped profile and
+// rename it to a workspace-scoped id (D9 workspace naming).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const patchScopeProfileEmergency = mutation({

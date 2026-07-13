@@ -148,12 +148,12 @@ describe("withOrgScope — org not in mapping", () => {
 // =============================================================================
 
 describe("withOrgScope — active org mapping", () => {
-	test("tasks.list returns only victor's tasks for iris-rh org", async () => {
+	test("tasks.list returns only victor's tasks for acme-hr org", async () => {
 		const t = createTestConvex();
 
-		// Seed mapping for iris-rh → can see victor only
+		// Seed mapping for acme-hr → can see victor only
 		await seedOrgMapping(t, {
-			clerkOrgSlug: "iris-rh",
+			clerkOrgSlug: "acme-hr",
 			allowedOrchestrators: ["victor"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 		});
@@ -175,8 +175,8 @@ describe("withOrgScope — active org mapping", () => {
 		});
 
 		const tWithAuth = t.withIdentity({
-			subject: "user-marie",
-			organizationSlug: "iris-rh",
+			subject: "user-alice",
+			organizationSlug: "acme-hr",
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const result = await tWithAuth.query(api.tasks.list, {});
@@ -222,9 +222,9 @@ describe("filterByOrgScope", () => {
 		isMaster: true,
 	};
 
-	const irisRhScope: OrgScope = {
-		userId: "user-marie",
-		orgSlug: "iris-rh",
+	const acmeHrScope: OrgScope = {
+		userId: "user-alice",
+		orgSlug: "acme-hr",
 		allowedOrchestrators: ["victor"],
 		scopes: ["view-own-tasks", "view-own-missions"],
 		isMaster: false,
@@ -244,8 +244,8 @@ describe("filterByOrgScope", () => {
 	});
 
 	// Test 7
-	test("iris-rh scope (allowedOrchestrators=['victor']) → only victor's records", () => {
-		const result = filterByOrgScope(records, irisRhScope);
+	test("acme-hr scope (allowedOrchestrators=['victor']) → only victor's records", () => {
+		const result = filterByOrgScope(records, acmeHrScope);
 		expect(result).toHaveLength(1);
 		expect(result[0].assignedTo).toBe("victor");
 	});
@@ -255,7 +255,7 @@ describe("filterByOrgScope", () => {
 			{ _id: "m1", pilot: "victor", name: "Mission V" },
 			{ _id: "m2", pilot: "kappa", name: "Mission K" },
 		];
-		const result = filterByOrgScope(missionRecords, irisRhScope);
+		const result = filterByOrgScope(missionRecords, acmeHrScope);
 		expect(result).toHaveLength(1);
 		expect(result[0].pilot).toBe("victor");
 	});
@@ -265,7 +265,7 @@ describe("filterByOrgScope", () => {
 			{ _id: "x1", title: "no owner" }, // no pilot, no assignedTo
 			{ _id: "x2", assignedTo: "victor", title: "victor item" },
 		];
-		const result = filterByOrgScope(mixed, irisRhScope);
+		const result = filterByOrgScope(mixed, acmeHrScope);
 		expect(result).toHaveLength(1);
 		expect(result[0].assignedTo).toBe("victor");
 	});
@@ -280,9 +280,9 @@ describe("requireScope", () => {
 		isMaster: true,
 	};
 
-	const irisRhScope: OrgScope = {
-		userId: "user-marie",
-		orgSlug: "iris-rh",
+	const acmeHrScope: OrgScope = {
+		userId: "user-alice",
+		orgSlug: "acme-hr",
 		allowedOrchestrators: ["victor"],
 		scopes: ["view-own-tasks"],
 		isMaster: false,
@@ -300,11 +300,11 @@ describe("requireScope", () => {
 	// Test 9
 	test("non-master scope + missing scope → throws Forbidden", () => {
 		expect(() =>
-			requireScope(irisRhScope, "view-stats-aggregated"),
+			requireScope(acmeHrScope, "view-stats-aggregated"),
 		).toThrow(/RBAC_DENIED:.*view-stats-aggregated/);
 	});
 
 	test("non-master scope + granted scope → no throw", () => {
-		expect(() => requireScope(irisRhScope, "view-own-tasks")).not.toThrow();
+		expect(() => requireScope(acmeHrScope, "view-own-tasks")).not.toThrow();
 	});
 });

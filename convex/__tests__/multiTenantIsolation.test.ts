@@ -31,7 +31,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { withOrgScope } from "../lib/auth";
@@ -250,5 +250,199 @@ describe("diary.list cross-tenant isolation (RED — handler is unscoped, table 
 		});
 
 		expect(result.length).toBe(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. ANONYMOUS DIRECT caller (no Clerk identity at all) against the PUBLIC
+//    memories.listMemories / memories.getMemory handlers.
+//
+// Residue (a) — task brief 2026-07-11: memories.listMemories/getMemory call
+// withOrgScope(ctx, { allowNoIdentityMaster: true }) (convex/memories.ts:161,
+// 226). When ctx.auth.getUserIdentity() resolves to null (no .withIdentity()
+// applied — the exact shape of an anonymous direct call against the public
+// Convex deployment URL, reachable with zero Clerk identity, zero MCP/web
+// layer in front of it), withOrgScope's allowNoIdentityMaster opt-in
+// (convex/lib/auth.ts:67-85) returns isMaster:true / allowedOrchestrators:["*"]
+// unconditionally — NOT the fail-closed anonymous branch that other new
+// call-sites get by default. isNamespaceAllowedForScope(scope, namespace)
+// then short-circuits `true` for any namespace because scope.isMaster is
+// true, so an anonymous caller reads org-b's data merely by naming its
+// namespace/memoryId. This is the SAME fail-open class PR #1085 closed by
+// default in withOrgScope — still open here because these two public
+// handlers keep the master opt-in. These tests FAIL today for that reason.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("memories.listMemories ANONYMOUS DIRECT call (RED — public handler still opts into allowNoIdentityMaster)", () => {
+	test("caller with NO Clerk identity at all must not receive org-b's memory for org-b's namespace", async () => {
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memories", {
+				namespace: "team/org-b/secrets",
+				type: "project",
+				content: "org-b secret content",
+				createdBy: "dummy-b",
+				relations: [],
+				isLatest: true,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
+
+		// Deliberately NO t.withIdentity(...) anywhere — this simulates an
+		// anonymous direct call to the public Convex deployment URL with zero
+		// Clerk identity attached (no browser session, no MCP OAuth token).
+		// ctx.auth.getUserIdentity() resolves to null inside the handler,
+		// exactly the branch that hits allowNoIdentityMaster:true today.
+		const result = await t.query(api.memories.listMemories, {
+			namespace: "team/org-b/secrets",
+		});
+
+		// DESIRED fail-closed behaviour: anonymous caller gets nothing.
+		// FAILS today: allowNoIdentityMaster:true → isMaster:true →
+		// isNamespaceAllowedForScope short-circuits true → org-b's row leaks.
+		expect(result.value.length).toBe(0);
+	});
+});
+
+describe("memories.getMemory ANONYMOUS DIRECT call (RED — public handler still opts into allowNoIdentityMaster)", () => {
+	test("caller with NO Clerk identity at all must not fetch org-b's memory by ID", async () => {
+		const t = createT();
+
+		const orgBMemoryId = await t.run(async (ctx) => {
+			return await ctx.db.insert("memories", {
+				namespace: "team/org-b/secrets",
+				type: "project",
+				content: "org-b secret content",
+				createdBy: "dummy-b",
+				relations: [],
+				isLatest: true,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
+
+		// No .withIdentity() — anonymous direct call, same as above.
+		const result = await t.query(api.memories.getMemory, {
+			memoryId: orgBMemoryId,
+		});
+
+		// DESIRED: null (denied). FAILS today: allowNoIdentityMaster:true
+		// resolves to master scope and returns org-b's row verbatim.
+		expect(result).toBeNull();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. SERVICE-ACCOUNT identity path — proves the real Clerk-identity fix does
+//    not just deny anonymous (green-by-void), but that the MCP server's
+//    verified service-account identity still reads cross-tenant data.
+//    "identity present" is now split into two distinct outcomes:
+//      - identity present, subject === CLERK_SERVICE_ACCOUNT_USER_ID -> ALLOW (master)
+//      - identity present, any other subject with no org             -> ALLOW (legacy Alpha)
+//      - no identity at all, no allowNoIdentityMaster opt-in          -> DENY (asserted above)
+//    Unlike the removed MCP_SYSTEM_TOKEN mechanism, this is never a
+//    caller-supplied argument — `t.withIdentity(...)` here stands in for a
+//    Clerk JWT whose signature Convex has already verified via auth.config.ts;
+//    convex/lib/auth.ts only recognizes the *subject claim* of that verified
+//    identity, it does not compare any shared secret.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("memories.listMemories / getMemory SERVICE-ACCOUNT identity (GREEN — proves internal reads still work)", () => {
+	test("caller presenting a verified identity matching CLERK_SERVICE_ACCOUNT_USER_ID reads org-b's memory", async () => {
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_mcp");
+		const t = createT();
+
+		const orgBMemoryId = await t.run(async (ctx) => {
+			return await ctx.db.insert("memories", {
+				namespace: "team/org-b/secrets",
+				type: "project",
+				content: "org-b secret content",
+				createdBy: "dummy-b",
+				relations: [],
+				isLatest: true,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
+
+		// A verified Clerk identity whose subject matches the configured
+		// service-account user id — the same shape Convex would resolve from
+		// a real Clerk JWT signed for that dedicated user, no org attached.
+		const tSystem = t.withIdentity({
+			subject: "user_service_account_mcp",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const listResult = await tSystem.query(api.memories.listMemories, {
+			namespace: "team/org-b/secrets",
+		});
+		expect(listResult.value.length).toBe(1);
+		expect(listResult.value[0]._id).toBe(orgBMemoryId);
+
+		const getResult = await tSystem.query(api.memories.getMemory, {
+			memoryId: orgBMemoryId,
+		});
+		expect(getResult?._id).toBe(orgBMemoryId);
+
+		vi.unstubAllEnvs();
+	});
+
+	test("caller presenting a DIFFERENT verified identity (not the service account, no org) is NOT scoped-denied — matches existing Alpha master behaviour, but is a distinct real Clerk user, never a guessable secret", async () => {
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_mcp");
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memories", {
+				namespace: "team/org-b/secrets",
+				type: "project",
+				content: "org-b secret content",
+				createdBy: "dummy-b",
+				relations: [],
+				isLatest: true,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
+
+		// Any other verified identity with no org is the pre-existing Alpha
+		// backwards-compat branch (unchanged) — included here to document
+		// that recognition is keyed on the specific subject claim, not a
+		// blanket "any identity" rule.
+		const tOther = t.withIdentity({
+			subject: "some-other-verified-clerk-user",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const result = await tOther.query(api.memories.listMemories, {
+			namespace: "team/org-b/secrets",
+		});
+		expect(result.value.length).toBe(1);
+
+		vi.unstubAllEnvs();
+	});
+
+	test("anonymous caller (no identity at all) is denied even when CLERK_SERVICE_ACCOUNT_USER_ID is configured — no fallback path", async () => {
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_mcp");
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memories", {
+				namespace: "team/org-b/secrets",
+				type: "project",
+				content: "org-b secret content",
+				createdBy: "dummy-b",
+				relations: [],
+				isLatest: true,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
+
+		const result = await t.query(api.memories.listMemories, {
+			namespace: "team/org-b/secrets",
+		});
+		expect(result.value.length).toBe(0);
+
+		vi.unstubAllEnvs();
 	});
 });

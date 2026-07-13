@@ -11,7 +11,7 @@
  *   2. E2E — live prod Railway endpoint using trio creds from .env.local.
  *      Skipped in CI (VP_TEST_MODE=1) and when creds are absent.
  *
- * Customer friction: Marie Day 92 Iris RH skill had to ASK the user for
+ * Customer friction: Alice Day 92 Acme HR skill had to ASK the user for
  * orchestrator_id because there was no programmatic way to discover it from
  * the bearer. whoami closes that loop.
  *
@@ -255,13 +255,13 @@ describe("whoami — unit (no network)", () => {
 
 	it("case preserved — suggested_orchestrator_id is NOT lowercased", async () => {
 		const oauthCtx = buildOauthCtx({
-			scopeProfile: "helios-profile",
-			fromAllowList: ["Helios", "helios"],
+			scopeProfile: "zoe-profile",
+			fromAllowList: ["Zoe", "zoe"],
 		});
 
 		const result = await callWhoami(oauthCtx);
-		// Must be "Helios" not "helios"
-		expect(result?.suggested_orchestrator_id).toBe("Helios");
+		// Must be "Zoe" not "zoe"
+		expect(result?.suggested_orchestrator_id).toBe("Zoe");
 	});
 
 	it("empty fromAllowList on non-master — suggested_orchestrator_id=null", async () => {

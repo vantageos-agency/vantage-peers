@@ -115,7 +115,9 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 	test("positive control: a real memoryId still returns the document", async () => {
 		const t = createT();
 		const memoryId = await newMemory(t);
-		const doc = await t.query(api.memories.getMemory, { memoryId });
+		const doc = await t
+			.withIdentity({ subject: "test-internal-reader" })
+			.query(api.memories.getMemory, { memoryId });
 		expect(doc?._id).toBe(memoryId);
 		expect(doc?.content).toBe("Probe memory");
 	});

@@ -6,11 +6,11 @@
  *
  * Reference pattern: tools.ts check_messages L1383-1399 (commit 24b39c5).
  * Fixed regression: 28db616 (PR #625) compared assignedTo/createdBy against
- * oauthCtx.userId (profile name "helios-iris-rh") instead of fromAllowList.
+ * oauthCtx.userId (profile name "zoe-acme-hr") instead of fromAllowList.
  *
  * C2 (Day 92): upgraded from raw .toLowerCase() to normalizeOrchestratorId()
  * which applies NFC normalization before lowercasing. Decomposed NFD variants
- * ("Hélios" NFD) now match composed NFC entries in the allow list.
+ * ("Zoé" NFD) now match composed NFC entries in the allow list.
  * B2 standard §6 (case-insensitive) + §7 (Unicode NFC). PR #667.
  *
  * Contract:

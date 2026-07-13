@@ -107,7 +107,9 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 			severity: "minor",
 		});
 
-		const row = await t.query(api.memories.getMemory, { memoryId });
+		const row = await t
+			.withIdentity({ subject: "test-internal-reader" })
+			.query(api.memories.getMemory, { memoryId });
 		expect(row).not.toBeNull();
 		expect(row?._id).toBe(memoryId);
 		expect(row?.type).toBe("episode");

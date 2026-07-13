@@ -19,9 +19,9 @@
  *   U4 — master scope returns the note even for foreign tenant rows.
  *   U5 — scoped caller whose scope rejects the row gets null (non-leaky 404).
  *   M1 — cross-tenant: tenant-A row, tenant-B caller → null.
- *   M2 — namespace-prefix allowed: orchestrator/marie/x row + prefix
- *        orchestrator/marie → returned.
- *   M3 — createdBy fromAllowList: row.createdBy=marie + allowList=[marie] →
+ *   M2 — namespace-prefix allowed: orchestrator/alice/x row + prefix
+ *        orchestrator/alice → returned.
+ *   M3 — createdBy fromAllowList: row.createdBy=alice + allowList=[alice] →
  *        returned.
  *
  * Harness convention (mirrors Wave A § Friction + Wave B note): tests
@@ -82,15 +82,15 @@ function tenantBCtx(): OAuthContext {
 	};
 }
 
-function marieCtx(): OAuthContext {
+function aliceCtx(): OAuthContext {
 	return {
-		clientId: "client-marie",
-		userId: "user-marie",
+		clientId: "client-alice",
+		userId: "user-alice",
 		scopes: ["vantage:read"],
-		scopeProfile: "marie",
-		fromAllowList: ["marie"],
-		namespaceReadPrefixes: ["orchestrator/marie"],
-		namespaceWritePrefixes: ["orchestrator/marie"],
+		scopeProfile: "alice",
+		fromAllowList: ["alice"],
+		namespaceReadPrefixes: ["orchestrator/alice"],
+		namespaceWritePrefixes: ["orchestrator/alice"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
 	};
@@ -232,31 +232,31 @@ describe("M — get_briefing_note multi-tenant scenarios", () => {
 		expect(out).toBeNull();
 	});
 
-	it("M2 namespace-prefix allowed: row in orchestrator/marie/x → returned", () => {
+	it("M2 namespace-prefix allowed: row in orchestrator/alice/x → returned", () => {
 		const row: BriefingNoteRow = {
-			_id: "bn_marie_sub",
+			_id: "bn_alice_sub",
 			createdBy: "someone-else",
-			namespace: "orchestrator/marie/x",
+			namespace: "orchestrator/alice/x",
 			topic: "x",
-			title: "marie subspace",
+			title: "alice subspace",
 			content: "x",
 		};
-		const out = scopeFilterGet(marieCtx(), row);
+		const out = scopeFilterGet(aliceCtx(), row);
 		expect(out).not.toBeNull();
-		expect(out?._id).toBe("bn_marie_sub");
+		expect(out?._id).toBe("bn_alice_sub");
 	});
 
-	it("M3 createdBy fromAllowList: row.createdBy=marie + allowList=[marie] → returned", () => {
+	it("M3 createdBy fromAllowList: row.createdBy=alice + allowList=[alice] → returned", () => {
 		const row: BriefingNoteRow = {
-			_id: "bn_marie_made",
-			createdBy: "marie",
-			namespace: "global", // not in marie's namespaceReadPrefixes
+			_id: "bn_alice_made",
+			createdBy: "alice",
+			namespace: "global", // not in alice's namespaceReadPrefixes
 			topic: "x",
-			title: "marie-authored",
+			title: "alice-authored",
 			content: "x",
 		};
-		const out = scopeFilterGet(marieCtx(), row);
+		const out = scopeFilterGet(aliceCtx(), row);
 		expect(out).not.toBeNull();
-		expect(out?._id).toBe("bn_marie_made");
+		expect(out?._id).toBe("bn_alice_made");
 	});
 });

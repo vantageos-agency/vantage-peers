@@ -32,27 +32,50 @@ export interface OrgScope {
  * Clerk identity is present on the request.
  *
  * `allowNoIdentityMaster` MUST be explicitly opted into by call sites that are
- * known-legitimate internal/back-compat surfaces (MCP server deploy-key calls,
- * Convex CLI, existing Alpha handlers migrated pre-Beta). It is a deliberate,
- * per-call-site marker — not a blanket default — so that new/unaudited call
- * sites fail closed by default (Day 108 fail-closed multi-tenant doctrine).
+ * known-legitimate internal/back-compat surfaces (Convex CLI, existing Alpha
+ * handlers migrated pre-Beta). It is a deliberate, per-call-site marker — not
+ * a blanket default — so that new/unaudited call sites fail closed by default
+ * (Day 108 fail-closed multi-tenant doctrine).
  */
 export interface WithOrgScopeOptions {
 	allowNoIdentityMaster?: boolean;
 }
 
 /**
+ * Real service-account identity fix (2026-07-11, replaces the MCP_SYSTEM_TOKEN
+ * shared-secret residue).
+ *
+ * The MCP server authenticates to Convex as a genuine Clerk identity: it
+ * mints session JWTs (template "convex") for a dedicated Clerk user acting as
+ * the VantagePeers service account (see mcp-server/src/serviceAccountAuth.ts).
+ * Convex verifies that JWT's signature/issuer via auth.config.ts exactly like
+ * any browser session — `ctx.auth.getUserIdentity()` only returns non-null
+ * here because the signature already checked out. This env var is therefore
+ * NOT a secret: it is the Clerk user_id (subject claim) of that dedicated
+ * account, a public-ish identifier, not a bearer credential. Recognizing it
+ * cannot be spoofed by merely knowing/guessing the value — an attacker would
+ * still need a validly-signed Clerk JWT with that exact `sub` claim, which
+ * only Clerk (holding CLERK_SECRET_KEY) can issue.
+ */
+const SERVICE_ACCOUNT_SUBJECT = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
+
+/**
  * Resolves the caller's auth identity into an OrgScope.
  *
  * - No Clerk identity, opts.allowNoIdentityMaster=true → isMaster=true
- *   (legacy/internal call sites that explicitly opt in: MCP server / Convex
- *   CLI / pre-Beta Alpha handlers preserved for backwards compatibility).
+ *   (legacy/internal call sites that explicitly opt in: Convex CLI / pre-Beta
+ *   Alpha handlers preserved for backwards compatibility).
  * - No Clerk identity, opts.allowNoIdentityMaster not set (default) →
  *   FAIL-CLOSED: isMaster=false, allowedOrchestrators=[], scopes=[]. This is
  *   the default for any new or client-facing call site — absence of identity
  *   on a client-facing surface must never resolve to full access.
- * - No org attached (identity present) → isMaster=true (existing Alpha
- *   callers, Laurent — unchanged, distinct from the no-identity case above).
+ * - Identity present, subject === CLERK_SERVICE_ACCOUNT_USER_ID → isMaster=true
+ *   (the MCP server's real, Clerk-signature-verified service-account
+ *   identity — see SERVICE_ACCOUNT_SUBJECT doc above). This is checked before
+ *   the org-slug branch since the service account has no Clerk org attached.
+ * - No org attached (identity present, not the service account) → isMaster=true
+ *   (existing Alpha callers, Laurent — unchanged, distinct from the
+ *   no-identity case above).
  * - Org slug present → looks up client_org_mapping; throws if missing/inactive.
  *
  * Call this at the top of any query/mutation that serves dashboard Beta clients.
@@ -91,6 +114,30 @@ export async function withOrgScope(
 			allowedOrchestrators: [],
 			scopes: [],
 			isMaster: false,
+		};
+	}
+
+	// Verified service-account identity (MCP server's Clerk-signed JWT).
+	// `identity` is only reachable here because Convex already validated the
+	// JWT signature/issuer against auth.config.ts — this is a real Clerk
+	// identity, not a caller-supplied argument. Checked before the org-slug
+	// lookup because the service account has no Clerk org attached, and is
+	// unconditional master (unlike allowNoIdentityMaster, which required an
+	// explicit per-call-site opt-in) since every public handler should trust
+	// this specific, verified subject the same way.
+	if (SERVICE_ACCOUNT_SUBJECT && identity.subject === SERVICE_ACCOUNT_SUBJECT) {
+		return {
+			userId: "system",
+			orgSlug: null,
+			allowedOrchestrators: ["*"],
+			scopes: [
+				"cross-tenant-read",
+				"view-own-tasks",
+				"view-own-missions",
+				"view-stats-aggregated",
+				"view-orchestrator-summary",
+			],
+			isMaster: true,
 		};
 	}
 

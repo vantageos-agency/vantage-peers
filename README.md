@@ -353,7 +353,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 |------|-------------|
 | `get_profile` | Fetch an orchestrator's profile (static identity + dynamic session state) |
 | `update_profile` | Create or update an orchestrator profile |
-| `list_peers` | List all registered agent instances and their current summaries |
+| `list_peers` | List all registered agent instances and their current summary state |
 | `set_summary` | Set a status summary visible to other agents via `list_peers` |
 | `update_summary` | Alias of `set_summary` |
 | `whoami` | Returns the orchestrator identity baked into the current bearer's scope context |

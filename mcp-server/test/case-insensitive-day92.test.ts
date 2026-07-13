@@ -24,36 +24,36 @@ import { listTasksGate } from "../src/list-tasks-gate.js";
 import type { OAuthContext } from "../src/auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TRIO fromAllowList fixture — Hélios + helios + Hélios (NFD) + HELIOS + Clio
+// TRIO fromAllowList fixture — Zoé + zoe + Zoé (NFD) + ZOE + Milo
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** "Hélios" decomposed NFD form (H + e + ́ + lios) */
-const HELIOS_NFD = "Hélios";
-/** "Hélios" composed NFC form */
-const HELIOS_NFC = "Hélios";
-/** "hélios" composed NFC lowercase */
-const HELIOS_LC_NFC = "hélios";
+/** "Zoé" decomposed NFD form (Z + o + e + ́) */
+const ZOE_NFD = "Zoé";
+/** "Zoé" composed NFC form */
+const ZOE_NFC = "Zoé";
+/** "zoé" composed NFC lowercase */
+const ZOE_LC_NFC = "zoé";
 
 const TRIO_FROM_ALLOW_LIST = [
-  "Clio",
-  "clio",
-  HELIOS_NFC, // "Hélios" NFC
-  "Helios",
-  "helios",
-  HELIOS_LC_NFC, // "hélios" NFC
+  "Milo",
+  "milo",
+  ZOE_NFC, // "Zoé" NFC
+  "Zoe",
+  "zoe",
+  ZOE_LC_NFC, // "zoé" NFC
   "Victor",
   "victor",
 ];
 
-function heliosCtx(fromAllowList = TRIO_FROM_ALLOW_LIST): OAuthContext {
+function zoeCtx(fromAllowList = TRIO_FROM_ALLOW_LIST): OAuthContext {
   return {
     clientId: "2e5d41df-b8f8-4f1a-95aa-2eb0d6bdadb7",
-    userId: "helios-iris-rh",
+    userId: "zoe-acme-hr",
     scopes: ["vantage:read", "vantage:write"],
-    scopeProfile: "helios-iris-rh",
+    scopeProfile: "zoe-acme-hr",
     fromAllowList,
-    namespaceReadPrefixes: ["orchestrator/helios-iris-rh"],
-    namespaceWritePrefixes: ["orchestrator/helios-iris-rh"],
+    namespaceReadPrefixes: ["orchestrator/zoe-acme-hr"],
+    namespaceWritePrefixes: ["orchestrator/zoe-acme-hr"],
     expiresAt: Date.now() + 3_600_000,
     isMaster: false,
   };
@@ -79,43 +79,43 @@ function masterCtx(): OAuthContext {
 
 describe("normalizeOrchestratorId", () => {
   it("lowercases ASCII identifiers", () => {
-    expect(normalizeOrchestratorId("Helios")).toBe("helios");
+    expect(normalizeOrchestratorId("Zoe")).toBe("zoe");
   });
 
   it("lowercases ALL-CAPS identifiers", () => {
-    expect(normalizeOrchestratorId("HELIOS")).toBe("helios");
+    expect(normalizeOrchestratorId("ZOE")).toBe("zoe");
   });
 
   it("leaves already-lowercase ASCII identifiers unchanged", () => {
-    expect(normalizeOrchestratorId("helios")).toBe("helios");
+    expect(normalizeOrchestratorId("zoe")).toBe("zoe");
   });
 
   it("NFC normalizes a composed accented string and lowercases", () => {
-    // HELIOS_NFC = "Hélios" → normalize → "hélios"
-    expect(normalizeOrchestratorId(HELIOS_NFC)).toBe(HELIOS_LC_NFC);
+    // ZOE_NFC = "Zoé" → normalize → "zoé"
+    expect(normalizeOrchestratorId(ZOE_NFC)).toBe(ZOE_LC_NFC);
   });
 
   it("NFC normalizes a decomposed NFD string to the same canonical form", () => {
-    // HELIOS_NFD = "Hélios" → NFC → "Hélios" → lower → "hélios"
-    expect(normalizeOrchestratorId(HELIOS_NFD)).toBe(HELIOS_LC_NFC);
+    // ZOE_NFD = "Zoé" → NFC → "Zoé" → lower → "zoé"
+    expect(normalizeOrchestratorId(ZOE_NFD)).toBe(ZOE_LC_NFC);
   });
 
   it("NFC+lowercase of composed == NFC+lowercase of decomposed (invariant)", () => {
-    expect(normalizeOrchestratorId(HELIOS_NFC)).toBe(
-      normalizeOrchestratorId(HELIOS_NFD),
+    expect(normalizeOrchestratorId(ZOE_NFC)).toBe(
+      normalizeOrchestratorId(ZOE_NFD),
     );
   });
 
   it("trims leading whitespace", () => {
-    expect(normalizeOrchestratorId("  helios")).toBe("helios");
+    expect(normalizeOrchestratorId("  zoe")).toBe("zoe");
   });
 
   it("trims trailing whitespace", () => {
-    expect(normalizeOrchestratorId("helios  ")).toBe("helios");
+    expect(normalizeOrchestratorId("zoe  ")).toBe("zoe");
   });
 
   it("trims and normalizes combined", () => {
-    expect(normalizeOrchestratorId("  HELIOS  ")).toBe("helios");
+    expect(normalizeOrchestratorId("  ZOE  ")).toBe("zoe");
   });
 
   it("handles a simple lowercase identifier (pi)", () => {
@@ -136,24 +136,24 @@ describe("normalizeOrchestratorId", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("isInAllowList", () => {
-  it("matches HELIOS (uppercase) against list containing Helios", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "HELIOS")).toBe(true);
+  it("matches ZOE (uppercase) against list containing Zoe", () => {
+    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "ZOE")).toBe(true);
   });
 
-  it("matches Hélios NFC (composed) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFC)).toBe(true);
+  it("matches Zoé NFC (composed) against list", () => {
+    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, ZOE_NFC)).toBe(true);
   });
 
-  it("matches Hélios NFD (decomposed) against list after NFC normalization", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFD)).toBe(true);
+  it("matches Zoé NFD (decomposed) against list after NFC normalization", () => {
+    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, ZOE_NFD)).toBe(true);
   });
 
-  it("matches helios (lowercase) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "helios")).toBe(true);
+  it("matches zoe (lowercase) against list", () => {
+    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "zoe")).toBe(true);
   });
 
-  it("matches Clio (capitalised) against list containing clio + Clio", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Clio")).toBe(true);
+  it("matches Milo (capitalised) against list containing milo + Milo", () => {
+    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Milo")).toBe(true);
   });
 
   it("matches Victor (capitalised) against list", () => {
@@ -174,54 +174,54 @@ describe("isInAllowList", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("listTasksGate — case-insensitive + NFC (Day 92 C2)", () => {
-  it("allows HELIOS (all caps) as assignedTo with TRIO list", () => {
-    const err = listTasksGate(heliosCtx(), "HELIOS", undefined);
+  it("allows ZOE (all caps) as assignedTo with TRIO list", () => {
+    const err = listTasksGate(zoeCtx(), "ZOE", undefined);
     expect(err).toBeNull();
   });
 
-  it("allows Hélios NFC (composed) as assignedTo", () => {
-    const err = listTasksGate(heliosCtx(), HELIOS_NFC, undefined);
+  it("allows Zoé NFC (composed) as assignedTo", () => {
+    const err = listTasksGate(zoeCtx(), ZOE_NFC, undefined);
     expect(err).toBeNull();
   });
 
-  it("allows Hélios NFD (decomposed) as assignedTo after normalize", () => {
-    const err = listTasksGate(heliosCtx(), HELIOS_NFD, undefined);
+  it("allows Zoé NFD (decomposed) as assignedTo after normalize", () => {
+    const err = listTasksGate(zoeCtx(), ZOE_NFD, undefined);
     expect(err).toBeNull();
   });
 
-  it("allows helios (lowercase) as assignedTo", () => {
-    const err = listTasksGate(heliosCtx(), "helios", undefined);
+  it("allows zoe (lowercase) as assignedTo", () => {
+    const err = listTasksGate(zoeCtx(), "zoe", undefined);
     expect(err).toBeNull();
   });
 
-  it("allows hélios (lowercase NFC) as assignedTo", () => {
-    const err = listTasksGate(heliosCtx(), HELIOS_LC_NFC, undefined);
+  it("allows zoé (lowercase NFC) as assignedTo", () => {
+    const err = listTasksGate(zoeCtx(), ZOE_LC_NFC, undefined);
     expect(err).toBeNull();
   });
 
-  it("allows Clio as createdBy", () => {
-    const err = listTasksGate(heliosCtx(), undefined, "Clio");
+  it("allows Milo as createdBy", () => {
+    const err = listTasksGate(zoeCtx(), undefined, "Milo");
     expect(err).toBeNull();
   });
 
-  it("allows CLIO (all caps) as createdBy", () => {
-    const err = listTasksGate(heliosCtx(), undefined, "CLIO");
+  it("allows MILO (all caps) as createdBy", () => {
+    const err = listTasksGate(zoeCtx(), undefined, "MILO");
     expect(err).toBeNull();
   });
 
   it("rejects Outsider as assignedTo (not in TRIO list)", () => {
-    const err = listTasksGate(heliosCtx(), "Outsider", undefined);
+    const err = listTasksGate(zoeCtx(), "Outsider", undefined);
     expect(err).not.toBeNull();
     expect(err).toContain("Forbidden");
   });
 
   it("master scope always passes through (null)", () => {
-    const err = listTasksGate(masterCtx(), "HELIOS", undefined);
+    const err = listTasksGate(masterCtx(), "ZOE", undefined);
     expect(err).toBeNull();
   });
 
   it("undefined oauthCtx (legacy bearer) always passes through (null)", () => {
-    const err = listTasksGate(undefined, "HELIOS", undefined);
+    const err = listTasksGate(undefined, "ZOE", undefined);
     expect(err).toBeNull();
   });
 });

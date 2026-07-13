@@ -48,7 +48,7 @@ async function seedNoteWithOrgId(ctx: any): Promise<string> {
 		content: "Full content of the scoped briefing note",
 		createdBy: "sigma",
 		createdAt: Date.now(),
-		orgId: "iris-rh", // the field missing from old validators
+		orgId: "acme-hr", // the field missing from old validators
 	});
 }
 
@@ -85,7 +85,7 @@ describe("briefingNotes.get — orgId returns-validator regression", () => {
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Briefing with orgId");
 		// After fix: orgId is present in the returned document
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T2: get — note WITHOUT orgId (backward compat) ──────────────────────
@@ -125,7 +125,7 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 		// get should return the updated doc (with orgId still present)
 		const result = await t.query(api.briefingNotes.get, { noteId: noteId as any });
 		expect(result?.content).toBe("Updated content after orgId fix");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T4: update on note WITHOUT orgId ─────────────────────────────────────

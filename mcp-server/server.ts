@@ -20,9 +20,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
 import { registerTools } from "./src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ function loadConvexUrl(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const convexUrl = loadConvexUrl();
-const convex = new ConvexHttpClient(convexUrl);
+const convex = createServiceAccountConvexClient(convexUrl);
 
 const server = new McpServer({
 	name: "vantage-peers",

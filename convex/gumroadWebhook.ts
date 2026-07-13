@@ -17,7 +17,7 @@
  *   GUMROAD_PRODUCT_ID_FR       — Gumroad product permalink/id for FR listing
  *   RESEND_API_KEY              — Resend API key for transactional email
  *   RESEND_FROM                 — Sender address, e.g. "VantagePeers <noreply@vantagepeers.com>"
- *   CEDRIC_CALENDAR_URL         — (optional) Google Calendar booking URL for Cédric
+ *   BOB_CALENDAR_URL         — (optional) Google Calendar booking URL for Bob
  */
 
 import { createHmac } from "node:crypto";
@@ -34,11 +34,11 @@ const DOC_URL_EN =
 const DOC_URL_FR =
 	"https://github.com/vantageos-agency/vantage-peers/blob/main/docs/install-FR.md";
 
-// GitHub repos for session 2. Read from CEDRIC_GITHUB_REPOS_CSV env var in prod
+// GitHub repos for session 2. Read from BOB_GITHUB_REPOS_CSV env var in prod
 // (comma-separated list of 5 GitHub URLs). Falls back to placeholder URLs for
 // first ship if the env var is not configured yet.
 function getGithubRepos(): [string, string, string, string, string] {
-	const csv = process.env.CEDRIC_GITHUB_REPOS_CSV;
+	const csv = process.env.BOB_GITHUB_REPOS_CSV;
 	if (csv) {
 		const parts = csv.split(",").map((s) => s.trim());
 		if (parts.length >= 5) {
@@ -731,11 +731,10 @@ export const handleGumroadWebhook = internalAction({
 		}
 
 		// ── 6. Build and send onboarding email ────────────────────────────────────
-		// CALENDAR_URL: set CEDRIC_CALENDAR_URL env var in prod.
+		// CALENDAR_URL: set BOB_CALENDAR_URL env var in prod.
 		// Fallback to placeholder if not configured.
 		const calendarUrl =
-			process.env.CEDRIC_CALENDAR_URL ??
-			"https://calendar.app.google/PLACEHOLDER"; // Pi/Laurent: set CEDRIC_CALENDAR_URL in Convex dashboard
+			process.env.BOB_CALENDAR_URL ?? "https://calendar.app.google/PLACEHOLDER"; // Pi/Laurent: set BOB_CALENDAR_URL in Convex dashboard
 
 		const displayName = customerName ?? customerEmail;
 		const repos = getGithubRepos();

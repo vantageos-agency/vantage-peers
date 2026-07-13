@@ -53,7 +53,7 @@ import type * as migrations from "../migrations.js";
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
 import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_stale_deploy_tasks.js";
 import type * as migrations_diary_backfill_createdBy from "../migrations/diary_backfill_createdBy.js";
-import type * as migrations_patch_marie_iris_rh_scope from "../migrations/patch_marie_iris_rh_scope.js";
+import type * as migrations_patch_alice_acme_hr_scope from "../migrations/patch_alice_acme_hr_scope.js";
 import type * as migrations_populateOrgIds from "../migrations/populateOrgIds.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as missionTemplates from "../missionTemplates.js";
@@ -125,7 +125,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;
   "migrations/dedup_stale_deploy_tasks": typeof migrations_dedup_stale_deploy_tasks;
   "migrations/diary_backfill_createdBy": typeof migrations_diary_backfill_createdBy;
-  "migrations/patch_marie_iris_rh_scope": typeof migrations_patch_marie_iris_rh_scope;
+  "migrations/patch_alice_acme_hr_scope": typeof migrations_patch_alice_acme_hr_scope;
   "migrations/populateOrgIds": typeof migrations_populateOrgIds;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   missionTemplates: typeof missionTemplates;

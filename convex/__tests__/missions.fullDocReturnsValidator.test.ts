@@ -52,7 +52,7 @@ async function seedMissionWithOrgId(ctx: any): Promise<string> {
 		createdBy: "sigma",
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
-		orgId: "iris-rh", // the field missing from old validators
+		orgId: "acme-hr", // the field missing from old validators
 	});
 }
 
@@ -92,7 +92,7 @@ describe("missions.get — orgId returns-validator regression", () => {
 		expect(result).not.toBeNull();
 		expect(result?.name).toBe("Mission with orgId");
 		// After fix: orgId is present in the returned document
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T2: get — mission WITHOUT orgId (backward compat) ───────────────────
@@ -129,7 +129,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 
 		const result = await t.query(api.missions.get, { missionId: missionId as any });
 		expect(result?.priority).toBe("urgent");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T4: update on mission WITHOUT orgId ─────────────────────────────────
@@ -165,7 +165,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 
 		const result = await t.query(api.missions.get, { missionId: missionId as any });
 		expect(result?.status).toBe("validate");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 });
 

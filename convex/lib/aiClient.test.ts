@@ -66,14 +66,14 @@ describe("resolveEmbeddingPath", () => {
 		}
 	});
 
-	test("AI_GATEWAY_API_KEY with sk- key (Cédric bug) → openai-direct path", () => {
+	test("AI_GATEWAY_API_KEY with sk- key (Bob bug) → openai-direct path", () => {
 		// This is the root cause: user put a direct OpenAI key into AI_GATEWAY_API_KEY.
 		// Previously this routed to ai-gateway.vercel.sh → 401 → recall() returned [].
-		process.env.AI_GATEWAY_API_KEY = "sk-proj-cedricDirectKey123";
+		process.env.AI_GATEWAY_API_KEY = "sk-proj-bobDirectKey123";
 		const resolved = resolveEmbeddingPath();
 		expect(resolved.path).toBe("openai-direct");
 		if (resolved.path === "openai-direct") {
-			expect(resolved.apiKey).toBe("sk-proj-cedricDirectKey123");
+			expect(resolved.apiKey).toBe("sk-proj-bobDirectKey123");
 		}
 	});
 
@@ -125,11 +125,11 @@ describe("getAITextEmbeddingProvider", () => {
 		expect(typeof provider.textEmbeddingModel).toBe("function");
 	});
 
-	test("Cédric bug path: sk-* in AI_GATEWAY_API_KEY → returns callable provider (not throwing)", () => {
+	test("Bob bug path: sk-* in AI_GATEWAY_API_KEY → returns callable provider (not throwing)", () => {
 		// This is the regression test for the fix.
 		// Before the fix, this key would be sent to ai-gateway.vercel.sh → 401.
 		// After the fix, it routes to api.openai.com/v1.
-		process.env.AI_GATEWAY_API_KEY = "sk-proj-cedricDirectKey123";
+		process.env.AI_GATEWAY_API_KEY = "sk-proj-bobDirectKey123";
 		const provider = getAITextEmbeddingProvider();
 		expect(provider).toBeTruthy();
 		expect(typeof provider.textEmbeddingModel).toBe("function");
@@ -172,11 +172,11 @@ describe("getEmbeddingModelName", () => {
 		expect(getEmbeddingModelName()).toBe("text-embedding-3-small");
 	});
 
-	test("Cédric bug path: sk-* in AI_GATEWAY_API_KEY → bare model name (direct path)", () => {
+	test("Bob bug path: sk-* in AI_GATEWAY_API_KEY → bare model name (direct path)", () => {
 		// After fix: sk-* key in AI_GATEWAY_API_KEY → direct path → bare model name.
 		// Before fix: gateway path was taken → "openai/" prefix → wrong model name
 		// sent to api.openai.com/v1 (which rejects the prefix) → 400 error.
-		process.env.AI_GATEWAY_API_KEY = "sk-proj-cedricDirectKey123";
+		process.env.AI_GATEWAY_API_KEY = "sk-proj-bobDirectKey123";
 		expect(getEmbeddingModelName()).toBe("text-embedding-3-small");
 	});
 

@@ -312,10 +312,10 @@ pilot       participants[]  orchestratorId  callerOrchestrator
 **Required test coverage:** every tool that reads an orchestrator-ID filter argument MUST have tests covering:
 
 ```
-"Helios"  →  allowed
-"helios"  →  allowed
-"HELIOS"  →  allowed
-"Hélios"  →  allowed (accented variant — see §7 for unicode normalization)
+"Zoe"  →  allowed
+"zoe"  →  allowed
+"ZOE"  →  allowed
+"Zoé"  →  allowed (accented variant — see §7 for unicode normalization)
 "sigma"   →  forbidden (different identity)
 ```
 
@@ -337,13 +337,13 @@ if (!allowed) throw new Error("Forbidden");
 
 ---
 
-**FR :** TOUS les champs d'identité d'orchestrateur utilisés comme filtres ou sujets d'autorisation DOIVENT être comparés sans sensibilité à la casse. Normaliser les deux côtés via `.toLowerCase()`. Référence canonique : `mcp-server/src/list-tasks-gate.ts` (PR #654, commit `00b95f0`). Tests obligatoires : `Helios`, `helios`, `HELIOS`, `Hélios`, `sigma` (rejeté).
+**FR :** TOUS les champs d'identité d'orchestrateur utilisés comme filtres ou sujets d'autorisation DOIVENT être comparés sans sensibilité à la casse. Normaliser les deux côtés via `.toLowerCase()`. Référence canonique : `mcp-server/src/list-tasks-gate.ts` (PR #654, commit `00b95f0`). Tests obligatoires : `Zoe`, `zoe`, `ZOE`, `Zoé`, `sigma` (rejeté).
 
 ---
 
 ## §7 — Unicode NFC Normalization
 
-**EN:** Silent mismatches occur when the same visual string is stored in different Unicode forms — e.g. `Hélios` composed (NFC, U+00E9) vs `Hélios` decomposed (NFD, e + U+0301). These are byte-inequal but visually identical.
+**EN:** Silent mismatches occur when the same visual string is stored in different Unicode forms — e.g. `Zoé` composed (NFC, U+00E9) vs `Zoé` decomposed (NFD, e + U+0301). These are byte-inequal but visually identical.
 
 **Rule:**
 
@@ -517,7 +517,7 @@ if (client.status === "revoked") {
 1. Nominal path — expected inputs, expected output shape (outputSchema valid)
 2. Auth rejection — non-master token on master-only tool returns 403
 3. Cross-tenant isolation — token A cannot read/write token B's data
-4. Case variants — Helios / helios / HELIOS all accepted for valid identity
+4. Case variants — Zoe / zoe / ZOE all accepted for valid identity
 5. Unicode variants — NFC vs NFD variants match as equal
 6. Error shape — ConvexError codes match expected HTTP status
 ```
@@ -661,8 +661,8 @@ server.tool(
        FR : Label défini dans les métadonnées d'enregistrement (`readOnlyHint`, `destructiveHint`, `title`).
 
 6. [ ] **Case-insensitive lookup:** all orchestrator-ID filter args compared via
-       `.toLowerCase()` / Set normalization (§6). Tests cover Helios/helios/HELIOS variants.
-       FR : Tous les args de filtre d'identité comparés via `.toLowerCase()`. Tests couvrent Helios/helios/HELIOS.
+       `.toLowerCase()` / Set normalization (§6). Tests cover Zoe/zoe/ZOE variants.
+       FR : Tous les args de filtre d'identité comparés via `.toLowerCase()`. Tests couvrent Zoe/zoe/ZOE.
 
 7. [ ] **Unicode NFC normalization:** `field.normalize('NFC').trim()` applied at write on
        all orchestrator-ID and namespace fields (§7).

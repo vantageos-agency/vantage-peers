@@ -30,7 +30,7 @@ Day 92 VP MCP quality overhaul (mission `k57a36y8w5t085bqr23dsmvb2d882506`, PR #
 
 - **C0 — 14 P0 zero-auth write tools secured** with master-only gates (`guardMasterOnly` / `checkFromAllowed`); all 14 tools identified in the A1 audit matrix (commit `d03d2d7`) now require an explicit scope gate before any mutation reaches Convex.
 - **C1 — 87 Zod `outputSchema` exports** following the per-family envelope standard (`create_*` → `{id,...}`, `list_*` → `{items,cursor}`, `delete_*` → `{id,deleted:true}`, etc.) based on the `whoamiOutputSchema` precedent (commit `5231811`).
-- **C2 — Unicode NFC normalization + case-insensitive orchestrator-ID matching** applied at all write paths and filter comparisons; closes the NFD/NFC silent mismatch class discovered in the Hélios/helios production regression.
+- **C2 — Unicode NFC normalization + case-insensitive orchestrator-ID matching** applied at all write paths and filter comparisons; closes the NFD/NFC silent mismatch class discovered in the Zoé/zoe production regression.
 - **C3 — 97 tool descriptions standardized** (1-line summary + WHEN clause + concrete EXAMPLE, 80–500 chars) + 10 canonical aliases aligned to the `verb_noun_snake` whitelist.
 - **PR-J (Day 113) — canonical 114-tool snapshot quality gate** (`mcp-server/src/__tests__/tools-descriptions-canonical.test.ts`): inventory floor ≥100, length floor ≥60 chars, placeholder ban, category contracts (every `list_*` mentions `limit` + `cap`/`default 20`/`default 100`; every recall-class tool carries the PR-H VP-Sources doctrine verbatim). 15 `list_*` descriptions amended in T-GREEN `41944dc` to add the paging qualifier `Default limit N. cap M.` aligned with PR-A/B/C/E precedent.
 - **C4 — `claude-peers` legacy references removed** from source and docs + grep-gate CI check to prevent reintroduction.
@@ -184,7 +184,7 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 | Layer | Token type | scopeProfile | Namespace access |
 |-------|-----------|-------------|-----------------|
 | 1 | `BEARER_SECRET_MASTER` static token | `master` | Full — all namespaces |
-| 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `marie-iris-rh`) | Per-profile prefix list |
+| 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `alice-acme-hr`) | Per-profile prefix list |
 | 2.5 | **Clerk JWT** (org session, `org_id` claim present) | `team-member` | `team/<orgId>/*` only |
 | 3 | DCR auto-registered client (`oauthTokens` table) | `client-generic` | Deny-by-default (empty prefixes) |
 | 4 | Legacy internal bearer (`mcpTenants` table) | unscoped | Tenant deployment URL routing |

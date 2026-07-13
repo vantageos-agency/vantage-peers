@@ -181,8 +181,8 @@ export function checkFromAllowed(
 	if (ctx.fromAllowList.includes(from)) return null;
 	// Day 88 friction capitalize: surface the allowed values so the LLM caller
 	// can self-correct on the next attempt instead of guessing identifiers.
-	// Marie onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
-	// the actual allowlist was ["marie"].
+	// Alice onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
+	// the actual allowlist was ["alice"].
 	const allowed =
 		ctx.fromAllowList.length === 0
 			? "(none — this client has no allowed 'from' identities)"
@@ -303,7 +303,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		// connector looks for `resource_metadata=` to bootstrap PRM discovery; with
 		// `resource=` the entire DCR chain breaks before any token is issued.
 		//
-		// Day 107 Cédric BLOCKER root cause: a hardcoded fallback to the
+		// Day 107 Bob BLOCKER root cause: a hardcoded fallback to the
 		// VantagePeers Cloud production URL ("vantage-peers-production.up.railway.app")
 		// meant Self-host deploys that forgot PUBLIC_BASE_URL silently advertised
 		// Sigma's PRM endpoint, breaking every Self-host customer's DCR chain with

@@ -6,8 +6,8 @@
  * separate file to satisfy mcp-server tsconfig rootDir constraint).
  *
  * Rule: NFC normalize → lowercase → trim.
- * This collapses "Hélios" (composed), "Hélios" (decomposed NFD), "HELIOS",
- * "Helios", "helios", "hélios" all to "hélios".
+ * This collapses "Zoé" (composed), "Zoé" (decomposed NFD), "ZOE",
+ * "Zoe", "zoe", "zoé" all to "zoé".
  *
  * Reference: PR #667, mission k57a36y8w5t085bqr23dsmvb2d882506.
  */

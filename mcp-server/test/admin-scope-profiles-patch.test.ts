@@ -89,7 +89,7 @@ const MASTER = "test-master-token"; // matches vitest.config.ts env
 beforeEach(() => {
 	state.mutationCalls.length = 0;
 	state.mutationImpl = async () => ({
-		patchedProfileId: "iris-rh",
+		patchedProfileId: "acme-hr",
 		cascadeRevokedCount: 0,
 		clientsRetargeted: 0,
 		auditLogId: "audit-fake-1",
@@ -136,17 +136,17 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T1 — happy path
 	it("T1 200 with valid master Bearer + valid body returns mutation result", async () => {
 		state.mutationImpl = async () => ({
-			patchedProfileId: "iris-rh",
+			patchedProfileId: "acme-hr",
 			cascadeRevokedCount: 3,
 			clientsRetargeted: 1,
 			auditLogId: "audit-1",
 		});
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{
-				rename: "iris-rh",
-				namespaceReadPrefixes: ["iris/"],
-				namespaceWritePrefixes: ["iris/"],
+				rename: "acme-hr",
+				namespaceReadPrefixes: ["acme/"],
+				namespaceWritePrefixes: ["acme/"],
 				cascadeRevokeTokens: true,
 				reason: VALID_REASON,
 			},
@@ -154,7 +154,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as Record<string, unknown>;
-		expect(body.patchedProfileId).toBe("iris-rh");
+		expect(body.patchedProfileId).toBe("acme-hr");
 		expect(body.cascadeRevokedCount).toBe(3);
 		expect(body.clientsRetargeted).toBe(1);
 		expect(body.auditLogId).toBe("audit-1");
@@ -163,7 +163,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T2 — missing Authorization header
 	it("T2 401 when Authorization header missing", async () => {
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{
 				cascadeRevokeTokens: false,
 				reason: VALID_REASON,
@@ -177,7 +177,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T3 — non-master Bearer
 	it("T3 403 when Bearer is not the master token", async () => {
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{ cascadeRevokeTokens: false, reason: VALID_REASON },
 			"Bearer not-the-master-token",
 		);
@@ -188,7 +188,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T4 — malformed bearer (length differs) — constant-time compare path
 	it("T4 401/403 on malformed bearer (no Bearer prefix)", async () => {
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{ cascadeRevokeTokens: false, reason: VALID_REASON },
 			MASTER, // no "Bearer " prefix
 		);
@@ -199,7 +199,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T5 — body validation: missing required cascadeRevokeTokens
 	it("T5 400 when required field cascadeRevokeTokens is missing", async () => {
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{ reason: VALID_REASON },
 			`Bearer ${MASTER}`,
 		);
@@ -212,7 +212,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T5b — body validation: missing reason
 	it("T5b 400 when reason missing", async () => {
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{ cascadeRevokeTokens: false },
 			`Bearer ${MASTER}`,
 		);
@@ -228,7 +228,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 			);
 		};
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{ cascadeRevokeTokens: false, reason: "too short" },
 			`Bearer ${MASTER}`,
 		);
@@ -238,7 +238,7 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T5d — malformed JSON body
 	it("T5d 400 when body is not valid JSON", async () => {
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			"{ not json",
 			`Bearer ${MASTER}`,
 		);
@@ -250,19 +250,19 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	it("T6 cascade-update oauth_clients on rename + audit log returned", async () => {
 		state.mutationImpl = async (args) => {
 			// Verify the mutation was called with rename arg
-			expect(args.rename).toBe("iris-rh");
-			expect(args.profileId).toBe("marie-iris-rh");
+			expect(args.rename).toBe("acme-hr");
+			expect(args.profileId).toBe("alice-acme-hr");
 			return {
-				patchedProfileId: "iris-rh",
+				patchedProfileId: "acme-hr",
 				cascadeRevokedCount: 0,
 				clientsRetargeted: 2,
 				auditLogId: "audit-rename-1",
 			};
 		};
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{
-				rename: "iris-rh",
+				rename: "acme-hr",
 				cascadeRevokeTokens: false,
 				reason: VALID_REASON,
 			},
@@ -279,19 +279,19 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	it("T7 cascade-revoke tokens when cascadeRevokeTokens=true + count returned", async () => {
 		state.mutationImpl = async (args) => {
 			expect(args.cascadeRevokeTokens).toBe(true);
-			expect(args.namespaceReadPrefixes).toEqual(["iris/"]);
+			expect(args.namespaceReadPrefixes).toEqual(["acme/"]);
 			return {
-				patchedProfileId: "marie-iris-rh",
+				patchedProfileId: "alice-acme-hr",
 				cascadeRevokedCount: 5,
 				clientsRetargeted: 0,
 				auditLogId: "audit-revoke-1",
 			};
 		};
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{
-				namespaceReadPrefixes: ["iris/"],
-				namespaceWritePrefixes: ["iris/"],
+				namespaceReadPrefixes: ["acme/"],
+				namespaceWritePrefixes: ["acme/"],
 				cascadeRevokeTokens: true,
 				reason: VALID_REASON,
 			},
@@ -319,11 +319,11 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	it("T9 400 typed error on D4 violation (global/* in tenant profile)", async () => {
 		state.mutationImpl = async () => {
 			throw new Error(
-				'D4 violation: profile "marie-iris-rh" cannot include "global" in namespace prefixes',
+				'D4 violation: profile "alice-acme-hr" cannot include "global" in namespace prefixes',
 			);
 		};
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{
 				namespaceReadPrefixes: ["global"],
 				cascadeRevokeTokens: false,
@@ -339,15 +339,15 @@ describe("PATCH /admin/scope-profiles/:id — S2.2 D5", () => {
 	// T10 — full response shape contract
 	it("T10 response shape: patchedProfileId + cascadeRevokedCount + clientsRetargeted + auditLogId", async () => {
 		state.mutationImpl = async () => ({
-			patchedProfileId: "iris-rh",
+			patchedProfileId: "acme-hr",
 			cascadeRevokedCount: 7,
 			clientsRetargeted: 3,
 			auditLogId: "audit-shape-1",
 		});
 		const res = await reqPatch(
-			"marie-iris-rh",
+			"alice-acme-hr",
 			{
-				rename: "iris-rh",
+				rename: "acme-hr",
 				cascadeRevokeTokens: true,
 				reason: VALID_REASON,
 			},

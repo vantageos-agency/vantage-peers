@@ -41,15 +41,15 @@ const masterLayerCtx: OAuthContext = {
 	isMaster: true,
 };
 
-/** Layer 2 (OAuth scoped token, admin-provisioned) — marie-iris-rh scope */
-const marieOAuthCtx: OAuthContext = {
-	clientId: "marie-client-id",
-	userId: "marie",
+/** Layer 2 (OAuth scoped token, admin-provisioned) — alice-acme-hr scope */
+const aliceOAuthCtx: OAuthContext = {
+	clientId: "alice-client-id",
+	userId: "alice",
 	scopes: ["vantage:read", "vantage:write"],
-	scopeProfile: "marie-iris-rh",
-	fromAllowList: ["marie"],
-	namespaceReadPrefixes: ["orchestrator/victor", "project/marie", "global"],
-	namespaceWritePrefixes: ["orchestrator/victor", "project/marie", "global"],
+	scopeProfile: "alice-acme-hr",
+	fromAllowList: ["alice"],
+	namespaceReadPrefixes: ["orchestrator/victor", "project/alice", "global"],
+	namespaceWritePrefixes: ["orchestrator/victor", "project/alice", "global"],
 	expiresAt: now + 3600_000,
 	isMaster: false,
 };
@@ -131,7 +131,7 @@ describe("DCR scope enforcement — bearer layer selection", () => {
 	it("3. master bearer token: full access to all namespaces and from values", () => {
 		expect(isMasterScope(masterLayerCtx)).toBe(true);
 		expect(checkFromAllowed(masterLayerCtx, "pi")).toBeNull();
-		expect(checkFromAllowed(masterLayerCtx, "marie")).toBeNull();
+		expect(checkFromAllowed(masterLayerCtx, "alice")).toBeNull();
 		expect(checkNamespaceRead(masterLayerCtx, "orchestrator/pi")).toBeNull();
 		expect(checkNamespaceWrite(masterLayerCtx, "project/top-secret")).toBeNull();
 	});
@@ -170,9 +170,9 @@ describe("DCR scope enforcement — bearer layer selection", () => {
 			expect(checkNamespaceRead(dcrTokenCtx, "global")).toMatch(/Forbidden/);
 		});
 
-		it("tool: recall(namespace=orchestrator/victor) via marie-oauth-token → OK", () => {
-			// Properly provisioned OAuth token for Marie can read victor's namespace
-			expect(checkNamespaceRead(marieOAuthCtx, "orchestrator/victor")).toBeNull();
+		it("tool: recall(namespace=orchestrator/victor) via alice-oauth-token → OK", () => {
+			// Properly provisioned OAuth token for Alice can read victor's namespace
+			expect(checkNamespaceRead(aliceOAuthCtx, "orchestrator/victor")).toBeNull();
 		});
 
 		it("tool: create_task(assignedTo=pi) via DCR token → Forbidden (from check)", () => {
@@ -180,10 +180,10 @@ describe("DCR scope enforcement — bearer layer selection", () => {
 			expect(checkFromAllowed(dcrTokenCtx, "pi")).toMatch(/Forbidden/);
 		});
 
-		it("tool: send_message(from=marie) via master token → OK (backward compat)", () => {
+		it("tool: send_message(from=alice) via master token → OK (backward compat)", () => {
 			// Master token can send as any orchestrator — regression check
-			expect(checkFromAllowed(masterLayerCtx, "marie")).toBeNull();
-			expect(checkNamespaceWrite(masterLayerCtx, "project/marie")).toBeNull();
+			expect(checkFromAllowed(masterLayerCtx, "alice")).toBeNull();
+			expect(checkNamespaceWrite(masterLayerCtx, "project/alice")).toBeNull();
 		});
 	});
 });

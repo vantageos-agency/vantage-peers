@@ -52,7 +52,7 @@ describe("Memories", () => {
 
 		expect(memoryId).toBeDefined();
 
-		const memory = await t.query(api.memories.getMemory, { memoryId });
+		const memory = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		expect(memory!.content).toBe("VantagePeers uses Convex as its backend");
 		expect(memory!.type).toBe("project");
@@ -88,7 +88,7 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const alphaResult = await t.query(api.memories.listMemories, {
+		const alphaResult = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.listMemories, {
 			namespace: "project/alpha",
 		});
 
@@ -125,7 +125,7 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const projectResult = await t.query(api.memories.listMemories, {
+		const projectResult = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.listMemories, {
 			namespace: "global",
 			type: "project",
 		});
@@ -147,12 +147,12 @@ describe("Memories", () => {
 
 		await t.mutation(api.memories.softDeleteMemory, { memoryId });
 
-		const memory = await t.query(api.memories.getMemory, { memoryId });
+		const memory = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		expect(memory!.isLatest).toBe(false);
 
 		// Should not appear in default (isLatest=true) listing
-		const listedResult = await t.query(api.memories.listMemories, {
+		const listedResult = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.listMemories, {
 			namespace: "global",
 		});
 		expect(listedResult.value.find((m) => m._id === memoryId)).toBeUndefined();
@@ -179,21 +179,21 @@ describe("Memories", () => {
 		});
 
 		// Original should now have isLatest=false
-		const original = await t.query(api.memories.getMemory, {
+		const original = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.getMemory, {
 			memoryId: originalId,
 		});
 		expect(original).not.toBeNull();
 		expect(original!.isLatest).toBe(false);
 
 		// Updated should have isLatest=true
-		const updated = await t.query(api.memories.getMemory, {
+		const updated = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.getMemory, {
 			memoryId: updatedId,
 		});
 		expect(updated).not.toBeNull();
 		expect(updated!.isLatest).toBe(true);
 
 		// Default listing should only show the updated version
-		const listedResult = await t.query(api.memories.listMemories, {
+		const listedResult = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.listMemories, {
 			namespace: "global",
 		});
 		expect(listedResult.value).toHaveLength(1);
@@ -212,7 +212,7 @@ describe("Memories", () => {
 			// relations intentionally omitted
 		});
 
-		const memory = await t.query(api.memories.getMemory, { memoryId });
+		const memory = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		if (memory === null) throw new Error("memory must not be null");
 		expect(Array.isArray(memory.relations)).toBe(true);
@@ -242,7 +242,7 @@ describe("Episodes", () => {
 		expect(episodeId).toBeDefined();
 
 		// Retrieve via getMemory to verify structure
-		const memory = await t.query(api.memories.getMemory, {
+		const memory = await t.withIdentity({ subject: "test-internal-reader" }).query(api.memories.getMemory, {
 			memoryId: episodeId,
 		});
 		expect(memory).not.toBeNull();

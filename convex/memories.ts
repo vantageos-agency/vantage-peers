@@ -116,7 +116,9 @@ export const storeMemory = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getMemory = query({
-  args: { memoryId: v.string() },
+  args: {
+    memoryId: v.string(),
+  },
   returns: v.union(
     v.object({
       _id: v.id("memories"),
@@ -158,7 +160,7 @@ export const getMemory = query({
     );
     const doc = await ctx.db.get(memoryId);
     if (doc === null) return null;
-    const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+    const scope = await withOrgScope(ctx);
     if (!isNamespaceAllowedForScope(scope, doc.namespace)) return null;
     return doc;
   },
@@ -223,7 +225,7 @@ export const listMemories = query({
   },
   returns: listMemoriesResultValidator,
   handler: async (ctx, args) => {
-    const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+    const scope = await withOrgScope(ctx);
     if (!isNamespaceAllowedForScope(scope, args.namespace)) {
       return { value: [], continueCursor: null, isDone: true };
     }

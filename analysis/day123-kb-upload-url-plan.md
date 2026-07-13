@@ -11,7 +11,7 @@ Il n'existe **AUCUNE** fonction `generateUploadUrl` ni route d'upload dans tout 
 - `grep -rniE "generateUploadUrl" --include=*.ts .` (hors node_modules/tests) → **1 seule occurrence, un commentaire** dans `mcp-server/src/tools/kbIngest.ts:76` (« Upload the file via generateUploadUrl → POST → get storageId first »).
 - Routes `convex/http.ts` = `/github/webhook`, `/issueBearerFromClerk`, `/api/gumroad-webhook`, `/api/eta/verify-publish-token` — **aucune upload/storage**.
 
-`store_document_chunked` (kb.ts:184) exige un `storageId` d'un blob **déjà uploadé**, mais **rien n'expose `ctx.storage.generateUploadUrl()`** → aucun client (Marie incluse) ne peut obtenir de `storageId` → **personne ne peut uploader** → cause du prod 0-doc (`npx convex data _storage` et `kbUploads` = vides). En amont du fix d'indexation #1056 (déjà en prod, 99c5cbf), qui reste correct mais inerte sans upload.
+`store_document_chunked` (kb.ts:184) exige un `storageId` d'un blob **déjà uploadé**, mais **rien n'expose `ctx.storage.generateUploadUrl()`** → aucun client (Alice incluse) ne peut obtenir de `storageId` → **personne ne peut uploader** → cause du prod 0-doc (`npx convex data _storage` et `kbUploads` = vides). En amont du fix d'indexation #1056 (déjà en prod, 99c5cbf), qui reste correct mais inerte sans upload.
 
 ## 2. Forme de la fonction (T2)
 

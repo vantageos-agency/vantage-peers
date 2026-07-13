@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * License system tests — W2 Cédric onboarding.
+ * License system tests — W2 Bob onboarding.
  *
  * Tests: generate / activate / validate / requireActiveLicense middleware.
  * 9 test cases covering: happy paths, auth failures, expiry, revocation, unknown.
@@ -50,7 +50,7 @@ describe("generate", () => {
 
 		const result = await t.mutation(api.licenses.generate, {
 			callerToken: MASTER_TOKEN,
-			customerEmail: "cedric@example.com",
+			customerEmail: "bob@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
 		});
@@ -96,7 +96,7 @@ describe("activate", () => {
 		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
 		return await t.mutation(api.licenses.generate, {
 			callerToken: MASTER_TOKEN,
-			customerEmail: "cedric@example.com",
+			customerEmail: "bob@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
 			...overrides,
@@ -109,7 +109,7 @@ describe("activate", () => {
 
 		const result = await t.mutation(api.licenses.activate, {
 			licenseKey,
-			customerEmail: "cedric@example.com",
+			customerEmail: "bob@example.com",
 		});
 
 		expect(result.ok).toBe(true);
@@ -141,7 +141,7 @@ describe("activate", () => {
 		await expect(
 			t.mutation(api.licenses.activate, {
 				licenseKey,
-				customerEmail: "cedric@example.com",
+				customerEmail: "bob@example.com",
 			}),
 		).rejects.toThrow("License invalid or expired");
 	});
@@ -171,7 +171,7 @@ describe("validate", () => {
 		// Generate with expiresInDays=1 so it's active now
 		const { licenseKey } = await t.mutation(api.licenses.generate, {
 			callerToken: MASTER_TOKEN,
-			customerEmail: "cedric@example.com",
+			customerEmail: "bob@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
 			expiresInDays: 1,
@@ -184,7 +184,7 @@ describe("validate", () => {
 
 		expect(result.status).toBe("expired");
 		expect(result.expiresAt).toBeDefined();
-		expect(result.customerEmail).toBe("cedric@example.com");
+		expect(result.customerEmail).toBe("bob@example.com");
 	});
 });
 
@@ -197,7 +197,7 @@ describe("requireActiveLicense", () => {
 		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
 		return await t.mutation(api.licenses.generate, {
 			callerToken: MASTER_TOKEN,
-			customerEmail: "cedric@example.com",
+			customerEmail: "bob@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
 		});
@@ -231,7 +231,7 @@ describe("requireActiveLicense", () => {
 		const t = createTestConvex();
 		const { licenseKey } = await t.mutation(api.licenses.generate, {
 			callerToken: MASTER_TOKEN,
-			customerEmail: "cedric@example.com",
+			customerEmail: "bob@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
 			expiresInDays: 1,

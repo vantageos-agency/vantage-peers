@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Gumroad webhook handler tests — W3 Cédric onboarding.
+ * Gumroad webhook handler tests — W3 Bob onboarding.
  *
  * 5 cases: EN happy path, FR happy path, invalid signature, non-whitelisted
  * product_id, idempotent duplicate gumroadOrderId.
@@ -37,8 +37,8 @@ function buildGumroadBody(overrides?: {
 	const params = new URLSearchParams({
 		product_id: overrides?.product_id ?? PRODUCT_ID_EN,
 		sale_id: overrides?.sale_id ?? "sale_test_001",
-		email: overrides?.email ?? "cedric@example.com",
-		full_name: overrides?.full_name ?? "Cédric Test",
+		email: overrides?.email ?? "bob@example.com",
+		full_name: overrides?.full_name ?? "Bob Test",
 	});
 	return params.toString();
 }
@@ -95,8 +95,8 @@ describe("handleGumroadWebhook", () => {
 		const body = buildGumroadBody({
 			product_id: PRODUCT_ID_EN,
 			sale_id: "sale_en_001",
-			email: "cedric-en@example.com",
-			full_name: "Cédric EN",
+			email: "bob-en@example.com",
+			full_name: "Bob EN",
 		});
 		const signature = sign(body, WEBHOOK_SECRET);
 
@@ -136,7 +136,7 @@ describe("handleGumroadWebhook", () => {
 
 		expect(license).not.toBeNull();
 		expect(license?.purchaseLocale).toBe("en");
-		expect(license?.customerEmail).toBe("cedric-en@example.com");
+		expect(license?.customerEmail).toBe("bob-en@example.com");
 		expect(license?.emailSent).toBe(false);
 	});
 
@@ -148,8 +148,8 @@ describe("handleGumroadWebhook", () => {
 		const body = buildGumroadBody({
 			product_id: PRODUCT_ID_FR,
 			sale_id: "sale_fr_001",
-			email: "cedric-fr@example.com",
-			full_name: "Cédric FR",
+			email: "bob-fr@example.com",
+			full_name: "Bob FR",
 		});
 		const signature = sign(body, WEBHOOK_SECRET);
 
@@ -182,7 +182,7 @@ describe("handleGumroadWebhook", () => {
 
 		expect(license).not.toBeNull();
 		expect(license?.purchaseLocale).toBe("fr");
-		expect(license?.customerEmail).toBe("cedric-fr@example.com");
+		expect(license?.customerEmail).toBe("bob-fr@example.com");
 	});
 
 	// ── Case 3: Invalid HMAC signature → 401, no license ────────────────────────
@@ -267,7 +267,7 @@ describe("handleGumroadWebhook", () => {
 		const body = buildGumroadBody({
 			product_id: PRODUCT_ID_EN,
 			sale_id: "sale_idempotent_001",
-			email: "cedric-idem@example.com",
+			email: "bob-idem@example.com",
 		});
 		const signature = sign(body, WEBHOOK_SECRET);
 
@@ -426,14 +426,14 @@ describe("handleGumroadWebhook", () => {
 	test("8. trial license for email → webhook upgrades to active, keyHash unchanged, isUpgraded=true", async () => {
 		const t = createTestConvex();
 
-		const trialEmail = "cedric@example.com";
+		const trialEmail = "bob@example.com";
 
 		// Pre-seed a trial license for the same email
 		const trialId = await t.run(async (ctx) => {
 			return await ctx.db.insert("licenses", {
 				keyHash: "deadbeef-trial-hash",
 				customerEmail: trialEmail,
-				customerName: "Cédric Trial",
+				customerName: "Bob Trial",
 				productCode: "vantage-peers-self-host",
 				tier: "open-core-trial",
 				purchasedAt: Date.now() - 7 * 24 * 60 * 60 * 1000, // 7 days ago
@@ -446,7 +446,7 @@ describe("handleGumroadWebhook", () => {
 			product_id: PRODUCT_ID_EN,
 			sale_id: "sale_trial_upgrade_001",
 			email: trialEmail,
-			full_name: "Cédric Trial",
+			full_name: "Bob Trial",
 		});
 		const signature = sign(body, WEBHOOK_SECRET);
 

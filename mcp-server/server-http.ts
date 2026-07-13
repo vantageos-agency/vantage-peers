@@ -32,7 +32,6 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { timingSafeEqual } from "@vantageos/cloud-identity";
-import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -42,6 +41,7 @@ import {
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
+import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -62,7 +62,7 @@ try {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Day 107 Cédric BLOCKER root cause: previously hardcoded a fallback to the
+// Day 107 Bob BLOCKER root cause: previously hardcoded a fallback to the
 // VantagePeers Cloud production URL, which meant Self-host deploys forgetting
 // PUBLIC_BASE_URL silently advertised Sigma's URL in OAuth metadata and broke
 // every Self-host customer's DCR chain with `invalid_client`. Fix: env-only
@@ -926,7 +926,7 @@ app.get("/health", (c) =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin endpoints — master token only
-// Used by Pi to provision OAuth clients for external users (Marie, VIP).
+// Used by Pi to provision OAuth clients for external users (Alice, VIP).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const admin = new Hono();
@@ -1496,8 +1496,9 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	const tenant = c.get("tenant");
 	const oauthCtx = c.get("oauthContext");
 
-	// Per-request Convex client bound to the resolved deployment
-	const convex = new ConvexHttpClient(tenant.convexUrl);
+	// Per-request Convex client bound to the resolved deployment, authenticated
+	// as the MCP server's Clerk service-account identity.
+	const convex = createServiceAccountConvexClient(tenant.convexUrl);
 
 	// Fresh McpServer per request — stateless mode, no session leakage
 	const server = new McpServer({

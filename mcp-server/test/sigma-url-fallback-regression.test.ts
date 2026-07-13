@@ -1,5 +1,5 @@
 /**
- * Day 107 — Sigma URL fallback removed (Cédric Self-host BLOCKER root cause).
+ * Day 107 — Sigma URL fallback removed (Bob Self-host BLOCKER root cause).
  *
  * Regression test for PR #875.
  *
@@ -78,13 +78,13 @@ describe("bearerAuthMiddleware publicBaseUrl derive-from-request (#875)", () => 
 
 		const res = await app.request("/protected", {
 			headers: {
-				host: "cedric-selfhost.io",
+				host: "bob-selfhost.io",
 				"x-forwarded-proto": "https",
 			},
 		});
 		expect(res.status).toBe(401);
 		const header = res.headers.get("WWW-Authenticate");
-		expect(header).toContain("cedric-selfhost.io");
+		expect(header).toContain("bob-selfhost.io");
 		expect(header).not.toContain(SIGMA_CLOUD_URL);
 		expect(header).not.toContain("other-tenant.example.org");
 	});

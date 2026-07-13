@@ -69,7 +69,7 @@
 | `memories-search` | search-results | Hybrid search (vector+BM25) avec score + snippet | 🔄 TO BUILD | — |
 | `episode-detail` | detail-view | Affichage structuré episode (context/goal/action/outcome/insight) | 🔄 TO BUILD | — |
 
-**Notes** : Scoping multi-tenant par `namespace` (ex: `project/iris-rh`). `isLatest=false` = superseded, à masquer par défaut. TTL field → badge d'expiration. Episode type nécessite un rendu spécifique (5 champs structurés).
+**Notes** : Scoping multi-tenant par `namespace` (ex: `project/acme-hr`). `isLatest=false` = superseded, à masquer par défaut. TTL field → badge d'expiration. Episode type nécessite un rendu spécifique (5 champs structurés).
 
 ---
 
@@ -415,7 +415,7 @@
 
 ### Table : `oauth_clients`
 
-**Finalité business** : Clients OAuth 2.0 enregistrés dynamiquement (RFC 7591) — Claude.ai custom connector, Marie, clients VIP.
+**Finalité business** : Clients OAuth 2.0 enregistrés dynamiquement (RFC 7591) — Claude.ai custom connector, Alice, clients VIP.
 **Cardinality typique** : small (<100)
 **Convex queries principales** : `oauth_clients.getByClientId`, `oauth_clients.list`
 **Convex mutations principales** : `oauth_clients.register`, `oauth_clients.revoke`

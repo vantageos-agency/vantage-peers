@@ -3,9 +3,9 @@
  * of list_messages, list_briefing_notes, list_peers).
  *
  * Root cause: PR #625 commit 28db616 introduced a pre-gate in list_tasks that
- * compares assignedTo|createdBy to oauthCtx.userId ("helios-iris-rh") instead
- * of checking membership in oauthCtx.fromAllowList (["Clio","clio","Hélios",
- * "Helios","helios","hélios","Victor","victor"]).
+ * compares assignedTo|createdBy to oauthCtx.userId ("zoe-acme-hr") instead
+ * of checking membership in oauthCtx.fromAllowList (["Milo","milo","Zoé",
+ * "Zoe","zoe","zoé","Victor","victor"]).
  *
  * Reference fix pattern: tools.ts L1383-1399 check_messages (commit 24b39c5).
  *
@@ -27,29 +27,29 @@ import type { OAuthContext } from "../src/auth.js";
 import { listTasksGate } from "../src/list-tasks-gate.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TRIO fromAllowList fixture (Hélios + Clio + Victor cross-persona, Day 92)
+// TRIO fromAllowList fixture (Zoé + Milo + Victor cross-persona, Day 92)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TRIO_FROM_ALLOW_LIST = [
-	"Clio",
-	"clio",
-	"Hélios",
-	"Helios",
-	"helios",
-	"hélios",
+	"Milo",
+	"milo",
+	"Zoé",
+	"Zoe",
+	"zoe",
+	"zoé",
 	"Victor",
 	"victor",
 ];
 
-function heliosCtx(): OAuthContext {
+function zoeCtx(): OAuthContext {
 	return {
 		clientId: "2e5d41df-b8f8-4f1a-95aa-2eb0d6bdadb7",
-		userId: "helios-iris-rh",
+		userId: "zoe-acme-hr",
 		scopes: ["vantage:read", "vantage:write"],
-		scopeProfile: "helios-iris-rh",
+		scopeProfile: "zoe-acme-hr",
 		fromAllowList: TRIO_FROM_ALLOW_LIST,
-		namespaceReadPrefixes: ["orchestrator/helios-iris-rh"],
-		namespaceWritePrefixes: ["orchestrator/helios-iris-rh"],
+		namespaceReadPrefixes: ["orchestrator/zoe-acme-hr"],
+		namespaceWritePrefixes: ["orchestrator/zoe-acme-hr"],
 		expiresAt: Date.now() + 3_600_000,
 		isMaster: false,
 	};
@@ -75,8 +75,8 @@ function masterCtx(): OAuthContext {
 
 describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 	describe("master scope — all filters pass", () => {
-		it("allows assignedTo=Helios", () => {
-			expect(listTasksGate(masterCtx(), "Helios", undefined)).toBeNull();
+		it("allows assignedTo=Zoe", () => {
+			expect(listTasksGate(masterCtx(), "Zoe", undefined)).toBeNull();
 		});
 		it("allows assignedTo=attacker", () => {
 			expect(listTasksGate(masterCtx(), "attacker", undefined)).toBeNull();
@@ -86,35 +86,35 @@ describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 		});
 	});
 
-	describe("non-master helios-iris-rh scope with TRIO fromAllowList", () => {
-		const ctx = heliosCtx();
+	describe("non-master zoe-acme-hr scope with TRIO fromAllowList", () => {
+		const ctx = zoeCtx();
 
-		it("allows assignedTo=Helios (exact match in list)", () => {
-			expect(listTasksGate(ctx, "Helios", undefined)).toBeNull();
+		it("allows assignedTo=Zoe (exact match in list)", () => {
+			expect(listTasksGate(ctx, "Zoe", undefined)).toBeNull();
 		});
 
-		it("allows assignedTo=Hélios (exact with accent)", () => {
-			expect(listTasksGate(ctx, "Hélios", undefined)).toBeNull();
+		it("allows assignedTo=Zoé (exact with accent)", () => {
+			expect(listTasksGate(ctx, "Zoé", undefined)).toBeNull();
 		});
 
-		it("allows assignedTo=helios (lowercase variant — case-insensitive)", () => {
-			expect(listTasksGate(ctx, "helios", undefined)).toBeNull();
+		it("allows assignedTo=zoe (lowercase variant — case-insensitive)", () => {
+			expect(listTasksGate(ctx, "zoe", undefined)).toBeNull();
 		});
 
-		it("allows assignedTo=HELIOS (uppercase variant — case-insensitive)", () => {
-			expect(listTasksGate(ctx, "HELIOS", undefined)).toBeNull();
+		it("allows assignedTo=ZOE (uppercase variant — case-insensitive)", () => {
+			expect(listTasksGate(ctx, "ZOE", undefined)).toBeNull();
 		});
 
-		it("allows assignedTo=hélios (lowercase accent variant)", () => {
-			expect(listTasksGate(ctx, "hélios", undefined)).toBeNull();
+		it("allows assignedTo=zoé (lowercase accent variant)", () => {
+			expect(listTasksGate(ctx, "zoé", undefined)).toBeNull();
 		});
 
-		it("allows assignedTo=Clio", () => {
-			expect(listTasksGate(ctx, "Clio", undefined)).toBeNull();
+		it("allows assignedTo=Milo", () => {
+			expect(listTasksGate(ctx, "Milo", undefined)).toBeNull();
 		});
 
-		it("allows assignedTo=clio (lowercase)", () => {
-			expect(listTasksGate(ctx, "clio", undefined)).toBeNull();
+		it("allows assignedTo=milo (lowercase)", () => {
+			expect(listTasksGate(ctx, "milo", undefined)).toBeNull();
 		});
 
 		it("allows assignedTo=Victor", () => {
@@ -125,12 +125,12 @@ describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 			expect(listTasksGate(ctx, "victor", undefined)).toBeNull();
 		});
 
-		it("allows createdBy=Helios", () => {
-			expect(listTasksGate(ctx, undefined, "Helios")).toBeNull();
+		it("allows createdBy=Zoe", () => {
+			expect(listTasksGate(ctx, undefined, "Zoe")).toBeNull();
 		});
 
-		it("allows createdBy=Clio", () => {
-			expect(listTasksGate(ctx, undefined, "Clio")).toBeNull();
+		it("allows createdBy=Milo", () => {
+			expect(listTasksGate(ctx, undefined, "Milo")).toBeNull();
 		});
 
 		it("allows no filter (no assignedTo, no createdBy) — Convex handles intersection", () => {
@@ -145,18 +145,18 @@ describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 			expect(listTasksGate(ctx, "attacker", undefined)).toMatch(/Forbidden/);
 		});
 
-		it("rejects assignedTo=marie — not in TRIO list", () => {
-			expect(listTasksGate(ctx, "marie", undefined)).toMatch(/Forbidden/);
+		it("rejects assignedTo=alice — not in TRIO list", () => {
+			expect(listTasksGate(ctx, "alice", undefined)).toMatch(/Forbidden/);
 		});
 
 		it("rejects createdBy=Outsider", () => {
 			expect(listTasksGate(ctx, undefined, "Outsider")).toMatch(/Forbidden/);
 		});
 
-		it("rejects assignedTo=helios-iris-rh (the profile name is NOT a valid filter)", () => {
-			// The profile name "helios-iris-rh" is not in fromAllowList — it's not
-			// an orchestrator identity. Orchestrators identify as "Helios"/"helios"/etc.
-			expect(listTasksGate(ctx, "helios-iris-rh", undefined)).toMatch(
+		it("rejects assignedTo=zoe-acme-hr (the profile name is NOT a valid filter)", () => {
+			// The profile name "zoe-acme-hr" is not in fromAllowList — it's not
+			// an orchestrator identity. Orchestrators identify as "Zoe"/"zoe"/etc.
+			expect(listTasksGate(ctx, "zoe-acme-hr", undefined)).toMatch(
 				/Forbidden/,
 			);
 		});
@@ -174,20 +174,20 @@ describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("list_messages — scopeFilterList symmetric audit", () => {
-	const ctx = heliosCtx();
+	const ctx = zoeCtx();
 
 	it("master scope: any createdBy passes", () => {
 		const rows = [{ createdBy: "Outsider", namespace: undefined }];
 		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
-	it("non-master: row with createdBy=Helios passes (exact in fromAllowList)", () => {
-		const rows = [{ createdBy: "Helios" }];
+	it("non-master: row with createdBy=Zoe passes (exact in fromAllowList)", () => {
+		const rows = [{ createdBy: "Zoe" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
-	it("non-master: row with createdBy=Clio passes", () => {
-		const rows = [{ createdBy: "Clio" }];
+	it("non-master: row with createdBy=Milo passes", () => {
+		const rows = [{ createdBy: "Milo" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
@@ -203,14 +203,14 @@ describe("list_messages — scopeFilterList symmetric audit", () => {
 
 	it("non-master: mixed rows filtered correctly", () => {
 		const rows = [
-			{ createdBy: "Helios" },
+			{ createdBy: "Zoe" },
 			{ createdBy: "Outsider" },
-			{ createdBy: "Clio" },
+			{ createdBy: "Milo" },
 			{ createdBy: "attacker" },
 		];
 		const filtered = scopeFilterList(ctx as unknown as OAuthCtx, rows);
 		expect(filtered).toHaveLength(2);
-		expect(filtered.map((r) => r.createdBy)).toEqual(["Helios", "Clio"]);
+		expect(filtered.map((r) => r.createdBy)).toEqual(["Zoe", "Milo"]);
 	});
 
 	it("non-master: no rows → empty (no crash)", () => {
@@ -223,21 +223,21 @@ describe("list_messages — scopeFilterList symmetric audit", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("list_briefing_notes — scopeFilterList symmetric audit", () => {
-	const ctx = heliosCtx();
+	const ctx = zoeCtx();
 
 	it("master scope: any row passes", () => {
 		const rows = [{ createdBy: "anyone" }];
 		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
-	it("non-master: row with createdBy=Helios passes", () => {
-		const rows = [{ createdBy: "Helios" }];
+	it("non-master: row with createdBy=Zoe passes", () => {
+		const rows = [{ createdBy: "Zoe" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
-	it("non-master: row with createdBy=hélios passes (accent variant in list)", () => {
-		// "hélios" is in fromAllowList verbatim — exact match
-		const rows = [{ createdBy: "hélios" }];
+	it("non-master: row with createdBy=zoé passes (accent variant in list)", () => {
+		// "zoé" is in fromAllowList verbatim — exact match
+		const rows = [{ createdBy: "zoé" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
@@ -247,7 +247,7 @@ describe("list_briefing_notes — scopeFilterList symmetric audit", () => {
 	});
 
 	it("non-master: row with namespace matching prefix passes", () => {
-		const rows = [{ namespace: "orchestrator/helios-iris-rh/notes" }];
+		const rows = [{ namespace: "orchestrator/zoe-acme-hr/notes" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 });
@@ -257,15 +257,15 @@ describe("list_briefing_notes — scopeFilterList symmetric audit", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("list_peers — scopeFilterList symmetric audit", () => {
-	const ctx = heliosCtx();
+	const ctx = zoeCtx();
 
 	it("master scope: any row passes", () => {
 		const rows = [{ createdBy: "anyone" }];
 		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
-	it("non-master: peer with createdBy=Helios passes", () => {
-		const rows = [{ createdBy: "Helios" }];
+	it("non-master: peer with createdBy=Zoe passes", () => {
+		const rows = [{ createdBy: "Zoe" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 
@@ -281,8 +281,8 @@ describe("list_peers — scopeFilterList symmetric audit", () => {
 
 	it("non-master: multiple peers, only TRIO members visible", () => {
 		const rows = [
-			{ createdBy: "Helios" },
-			{ createdBy: "Clio" },
+			{ createdBy: "Zoe" },
+			{ createdBy: "Milo" },
 			{ createdBy: "Victor" },
 			{ createdBy: "ExternalBot" },
 		];

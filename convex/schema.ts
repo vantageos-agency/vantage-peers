@@ -206,7 +206,7 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number(),
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
-		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
+		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
 	})
 		.index("by_project", ["project", "status"])
@@ -250,7 +250,7 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number(),
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
-		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
+		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
@@ -302,7 +302,7 @@ export default defineSchema({
 		updatedAt: v.optional(v.number()), // set on first update
 		updatedBy: v.optional(creatorValidator), // orchestrator that last updated
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
-		// Set to Clerk org slug (e.g. "iris-rh") for client-scoped rows.
+		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
 	})
 		.index("by_topic", ["topic"])
@@ -656,7 +656,7 @@ export default defineSchema({
 
 	// ── oauth_clients ─────────────────────────────────────────────────────────
 	// OAuth 2.0 Dynamic Client Registration (RFC 7591).
-	// One row per registered OAuth client (Claude.ai custom connector, Marie,
+	// One row per registered OAuth client (Claude.ai custom connector, Alice,
 	// future Perello VIP clients). Each client is bound to a scopeProfile that
 	// limits the `from=` allowlist and namespace read/write prefixes.
 	//
@@ -666,7 +666,7 @@ export default defineSchema({
 		clientId: v.string(), // public identifier (UUID)
 		clientSecretHash: v.string(), // SHA-256 hex of raw secret
 		redirectUris: v.array(v.string()),
-		name: v.string(), // human label, e.g. "marie-iris-rh"
+		name: v.string(), // human label, e.g. "alice-acme-hr"
 		scopeProfile: v.string(), // FK to oauth_scope_profiles.profileId
 		createdAt: v.number(),
 		revokedAt: v.optional(v.number()),
@@ -733,10 +733,10 @@ export default defineSchema({
 	// profileId; the access_token materialises the profile into the token row
 	// so scope changes on the profile don't retroactively grant or revoke.
 	//
-	// Seeded on first deploy via oauth.seedDefaultProfiles: master, marie-iris-rh,
+	// Seeded on first deploy via oauth.seedDefaultProfiles: master, alice-acme-hr,
 	// client-generic (deny-by-default template).
 	oauth_scope_profiles: defineTable({
-		profileId: v.string(), // stable slug e.g. "marie-iris-rh"
+		profileId: v.string(), // stable slug e.g. "alice-acme-hr"
 		description: v.string(),
 		fromAllowList: v.array(v.string()),
 		namespaceReadPrefixes: v.array(v.string()),
@@ -958,7 +958,7 @@ export default defineSchema({
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex
 	// dashboard or npx convex run after merge.
 	//
-	// clerkOrgSlug: the Clerk organisation slug (e.g. "iris-rh", "novalayer").
+	// clerkOrgSlug: the Clerk organisation slug (e.g. "acme-hr", "novalayer").
 	//   Maps to `identity.organizationId ?? identity.organizationSlug` in Convex
 	//   auth helpers.
 	// allowedOrchestrators: which orchestrator pilots/assignees this org can see.
@@ -969,13 +969,13 @@ export default defineSchema({
 	// isActive: false = org is disabled (returns Forbidden) without deleting the row.
 	//
 	// Seed rows (post-merge, Sigma runs npx convex run):
-	//   iris-rh   → allowedOrchestrators=["victor"], scopes=["view-own-tasks","view-own-missions","view-orchestrator-summary"]
+	//   acme-hr   → allowedOrchestrators=["victor"], scopes=["view-own-tasks","view-own-missions","view-orchestrator-summary"]
 	//   novalayer → allowedOrchestrators=["phi"],    scopes=["view-own-tasks","view-own-missions"]
 	client_org_mapping: defineTable({
-		clerkOrgSlug: v.string(), // "iris-rh"
+		clerkOrgSlug: v.string(), // "acme-hr"
 		allowedOrchestrators: v.array(v.string()), // ["victor"] or ["*"] for master sentinel
 		scopes: v.array(v.string()), // ["view-own-tasks", "view-own-missions", ...]
-		displayName: v.string(), // "Iris RH"
+		displayName: v.string(), // "Acme HR"
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})
@@ -1036,7 +1036,7 @@ export default defineSchema({
 	// One row per patchScopeProfileEmergency invocation.
 	// actorTokenHash = sha256Hex of the callerToken (raw token never stored).
 	// previousState + newState allow forensic reconstruction of leaked scopes.
-	// S1.2-mutation: captures Day 90 Marie `global` leak remediation.
+	// S1.2-mutation: captures Day 90 Alice `global` leak remediation.
 	// S2.1-D9: clientsRetargeted added (additive, optional for backward compat).
 	oauth_audit_log: defineTable({
 		eventType: v.string(),
