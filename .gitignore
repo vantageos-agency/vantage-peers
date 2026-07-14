@@ -23,3 +23,12 @@ apps/
 .playwright-mcp/
 _archive/
 mcp-server/dist/
+
+# Compiled Python artefacts. NOT merely noise: a .pyc keeps the SOURCE STRINGS
+# in its bytecode, so a committed .pyc goes on leaking identifiers long after the
+# source has been purged -- and a directory-copy distribution ships whatever sits
+# in the tree. Gitignoring is not enough on its own: the file has to actually be
+# absent. (Day 130: the leak guard's own .pyc was published carrying 6 client-name
+# hits in its bytecode, invisible to the guard because the guard refused to open it.)
+__pycache__/
+*.pyc

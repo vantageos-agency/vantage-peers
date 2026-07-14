@@ -4,10 +4,9 @@
 Context (Day 130): `vantageos-agency/vantage-peers` is a PUBLIC repo and the
 plugin under plugin/ is PUBLISHED. The VantageRegistry canonical for
 `session-start` carries a hardcoded orchestrator/workspace identity table
-containing REAL client names, a REAL person's name, and internal VPS paths:
-
-    "/root/coding/victor-workspace": ("victor", "victor-vps",
-        "Victor — Iris RH (Marie Parrent)", "project/iris-rh"),
+that pairs internal VPS workspace paths with real, third-party client
+organisation names and their real contact persons' names, one row per
+client engagement.
 
 Blindly resyncing packaged sources from VR would import that leak into the
 public package. Hence this guard, and hence the rule that it OUTRANKS parity:
@@ -23,7 +22,7 @@ no guard.
 
 MATCHING DISCIPLINE — word-boundary / token matching, NEVER substrings.
 A prior fleet purge did substring matching and renamed "summaries" because it
-contains "marie" ("sum|marie|s"). We do not repeat that. Every pattern below
+contains a fragment of a client contact's first name. We do not repeat that. Every pattern below
 is anchored with \\b word boundaries (or is a path/structural pattern), and
 the false-positive corpus in tests/plugin/test_leak_guard.py pins the benign
 terms that must NEVER match: "summaries", "client-side", "client delivery".
@@ -41,6 +40,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from client_identity_config import (  # noqa: E402
+    ClientIdentityConfigError,
+    hash_matcher_findings,
+    resolve_config_path,
+    resolve_vocabulary_or_fail,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # =============================================================================
@@ -53,24 +61,44 @@ TIER_CLIENT_DATA = "CLIENT_DATA"
 TIER_INTERNAL_ID = "INTERNAL_ID"
 
 # --- TIER 1: REAL CLIENT DATA. Hard block, always, everywhere. ---------------
-# Third-party client organisations and their contact persons. This is client
-# confidentiality: never sync, never publish, no exceptions, no baselining.
-# Exactly ONE VR canonical carries this today: `session-start`
-#   "Victor — Iris RH (Marie Parrent)"        -> project/iris-rh
-#   "Gaia — ... (1er client Marie Josée / Mini Mondes)"
-# It is NOT currently public (absent from origin/main and from the distributed
-# plugin copies). It is a LOADED GUN, not a live leak -- and we keep it that way.
+# Day 130 (Eta review, PR #1090): a hand-typed list rots at every new client --
+# the next one is always the one nobody remembered to add, and it printed
+# PASSED straight through the gap. As of this fix, the ENTIRE live client
+# vocabulary is RESOLVED at run time from a host-side config (see
+# client_identity_config.py, `VANTAGE_CLIENT_IDENTITIES`) and merged in via
+# `extra_client_patterns` in `main()`. `main()` FAILS LOUDLY, and never prints
+# PASSED, if that config cannot be resolved. Do NOT add any client identifier
+# (org name, contact person, commercial name, infra slug/alias) to a literal
+# list in this file -- ALL client vocabulary lives exclusively in the host
+# config, never in source under version control.
 #
-# Keep this list SPECIFIC. A generic word here (e.g. bare "client") would fire
-# on benign prose and get the guard disabled by the next engineer.
+# This file therefore carries NO literal client-org/contact-person entries at
+# all -- that is the fix, not an oversight. The regression tests in
+# tests/plugin/test_leak_guard.py exercise this tier entirely through
+# resolved, host-config-derived patterns (real config in CI/local dev, a
+# throwaway fictitious config for offline unit tests), never through literals
+# committed here.
+#
+# Third-party client organisations and their contact persons are client
+# confidentiality: never sync, never publish, no exceptions, no baselining.
+#
+# Keep any future addition here SPECIFIC and non-client. A generic word (e.g.
+# bare "client") would fire on benign prose and get the guard disabled by the
+# next engineer. As of Day 130 the literal client-org/contact set is empty by
+# design -- see rationale above.
 CLIENT_DATA_PATTERNS: list[tuple[str, str]] = [
-    (r"\bparrent\b", "real person surname (client contact)"),
-    (r"\bmarie\s+parrent\b", "real person full name (client contact)"),
-    (r"\biris[\s\-_]?rh\b", "real client org name"),
-    (r"\bmarie[\s\-]jos[ée]e\b", "real person name (client contact)"),
-    (r"\bmini[\s\-]?mondes\b", "real client org name"),
-    (r"\bminimondesdemarie\b", "real client org/domain"),
-    (r"\balsachimie\b", "real client org name"),
+    # Real Convex deployment slugs are a CLIENT's live production infrastructure
+    # identifier, not an internal operator detail. Listed by literal value, ON
+    # PURPOSE, NOT by a generic adjective-animal-number shape regex: measured
+    # against the packaged artifact, a shape-based `\b[a-z]+-[a-z]+-\d+\b`
+    # pattern hits dozens of unrelated hyphenated identifiers (hook names,
+    # example CSS classes, decision-doc slugs -- none of them Convex
+    # deployments) for the one real slug it is meant to catch. A pattern with
+    # that false-positive ratio is exactly the kind of guard that gets ripped
+    # out after mutilating a doc it shouldn't have touched. Confirmed real
+    # slugs belong in the host config's `aliases` key, not here;
+    # `guineapig-77` (skills/deploy-track/SKILL.md) is a pedagogical worked
+    # example, not client data, and MUST stay off any such list.
 ]
 
 # --- TIER 2: INTERNAL IDENTIFIERS ONLY. Tracked, not hard-blocked. -----------
@@ -94,6 +122,12 @@ INTERNAL_ID_PATTERNS: list[tuple[str, str]] = [
     (r"\bperello[\s\-]?consulting\b", "operator's own org name (not a client)"),
     (r"\b[a-z]+-vps\b", "internal VPS instance identifier"),
     (r"\bpi-chromebook\b", "internal operator machine identifier"),
+    # The maintainer's own first name -- Day 130 T3 finding: it ships verbatim
+    # in 10 packaged files. This is the operator's own identity, not a client's
+    # (that distinction is what keeps this TIER 2, not TIER 1): still real PII
+    # in a PUBLIC package, tracked and regression-gated like every other
+    # internal identifier above.
+    (r"\blaurent\b", "operator's own first name"),
 ]
 
 ALL_PATTERNS: list[tuple[str, str, str]] = [
@@ -110,6 +144,11 @@ class LeakFinding:
     pattern: str
     reason: str
     category: str
+    is_hash_match: bool = False
+    # Hash-mode findings never carry the raw matched n-gram or line content
+    # forward to output -- the entire point of the hashed vocabulary is that
+    # the plaintext identity is never resolvable in CI. `render()` below
+    # enforces that at the display boundary too, not just at match time.
 
     @property
     def tier(self) -> str:
@@ -120,6 +159,11 @@ class LeakFinding:
         return self.category == TIER_CLIENT_DATA
 
     def render(self) -> str:
+        if self.is_hash_match:
+            # Generic reason only -- file + line number, NEVER the raw
+            # n-gram/line content. Displaying the line would leak the very
+            # plaintext the hash vocabulary exists to avoid ever holding.
+            return f"{self.source}:{self.line_no}: [{self.category}: {self.reason}]"
         return (
             f"{self.source}:{self.line_no}: [{self.category}: {self.reason}] "
             f"matched /{self.pattern}/\n      {self.line.strip()[:160]}"
@@ -132,6 +176,8 @@ class LeakFinding:
         on them would produce phantom 'new' findings. We key on the offending
         token as it appears, plus the pattern that caught it.
         """
+        if self.is_hash_match:
+            return (self.pattern, self.line_no)
         m = re.search(self.pattern, self.line, flags=re.IGNORECASE)
         return (self.pattern, m.group(0).lower() if m else "")
 
@@ -175,23 +221,154 @@ def packaged_paths(root: Path = None) -> list[Path]:
     )
 
 
-def repo_wide_baseline(ref: str = None) -> list["LeakFinding"]:
+# --- Derived, full-artifact inventory ---------------------------------------
+# Day 130 T2 finding: the two hand-written globs above (`skills/*/SKILL.md`,
+# `hooks/*.py`) see 53 of 284 files in a real published package -- 19%
+# coverage. Anything under `references/`, `evals/`, `docs/`, `templates/`, a
+# nested `agents/` tree, etc. is invisible to them. `derive_inventory` below
+# is the replacement: it walks the artifact directory from disk (never a
+# hand-maintained list) so CHECKED + SKIPPED always sums to 100% of what is
+# actually shipped. This is the same discipline `vr_plugin_parity.py` already
+# uses (`Path.iterdir()` there) -- applied here to the whole tree, not just
+# two subfolders.
+
+# Directories excluded from scanning, WITH a written reason each. This is the
+# only silent-skip surface allowed, and it is not silent: every path skipped
+# for one of these reasons is reported as SKIPPED, never simply absent.
+EXCLUDED_DIR_NAMES: dict[str, str] = {
+    ".git": "version-control internals, never shipped as package content",
+    "node_modules": "third-party dependency tree, not first-party package content",
+    # __pycache__ is deliberately NOT excluded any more. It used to be, with the
+    # reason "never shipped" -- which was simply untrue: the .pyc was committed,
+    # published, and carried client names in its bytecode. An exclusion is a claim
+    # about reality; when the claim is wrong, the exclusion becomes the hiding
+    # place. If a __pycache__ is present in a shipped tree, that is itself the
+    # finding, and the guard must be able to say so.
+}
+
+# NOTHING IS SKIPPED FOR BEING BINARY. Every shipped file is read as BYTES.
+#
+# The previous version skipped binary extensions "not scanned as text", and
+# excluded __pycache__ with the comment "compiled bytecode cache, not source,
+# never shipped". Both were false, and together they hid a live leak:
+# scripts/__pycache__/leak_guard.cpython-312.pyc was COMMITTED and PUBLISHED on
+# the public repo, and `strings` on its bytecode returned 6 client-name hits.
+# The .pyc of the leak guard was leaking the very identifiers the leak guard
+# exists to catch, and the guard could not see it because it refused to open it.
+#
+# Purging a name from the SOURCE does not remove it from a compiled artifact:
+# string constants survive in bytecode. And a directory-copy distribution ships
+# whatever sits in the tree, tracked or not. This repo's own plugin CHANGELOG had
+# already written the lesson down -- "the bytecode has to actually be absent from
+# the directory" -- and this guard did not apply it.
+#
+# So: bytes, always. Decoding is latin-1, which cannot raise and maps every byte
+# to exactly one character, so ASCII identifiers embedded in any container --
+# bytecode, archives, images with metadata -- are still found. Scanning a binary
+# for a name yields at worst a harmless false-positive line number; NOT scanning
+# it yields a silent leak. Those two failure modes are not comparable.
+BINARY_EXTENSIONS: frozenset[str] = frozenset()
+
+
+def _claudepluginignore_patterns(root: Path) -> list[str]:
+    ignore_file = root / ".claudepluginignore"
+    if not ignore_file.is_file():
+        return []
+    lines = ignore_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+
+
+@dataclass
+class InventoryItem:
+    path: Path
+    skip_reason: str | None = None  # None == CHECKED; set == SKIPPED-with-reason
+
+    @property
+    def checked(self) -> bool:
+        return self.skip_reason is None
+
+
+def derive_inventory(root: Path) -> list[InventoryItem]:
+    """Walk `root` on disk and classify every shipped file as CHECKED or
+    SKIPPED-with-a-written-reason. CHECKED ∪ SKIPPED == 100% of `root`'s files,
+    by construction (every file yielded by the walk gets exactly one
+    InventoryItem). Never a hand-written file list.
+    """
+    if not root.is_dir():
+        raise FileNotFoundError(f"leak guard inventory root does not exist or is not a directory: {root}")
+
+    ignore_patterns = _claudepluginignore_patterns(root)
+    items: list[InventoryItem] = []
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIR_NAMES]
+        dpath = Path(dirpath)
+        for fname in sorted(filenames):
+            fpath = dpath / fname
+            rel = fpath.relative_to(root).as_posix()
+
+            reason = None
+            if fpath.suffix.lower() in BINARY_EXTENSIONS:
+                reason = f"binary file extension {fpath.suffix!r}, not scanned as text"
+            else:
+                for pat in ignore_patterns:
+                    if fpath.match(pat) or rel == pat or rel.startswith(pat.rstrip("/") + "/"):
+                        reason = f".claudepluginignore pattern {pat!r}"
+                        break
+
+            items.append(InventoryItem(path=fpath, skip_reason=reason))
+
+    return items
+
+
+def repo_wide_baseline(ref: str = None, paths: list[Path] | None = None, git_root: Path | None = None) -> list["LeakFinding"]:
     """Every internal identifier already public across the packaged artifact on `ref`.
 
-    Derived from git + the packaged directories, never hand-maintained.
+    Derived from git + the packaged directories, never hand-maintained. `paths`
+    defaults to `packaged_paths()` (this script's own two-glob artifact) for
+    backward compatibility with existing callers/tests; `main()` passes the
+    DERIVED inventory + the target artifact's own `git_root` when scanning an
+    external package.
     """
     ref = ref or BASELINE_REF
     out: list[LeakFinding] = []
-    for p in packaged_paths():
-        out.extend(scan_baseline(p, ref))
+    for p in (paths if paths is not None else packaged_paths()):
+        out.extend(scan_baseline(p, ref, git_root=git_root))
     return out
 
 
-def scan_text(text: str, source: str) -> list[LeakFinding]:
-    """Return every leak finding in `text`. Empty list == clean."""
+def scan_text(
+    text: str,
+    source: str,
+    extra_client_patterns: list[tuple[str, str]] | None = None,
+    hash_vocab: dict | None = None,
+) -> list[LeakFinding]:
+    """Return every leak finding in `text`. Empty list == clean.
+
+    `extra_client_patterns` -- (regex, reason) pairs, TIER_CLIENT_DATA -- lets
+    callers merge in the RESOLVED, host-config-derived client vocabulary
+    (see client_identity_config.py) on top of the small set of historical,
+    already-reviewed literals in `CLIENT_DATA_PATTERNS` below. `main()` is the
+    only caller that is REQUIRED to pass a resolved set (and fails loudly,
+    never PASSED, if it cannot resolve one) -- direct `scan_text` callers
+    (tests, `vr_plugin_parity.py`) may omit it when they are only exercising
+    the pre-existing, already-reviewed pattern set.
+
+    `hash_vocab` -- the salted-hash vocabulary dict from
+    `client_identity_config.resolve_client_hash_vocabulary()` (CI mode). When
+    given, each line is ALSO scanned via `hash_matcher_findings`, catching the
+    same client vocabulary via salted-hash n-gram matching instead of regex.
+    Mutually usable alongside `extra_client_patterns` (local dev with both
+    sources available), though callers normally pass exactly one.
+    """
+    patterns = ALL_PATTERNS
+    if extra_client_patterns:
+        patterns = ALL_PATTERNS + [
+            (p, r, TIER_CLIENT_DATA) for p, r in extra_client_patterns
+        ]
     findings: list[LeakFinding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
-        for pattern, reason, category in ALL_PATTERNS:
+        for pattern, reason, category in patterns:
             if re.search(pattern, line, flags=re.IGNORECASE):
                 findings.append(
                     LeakFinding(
@@ -203,18 +380,125 @@ def scan_text(text: str, source: str) -> list[LeakFinding]:
                         category=category,
                     )
                 )
+        if hash_vocab is not None:
+            for _, reason in hash_matcher_findings(line, hash_vocab):
+                findings.append(
+                    LeakFinding(
+                        source=source,
+                        line_no=line_no,
+                        line="",  # never carried forward for hash matches
+                        pattern="<salted-hash-vocabulary-match>",
+                        reason=reason,
+                        category=TIER_CLIENT_DATA,
+                        is_hash_match=True,
+                    )
+                )
     return findings
 
 
-def scan_file(path: Path) -> list[LeakFinding]:
-    return scan_text(path.read_text(encoding="utf-8", errors="replace"), str(path))
+def scan_file(
+    path: Path,
+    extra_client_patterns: list[tuple[str, str]] | None = None,
+    hash_vocab: dict | None = None,
+) -> list[LeakFinding]:
+    # THE NAME IS PART OF THE ARTIFACT.
+    #
+    # A guard that reads what is INSIDE a file and never what it is CALLED is blind
+    # to a leak that is visible in `ls`. `convex/migrations/patch_marie_iris_rh_scope.ts`
+    # is tracked on the PUBLIC main branch: the client's contact and org are in the
+    # FILE NAME, and every content scan ever run over this repo reported it clean,
+    # because it was — inside.
+    #
+    # SCAN THE REPO-RELATIVE NAME, NEVER THE ABSOLUTE ONE.
+    #
+    # The absolute path says where *I* happened to clone the repo, not what the repo
+    # ships. Scanning it flagged 13 files for carrying an "internal VPS workspace
+    # path" — /root/coding/<checkout>/… — which is true of the checkout and false of
+    # the artifact. A guard that reports the shape of its own working directory as a
+    # leak in the code is crying wolf, and the next engineer silences it.
+    #
+    # The name that matters is the one in the tree, which is also the one the baseline
+    # compares against.
+    try:
+        rel_name = path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        rel_name = path.name  # outside the repo (tmp fixtures): the bare name is the claim
+
+    findings = scan_text(
+        rel_name,
+        str(path),
+        extra_client_patterns=extra_client_patterns,
+        hash_vocab=hash_vocab,
+    )
+
+    # BYTES, not text. latin-1 cannot raise and maps every byte to exactly one
+    # character, so ASCII identifiers embedded in ANY container -- Python
+    # bytecode, an archive, image metadata -- are still found. utf-8 with
+    # errors="replace" would mangle those regions into U+FFFD and quietly lose
+    # the very strings we are hunting: the search would come back clean, which is
+    # the one answer a leak scanner must never give by accident.
+    findings.extend(
+        scan_text(
+            path.read_bytes().decode("latin-1"),
+            str(path),
+            extra_client_patterns=extra_client_patterns,
+            hash_vocab=hash_vocab,
+        )
+    )
+    return findings
 
 
 BASELINE_REF = os.environ.get("LEAK_GUARD_BASELINE_REF", "origin/main")
 
 
-def scan_baseline(path: Path, ref: str = BASELINE_REF) -> list[LeakFinding]:
-    """Scan the SAME file as it exists on `ref` (default origin/main).
+def _git_toplevel(start: Path) -> Path | None:
+    """Return the git repo root containing `start`, or None if it isn't one."""
+    proc = subprocess.run(
+        ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return Path(proc.stdout.strip())
+
+
+class BaselineUnresolvableError(RuntimeError):
+    """The baseline ref itself could not be resolved. Never silently empty."""
+
+
+_REF_RESOLVED: set[tuple[str, str]] = set()
+
+
+def _assert_ref_resolvable(ref: str, root: Path) -> None:
+    """Fail loudly if `ref` does not exist in `root`. Cached per (ref, root)."""
+    key = (ref, str(root))
+    if key in _REF_RESOLVED:
+        return
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise BaselineUnresolvableError(
+            f"baseline ref {ref!r} does not resolve in {root}. Without it the guard "
+            f"cannot tell a PRE-EXISTING identifier from a NEW one, and would report "
+            f"every already-public token as a fresh regression. Fetch the ref "
+            f"(e.g. `git fetch origin main`, and in CI check out with fetch-depth: 0), "
+            f"or set LEAK_GUARD_BASELINE_REF to a ref that exists. "
+            f"Refusing to judge a diff against a baseline it cannot read."
+        )
+    _REF_RESOLVED.add(key)
+
+
+def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = None) -> list[LeakFinding]:
+    """Scan the SAME file as it exists on `ref` (default origin/main) of the git
+    repo that CONTAINS `path` (`git_root`, auto-detected from `path` when not
+    given explicitly -- this is what makes the baseline correct when scanning
+    an external artifact, e.g. a clone of the published plugin repo, instead of
+    this script's own repo).
 
     This is the TIER 2 baseline: what is already public. Derived from git, never
     hand-maintained -- a hand-written allowlist is the same disease one level up.
@@ -222,34 +506,133 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF) -> list[LeakFinding]:
     so every internal identifier in it counts as new -> build fails. That is the
     correct default: new files must be born clean.
     """
+    root = git_root or _git_toplevel(path.resolve().parent) or REPO_ROOT
     try:
-        rel = path.resolve().relative_to(REPO_ROOT)
+        rel = path.resolve().relative_to(root)
     except ValueError:
         return []
+    # THE REF MUST RESOLVE BEFORE ANY FILE IS JUDGED AGAINST IT.
+    #
+    # This used to `git show <ref>:<file>` and treat ANY non-zero exit as "absent
+    # from the baseline -> born-clean rule". That collapsed two completely
+    # different facts into one output:
+    #
+    #   (a) the ref resolves, and this FILE is genuinely new  -> empty baseline is
+    #       correct: a new file must be born clean.
+    #   (b) THE REF ITSELF does not resolve (a fresh CI clone with no origin/main,
+    #       a shallow clone, a detached fetch) -> `git show` fails for EVERY file,
+    #       every baseline comes back empty, and every PRE-EXISTING identifier is
+    #       reported as a brand-new regression.
+    #
+    # (b) is what turned a green local run into a CI failure claiming "29 NEW
+    # internal identifier(s)" against files the branch never touched. "I could not
+    # read the baseline" and "the baseline is empty" printed the same thing --
+    # the same defect class this guard exists to prosecute, in the guard itself.
+    #
+    # So the ref is resolved ONCE, up front, and an unresolvable ref is a LOUD
+    # failure, never a silent empty baseline. A guard that cannot see what is
+    # already public cannot tell you what is new.
+    _assert_ref_resolvable(ref, root)
+
+    # BYTES, never text. `text=True` decodes git's output as UTF-8, and a tracked
+    # artifact is not required to be UTF-8: a .pyc is not, and a .pyc is exactly
+    # what carries a purged identifier past a purge of its source. On this repo
+    # the decode died on byte 0xcb of a compiled module -- so the baseline could
+    # not be read at all, and the guard crashed instead of judging.
+    #
+    # The file-side scan has read bytes since the byte-mode fix. The baseline side
+    # had not, so "read every shipped file as BYTES" was true of half the
+    # comparison. A guard that reads the present in bytes and the past in text is
+    # blind to precisely the artifacts that survive a text purge.
+    #
+    # latin-1 round-trips every byte 0x00-0xff to a character, so no input can
+    # raise here, and the regexes still match ASCII identifiers inside binary.
     proc = subprocess.run(
         ["git", "show", f"{ref}:{rel.as_posix()}"],
-        cwd=REPO_ROOT,
+        cwd=root,
         capture_output=True,
-        text=True,
     )
     if proc.returncode != 0:
-        return []  # absent from baseline -> born-clean rule applies
-    return scan_text(proc.stdout, f"{ref}:{rel.as_posix()}")
+        return []  # ref resolves, file absent from it -> born-clean rule applies
+
+    # SYMMETRY. The present is now scanned for its PATH as well as its bytes, so the
+    # baseline must be too. Scan one side with a wider net than the other and every
+    # pre-existing path identifier reads as a brand-new regression -- the guard would
+    # flag, as newly introduced, names that have been on main for weeks.
+    #
+    # This is the same asymmetry as reading the present in bytes and the past in text,
+    # which crashed this function two commits ago. Widening a scanner and forgetting
+    # its mirror is apparently a reflex; the fix is to keep the two calls adjacent so
+    # the next person cannot widen one without seeing the other.
+    findings = scan_text(rel.as_posix(), f"{ref}:{rel.as_posix()}")
+    findings.extend(
+        scan_text(proc.stdout.decode("latin-1"), f"{ref}:{rel.as_posix()}")
+    )
+    return findings
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "paths", nargs="*", help="files to scan (default: the packaged plugin artifact)"
+        "paths",
+        nargs="*",
+        help=(
+            "explicit files to scan. If omitted, the inventory is DERIVED "
+            "(os.walk, never hand-written globs) from --root."
+        ),
+    )
+    parser.add_argument(
+        "--root",
+        default=str(REPO_ROOT / "plugin"),
+        help=(
+            "root directory of the shipped artifact to walk when no explicit "
+            "paths are given (default: %(default)s). Point this at any "
+            "published/packaged copy, e.g. a clone of the public plugin repo."
+        ),
     )
     args = parser.parse_args()
+
+    # RESOLVE THE CLIENT VOCABULARY FIRST, before anything else. A guard that
+    # scans files and only discovers afterwards that it never had a resolved
+    # client vocabulary is one bad refactor away from silently downgrading
+    # "I could not resolve the vocabulary" into "found nothing" -> PASSED.
+    # Fail here, loudly, before any scanning happens, and before any code
+    # path that could reach the PASSED print at the bottom of this function.
+    try:
+        vocab_mode, vocab = resolve_vocabulary_or_fail()
+    except ClientIdentityConfigError as exc:
+        print(
+            "FAIL: could not resolve the client-identity vocabulary -- "
+            "refusing to report PASSED without it.\n"
+            f"  {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    resolved_client_patterns: list[tuple[str, str]] = []
+    resolved_hash_vocab: dict | None = None
+    if vocab_mode == "plaintext-patterns":
+        resolved_client_patterns = vocab
+        vocab_summary = f"{len(resolved_client_patterns)} identity pattern(s) from {resolve_config_path()}"
+    else:
+        resolved_hash_vocab = vocab
+        vocab_summary = f"{len(resolved_hash_vocab['hashes'])} salted-hash identity entries from VANTAGE_CLIENT_HASHES"
+
+    skipped: list[InventoryItem] = []
+    git_root: Path | None = None
 
     if args.paths:
         targets = [Path(p) for p in args.paths]
     else:
-        skills = sorted((REPO_ROOT / "plugin" / "skills").glob("*/SKILL.md"))
-        hooks = sorted((REPO_ROOT / "plugin" / "hooks").glob("*.py"))
-        targets = skills + hooks
+        root = Path(args.root)
+        try:
+            inventory = derive_inventory(root)
+        except FileNotFoundError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 2
+        targets = [item.path for item in inventory if item.checked]
+        skipped = [item for item in inventory if not item.checked]
+        git_root = _git_toplevel(root)
 
     if not targets:
         print(
@@ -259,14 +642,33 @@ def main() -> int:
         )
         return 2
 
+    if skipped:
+        print(f"SKIPPED (with reason) — {len(skipped)} file(s):")
+        for item in skipped:
+            print(f"  {item.path}: {item.skip_reason}")
+        print("-" * 90)
+
+    total_enumerated = len(targets) + len(skipped)
+    print(
+        f"Derived inventory: {total_enumerated} file(s) total "
+        f"({len(targets)} CHECKED, {len(skipped)} SKIPPED-with-reason)."
+    )
+    print("-" * 90)
+
     fatal_client: list[LeakFinding] = []
     regressions: list[LeakFinding] = []
     tracked: list[LeakFinding] = []
 
-    baseline = repo_wide_baseline()  # what is ALREADY public in the package
+    # What is ALREADY public in the package, per the ARTIFACT'S OWN git history
+    # (not this script's repo) when scanning a derived, external inventory.
+    baseline = repo_wide_baseline(paths=targets if not args.paths else None, git_root=git_root)
 
     for t in targets:
-        found = scan_file(t)
+        found = scan_file(
+            t,
+            extra_client_patterns=resolved_client_patterns,
+            hash_vocab=resolved_hash_vocab,
+        )
         cd = client_data(found)
         new_ids = new_internal_ids(found, baseline)
         pre_existing = [f for f in internal_ids(found) if f not in new_ids]
@@ -327,8 +729,9 @@ def main() -> int:
 
     if exit_code == 0:
         print(
-            f"\nLEAK GUARD PASSED — no client data, no new internal identifiers "
-            f"across {len(targets)} packaged file(s)."
+            f"\nLEAK GUARD PASSED — client vocabulary RESOLVED ({vocab_summary}); "
+            f"no client data, no new internal identifiers across "
+            f"{len(targets)} packaged file(s)."
         )
     return exit_code
 

@@ -12,6 +12,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The leak guard measures NEW internal identifiers against origin/main:
+          # a token already public there is tracked, a new one fails the build.
+          # The default checkout is SHALLOW — origin/main does not exist in it —
+          # so the guard cannot read its baseline and (correctly) refuses to
+          # judge a diff against a baseline it cannot see.
+          #
+          # This line is not a workaround for that refusal, it is its other half.
+          # A guard that punishes without providing the means to comply gets
+          # ripped out, and then it guards nothing. The commit that makes the
+          # guard fail loudly is the commit that must hand it the baseline.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -24,6 +36,13 @@ jobs:
       # packaged file carrying client/person identifiers is a live disclosure
       # in a PUBLIC package, and must fail the build even if VR is down.
       - name: Leak guard (no client/person identifiers in the public package)
+        env:
+          # Salted-hash vocabulary only -- the plaintext host config never
+          # leaves the operator's machine. See scripts/emit_client_hashes.py
+          # and scripts/client_identity_config.py (resolve_vocabulary_or_fail)
+          # for the full rationale: WE DO NOT TRANSPORT THE SECRET TO PROVE
+          # WE DETECT IT.
+          VANTAGE_CLIENT_HASHES: ${{ secrets.VANTAGE_CLIENT_HASHES }}
         run: pytest tests/plugin/test_leak_guard.py -v
 
       - name: VR parity gate (with secrecy-suspension)

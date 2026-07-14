@@ -5,6 +5,8 @@ client/person identifiers or internal infrastructure paths. See
 scripts/leak_guard.py for the full rationale.
 """
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,12 +16,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from leak_guard import (  # noqa: E402
+    BaselineUnresolvableError,
+    scan_baseline,
     client_data,
+    derive_inventory,
     new_internal_ids,
     packaged_paths,
     repo_wide_baseline,
     scan_file,
     scan_text,
+)
+from client_identity_config import (  # noqa: E402
+    ClientIdentityConfigError,
+    build_hashed_vocabulary,
+    derive_organizations_from_bu_registry,
+    hash_matcher_findings,
+    load_raw_config,
+    resolve_client_data_patterns,
+    resolve_client_hash_vocabulary,
+    resolve_config_path,
+    resolve_vocabulary_or_fail,
 )
 
 # Benign terms that MUST NOT match. A prior fleet purge used substring matching
@@ -34,12 +50,129 @@ BENIGN_CORPUS = [
     "a summary of client feedback",
 ]
 
-# Real leak material. Verbatim from the VR canonical of `session-start`.
-LEAKING_CORPUS = [
-    '"/root/coding/victor-workspace": ("victor", "victor-vps", "Victor — Iris RH (Marie Parrent)", "project/iris-rh"),',
-    '"/home/laurentperello/coding/ElPi Corp": ("pi", "pi-chromebook", ...)',
-    '"/root/coding/gaia-workspace": ("gaia", "gaia-vps", "Gaia — (1er client Marie Josée / Mini Mondes)"),',
-]
+# =============================================================================
+# TIER 1 corpus — DERIVED from the REAL host-side client-identity config at
+# TEST-EXECUTION TIME, never written verbatim in this tracked file.
+#
+# Describing a leak by reproducing it IS re-publishing it. So this file
+# carries zero real client names/orgs in its own source. Instead, at runtime,
+# `real_client_identities` loads the actual host config (the same one
+# `leak_guard.main()` resolves in CI/prod) and `_synthesize_leak_lines`
+# stitches its real tokens into realistic "identity table row" style
+# sentences -- the same shape as the VR `session-start` canonical this guard
+# exists to catch. The guard is proven against genuine client material this
+# way, with the material itself never landing in git history.
+#
+# If the host config cannot be resolved (missing/empty/malformed), the
+# fixture below RAISES -- these tests then ERROR, loudly, in the pytest
+# summary. They are never `skip`: a skipped test is a silent green that is
+# indistinguishable from "the guard works", which is exactly the failure
+# mode this whole effort exists to eliminate.
+# =============================================================================
+
+
+def _plaintext_unavailable_but_hashes_are() -> bool:
+    """True iff we are running where the plaintext vocabulary is absent BY DESIGN
+    and a salted-hash vocabulary stands in for it -- i.e. CI.
+
+    This is the ONE legitimate reason a plaintext-requiring test may not run. It
+    is not a convenience: on a public CI runner the plaintext names must not
+    exist, so a test that needs them to build real leak material genuinely cannot
+    execute there. What it must never do is vanish quietly.
+    """
+    if resolve_config_path().is_file():
+        return False
+    try:
+        return resolve_client_hash_vocabulary() is not None
+    except ClientIdentityConfigError:
+        return False
+
+
+#: A skip is only honest when it is WRITTEN DOWN and CONDITIONAL on a state we
+#: assert. This mirrors the guard's own inventory rule -- CHECKED ∪
+#: SKIPPED-with-a-written-reason = 100%, never a silent third state. If NEITHER
+#: vocabulary resolves, nothing below skips: the fixtures raise and pytest ERRORs,
+#: because "I could not resolve the vocabulary" must never look like "clean".
+requires_plaintext_vocabulary = pytest.mark.skipif(
+    _plaintext_unavailable_but_hashes_are(),
+    reason=(
+        "plaintext client vocabulary is absent BY DESIGN (CI runs on salted hashes, "
+        "so the real names never exist on the runner). This marker is for ONE narrow "
+        "class ONLY: tests that must SYNTHESIZE leak material out of the real names "
+        "(they depend on `leaking_corpus`). Without plaintext there is nothing to "
+        "build the fixture from -- not an inconvenience, a physical impossibility. "
+        "The same matching path is proven to bite, in this same module and in hash "
+        "mode, against FICTIVE identities, with separator and case variants pinned. "
+        "It must NEVER be attached to a test that merely needs a RESOLVED vocabulary "
+        "-- hashes are one. `test_no_client_data_in_packaged_artifact` was briefly "
+        "and wrongly marked here, which switched off the only scan of the shipping "
+        "surface on the only runner that ships it, while this very reason claimed it "
+        "was being scanned. A skip reason that asserts what it prevents is worse than "
+        "no reason at all: it makes the next reader confident."
+    ),
+)
+
+
+@pytest.fixture(scope="module")
+def real_client_identities():
+    """The REAL, resolved host-side client-identity config dict.
+
+    Loaded once per test module run. Raises `ClientIdentityConfigError` (via
+    `load_raw_config`) if the host config is missing/empty/malformed -- that
+    failure propagates as a pytest fixture ERROR, never a skip.
+    """
+    return load_raw_config(resolve_config_path())
+
+
+@pytest.fixture(scope="module")
+def real_client_patterns():
+    """The REAL, resolved (regex, reason) client-data patterns -- same call
+    `leak_guard.main()` makes. Raises loudly if unresolvable (see above)."""
+    return resolve_client_data_patterns()
+
+
+def _synthesize_leak_lines(identities: dict) -> list[str]:
+    """Stitch REAL tokens from the resolved host config into realistic
+    'identity table row' style sentences, entirely at execution time.
+
+    Mirrors the shape of the VR `session-start` canonical this guard exists
+    to catch (an internal workspace path paired with a real org/contact
+    pair) -- without ever writing a real name into this tracked source file.
+    Returns an empty list only if the config itself carries none of the
+    fields it can synthesize from; the caller asserts non-emptiness.
+    """
+    lines: list[str] = []
+    orgs = identities.get("organizations") or []
+    contacts = identities.get("contacts") or []
+    commercial = identities.get("commercial_names") or []
+    aliases = identities.get("aliases") or []
+
+    if orgs:
+        org = orgs[0]
+        contact = contacts[0] if contacts else "the client contact"
+        lines.append(
+            f'"/root/coding/example-workspace": ("example", "example-vps", '
+            f'"Example — {org} ({contact})", "project/example"),'
+        )
+    if contacts:
+        lines.append(f"Onboarding notes for contact {contacts[-1]}.")
+    if commercial:
+        lines.append(f"Product line reference in a stray doc: {commercial[0]}.")
+    if aliases:
+        lines.append(f"Infra alias mentioned in passing: {aliases[0]}.")
+
+    return lines
+
+
+@pytest.fixture(scope="module")
+def leaking_corpus(real_client_identities):
+    lines = _synthesize_leak_lines(real_client_identities)
+    assert lines, (
+        "host config resolved but produced ZERO synthesizable leak lines -- "
+        "the config has no organizations/contacts/commercial_names/aliases "
+        "to build a fixture from."
+    )
+    return lines
 
 
 @pytest.mark.parametrize("text", BENIGN_CORPUS)
@@ -52,18 +185,63 @@ def test_benign_text_does_not_match(text):
     )
 
 
-@pytest.mark.parametrize("text", LEAKING_CORPUS)
-def test_real_leak_material_is_caught(text):
-    findings = scan_text(text, "leak")
-    assert findings, f"MISSED LEAK: {text!r} was not flagged"
+@requires_plaintext_vocabulary
+def test_real_leak_material_is_caught(leaking_corpus, real_client_patterns):
+    """The guard must flag sentences built from the REAL, resolved
+    client-identity vocabulary -- proving it catches genuine client material
+    without this file ever republishing that material verbatim."""
+    for text in leaking_corpus:
+        findings = scan_text(text, "leak", extra_client_patterns=real_client_patterns)
+        assert findings, f"MISSED LEAK: a synthesized real-vocabulary line was not flagged: {text!r}"
+
+
+@requires_plaintext_vocabulary
+def test_real_leak_material_is_not_caught_without_resolved_patterns(leaking_corpus):
+    """PROOF THE GUARD ACTUALLY BITES (and isn't trivially green): the same
+    synthesized real-vocabulary lines, scanned WITHOUT the resolved client
+    patterns merged in, must NOT be universally flagged by the historical
+    literal CLIENT_DATA_PATTERNS alone -- because as of Day 130 that literal
+    set carries no client-org/contact entries at all (see leak_guard.py).
+    A guard that reports these as caught either way would mean the resolved
+    vocabulary is decorative, not load-bearing.
+    """
+    for text in leaking_corpus:
+        findings = client_data(scan_text(text, "leak"))
+        assert not findings, (
+            "unexpected: a synthesized line matched WITHOUT the resolved "
+            "client vocabulary -- a stale literal client entry may have "
+            "leaked back into CLIENT_DATA_PATTERNS in leak_guard.py"
+        )
 
 
 def test_no_client_data_in_packaged_artifact():
     """TIER 1: no packaged file may carry real client-org / contact-person data.
 
     Hard block, no baselining, no exceptions. This is the gate that stops a
-    resync from importing 'Marie Parrent' / 'Iris RH' into a public package.
+    resync from importing the real client vocabulary into a PUBLIC package.
+
+    IT MUST RUN EVERYWHERE, AND ESPECIALLY ON CI. This is the only test that
+    scans the surface that actually SHIPS. Skipping it on the public runner --
+    the exact place the package leaves from -- would switch off the guard at the
+    one point it exists to guard, and CI would go green over an unscanned artifact.
+    An honest red is worth more than a holed green.
+
+    It was briefly marked `requires_plaintext_vocabulary`, which was wrong twice
+    over: it does not need plaintext (it needs a RESOLVED vocabulary, and hashes
+    are one), and the skip reason asserted, verbatim, that "the packaged artifact
+    IS scanned here" while skipping precisely that. A lying contract inside the
+    proof chain is worse than a missing one -- it makes the next reader confident.
+    Caught by Eta on PR #1092.
+
+    So the vocabulary comes from the SAME resolver `main()` uses: plaintext when a
+    host config is present, salted hashes on CI. Neither path lets this test pass
+    without a resolved vocabulary -- `resolve_vocabulary_or_fail()` raises, and the
+    test ERRORs, when neither source resolves.
     """
+    mode, vocab = resolve_vocabulary_or_fail()
+    patterns = vocab if mode == "plaintext-patterns" else None
+    hash_vocab = vocab if mode == "hashes" else None
+
     targets = packaged_paths()
     assert targets, (
         "Leak guard enumerated ZERO packaged files. That is a broken parser, "
@@ -71,7 +249,11 @@ def test_no_client_data_in_packaged_artifact():
     )
     findings = []
     for t in targets:
-        findings.extend(client_data(scan_file(t)))
+        findings.extend(
+            client_data(
+                scan_file(t, extra_client_patterns=patterns, hash_vocab=hash_vocab)
+            )
+        )
     if findings:
         detail = "\n".join(f"  {f.render()}" for f in findings)
         pytest.fail(f"{len(findings)} CLIENT DATA leak(s) in the PUBLIC package:\n{detail}")
@@ -95,3 +277,801 @@ def test_no_new_internal_identifiers():
         pytest.fail(
             f"{len(regressions)} NEW internal identifier(s) vs origin/main:\n{detail}"
         )
+
+
+# =============================================================================
+# Day 130 T2 — derived inventory (os.walk), closing the two-glob coverage gap.
+# These are OFFLINE (no VR, no network): built on a throwaway tmp_path tree
+# that mimics the real published artifact's shape (a leak under references/,
+# a benign example, an empty inventory case).
+# =============================================================================
+
+
+def test_derived_inventory_catches_leak_outside_old_globs(tmp_path):
+    """A leak shipped OUTSIDE `skills/*/SKILL.md` and `hooks/*.py` (e.g. under
+    `references/` or `docs/`) MUST be named by the guard. This is the test
+    that the OLD two-glob `packaged_paths()` would have missed -- it is the
+    one that closes the coverage-gap class of bug (19% -> 100%).
+
+    Purely structural (inventory coverage), so a FICTITIOUS identity via a
+    throwaway config is sufficient -- no real client material needed here.
+    """
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    skill_dir = tmp_path / "pkg" / "skills" / "some-skill" / "references"
+    skill_dir.mkdir(parents=True)
+    leak_file = skill_dir / "examples.md"
+    leak_file.write_text(
+        "A worked example featuring Zorblatt Holdings as the client contact.\n",
+        encoding="utf-8",
+    )
+
+    inventory = derive_inventory(tmp_path / "pkg")
+    checked_paths = {item.path for item in inventory if item.checked}
+    assert leak_file in checked_paths, (
+        "derive_inventory() did not enumerate a file under references/ -- "
+        "the old packaged_paths() glob would have silently skipped this file "
+        "and the leak inside it."
+    )
+
+    findings = []
+    for item in inventory:
+        if item.checked:
+            findings.extend(client_data(scan_file(item.path, extra_client_patterns=patterns)))
+    assert findings, (
+        "MISSED LEAK: fictitious 'Zorblatt Holdings' inside references/examples.md "
+        "was not flagged by the derived-inventory scan."
+    )
+    named = {f.source for f in findings}
+    assert str(leak_file) in named, f"leak was found but not attributed to {leak_file}"
+
+
+def test_derived_inventory_leaves_legitimate_example_slug_green(tmp_path):
+    """`guineapig-77` is a WRITTEN, pedagogical worked example (the skill
+    teaching the deploy-track rule uses it on purpose) -- not real client
+    infrastructure. It must NEVER be flagged as CLIENT_DATA, in a shipped
+    file at any depth in the tree.
+    """
+    skill_dir = tmp_path / "skills" / "deploy-track"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "User: track convex deployment guineapig-77 at "
+        "https://guineapig-77.convex.cloud, key in env var DEPLOY_KEY_GUINEAPIG.\n",
+        encoding="utf-8",
+    )
+
+    inventory = derive_inventory(tmp_path)
+    checked_paths = {item.path for item in inventory if item.checked}
+    assert skill_file in checked_paths
+
+    findings = client_data(scan_file(skill_file))
+    assert not findings, (
+        f"FALSE POSITIVE: legitimate example slug 'guineapig-77' was flagged as "
+        f"CLIENT DATA: {[f.render() for f in findings]}. Over-purging pedagogical "
+        "examples is the symmetric failure to missing real leaks."
+    )
+
+
+def test_derived_inventory_empty_root_fails_loud(tmp_path):
+    """An empty artifact directory is a broken parser/path, not a clean repo --
+    `derive_inventory` itself must not silently report zero findings on a
+    directory it never actually walked; the anti-silence contract lives in
+    `main()`, which raises/exits when zero files are enumerated. Here we pin
+    that `derive_inventory` on a genuinely-empty directory returns an empty
+    list (never raises spuriously, never fabricates entries) so `main()`'s
+    zero-check has an honest signal to act on.
+    """
+    empty_root = tmp_path / "empty-artifact"
+    empty_root.mkdir()
+
+    inventory = derive_inventory(empty_root)
+    assert inventory == [], "expected zero items from a genuinely empty directory"
+
+    # Simulate main()'s anti-silence gate directly against the derived result.
+    targets = [item.path for item in inventory if item.checked]
+    assert not targets, "an empty artifact must never produce non-empty targets"
+
+
+def test_derive_inventory_missing_root_raises():
+    """A root that does not exist at all -- as opposed to an empty directory --
+    is a broken invocation (wrong --root path). This must raise loudly rather
+    than silently returning an empty inventory indistinguishable from case
+    above (a real empty artifact).
+    """
+    with pytest.raises(FileNotFoundError):
+        derive_inventory(Path("/nonexistent/leak-guard-path-day130"))
+
+
+def test_derived_inventory_excludes_dirs_with_written_reason(tmp_path):
+    """`.git` is excluded. `__pycache__` is NOT — and that reversal is the point.
+
+    This test used to assert the opposite: that `__pycache__` contents "must
+    never be enumerated at all", on the stated ground that bytecode is "not
+    source, never shipped". Both halves were false. The .pyc was committed AND
+    published, and `strings` on its bytecode returned six client-name hits. The
+    exclusion was not a safe optimisation, it was the hiding place — and this
+    test was pinning it there.
+
+    An exclusion is a CLAIM ABOUT REALITY. When the claim is wrong, the guard
+    goes blind exactly where the leak is. So a __pycache__ inside a shipped tree
+    is now enumerated and scanned like anything else; its presence is itself a
+    finding, not a reason to look away.
+    """
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "mod.cpython-312.pyc").write_bytes(b"\x00\x01")
+    skill_dir = tmp_path / "skills" / "x"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("clean content\n", encoding="utf-8")
+
+    inventory = derive_inventory(tmp_path)
+    paths = {item.path for item in inventory}
+    assert not any(".git" in p.parts for p in paths), ".git contents must never be enumerated at all"
+    assert any("__pycache__" in p.parts for p in paths), (
+        "a __pycache__ sitting in a shipped tree MUST be enumerated — skipping it "
+        "is how a .pyc carrying purged identifiers in its bytecode goes unseen"
+    )
+    assert (skill_dir / "SKILL.md") in {item.path for item in inventory if item.checked}
+
+
+def test_leak_inside_compiled_bytecode_is_caught(tmp_path, monkeypatch):
+    """A client identity surviving in a .pyc's bytecode must be FOUND.
+
+    Purging a name from the SOURCE does not remove it from a compiled artifact:
+    string constants live on in bytecode. This is the case that was live on the
+    public repo — the leak guard's own .pyc, published, carrying the very
+    identifiers the guard exists to catch, invisible to it because it refused to
+    open binary files. Fictitious identity only.
+    """
+    cfg = tmp_path / "identities.json"
+    cfg.write_text(json.dumps({
+        "organizations": ["Zorblatt Holdings"], "contacts": [], "commercial_names": [], "aliases": [],
+    }), encoding="utf-8")
+    monkeypatch.setenv("VANTAGE_CLIENT_IDENTITIES", str(cfg))
+
+    pkg = tmp_path / "pkg"
+    (pkg / "__pycache__").mkdir(parents=True)
+    # A real .pyc is a binary container with UTF-8 string constants inside.
+    (pkg / "__pycache__" / "mod.cpython-312.pyc").write_bytes(
+        b"\xcb\x0d\x0d\x0a\x00\x00\x00\x00" + b"Zorblatt Holdings" + b"\x00\x01\x02\xff"
+    )
+
+    findings = [f for item in derive_inventory(pkg) if item.checked
+                for f in scan_file(item.path, extra_client_patterns=resolve_client_data_patterns())]
+    assert any(f.category == "CLIENT_DATA" for f in findings), (
+        "a client identity embedded in compiled bytecode must be caught — "
+        "a guard that cannot read what it ships cannot vouch for it"
+    )
+    assert any(".pyc" in f.source for f in findings), "the finding must NAME the .pyc"
+
+
+# =============================================================================
+# Day 130 T? — host-resolved client vocabulary. Eta review (PR #1090) found the
+# hand-typed CLIENT_DATA_PATTERNS list missing an ACTIVE client identity: a
+# guard that prints PASSED without ever having resolved a client vocabulary is
+# worse than no guard. These tests are 100% OFFLINE and use ONLY FICTITIOUS
+# identities via a throwaway tmp_path config -- never a real client name.
+# =============================================================================
+
+FICTIVE_CONFIG = {
+    "organizations": ["Zorblatt Holdings"],
+    "contacts": ["Zara Quinlin"],
+    "commercial_names": [],
+    "aliases": ["FICTIVE_PERSON_ZARA_QUINLIN"],
+}
+
+
+def _write_config(tmp_path, data):
+    import json
+
+    path = tmp_path / "fictive-client-identities.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def test_missing_config_fails_loud_not_passed(tmp_path):
+    """THE test that proves the guard can no longer lie: an absent config must
+    raise, never silently resolve to zero patterns (which would look identical
+    to 'the package is clean')."""
+    missing = tmp_path / "does-not-exist.json"
+    with pytest.raises(ClientIdentityConfigError, match=r"not found"):
+        load_raw_config(missing)
+
+
+def test_empty_config_fails_loud(tmp_path):
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(ClientIdentityConfigError, match=r"EMPTY"):
+        load_raw_config(empty)
+
+    # A config with all-empty lists (valid JSON, zero identities) must also
+    # fail loud -- zero identities is indistinguishable from a broken config.
+    zero_identities = tmp_path / "zero.json"
+    zero_identities.write_text(
+        '{"organizations": [], "contacts": [], "commercial_names": [], "aliases": []}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ClientIdentityConfigError, match=r"ZERO identities"):
+        load_raw_config(zero_identities)
+
+
+def test_malformed_config_fails_loud(tmp_path):
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(ClientIdentityConfigError, match=r"not valid JSON"):
+        load_raw_config(bad_json)
+
+    missing_key = tmp_path / "missing-key.json"
+    missing_key.write_text('{"organizations": ["x"]}', encoding="utf-8")
+    with pytest.raises(ClientIdentityConfigError, match=r"missing required key"):
+        load_raw_config(missing_key)
+
+
+def test_resolved_fictive_identity_caught_outside_old_globs(tmp_path):
+    """A FICTITIOUS identity resolved from a throwaway config, shipped in a
+    file OUTSIDE the old two-glob surface (under docs/), must be caught and
+    NAMED with its file + line. This is the test that proves the vocabulary
+    is actually RESOLVED and used, not just documented."""
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    leak_dir = tmp_path / "pkg" / "docs"
+    leak_dir.mkdir(parents=True)
+    leak_file = leak_dir / "example.md"
+    leak_file.write_text(
+        "A worked example featuring Zorblatt Holdings as the client contact.\n",
+        encoding="utf-8",
+    )
+
+    findings = client_data(scan_file(leak_file, extra_client_patterns=patterns))
+    assert findings, "MISSED LEAK: fictitious resolved-config identity was not flagged"
+    assert findings[0].source == str(leak_file)
+    assert findings[0].line_no == 1
+
+
+def test_resolved_fictive_identity_caught_in_skill_references(tmp_path):
+    """Same fictitious identity, this time under skills/*/references/ -- the
+    second surface Eta's probes hit."""
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    ref_dir = tmp_path / "pkg" / "skills" / "some-skill" / "references"
+    ref_dir.mkdir(parents=True)
+    leak_file = ref_dir / "notes.md"
+    leak_file.write_text(
+        "Onboarding notes for contact Zara Quinlin.\n", encoding="utf-8"
+    )
+
+    findings = client_data(scan_file(leak_file, extra_client_patterns=patterns))
+    assert findings, "MISSED LEAK: fictitious resolved-config contact name was not flagged"
+
+
+def test_resolved_client_patterns_do_not_flag_legitimate_example(tmp_path):
+    """Zero false positives: a legitimate pedagogical example (guineapig-77,
+    DEPLOY_KEY_GUINEAPIG) must stay green even with a resolved client
+    vocabulary merged in. Over-purging is the symmetric failure to missing
+    real leaks."""
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    skill_dir = tmp_path / "pkg" / "skills" / "deploy-track"
+    skill_dir.mkdir(parents=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "User: track convex deployment guineapig-77 at "
+        "https://guineapig-77.convex.cloud, key in env var DEPLOY_KEY_GUINEAPIG.\n",
+        encoding="utf-8",
+    )
+
+    findings = client_data(scan_file(skill_file, extra_client_patterns=patterns))
+    assert not findings, (
+        f"FALSE POSITIVE with resolved client vocabulary merged in: "
+        f"{[f.render() for f in findings]}"
+    )
+
+
+def test_build_client_data_patterns_rejects_blank_entry(tmp_path):
+    cfg_path = _write_config(
+        tmp_path,
+        {"organizations": ["  "], "contacts": [], "commercial_names": [], "aliases": []},
+    )
+    with pytest.raises(ClientIdentityConfigError):
+        load_raw_config(cfg_path)
+
+
+def test_derive_organizations_from_bu_registry_is_supplementary_only():
+    """The BU registry can only ever supply ElPi Corp's OWN product/BU names
+    (schema has no client-org/contact field) -- this pins that the helper does
+    exactly that and nothing more, so it can never be mistaken for a
+    substitute for the host client-identity config."""
+    bu_entries = [
+        {"name": "VantagePeers", "orchestratorId": "sigma"},
+        {"name": "VantageRegistry", "orchestratorId": "pi"},
+        {"orchestratorId": "no-name-field"},
+    ]
+    names = derive_organizations_from_bu_registry(bu_entries)
+    assert names == ["VantagePeers", "VantageRegistry"]
+    # None of these are client org/contact names -- the function's docstring
+    # is the load-bearing artifact here, not a runtime assertion, but this
+    # pins that it never fabricates a name it wasn't given.
+    assert "Zorblatt Holdings" not in names
+
+
+def test_unresolvable_baseline_ref_fails_loud_never_empty(tmp_path):
+    """An unresolvable baseline ref must RAISE, never yield an empty baseline.
+
+    scan_baseline() used to treat ANY `git show` failure as "file absent from
+    the baseline -> born-clean rule". That collapsed two different facts:
+
+      (a) the ref resolves and the FILE is new        -> empty baseline is right
+      (b) THE REF ITSELF does not resolve (fresh CI clone, shallow clone)
+                                                       -> EVERY baseline empty
+
+    Under (b) every already-public identifier is reported as a brand-new
+    regression. That is exactly what turned a green local run into a CI failure
+    claiming "29 NEW internal identifier(s)" against files the branch never
+    touched -- and it is the same defect class this guard exists to prosecute,
+    committed by the guard itself: "I could not read the baseline" and "the
+    baseline is empty" printed the same thing.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    f = repo / "packaged.md"
+    f.write_text("workspace: /home/laurentperello/coding/x\n", encoding="utf-8")
+
+    with pytest.raises(BaselineUnresolvableError) as exc:
+        scan_baseline(f, ref="origin/nope", git_root=repo)
+
+    msg = str(exc.value)
+    assert "does not resolve" in msg, "the failure must NAME what it could not resolve"
+    assert "origin/nope" in msg
+
+
+def test_baseline_reads_bytes_not_text(tmp_path):
+    """A NON-UTF-8 blob in the BASELINE must not crash the guard.
+
+    The companion of `test_leak_inside_compiled_bytecode_is_caught`, and the half
+    that was missing. The file side had been reading bytes since the byte-mode
+    fix; `scan_baseline` still shelled out to `git show` with `text=True`, which
+    decodes as UTF-8. A tracked artifact is not obliged to be UTF-8 — a .pyc is
+    not — so the guard died with UnicodeDecodeError on byte 0xcb of a compiled
+    module instead of judging anything at all.
+
+    That is worse than a miss: the guard read the PRESENT in bytes and the PAST
+    in text, which blinded it to exactly the artifacts that survive a text purge,
+    and then it crashed rather than saying so. "read every shipped file as BYTES"
+    was true of half the comparison.
+
+    This test pins the whole path: commit a binary blob, then scan it as baseline.
+    Reverting `scan_baseline` to text=True makes it fail with UnicodeDecodeError.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t.t")
+    git("config", "user.name", "t")
+
+    blob = repo / "compiled.pyc"
+    # Byte 0xcb is not valid UTF-8 as a continuation byte — it is the exact byte
+    # that killed the baseline read on the real repository.
+    blob.write_bytes(b"\xcb\x0d\x0d\x0a" + b"harmless-ascii-token" + b"\xff\xfe\x00")
+    git("add", "compiled.pyc")
+    git("commit", "-q", "-m", "binary")
+    git("branch", "-M", "baseline-ref")
+
+    # Must return findings (possibly empty) — must NOT raise UnicodeDecodeError.
+    findings = scan_baseline(blob, ref="baseline-ref", git_root=repo)
+    assert isinstance(findings, list), (
+        "scan_baseline must READ a non-UTF-8 baseline blob, not die on it. A guard "
+        "that crashes on the artifact class it was built to see is not a guard."
+    )
+
+
+# =============================================================================
+# Day 130 v2 — salted-hash CI vocabulary. CI has NO plaintext host config: WE
+# DO NOT TRANSPORT THE SECRET TO PROVE WE DETECT IT. These tests prove the
+# hash-matching path (a) catches the SAME leak material as regex matching,
+# (b) has zero false positives on the benign corpus, and (c) fails loud, never
+# PASSED, when neither vocabulary source resolves. Fictitious identities only.
+# =============================================================================
+
+HASH_FICTIVE_CONFIG = {
+    "organizations": ["Zorblatt Holdings"],
+    "contacts": ["Zara Quinlin"],
+    "commercial_names": ["Quinlex Suite"],
+    "aliases": ["fictive-infra-slug-77"],
+}
+
+
+@pytest.fixture
+def hash_vocab():
+    return build_hashed_vocabulary(HASH_FICTIVE_CONFIG, salt="deadbeef" * 4)
+
+
+@pytest.fixture
+def regex_patterns(tmp_path):
+    cfg_path = _write_config(tmp_path, HASH_FICTIVE_CONFIG)
+    return resolve_client_data_patterns(path=cfg_path)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "Zorblatt Holdings",
+        "zorblatt holdings",
+        "Zorblatt-Holdings",
+        "zorblatt_holdings",
+        "ZORBLATT HOLDINGS",
+    ],
+)
+def test_hash_and_regex_parity_on_separator_and_case_variants(variant, hash_vocab, regex_patterns):
+    """PARITY OF DETECTION: for the SAME leak material, hash mode and regex
+    mode must find the SAME thing -- across space/hyphen/underscore separator
+    variants and case. If hash mode catches less, we've swapped a leak for a
+    blind sensor, which is a failure, not an acceptable trade-off."""
+    text = f"Client record: {variant} is the account of record."
+
+    regex_findings = client_data(scan_text(text, "regex-mode", extra_client_patterns=regex_patterns))
+    hash_findings = hash_matcher_findings(text, hash_vocab)
+
+    assert regex_findings, f"regex mode itself failed to catch {variant!r} -- fixture is broken"
+    assert hash_findings, f"PARITY BREAK: hash mode missed {variant!r} that regex mode caught"
+
+
+def test_hash_matcher_catches_multiword_identity_and_contact(hash_vocab):
+    findings_org = hash_matcher_findings("The client is Zorblatt Holdings, based in London.", hash_vocab)
+    findings_contact = hash_matcher_findings("Please loop in Zara Quinlin on this thread.", hash_vocab)
+    findings_alias = hash_matcher_findings("Infra alias: fictive-infra-slug-77 in use.", hash_vocab)
+    assert findings_org, "MISSED LEAK (hash mode): multi-word organization not caught"
+    assert findings_contact, "MISSED LEAK (hash mode): contact name not caught"
+    assert findings_alias, "MISSED LEAK (hash mode): alias not caught"
+
+
+@pytest.mark.parametrize("text", BENIGN_CORPUS)
+def test_hash_matcher_zero_false_positives_on_benign_corpus(text, hash_vocab):
+    findings = hash_matcher_findings(text, hash_vocab)
+    assert findings == [], (
+        f"FALSE POSITIVE (hash mode): benign text {text!r} matched the hash "
+        "vocabulary."
+    )
+
+
+def test_hash_matcher_finding_never_renders_raw_plaintext(hash_vocab):
+    """The finding rendered by leak_guard.LeakFinding.render() in hash mode
+    must show file+line+generic reason ONLY -- never the raw matched n-gram or
+    the source line content."""
+    findings = scan_text(
+        "Zorblatt Holdings signed the contract yesterday.",
+        "hash-source.md",
+        hash_vocab=hash_vocab,
+    )
+    cd = client_data(findings)
+    assert cd, "expected a hash-mode client-data finding"
+    for f in cd:
+        assert f.is_hash_match
+        rendered = f.render()
+        assert "Zorblatt" not in rendered
+        assert "zorblatt" not in rendered.lower()
+        assert "hash-source.md:1:" in rendered
+
+
+def test_resolve_client_hash_vocabulary_absent_returns_none(monkeypatch):
+    monkeypatch.delenv("VANTAGE_CLIENT_HASHES", raising=False)
+    assert resolve_client_hash_vocabulary() is None
+
+
+def test_resolve_client_hash_vocabulary_malformed_fails_loud(monkeypatch):
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", "{not valid json")
+    with pytest.raises(ClientIdentityConfigError, match=r"not valid JSON"):
+        resolve_client_hash_vocabulary()
+
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps({"algo": "sha256", "salt": "x", "hashes": []}))
+    with pytest.raises(ClientIdentityConfigError, match=r"non-empty list"):
+        resolve_client_hash_vocabulary()
+
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps({"algo": "md5", "salt": "x", "hashes": ["a"]}))
+    with pytest.raises(ClientIdentityConfigError, match=r"unsupported algo"):
+        resolve_client_hash_vocabulary()
+
+
+def test_resolve_client_hash_vocabulary_valid_roundtrips(monkeypatch, hash_vocab):
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps(hash_vocab))
+    resolved = resolve_client_hash_vocabulary()
+    assert resolved["algo"] == "sha256"
+    assert resolved["salt"] == hash_vocab["salt"]
+    assert set(resolved["hashes"]) == set(hash_vocab["hashes"])
+
+
+def test_emit_client_hashes_output_never_contains_plaintext_identity():
+    """The JSON emitted for the CI secret must NEVER contain any identity
+    from the config in cleartext -- explicit substring assertion against
+    every identity in a fictitious fixture config."""
+    vocab = build_hashed_vocabulary(HASH_FICTIVE_CONFIG, salt="cafebabe" * 4)
+    serialized = json.dumps(vocab)
+    for key in ("organizations", "contacts", "commercial_names", "aliases"):
+        for identity in HASH_FICTIVE_CONFIG[key]:
+            assert identity.lower() not in serialized.lower(), (
+                f"PLAINTEXT LEAK: {identity!r} appears in the emitted hash "
+                "vocabulary JSON -- hashing failed to remove it."
+            )
+
+
+def test_resolve_vocabulary_or_fail_prefers_plaintext_then_hashes(monkeypatch, tmp_path):
+    """Order of preference: plaintext host config FIRST (local dev, regex
+    matching), salted hashes SECOND (CI). Neither present -> raises naming
+    BOTH sources."""
+    # Neither source available.
+    monkeypatch.setenv("VANTAGE_CLIENT_IDENTITIES", str(tmp_path / "nope.json"))
+    monkeypatch.delenv("VANTAGE_CLIENT_HASHES", raising=False)
+    with pytest.raises(ClientIdentityConfigError) as exc:
+        resolve_vocabulary_or_fail()
+    msg = str(exc.value)
+    assert "plaintext host config" in msg
+    assert "salted-hash CI vocabulary" in msg
+
+    # Only hashes available -> mode "hashes".
+    vocab = build_hashed_vocabulary(HASH_FICTIVE_CONFIG, salt="feedface" * 4)
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps(vocab))
+    mode, resolved = resolve_vocabulary_or_fail()
+    assert mode == "hashes"
+    assert set(resolved["hashes"]) == set(vocab["hashes"])
+
+    # Plaintext also available -> plaintext wins.
+    cfg_path = _write_config(tmp_path, HASH_FICTIVE_CONFIG)
+    monkeypatch.setenv("VANTAGE_CLIENT_IDENTITIES", str(cfg_path))
+    mode, resolved = resolve_vocabulary_or_fail()
+    assert mode == "plaintext-patterns"
+
+
+def test_leak_guard_main_fails_loud_without_any_vocabulary_source(monkeypatch, tmp_path):
+    """FAIL-CLOSED: neither the plaintext config nor VANTAGE_CLIENT_HASHES
+    resolves -> leak_guard.main() must exit non-zero and must NEVER print
+    LEAK GUARD PASSED."""
+    import os as _os
+
+    env = dict(_os.environ)
+    env["VANTAGE_CLIENT_IDENTITIES"] = str(tmp_path / "does-not-exist.json")
+    env.pop("VANTAGE_CLIENT_HASHES", None)
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "leak_guard.py"), "--root", str(REPO_ROOT / "plugin")],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, "leak_guard.py must exit non-zero when no vocabulary source resolves"
+    assert "LEAK GUARD PASSED" not in combined, (
+        "leak_guard.py printed a PASSED-looking verdict without ever resolving "
+        "a client vocabulary -- this is exactly the false-assurance failure "
+        "mode the whole guard exists to prevent."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The boundary, and the two ways to get it wrong.
+#
+# v1 matched substrings, and a fleet purge renamed "summaries" because it
+# contains "marie". The fix was `\b`. But `_` is a WORD character, so `\b` never
+# fires between `marie_` and `iris` — and the guard went blind to client
+# identities inside snake_case identifiers: file names, function names, variable
+# names, namespace constants. Correcting an over-matcher produced an
+# under-matcher, and nobody looked back.
+#
+# `convex/migrations/patch_marie_iris_rh_scope.ts` is tracked on the PUBLIC main
+# branch. Every content scan ever run over this repo called it clean — and it
+# was, inside. The leak is in the NAME.
+#
+# Both poles are pinned below, because a fix for one of these that reintroduces
+# the other is not a fix, it is a swap.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SNAKE_CASE_MUST_BE_SEEN = [
+    "patch_{org}_scope.ts",
+    "convex/migrations/patch_{org}_scope.ts",
+    "const {org}_NAMESPACE = 1;",
+    "fn handle_{org}_rows()",
+]
+
+BENIGN_MUST_STAY_INVISIBLE = [
+    # The exact false positives a substring matcher produced. If any of these
+    # match, we have swapped one blindness for the other.
+    "generate summaries of the day",
+    "summaries and standups",
+    "client-side rendering only",
+    "client delivery timeline",
+    "the marinade was ready",
+    "primary_key",
+    "iridescent",
+    # Pedagogical example + an env-var NAME. Over-purging is the symmetric failure.
+    "guineapig-77",
+    "DEPLOY_KEY_GUINEAPIG",
+]
+
+
+@requires_plaintext_vocabulary
+@pytest.mark.parametrize("template", SNAKE_CASE_MUST_BE_SEEN)
+def test_client_identity_inside_snake_case_is_seen(template, real_client_identities, real_client_patterns):
+    """A client token embedded in a snake_case identifier MUST be found.
+
+    Reverting the boundary to `\\b` makes every one of these go blind, because the
+    underscore is a word character and the boundary never fires.
+    """
+    orgs = real_client_identities.get("organizations") or []
+    if not orgs:
+        pytest.fail("host config has no organizations to build this fixture from")
+    token = orgs[0].lower().replace(" ", "_")
+    text = template.format(org=f"marie_{token}")
+
+    findings = scan_text(text, "snake", extra_client_patterns=real_client_patterns)
+    assert findings, (
+        f"BLIND: {text!r} carries a real client identity inside a snake_case "
+        "identifier and was NOT flagged. `\\b` does not fire across `_`. A guard "
+        "that reads what is inside a file but never what it is called cannot see a "
+        "leak that is visible in `ls`."
+    )
+
+
+@pytest.mark.parametrize("text", BENIGN_MUST_STAY_INVISIBLE)
+def test_snake_case_fix_did_not_reintroduce_substring_matching(text):
+    """The other pole. Widening the boundary must NOT resurrect the substring bug.
+
+    Without this, "make the guard see snake_case" has an easy wrong answer — drop the
+    boundary entirely — and we are back to renaming "summaries" because it contains
+    "marie".
+
+    This takes the vocabulary from the SAME two-source resolver `main()` uses, so it
+    RUNS ON CI. A false-positive test that only runs on the maintainer's laptop cannot
+    stop a false positive from shipping — and shipping one is how the guard gets
+    switched off. (I marked a test plaintext-only once already today and switched off
+    the packaged scan on the one runner that ships. Not twice.)
+    """
+    mode, vocab = resolve_vocabulary_or_fail()
+    patterns = vocab if mode == "plaintext-patterns" else None
+    hash_vocab = vocab if mode == "hashes" else None
+
+    findings = scan_text(
+        text, "benign", extra_client_patterns=patterns, hash_vocab=hash_vocab
+    )
+    assert findings == [], (
+        f"FALSE POSITIVE: benign text {text!r} matched {[f.pattern for f in findings]}. "
+        "The snake_case fix swapped one blindness for the other."
+    )
+
+
+@requires_plaintext_vocabulary
+def test_a_leak_in_the_FILE_NAME_is_caught(tmp_path, real_client_identities, real_client_patterns):
+    """The name is part of the artifact. A file whose CONTENT is spotless but whose
+    NAME carries a client identity is a leak, and it is the one on public main."""
+    orgs = real_client_identities.get("organizations") or []
+    if not orgs:
+        pytest.fail("host config has no organizations to build this fixture from")
+    token = orgs[0].lower().replace(" ", "_")
+
+    f = tmp_path / f"patch_marie_{token}_scope.ts"
+    f.write_text("// nothing incriminating whatsoever\nexport const x = 1;\n", encoding="utf-8")
+
+    findings = client_data(scan_file(f, extra_client_patterns=real_client_patterns))
+    assert findings, (
+        f"MISSED: {f.name} has clean contents and a leaking NAME. Every content-only "
+        "scan calls this clean — and it is, inside."
+    )
+
+
+# The boundary is a PURE property of the matcher — it needs no real name to prove.
+# So it is proven with a FICTIVE identity, which means it runs EVERYWHERE, including
+# on the public CI runner where the real names must not exist.
+#
+# Without this, the MUST_SEE pole would only ever run on the maintainer's laptop, and
+# CI could not catch a regression that reverted the boundary to `\b`. A guarantee that
+# only holds where the author happens to sit is not a guarantee.
+
+FICTIVE_ORG = "Zorblatt Holdings"
+
+
+def _fictive_patterns(tmp_path):
+    cfg = tmp_path / "identities.json"
+    cfg.write_text(
+        json.dumps({
+            "organizations": [FICTIVE_ORG],
+            "contacts": [], "commercial_names": [], "aliases": [],
+        }),
+        encoding="utf-8",
+    )
+    return resolve_client_data_patterns(cfg)
+
+
+@pytest.mark.parametrize(
+    "text,must_match",
+    [
+        # snake_case — the blindness `\b` created. `_` is a WORD char, so `\b` never
+        # fires between `patch_` and `zorblatt`.
+        ("patch_zorblatt_holdings_scope.ts", True),
+        ("convex/migrations/patch_marie_zorblatt_holdings_scope.ts", True),
+        ("const ZORBLATT_HOLDINGS_NS = 1;", True),
+        # separators that are not underscores must keep working
+        ("zorblatt-holdings", True),
+        ("Zorblatt Holdings", True),
+        ("project/zorblatt_holdings", True),
+        # the OTHER pole: flanked by letters/digits -> still no match. This is what
+        # stops us from swapping snake_case blindness for substring blindness.
+        ("xzorblatt holdingsx", False),
+        ("zorblattholdings", False),
+        ("prezorblatt-holdings9", False),
+    ],
+)
+def test_boundary_sees_snake_case_without_becoming_a_substring_matcher(tmp_path, text, must_match):
+    findings = scan_text(text, "boundary", extra_client_patterns=_fictive_patterns(tmp_path))
+    if must_match:
+        assert findings, (
+            f"BLIND: {text!r} carries a client identity and was NOT flagged. "
+            "`\\b` does not fire across `_` — that is the hole this boundary closes."
+        )
+    else:
+        assert findings == [], (
+            f"FALSE POSITIVE: {text!r} matched {[f.pattern for f in findings]}. "
+            "Widening the boundary must not resurrect substring matching."
+        )
+
+
+def test_scan_file_actually_FEEDS_the_filename_to_the_scanner(tmp_path, monkeypatch):
+    """THE PLUMBING, not the pattern. Fictive identity, so it runs on CI.
+
+    Eta, PR #1092, downgrading his own APPROVED to catch this — and he was right.
+
+    The boundary tests prove the PATTERN matches a path-shaped STRING: they call
+    `scan_text("patch_<org>_scope.ts")`. They do NOT prove that `scan_file` ever hands
+    the file's NAME to the scanner. Those are different claims, and only the second one
+    is what kept `patch_<contact>_<org>_scope.ts` invisible on public main for weeks.
+
+    His mutation makes the gap concrete:
+
+        - rel_name = path.resolve().relative_to(REPO_ROOT).as_posix()
+        + rel_name = ""
+
+    On the public runner that mutation is GREEN — 61 passed, 7 skipped. The only test
+    that catches it needs the plaintext vocabulary, so it is skipped exactly where it
+    would matter. The blindness could come back and CI would not notice.
+
+    So this test exercises the REPO-RELATIVE branch — the one real repo files take —
+    with a FICTIVE identity, and therefore runs everywhere. It asserts the finding comes
+    out of `scan_file` with the FILE NAME as its source, on a file whose CONTENTS are
+    spotless. A guard that reads what is inside a file and never what it is called
+    cannot see a leak that is visible in `ls`.
+    """
+    monkeypatch.setattr("leak_guard.REPO_ROOT", tmp_path)
+
+    cfg = tmp_path / "identities.json"
+    cfg.write_text(
+        json.dumps({
+            "organizations": [FICTIVE_ORG],
+            "contacts": [], "commercial_names": [], "aliases": [],
+        }),
+        encoding="utf-8",
+    )
+    patterns = resolve_client_data_patterns(cfg)
+
+    pkg = tmp_path / "convex" / "migrations"
+    pkg.mkdir(parents=True)
+    leaking = pkg / "patch_zorblatt_holdings_scope.ts"
+    leaking.write_text("// nothing incriminating in here\nexport const x = 1;\n", encoding="utf-8")
+
+    findings = client_data(scan_file(leaking, extra_client_patterns=patterns))
+
+    assert findings, (
+        "MISSED: the file's CONTENTS are spotless and its NAME carries a client "
+        "identity. scan_file() did not feed the name to the scanner. Deleting the "
+        "filename-scan line must not be survivable — on CI least of all."
+    )
+    assert any("patch_zorblatt_holdings_scope" in (f.line or "") for f in findings), (
+        "the finding fired, but not on the NAME — the assertion must pin WHERE it came "
+        "from, or a content match would satisfy this test by accident and prove nothing."
+    )
