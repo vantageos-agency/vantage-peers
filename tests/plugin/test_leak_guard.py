@@ -1020,3 +1020,58 @@ def test_boundary_sees_snake_case_without_becoming_a_substring_matcher(tmp_path,
             f"FALSE POSITIVE: {text!r} matched {[f.pattern for f in findings]}. "
             "Widening the boundary must not resurrect substring matching."
         )
+
+
+def test_scan_file_actually_FEEDS_the_filename_to_the_scanner(tmp_path, monkeypatch):
+    """THE PLUMBING, not the pattern. Fictive identity, so it runs on CI.
+
+    Eta, PR #1092, downgrading his own APPROVED to catch this — and he was right.
+
+    The boundary tests prove the PATTERN matches a path-shaped STRING: they call
+    `scan_text("patch_<org>_scope.ts")`. They do NOT prove that `scan_file` ever hands
+    the file's NAME to the scanner. Those are different claims, and only the second one
+    is what kept `patch_<contact>_<org>_scope.ts` invisible on public main for weeks.
+
+    His mutation makes the gap concrete:
+
+        - rel_name = path.resolve().relative_to(REPO_ROOT).as_posix()
+        + rel_name = ""
+
+    On the public runner that mutation is GREEN — 61 passed, 7 skipped. The only test
+    that catches it needs the plaintext vocabulary, so it is skipped exactly where it
+    would matter. The blindness could come back and CI would not notice.
+
+    So this test exercises the REPO-RELATIVE branch — the one real repo files take —
+    with a FICTIVE identity, and therefore runs everywhere. It asserts the finding comes
+    out of `scan_file` with the FILE NAME as its source, on a file whose CONTENTS are
+    spotless. A guard that reads what is inside a file and never what it is called
+    cannot see a leak that is visible in `ls`.
+    """
+    monkeypatch.setattr("leak_guard.REPO_ROOT", tmp_path)
+
+    cfg = tmp_path / "identities.json"
+    cfg.write_text(
+        json.dumps({
+            "organizations": [FICTIVE_ORG],
+            "contacts": [], "commercial_names": [], "aliases": [],
+        }),
+        encoding="utf-8",
+    )
+    patterns = resolve_client_data_patterns(cfg)
+
+    pkg = tmp_path / "convex" / "migrations"
+    pkg.mkdir(parents=True)
+    leaking = pkg / "patch_zorblatt_holdings_scope.ts"
+    leaking.write_text("// nothing incriminating in here\nexport const x = 1;\n", encoding="utf-8")
+
+    findings = client_data(scan_file(leaking, extra_client_patterns=patterns))
+
+    assert findings, (
+        "MISSED: the file's CONTENTS are spotless and its NAME carries a client "
+        "identity. scan_file() did not feed the name to the scanner. Deleting the "
+        "filename-scan line must not be survivable — on CI least of all."
+    )
+    assert any("patch_zorblatt_holdings_scope" in (f.line or "") for f in findings), (
+        "the finding fired, but not on the NAME — the assertion must pin WHERE it came "
+        "from, or a content match would satisfy this test by accident and prove nothing."
+    )
