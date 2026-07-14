@@ -401,18 +401,51 @@ def scan_file(
     extra_client_patterns: list[tuple[str, str]] | None = None,
     hash_vocab: dict | None = None,
 ) -> list[LeakFinding]:
+    # THE NAME IS PART OF THE ARTIFACT.
+    #
+    # A guard that reads what is INSIDE a file and never what it is CALLED is blind
+    # to a leak that is visible in `ls`. `convex/migrations/patch_marie_iris_rh_scope.ts`
+    # is tracked on the PUBLIC main branch: the client's contact and org are in the
+    # FILE NAME, and every content scan ever run over this repo reported it clean,
+    # because it was — inside.
+    #
+    # SCAN THE REPO-RELATIVE NAME, NEVER THE ABSOLUTE ONE.
+    #
+    # The absolute path says where *I* happened to clone the repo, not what the repo
+    # ships. Scanning it flagged 13 files for carrying an "internal VPS workspace
+    # path" — /root/coding/<checkout>/… — which is true of the checkout and false of
+    # the artifact. A guard that reports the shape of its own working directory as a
+    # leak in the code is crying wolf, and the next engineer silences it.
+    #
+    # The name that matters is the one in the tree, which is also the one the baseline
+    # compares against.
+    try:
+        rel_name = path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        rel_name = path.name  # outside the repo (tmp fixtures): the bare name is the claim
+
+    findings = scan_text(
+        rel_name,
+        str(path),
+        extra_client_patterns=extra_client_patterns,
+        hash_vocab=hash_vocab,
+    )
+
     # BYTES, not text. latin-1 cannot raise and maps every byte to exactly one
     # character, so ASCII identifiers embedded in ANY container -- Python
     # bytecode, an archive, image metadata -- are still found. utf-8 with
     # errors="replace" would mangle those regions into U+FFFD and quietly lose
     # the very strings we are hunting: the search would come back clean, which is
     # the one answer a leak scanner must never give by accident.
-    return scan_text(
-        path.read_bytes().decode("latin-1"),
-        str(path),
-        extra_client_patterns=extra_client_patterns,
-        hash_vocab=hash_vocab,
+    findings.extend(
+        scan_text(
+            path.read_bytes().decode("latin-1"),
+            str(path),
+            extra_client_patterns=extra_client_patterns,
+            hash_vocab=hash_vocab,
+        )
     )
+    return findings
 
 
 BASELINE_REF = os.environ.get("LEAK_GUARD_BASELINE_REF", "origin/main")
@@ -521,7 +554,21 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = N
     )
     if proc.returncode != 0:
         return []  # ref resolves, file absent from it -> born-clean rule applies
-    return scan_text(proc.stdout.decode("latin-1"), f"{ref}:{rel.as_posix()}")
+
+    # SYMMETRY. The present is now scanned for its PATH as well as its bytes, so the
+    # baseline must be too. Scan one side with a wider net than the other and every
+    # pre-existing path identifier reads as a brand-new regression -- the guard would
+    # flag, as newly introduced, names that have been on main for weeks.
+    #
+    # This is the same asymmetry as reading the present in bytes and the past in text,
+    # which crashed this function two commits ago. Widening a scanner and forgetting
+    # its mirror is apparently a reflex; the fix is to keep the two calls adjacent so
+    # the next person cannot widen one without seeing the other.
+    findings = scan_text(rel.as_posix(), f"{ref}:{rel.as_posix()}")
+    findings.extend(
+        scan_text(proc.stdout.decode("latin-1"), f"{ref}:{rel.as_posix()}")
+    )
+    return findings
 
 
 def main() -> int:

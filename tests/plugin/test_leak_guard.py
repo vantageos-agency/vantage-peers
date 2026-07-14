@@ -854,3 +854,101 @@ def test_leak_guard_main_fails_loud_without_any_vocabulary_source(monkeypatch, t
         "a client vocabulary -- this is exactly the false-assurance failure "
         "mode the whole guard exists to prevent."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The boundary, and the two ways to get it wrong.
+#
+# v1 matched substrings, and a fleet purge renamed "summaries" because it
+# contains "marie". The fix was `\b`. But `_` is a WORD character, so `\b` never
+# fires between `marie_` and `iris` — and the guard went blind to client
+# identities inside snake_case identifiers: file names, function names, variable
+# names, namespace constants. Correcting an over-matcher produced an
+# under-matcher, and nobody looked back.
+#
+# `convex/migrations/patch_marie_iris_rh_scope.ts` is tracked on the PUBLIC main
+# branch. Every content scan ever run over this repo called it clean — and it
+# was, inside. The leak is in the NAME.
+#
+# Both poles are pinned below, because a fix for one of these that reintroduces
+# the other is not a fix, it is a swap.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SNAKE_CASE_MUST_BE_SEEN = [
+    "patch_{org}_scope.ts",
+    "convex/migrations/patch_{org}_scope.ts",
+    "const {org}_NAMESPACE = 1;",
+    "fn handle_{org}_rows()",
+]
+
+BENIGN_MUST_STAY_INVISIBLE = [
+    # The exact false positives a substring matcher produced. If any of these
+    # match, we have swapped one blindness for the other.
+    "generate summaries of the day",
+    "summaries and standups",
+    "client-side rendering only",
+    "client delivery timeline",
+    "the marinade was ready",
+    "primary_key",
+    "iridescent",
+    # Pedagogical example + an env-var NAME. Over-purging is the symmetric failure.
+    "guineapig-77",
+    "DEPLOY_KEY_GUINEAPIG",
+]
+
+
+@requires_plaintext_vocabulary
+@pytest.mark.parametrize("template", SNAKE_CASE_MUST_BE_SEEN)
+def test_client_identity_inside_snake_case_is_seen(template, real_client_identities, real_client_patterns):
+    """A client token embedded in a snake_case identifier MUST be found.
+
+    Reverting the boundary to `\\b` makes every one of these go blind, because the
+    underscore is a word character and the boundary never fires.
+    """
+    orgs = real_client_identities.get("organizations") or []
+    if not orgs:
+        pytest.fail("host config has no organizations to build this fixture from")
+    token = orgs[0].lower().replace(" ", "_")
+    text = template.format(org=f"marie_{token}")
+
+    findings = scan_text(text, "snake", extra_client_patterns=real_client_patterns)
+    assert findings, (
+        f"BLIND: {text!r} carries a real client identity inside a snake_case "
+        "identifier and was NOT flagged. `\\b` does not fire across `_`. A guard "
+        "that reads what is inside a file but never what it is called cannot see a "
+        "leak that is visible in `ls`."
+    )
+
+
+@pytest.mark.parametrize("text", BENIGN_MUST_STAY_INVISIBLE)
+def test_snake_case_fix_did_not_reintroduce_substring_matching(text, real_client_patterns):
+    """The other pole. Widening the boundary must NOT resurrect the substring bug.
+
+    Without this, "make the guard see snake_case" has an easy wrong answer —
+    drop the boundary entirely — and we would be back to renaming "summaries"
+    because it contains "marie".
+    """
+    findings = scan_text(text, "benign", extra_client_patterns=real_client_patterns)
+    assert findings == [], (
+        f"FALSE POSITIVE: benign text {text!r} matched {[f.pattern for f in findings]}. "
+        "The snake_case fix swapped one blindness for the other."
+    )
+
+
+@requires_plaintext_vocabulary
+def test_a_leak_in_the_FILE_NAME_is_caught(tmp_path, real_client_identities, real_client_patterns):
+    """The name is part of the artifact. A file whose CONTENT is spotless but whose
+    NAME carries a client identity is a leak, and it is the one on public main."""
+    orgs = real_client_identities.get("organizations") or []
+    if not orgs:
+        pytest.fail("host config has no organizations to build this fixture from")
+    token = orgs[0].lower().replace(" ", "_")
+
+    f = tmp_path / f"patch_marie_{token}_scope.ts"
+    f.write_text("// nothing incriminating whatsoever\nexport const x = 1;\n", encoding="utf-8")
+
+    findings = client_data(scan_file(f, extra_client_patterns=real_client_patterns))
+    assert findings, (
+        f"MISSED: {f.name} has clean contents and a leaking NAME. Every content-only "
+        "scan calls this clean — and it is, inside."
+    )
