@@ -184,3 +184,39 @@ describe("MUST_BLOCK pole", () => {
 		}
 	});
 });
+
+// ─── MUST_REFUSE ──────────────────────────────────────────────────────────────
+// The third pole (Eta, Day 131). MUST_BLOCK and MUST_PASS prove the guard tells
+// the sound from the false. They say NOTHING about what it does when its
+// instrument is taken away — which is precisely the hypothesis that breaks in
+// production. A guard has three outcomes, never two: it passed, it bit, or IT
+// COULD NOT MEASURE.
+//
+// This guard is fail-OPEN on "cannot verify" (declared, and argued in the module
+// docstring: it is a net over prose the author never marked as a live claim, and
+// blocking a legitimate message on a network failure rebuilds the very "silence
+// read as good news" the doctrine exists to kill).
+//
+// But fail-open MUST NOT mean FAIL-SILENT — and it was. The warning went to the
+// server's own console, where the orchestrator who sent the message never sees
+// it. From the caller's side, "GitHub was unreachable" and "your claim checks
+// out" rendered THE SAME SCREEN. That is the defect, in the guard written to
+// prosecute it, shipped by its own author on the same day.
+describe("MUST_REFUSE pole — the inability must reach the CALLER, not a console", () => {
+	it("names what it could not read, and hands that back to whoever sent the message", async () => {
+		const seen: string[] = [];
+		const fetchImpl = vi.fn().mockRejectedValue(new Error("ETIMEDOUT"));
+		const deps = buildDeps({ fetchImpl, warn: (m: string) => seen.push(m) });
+
+		await expect(
+			guardFreshState("evidence: PR #54 (owner/repo) -> OPEN", deps),
+		).resolves.toBeUndefined();
+
+		// Allowed — but never silently. The caller must be able to tell a pass
+		// from an unmeasured pass, or the absence of a verdict becomes a verdict.
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).toMatch(/unreachable/i);
+		expect(seen[0]).toMatch(/PR #54/);
+		expect(seen[0]).toMatch(/owner\/repo/);
+	});
+});

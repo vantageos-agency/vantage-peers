@@ -205,7 +205,10 @@ async function checkPrClaims(
 			});
 		} catch (err) {
 			warn(
-				`GitHub unreachable for PR #${number} (${err instanceof Error ? err.message : String(err)}) — cannot verify, allowing.`,
+				// Name the artifact it could not read — repo included. "GitHub unreachable"
+				// alone tells the caller a guard ran and shrugged; it does not tell them
+				// WHICH claim went unchecked, which is the only part they can act on.
+				`GitHub unreachable for PR #${number} (${repo}) (${err instanceof Error ? err.message : String(err)}) — cannot verify this claim, allowing the send. The state was NOT checked: use {{pr:${repo}#${number}}} to have the server resolve it.`,
 			);
 			continue;
 		}

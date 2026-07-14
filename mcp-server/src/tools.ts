@@ -2742,6 +2742,16 @@ export function registerTools(
 				// (warns, allows) when the live value cannot be determined —
 				// this is a safety net over unmarked prose, not an explicit
 				// resolution request, so erring toward not-blocking is correct.
+				// The third state. A guard has three outcomes, never two: it passed,
+				// it bit, or IT COULD NOT MEASURE. Collapsing the last into the first
+				// is how an absence of measurement becomes a certificate of cleanliness.
+				// This guard is fail-open on "cannot verify" — deliberately, see above —
+				// but fail-open MUST NOT mean fail-silent: the warning went to the
+				// server's own console, where the orchestrator who sent the message
+				// never sees it, so from the caller's side "GitHub was unreachable"
+				// and "your claim checks out" rendered the SAME screen. They are
+				// returned to the caller now, on the send result.
+				const unverified: string[] = [];
 				try {
 					await guardFreshState(resolvedContent, {
 						fetchImpl: fetch,
@@ -2749,6 +2759,7 @@ export function registerTools(
 						now: () => new Date(),
 						githubToken: process.env.GITHUB_TOKEN,
 						defaultRepo: process.env.STATE_TOKENS_DEFAULT_REPO,
+						warn: (message) => unverified.push(message),
 					});
 				} catch (guardError) {
 					if (guardError instanceof FreshStateGuardError) {
@@ -2790,7 +2801,13 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ messageId, from, channel }, null, 2),
+							text: JSON.stringify(
+								unverified.length > 0
+									? { messageId, from, channel, stateUnverified: unverified }
+									: { messageId, from, channel },
+								null,
+								2,
+							),
 						},
 					],
 				};
