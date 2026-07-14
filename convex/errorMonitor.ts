@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
+import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import {
 	internalMutation,
@@ -90,25 +91,30 @@ export const upsertError = internalMutation({
 
 		if (existing) {
 			const newCount = existing.count + 1;
-			// Day 107 — 24h cross-tick re-raise window. Capture the PREVIOUS
-			// lastSeen BEFORE patching. If the row already had an issue created
-			// AND we have not seen it for >= AUTO_IRP_24H_RERAISE_WINDOW_MS, the
-			// fix attempt evidently did not take — schedule a NEW mission with
-			// the `[RECURRING 24h+ — root cause not fixed]` escalation tag.
-			//
-			// Within the same 24h window, the existing `issueCreated` guard
-			// already prevents a duplicate mission (this is the original
-			// "cross-tick dedup" behaviour we are preserving).
-			const previousLastSeen = existing.lastSeen;
-			const isReRaise =
-				existing.issueCreated === true &&
-				now - previousLastSeen >= AUTO_IRP_24H_RERAISE_WINDOW_MS;
+			const effectiveThreshold = existing.recurrenceThreshold ?? threshold;
+
+			// Day 128 fix (issue #1088 fabricated incident) — the RECURRING
+			// escalation label is now only emitted from GENUINELY MEASURED
+			// recurrence, never from group identity + a stale timestamp alone.
+			// See convex/errorMonitorRecurrence.ts for the full rationale.
+			const decision = computeRecurrenceDecision({
+				now,
+				previousLastSeen: existing.lastSeen,
+				existingCount: existing.count,
+				newCount,
+				existingIssueCreated: existing.issueCreated === true,
+				existingIssueNumber: existing.issueNumber,
+				existingReRaiseBaselineCount: existing.reRaiseBaselineCount,
+				effectiveThreshold,
+				reraiseWindowMs: AUTO_IRP_24H_RERAISE_WINDOW_MS,
+			});
 
 			const patch: Partial<Doc<"errorLogs">> = {
 				lastSeen: now,
 				count: newCount,
+				reRaiseBaselineCount: decision.nextReRaiseBaselineCount,
 			};
-			if (isReRaise) {
+			if (decision.isMeasuredReRaise) {
 				// Re-arm the issue-creation gate so the next scheduled
 				// createGitHubIssue can land. We do NOT touch irpMissionId or
 				// issueNumber so the auto-resolver can still cascade-close the
@@ -117,12 +123,7 @@ export const upsertError = internalMutation({
 			}
 			await ctx.db.patch(existing._id, patch);
 
-			// Threshold check: if the GH issue has NOT been created yet and we
-			// have now crossed the recurrence threshold, schedule creation now.
-			// Guard `issueCreated` so we never double-fire even if the cron races.
-			const effectiveThreshold = existing.recurrenceThreshold ?? threshold;
-			const issueGateOpen = isReRaise || !existing.issueCreated;
-			if (issueGateOpen && newCount >= effectiveThreshold) {
+			if (decision.shouldCreateIssue) {
 				await ctx.scheduler.runAfter(
 					0,
 					internal.errorMonitorActions.createGitHubIssue,
@@ -134,7 +135,7 @@ export const upsertError = internalMutation({
 						stackTrace: args.stackTrace ?? "",
 						deployment: args.deployment,
 						orchestrator: args.orchestrator,
-						recurringEscalation: isReRaise,
+						recurringEscalation: decision.isMeasuredReRaise,
 					},
 				);
 			}
@@ -310,6 +311,7 @@ export const listStaleAutoIrp = internalQuery({
 			autoResolved: v.optional(v.boolean()),
 			recurrenceThreshold: v.optional(v.number()),
 			stackTrace: v.optional(v.string()),
+			reRaiseBaselineCount: v.optional(v.number()),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -509,6 +511,7 @@ export const listErrors = query({
 			irpMissionId: v.optional(v.id("missions")),
 			autoResolved: v.optional(v.boolean()),
 			recurrenceThreshold: v.optional(v.number()),
+			reRaiseBaselineCount: v.optional(v.number()),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -552,6 +555,7 @@ export const getError = query({
 			irpMissionId: v.optional(v.id("missions")),
 			autoResolved: v.optional(v.boolean()),
 			recurrenceThreshold: v.optional(v.number()),
+			reRaiseBaselineCount: v.optional(v.number()),
 		}),
 		v.null(),
 	),

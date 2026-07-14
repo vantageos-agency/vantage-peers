@@ -10,6 +10,7 @@ import {
 	type FilterRule,
 	isTransientErrorMessage,
 } from "./errorMonitorFilters";
+import { isDeployWindowActive } from "./errorMonitorDeployWindow";
 import { computeGroupKey } from "./errorMonitorGroupKey";
 import {
 	assertKillSwitchHealth,
@@ -59,6 +60,19 @@ export const createGitHubIssue = internalAction({
 		if (isKillSwitchActive()) {
 			console.log(
 				"[createGitHubIssue] Skipped — AUTO_IRP_PAUSED env var is 'true'.",
+			);
+			return null;
+		}
+		// Day 128 hardening (issue #1088, Bug 1) — belt-and-suspenders guard
+		// mirroring the kill-switch pattern above. upsertError's scheduler.
+		// runAfter call is the primary suppression point (pollDeploymentLogs
+		// skips upsertError entirely during a declared deploy window), but a
+		// race (in-flight scheduled call from just before the window opened)
+		// is caught here too. See errorMonitorDeployWindow.ts for the
+		// non-forgeable-signal rationale.
+		if (isDeployWindowActive(Date.now())) {
+			console.log(
+				`[createGitHubIssue] Skipped — DEPLOY_WINDOW_UNTIL_MS is active for ${args.deployment}.`,
 			);
 			return null;
 		}
@@ -304,6 +318,21 @@ export const pollDeploymentLogs = internalAction({
 				if (decision.severity === "log-only") {
 					console.log(
 						`[ErrorMonitor] log-only filter (${decision.matchedRule?.reason ?? "n/a"}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
+					);
+					continue;
+				}
+
+				// Day 128 hardening (issue #1088, Bug 1) — an operator-declared
+				// deploy window (DEPLOY_WINDOW_UNTIL_MS env var, settable only via
+				// `npx convex env set` / dashboard — never forgeable by anything a
+				// probe/API caller can pass as an argument) suppresses feeding this
+				// tick's errors into the escalation pipeline. Still logged for
+				// observability, just never upserted/escalated. See
+				// errorMonitorDeployWindow.ts for the full non-forgeable-signal
+				// rationale and its explicit HONEST LIMITATION section.
+				if (isDeployWindowActive(Date.now())) {
+					console.log(
+						`[ErrorMonitor] deploy-window active — skipping escalation pipeline for ${functionName}: ${errorMessage.slice(0, 120)}`,
 					);
 					continue;
 				}
