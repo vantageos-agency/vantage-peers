@@ -65,6 +65,7 @@
 	],
 	"license": "FSL-1.1-Apache-2.0",
 	"dependencies": {
+		"@clerk/backend": "^3.11.4",
 		"@mcp-ui/server": "^6.1.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@vantageos/cloud-identity": "^0.1.0",
