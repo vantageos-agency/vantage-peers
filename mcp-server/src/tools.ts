@@ -24,6 +24,7 @@ import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
+import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
@@ -2730,6 +2731,33 @@ export function registerTools(
 						);
 					}
 					throw tokenError;
+				}
+
+				// Layer 2 (Day 128 brief, defence-in-depth over Layer 1 above):
+				// catch a hand-typed living-artifact state claim in the
+				// `evidence:` field of the message that was typed INSTEAD of
+				// using a `{{pr:...}}` / `{{npm:...}}` / `{{task:...}}` token.
+				// Re-verifies the claim against the live source; a
+				// contradiction is a hard refusal (nothing is sent). Fail-OPEN
+				// (warns, allows) when the live value cannot be determined —
+				// this is a safety net over unmarked prose, not an explicit
+				// resolution request, so erring toward not-blocking is correct.
+				try {
+					await guardFreshState(resolvedContent, {
+						fetchImpl: fetch,
+						convexQuery: (name, args) => convex.query(name as any, args),
+						now: () => new Date(),
+						githubToken: process.env.GITHUB_TOKEN,
+						defaultRepo: process.env.STATE_TOKENS_DEFAULT_REPO,
+					});
+				} catch (guardError) {
+					if (guardError instanceof FreshStateGuardError) {
+						throw new McpError(
+							ErrorCode.InvalidParams,
+							`ÉTAT PÉRIMÉ — send_message aborted, nothing was sent: ${guardError.message}`,
+						);
+					}
+					throw guardError;
 				}
 
 				contentBytes = assertContentSize(resolvedContent, "send_message");
