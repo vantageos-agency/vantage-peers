@@ -558,3 +558,47 @@ def test_unresolvable_baseline_ref_fails_loud_never_empty(tmp_path):
     msg = str(exc.value)
     assert "does not resolve" in msg, "the failure must NAME what it could not resolve"
     assert "origin/nope" in msg
+
+
+def test_baseline_reads_bytes_not_text(tmp_path):
+    """A NON-UTF-8 blob in the BASELINE must not crash the guard.
+
+    The companion of `test_leak_inside_compiled_bytecode_is_caught`, and the half
+    that was missing. The file side had been reading bytes since the byte-mode
+    fix; `scan_baseline` still shelled out to `git show` with `text=True`, which
+    decodes as UTF-8. A tracked artifact is not obliged to be UTF-8 — a .pyc is
+    not — so the guard died with UnicodeDecodeError on byte 0xcb of a compiled
+    module instead of judging anything at all.
+
+    That is worse than a miss: the guard read the PRESENT in bytes and the PAST
+    in text, which blinded it to exactly the artifacts that survive a text purge,
+    and then it crashed rather than saying so. "read every shipped file as BYTES"
+    was true of half the comparison.
+
+    This test pins the whole path: commit a binary blob, then scan it as baseline.
+    Reverting `scan_baseline` to text=True makes it fail with UnicodeDecodeError.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t.t")
+    git("config", "user.name", "t")
+
+    blob = repo / "compiled.pyc"
+    # Byte 0xcb is not valid UTF-8 as a continuation byte — it is the exact byte
+    # that killed the baseline read on the real repository.
+    blob.write_bytes(b"\xcb\x0d\x0d\x0a" + b"harmless-ascii-token" + b"\xff\xfe\x00")
+    git("add", "compiled.pyc")
+    git("commit", "-q", "-m", "binary")
+    git("branch", "-M", "baseline-ref")
+
+    # Must return findings (possibly empty) — must NOT raise UnicodeDecodeError.
+    findings = scan_baseline(blob, ref="baseline-ref", git_root=repo)
+    assert isinstance(findings, list), (
+        "scan_baseline must READ a non-UTF-8 baseline blob, not die on it. A guard "
+        "that crashes on the artifact class it was built to see is not a guard."
+    )

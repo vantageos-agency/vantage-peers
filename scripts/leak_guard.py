@@ -465,15 +465,27 @@ def scan_baseline(path: Path, ref: str = BASELINE_REF, git_root: Path | None = N
     # already public cannot tell you what is new.
     _assert_ref_resolvable(ref, root)
 
+    # BYTES, never text. `text=True` decodes git's output as UTF-8, and a tracked
+    # artifact is not required to be UTF-8: a .pyc is not, and a .pyc is exactly
+    # what carries a purged identifier past a purge of its source. On this repo
+    # the decode died on byte 0xcb of a compiled module -- so the baseline could
+    # not be read at all, and the guard crashed instead of judging.
+    #
+    # The file-side scan has read bytes since the byte-mode fix. The baseline side
+    # had not, so "read every shipped file as BYTES" was true of half the
+    # comparison. A guard that reads the present in bytes and the past in text is
+    # blind to precisely the artifacts that survive a text purge.
+    #
+    # latin-1 round-trips every byte 0x00-0xff to a character, so no input can
+    # raise here, and the regexes still match ASCII identifiers inside binary.
     proc = subprocess.run(
         ["git", "show", f"{ref}:{rel.as_posix()}"],
         cwd=root,
         capture_output=True,
-        text=True,
     )
     if proc.returncode != 0:
         return []  # ref resolves, file absent from it -> born-clean rule applies
-    return scan_text(proc.stdout, f"{ref}:{rel.as_posix()}")
+    return scan_text(proc.stdout.decode("latin-1"), f"{ref}:{rel.as_posix()}")
 
 
 def main() -> int:
