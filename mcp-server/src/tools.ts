@@ -24,6 +24,7 @@ import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
+import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
@@ -2732,6 +2733,44 @@ export function registerTools(
 					throw tokenError;
 				}
 
+				// Layer 2 (Day 128 brief, defence-in-depth over Layer 1 above):
+				// catch a hand-typed living-artifact state claim in the
+				// `evidence:` field of the message that was typed INSTEAD of
+				// using a `{{pr:...}}` / `{{npm:...}}` / `{{task:...}}` token.
+				// Re-verifies the claim against the live source; a
+				// contradiction is a hard refusal (nothing is sent). Fail-OPEN
+				// (warns, allows) when the live value cannot be determined —
+				// this is a safety net over unmarked prose, not an explicit
+				// resolution request, so erring toward not-blocking is correct.
+				// The third state. A guard has three outcomes, never two: it passed,
+				// it bit, or IT COULD NOT MEASURE. Collapsing the last into the first
+				// is how an absence of measurement becomes a certificate of cleanliness.
+				// This guard is fail-open on "cannot verify" — deliberately, see above —
+				// but fail-open MUST NOT mean fail-silent: the warning went to the
+				// server's own console, where the orchestrator who sent the message
+				// never sees it, so from the caller's side "GitHub was unreachable"
+				// and "your claim checks out" rendered the SAME screen. They are
+				// returned to the caller now, on the send result.
+				const unverified: string[] = [];
+				try {
+					await guardFreshState(resolvedContent, {
+						fetchImpl: fetch,
+						convexQuery: (name, args) => convex.query(name as any, args),
+						now: () => new Date(),
+						githubToken: process.env.GITHUB_TOKEN,
+						defaultRepo: process.env.STATE_TOKENS_DEFAULT_REPO,
+						warn: (message) => unverified.push(message),
+					});
+				} catch (guardError) {
+					if (guardError instanceof FreshStateGuardError) {
+						throw new McpError(
+							ErrorCode.InvalidParams,
+							`ÉTAT PÉRIMÉ — send_message aborted, nothing was sent: ${guardError.message}`,
+						);
+					}
+					throw guardError;
+				}
+
 				contentBytes = assertContentSize(resolvedContent, "send_message");
 
 				// A.7: auto-derive sessionDay from project epoch when caller omits it.
@@ -2762,7 +2801,13 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ messageId, from, channel }, null, 2),
+							text: JSON.stringify(
+								unverified.length > 0
+									? { messageId, from, channel, stateUnverified: unverified }
+									: { messageId, from, channel },
+								null,
+								2,
+							),
 						},
 					],
 				};
