@@ -1,10 +1,23 @@
 name: Typecheck
 
+# A workflow that does not run and a workflow that passes look identical on the
+# checks page: neither shows a red cross. Day 131 measured that: `push` was pinned
+# to `main`, so on a branch with no open PR only the grep gate ever fired, and an
+# ABSENCE of verdict was read as a verdict. Triggering on every branch is half the
+# cure; the other half is branch protection (task k17cnkxkm8xaz6d5tq1nxtxjtx8agq84),
+# which makes the absence BLOCK instead of merely being invisible.
+#
+# `pull_request` is deliberately gone: with `branches: ["**"]` every same-repo PR is
+# already covered by its push, and keeping both fired two identical runs per commit.
+# Fork PRs are consequently unchecked — they are not part of the fleet flow, where
+# every merge is Pi-gated.
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   typecheck:
