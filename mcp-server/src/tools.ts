@@ -23,11 +23,13 @@ import {
 import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
+import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
+
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 
@@ -185,10 +187,12 @@ export const memoryIdSchema = z
 
 /** Build a strict Convex document-ID schema with a field-named error message. */
 const convexIdSchema = (field: string) =>
-	z.string().regex(
-		convexIdPattern,
-		`${field} must be a 32-char lowercase alphanumeric Convex ID`,
-	);
+	z
+		.string()
+		.regex(
+			convexIdPattern,
+			`${field} must be a 32-char lowercase alphanumeric Convex ID`,
+		);
 
 export const taskIdSchema = convexIdSchema("taskId");
 export const missionIdSchema = convexIdSchema("missionId");
@@ -296,8 +300,19 @@ export const listTasksArgsSchema = z.object({
 		),
 	status: z
 		.union([
-			z.enum(["todo", "in_progress", "review", "blocked", "done", "open", "active", "all"]),
-			z.array(z.enum(["todo", "in_progress", "review", "blocked", "done"])).min(1),
+			z.enum([
+				"todo",
+				"in_progress",
+				"review",
+				"blocked",
+				"done",
+				"open",
+				"active",
+				"all",
+			]),
+			z
+				.array(z.enum(["todo", "in_progress", "review", "blocked", "done"]))
+				.min(1),
 		])
 		.optional()
 		.describe("Filter by status (single, alias, or array)"),
@@ -375,7 +390,8 @@ export const bulkCompleteTasksArgsSchema = z.object({
 // Convex `tasks:billingSummaryByProject`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const BILLING_SUMMARY_BY_PROJECT_TOOL_NAME = "billing_summary_by_project";
+export const BILLING_SUMMARY_BY_PROJECT_TOOL_NAME =
+	"billing_summary_by_project";
 
 export const BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION =
 	"Billing/refacturation base — sums MACHINE-derived actualMinutes (startedAt→completedAt, never a hand-typed time line) grouped by project for tasks completed within [from, to]. " +
@@ -498,7 +514,9 @@ export const updateBriefingNoteDescription =
 	"EXAMPLE: update_briefing_note noteId='j57aaaaa...' callerOrchestrator='alpha' decisions=['Use hybrid_search first'].";
 
 export const updateBriefingNoteSchema = z.object({
-	noteId: noteIdSchema.describe("Convex document ID of the briefing note to update"),
+	noteId: noteIdSchema.describe(
+		"Convex document ID of the briefing note to update",
+	),
 	callerOrchestrator: creatorSchema.describe(
 		"Orchestrator role making the update — must match createdBy or be 'system' (RBAC deny-by-default)",
 	),
@@ -2684,10 +2702,37 @@ export function registerTools(
 		}) => {
 			let contentBytes = 0;
 			try {
-				contentBytes = assertContentSize(content, "send_message");
-
 				const fromDenied = guardFrom(from);
 				if (fromDenied) return fromDenied;
+
+				// State tokens (Day 128 brief, k... — "un état tapé à la main
+				// est un mensonge en sursis"): {{pr:owner/repo#N}} /
+				// {{npm:pkg[@tag]}} / {{task:taskId}} are resolved against the
+				// LIVE source right now, at send time — never from a value the
+				// author typed earlier in the compose session. Resolution
+				// failure (unreachable network, nonexistent artifact) is
+				// fail-closed: the message is NOT sent, and the caller gets an
+				// explicit "ÉTAT NON RÉSOLU" error citing what could not be
+				// resolved. Content with zero tokens passes through unchanged.
+				let resolvedContent: string;
+				try {
+					resolvedContent = await resolveStateTokens(content, {
+						fetchImpl: fetch,
+						convexQuery: (name, args) => convex.query(name as any, args),
+						now: () => new Date(),
+						githubToken: process.env.GITHUB_TOKEN,
+					});
+				} catch (tokenError) {
+					if (tokenError instanceof StateTokenError) {
+						throw new McpError(
+							ErrorCode.InvalidParams,
+							`ÉTAT NON RÉSOLU — send_message aborted, nothing was sent: ${tokenError.message}`,
+						);
+					}
+					throw tokenError;
+				}
+
+				contentBytes = assertContentSize(resolvedContent, "send_message");
 
 				// A.7: auto-derive sessionDay from project epoch when caller omits it.
 				// Day 1 = 2026-03-06 UTC (Day 88 confirmed as 2026-06-01).
@@ -2708,7 +2753,7 @@ export function registerTools(
 					from: normFrom,
 					fromInstanceId,
 					channel: normChannel,
-					content,
+					content: resolvedContent,
 					sessionDay: derivedSessionDay,
 					tenantId,
 				});
@@ -2925,7 +2970,9 @@ export function registerTools(
 			"WHEN: use to retract a mistaken broadcast or sensitive content before recipients read it. " +
 			"EXAMPLE: delete_message messageId='j57dy3049btafda9m2f5d2ggk987ph3f' callerOrchestrator='alpha'.",
 		{
-			messageId: messageIdSchema.describe("Convex document ID of the message to delete"),
+			messageId: messageIdSchema.describe(
+				"Convex document ID of the message to delete",
+			),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be the sender or system"),
@@ -3329,7 +3376,9 @@ export function registerTools(
 			"EXAMPLE: list_broadcast_status messageId='j57dy3049btafda9m2f5d2ggk987ph3f'. " +
 			"Default limit 20. cap 200.",
 		{
-			messageId: messageIdSchema.describe("Convex document ID of the broadcast message"),
+			messageId: messageIdSchema.describe(
+				"Convex document ID of the broadcast message",
+			),
 			limit: z
 				.number()
 				.int()
@@ -3618,7 +3667,9 @@ export function registerTools(
 					callerOrchestrator,
 				});
 				return {
-					content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(result, null, 2) },
+					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3645,7 +3696,9 @@ export function registerTools(
 				.optional()
 				.describe("Filter by status"),
 			project: z.string().optional().describe("Filter by project name"),
-			missionId: missionIdSchema.optional().describe("Filter by mission Convex ID"),
+			missionId: missionIdSchema
+				.optional()
+				.describe("Filter by mission Convex ID"),
 			limit: z
 				.number()
 				.int()
@@ -3864,7 +3917,9 @@ export function registerTools(
 			"WHEN: call when all deliverables are committed or verified — never complete without a proof token in the note. " +
 			"EXAMPLE: complete_task taskId='k178d3ns...' completionNote='PR #667 merged, 86 descriptions updated' callerOrchestrator='beta'.",
 		{
-			taskId: taskIdSchema.describe("Convex document ID of the task to complete"),
+			taskId: taskIdSchema.describe(
+				"Convex document ID of the task to complete",
+			),
 			completionNote: z
 				.string()
 				.describe("What was actually done — summary of work completed"),
@@ -4112,7 +4167,9 @@ export function registerTools(
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
 			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
-			taskId: taskIdSchema.describe("Convex document ID of the task that depends on others"),
+			taskId: taskIdSchema.describe(
+				"Convex document ID of the task that depends on others",
+			),
 			dependsOn: z
 				.array(taskIdSchema)
 				.describe("Task IDs that must complete first"),
@@ -4530,7 +4587,9 @@ export function registerTools(
 			"WHEN: use to advance status, update progress percentage, or change pilot/agents mid-flight. " +
 			"EXAMPLE: update_mission missionId='k57a36y8...' progress=75 status='validate'.",
 		{
-			missionId: missionIdSchema.describe("Convex document ID of the mission to update"),
+			missionId: missionIdSchema.describe(
+				"Convex document ID of the mission to update",
+			),
 			name: z.string().optional().describe("New name"),
 			description: z.string().optional().describe("New description"),
 			project: z.string().optional().describe("New project"),
@@ -5388,9 +5447,7 @@ export function registerTools(
 							: []
 				) as unknown[];
 				const backendNextCursor =
-					envelope &&
-					typeof envelope === "object" &&
-					"nextCursor" in envelope
+					envelope && typeof envelope === "object" && "nextCursor" in envelope
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
@@ -5398,7 +5455,10 @@ export function registerTools(
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
-				if (filteredComponents.length < rawItems.length && filteredComponents.length > 0) {
+				if (
+					filteredComponents.length < rawItems.length &&
+					filteredComponents.length > 0
+				) {
 					const last = filteredComponents[filteredComponents.length - 1] as {
 						_creationTime?: number;
 					};
@@ -5478,7 +5538,9 @@ export function registerTools(
 			"WHEN: use to bump a skill version or fix content without re-registering from scratch. " +
 			"EXAMPLE: update_component componentId='j57aaaaa...' version='1.3.0' content='...'.",
 		{
-			componentId: componentIdSchema.describe("Convex document ID of the component"),
+			componentId: componentIdSchema.describe(
+				"Convex document ID of the component",
+			),
 			name: z.string().optional().describe("New component name"),
 			team: z.string().optional().describe("New team name"),
 			content: z.string().optional().describe("New content/source code"),
@@ -5537,7 +5599,9 @@ export function registerTools(
 			"WHEN: use to remove deprecated or test components that should no longer be discoverable. " +
 			"EXAMPLE: delete_component componentId='j57aaaaa...'.",
 		{
-			componentId: componentIdSchema.describe("Convex document ID of the component to delete"),
+			componentId: componentIdSchema.describe(
+				"Convex document ID of the component to delete",
+			),
 		},
 		{
 			readOnlyHint: false,
@@ -5975,7 +6039,9 @@ export function registerTools(
 			"WHEN: use to change assignee, schedule, or priority of an active recurring template. " +
 			"EXAMPLE: update_recurring_task recurringTaskId='j57aaaaa...' cronExpression='0 10 * * 1' priority='high'.",
 		{
-			recurringTaskId: recurringTaskIdSchema.describe("Convex document ID of the recurring task"),
+			recurringTaskId: recurringTaskIdSchema.describe(
+				"Convex document ID of the recurring task",
+			),
 			title: z.string().optional().describe("New title"),
 			description: z.string().optional().describe("New description"),
 			assignedTo: creatorSchema.optional().describe("New assignee"),
@@ -6111,7 +6177,9 @@ export function registerTools(
 			"WHEN: call when the fulfiller confirms they can deliver the service within the agreed budget. " +
 			"EXAMPLE: accept_mandate mandateId='j57aaaaa...' callerOrchestrator='beta'.",
 		{
-			mandateId: mandateIdSchema.describe("Convex document ID of the mandate to accept"),
+			mandateId: mandateIdSchema.describe(
+				"Convex document ID of the mandate to accept",
+			),
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the fulfilledBy orchestrator or system",
 			),
@@ -6154,7 +6222,9 @@ export function registerTools(
 			"WHEN: use to record spend progress, link created tasks, or advance status to delivered. " +
 			"EXAMPLE: update_mandate mandateId='j57aaaaa...' callerOrchestrator='beta' tokensCost=1200 status='delivered'.",
 		{
-			mandateId: mandateIdSchema.describe("Convex document ID of the mandate to update"),
+			mandateId: mandateIdSchema.describe(
+				"Convex document ID of the mandate to update",
+			),
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the fulfilledBy orchestrator or system",
 			),
@@ -6212,7 +6282,9 @@ export function registerTools(
 			"WHEN: call after verifying the delivered work meets the mandate scope — closes the billing cycle. " +
 			"EXAMPLE: settle_mandate mandateId='j57aaaaa...' callerOrchestrator='alpha' finalCost=4800.",
 		{
-			mandateId: mandateIdSchema.describe("Convex document ID of the mandate to settle"),
+			mandateId: mandateIdSchema.describe(
+				"Convex document ID of the mandate to settle",
+			),
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the requestedBy orchestrator or system",
 			),
@@ -6507,7 +6579,9 @@ export function registerTools(
 			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. " +
 			"EXAMPLE: update_bu buId='j57aaaaa...' status='live' revenueProjections={y1:10000,y2:80000,y3:300000}.",
 		{
-			buId: buIdSchema.describe("Convex document ID of the business unit to update"),
+			buId: buIdSchema.describe(
+				"Convex document ID of the business unit to update",
+			),
 			name: z.string().optional().describe("New name"),
 			description: z.string().optional().describe("New description"),
 			purpose: z.string().optional().describe("New purpose"),
@@ -6701,9 +6775,7 @@ export function registerTools(
 							: []
 				) as unknown[];
 				const backendNextCursor =
-					envelope &&
-					typeof envelope === "object" &&
-					"nextCursor" in envelope
+					envelope && typeof envelope === "object" && "nextCursor" in envelope
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
@@ -6752,7 +6824,9 @@ export function registerTools(
 			"WHEN: use only for test BUs or entities created in error; prefer status update for real BUs. " +
 			"EXAMPLE: delete_bu buId='j57aaaaa...'.",
 		{
-			buId: buIdSchema.describe("Convex document ID of the business unit to delete"),
+			buId: buIdSchema.describe(
+				"Convex document ID of the business unit to delete",
+			),
 		},
 		{
 			readOnlyHint: false,
@@ -6917,9 +6991,7 @@ export function registerTools(
 							: []
 				) as unknown[];
 				const backendNextCursor =
-					envelope &&
-					typeof envelope === "object" &&
-					"nextCursor" in envelope
+					envelope && typeof envelope === "object" && "nextCursor" in envelope
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
@@ -6927,7 +6999,10 @@ export function registerTools(
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
-				if (filteredMappings.length < rawItems.length && filteredMappings.length > 0) {
+				if (
+					filteredMappings.length < rawItems.length &&
+					filteredMappings.length > 0
+				) {
 					const last = filteredMappings[filteredMappings.length - 1] as {
 						_creationTime?: number;
 					};
@@ -8018,7 +8093,9 @@ export function registerTools(
 			templateName: z
 				.string()
 				.describe("Name of the mission template to instantiate"),
-			missionId: missionIdSchema.describe("Convex document ID of the target mission"),
+			missionId: missionIdSchema.describe(
+				"Convex document ID of the target mission",
+			),
 			context: z
 				.record(z.string(), z.string())
 				.optional()
@@ -8324,7 +8401,9 @@ export function registerTools(
 			"WHEN: use after list_errors to retrieve the full stack trace for a specific error entry. " +
 			"EXAMPLE: get_error errorId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			errorId: errorIdSchema.describe("Convex document ID of the errorLogs entry"),
+			errorId: errorIdSchema.describe(
+				"Convex document ID of the errorLogs entry",
+			),
 		},
 		{
 			readOnlyHint: true,
@@ -9046,7 +9125,9 @@ export function registerTools(
 			"WHEN: use when you have a recurringTaskId from list_recurring_tasks and need the full row before pause_recurring_task / update_recurring_task / delete_recurring_task. " +
 			"EXAMPLE: get_recurring_task recurringTaskId='k57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
-			recurringTaskId: recurringTaskIdSchema.describe("Recurring task document ID"),
+			recurringTaskId: recurringTaskIdSchema.describe(
+				"Recurring task document ID",
+			),
 		},
 		{
 			readOnlyHint: true,
