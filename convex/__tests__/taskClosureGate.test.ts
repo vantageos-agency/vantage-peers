@@ -24,12 +24,13 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
+// `backfill` was in this exclusion list, which meant the backfill migration —
+// the subject of the fix below — was never loaded, so nothing could exercise it.
+// The named fear needs the named test: I wrote "a page of zero updates is not a
+// finish line" into the PR body and then shipped no test that could catch it.
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
-		([path]) =>
-			!path.includes("ragSync") &&
-			!path.includes("search") &&
-			!path.includes("backfill"),
+		([path]) => !path.includes("ragSync") && !path.includes("search"),
 	),
 );
 
@@ -454,5 +455,85 @@ describe("task closure gate — FORGE createdBy:'system' (Day 130 follow-up #2)"
 				callerOrchestrator: "sigma-forge-3",
 			}),
 		).rejects.toThrow(/TASK_NEVER_STARTED_BILLABLE/);
+	});
+});
+
+// =============================================================================
+// Day 130 follow-up #3 (Eta REVISE, PR #1091) — the backfill migration.
+//
+// The first version used `.take(batchSize)`: it grabbed the first N candidate
+// rows (createdBy:"system", no origin), patched only those whose title matched
+// the webhook's [Review] format, and left the rest untouched — so they stayed
+// candidates, and the NEXT call re-fetched the SAME N. It could never reach the
+// [Review] tasks. Against production it returned {updated: 0, skipped: 100} and
+// made zero progress.
+//
+// The lethal part was the REPORT, not the stall: the instruction said "re-run
+// until updated:0", but updated:0 is ALSO the stuck state. "I made no progress"
+// and "the work is finished" printed the same thing.
+//
+// This suite pins the fear I named in the PR body and then failed to test:
+// A PAGE OF ZERO UPDATES IS NOT A FINISH LINE.
+// =============================================================================
+
+describe("backfill migration — the cursor must walk past a zero-update page", () => {
+	test("(WALK-1) a zero-update middle page does NOT end the walk; isDone does", async () => {
+		const t = convexTest(schema, modules);
+		await seedBillableConfig(t);
+
+		// One page's worth of NON-matching system rows (they will always be
+		// `skipped`, never patched — exactly the rows that trapped the old
+		// `.take()` version), and ONE real [Review] row placed AFTER them.
+		const PAGE = 5;
+		await t.run(async (ctx) => {
+			for (let i = 0; i < PAGE * 2; i++) {
+				await ctx.db.insert("tasks", {
+					title: `cron heartbeat ${i}`, // NOT the webhook's [Review] format
+					assignedTo: "sigma", priority: "low", status: "todo",
+					createdBy: "system", project: BILLABLE_PROJECT,
+					createdAt: Date.now(), updatedAt: Date.now(),
+				});
+			}
+			await ctx.db.insert("tasks", {
+				title: "[Review] owner/repo PR #7: a real webhook-minted review task",
+				assignedTo: "eta", priority: "high", status: "todo",
+				createdBy: "system", project: BILLABLE_PROJECT,
+				createdAt: Date.now(), updatedAt: Date.now(),
+			});
+		});
+
+		// Walk the cursor exactly as the operator does. Stop on isDone, NEVER on
+		// updated===0 — the whole point.
+		let cursor: string | null = null;
+		let pages = 0;
+		let totalUpdated = 0;
+		let sawZeroUpdatePageBeforeTheEnd = false;
+		for (;;) {
+			const r: { updated: number; skipped: number; isDone: boolean; nextCursor: string | null } =
+				await t.mutation(internal.migrations.backfill_review_task_origin.backfillOrigin, {
+					cursor, batchSize: PAGE,
+				});
+			pages++;
+			totalUpdated += r.updated;
+			if (r.updated === 0 && !r.isDone) sawZeroUpdatePageBeforeTheEnd = true;
+			if (r.isDone) break;
+			cursor = r.nextCursor;
+			expect(pages).toBeLessThan(20); // the walk must terminate, not spin
+		}
+
+		expect(sawZeroUpdatePageBeforeTheEnd).toBe(true); // the trap was actually laid
+		expect(pages).toBeGreaterThan(1); // it really did walk more than one page
+		expect(totalUpdated).toBe(1); // and it REACHED the [Review] row past the zero page
+
+		// The old `.take()` code stops at the first zero-update page and never
+		// patches this row. That is the regression this test exists to catch.
+		await t.run(async (ctx) => {
+			const rows = await ctx.db.query("tasks").collect();
+			const review = rows.find((r) => r.title.startsWith("[Review]"));
+			expect(review?.origin).toBe("automation");
+			// And nothing else was touched — a data repair that widens its own
+			// scope is how a fix becomes an incident.
+			expect(rows.filter((r) => r.origin === "automation")).toHaveLength(1);
+		});
 	});
 });
