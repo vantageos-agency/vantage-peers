@@ -4,10 +4,9 @@
 Context (Day 130): `vantageos-agency/vantage-peers` is a PUBLIC repo and the
 plugin under plugin/ is PUBLISHED. The VantageRegistry canonical for
 `session-start` carries a hardcoded orchestrator/workspace identity table
-containing REAL client names, a REAL person's name, and internal VPS paths:
-
-    "/root/coding/victor-workspace": ("victor", "victor-vps",
-        "Victor — Iris RH (Marie Parrent)", "project/iris-rh"),
+that pairs internal VPS workspace paths with real, third-party client
+organisation names and their real contact persons' names, one row per
+client engagement.
 
 Blindly resyncing packaged sources from VR would import that leak into the
 public package. Hence this guard, and hence the rule that it OUTRANKS parity:
@@ -23,7 +22,7 @@ no guard.
 
 MATCHING DISCIPLINE — word-boundary / token matching, NEVER substrings.
 A prior fleet purge did substring matching and renamed "summaries" because it
-contains "marie" ("sum|marie|s"). We do not repeat that. Every pattern below
+contains a fragment of a client contact's first name. We do not repeat that. Every pattern below
 is anchored with \\b word boundaries (or is a path/structural pattern), and
 the false-positive corpus in tests/plugin/test_leak_guard.py pins the benign
 terms that must NEVER match: "summaries", "client-side", "client delivery".
@@ -61,52 +60,44 @@ TIER_CLIENT_DATA = "CLIENT_DATA"
 TIER_INTERNAL_ID = "INTERNAL_ID"
 
 # --- TIER 1: REAL CLIENT DATA. Hard block, always, everywhere. ---------------
-# Day 130 (Eta review, PR #1090): a hand-typed list like the one below rots at
-# every new client -- the next one is always the one nobody remembered to add,
-# and it printed PASSED straight through the gap. As of this fix, the LIVE
-# client vocabulary is RESOLVED at run time from a host-side config (see
-# client_identity_config.py) and merged in via `extra_client_patterns` in
-# `main()`. `main()` FAILS LOUDLY, and never prints PASSED, if that config
-# cannot be resolved. Do NOT add any new client identifier to the literal
-# list below -- new clients go in the host config, never in this file.
+# Day 130 (Eta review, PR #1090): a hand-typed list rots at every new client --
+# the next one is always the one nobody remembered to add, and it printed
+# PASSED straight through the gap. As of this fix, the ENTIRE live client
+# vocabulary is RESOLVED at run time from a host-side config (see
+# client_identity_config.py, `VANTAGE_CLIENT_IDENTITIES`) and merged in via
+# `extra_client_patterns` in `main()`. `main()` FAILS LOUDLY, and never prints
+# PASSED, if that config cannot be resolved. Do NOT add any client identifier
+# (org name, contact person, commercial name, infra slug/alias) to a literal
+# list in this file -- ALL client vocabulary lives exclusively in the host
+# config, never in source under version control.
 #
-# The entries still hard-coded below are the small, already-reviewed,
-# pre-Day-130 set (kept for the regression tests pinned against them); they
-# are not where new client vocabulary belongs going forward.
+# This file therefore carries NO literal client-org/contact-person entries at
+# all -- that is the fix, not an oversight. The regression tests in
+# tests/plugin/test_leak_guard.py exercise this tier entirely through
+# resolved, host-config-derived patterns (real config in CI/local dev, a
+# throwaway fictitious config for offline unit tests), never through literals
+# committed here.
 #
-# Third-party client organisations and their contact persons. This is client
+# Third-party client organisations and their contact persons are client
 # confidentiality: never sync, never publish, no exceptions, no baselining.
-# Exactly ONE VR canonical carries this today: `session-start`
-#   "Victor — Iris RH (Marie Parrent)"        -> project/iris-rh
-#   "Gaia — ... (1er client Marie Josée / Mini Mondes)"
-# It is NOT currently public (absent from origin/main and from the distributed
-# plugin copies). It is a LOADED GUN, not a live leak -- and we keep it that way.
 #
-# Keep this list SPECIFIC. A generic word here (e.g. bare "client") would fire
-# on benign prose and get the guard disabled by the next engineer.
+# Keep any future addition here SPECIFIC and non-client. A generic word (e.g.
+# bare "client") would fire on benign prose and get the guard disabled by the
+# next engineer. As of Day 130 the literal client-org/contact set is empty by
+# design -- see rationale above.
 CLIENT_DATA_PATTERNS: list[tuple[str, str]] = [
-    (r"\bparrent\b", "real person surname (client contact)"),
-    (r"\bmarie\s+parrent\b", "real person full name (client contact)"),
-    (r"\biris[\s\-_]?rh\b", "real client org name"),
-    (r"\bmarie[\s\-]jos[ée]e\b", "real person name (client contact)"),
-    (r"\bmini[\s\-]?mondes\b", "real client org name"),
-    (r"\bminimondesdemarie\b", "real client org/domain"),
-    (r"\balsachimie\b", "real client org name"),
     # Real Convex deployment slugs are a CLIENT's live production infrastructure
-    # identifier, not an internal operator detail -- Day 130 finding: the
-    # vantage-immo prod slug `proper-alligator-8` shipped verbatim in a public
-    # CHANGELOG. Listed by literal value, ON PURPOSE, NOT by a generic
-    # adjective-animal-number shape regex: measured against the packaged
-    # artifact, a shape-based `\b[a-z]+-[a-z]+-\d+\b` pattern hits 39 unrelated
-    # hyphenated identifiers (hook names like `enforce-ship-24`, example CSS
-    # classes like `bg-gray-900`, decision-doc slugs like `hook-postmortem-2026`
-    # -- none of them Convex deployments) for the one real slug it is meant to
-    # catch. A pattern with that false-positive ratio is exactly the kind of
-    # guard that gets ripped out after mutilating a doc it shouldn't have
-    # touched. Real slugs must be added here explicitly as they are confirmed;
+    # identifier, not an internal operator detail. Listed by literal value, ON
+    # PURPOSE, NOT by a generic adjective-animal-number shape regex: measured
+    # against the packaged artifact, a shape-based `\b[a-z]+-[a-z]+-\d+\b`
+    # pattern hits dozens of unrelated hyphenated identifiers (hook names,
+    # example CSS classes, decision-doc slugs -- none of them Convex
+    # deployments) for the one real slug it is meant to catch. A pattern with
+    # that false-positive ratio is exactly the kind of guard that gets ripped
+    # out after mutilating a doc it shouldn't have touched. Confirmed real
+    # slugs belong in the host config's `aliases` key, not here;
     # `guineapig-77` (skills/deploy-track/SKILL.md) is a pedagogical worked
-    # example, not client data, and MUST stay off this list.
-    (r"\bproper-alligator-8\b", "real client production Convex deployment slug"),
+    # example, not client data, and MUST stay off any such list.
 ]
 
 # --- TIER 2: INTERNAL IDENTIFIERS ONLY. Tracked, not hard-blocked. -----------

@@ -31,6 +31,7 @@ from client_identity_config import (  # noqa: E402
     derive_organizations_from_bu_registry,
     load_raw_config,
     resolve_client_data_patterns,
+    resolve_config_path,
 )
 
 # Benign terms that MUST NOT match. A prior fleet purge used substring matching
@@ -45,12 +46,87 @@ BENIGN_CORPUS = [
     "a summary of client feedback",
 ]
 
-# Real leak material. Verbatim from the VR canonical of `session-start`.
-LEAKING_CORPUS = [
-    '"/root/coding/victor-workspace": ("victor", "victor-vps", "Victor — Iris RH (Marie Parrent)", "project/iris-rh"),',
-    '"/home/laurentperello/coding/ElPi Corp": ("pi", "pi-chromebook", ...)',
-    '"/root/coding/gaia-workspace": ("gaia", "gaia-vps", "Gaia — (1er client Marie Josée / Mini Mondes)"),',
-]
+# =============================================================================
+# TIER 1 corpus — DERIVED from the REAL host-side client-identity config at
+# TEST-EXECUTION TIME, never written verbatim in this tracked file.
+#
+# Describing a leak by reproducing it IS re-publishing it. So this file
+# carries zero real client names/orgs in its own source. Instead, at runtime,
+# `real_client_identities` loads the actual host config (the same one
+# `leak_guard.main()` resolves in CI/prod) and `_synthesize_leak_lines`
+# stitches its real tokens into realistic "identity table row" style
+# sentences -- the same shape as the VR `session-start` canonical this guard
+# exists to catch. The guard is proven against genuine client material this
+# way, with the material itself never landing in git history.
+#
+# If the host config cannot be resolved (missing/empty/malformed), the
+# fixture below RAISES -- these tests then ERROR, loudly, in the pytest
+# summary. They are never `skip`: a skipped test is a silent green that is
+# indistinguishable from "the guard works", which is exactly the failure
+# mode this whole effort exists to eliminate.
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def real_client_identities():
+    """The REAL, resolved host-side client-identity config dict.
+
+    Loaded once per test module run. Raises `ClientIdentityConfigError` (via
+    `load_raw_config`) if the host config is missing/empty/malformed -- that
+    failure propagates as a pytest fixture ERROR, never a skip.
+    """
+    return load_raw_config(resolve_config_path())
+
+
+@pytest.fixture(scope="module")
+def real_client_patterns():
+    """The REAL, resolved (regex, reason) client-data patterns -- same call
+    `leak_guard.main()` makes. Raises loudly if unresolvable (see above)."""
+    return resolve_client_data_patterns()
+
+
+def _synthesize_leak_lines(identities: dict) -> list[str]:
+    """Stitch REAL tokens from the resolved host config into realistic
+    'identity table row' style sentences, entirely at execution time.
+
+    Mirrors the shape of the VR `session-start` canonical this guard exists
+    to catch (an internal workspace path paired with a real org/contact
+    pair) -- without ever writing a real name into this tracked source file.
+    Returns an empty list only if the config itself carries none of the
+    fields it can synthesize from; the caller asserts non-emptiness.
+    """
+    lines: list[str] = []
+    orgs = identities.get("organizations") or []
+    contacts = identities.get("contacts") or []
+    commercial = identities.get("commercial_names") or []
+    aliases = identities.get("aliases") or []
+
+    if orgs:
+        org = orgs[0]
+        contact = contacts[0] if contacts else "the client contact"
+        lines.append(
+            f'"/root/coding/example-workspace": ("example", "example-vps", '
+            f'"Example — {org} ({contact})", "project/example"),'
+        )
+    if contacts:
+        lines.append(f"Onboarding notes for contact {contacts[-1]}.")
+    if commercial:
+        lines.append(f"Product line reference in a stray doc: {commercial[0]}.")
+    if aliases:
+        lines.append(f"Infra alias mentioned in passing: {aliases[0]}.")
+
+    return lines
+
+
+@pytest.fixture(scope="module")
+def leaking_corpus(real_client_identities):
+    lines = _synthesize_leak_lines(real_client_identities)
+    assert lines, (
+        "host config resolved but produced ZERO synthesizable leak lines -- "
+        "the config has no organizations/contacts/commercial_names/aliases "
+        "to build a fixture from."
+    )
+    return lines
 
 
 @pytest.mark.parametrize("text", BENIGN_CORPUS)
@@ -63,17 +139,41 @@ def test_benign_text_does_not_match(text):
     )
 
 
-@pytest.mark.parametrize("text", LEAKING_CORPUS)
-def test_real_leak_material_is_caught(text):
-    findings = scan_text(text, "leak")
-    assert findings, f"MISSED LEAK: {text!r} was not flagged"
+def test_real_leak_material_is_caught(leaking_corpus, real_client_patterns):
+    """The guard must flag sentences built from the REAL, resolved
+    client-identity vocabulary -- proving it catches genuine client material
+    without this file ever republishing that material verbatim."""
+    for text in leaking_corpus:
+        findings = scan_text(text, "leak", extra_client_patterns=real_client_patterns)
+        assert findings, f"MISSED LEAK: a synthesized real-vocabulary line was not flagged: {text!r}"
 
 
-def test_no_client_data_in_packaged_artifact():
+def test_real_leak_material_is_not_caught_without_resolved_patterns(leaking_corpus):
+    """PROOF THE GUARD ACTUALLY BITES (and isn't trivially green): the same
+    synthesized real-vocabulary lines, scanned WITHOUT the resolved client
+    patterns merged in, must NOT be universally flagged by the historical
+    literal CLIENT_DATA_PATTERNS alone -- because as of Day 130 that literal
+    set carries no client-org/contact entries at all (see leak_guard.py).
+    A guard that reports these as caught either way would mean the resolved
+    vocabulary is decorative, not load-bearing.
+    """
+    for text in leaking_corpus:
+        findings = client_data(scan_text(text, "leak"))
+        assert not findings, (
+            "unexpected: a synthesized line matched WITHOUT the resolved "
+            "client vocabulary -- a stale literal client entry may have "
+            "leaked back into CLIENT_DATA_PATTERNS in leak_guard.py"
+        )
+
+
+def test_no_client_data_in_packaged_artifact(real_client_patterns):
     """TIER 1: no packaged file may carry real client-org / contact-person data.
 
     Hard block, no baselining, no exceptions. This is the gate that stops a
-    resync from importing 'Marie Parrent' / 'Iris RH' into a public package.
+    resync from importing the real host-config client vocabulary into a
+    public package. Scanned with the RESOLVED patterns merged in -- the
+    literal CLIENT_DATA_PATTERNS in leak_guard.py carries no client entries
+    by design (Day 130), so this tier only has teeth via the resolved config.
     """
     targets = packaged_paths()
     assert targets, (
@@ -82,7 +182,7 @@ def test_no_client_data_in_packaged_artifact():
     )
     findings = []
     for t in targets:
-        findings.extend(client_data(scan_file(t)))
+        findings.extend(client_data(scan_file(t, extra_client_patterns=real_client_patterns)))
     if findings:
         detail = "\n".join(f"  {f.render()}" for f in findings)
         pytest.fail(f"{len(findings)} CLIENT DATA leak(s) in the PUBLIC package:\n{detail}")
@@ -121,16 +221,22 @@ def test_derived_inventory_catches_leak_outside_old_globs(tmp_path):
     `references/` or `docs/`) MUST be named by the guard. This is the test
     that the OLD two-glob `packaged_paths()` would have missed -- it is the
     one that closes the coverage-gap class of bug (19% -> 100%).
+
+    Purely structural (inventory coverage), so a FICTITIOUS identity via a
+    throwaway config is sufficient -- no real client material needed here.
     """
-    skill_dir = tmp_path / "skills" / "some-skill" / "references"
+    cfg_path = _write_config(tmp_path, FICTIVE_CONFIG)
+    patterns = resolve_client_data_patterns(path=cfg_path)
+
+    skill_dir = tmp_path / "pkg" / "skills" / "some-skill" / "references"
     skill_dir.mkdir(parents=True)
     leak_file = skill_dir / "examples.md"
     leak_file.write_text(
-        "A worked example featuring Marie Parrent as the client contact.\n",
+        "A worked example featuring Zorblatt Holdings as the client contact.\n",
         encoding="utf-8",
     )
 
-    inventory = derive_inventory(tmp_path)
+    inventory = derive_inventory(tmp_path / "pkg")
     checked_paths = {item.path for item in inventory if item.checked}
     assert leak_file in checked_paths, (
         "derive_inventory() did not enumerate a file under references/ -- "
@@ -141,10 +247,10 @@ def test_derived_inventory_catches_leak_outside_old_globs(tmp_path):
     findings = []
     for item in inventory:
         if item.checked:
-            findings.extend(client_data(scan_file(item.path)))
+            findings.extend(client_data(scan_file(item.path, extra_client_patterns=patterns)))
     assert findings, (
-        "MISSED LEAK: 'Marie Parrent' inside references/examples.md was not "
-        "flagged by the derived-inventory scan."
+        "MISSED LEAK: fictitious 'Zorblatt Holdings' inside references/examples.md "
+        "was not flagged by the derived-inventory scan."
     )
     named = {f.source for f in findings}
     assert str(leak_file) in named, f"leak was found but not attributed to {leak_file}"
