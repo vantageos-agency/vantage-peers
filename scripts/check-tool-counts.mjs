@@ -46,11 +46,22 @@ const targetFr =
 	(args.find((a) => a.startsWith("--target-fr=")) || "").slice(12) || null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+// THREE outcomes, not two: PASS (0), VIOLATION (1, a real drift), or REFUSAL
+// TO JUDGE (2, a required input this script needs to read is absent/unreadable).
+// A missing tools.ts/README/target file used to `fail()` into the SAME bucket
+// as a genuine count drift -- both printed the identical exit 1, so "I could
+// not read the file" and "the counts are wrong" were indistinguishable on the
+// only signal a CI gate looks at. REFUSALS is that third bucket.
 const ERRORS = [];
+const REFUSALS = [];
 const FIXED = [];
 
 function fail(msg) {
 	ERRORS.push(msg);
+}
+
+function refuse(msg) {
+	REFUSALS.push(msg);
 }
 
 function info(msg) {
@@ -61,7 +72,7 @@ function info(msg) {
 function countCanonicalSurface() {
 	const mainFile = join(REPO_ROOT, "mcp-server/src/tools.ts");
 	if (!existsSync(mainFile)) {
-		fail(`tools.ts not found at ${mainFile}`);
+		refuse(`tools.ts not found at ${mainFile} — cannot count the canonical MCP-tool surface`);
 		return 0;
 	}
 	let total = 0;
@@ -93,7 +104,7 @@ function countCanonicalSurface() {
 // stop counting at the next ### or ## or H1.
 function checkReadmeCategoryCounts(path) {
 	if (!existsSync(path)) {
-		fail(`README not found at ${path}`);
+		refuse(`README not found at ${path} — cannot check category-count self-consistency`);
 		return null;
 	}
 	const src = readFileSync(path, "utf8");
@@ -165,7 +176,7 @@ function checkReadmeCategoryCounts(path) {
 // Then parse `## Summary` table for declared per-domain integers and Total.
 function parseCatalogue(path) {
 	if (!existsSync(path)) {
-		fail(`Catalogue not found at ${path}`);
+		refuse(`Catalogue not found at ${path} — cannot check its Summary/table self-consistency`);
 		return null;
 	}
 	const src = readFileSync(path, "utf8");
@@ -365,6 +376,16 @@ function main() {
 	if (FIXED.length > 0) {
 		info(`\nApplied ${FIXED.length} fix(es) (--update):`);
 		for (const f of FIXED) info(`  ${f}`);
+	}
+	// REFUSAL TO JUDGE takes priority over reporting drift: if a required input
+	// could not be read, any drift/OK verdict computed from the files that
+	// COULD be read is partial and must not be presented as the final answer.
+	if (REFUSALS.length > 0) {
+		process.stderr.write(
+			`\nREFUSING TO JUDGE — ${REFUSALS.length} required input(s) could not be read:\n`,
+		);
+		for (const r of REFUSALS) process.stderr.write(`  ${r}\n`);
+		process.exit(2);
 	}
 	if (ERRORS.length > 0) {
 		info(`\nFAIL — ${ERRORS.length} drift class(es) detected:`);

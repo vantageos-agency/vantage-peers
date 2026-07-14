@@ -562,16 +562,38 @@ def main():
         print(f"Error: '{orch}' is not a valid orchestrator. Choose from: {', '.join(sorted(valid))}")
         sys.exit(1)
 
-    client = McpClient()
+    # THREE outcomes, not two: PASS (0, every tool call behaved), VIOLATION (1,
+    # a tool call genuinely failed/misbehaved), or REFUSAL TO JUDGE (2, the
+    # instrument itself could not be stood up -- CONVEX_URL unresolved, the
+    # `bun` binary absent, or the server never answered the handshake). Before
+    # this fix, all three of these infrastructure failures were UNCAUGHT
+    # exceptions: Python's default uncaught-exception exit code is 1, the same
+    # code `run_tests` uses for a genuine FAILED validator. "the server never
+    # came up" and "a validator broke" printed the identical exit code.
+    try:
+        client = McpClient()
+    except RuntimeError as e:
+        print(f"REFUSAL: cannot resolve CONVEX_URL -- {e}", file=sys.stderr)
+        sys.exit(2)
+    except FileNotFoundError as e:
+        print(f"REFUSAL: cannot spawn MCP server (missing dependency) -- {e}", file=sys.stderr)
+        sys.exit(2)
 
     try:
-        # Initialize MCP handshake
-        client.send("initialize", {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "orchestrator-validator", "version": "1.0.0"},
-        })
-        client.notify("notifications/initialized")
+        try:
+            # Initialize MCP handshake
+            client.send("initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "orchestrator-validator", "version": "1.0.0"},
+            })
+            client.notify("notifications/initialized")
+        except TimeoutError as e:
+            print(
+                f"REFUSAL: MCP server did not respond to the initialize handshake -- {e}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
         run_tests(client, orch)
     finally:
