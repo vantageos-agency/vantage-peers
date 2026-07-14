@@ -23,9 +23,10 @@
  */
 
 import { validateMasterBearer } from "@vantageos/cloud-identity";
-import { ConvexHttpClient } from "convex/browser";
+import type { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createServiceAccountConvexClient } from "./authenticatedConvexClient.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context types attached to Hono request
@@ -97,7 +98,13 @@ function buildInternalClient(): ConvexHttpClient {
 				"Set it to your internal VantagePeers Convex deployment URL.",
 		);
 	}
-	return new ConvexHttpClient(url);
+	// Every outgoing call from this client carries the MCP server's
+	// service-account Clerk identity (see authenticatedConvexClient.ts /
+	// serviceAccountAuth.ts). It never proceeds unauthenticated: if the
+	// identity cannot be minted, the call throws instead of silently
+	// falling back to an anonymous request that Convex's withOrgScope()
+	// would treat as master/unfiltered.
+	return createServiceAccountConvexClient(url);
 }
 
 // Lazily instantiated so the module can be imported without env vars in tests
