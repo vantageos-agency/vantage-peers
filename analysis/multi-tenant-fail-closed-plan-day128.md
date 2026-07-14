@@ -6,7 +6,7 @@ Scoping pur, aucune ligne de fix. Mesuré corps-par-corps, pas au grep de surfac
 ## Verdict de sévérité (question de Pi : emergency vs pré-go-live)
 
 **Le trou est réel et localisé. La sévérité tient à UN fait de provisioning que je ne peux
-pas lire depuis le code : le `convexUrl` du tenant MCP de Marie / Iris RH.**
+pas lire depuis le code : le `convexUrl` du tenant MCP de Marie / <client-org>.**
 
 - `convexUrl` de Marie = backend **partagé** (compassionate-goldfinch-737) → **EMERGENCY**.
   Elle voit les données de tous les orgs (voir mécanisme ci-dessous).
@@ -108,12 +108,12 @@ garde route.
 
 ## Verdict de sévérité — TRANCHÉ (lecture de table, Day 128)
 
-**NON-emergency.** Marie / Iris RH passe par le chemin (2) OAuth scopé, PAS le chemin (4)
+**NON-emergency.** Marie / <client-org> passe par le chemin (2) OAuth scopé, PAS le chemin (4)
 troué. Preuve (npx convex data, autorisé par Laurent) :
 - `mcpTenants` (chemin 4) = un seul tenant `e2e-test` (compte de test). Aucune vraie cliente.
-- `oauth_scope_profiles` : profils Marie (`marie-iris-rh`, `iris-rh`, personas Hélios/Clio)
+- `oauth_scope_profiles` : profils Marie (`marie-<client-org>`, `<client-org>`, personas Hélios/Clio)
   avec namespaceReadPrefixes ÉTROITS (`orchestrator/marie`, `orchestrator/victor`,
-  `project/marie`/`project/iris-rh`, `global`) — jamais `["*"]` (seul `master` l'a).
+  `project/marie`/`project/<client-org>`, `global`) — jamais `["*"]` (seul `master` l'a).
 Les guards de tools.ts s'appliquent sur ce chemin → Marie est bornée à ses namespaces.
 Les 2 trous (chemin 4 sans oauthContext ; withOrgScope fail-open) restent de vraies dettes
 de défense-en-profondeur à fermer, mais sans exposition cliente réelle aujourd'hui.
@@ -130,7 +130,7 @@ autre client).
 
 ## Bloquant T0 → RÉSOLU (voir verdict ci-dessus)
 
-Question binaire ouverte : **le tenant MCP de Marie / Iris RH est-il provisionné sur le
+Question binaire ouverte : **le tenant MCP de Marie / <client-org> est-il provisionné sur le
 backend partagé (compassionate-goldfinch-737) ou sur un déploiement Convex dédié ?**
 Le seed (scripts/seed-mcp-tenant.ts) prend `--convex-url` en argument, sans défaut → valeur
 inconnue depuis le code seul.

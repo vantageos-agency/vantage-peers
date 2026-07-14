@@ -99,7 +99,7 @@ The scope-aware filter framework is the single chokepoint that translates an aut
 
 | Concept | Type | Purpose | Never used as |
 |---|---|---|---|
-| `scope_profile.name` | `string` (opaque identifier) | Uniquely identifies a scope-profile record in the catalog. Human-readable slug (`helios-iris-rh`, `alpha-test-trio`). | Orchestrator ID, namespace prefix, identity filter value |
+| `scope_profile.name` | `string` (opaque identifier) | Uniquely identifies a scope-profile record in the catalog. Human-readable slug (`helios-<client-org>`, `alpha-test-trio`). | Orchestrator ID, namespace prefix, identity filter value |
 | `scope_profile.fromAllowList[]` | `string[]` | Exhaustive list of orchestrator IDs authorized to appear as `assignedTo`, `createdBy`, `from`, `recipient`, `pilot` under this scope. | Namespace filter, profile name comparison |
 | `scope_profile.namespaceReadPrefixes[]` | `string[]` | Prefix list for namespace-scoped **READ** operations (`list_memories`, `recall`, `get_memory`). | Identity filter, write gate |
 | `scope_profile.namespaceWritePrefixes[]` | `string[]` | Prefix list for namespace-scoped **WRITE** operations (`store_memory`). | Identity filter, read gate |
@@ -108,7 +108,7 @@ The scope-aware filter framework is the single chokepoint that translates an aut
 
 | Concept | Type | Rôle | Ne jamais utiliser comme |
 |---|---|---|---|
-| `scope_profile.name` | `string` (identifiant opaque) | Identifie de manière unique un enregistrement scope-profile dans le catalogue. Slug lisible (`helios-iris-rh`, `alpha-test-trio`). | ID d'orchestrateur, préfixe de namespace, valeur de filtre d'identité |
+| `scope_profile.name` | `string` (identifiant opaque) | Identifie de manière unique un enregistrement scope-profile dans le catalogue. Slug lisible (`helios-<client-org>`, `alpha-test-trio`). | ID d'orchestrateur, préfixe de namespace, valeur de filtre d'identité |
 | `scope_profile.fromAllowList[]` | `string[]` | Liste exhaustive des IDs d'orchestrateurs autorisés à apparaître comme `assignedTo`, `createdBy`, `from`, `recipient`, `pilot` sous ce scope. | Filtre de namespace, comparaison de nom de profil |
 | `scope_profile.namespaceReadPrefixes[]` | `string[]` | Liste de préfixes pour les opérations de **LECTURE** par namespace (`list_memories`, `recall`, `get_memory`). | Filtre d'identité, verrou d'écriture |
 | `scope_profile.namespaceWritePrefixes[]` | `string[]` | Liste de préfixes pour les opérations d'**ÉCRITURE** par namespace (`store_memory`). | Filtre d'identité, verrou de lecture |
@@ -171,7 +171,7 @@ function canWriteNamespace(scope: OAuthContext, namespace: string): boolean {
 
 **FR — Pour un bearer non-master, les outils filtrés par namespace DOIVENT filtrer contre la liste de préfixes appropriée, et non contre `scope_profile.name`.**
 
-Correspondance exacte ou hiérarchique : `project/iris-rh/sub` passe si le préfixe `project/iris-rh` est configuré.
+Correspondance exacte ou hiérarchique : `project/<client-org>/sub` passe si le préfixe `project/<client-org>` est configuré.
 
 ### §4.3.1 Built-in scope profiles — `team-member` (B4, 2026-06-20)
 
@@ -195,7 +195,7 @@ Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `
 
 | Code | Anti-pattern | Regression | Fix |
 |---|---|---|---|
-| A1 | `presentedIdentity === scope_profile.name` | PR #625 commit `28db616` — `list_tasks` blocked Hélios on `helios-iris-rh` | PR #654 commit `00b95f0` — `list-tasks-gate.ts` uses `fromAllowList` |
+| A1 | `presentedIdentity === scope_profile.name` | PR #625 commit `28db616` — `list_tasks` blocked Hélios on `helios-<client-org>` | PR #654 commit `00b95f0` — `list-tasks-gate.ts` uses `fromAllowList` |
 | A2 | Case-sensitive identity match | Blocks `Helios` when `helios` is in `fromAllowList` | Always use `.toLowerCase()` on both sides |
 | A3 | NFC normalization absent at write time | `Hélios` (NFC composed) vs `Hélios` (NFD decomposed) mismatch | Normalize to NFC at insert time and at compare time |
 | A4 | `masterOnlyMiddleware` bypass missing | Master-only tools accidentally accessible to tenant bearers | Every admin-surface tool must pass through `guardMasterOnly` |
@@ -205,7 +205,7 @@ Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `
 
 | Code | Anti-pattern | Régression | Correctif |
 |---|---|---|---|
-| A1 | `presentedIdentity === scope_profile.name` | PR #625 commit `28db616` — `list_tasks` bloquait Hélios sur `helios-iris-rh` | PR #654 commit `00b95f0` — `list-tasks-gate.ts` utilise `fromAllowList` |
+| A1 | `presentedIdentity === scope_profile.name` | PR #625 commit `28db616` — `list_tasks` bloquait Hélios sur `helios-<client-org>` | PR #654 commit `00b95f0` — `list-tasks-gate.ts` utilise `fromAllowList` |
 | A2 | Comparaison d'identité sensible à la casse | Bloque `Helios` quand `helios` est dans `fromAllowList` | Toujours utiliser `.toLowerCase()` des deux côtés |
 | A3 | Normalisation NFC absente à l'écriture | `Hélios` (NFC composé) vs `Hélios` (NFD décomposé) ne correspondent pas | Normaliser en NFC à l'insertion et à la comparaison |
 | A4 | Absence du bypass `masterOnlyMiddleware` | Outils master-only accessibles aux bearers tenant | Chaque outil admin doit passer par `guardMasterOnly` |
@@ -259,24 +259,24 @@ Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `
 
 ---
 
-### §4.6 Concrete example — tenant Marie Iris RH / Hélios
+### §4.6 Concrete example — tenant Marie <client-org> / Hélios
 
 **EN — This example anchors the Day 92 live regression (visio blocked) and its resolution.**
 
-Tenant scope_profile `helios-iris-rh`:
+Tenant scope_profile `helios-<client-org>`:
 
 ```json
 {
-  "name": "helios-iris-rh",
+  "name": "helios-<client-org>",
   "fromAllowList": ["Hélios", "Helios", "helios", "hélios", "Clio", "clio", "Victor", "victor"],
   "namespaceReadPrefixes": [
     "orchestrator/Hélios", "orchestrator/Helios",
     "orchestrator/Clio", "orchestrator/clio",
-    "orchestrator/Victor", "project/iris-rh"
+    "orchestrator/Victor", "project/<client-org>"
   ],
   "namespaceWritePrefixes": [
     "orchestrator/Hélios", "orchestrator/Helios",
-    "project/iris-rh"
+    "project/<client-org>"
   ]
 }
 ```
@@ -286,24 +286,24 @@ Tenant scope_profile `helios-iris-rh`:
 - Hélios bearer calls `list_tasks assignedTo=Helios`
   → `canListByIdentity`: `"Helios"` ∈ `fromAllowList` (case-insensitive) → **PASS**
 
-- Hélios bearer calls `list_tasks assignedTo=helios-iris-rh`
-  → `canListByIdentity`: `"helios-iris-rh"` ∉ `fromAllowList` → **FORBIDDEN** (correct)
+- Hélios bearer calls `list_tasks assignedTo=helios-<client-org>`
+  → `canListByIdentity`: `"helios-<client-org>"` ∉ `fromAllowList` → **FORBIDDEN** (correct)
   *(This is the regression introduced by PR #625 commit `28db616`: the filter was matching against `scope_profile.name` instead of `fromAllowList`.)*
 
-- Hélios bearer calls `list_memories namespace=project/iris-rh`
-  → `canReadNamespace`: `"project/iris-rh"` exact-matches prefix `"project/iris-rh"` → **PASS**
+- Hélios bearer calls `list_memories namespace=project/<client-org>`
+  → `canReadNamespace`: `"project/<client-org>"` exact-matches prefix `"project/<client-org>"` → **PASS**
 
 - Hélios bearer calls `list_memories namespace=project/other-tenant`
   → `canReadNamespace`: no prefix matches → **FORBIDDEN** (correct)
 
 **FR — Cet exemple ancre la régression de production Day 92 (visio bloquée) et sa résolution.**
 
-Tenant scope_profile `helios-iris-rh` (voir JSON ci-dessus).
+Tenant scope_profile `helios-<client-org>` (voir JSON ci-dessus).
 
 Flux correct (après PR #654) :
 - Hélios appelle `list_tasks assignedTo=Helios` → `canListByIdentity` : `"Helios"` ∈ `fromAllowList` (insensible à la casse) → **PASS**.
-- Hélios appelle `list_tasks assignedTo=helios-iris-rh` → `"helios-iris-rh"` ∉ `fromAllowList` → **FORBIDDEN** (correct). C'est exactement la régression du commit `28db616` : le filtre comparait avec `scope_profile.name` au lieu de `fromAllowList`.
-- Hélios appelle `list_memories namespace=project/iris-rh` → correspondance exacte du préfixe → **PASS**.
+- Hélios appelle `list_tasks assignedTo=helios-<client-org>` → `"helios-<client-org>"` ∉ `fromAllowList` → **FORBIDDEN** (correct). C'est exactement la régression du commit `28db616` : le filtre comparait avec `scope_profile.name` au lieu de `fromAllowList`.
+- Hélios appelle `list_memories namespace=project/<client-org>` → correspondance exacte du préfixe → **PASS**.
 - Hélios appelle `list_memories namespace=project/other-tenant` → aucun préfixe ne correspond → **FORBIDDEN** (correct).
 
 ---

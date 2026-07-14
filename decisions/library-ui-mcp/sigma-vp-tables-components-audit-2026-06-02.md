@@ -69,7 +69,7 @@
 | `memories-search` | search-results | Hybrid search (vector+BM25) avec score + snippet | 🔄 TO BUILD | — |
 | `episode-detail` | detail-view | Affichage structuré episode (context/goal/action/outcome/insight) | 🔄 TO BUILD | — |
 
-**Notes** : Scoping multi-tenant par `namespace` (ex: `project/iris-rh`). `isLatest=false` = superseded, à masquer par défaut. TTL field → badge d'expiration. Episode type nécessite un rendu spécifique (5 champs structurés).
+**Notes** : Scoping multi-tenant par `namespace` (ex: `project/<client-org>`). `isLatest=false` = superseded, à masquer par défaut. TTL field → badge d'expiration. Episode type nécessite un rendu spécifique (5 champs structurés).
 
 ---
 

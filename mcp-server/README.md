@@ -184,7 +184,7 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 | Layer | Token type | scopeProfile | Namespace access |
 |-------|-----------|-------------|-----------------|
 | 1 | `BEARER_SECRET_MASTER` static token | `master` | Full — all namespaces |
-| 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `marie-iris-rh`) | Per-profile prefix list |
+| 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `<client-profile>`) | Per-profile prefix list |
 | 2.5 | **Clerk JWT** (org session, `org_id` claim present) | `team-member` | `team/<orgId>/*` only |
 | 3 | DCR auto-registered client (`oauthTokens` table) | `client-generic` | Deny-by-default (empty prefixes) |
 | 4 | Legacy internal bearer (`mcpTenants` table) | unscoped | Tenant deployment URL routing |
