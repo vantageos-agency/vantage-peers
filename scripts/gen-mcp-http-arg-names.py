@@ -137,8 +137,19 @@ def line_of(text: str, idx: int) -> int:
     return text.count("\n", 0, idx) + 1
 
 
+class ModuleUnreadableError(RuntimeError):
+    """A convex/*.ts module exists but could not be read as text. Distinct
+    from 'the module has zero exported functions' -- that is a valid, clean
+    result; this is a measurement failure and must never be reported as one."""
+
+
 def parse_module(path: Path) -> dict:
-    src = path.read_text(encoding="utf-8")
+    try:
+        src = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ModuleUnreadableError(f"{path} could not be read: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ModuleUnreadableError(f"{path} is not valid UTF-8: {exc}") from exc
     module_name = path.stem
     module_rel = f"convex/{path.name}"
 
@@ -237,9 +248,17 @@ def git_head_sha() -> str:
 
 
 def main() -> int:
+    # THREE outcomes: PASS (0, canonical map written), VIOLATION -- there isn't
+    # one here, this is a generator, not a gate -- or REFUSAL TO JUDGE (2, an
+    # input this script needs to read is absent/unreadable). A missing
+    # convex/ directory or an unreadable *.ts module used to print an error
+    # and return exit code 1 (CONVEX_DIR case) or crash with an uncaught
+    # exception (unreadable-module case, default exit 1 either way) -- both
+    # indistinguishable from a genuine tool failure, and both silently wrong
+    # if this script's exit code is ever gated on in CI.
     if not CONVEX_DIR.is_dir():
-        print(f"error: {CONVEX_DIR} not found", file=sys.stderr)
-        return 1
+        print(f"REFUSAL: {CONVEX_DIR} not found or is not a directory -- cannot enumerate convex/*.ts modules", file=sys.stderr)
+        return 2
 
     modules: dict[str, dict] = {}
     all_error_codes: dict[str, list[dict]] = {}
@@ -250,8 +269,20 @@ def main() -> int:
         if not p.name.endswith(".test.ts") and p.name != "schema.ts"
     )
 
+    if not convex_files:
+        print(
+            f"REFUSAL: {CONVEX_DIR} enumerated ZERO *.ts modules (excluding *.test.ts, schema.ts) "
+            "-- that is a broken enumeration, not a clean/empty backend",
+            file=sys.stderr,
+        )
+        return 2
+
     for path in convex_files:
-        parsed = parse_module(path)
+        try:
+            parsed = parse_module(path)
+        except ModuleUnreadableError as exc:
+            print(f"REFUSAL: {exc}", file=sys.stderr)
+            return 2
         if not parsed["functions"]:
             continue
         # Promote per-module error catalogue to top-level catalogue.
@@ -292,11 +323,15 @@ def main() -> int:
         },
     }
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(
-        json.dumps(output, indent=2, ensure_ascii=False, sort_keys=False) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        OUTPUT_PATH.write_text(
+            json.dumps(output, indent=2, ensure_ascii=False, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(f"REFUSAL: could not write {OUTPUT_PATH} -- {exc}", file=sys.stderr)
+        return 2
     print(f"wrote {OUTPUT_PATH.relative_to(REPO_ROOT)}")
     print(
         f"stats: modules={output['stats']['moduleCount']} "
