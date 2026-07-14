@@ -414,7 +414,15 @@ def _token_to_pattern(token: str, source_key: str, path: Path) -> str:
             "blank/whitespace-only entry."
         )
     escaped = [re.escape(w) for w in words]
-    body = r"[\s\-_]+".join(escaped)
+    # `/` belongs in the joiner, not only in the boundary. The boundary already
+    # treats `/` as a separator, so a SINGLE-word identity is seen inside a ref.
+    # A MULTI-word one was not: the words could be joined by space, `-`, `_` or `.`
+    # and nothing else — so `org/name` fell straight through, on a guard whose whole
+    # subject is BRANCH NAMES, where `/` is THE separator. The docstring above
+    # promised `/` was covered; the code did not do it. A lying contract, inside the
+    # remedy written to catch lying contracts. Caught by Eta on #1099 with a probe
+    # derived from the vocabulary: `-` 5/5, `_` 5/5, `.` 5/5, `/` 2/5.
+    body = r"[\s\-_./]+".join(escaped)
     return rf"{_LEFT_BOUNDARY}{body}{_RIGHT_BOUNDARY}"
 
 
