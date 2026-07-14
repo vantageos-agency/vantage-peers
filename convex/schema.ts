@@ -1105,4 +1105,57 @@ export default defineSchema({
 	})
 		.index("by_targetProfileId", ["targetProfileId"])
 		.index("by_createdAt", ["createdAt"]),
+
+	// ── okfDurableExportProgress ─────────────────────────────────────────────
+	// I1 long-task survival — durable variant of `exportOkfBundle`
+	// (convex/okfBundleDurable.ts). One row per durable job (keyed by the
+	// `@vantageos/agent-engine` `jobId`), tracking pagination cursors across
+	// steps so a step function can resume exactly where the previous one left
+	// off. `orgId` here IS the requested namespace string (see
+	// okfBundleDurable.ts comment) — kept as its own field, never trusted as a
+	// client-supplied scope on any step: every step re-derives its DB reads
+	// from `namespace`/`orgId` on THIS row, written once at job creation by
+	// the authenticated `startOkfBundleExportDurable` mutation.
+	okfDurableExportProgress: defineTable({
+		jobId: v.string(), // opaque id returned by durableJob.start
+		orgId: v.string(), // == namespace; tenant scope for every step read
+		namespace: v.string(),
+		sinceMs: v.optional(v.number()),
+		memoriesCursor: v.union(v.string(), v.null()),
+		memoriesDone: v.boolean(),
+		briefingsCursor: v.union(v.string(), v.null()),
+		briefingsDone: v.boolean(),
+		tasksCursor: v.union(v.string(), v.null()),
+		tasksDone: v.boolean(),
+		memoryCount: v.number(),
+		briefingCount: v.number(),
+		taskCount: v.number(),
+		stepsCompleted: v.number(),
+		status: v.union(v.literal("running"), v.literal("assembled")),
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_jobId", ["jobId"])
+		.index("by_orgId_jobId", ["orgId", "jobId"]),
+
+	// ── okfDurableExportEntries ──────────────────────────────────────────────
+	// Serialized bundle files (path + markdown content) appended one page at a
+	// time by the durable step function. `orgId` is the FIRST index field on
+	// every index (multi-tenant convention) — a step for org A can never read
+	// org B's rows because every query below is scoped by `.eq("orgId", ...)`
+	// before anything else.
+	okfDurableExportEntries: defineTable({
+		orgId: v.string(),
+		jobId: v.string(),
+		family: v.union(
+			v.literal("memory"),
+			v.literal("briefing"),
+			v.literal("task"),
+		),
+		seq: v.number(),
+		path: v.string(),
+		content: v.string(),
+	})
+		.index("by_org_job", ["orgId", "jobId"])
+		.index("by_org_job_seq", ["orgId", "jobId", "seq"]),
 });
