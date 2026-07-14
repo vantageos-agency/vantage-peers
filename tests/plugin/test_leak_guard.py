@@ -71,6 +71,41 @@ BENIGN_CORPUS = [
 # =============================================================================
 
 
+def _plaintext_unavailable_but_hashes_are() -> bool:
+    """True iff we are running where the plaintext vocabulary is absent BY DESIGN
+    and a salted-hash vocabulary stands in for it -- i.e. CI.
+
+    This is the ONE legitimate reason a plaintext-requiring test may not run. It
+    is not a convenience: on a public CI runner the plaintext names must not
+    exist, so a test that needs them to build real leak material genuinely cannot
+    execute there. What it must never do is vanish quietly.
+    """
+    if resolve_config_path().is_file():
+        return False
+    try:
+        return resolve_client_hash_vocabulary() is not None
+    except ClientIdentityConfigError:
+        return False
+
+
+#: A skip is only honest when it is WRITTEN DOWN and CONDITIONAL on a state we
+#: assert. This mirrors the guard's own inventory rule -- CHECKED ∪
+#: SKIPPED-with-a-written-reason = 100%, never a silent third state. If NEITHER
+#: vocabulary resolves, nothing below skips: the fixtures raise and pytest ERRORs,
+#: because "I could not resolve the vocabulary" must never look like "clean".
+requires_plaintext_vocabulary = pytest.mark.skipif(
+    _plaintext_unavailable_but_hashes_are(),
+    reason=(
+        "plaintext client vocabulary is absent BY DESIGN (CI runs on salted hashes, "
+        "so the real names never exist on the runner). Real-material tests cannot be "
+        "built without plaintext. The same matching path is proven to bite in this "
+        "same module against FICTIVE identities in hash mode "
+        "(see the hash-parity tests), and the packaged artifact IS scanned here "
+        "under the real hashed vocabulary."
+    ),
+)
+
+
 @pytest.fixture(scope="module")
 def real_client_identities():
     """The REAL, resolved host-side client-identity config dict.
@@ -143,6 +178,7 @@ def test_benign_text_does_not_match(text):
     )
 
 
+@requires_plaintext_vocabulary
 def test_real_leak_material_is_caught(leaking_corpus, real_client_patterns):
     """The guard must flag sentences built from the REAL, resolved
     client-identity vocabulary -- proving it catches genuine client material
@@ -152,6 +188,7 @@ def test_real_leak_material_is_caught(leaking_corpus, real_client_patterns):
         assert findings, f"MISSED LEAK: a synthesized real-vocabulary line was not flagged: {text!r}"
 
 
+@requires_plaintext_vocabulary
 def test_real_leak_material_is_not_caught_without_resolved_patterns(leaking_corpus):
     """PROOF THE GUARD ACTUALLY BITES (and isn't trivially green): the same
     synthesized real-vocabulary lines, scanned WITHOUT the resolved client
@@ -170,6 +207,7 @@ def test_real_leak_material_is_not_caught_without_resolved_patterns(leaking_corp
         )
 
 
+@requires_plaintext_vocabulary
 def test_no_client_data_in_packaged_artifact(real_client_patterns):
     """TIER 1: no packaged file may carry real client-org / contact-person data.
 
