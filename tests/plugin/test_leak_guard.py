@@ -28,10 +28,14 @@ from leak_guard import (  # noqa: E402
 )
 from client_identity_config import (  # noqa: E402
     ClientIdentityConfigError,
+    build_hashed_vocabulary,
     derive_organizations_from_bu_registry,
+    hash_matcher_findings,
     load_raw_config,
     resolve_client_data_patterns,
+    resolve_client_hash_vocabulary,
     resolve_config_path,
+    resolve_vocabulary_or_fail,
 )
 
 # Benign terms that MUST NOT match. A prior fleet purge used substring matching
@@ -601,4 +605,185 @@ def test_baseline_reads_bytes_not_text(tmp_path):
     assert isinstance(findings, list), (
         "scan_baseline must READ a non-UTF-8 baseline blob, not die on it. A guard "
         "that crashes on the artifact class it was built to see is not a guard."
+    )
+
+
+# =============================================================================
+# Day 130 v2 — salted-hash CI vocabulary. CI has NO plaintext host config: WE
+# DO NOT TRANSPORT THE SECRET TO PROVE WE DETECT IT. These tests prove the
+# hash-matching path (a) catches the SAME leak material as regex matching,
+# (b) has zero false positives on the benign corpus, and (c) fails loud, never
+# PASSED, when neither vocabulary source resolves. Fictitious identities only.
+# =============================================================================
+
+HASH_FICTIVE_CONFIG = {
+    "organizations": ["Zorblatt Holdings"],
+    "contacts": ["Zara Quinlin"],
+    "commercial_names": ["Quinlex Suite"],
+    "aliases": ["fictive-infra-slug-77"],
+}
+
+
+@pytest.fixture
+def hash_vocab():
+    return build_hashed_vocabulary(HASH_FICTIVE_CONFIG, salt="deadbeef" * 4)
+
+
+@pytest.fixture
+def regex_patterns(tmp_path):
+    cfg_path = _write_config(tmp_path, HASH_FICTIVE_CONFIG)
+    return resolve_client_data_patterns(path=cfg_path)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "Zorblatt Holdings",
+        "zorblatt holdings",
+        "Zorblatt-Holdings",
+        "zorblatt_holdings",
+        "ZORBLATT HOLDINGS",
+    ],
+)
+def test_hash_and_regex_parity_on_separator_and_case_variants(variant, hash_vocab, regex_patterns):
+    """PARITY OF DETECTION: for the SAME leak material, hash mode and regex
+    mode must find the SAME thing -- across space/hyphen/underscore separator
+    variants and case. If hash mode catches less, we've swapped a leak for a
+    blind sensor, which is a failure, not an acceptable trade-off."""
+    text = f"Client record: {variant} is the account of record."
+
+    regex_findings = client_data(scan_text(text, "regex-mode", extra_client_patterns=regex_patterns))
+    hash_findings = hash_matcher_findings(text, hash_vocab)
+
+    assert regex_findings, f"regex mode itself failed to catch {variant!r} -- fixture is broken"
+    assert hash_findings, f"PARITY BREAK: hash mode missed {variant!r} that regex mode caught"
+
+
+def test_hash_matcher_catches_multiword_identity_and_contact(hash_vocab):
+    findings_org = hash_matcher_findings("The client is Zorblatt Holdings, based in London.", hash_vocab)
+    findings_contact = hash_matcher_findings("Please loop in Zara Quinlin on this thread.", hash_vocab)
+    findings_alias = hash_matcher_findings("Infra alias: fictive-infra-slug-77 in use.", hash_vocab)
+    assert findings_org, "MISSED LEAK (hash mode): multi-word organization not caught"
+    assert findings_contact, "MISSED LEAK (hash mode): contact name not caught"
+    assert findings_alias, "MISSED LEAK (hash mode): alias not caught"
+
+
+@pytest.mark.parametrize("text", BENIGN_CORPUS)
+def test_hash_matcher_zero_false_positives_on_benign_corpus(text, hash_vocab):
+    findings = hash_matcher_findings(text, hash_vocab)
+    assert findings == [], (
+        f"FALSE POSITIVE (hash mode): benign text {text!r} matched the hash "
+        "vocabulary."
+    )
+
+
+def test_hash_matcher_finding_never_renders_raw_plaintext(hash_vocab):
+    """The finding rendered by leak_guard.LeakFinding.render() in hash mode
+    must show file+line+generic reason ONLY -- never the raw matched n-gram or
+    the source line content."""
+    findings = scan_text(
+        "Zorblatt Holdings signed the contract yesterday.",
+        "hash-source.md",
+        hash_vocab=hash_vocab,
+    )
+    cd = client_data(findings)
+    assert cd, "expected a hash-mode client-data finding"
+    for f in cd:
+        assert f.is_hash_match
+        rendered = f.render()
+        assert "Zorblatt" not in rendered
+        assert "zorblatt" not in rendered.lower()
+        assert "hash-source.md:1:" in rendered
+
+
+def test_resolve_client_hash_vocabulary_absent_returns_none(monkeypatch):
+    monkeypatch.delenv("VANTAGE_CLIENT_HASHES", raising=False)
+    assert resolve_client_hash_vocabulary() is None
+
+
+def test_resolve_client_hash_vocabulary_malformed_fails_loud(monkeypatch):
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", "{not valid json")
+    with pytest.raises(ClientIdentityConfigError, match=r"not valid JSON"):
+        resolve_client_hash_vocabulary()
+
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps({"algo": "sha256", "salt": "x", "hashes": []}))
+    with pytest.raises(ClientIdentityConfigError, match=r"non-empty list"):
+        resolve_client_hash_vocabulary()
+
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps({"algo": "md5", "salt": "x", "hashes": ["a"]}))
+    with pytest.raises(ClientIdentityConfigError, match=r"unsupported algo"):
+        resolve_client_hash_vocabulary()
+
+
+def test_resolve_client_hash_vocabulary_valid_roundtrips(monkeypatch, hash_vocab):
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps(hash_vocab))
+    resolved = resolve_client_hash_vocabulary()
+    assert resolved["algo"] == "sha256"
+    assert resolved["salt"] == hash_vocab["salt"]
+    assert set(resolved["hashes"]) == set(hash_vocab["hashes"])
+
+
+def test_emit_client_hashes_output_never_contains_plaintext_identity():
+    """The JSON emitted for the CI secret must NEVER contain any identity
+    from the config in cleartext -- explicit substring assertion against
+    every identity in a fictitious fixture config."""
+    vocab = build_hashed_vocabulary(HASH_FICTIVE_CONFIG, salt="cafebabe" * 4)
+    serialized = json.dumps(vocab)
+    for key in ("organizations", "contacts", "commercial_names", "aliases"):
+        for identity in HASH_FICTIVE_CONFIG[key]:
+            assert identity.lower() not in serialized.lower(), (
+                f"PLAINTEXT LEAK: {identity!r} appears in the emitted hash "
+                "vocabulary JSON -- hashing failed to remove it."
+            )
+
+
+def test_resolve_vocabulary_or_fail_prefers_plaintext_then_hashes(monkeypatch, tmp_path):
+    """Order of preference: plaintext host config FIRST (local dev, regex
+    matching), salted hashes SECOND (CI). Neither present -> raises naming
+    BOTH sources."""
+    # Neither source available.
+    monkeypatch.setenv("VANTAGE_CLIENT_IDENTITIES", str(tmp_path / "nope.json"))
+    monkeypatch.delenv("VANTAGE_CLIENT_HASHES", raising=False)
+    with pytest.raises(ClientIdentityConfigError) as exc:
+        resolve_vocabulary_or_fail()
+    msg = str(exc.value)
+    assert "plaintext host config" in msg
+    assert "salted-hash CI vocabulary" in msg
+
+    # Only hashes available -> mode "hashes".
+    vocab = build_hashed_vocabulary(HASH_FICTIVE_CONFIG, salt="feedface" * 4)
+    monkeypatch.setenv("VANTAGE_CLIENT_HASHES", json.dumps(vocab))
+    mode, resolved = resolve_vocabulary_or_fail()
+    assert mode == "hashes"
+    assert set(resolved["hashes"]) == set(vocab["hashes"])
+
+    # Plaintext also available -> plaintext wins.
+    cfg_path = _write_config(tmp_path, HASH_FICTIVE_CONFIG)
+    monkeypatch.setenv("VANTAGE_CLIENT_IDENTITIES", str(cfg_path))
+    mode, resolved = resolve_vocabulary_or_fail()
+    assert mode == "plaintext-patterns"
+
+
+def test_leak_guard_main_fails_loud_without_any_vocabulary_source(monkeypatch, tmp_path):
+    """FAIL-CLOSED: neither the plaintext config nor VANTAGE_CLIENT_HASHES
+    resolves -> leak_guard.main() must exit non-zero and must NEVER print
+    LEAK GUARD PASSED."""
+    import os as _os
+
+    env = dict(_os.environ)
+    env["VANTAGE_CLIENT_IDENTITIES"] = str(tmp_path / "does-not-exist.json")
+    env.pop("VANTAGE_CLIENT_HASHES", None)
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "leak_guard.py"), "--root", str(REPO_ROOT / "plugin")],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, "leak_guard.py must exit non-zero when no vocabulary source resolves"
+    assert "LEAK GUARD PASSED" not in combined, (
+        "leak_guard.py printed a PASSED-looking verdict without ever resolving "
+        "a client vocabulary -- this is exactly the false-assurance failure "
+        "mode the whole guard exists to prevent."
     )

@@ -44,8 +44,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from client_identity_config import (  # noqa: E402
     ClientIdentityConfigError,
-    resolve_client_data_patterns,
+    hash_matcher_findings,
     resolve_config_path,
+    resolve_vocabulary_or_fail,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -143,6 +144,11 @@ class LeakFinding:
     pattern: str
     reason: str
     category: str
+    is_hash_match: bool = False
+    # Hash-mode findings never carry the raw matched n-gram or line content
+    # forward to output -- the entire point of the hashed vocabulary is that
+    # the plaintext identity is never resolvable in CI. `render()` below
+    # enforces that at the display boundary too, not just at match time.
 
     @property
     def tier(self) -> str:
@@ -153,6 +159,11 @@ class LeakFinding:
         return self.category == TIER_CLIENT_DATA
 
     def render(self) -> str:
+        if self.is_hash_match:
+            # Generic reason only -- file + line number, NEVER the raw
+            # n-gram/line content. Displaying the line would leak the very
+            # plaintext the hash vocabulary exists to avoid ever holding.
+            return f"{self.source}:{self.line_no}: [{self.category}: {self.reason}]"
         return (
             f"{self.source}:{self.line_no}: [{self.category}: {self.reason}] "
             f"matched /{self.pattern}/\n      {self.line.strip()[:160]}"
@@ -165,6 +176,8 @@ class LeakFinding:
         on them would produce phantom 'new' findings. We key on the offending
         token as it appears, plus the pattern that caught it.
         """
+        if self.is_hash_match:
+            return (self.pattern, self.line_no)
         m = re.search(self.pattern, self.line, flags=re.IGNORECASE)
         return (self.pattern, m.group(0).lower() if m else "")
 
@@ -328,6 +341,7 @@ def scan_text(
     text: str,
     source: str,
     extra_client_patterns: list[tuple[str, str]] | None = None,
+    hash_vocab: dict | None = None,
 ) -> list[LeakFinding]:
     """Return every leak finding in `text`. Empty list == clean.
 
@@ -339,6 +353,13 @@ def scan_text(
     never PASSED, if it cannot resolve one) -- direct `scan_text` callers
     (tests, `vr_plugin_parity.py`) may omit it when they are only exercising
     the pre-existing, already-reviewed pattern set.
+
+    `hash_vocab` -- the salted-hash vocabulary dict from
+    `client_identity_config.resolve_client_hash_vocabulary()` (CI mode). When
+    given, each line is ALSO scanned via `hash_matcher_findings`, catching the
+    same client vocabulary via salted-hash n-gram matching instead of regex.
+    Mutually usable alongside `extra_client_patterns` (local dev with both
+    sources available), though callers normally pass exactly one.
     """
     patterns = ALL_PATTERNS
     if extra_client_patterns:
@@ -359,12 +380,26 @@ def scan_text(
                         category=category,
                     )
                 )
+        if hash_vocab is not None:
+            for _, reason in hash_matcher_findings(line, hash_vocab):
+                findings.append(
+                    LeakFinding(
+                        source=source,
+                        line_no=line_no,
+                        line="",  # never carried forward for hash matches
+                        pattern="<salted-hash-vocabulary-match>",
+                        reason=reason,
+                        category=TIER_CLIENT_DATA,
+                        is_hash_match=True,
+                    )
+                )
     return findings
 
 
 def scan_file(
     path: Path,
     extra_client_patterns: list[tuple[str, str]] | None = None,
+    hash_vocab: dict | None = None,
 ) -> list[LeakFinding]:
     # BYTES, not text. latin-1 cannot raise and maps every byte to exactly one
     # character, so ASCII identifiers embedded in ANY container -- Python
@@ -376,6 +411,7 @@ def scan_file(
         path.read_bytes().decode("latin-1"),
         str(path),
         extra_client_patterns=extra_client_patterns,
+        hash_vocab=hash_vocab,
     )
 
 
@@ -516,7 +552,7 @@ def main() -> int:
     # Fail here, loudly, before any scanning happens, and before any code
     # path that could reach the PASSED print at the bottom of this function.
     try:
-        resolved_client_patterns = resolve_client_data_patterns()
+        vocab_mode, vocab = resolve_vocabulary_or_fail()
     except ClientIdentityConfigError as exc:
         print(
             "FAIL: could not resolve the client-identity vocabulary -- "
@@ -525,6 +561,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+
+    resolved_client_patterns: list[tuple[str, str]] = []
+    resolved_hash_vocab: dict | None = None
+    if vocab_mode == "plaintext-patterns":
+        resolved_client_patterns = vocab
+        vocab_summary = f"{len(resolved_client_patterns)} identity pattern(s) from {resolve_config_path()}"
+    else:
+        resolved_hash_vocab = vocab
+        vocab_summary = f"{len(resolved_hash_vocab['hashes'])} salted-hash identity entries from VANTAGE_CLIENT_HASHES"
 
     skipped: list[InventoryItem] = []
     git_root: Path | None = None
@@ -572,7 +617,11 @@ def main() -> int:
     baseline = repo_wide_baseline(paths=targets if not args.paths else None, git_root=git_root)
 
     for t in targets:
-        found = scan_file(t, extra_client_patterns=resolved_client_patterns)
+        found = scan_file(
+            t,
+            extra_client_patterns=resolved_client_patterns,
+            hash_vocab=resolved_hash_vocab,
+        )
         cd = client_data(found)
         new_ids = new_internal_ids(found, baseline)
         pre_existing = [f for f in internal_ids(found) if f not in new_ids]
@@ -633,10 +682,9 @@ def main() -> int:
 
     if exit_code == 0:
         print(
-            f"\nLEAK GUARD PASSED — client vocabulary RESOLVED "
-            f"({len(resolved_client_patterns)} identity pattern(s) from "
-            f"{resolve_config_path()}); no client data, no new internal "
-            f"identifiers across {len(targets)} packaged file(s)."
+            f"\nLEAK GUARD PASSED — client vocabulary RESOLVED ({vocab_summary}); "
+            f"no client data, no new internal identifiers across "
+            f"{len(targets)} packaged file(s)."
         )
     return exit_code
 

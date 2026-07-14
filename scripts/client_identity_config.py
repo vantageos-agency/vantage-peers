@@ -57,13 +57,225 @@ file content.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 
 CLIENT_IDENTITIES_ENV = "VANTAGE_CLIENT_IDENTITIES"
 DEFAULT_CLIENT_IDENTITIES_PATH = Path.home() / ".claude" / "vantage-client-identities.json"
+
+# --- CI vocabulary source: salted hashes, never the plaintext ---------------
+# Day 130 v2: the plaintext host config (`VANTAGE_CLIENT_IDENTITIES`) is
+# deliberately absent from the GitHub Actions runner -- we will not transport
+# client names off the operator's machine, encrypted secret or not: WE DO NOT
+# TRANSPORT THE SECRET TO PROVE WE DETECT IT. Instead CI is handed a set of
+# salted SHA-256 hashes of the (normalized) identity vocabulary via
+# `VANTAGE_CLIENT_HASHES` (a JSON *value*, not a path -- lives in a GitHub
+# Actions secret). The guard matches by hashing candidate n-grams from the
+# scanned text with the SAME salt and comparing hash sets -- it never needs,
+# and never sees, the plaintext name in CI.
+CLIENT_HASHES_ENV = "VANTAGE_CLIENT_HASHES"
+_HASH_VOCAB_REQUIRED_KEYS = ("algo", "salt", "hashes")
+_NORMALIZE_SEPARATORS_RE = re.compile(r"[\s\-_]+")
+
+
+def normalize_identity_token(token: str) -> str:
+    """Normalize an identity token for hashing/matching: lowercase, collapse
+    every run of whitespace/hyphen/underscore into a single space, trim.
+
+    This is the SAME normalization on both sides of the hash comparison (the
+    vocabulary side in `build_hashed_vocabulary` and the candidate side in
+    `hash_matcher_findings`) -- so "Acme Corp", "acme-corp", and "acme_corp"
+    all normalize to "acme corp" and hash identically. This is the hashed
+    counterpart of the regex guard's `[\\s\\-_]+` separator class.
+    """
+    collapsed = _NORMALIZE_SEPARATORS_RE.sub(" ", token.strip().lower())
+    return collapsed.strip()
+
+
+def _hash_token(token: str, salt: str) -> str:
+    return hashlib.sha256((salt + token).encode("utf-8")).hexdigest()
+
+
+def build_hashed_vocabulary(config: dict, salt: str | None = None) -> dict:
+    """Build a salted-hash vocabulary from a plaintext host config dict.
+
+    Every identity across `REQUIRED_LIST_KEYS` (organizations, contacts,
+    commercial_names, aliases) is normalized (see `normalize_identity_token`)
+    and hashed with SHA-256 + the given (or freshly generated) salt. Returns
+    `{"algo": "sha256", "salt": <hex>, "hashes": [<hex>, ...]}` -- this dict
+    contains NO plaintext identity, by construction: only normalized tokens
+    ever reach the hash function, and only the hash digest is returned.
+
+    `salt` is provided by the caller when reproducibility across runs is
+    needed (e.g. to regenerate the same hash set); when omitted, a fresh
+    cryptographically random 32-byte salt is generated and returned in the
+    output so the caller can persist it if desired.
+    """
+    salt = salt if salt is not None else secrets.token_hex(32)
+    hashes: set[str] = set()
+    for key in REQUIRED_LIST_KEYS:
+        for token in config.get(key, []) or []:
+            normalized = normalize_identity_token(str(token))
+            if normalized:
+                hashes.add(_hash_token(normalized, salt))
+    return {"algo": "sha256", "salt": salt, "hashes": sorted(hashes)}
+
+
+def resolve_client_hash_vocabulary() -> dict | None:
+    """Read + validate the CI hash vocabulary from `VANTAGE_CLIENT_HASHES`
+    (a JSON *value* -- direct env content, never a file path).
+
+    Returns None if the env var is absent (caller falls back to another
+    source). Raises `ClientIdentityConfigError` if it IS present but
+    malformed -- a present-but-broken CI secret must never be silently
+    treated as "no vocabulary here, try elsewhere", the same anti-silence
+    discipline as the plaintext config path.
+    """
+    raw = os.environ.get(CLIENT_HASHES_ENV)
+    if raw is None or not raw.strip():
+        return None
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ClientIdentityConfigError(
+            f"{CLIENT_HASHES_ENV} is set but is not valid JSON: {exc}"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise ClientIdentityConfigError(
+            f"{CLIENT_HASHES_ENV} must be a JSON object with keys "
+            f"{_HASH_VOCAB_REQUIRED_KEYS}, got a {type(data).__name__}."
+        )
+
+    for key in _HASH_VOCAB_REQUIRED_KEYS:
+        if key not in data:
+            raise ClientIdentityConfigError(
+                f"{CLIENT_HASHES_ENV} is missing required key {key!r}. Schema "
+                f"requires all of {_HASH_VOCAB_REQUIRED_KEYS}."
+            )
+
+    if data.get("algo") != "sha256":
+        raise ClientIdentityConfigError(
+            f"{CLIENT_HASHES_ENV} has unsupported algo {data.get('algo')!r}; "
+            "only 'sha256' is supported."
+        )
+    if not isinstance(data.get("salt"), str) or not data["salt"].strip():
+        raise ClientIdentityConfigError(
+            f"{CLIENT_HASHES_ENV}['salt'] must be a non-empty string."
+        )
+    hashes = data.get("hashes")
+    if not isinstance(hashes, list) or not hashes:
+        raise ClientIdentityConfigError(
+            f"{CLIENT_HASHES_ENV}['hashes'] must be a non-empty list -- an "
+            "empty hash vocabulary is indistinguishable from a broken one and "
+            "is rejected the same way as a missing plaintext config."
+        )
+    for i, h in enumerate(hashes):
+        if not isinstance(h, str) or not h.strip():
+            raise ClientIdentityConfigError(
+                f"{CLIENT_HASHES_ENV}['hashes'][{i}] must be a non-empty string, "
+                f"got {h!r}."
+            )
+
+    return {"algo": "sha256", "salt": data["salt"], "hashes": list(hashes)}
+
+
+# N-gram tokenizer for hash matching: mirrors the word-boundary discipline of
+# the regex guard, but works over 1-4 word windows so a multi-word identity
+# ("Acme Corp Holdings") can be matched without needing a pre-known token
+# count. Separators mirror leak_guard's own text-splitting character class.
+_NGRAM_SPLIT_RE = re.compile(r"[\s\-_/.,:;()\[\]{}\"'`]+")
+_MAX_NGRAM_WORDS = 4
+
+
+def hash_matcher_findings(text: str, vocab: dict) -> list[tuple[str, str]]:
+    """Scan `text` for tokens whose normalized+salted hash appears in `vocab`.
+
+    Returns a list of (line_repr, reason) pairs -- NEVER the matched
+    plaintext n-gram itself (that would defeat the entire point of hash
+    matching: the whole design exists so the matched name never has to be
+    known or displayed by the CI-side matcher). `line_repr` is a generic,
+    non-identifying marker; callers (leak_guard.py) are responsible for
+    pairing this with file/line context without echoing the raw n-gram.
+
+    Tokenization: word-boundary split (mirrors the regex guard's separator
+    class), 1-to-4-word sliding n-grams, each normalized identically to
+    `build_hashed_vocabulary` before hashing -- so "Acme-Corp", "acme_corp",
+    and "Acme  Corp" all resolve to the same hash regardless of which
+    separator variant appears in the scanned text.
+    """
+    algo = vocab.get("algo")
+    if algo != "sha256":
+        raise ClientIdentityConfigError(f"unsupported hash vocabulary algo {algo!r}")
+    salt = vocab["salt"]
+    hash_set = set(vocab["hashes"])
+
+    words = [w for w in _NGRAM_SPLIT_RE.split(text) if w]
+    findings: list[tuple[str, str]] = []
+    seen: set[int] = set()
+    for start in range(len(words)):
+        for n in range(1, _MAX_NGRAM_WORDS + 1):
+            end = start + n
+            if end > len(words):
+                break
+            ngram = " ".join(words[start:end])
+            normalized = normalize_identity_token(ngram)
+            if not normalized:
+                continue
+            digest = _hash_token(normalized, salt)
+            if digest in hash_set and start not in seen:
+                findings.append(
+                    (
+                        "matched client-identity hash vocabulary",
+                        "real client identifier (salted-hash vocabulary match, VANTAGE_CLIENT_HASHES)",
+                    )
+                )
+                seen.add(start)
+    return findings
+
+
+def resolve_vocabulary_or_fail() -> tuple[str, object]:
+    """Resolve a client vocabulary, plaintext host config FIRST, salted-hash
+    vocabulary SECOND. Returns `(mode, vocab)` where `mode` is
+    `"plaintext-patterns"` (vocab is a list[tuple[str, str]] of compiled
+    regex patterns) or `"hashes"` (vocab is the hash-vocab dict).
+
+    Raises `ClientIdentityConfigError`, naming BOTH sources attempted, if
+    NEITHER resolves. "I could not resolve the vocabulary" and "the package
+    is clean" must never produce the same outcome -- this function is the
+    single choke point that guarantees that for both vocabulary sources, not
+    just the plaintext one.
+    """
+    plaintext_error: Exception | None = None
+    try:
+        patterns = resolve_client_data_patterns()
+        return ("plaintext-patterns", patterns)
+    except ClientIdentityConfigError as exc:
+        plaintext_error = exc
+
+    hash_error: Exception | None = None
+    try:
+        vocab = resolve_client_hash_vocabulary()
+    except ClientIdentityConfigError as exc:
+        hash_error = exc
+        vocab = None
+
+    if vocab is not None:
+        return ("hashes", vocab)
+
+    raise ClientIdentityConfigError(
+        "could not resolve a client-identity vocabulary from EITHER source: "
+        f"(1) plaintext host config ({CLIENT_IDENTITIES_ENV} / "
+        f"{DEFAULT_CLIENT_IDENTITIES_PATH}): {plaintext_error}; "
+        f"(2) salted-hash CI vocabulary ({CLIENT_HASHES_ENV}): "
+        f"{hash_error if hash_error is not None else 'not set'}. "
+        "Refusing to report PASSED without a resolved vocabulary from either source."
+    )
 
 REQUIRED_LIST_KEYS: tuple[str, ...] = (
     "organizations",
