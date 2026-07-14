@@ -60,7 +60,38 @@ MUST_BLOCK = [
     "ZORBLATT-HOLDINGS-hotfix",          # case must not save it
     "wip/zorblatt_holdings",
     "release/zorblatt.holdings.v2",
+    "zorblatt/holdings-onboarding",       # `/` BETWEEN the words — see below
 ]
+
+# The separator that a guard about BRANCH NAMES had no business missing.
+#
+# The list above pins `-`, `_`, `.` and space between the words of a multi-word
+# identity. It did NOT pin `/`, and the joiner did not accept it: a single-word
+# identity was seen through `/` (the boundary allows it), but `zorblatt/holdings`
+# fell straight through. On a guard whose entire subject is refs, where `/` is THE
+# separator. The docstring in client_identity_config.py promised `/` was covered;
+# the code did not do it.
+#
+# Eta found it with a probe DERIVED from the vocabulary rather than typed: `-` 5/5,
+# `_` 5/5, `.` 5/5, `/` 2/5 — the 2 being the single-word identities, which never
+# needed the joiner at all. A hand-written list proves the cases its author thought
+# of; it is silent on the one he did not. So this test does not enumerate — it
+# DERIVES every separator form from the vocabulary itself, and any separator added
+# to the joiner later must be added here or the asymmetry shows up as a red.
+MULTI_WORD = [v for vs in FICTIVE.values() for v in vs if len(v.split()) > 1]
+SEPARATORS = [" ", "-", "_", ".", "/"]
+
+
+@pytest.mark.parametrize("sep", SEPARATORS)
+@pytest.mark.parametrize("identity", MULTI_WORD)
+def test_must_block_multi_word_identity_through_every_separator(identity, sep, cfg):
+    ref = "feat/" + sep.join(identity.split()).lower() + "-onboarding"
+    p = run([ref])
+    assert p.returncode == 1, (
+        f"MISSED: {ref!r} joins the words of a client identity with {sep!r} and was "
+        "ALLOWED. The separator set is not a matter of taste — a ref is published the "
+        f"moment it is pushed.\nstdout: {p.stdout}\nstderr: {p.stderr}"
+    )
 
 MUST_PASS = [
     "fix/tenant-scoped-drop-global-day128",
