@@ -31,13 +31,35 @@ claim and the live value is a hard BLOCK (exit 2), citing BOTH values plus
 the resolution instant — the send never happens.
 
 WHAT THIS HOOK NEVER TOUCHES (must stay green — MUST_PASS class):
-  - Ratios ("788/788"), bare SHAs, unified diffs, past-tense narration
-    ("at the time I gated, #54 was OPEN") — none of these match the
-    "-> STATE" / "-> VERSION" claim grammar above, by construction: the
-    arrow (`->`) is the load-bearing token, and past-tense sentences use
-    "was"/"had been", never "->".
-  - Content that mentions no recognized claim at all passes through
-    unmodified — the hook is silent (exit 0), zero stderr.
+  - Anything outside the `evidence:` field. `finding:`, `action:`, `next:` are
+    where an author NARRATES — including quoting their own past proofs verbatim,
+    arrows and all:
+
+        finding: at the time I gated it, PR #870 -> OPEN — that is what I cited,
+                 and it was true.
+
+    This is exact, lawful and honest, and an earlier version of this hook BLOCKED
+    it, because it scanned the whole body and heard only the current tree. A
+    reviewer forbidden from quoting his own evidence routes around the guard, and
+    then the guard guards nothing.
+
+    That earlier version also PROMISED this carve-out right here, on the theory
+    that past-tense prose says "was" and never "->". The theory was FALSE — the
+    arrow IS our proof syntax, and we quote it in past-tense narration constantly,
+    precisely because it is the form the proof was produced in. A guard that
+    documents an exemption it does not grant is a lying contract inside the guard,
+    which is the very defect it exists to prosecute. Caught by Eta on PR #1094;
+    the fix is scope, not grammar.
+  - Ratios ("788/788"), bare SHAs, unified diffs — no claim grammar, no match.
+  - Content with no recognized claim passes through unmodified — silent, exit 0.
+
+DECLARED HOLE (stated, not discovered later):
+  A live claim written as ordinary prose ("PR #1092 is already merged") is NOT
+  caught — no arrow, and often not in `evidence:` either. This net is deliberately
+  partial. A net that believes itself complete is more dangerous than one declared
+  partial. Layer 1 (state tokens resolved server-side, mcp-server/src/state-tokens.ts)
+  is what actually closes the class; this hook is only the belt over prose Layer 1
+  never saw.
 
 FAIL-OPEN ON "CANNOT VERIFY" (deliberate, distinct from Layer 1):
   Layer 1 (state-tokens.ts) is fail-CLOSED: a token that cannot resolve
@@ -77,6 +99,35 @@ import urllib.request
 from datetime import datetime, timezone
 
 TEXT_FIELDS = ("content",)
+
+#: The message grid's assertion field. Everything from `evidence:` up to the next
+#: top-level grid label is where the author ASSERTS the state of the world NOW.
+#: `finding:`, `action:`, `next:` are where the author NARRATES — including quoting
+#: their own past evidence verbatim, arrows and all. Only the first is scanned.
+EVIDENCE_START_RE = re.compile(r"^\s*evidence\s*:", re.IGNORECASE | re.MULTILINE)
+GRID_LABEL_RE = re.compile(
+    r"^\s*(finding|action|next|nb|note|context)\s*:", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _evidence_scope(content: str) -> str:
+    """Return only the `evidence:` block(s) — the region where a LIVE state is
+    asserted. Returns "" when the message carries no evidence field at all.
+
+    A message with no `evidence:` field asserts nothing verifiable and is left
+    alone: this net catches over-claiming, not free speech. That it therefore
+    misses a live claim written as ordinary prose ("PR #1092 is already merged")
+    is a REAL and DELIBERATE hole, stated here rather than discovered later —
+    a net that believes itself complete is more dangerous than one declared
+    partial. Layer 1 (state tokens, resolved server-side) is what actually closes
+    the class; this hook is only the belt over prose that Layer 1 never saw.
+    """
+    out: list[str] = []
+    for m in EVIDENCE_START_RE.finditer(content):
+        start = m.start()
+        nxt = GRID_LABEL_RE.search(content, m.end())
+        out.append(content[start : nxt.start() if nxt else len(content)])
+    return "\n".join(out)
 
 OVERRIDE_RE = re.compile(r"//\s*allow-stale-state-claim:\s*\S.{5,}")
 
@@ -257,12 +308,41 @@ def main() -> int:
         return 0  # fail-open on unreadable payload (matches enforce-full-ids.py convention)
 
     tool_input = payload.get("tool_input") or {}
-    blob = "\n".join(str(tool_input.get(f, "")) for f in TEXT_FIELDS)
+    full = "\n".join(str(tool_input.get(f, "")) for f in TEXT_FIELDS)
 
-    if not blob.strip():
+    if not full.strip():
         return 0
 
-    if OVERRIDE_RE.search(blob):
+    if OVERRIDE_RE.search(full):
+        return 0
+
+    # SCAN ONLY WHERE A LIVE STATE IS ASSERTED, NEVER WHERE ONE IS NARRATED.
+    #
+    # The message grid separates the two, and the separation is the whole fix:
+    #   evidence:  is where you ASSERT the state of the world right now.
+    #   finding: / action: / next:  is where you RECOUNT what you saw, argue,
+    #            and quote your own past proofs.
+    #
+    # Scanning the whole body blocked this, which is exact, lawful, and honest:
+    #
+    #     finding: at the time I gated it, PR #870 -> OPEN — that is what I cited,
+    #              and it was true.
+    #
+    # The sentence says "at the time". The guard heard only the current tree, and
+    # refused the send because the PR has since merged. That is not a leak caught;
+    # that is a reviewer forbidden from quoting his own evidence — and a guard you
+    # must route around in order to tell the truth is a guard that gets ripped out.
+    # No `// allow-stale-state-claim:` marker saves it either: we do not ask people
+    # to apologise for citing what they actually observed.
+    #
+    # The docstring of this very file used to promise this carve-out, on the theory
+    # that past-tense prose says "was" and never "->". That theory is FALSE: the
+    # arrow IS our proof syntax, and we quote it in past-tense narration constantly,
+    # precisely because it is the form the proof was produced in. A guard that
+    # documents an exemption it does not grant is a lying contract in the guard
+    # itself — the same defect it exists to prosecute. Caught by Eta on PR #1094.
+    blob = _evidence_scope(full)
+    if not blob.strip():
         return 0
 
     check_pr_claims(blob)
