@@ -881,6 +881,13 @@ export default defineSchema({
 		irpMissionId: v.optional(v.id("missions")),
 		autoResolved: v.optional(v.boolean()),
 		recurrenceThreshold: v.optional(v.number()),
+		// Day 128 fix (issue #1088 fabricated incident) — see
+		// convex/errorMonitorRecurrence.ts. Records the `count` value at the
+		// moment a 24h+ re-raise measurement window was armed. The RECURRING
+		// escalation label is only emitted once NEW occurrences counted after
+		// this baseline reach the effective threshold — never from group
+		// identity + a stale timestamp alone.
+		reRaiseBaselineCount: v.optional(v.number()),
 	})
 		.index("by_hash", ["hash"])
 		.index("by_deployment", ["deployment"])
