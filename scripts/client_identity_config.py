@@ -414,7 +414,7 @@ def _token_to_pattern(token: str, source_key: str, path: Path) -> str:
             "blank/whitespace-only entry."
         )
     escaped = [re.escape(w) for w in words]
-    body = r"[\s\-_]+".join(escaped)
+    body = r"[\s\-_.]+".join(escaped)
     return rf"{_LEFT_BOUNDARY}{body}{_RIGHT_BOUNDARY}"
 
 
