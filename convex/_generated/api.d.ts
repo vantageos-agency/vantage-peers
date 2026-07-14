@@ -20,9 +20,11 @@ import type * as episodes from "../episodes.js";
 import type * as errorMonitor from "../errorMonitor.js";
 import type * as errorMonitorActions from "../errorMonitorActions.js";
 import type * as errorMonitorAutoResolver from "../errorMonitorAutoResolver.js";
+import type * as errorMonitorDeployWindow from "../errorMonitorDeployWindow.js";
 import type * as errorMonitorFilters from "../errorMonitorFilters.js";
 import type * as errorMonitorGroupKey from "../errorMonitorGroupKey.js";
 import type * as errorMonitorKillSwitch from "../errorMonitorKillSwitch.js";
+import type * as errorMonitorRecurrence from "../errorMonitorRecurrence.js";
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubDeployGate from "../githubDeployGate.js";
@@ -44,6 +46,7 @@ import type * as lib_auth from "../lib/auth.js";
 import type * as lib_ids from "../lib/ids.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
+import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as licenses from "../licenses.js";
 import type * as mandates from "../mandates.js";
 import type * as mcpTenants from "../mcpTenants.js";
@@ -75,6 +78,7 @@ import type * as recurringTasks from "../recurringTasks.js";
 import type * as search from "../search.js";
 import type * as stats from "../stats.js";
 import type * as tasks from "../tasks.js";
+import type * as tenantOrgSeed from "../tenantOrgSeed.js";
 
 import type {
   ApiFromModules,
@@ -95,9 +99,11 @@ declare const fullApi: ApiFromModules<{
   errorMonitor: typeof errorMonitor;
   errorMonitorActions: typeof errorMonitorActions;
   errorMonitorAutoResolver: typeof errorMonitorAutoResolver;
+  errorMonitorDeployWindow: typeof errorMonitorDeployWindow;
   errorMonitorFilters: typeof errorMonitorFilters;
   errorMonitorGroupKey: typeof errorMonitorGroupKey;
   errorMonitorKillSwitch: typeof errorMonitorKillSwitch;
+  errorMonitorRecurrence: typeof errorMonitorRecurrence;
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;
   githubDeployGate: typeof githubDeployGate;
@@ -119,6 +125,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ids": typeof lib_ids;
   "lib/license": typeof lib_license;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
+  "lib/tenantSlug": typeof lib_tenantSlug;
   licenses: typeof licenses;
   mandates: typeof mandates;
   mcpTenants: typeof mcpTenants;
@@ -150,6 +157,7 @@ declare const fullApi: ApiFromModules<{
   search: typeof search;
   stats: typeof stats;
   tasks: typeof tasks;
+  tenantOrgSeed: typeof tenantOrgSeed;
 }>;
 
 /**
