@@ -18,14 +18,18 @@ Check unread VantagePeers messages and, in autonomous mode, auto-pick the next u
 
 A cron firing that finds NOTHING NEW produces **ZERO text output. Not one word.** No "court", no "ok", no "standby", no summary, no echo of any style instruction. Text costs quota at every cron firing, around the clock, across the whole fleet. The ONLY legal outputs of this skill are: (a) displayed messages when messages exist, (b) a standby block when the blocked/queue STATE CHANGED since the previous firing, (c) task execution output. Everything else is silence.
 
-Incident Day 127: orchestrators emitted a literal one-word reply ("court") on every cron firing, some in endless self-chaining loops — pure quota burn observed fleet-wide by Laurent.
+Incident Day 127: orchestrators emitted a literal one-word reply ("court") on every cron firing, some in endless self-chaining loops — pure quota burn observed fleet-wide.
 
 ## WORKFLOW
 
 **Step 1 — Detect mode**
 
-- Read first 20 lines of `CLAUDE.md`. If "You are Pi" + workspace `/home/laurentperello/coding/ElPi Corp` → **HUMAN MODE**.
-- Else (any VPS orchestrator) → **AUTONOMOUS MODE**. Default to autonomous if in doubt.
+HUMAN MODE is opt-in via a HOST-SIDE marker that lives outside every repo and every published package. Never key it on a hardcoded filesystem path or a person's name: a published plugin must not carry its maintainer's home directory — that is an internal-identifier leak, and it is meaningless to any external user of the plugin.
+
+- **HUMAN MODE** iff the marker is present: env `VANTAGE_HUMAN_MODE=1`, or the file `~/.claude/vantage-human-mode` exists.
+- **AUTONOMOUS MODE** otherwise. No marker = autonomous.
+
+This degrades in the safe direction: an interactive operator who forgets the marker gets an autonomous run, which is immediately visible. The reverse default would silently freeze a VPS orchestrator waiting on a human who is not there.
 
 **Step 2 — Check messages**
 
@@ -61,13 +65,13 @@ Why pull-not-push, plus anti-patterns, in `references/pi-pull-doctrine.md`.
 Empty queue or all blocked on deps:
 1. Compare to the PREVIOUS firing (memory of the session): if the blocked-list and queue state are IDENTICAL, output NOTHING and stop — see SILENCE CONTRACT.
 2. Only if the state CHANGED (new blocker, task newly frozen/unfrozen): output the 3-line standby block (role, instance, "blocked on: [list]").
-3. Do NOT ask Laurent/Pi what to do next. Do NOT invent work. Do NOT re-invoke this skill.
+3. Do NOT ask the user/Pi what to do next. Do NOT invent work. Do NOT re-invoke this skill.
 
 ## RULES
 
 - Always mark messages as read after displaying.
 - Respond immediately to any message asking a question / requesting action.
-- AUTONOMOUS: NEVER produce output asking Laurent/Pi what to do next. Pick a task or standby.
+- AUTONOMOUS: NEVER produce output asking the user/Pi what to do next. Pick a task or standby.
 - AUTONOMOUS: a no-change firing is SILENT (zero text). Echoing a style instruction ("court", "ok", "noté") as the whole reply is banned — it is quota burn, not compliance.
 - AUTONOMOUS: never re-invoke /check-messages from a firing that found an empty queue. One firing = at most one chain, and only on a plausible unblock.
 - HUMAN: display + mark read + respond if needed. Do NOT auto-pick (Pi is interactive).
