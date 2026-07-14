@@ -921,14 +921,26 @@ def test_client_identity_inside_snake_case_is_seen(template, real_client_identit
 
 
 @pytest.mark.parametrize("text", BENIGN_MUST_STAY_INVISIBLE)
-def test_snake_case_fix_did_not_reintroduce_substring_matching(text, real_client_patterns):
+def test_snake_case_fix_did_not_reintroduce_substring_matching(text):
     """The other pole. Widening the boundary must NOT resurrect the substring bug.
 
-    Without this, "make the guard see snake_case" has an easy wrong answer —
-    drop the boundary entirely — and we would be back to renaming "summaries"
-    because it contains "marie".
+    Without this, "make the guard see snake_case" has an easy wrong answer — drop the
+    boundary entirely — and we are back to renaming "summaries" because it contains
+    "marie".
+
+    This takes the vocabulary from the SAME two-source resolver `main()` uses, so it
+    RUNS ON CI. A false-positive test that only runs on the maintainer's laptop cannot
+    stop a false positive from shipping — and shipping one is how the guard gets
+    switched off. (I marked a test plaintext-only once already today and switched off
+    the packaged scan on the one runner that ships. Not twice.)
     """
-    findings = scan_text(text, "benign", extra_client_patterns=real_client_patterns)
+    mode, vocab = resolve_vocabulary_or_fail()
+    patterns = vocab if mode == "plaintext-patterns" else None
+    hash_vocab = vocab if mode == "hashes" else None
+
+    findings = scan_text(
+        text, "benign", extra_client_patterns=patterns, hash_vocab=hash_vocab
+    )
     assert findings == [], (
         f"FALSE POSITIVE: benign text {text!r} matched {[f.pattern for f in findings]}. "
         "The snake_case fix swapped one blindness for the other."
@@ -952,3 +964,59 @@ def test_a_leak_in_the_FILE_NAME_is_caught(tmp_path, real_client_identities, rea
         f"MISSED: {f.name} has clean contents and a leaking NAME. Every content-only "
         "scan calls this clean — and it is, inside."
     )
+
+
+# The boundary is a PURE property of the matcher — it needs no real name to prove.
+# So it is proven with a FICTIVE identity, which means it runs EVERYWHERE, including
+# on the public CI runner where the real names must not exist.
+#
+# Without this, the MUST_SEE pole would only ever run on the maintainer's laptop, and
+# CI could not catch a regression that reverted the boundary to `\b`. A guarantee that
+# only holds where the author happens to sit is not a guarantee.
+
+FICTIVE_ORG = "Zorblatt Holdings"
+
+
+def _fictive_patterns(tmp_path):
+    cfg = tmp_path / "identities.json"
+    cfg.write_text(
+        json.dumps({
+            "organizations": [FICTIVE_ORG],
+            "contacts": [], "commercial_names": [], "aliases": [],
+        }),
+        encoding="utf-8",
+    )
+    return resolve_client_data_patterns(cfg)
+
+
+@pytest.mark.parametrize(
+    "text,must_match",
+    [
+        # snake_case — the blindness `\b` created. `_` is a WORD char, so `\b` never
+        # fires between `patch_` and `zorblatt`.
+        ("patch_zorblatt_holdings_scope.ts", True),
+        ("convex/migrations/patch_marie_zorblatt_holdings_scope.ts", True),
+        ("const ZORBLATT_HOLDINGS_NS = 1;", True),
+        # separators that are not underscores must keep working
+        ("zorblatt-holdings", True),
+        ("Zorblatt Holdings", True),
+        ("project/zorblatt_holdings", True),
+        # the OTHER pole: flanked by letters/digits -> still no match. This is what
+        # stops us from swapping snake_case blindness for substring blindness.
+        ("xzorblatt holdingsx", False),
+        ("zorblattholdings", False),
+        ("prezorblatt-holdings9", False),
+    ],
+)
+def test_boundary_sees_snake_case_without_becoming_a_substring_matcher(tmp_path, text, must_match):
+    findings = scan_text(text, "boundary", extra_client_patterns=_fictive_patterns(tmp_path))
+    if must_match:
+        assert findings, (
+            f"BLIND: {text!r} carries a client identity and was NOT flagged. "
+            "`\\b` does not fire across `_` — that is the hole this boundary closes."
+        )
+    else:
+        assert findings == [], (
+            f"FALSE POSITIVE: {text!r} matched {[f.pattern for f in findings]}. "
+            "Widening the boundary must not resurrect substring matching."
+        )
