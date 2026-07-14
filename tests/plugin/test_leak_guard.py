@@ -97,11 +97,18 @@ requires_plaintext_vocabulary = pytest.mark.skipif(
     _plaintext_unavailable_but_hashes_are(),
     reason=(
         "plaintext client vocabulary is absent BY DESIGN (CI runs on salted hashes, "
-        "so the real names never exist on the runner). Real-material tests cannot be "
-        "built without plaintext. The same matching path is proven to bite in this "
-        "same module against FICTIVE identities in hash mode "
-        "(see the hash-parity tests), and the packaged artifact IS scanned here "
-        "under the real hashed vocabulary."
+        "so the real names never exist on the runner). This marker is for ONE narrow "
+        "class ONLY: tests that must SYNTHESIZE leak material out of the real names "
+        "(they depend on `leaking_corpus`). Without plaintext there is nothing to "
+        "build the fixture from -- not an inconvenience, a physical impossibility. "
+        "The same matching path is proven to bite, in this same module and in hash "
+        "mode, against FICTIVE identities, with separator and case variants pinned. "
+        "It must NEVER be attached to a test that merely needs a RESOLVED vocabulary "
+        "-- hashes are one. `test_no_client_data_in_packaged_artifact` was briefly "
+        "and wrongly marked here, which switched off the only scan of the shipping "
+        "surface on the only runner that ships it, while this very reason claimed it "
+        "was being scanned. A skip reason that asserts what it prevents is worse than "
+        "no reason at all: it makes the next reader confident."
     ),
 )
 
@@ -207,16 +214,34 @@ def test_real_leak_material_is_not_caught_without_resolved_patterns(leaking_corp
         )
 
 
-@requires_plaintext_vocabulary
-def test_no_client_data_in_packaged_artifact(real_client_patterns):
+def test_no_client_data_in_packaged_artifact():
     """TIER 1: no packaged file may carry real client-org / contact-person data.
 
     Hard block, no baselining, no exceptions. This is the gate that stops a
-    resync from importing the real host-config client vocabulary into a
-    public package. Scanned with the RESOLVED patterns merged in -- the
-    literal CLIENT_DATA_PATTERNS in leak_guard.py carries no client entries
-    by design (Day 130), so this tier only has teeth via the resolved config.
+    resync from importing the real client vocabulary into a PUBLIC package.
+
+    IT MUST RUN EVERYWHERE, AND ESPECIALLY ON CI. This is the only test that
+    scans the surface that actually SHIPS. Skipping it on the public runner --
+    the exact place the package leaves from -- would switch off the guard at the
+    one point it exists to guard, and CI would go green over an unscanned artifact.
+    An honest red is worth more than a holed green.
+
+    It was briefly marked `requires_plaintext_vocabulary`, which was wrong twice
+    over: it does not need plaintext (it needs a RESOLVED vocabulary, and hashes
+    are one), and the skip reason asserted, verbatim, that "the packaged artifact
+    IS scanned here" while skipping precisely that. A lying contract inside the
+    proof chain is worse than a missing one -- it makes the next reader confident.
+    Caught by Eta on PR #1092.
+
+    So the vocabulary comes from the SAME resolver `main()` uses: plaintext when a
+    host config is present, salted hashes on CI. Neither path lets this test pass
+    without a resolved vocabulary -- `resolve_vocabulary_or_fail()` raises, and the
+    test ERRORs, when neither source resolves.
     """
+    mode, vocab = resolve_vocabulary_or_fail()
+    patterns = vocab if mode == "plaintext-patterns" else None
+    hash_vocab = vocab if mode == "hashes" else None
+
     targets = packaged_paths()
     assert targets, (
         "Leak guard enumerated ZERO packaged files. That is a broken parser, "
@@ -224,7 +249,11 @@ def test_no_client_data_in_packaged_artifact(real_client_patterns):
     )
     findings = []
     for t in targets:
-        findings.extend(client_data(scan_file(t, extra_client_patterns=real_client_patterns)))
+        findings.extend(
+            client_data(
+                scan_file(t, extra_client_patterns=patterns, hash_vocab=hash_vocab)
+            )
+        )
     if findings:
         detail = "\n".join(f"  {f.render()}" for f in findings)
         pytest.fail(f"{len(findings)} CLIENT DATA leak(s) in the PUBLIC package:\n{detail}")
