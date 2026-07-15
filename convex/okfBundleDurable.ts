@@ -172,6 +172,15 @@ export const startOkfBundleExportDurable = mutation({
 		const jobId: string = await ctx.runMutation(
 			agentEngineComponents.agentEngine.engine.durableJob.start,
 			{
+				// `orgId` is passed as an explicit argument, NOT read from
+				// `ctx.auth`, because Convex does not propagate the caller
+				// identity across a component boundary. The calling app has
+				// already authenticated the namespace (see
+				// `assertCanExportNamespaceV8` above), and hands the engine
+				// the verified tenant scope. `args.namespace` IS our tenant
+				// scope — the same value stored as `orgId` on the
+				// `okfDurableExportProgress` row a few lines below.
+				orgId: args.namespace,
 				kind: "vantage-peers.okf-export-durable",
 				stepFunctionHandle: stepHandle,
 				totalSteps: args.totalSteps,

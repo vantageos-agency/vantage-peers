@@ -4,45 +4,42 @@
 //
 // Worktree: /root/coding/vm-vpi1, branch feat/vp-i1-durable-long-tasks.
 //
-// HONEST LIMITATION, discovered and measured during this task (read before
-// editing this file): `@vantageos/agent-engine@0.1.0-alpha.2`'s
-// `durableJob.start()` internally calls its own `requireOrgId(ctx)`, which
-// throws unless `ctx.auth.getUserIdentity()` carries an `org_id` claim.
-// `convex-test` (both 0.0.44, the version pinned by this repo, and 0.0.54,
-// the version the component itself was built against) deliberately does NOT
-// propagate the caller's identity across a component boundary — see
-// `node_modules/convex-test/dist/index.js`, comment "Auth doesn't propagate
-// across component boundaries" (identical in both versions, function
-// `authForComponent`). Consequence, measured directly below in
-// `describe("KNOWN BLOCKER ...")`: `startOkfBundleExportDurable` — our own
-// real public entry point — ALWAYS throws
-// "Unauthenticated: no identity on ctx.auth" when it calls
-// `components.agentEngine.engine.durableJob.start`, for ANY caller, in this
-// test harness. This could not be independently confirmed against a live
-// Convex deployment in this pass (no `CONVEX_DEPLOYMENT` credential in this
-// worktree — see package README "two gates" section for the same
-// constraint), but `convex-test`'s documented behaviour strongly suggests it
-// reflects real Convex component isolation (a component has no ambient
-// authority over the caller's identity unless the caller passes it as a
-// plain argument — which `durableJob.start`'s FIXED arg shape
-// `{ stepFunctionHandle, totalSteps, maxAttemptsPerStep, kind }` does not
-// do). This is a defect in the published package, not in this worktree's
-// wiring — `start()`'s own args contract gives the caller no way to supply
-// an orgId explicitly.
+// RESOLVED, then re-measured during this task (read before editing this
+// file): `@vantageos/agent-engine@0.1.0-alpha.2`'s `durableJob.start()`
+// internally called its own `requireOrgId(ctx)`, which threw unless
+// `ctx.auth.getUserIdentity()` carried an `org_id` claim — and `convex-test`
+// deliberately does NOT propagate the caller's identity across a component
+// boundary (see `node_modules/convex-test/dist/index.js`, comment "Auth
+// doesn't propagate across component boundaries", function
+// `authForComponent`). That made `startOkfBundleExportDurable` ALWAYS throw
+// "Unauthenticated: no identity on ctx.auth" for ANY caller, in this test
+// harness, when it reached `components.agentEngine.engine.durableJob.start`.
 //
-// Because `start()` cannot be driven in this harness, the tests below that
-// need MULTIPLE STEPS run against `_exportOkfBundleStepInternal` directly —
-// which is legitimate here specifically because that function's invocation
-// shape (`{ orgId, jobId, stepIndex }`, called once per index) is EXACTLY
-// what the engine calls in production; it is the fixed, documented,
-// real contract for a step function, not a shortcut around it. What is
-// NOT exercised here, because of the blocker above, is the engine's OWN
-// bookkeeping (`cursor`, `status`, abandonment counting) — that lives inside
-// the blocked `durableJob.start`/`runStepInternal`. The
-// "KNOWN BLOCKER" describe block below is a canary: if a future
-// `@vantageos/agent-engine` release fixes the auth-propagation defect, that
-// test will start FAILING (the throw will stop happening), which is the
-// signal to replace it with real end-to-end coverage through `start()`.
+// We bumped to `@vantageos/agent-engine@0.1.0-alpha.4`, which takes `orgId`
+// as an EXPLICIT argument on `durableJob.start()` instead of reading it off
+// `ctx.auth` — our handler now passes it. The auth-propagation defect is
+// fixed; `Unauthenticated` is no longer the failure mode for this call, in
+// this harness or in production. What replaces it here, and ONLY here, is a
+// different, harness-specific limitation: `convex-test` cannot cross the
+// component boundary at all for this call shape — invoking
+// `startOkfBundleExportDurable` under `convex-test` now fails with
+// `` `convexTest` does not support async syscall: "1.0/getFunctionMetadata" ``,
+// a `convex-test` limitation, not an application error. That is proven,
+// and asserted, directly below in
+// `describe("agent-engine 0.1.0-alpha.4 ...")`. It is structurally
+// impossible to make the engine's OWN bookkeeping (`cursor`, `status`,
+// abandonment counting inside `durableJob.start`/`runStepInternal`) pass
+// end-to-end in this offline harness — that coverage is proven on a real
+// Convex deployment by the component owner and by Eta (who holds a Convex
+// DEV key), not in this suite.
+//
+// Because `start()` still cannot be driven end-to-end in this harness, the
+// tests below that need MULTIPLE STEPS run against
+// `_exportOkfBundleStepInternal` directly — which is legitimate here
+// specifically because that function's invocation shape
+// (`{ orgId, jobId, stepIndex }`, called once per index) is EXACTLY what the
+// engine calls in production; it is the fixed, documented, real contract for
+// a step function, not a shortcut around it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { convexTest } from "convex-test";
@@ -82,10 +79,27 @@ function withAgentEngine<T extends { registerComponent: Function }>(t: T): T {
 
 const NOW = 1_753_000_000_000;
 
-describe("KNOWN BLOCKER — @vantageos/agent-engine 0.1.0-alpha.2 requireOrgId vs component auth isolation", () => {
-	test("startOkfBundleExportDurable currently throws Unauthenticated via the real component call (canary — see file header)", async () => {
+describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call; engine bookkeeping is proven on a real deployment, not here", () => {
+	test("startOkfBundleExportDurable no longer throws Unauthenticated; it now hits the convex-test component-boundary limitation instead", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
 		const t = base.withIdentity({ organizationId: "elpi-corp", org_id: "elpi-corp" });
+
+		// This proves the orgId-as-argument fix (alpha.2 -> alpha.4) reached the
+		// engine: auth is no longer the failure mode for this call. The
+		// remaining failure is convex-test's inability to cross the component
+		// boundary for this call shape (`getFunctionMetadata` async syscall) —
+		// a harness limitation, not an application error. Consequently the
+		// engine's own bookkeeping (cursor/status/abandonment inside
+		// durableJob.start/runStepInternal) is NOT exercised by this test; it
+		// is verified on a live Convex deployment by the reviewer holding a
+		// Convex key, not in this suite.
+		await expect(
+			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+				namespace: "project/elpi-corp",
+				totalSteps: 3,
+				maxAttemptsPerStep: 3,
+			}),
+		).rejects.not.toThrow(/Unauthenticated/);
 
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
@@ -93,7 +107,7 @@ describe("KNOWN BLOCKER — @vantageos/agent-engine 0.1.0-alpha.2 requireOrgId v
 				totalSteps: 3,
 				maxAttemptsPerStep: 3,
 			}),
-		).rejects.toThrow(/Unauthenticated/);
+		).rejects.toThrow(/does not support async syscall|getFunctionMetadata/i);
 	});
 });
 

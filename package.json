@@ -41,7 +41,7 @@
     "@convex-dev/workpool": "^0.4.6",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/pdf-parse": "^1.1.5",
-    "@vantageos/agent-engine": "0.1.0-alpha.2",
+    "@vantageos/agent-engine": "0.1.0-alpha.4",
     "ai": "^6.0.134",
     "convex": "^1.42.1",
     "convex-helpers": "^0.1.114",
@@ -61,8 +61,5 @@
     "convex-test": "^0.0.44",
     "typescript": "^5.9.3",
     "vitest": "^4.1.1"
-  },
-  "patchedDependencies": {
-    "@vantageos/agent-engine@0.1.0-alpha.2": "patches/@vantageos%2Fagent-engine@0.1.0-alpha.2.patch"
   }
 }
