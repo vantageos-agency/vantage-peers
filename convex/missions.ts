@@ -225,6 +225,19 @@ export const list = query({
 
 		let allRows: MissionRow[];
 
+		// Guard: project + pilot together is NOT covered by any compound index.
+		// The branches below pick ONE of {project, pilot} — silently combining
+		// both without a matching index would risk applying only one filter
+		// and returning a result silently broader than the question asked.
+		// Refuse loudly instead (same class fix as convex/tasks.ts `list`).
+		if (project !== undefined && pilot !== undefined) {
+			throw new Error(
+				`missions.list: project and pilot cannot be combined in a single call ` +
+					`(received project="${project}" pilot="${pilot}"). ` +
+					`Call list once per filter, or drop one of the two args.`,
+			);
+		}
+
 		// Filter by project + single status — use compound index
 		if (project !== undefined && statuses !== undefined && statuses.length === 1) {
 			allRows = await ctx.db

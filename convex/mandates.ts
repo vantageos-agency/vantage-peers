@@ -193,6 +193,21 @@ export const list = query({
 		const limit = args.limit ?? 50;
 
 		let rows: Doc<"mandates">[];
+
+		// Guard: requestedBy + fulfilledBy together is NOT covered by any
+		// compound index. The branches below pick ONE of {requestedBy,
+		// fulfilledBy} — silently combining both without a matching index
+		// would risk applying only one filter and returning a result silently
+		// broader than the question asked. Refuse loudly instead (same class
+		// fix as convex/tasks.ts `list`).
+		if (args.requestedBy !== undefined && args.fulfilledBy !== undefined) {
+			throw new Error(
+				`mandates.list: requestedBy and fulfilledBy cannot be combined in a single call ` +
+					`(received requestedBy="${args.requestedBy}" fulfilledBy="${args.fulfilledBy}"). ` +
+					`Call list once per filter, or drop one of the two args.`,
+			);
+		}
+
 		if (args.requestedBy !== undefined && args.status !== undefined) {
 			rows = await ctx.db
 				.query("mandates")

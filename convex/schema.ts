@@ -275,6 +275,12 @@ export default defineSchema({
 		.index("by_mission", ["missionId", "status"])
 		.index("by_instance", ["assignedToInstance", "status"])
 		.index("by_orgId", ["orgId"])
+		// Compound indexes added to close the silent-filter-drop defect in
+		// convex/tasks.ts `list`: when a caller supplies assignedTo/assignedToInstance
+		// TOGETHER with project, the query must apply BOTH filters via a matching
+		// index, never pick one and silently discard the other.
+		.index("by_assignee_project", ["assignedTo", "project", "status"])
+		.index("by_instance_project", ["assignedToInstance", "project", "status"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).
