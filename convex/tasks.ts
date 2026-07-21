@@ -298,7 +298,19 @@ export const getById = query({
 //   status="open"    — expands to ["todo","in_progress","review","blocked"]
 //   status="active"  — expands to ["todo","in_progress"]
 //   status=["todo","in_progress"] — multi-value array (no alias mixing)
+//
+// updatedSince/createdBy widened-scan fix (same defect class as #1110 on
+// billing): these two filters used to be applied IN-MEMORY after a
+// `.take(limit)` that had already bounded the page in creation-descending
+// order — so a row updated recently but created outside that page was
+// invisible, while the response looked like a complete list. When either
+// filter is supplied, the per-branch fetch is widened to
+// TASK_LIST_SCAN_CAP + 1 rows BEFORE the filter runs, then re-sliced to
+// `limit` afterwards. If even the widened scan hits its cap, we refuse to
+// return a silently-incomplete page — see the SCAN_CAP_EXCEEDED throw below.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const TASK_LIST_SCAN_CAP = 2000;
 
 export const list = query({
 	args: {
@@ -362,6 +374,13 @@ export const list = query({
 		const updatedSince = args.updatedSince;
 		const priorityFilter = args.priority;
 
+		// updatedSince/createdBy are applied in-memory below — widen the raw
+		// per-branch fetch so the filter runs over a superset of the final
+		// page instead of narrowing an already-limit-bounded page (see the
+		// comment above `TASK_LIST_SCAN_CAP`).
+		const needsWideScan = createdBy !== undefined || updatedSince !== undefined;
+		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
+
 		// Helper: apply multi-status in-memory filter on a pre-fetched slice
 		type TaskRow = Doc<"tasks">;
 		const applyStatusFilter = (rows: TaskRow[]) => {
@@ -399,7 +418,7 @@ export const list = query({
 							.eq("status", statuses[0]),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -407,7 +426,7 @@ export const list = query({
 						q.eq("assignedToInstance", assignedToInstance).eq("project", project),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -422,7 +441,7 @@ export const list = query({
 							.eq("status", statuses[0]),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -430,7 +449,7 @@ export const list = query({
 						q.eq("assignedToInstance", assignedToInstance),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -447,7 +466,7 @@ export const list = query({
 							.eq("status", statuses[0]),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -455,7 +474,7 @@ export const list = query({
 						q.eq("assignedTo", assignedTo).eq("project", project),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -468,13 +487,13 @@ export const list = query({
 						q.eq("assignedTo", assignedTo).eq("status", statuses[0]),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
 					.withIndex("by_assignee", (q) => q.eq("assignedTo", assignedTo))
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -487,13 +506,13 @@ export const list = query({
 						q.eq("project", project).eq("status", statuses[0]),
 					)
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
 					.withIndex("by_project", (q) => q.eq("project", project))
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -504,17 +523,26 @@ export const list = query({
 					.query("tasks")
 					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
 				// Multi-status without other filter: full table scan bounded by limit.
 				// Acceptable for bounded list sizes; no new index required per brief.
-				const base = await ctx.db.query("tasks").order("desc").take(limit);
+				const base = await ctx.db.query("tasks").order("desc").take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
 		// No filters — return all, newest first
 		else {
-			allRows = await ctx.db.query("tasks").order("desc").take(limit);
+			allRows = await ctx.db.query("tasks").order("desc").take(fetchCap);
+		}
+
+		// Refuse to return a silently-incomplete page: if the widened scan
+		// itself hit its cap, there may be matching rows we never looked at.
+		// "I couldn't measure" must never render identically to "complete".
+		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+			throw new ConvexError(
+				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status, or shrink the updatedSince window.`,
+			);
 		}
 
 		// v2.3.3 — apply createdBy + updatedSince filters in-memory
@@ -525,6 +553,10 @@ export const list = query({
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
 		}
+		// Re-bound to the requested page size now that the filter has run over
+		// the widened superset (no-op when a wide scan wasn't needed, since
+		// `allRows` was already <= limit in that case).
+		filtered = filtered.slice(0, limit);
 		// S3.3 B8 — cursor paging: drop rows newer-or-equal to cursor anchor.
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
@@ -1124,6 +1156,10 @@ export const listByMission = query({
 			);
 		}
 
+		// Same widened-scan fix as `list` above — see TASK_LIST_SCAN_CAP comment.
+		const needsWideScan = createdBy !== undefined || updatedSince !== undefined;
+		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
+
 		type TaskRow = Doc<"tasks">;
 		const applyStatusFilter = (rows: TaskRow[]) => {
 			if (statuses === undefined) return rows;
@@ -1141,14 +1177,21 @@ export const listByMission = query({
 					q.eq("missionId", missionId).eq("status", statuses[0]),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else {
 			const base = await ctx.db
 				.query("tasks")
 				.withIndex("by_mission", (q) => q.eq("missionId", missionId))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 			allRows = applyStatusFilter(base);
+		}
+
+		// Refuse a silently-incomplete page — see `list` above for rationale.
+		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+			throw new ConvexError(
+				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status, or shrink the updatedSince window.`,
+			);
 		}
 
 		// v2.3.3 — apply createdBy + updatedSince in-memory
@@ -1159,6 +1202,9 @@ export const listByMission = query({
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
 		}
+		// Re-bound to the requested page size now that the filter has run over
+		// the widened superset (no-op when a wide scan wasn't needed).
+		filtered = filtered.slice(0, limit);
 		// S3.3 B8 follow-up batch 2 — drop rows newer-or-equal to anchor.
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;

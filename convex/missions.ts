@@ -184,6 +184,16 @@ export const get = query({
 //   status=["plan","execute"] — multi-value array (no alias mixing)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// updatedSince widened-scan fix (same defect class as #1110 on billing, and
+// convex/tasks.ts `list`/`listByMission`): the filter used to run in-memory
+// after a `.take(limit)` that had already bounded the page in creation-
+// descending order — a mission updated recently but created outside that
+// page was invisible while the response looked complete. When updatedSince
+// is supplied, the per-branch fetch is widened to MISSION_LIST_SCAN_CAP + 1
+// rows before the filter runs, then re-sliced to `limit`. If the widened
+// scan itself hits its cap, we refuse to return a silently-incomplete page.
+const MISSION_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 		project: v.optional(v.string()),
@@ -215,6 +225,8 @@ export const list = query({
 				`[missions.list] auto-clamp: limit=30 applied (fields=full, no explicit limit).`,
 			);
 		}
+		const needsWideScan = updatedSince !== undefined;
+		const fetchCap = needsWideScan ? MISSION_LIST_SCAN_CAP + 1 : limit;
 
 		type MissionRow = Doc<"missions">;
 		const applyStatusFilter = (rows: MissionRow[]) => {
@@ -246,7 +258,7 @@ export const list = query({
 					q.eq("project", project).eq("status", statuses[0]),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		}
 		// Filter by project only (or project + multi-status filtered in-memory)
 		else if (project !== undefined) {
@@ -254,7 +266,7 @@ export const list = query({
 				.query("missions")
 				.withIndex("by_project", (q) => q.eq("project", project))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 			allRows = applyStatusFilter(base);
 		}
 		// Filter by pilot + single status — use compound index
@@ -265,7 +277,7 @@ export const list = query({
 					q.eq("pilot", pilot).eq("status", statuses[0]),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		}
 		// Filter by pilot only (or pilot + multi-status filtered in-memory)
 		else if (pilot !== undefined) {
@@ -273,7 +285,7 @@ export const list = query({
 				.query("missions")
 				.withIndex("by_pilot", (q) => q.eq("pilot", pilot))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 			allRows = applyStatusFilter(base);
 		}
 		// Filter by status only
@@ -283,15 +295,24 @@ export const list = query({
 					.query("missions")
 					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
-				const base = await ctx.db.query("missions").order("desc").take(limit);
+				const base = await ctx.db.query("missions").order("desc").take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
 		// No filters — return all, newest first
 		else {
-			allRows = await ctx.db.query("missions").order("desc").take(limit);
+			allRows = await ctx.db.query("missions").order("desc").take(fetchCap);
+		}
+
+		// Refuse to return a silently-incomplete page: if the widened scan
+		// itself hit its cap, there may be matching rows we never looked at.
+		// "I couldn't measure" must never render identically to "complete".
+		if (needsWideScan && allRows.length > MISSION_LIST_SCAN_CAP) {
+			throw new ConvexError(
+				`missions.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${MISSION_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with project/pilot/status, or shrink the updatedSince window.`,
+			);
 		}
 
 		// v2.3.3 — updatedSince in-memory filter
@@ -299,6 +320,9 @@ export const list = query({
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
 		}
+		// Re-bound to the requested page size now that the filter has run over
+		// the widened superset (no-op when a wide scan wasn't needed).
+		filtered = filtered.slice(0, limit);
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
