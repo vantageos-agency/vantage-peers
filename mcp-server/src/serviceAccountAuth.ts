@@ -180,6 +180,16 @@ export function _resetServiceAccountCacheForTest(): void {
 }
 
 /**
+ * Test-only hook: exposes the real, env-var-driven loadConfig() boundary
+ * directly, unlike _setServiceAccountDepsForTest which bypasses env entirely.
+ * Lets tests prove the null-vs-non-null decision is actually selective on
+ * CLERK_SECRET_KEY / CLERK_SERVICE_ACCOUNT_USER_ID, not hardcoded.
+ */
+export function _loadConfigForTest(): ServiceAccountConfig | null {
+	return loadConfig();
+}
+
+/**
  * Returns a fresh (or cached, if not near expiry) Clerk-issued JWT for the
  * VantagePeers MCP service-account identity. Returns null when the
  * credential is not configured (CLERK_SECRET_KEY / CLERK_SERVICE_ACCOUNT_USER_ID
