@@ -26,7 +26,7 @@
 // Idempotent: re-running replaces the row's `value` with PROJECTS (upsert
 // by key), safe to re-run after adding a new client project to PROJECTS.
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 
 const BILLABLE_PROJECTS_KEY = "billableProjects";
@@ -77,5 +77,51 @@ export const seedTaskClosureConfig = internalMutation({
 			billableProjectsSeeded: true,
 			staleThresholdSeeded: !existingThreshold,
 		};
+	},
+});
+
+// Public repo, private client roster: the billable-projects list must never
+// enter this source tree as a literal, because this repository is public and
+// a client name committed here would be permanent, discoverable git history.
+// This mutation takes the list as a RUNTIME ARGUMENT instead — an operator
+// runs `npx convex run "migrations/seed_task_closure_config:setBillableProjects"
+// '{"projects": ["<client-slug>"]}'` to add/replace a billable client without
+// ever touching a source file. The return value proves the before/after state
+// so the caller does not need a second read to confirm what changed.
+export const setBillableProjects = internalMutation({
+	args: { projects: v.array(v.string()) },
+	returns: v.object({
+		previous: v.array(v.string()),
+		current: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		if (args.projects.length === 0) {
+			throw new ConvexError(
+				"SET_BILLABLE_PROJECTS_EMPTY: refusing to write an empty billableProjects list — this would silently disable the entire billing closure gate (every project would read as non-billable). Pass the full desired list, not a delta.",
+			);
+		}
+
+		const now = Date.now();
+		const existing = await ctx.db
+			.query("taskClosureConfig")
+			.withIndex("by_key", (q) => q.eq("key", BILLABLE_PROJECTS_KEY))
+			.unique();
+
+		const previous: string[] = existing ? existing.value : [];
+
+		if (existing) {
+			await ctx.db.patch(existing._id, {
+				value: args.projects,
+				updatedAt: now,
+			});
+		} else {
+			await ctx.db.insert("taskClosureConfig", {
+				key: BILLABLE_PROJECTS_KEY,
+				value: args.projects,
+				updatedAt: now,
+			});
+		}
+
+		return { previous, current: args.projects };
 	},
 });
