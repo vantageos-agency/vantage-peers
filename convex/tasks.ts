@@ -1804,6 +1804,152 @@ export const billingSummaryByProject = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// taskDurationDistribution — feat/duration-distribution-instrument.
+// billingSummaryByProject excludes NEGATIVE actualMinutes (a sign check) but
+// has no view on aberrant POSITIVE values: a single task can carry 74904 or
+// 64734 minutes (weeks of wall-clock) straight into an invoice. This query
+// measures the distribution so an aberration threshold can be DERIVED from
+// real data — it corrects nothing, it never mutates, never estimates.
+//
+// Same index-bounded-scan discipline as billingSummaryByProject: the period
+// (and project, when supplied) bounds the QUERY via by_status_completedAt /
+// by_status_project_completedAt — never a post-hoc filter over an unrelated
+// fixed-size scan.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DURATION_DISTRIBUTION_SCAN_CAP = 5000;
+
+// count === 0 must never render as "a flat distribution" (all-zero
+// percentiles read exactly like "every task took 0 minutes", which is a
+// false measurement, not an absence of one). This sentinel is the explicit
+// "could not measure" value — the caller must branch on `count === 0` rather
+// than read the percentiles as data.
+const NO_DATA_SENTINEL = -1;
+
+function percentile(sorted: number[], p: number): number {
+	if (sorted.length === 0) return NO_DATA_SENTINEL;
+	if (sorted.length === 1) return sorted[0];
+	const rank = (p / 100) * (sorted.length - 1);
+	const lower = Math.floor(rank);
+	const upper = Math.ceil(rank);
+	if (lower === upper) return sorted[lower];
+	const weight = rank - lower;
+	return sorted[lower] + (sorted[upper] - sorted[lower]) * weight;
+}
+
+export const taskDurationDistribution = query({
+	args: {
+		from: v.optional(v.number()), // Unix ms, inclusive
+		to: v.optional(v.number()), // Unix ms, inclusive
+		project: v.optional(v.string()),
+	},
+	returns: v.object({
+		count: v.number(),
+		percentiles: v.object({
+			p50: v.number(),
+			p75: v.number(),
+			p90: v.number(),
+			p95: v.number(),
+			p99: v.number(),
+			max: v.number(),
+		}),
+		negativeCount: v.number(),
+		withProjectCount: v.number(),
+		withoutProjectCount: v.number(),
+		truncated: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		if (args.from !== undefined && args.to !== undefined && args.to < args.from) {
+			throw new ConvexError(
+				`INVALID_RANGE: to (${args.to}) must be >= from (${args.from})`,
+			);
+		}
+
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		requireScope(scope, "view-own-tasks");
+
+		const project = args.project;
+		const from = args.from ?? -Infinity;
+		const to = args.to ?? Infinity;
+
+		// Index-bounded scan: the period (and project, when supplied) bounds
+		// the QUERY, not an in-memory filter applied after the fetch.
+		const doneTasks =
+			project !== undefined
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_status_project_completedAt", (q) =>
+							q.eq("status", "done").eq("project", project).gte("completedAt", from).lte("completedAt", to),
+						)
+						.take(DURATION_DISTRIBUTION_SCAN_CAP + 1)
+				: await ctx.db
+						.query("tasks")
+						.withIndex("by_status_completedAt", (q) =>
+							q.eq("status", "done").gte("completedAt", from).lte("completedAt", to),
+						)
+						.take(DURATION_DISTRIBUTION_SCAN_CAP + 1);
+
+		const truncated = doneTasks.length > DURATION_DISTRIBUTION_SCAN_CAP;
+		const capped = doneTasks.slice(0, DURATION_DISTRIBUTION_SCAN_CAP);
+		const scoped = filterByOrgScope(capped, scope);
+
+		let negativeCount = 0;
+		let withProjectCount = 0;
+		let withoutProjectCount = 0;
+		const durations: number[] = [];
+
+		for (const task of scoped) {
+			if (task.actualMinutes === undefined) continue;
+			if (task.actualMinutes < 0) {
+				negativeCount++;
+				continue;
+			}
+			if (task.project === undefined) {
+				withoutProjectCount++;
+			} else {
+				withProjectCount++;
+			}
+			durations.push(task.actualMinutes);
+		}
+
+		durations.sort((a, b) => a - b);
+		const count = durations.length;
+
+		// count === 0: no positive-duration rows measured in the period. The
+		// sentinel makes this explicit rather than silently reporting zeros
+		// that would read as "every task took 0 minutes" — a false measurement
+		// distinct from "we could not measure".
+		const percentiles =
+			count === 0
+				? {
+						p50: NO_DATA_SENTINEL,
+						p75: NO_DATA_SENTINEL,
+						p90: NO_DATA_SENTINEL,
+						p95: NO_DATA_SENTINEL,
+						p99: NO_DATA_SENTINEL,
+						max: NO_DATA_SENTINEL,
+					}
+				: {
+						p50: percentile(durations, 50),
+						p75: percentile(durations, 75),
+						p90: percentile(durations, 90),
+						p95: percentile(durations, 95),
+						p99: percentile(durations, 99),
+						max: durations[durations.length - 1],
+					};
+
+		return {
+			count,
+			percentiles,
+			negativeCount,
+			withProjectCount,
+			withoutProjectCount,
+			truncated,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r).
 // BM25 keyword search over task titles via Convex native .searchIndex().
 //
