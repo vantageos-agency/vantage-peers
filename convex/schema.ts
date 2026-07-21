@@ -281,6 +281,17 @@ export default defineSchema({
 		// index, never pick one and silently discard the other.
 		.index("by_assignee_project", ["assignedTo", "project", "status"])
 		.index("by_instance_project", ["assignedToInstance", "project", "status"])
+		// billingSummaryByProject (convex/tasks.ts) — the period MUST bound the
+		// query itself, not a post-hoc in-memory filter over a fixed-size scan
+		// (Day-131 live-defect fix: recent, billable work was silently invisible
+		// because the old handler capped the by_status(status, createdAt) scan
+		// BEFORE ever comparing completedAt against the requested window).
+		.index("by_status_completedAt", ["status", "completedAt"])
+		// Same fix, pushed one level further: when the caller also supplies a
+		// project filter, apply BOTH status+project+completedAt at the index
+		// level so a single-project billing query is never a post-hoc filter
+		// over a truncated cross-project scan (same disease, same fix).
+		.index("by_status_project_completedAt", ["status", "project", "completedAt"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).

@@ -15,7 +15,9 @@
 //      wiring, not just schema existence (same pattern as
 //      list_memories_episodes_pagination.test.ts).
 //   3. truncated is never silently dropped — it is passed through verbatim.
-//   4. project arg filters the returned byProject rows client-side.
+//   4. project arg is passed straight through to the Convex query args
+//      (Day-131 fix: pushed into the index-backed query, never a post-hoc
+//      client-side filter over a truncated cross-project scan).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -159,26 +161,31 @@ describe("billing_summary_by_project — registration + wiring", () => {
 		expect(callArgs.endDate).toBeLessThanOrEqual(after);
 	});
 
-	it("project arg filters byProject rows client-side, never hides truncated", async () => {
+	it("project arg is forwarded to the Convex query args, never filtered client-side", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
 		registerTools(server, convex, undefined);
 		const handler = handlers.get(BILLING_SUMMARY_BY_PROJECT_TOOL_NAME)!;
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-			byProject: [
-				{ project: "vantage-immo", totalMinutes: 90, taskCount: 2 },
-				{ project: "vantage-peers", totalMinutes: 45, taskCount: 1 },
-			],
+			byProject: [{ project: "vantage-immo", totalMinutes: 90, taskCount: 2 }],
 			unattributedTaskCount: 0,
-			truncated: true, // scan hit its cap — must survive the client-side filter
+			invalidDurationTaskCount: 0,
+			truncated: true, // scan hit its cap — must survive verbatim
 		});
 
-		const result = await handler({ project: "vantage-immo" });
-		const parsed = JSON.parse(result.content[0].text);
+		const result = await handler({ project: "vantage-immo", from: 1000, to: 2000 });
 
+		expect(convex.query).toHaveBeenCalledWith("tasks:billingSummaryByProject", {
+			startDate: 1000,
+			endDate: 2000,
+			project: "vantage-immo",
+		});
+
+		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.byProject).toHaveLength(1);
 		expect(parsed.byProject[0].project).toBe("vantage-immo");
 		expect(parsed.truncated).toBe(true);
+		expect(parsed.invalidDurationTaskCount).toBe(0);
 	});
 });
