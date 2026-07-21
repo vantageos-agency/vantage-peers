@@ -3849,9 +3849,11 @@ export function registerTools(
 	// ── billing_summary_by_project ─────────────────────────────────────────────
 	// Day 130 (k17dhcmzqafve1ayzvh833kf558ae019) — refacturation base. Backed by
 	// Convex `tasks:billingSummaryByProject`; sums machine-derived actualMinutes
-	// grouped by project. `project` filters client-side (the Convex query always
-	// returns every project's totals; filtering here keeps the query itself
-	// simple/cacheable and matches the tool's optional-filter contract).
+	// grouped by project. `project` is passed straight through to the Convex
+	// query args (Day-131 fix): the query itself pushes it into an
+	// index-backed scan (by_status_project_completedAt), so a single-project
+	// query is never a post-hoc filter over a truncated cross-project scan —
+	// the same "bound applied after the fetch" disease as the period fix.
 
 	server.tool(
 		BILLING_SUMMARY_BY_PROJECT_TOOL_NAME,
@@ -3870,19 +3872,18 @@ export function registerTools(
 					{
 						startDate: from ?? 0,
 						endDate: to ?? Date.now(),
+						...(project !== undefined ? { project } : {}),
 					},
 				);
-				const byProject = project
-					? result.byProject.filter((r: any) => r.project === project)
-					: result.byProject;
 				return {
 					content: [
 						{
 							type: "text" as const,
 							text: JSON.stringify(
 								{
-									byProject,
+									byProject: result.byProject,
 									unattributedTaskCount: result.unattributedTaskCount,
+									invalidDurationTaskCount: result.invalidDurationTaskCount,
 									truncated: result.truncated,
 								},
 								null,

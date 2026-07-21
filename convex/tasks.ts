@@ -1696,10 +1696,13 @@ export const bulkComplete = mutation({
 // startedAt→completedAt, never a hand-typed line) grouped by `project` for
 // tasks completed within [startDate, endDate].
 //
-// Bounded scan: uses `by_status` index to fetch "done" tasks, capped at
-// BILLING_SUMMARY_SCAN_CAP to stay within Convex's per-query read budget.
-// If the cap is hit, `truncated: true` is returned so the caller can narrow
-// the period and re-query rather than silently under-reporting billing.
+// Day-131 live-defect fix: the scan is now bounded BY THE INDEX on
+// [status, completedAt] (or [status, project, completedAt] when a project
+// filter is supplied), so the requested period bounds the QUERY itself —
+// not a post-hoc in-memory filter applied after an unrelated fixed-size scan
+// of the oldest rows. `truncated: true` now means exactly what it says: the
+// PERIOD (optionally + project) itself produced more rows than the cap, not
+// "the table has more done tasks somewhere else than the cap allows".
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BILLING_SUMMARY_SCAN_CAP = 5000;
@@ -1708,6 +1711,11 @@ export const billingSummaryByProject = query({
 	args: {
 		startDate: v.number(), // Unix ms, inclusive
 		endDate: v.number(), // Unix ms, inclusive
+		// Optional — when supplied, pushed into the index-backed query itself
+		// (by_status_project_completedAt), never applied as a post-hoc filter
+		// over an unfiltered scan (that would reproduce the same "bound applied
+		// after the fetch" defect this handler was fixed for).
+		project: v.optional(v.string()),
 	},
 	returns: v.object({
 		byProject: v.array(
@@ -1718,6 +1726,11 @@ export const billingSummaryByProject = query({
 			}),
 		),
 		unattributedTaskCount: v.number(), // done tasks in range with no project or no actualMinutes
+		// Rows excluded because actualMinutes < 0 — an impossible value (e.g.
+		// completedAt earlier than startedAt, or a bad write). Never silently
+		// summed and never clamped to zero — surfaced here so the caller sees
+		// "N rows were unusable" instead of a quietly wrong (or negative) total.
+		invalidDurationTaskCount: v.number(),
 		truncated: v.boolean(),
 	}),
 	handler: async (ctx, args) => {
@@ -1727,27 +1740,50 @@ export const billingSummaryByProject = query({
 			);
 		}
 
-		const doneTasks = await ctx.db
-			.query("tasks")
-			.withIndex("by_status", (q) => q.eq("status", "done"))
-			.take(BILLING_SUMMARY_SCAN_CAP + 1);
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		requireScope(scope, "view-own-tasks");
+
+		const project = args.project;
+
+		// Index-bounded scan: the period (and project, when supplied) bounds
+		// the QUERY, not an in-memory filter applied after the fetch.
+		const doneTasks =
+			project !== undefined
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_status_project_completedAt", (q) =>
+							q
+								.eq("status", "done")
+								.eq("project", project)
+								.gte("completedAt", args.startDate)
+								.lte("completedAt", args.endDate),
+						)
+						.take(BILLING_SUMMARY_SCAN_CAP + 1)
+				: await ctx.db
+						.query("tasks")
+						.withIndex("by_status_completedAt", (q) =>
+							q
+								.eq("status", "done")
+								.gte("completedAt", args.startDate)
+								.lte("completedAt", args.endDate),
+						)
+						.take(BILLING_SUMMARY_SCAN_CAP + 1);
 
 		const truncated = doneTasks.length > BILLING_SUMMARY_SCAN_CAP;
 		const capped = doneTasks.slice(0, BILLING_SUMMARY_SCAN_CAP);
+		const scoped = filterByOrgScope(capped, scope);
 
 		const totals = new Map<string, { totalMinutes: number; taskCount: number }>();
 		let unattributedTaskCount = 0;
+		let invalidDurationTaskCount = 0;
 
-		for (const task of capped) {
-			if (
-				task.completedAt === undefined ||
-				task.completedAt < args.startDate ||
-				task.completedAt > args.endDate
-			) {
-				continue;
-			}
+		for (const task of scoped) {
 			if (task.project === undefined || task.actualMinutes === undefined) {
 				unattributedTaskCount++;
+				continue;
+			}
+			if (task.actualMinutes < 0) {
+				invalidDurationTaskCount++;
 				continue;
 			}
 			const existing = totals.get(task.project) ?? {
@@ -1760,10 +1796,10 @@ export const billingSummaryByProject = query({
 		}
 
 		const byProject = Array.from(totals.entries())
-			.map(([project, agg]) => ({ project, ...agg }))
+			.map(([proj, agg]) => ({ project: proj, ...agg }))
 			.sort((a, b) => b.totalMinutes - a.totalMinutes);
 
-		return { byProject, unattributedTaskCount, truncated };
+		return { byProject, unattributedTaskCount, invalidDurationTaskCount, truncated };
 	},
 });
 
