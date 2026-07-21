@@ -210,37 +210,31 @@ describe("PROF — get_profile scope-aware", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool 2 — list_broadcast_status (Convex query: messages:listBroadcastStatus)
-// Rows mimic broadcast receipts. Synthetic createdBy/namespace per row.
+//
+// Post-incident-fix contract: the backend returns a single status ENVELOPE
+// (`{ messageId, from, channel, createdAt, receipts[], truncated }`), never a
+// top-level array. Scope filtering applies to the `receipts` array (matched
+// on `recipient`), not the envelope — the envelope always survives so a
+// scoped caller still learns the broadcast exists.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BROADCAST_FIXTURE = [
-	{
-		_id: "br_a1",
-		createdBy: "alpha",
-		namespace: "orchestrator/alpha",
-		recipient: "alpha-1",
-		readAt: 1,
-	},
-	{
-		_id: "br_b1",
-		createdBy: "beta",
-		namespace: "orchestrator/beta",
-		recipient: "beta-1",
-		readAt: 2,
-	},
-	{
-		_id: "br_g1",
-		createdBy: "gamma",
-		namespace: "global",
-		recipient: "gamma-1",
-		readAt: 3,
-	},
-];
+const BROADCAST_ENVELOPE = {
+	messageId: "m1",
+	from: "gamma",
+	channel: "broadcast",
+	createdAt: 1000,
+	truncated: false,
+	receipts: [
+		{ _id: "br_a1", recipient: "alpha", readAt: 1 },
+		{ _id: "br_b1", recipient: "beta", readAt: 2 },
+		{ _id: "br_g1", recipient: "gamma", readAt: 3 },
+	],
+};
 
 describe("BCAST — list_broadcast_status scope-aware", () => {
-	it("BCAST-T1 master scope → all 3 rows visible", async () => {
+	it("BCAST-T1 master scope → all 3 receipts visible", async () => {
 		const tools = captureTools(
-			{ "messages:listBroadcastStatus": BROADCAST_FIXTURE },
+			{ "messages:listBroadcastStatus": BROADCAST_ENVELOPE },
 			masterCtx(),
 		);
 		const res = await tools.get("list_broadcast_status")!.handler({
@@ -254,7 +248,7 @@ describe("BCAST — list_broadcast_status scope-aware", () => {
 
 	it("BCAST-T2 non-master in-scope → NOT Forbidden", async () => {
 		const tools = captureTools(
-			{ "messages:listBroadcastStatus": BROADCAST_FIXTURE },
+			{ "messages:listBroadcastStatus": BROADCAST_ENVELOPE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_broadcast_status")!.handler({
@@ -263,9 +257,9 @@ describe("BCAST — list_broadcast_status scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("BCAST-T3 legacy bearer → all rows visible", async () => {
+	it("BCAST-T3 legacy bearer → all receipts visible", async () => {
 		const tools = captureTools({
-			"messages:listBroadcastStatus": BROADCAST_FIXTURE,
+			"messages:listBroadcastStatus": BROADCAST_ENVELOPE,
 		});
 		const res = await tools.get("list_broadcast_status")!.handler({
 			messageId: "m1",
@@ -274,9 +268,9 @@ describe("BCAST — list_broadcast_status scope-aware", () => {
 		expect(res.content[0].text).toContain("br_b1");
 	});
 
-	it("BCAST-M1 alpha scope → beta row filtered out", async () => {
+	it("BCAST-M1 alpha scope → beta receipt filtered out", async () => {
 		const tools = captureTools(
-			{ "messages:listBroadcastStatus": BROADCAST_FIXTURE },
+			{ "messages:listBroadcastStatus": BROADCAST_ENVELOPE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_broadcast_status")!.handler({
@@ -286,9 +280,9 @@ describe("BCAST — list_broadcast_status scope-aware", () => {
 		expect(res.content[0].text).not.toContain("br_b1");
 	});
 
-	it("BCAST-M2 alpha scope → own alpha row still visible", async () => {
+	it("BCAST-M2 alpha scope → own alpha receipt still visible, envelope survives", async () => {
 		const tools = captureTools(
-			{ "messages:listBroadcastStatus": BROADCAST_FIXTURE },
+			{ "messages:listBroadcastStatus": BROADCAST_ENVELOPE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_broadcast_status")!.handler({
@@ -296,6 +290,8 @@ describe("BCAST — list_broadcast_status scope-aware", () => {
 		});
 		expect(isForbiddenResponse(res)).toBe(false);
 		expect(res.content[0].text).toContain("br_a1");
+		// Envelope metadata is not gated by receipt-level scope filtering.
+		expect(res.content[0].text).toContain("m1");
 	});
 });
 
