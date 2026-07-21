@@ -1,0 +1,83 @@
+name: MCP Server Lockfile Isolated
+
+# Reproduces, on every push, the exact install layer Railway runs for
+# mcp-server (builder=RAILPACK, rootDirectory=/mcp-server): the deploy image
+# copies ONLY mcp-server/package.json + mcp-server/bun.lock — never the
+# monorepo parent — into an otherwise empty directory, then runs
+# `bun install --frozen-lockfile` in there. Outside the monorepo, bun cannot
+# walk up to the workspace root, so it reads mcp-server/bun.lock as the sole
+# source of truth for that install.
+#
+# Day ~135-141 measured RED: mcp-server/bun.lock was regenerated inside the
+# monorepo (bun resolves the parent workspace there, so `bun install` locally
+# looked clean) while mcp-server/package.json changed on 2026-07-14 without a
+# matching isolated-tree lockfile regen. Railway then failed 10 deploys in a
+# row from 2026-07-14 to 2026-07-21 with the old container silently
+# continuing to serve traffic — nothing surfaced the failure. This is the
+# second occurrence of this exact class: the same lockfile/isolation
+# mismatch already happened once on 2026-06-04 and was hand-repaired without
+# a guard closing the class. This job is that guard.
+#
+# `pull_request` is deliberately gone: with `branches: ["**"]` every
+# same-repo PR is already covered by its push, and keeping both fired two
+# identical runs per commit. Fork PRs are consequently unchecked — they are
+# not part of the fleet flow, where every merge is Pi-gated.
+on:
+  push:
+    branches: ["**"]
+
+concurrency:
+  group: mcp-server-lockfile-isolated-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-frozen-lockfile-install:
+    name: "bun install --frozen-lockfile in an isolated tree (Railway repro)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to 1.3.14 — the exact version Railway's RAILPACK builder used
+      # for mcp-server at the time of the 2026-07-14..2026-07-21 incident
+      # (read from Railway's build log). Do not float this to `latest`: the
+      # whole point of this job is to reproduce Railway's install layer
+      # byte-for-byte, and a bun version drift would make a green run here
+      # meaningless as a predictor of a green Railway deploy.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: "Copy ONLY mcp-server/package.json + mcp-server/bun.lock into an isolated tree"
+        run: |
+          set -e
+          mkdir -p /tmp/mcp-server-isolated
+          cp mcp-server/package.json /tmp/mcp-server-isolated/package.json
+          cp mcp-server/bun.lock /tmp/mcp-server-isolated/bun.lock
+          echo "Isolated tree contents:"
+          ls -la /tmp/mcp-server-isolated
+
+      - name: "bun install --frozen-lockfile (outside the monorepo, no parent workspace to resolve against)"
+        working-directory: /tmp/mcp-server-isolated
+        run: |
+          if ! bun install --frozen-lockfile; then
+            echo "ERROR: mcp-server/bun.lock is stale relative to mcp-server/package.json"
+            echo "when resolved WITHOUT the monorepo parent — exactly what Railway's"
+            echo "RAILPACK builder does (rootDirectory=/mcp-server, no workspace root copied)."
+            echo ""
+            echo "THE FIX: regenerate mcp-server/bun.lock FROM AN ISOLATED TREE, not from"
+            echo "inside the monorepo. Regenerating it in-repo lets bun resolve the parent"
+            echo "workspace, which produces a lockfile that looks correct locally and then"
+            echo "fails frozen-lockfile install on Railway (silently — the previous"
+            echo "container keeps serving, so nothing alerts you)."
+            echo ""
+            echo "  mkdir -p /tmp/mcp-server-isolated"
+            echo "  cp mcp-server/package.json mcp-server/bun.lock /tmp/mcp-server-isolated/"
+            echo "  cd /tmp/mcp-server-isolated && bun install"
+            echo "  cp /tmp/mcp-server-isolated/bun.lock <repo>/mcp-server/bun.lock"
+            echo ""
+            echo "This exact class of failure already happened once on 2026-06-04 and was"
+            echo "hand-repaired without closing it. This job is the guard against a third"
+            echo "occurrence."
+            exit 1
+          fi
+          echo "PASS: mcp-server/bun.lock installs frozen in an isolated tree — matches Railway's build layer"

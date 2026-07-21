@@ -918,6 +918,14 @@ app.get("/health", (c) =>
 		status: "ok",
 		service: "vantage-peers-mcp-http",
 		version: pkg.version,
+		// Day 145: /health could not discriminate which commit was actually
+		// serving traffic during the Railway silent-failure incident (10
+		// deploys failed 2026-07-14..2026-07-21 while the old container kept
+		// answering). RAILWAY_GIT_COMMIT_SHA is set by Railway's build system
+		// at build time — never hand-typed. Fallback is an honest "unknown"
+		// string, never a value shaped like a SHA (would be indistinguishable
+		// from a real commit and defeat the whole point of this field).
+		commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
 		transport: "streamable-http",
 		oauth: "supported",
 		scopes: ["mcp:full"],
