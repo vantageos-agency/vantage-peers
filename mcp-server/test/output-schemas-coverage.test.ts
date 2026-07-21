@@ -136,7 +136,7 @@ const REPRESENTATIVE_RESPONSES: Record<string, unknown> = {
 	set_summary: { orchestratorId: "pi", summary: "Working on C1" },
 	list_peers: [{ _id: "abc123def456abc123def456abc12345", id: "pi", instanceId: "pi", role: "lead", workspace: "/home/pi", currentTask: "idle", lastSeen: "2026-06-06T00:00:00.000Z", sessionCount: 42 }],
 	list_messages: [{ _id: "abc123def456abc123def456abc12345", from: "pi", content: "hello", channel: "broadcast" }],
-	list_broadcast_status: [{ receiptId: "abc123def456abc123def456abc12345", recipient: "tau", isRead: true }],
+	list_broadcast_status: { messageId: "abc123def456abc123def456abc12345", from: "pi", channel: "broadcast", createdAt: 1700000000000, receipts: [{ recipient: "tau", read: true, readAt: 1700000000000 }], truncated: false },
 	create_task: { taskId: "abc123def456abc123def456abc12345", title: "Test", assignedTo: "pi", priority: "medium", status: "todo" },
 	list_tasks: [{ _id: "abc123def456abc123def456abc12345", title: "Test", status: "todo", priority: "medium" }],
 	update_task: { taskId: "abc123def456abc123def456abc12345", updated: true },

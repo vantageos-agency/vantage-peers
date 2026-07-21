@@ -1062,9 +1062,19 @@ export const listMessagesOutputSchema = z.union([
 ]);
 
 // list_broadcast_status
-export const listBroadcastStatusOutputSchema = z.array(
-	z.record(z.string(), z.unknown()),
-);
+// Fix for the "Server Error on every call" incident: the backend returns a
+// single status ENVELOPE (`{ messageId, from, channel, createdAt, receipts[],
+// truncated }`), not a top-level list. The schema previously declared
+// `z.array(...)`, which combined with `Array.isArray(status) ? status : []`
+// in the handler silently collapsed every real payload into `[]`.
+export const listBroadcastStatusOutputSchema = z.object({
+	messageId: z.string(),
+	from: z.string(),
+	channel: z.string().optional(),
+	createdAt: z.number(),
+	receipts: z.array(z.record(z.string(), z.unknown())),
+	truncated: z.boolean(),
+});
 
 // create_task
 export const createTaskOutputSchema = z.object({
@@ -3413,6 +3423,20 @@ export function registerTools(
 	// is defined on top-level arrays, not embedded sub-arrays of a single
 	// envelope. Migrating would require a separate `list_broadcast_receipts`
 	// tool, which is out of scope for the S3.3 B8 rollout.
+	//
+	// LIVE DEFECT FIX (GitHub issue, "Server Error" on every call):
+	//   1. `limit` is now DECLARED by messages:listBroadcastStatus (was
+	//      previously injected unconditionally by this wrapper against a
+	//      backend arg list that didn't accept it → ArgumentValidationError
+	//      on every single call, regardless of whether the caller passed
+	//      `limit`).
+	//   2. The backend returns a single OBJECT envelope, never an array.
+	//      `Array.isArray(status) ? status : []` used to silently collapse
+	//      every real payload into `[]` — "nobody read this" instead of the
+	//      real receipts. Scope filtering now applies to the `receipts` array
+	//      (per-recipient visibility), not the envelope: the envelope
+	//      (messageId/from/channel/createdAt/truncated) is always returned
+	//      intact so a scoped caller still knows the broadcast exists.
 
 	server.tool(
 		"list_broadcast_status",
@@ -3456,20 +3480,47 @@ export function registerTools(
 					},
 				);
 
-				const filteredStatus = scopeFilterList(
-					oauthCtx,
-					Array.isArray(status) ? status : [],
-				);
+				const envelope = status as {
+					messageId: string;
+					from: string;
+					channel?: string;
+					createdAt: number;
+					receipts: Array<Record<string, unknown>>;
+					truncated: boolean;
+				};
 
+				// Scope filtering targets the receipts array, not the envelope: a
+				// non-master caller may not see every recipient's read status, but
+				// it still learns the broadcast exists (envelope fields carry no
+				// per-row ownership, so denying the whole envelope would just
+				// re-manufacture the "Server Error" experience under a different
+				// name). Each receipt is matched against fromAllowList by mapping
+				// `recipient` onto the `createdBy` field scopeFilterList expects.
+				const filteredReceipts = scopeFilterList(
+					oauthCtx,
+					envelope.receipts.map((r) => ({
+						...r,
+						createdBy: r.recipient as string | undefined,
+					})),
+				).map(({ createdBy: _createdBy, ...rest }) => rest);
+
+				const responsePayload = {
+					...envelope,
+					receipts: filteredReceipts,
+				};
+
+				// Deliberately NOT routed through capListResponseBytes: that helper
+				// truncates a bare array and rewraps it as `{_meta, items}`, which
+				// would silently swap this tool's envelope shape for a different one
+				// under byte pressure — its own instance of the "shape surprise"
+				// class this fix closes. `limit` (capped at 200 by the arg schema)
+				// plus `truncated` already give the caller an explicit, honest
+				// truncation signal without changing the response shape.
 				return {
 					content: [
 						{
 							type: "text",
-							text: capListResponseBytes(
-								filteredStatus,
-								JSON.stringify(filteredStatus, null, 2),
-								"list_broadcast_status",
-							),
+							text: JSON.stringify(responsePayload, null, 2),
 						},
 					],
 				};

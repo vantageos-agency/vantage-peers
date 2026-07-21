@@ -601,6 +601,13 @@ export const listBroadcastStatus = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		messageId: v.id("messages"),
+		// Fix for the "list_broadcast_status returns Server Error" incident: the
+		// MCP wrapper (mcp-server/src/tools.ts) always sent `limit` even when the
+		// caller omitted it, but this arg list previously did not declare it,
+		// so Convex rejected EVERY call with ArgumentValidationError. `limit` is
+		// now declared AND applied (see `truncated` below — a capped list never
+		// looks complete).
+		limit: v.optional(v.number()),
 	},
 	returns: v.object({
 		messageId: v.id("messages"),
@@ -615,27 +622,38 @@ export const listBroadcastStatus = query({
 				readAt: v.optional(v.number()),
 			}),
 		),
+		// True when `limit` truncated the receipts list — "I showed you N of M"
+		// must never render identically to "there are N".
+		truncated: v.boolean(),
 	}),
-	handler: async (ctx, { messageId }) => {
+	handler: async (ctx, { messageId, limit }) => {
 		const message = await ctx.db.get(messageId);
 		if (!message) throw new Error("Message not found");
 
+		// Deterministic order from the `by_message` index — no Date.now() here,
+		// queries must stay reproducible for reactivity.
 		const receipts = await ctx.db
 			.query("messageReceipts")
 			.withIndex("by_message", (q) => q.eq("messageId", messageId))
 			.collect();
+
+		const mapped = receipts.map((r) => ({
+			recipient: r.recipient,
+			recipientInstanceId: r.recipientInstanceId,
+			read: r.readAt !== undefined,
+			readAt: r.readAt,
+		}));
+
+		const truncated = limit !== undefined && mapped.length > limit;
+		const page = limit !== undefined ? mapped.slice(0, limit) : mapped;
 
 		return {
 			messageId,
 			from: message.from,
 			channel: message.channel,
 			createdAt: message.createdAt,
-			receipts: receipts.map((r) => ({
-				recipient: r.recipient,
-				recipientInstanceId: r.recipientInstanceId,
-				read: r.readAt !== undefined,
-				readAt: r.readAt,
-			})),
+			receipts: page,
+			truncated,
 		};
 	},
 });

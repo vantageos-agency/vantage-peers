@@ -239,6 +239,7 @@ export const listByProject = query({
 	args: {
 		sourceProject: v.string(),
 		limit: v.optional(v.number()),
+		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // no-op for now — closes ArgumentValidationError from MCP wrapper (mcp-server/src/tools.ts) which always sends `fields`, mirroring the v2.4.12 fix already applied to fixPatterns:listAll.
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
 	},
