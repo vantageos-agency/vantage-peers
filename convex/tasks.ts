@@ -373,8 +373,46 @@ export const list = query({
 
 		let allRows: TaskRow[];
 
-		// Filter by instance — use index for primary key, then filter statuses in-memory
-		if (assignedToInstance !== undefined) {
+		// ── Guard: mutually-exclusive index-backed filters ────────────────────────
+		// assignedToInstance and assignedTo are both index-backed but there is no
+		// compound index covering both together (and combining them via post-filter
+		// would risk the same silent-narrowing-that-looks-complete failure mode
+		// this fix closes). Refuse loudly rather than silently pick one side.
+		if (assignedToInstance !== undefined && assignedTo !== undefined) {
+			throw new Error(
+				`tasks.list: assignedToInstance and assignedTo cannot be combined in a single call ` +
+					`(received assignedToInstance="${assignedToInstance}" assignedTo="${assignedTo}"). ` +
+					`Call list once per filter, or drop one of the two args.`,
+			);
+		}
+
+		// Filter by instance + project together — matching compound index,
+		// so BOTH filters are applied, never one silently dropped.
+		if (assignedToInstance !== undefined && project !== undefined) {
+			if (statuses !== undefined && statuses.length === 1) {
+				allRows = await ctx.db
+					.query("tasks")
+					.withIndex("by_instance_project", (q) =>
+						q
+							.eq("assignedToInstance", assignedToInstance)
+							.eq("project", project)
+							.eq("status", statuses[0]),
+					)
+					.order("desc")
+					.take(limit);
+			} else {
+				const base = await ctx.db
+					.query("tasks")
+					.withIndex("by_instance_project", (q) =>
+						q.eq("assignedToInstance", assignedToInstance).eq("project", project),
+					)
+					.order("desc")
+					.take(limit);
+				allRows = applyStatusFilter(base);
+			}
+		}
+		// Filter by instance only — use index for primary key, then filter statuses in-memory
+		else if (assignedToInstance !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
@@ -396,7 +434,32 @@ export const list = query({
 				allRows = applyStatusFilter(base);
 			}
 		}
-		// Filter by assignee
+		// Filter by assignee + project together — matching compound index,
+		// so BOTH filters are applied, never one silently dropped.
+		else if (assignedTo !== undefined && project !== undefined) {
+			if (statuses !== undefined && statuses.length === 1) {
+				allRows = await ctx.db
+					.query("tasks")
+					.withIndex("by_assignee_project", (q) =>
+						q
+							.eq("assignedTo", assignedTo)
+							.eq("project", project)
+							.eq("status", statuses[0]),
+					)
+					.order("desc")
+					.take(limit);
+			} else {
+				const base = await ctx.db
+					.query("tasks")
+					.withIndex("by_assignee_project", (q) =>
+						q.eq("assignedTo", assignedTo).eq("project", project),
+					)
+					.order("desc")
+					.take(limit);
+				allRows = applyStatusFilter(base);
+			}
+		}
+		// Filter by assignee only
 		else if (assignedTo !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
@@ -415,7 +478,7 @@ export const list = query({
 				allRows = applyStatusFilter(base);
 			}
 		}
-		// Filter by project
+		// Filter by project only
 		else if (project !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
