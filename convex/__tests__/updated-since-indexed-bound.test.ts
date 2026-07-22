@@ -167,6 +167,61 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 		expect(extractItems(result).length).toBe(0);
 	});
 
+	// ── TWIN of the test above, for the assignedTo-ALONE branch (no `status`
+	// argument at all, so `list` takes the by_assignee_updatedAt path and
+	// applies any status filtering in memory afterward — irrelevant here
+	// since no status is supplied). Same identical-population, two-pole
+	// proof: a wide window makes every stored row a candidate and overflows
+	// the cap; a narrow window makes zero rows candidates and returns an
+	// empty (correct) result. If the bound were dropped from this branch's
+	// query (e.g. `.gte("updatedAt", 0)` instead of `.gte("updatedAt",
+	// updatedSince)`), both windows would fetch the identical
+	// TASK_LIST_SCAN_CAP + 1 rows and both would throw identically,
+	// regardless of the window.
+	test("assignedTo-alone branch (no status arg): identical population, a wide window still overflows the cap, a narrow window does not", async () => {
+		const t = convexTest(schema, modules);
+		const ASSIGNEE = "test-orch-indexed-bound-window-matters-alone";
+		const ROW_UPDATED_AT = Date.now() - 500;
+
+		await t.run(async (ctx) => {
+			for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
+				await ctx.db.insert("tasks", {
+					title: `window-matters-alone-task-${i}`,
+					assignedTo: ASSIGNEE,
+					priority: "medium",
+					// Mixed statuses on purpose: no `status` arg is passed to
+					// `list` below, so applyStatusFilter is a no-op and cannot be
+					// the reason either pole passes or fails.
+					status: i % 2 === 0 ? "todo" : "in_progress",
+					createdBy: ASSIGNEE,
+					createdAt: Date.now(),
+					updatedAt: ROW_UPDATED_AT,
+				} as never);
+			}
+		});
+
+		// WIDE window: threshold before every row's updatedAt -> every row is
+		// a candidate -> TASK_LIST_SCAN_CAP + 1 candidates -> overflow.
+		await expect(
+			t.query(api.tasks.list, {
+				assignedTo: ASSIGNEE,
+				updatedSince: ROW_UPDATED_AT - 1,
+				limit: 10,
+				fields: "full",
+			}),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
+
+		// NARROW window: threshold after every row's updatedAt -> zero rows
+		// are candidates -> no overflow, empty (correct) result.
+		const result = await t.query(api.tasks.list, {
+			assignedTo: ASSIGNEE,
+			updatedSince: ROW_UPDATED_AT + 1,
+			limit: 10,
+			fields: "full",
+		});
+		expect(extractItems(result).length).toBe(0);
+	});
+
 	// ── The cap must still be able to throw: a wide-enough window on a
 	// big-enough branch still overflows, and the message only promises a
 	// remedy that now actually works (shrinking the window IS a real lever
