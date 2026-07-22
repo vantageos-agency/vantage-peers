@@ -309,9 +309,13 @@ export const list = query({
 		// Refuse to return a silently-incomplete page: if the widened scan
 		// itself hit its cap, there may be matching rows we never looked at.
 		// "I couldn't measure" must never render identically to "complete".
+		// No branch here was measured to exceed the cap in production (unlike
+		// tasks.list's assignedTo branches), so no index was added and the
+		// fetch is still a fixed-size widened scan — "shrink the updatedSince
+		// window" would be a false remedy and is left out of the message.
 		if (needsWideScan && allRows.length > MISSION_LIST_SCAN_CAP) {
 			throw new ConvexError(
-				`missions.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${MISSION_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with project/pilot/status, or shrink the updatedSince window.`,
+				`missions.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${MISSION_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with project/pilot/status.`,
 			);
 		}
 
