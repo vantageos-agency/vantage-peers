@@ -702,4 +702,268 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			expect(items.some((r) => r.title === "target-at-cap-note")).toBe(true);
 		});
 	});
+
+	// ── EXACT-LIMIT re-bound assertion — the trou named by the reviewer ────────
+	//
+	// ETA-M2 deleted `filtered.slice(0, limit)` on the widened branch and the
+	// full suite stayed green: nothing above asserts an EXACT count on that
+	// branch when the matching population exceeds `limit`. `.some(...)`
+	// membership checks pass whether the re-bound line is present or not.
+	// Each pair below closes that gap for one site: population strictly
+	// bigger than `limit` (all matching, since strictly-bigger membership
+	// alone doesn't force the assert to fail without the re-bound) must
+	// render exactly `limit` rows; population strictly smaller than `limit`
+	// must render every row in the population, not `limit`.
+
+	const EXACT_LIMIT = 10;
+	const OVER_POPULATION = EXACT_LIMIT + 8; // decisively larger than the limit
+	const UNDER_POPULATION = EXACT_LIMIT - 4; // decisively smaller than the limit
+
+	describe("tasks.list — exact re-bound to limit", () => {
+		test("population larger than limit renders EXACTLY limit rows", async () => {
+			const t = convexTest(schema, modules);
+			await t.run(async (ctx) => {
+				for (let i = 0; i < OVER_POPULATION; i++) {
+					await ctx.db.insert("tasks", {
+						title: `exact-over-task-${i}`,
+						assignedTo: "test-orch-exact-limit-over",
+						priority: "medium",
+						status: "todo",
+						createdBy: "test-orch-exact-limit-over",
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.tasks.list, {
+				assignedTo: "test-orch-exact-limit-over",
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(EXACT_LIMIT);
+		});
+
+		test("population smaller than limit renders the FULL population, not limit", async () => {
+			const t = convexTest(schema, modules);
+			await t.run(async (ctx) => {
+				for (let i = 0; i < UNDER_POPULATION; i++) {
+					await ctx.db.insert("tasks", {
+						title: `exact-under-task-${i}`,
+						assignedTo: "test-orch-exact-limit-under",
+						priority: "medium",
+						status: "todo",
+						createdBy: "test-orch-exact-limit-under",
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.tasks.list, {
+				assignedTo: "test-orch-exact-limit-under",
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(UNDER_POPULATION);
+		});
+	});
+
+	describe("tasks.listByMission — exact re-bound to limit", () => {
+		test("population larger than limit renders EXACTLY limit rows", async () => {
+			const t = convexTest(schema, modules);
+			const missionId = await t.run(async (ctx) => {
+				return await ctx.db.insert("missions", {
+					name: "fixture-mission-exact-limit-over",
+					project: "fixture-project-exact-limit-over",
+					status: "execute",
+					priority: "medium",
+					pilot: "test-orch-exact-limit-over",
+					agents: ["test-orch-exact-limit-over"],
+					createdBy: "test-orch-exact-limit-over",
+					createdAt: OLD_UPDATED_AT,
+					updatedAt: OLD_UPDATED_AT,
+				} as never);
+			});
+			await t.run(async (ctx) => {
+				for (let i = 0; i < OVER_POPULATION; i++) {
+					await ctx.db.insert("tasks", {
+						title: `exact-over-mission-task-${i}`,
+						assignedTo: "test-orch-exact-limit-over",
+						priority: "medium",
+						status: "todo",
+						createdBy: "test-orch-exact-limit-over",
+						missionId,
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.tasks.listByMission, {
+				missionId,
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(EXACT_LIMIT);
+		});
+
+		test("population smaller than limit renders the FULL population, not limit", async () => {
+			const t = convexTest(schema, modules);
+			const missionId = await t.run(async (ctx) => {
+				return await ctx.db.insert("missions", {
+					name: "fixture-mission-exact-limit-under",
+					project: "fixture-project-exact-limit-under",
+					status: "execute",
+					priority: "medium",
+					pilot: "test-orch-exact-limit-under",
+					agents: ["test-orch-exact-limit-under"],
+					createdBy: "test-orch-exact-limit-under",
+					createdAt: OLD_UPDATED_AT,
+					updatedAt: OLD_UPDATED_AT,
+				} as never);
+			});
+			await t.run(async (ctx) => {
+				for (let i = 0; i < UNDER_POPULATION; i++) {
+					await ctx.db.insert("tasks", {
+						title: `exact-under-mission-task-${i}`,
+						assignedTo: "test-orch-exact-limit-under",
+						priority: "medium",
+						status: "todo",
+						createdBy: "test-orch-exact-limit-under",
+						missionId,
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.tasks.listByMission, {
+				missionId,
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(UNDER_POPULATION);
+		});
+	});
+
+	describe("missions.list — exact re-bound to limit", () => {
+		test("population larger than limit renders EXACTLY limit rows", async () => {
+			const t = convexTest(schema, modules);
+			await t.run(async (ctx) => {
+				for (let i = 0; i < OVER_POPULATION; i++) {
+					await ctx.db.insert("missions", {
+						name: `exact-over-mission-${i}`,
+						project: "fixture-project-mission-exact-limit-over",
+						status: "execute",
+						priority: "medium",
+						pilot: "test-orch-exact-limit-over",
+						agents: ["test-orch-exact-limit-over"],
+						createdBy: "test-orch-exact-limit-over",
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.missions.list, {
+				project: "fixture-project-mission-exact-limit-over",
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(EXACT_LIMIT);
+		});
+
+		test("population smaller than limit renders the FULL population, not limit", async () => {
+			const t = convexTest(schema, modules);
+			await t.run(async (ctx) => {
+				for (let i = 0; i < UNDER_POPULATION; i++) {
+					await ctx.db.insert("missions", {
+						name: `exact-under-mission-${i}`,
+						project: "fixture-project-mission-exact-limit-under",
+						status: "execute",
+						priority: "medium",
+						pilot: "test-orch-exact-limit-under",
+						agents: ["test-orch-exact-limit-under"],
+						createdBy: "test-orch-exact-limit-under",
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.missions.list, {
+				project: "fixture-project-mission-exact-limit-under",
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(UNDER_POPULATION);
+		});
+	});
+
+	describe("briefingNotes.list — exact re-bound to limit", () => {
+		test("population larger than limit renders EXACTLY limit rows", async () => {
+			const t = convexTest(schema, modules);
+			await t.run(async (ctx) => {
+				for (let i = 0; i < OVER_POPULATION; i++) {
+					await ctx.db.insert("briefingNotes", {
+						title: `exact-over-note-${i}`,
+						topic: "fixture-topic-exact-limit-over",
+						participants: ["test-orch-exact-limit-over"],
+						content: "fixture content",
+						createdBy: "test-orch-exact-limit-over",
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.briefingNotes.list, {
+				topic: "fixture-topic-exact-limit-over",
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(EXACT_LIMIT);
+		});
+
+		test("population smaller than limit renders the FULL population, not limit", async () => {
+			const t = convexTest(schema, modules);
+			await t.run(async (ctx) => {
+				for (let i = 0; i < UNDER_POPULATION; i++) {
+					await ctx.db.insert("briefingNotes", {
+						title: `exact-under-note-${i}`,
+						topic: "fixture-topic-exact-limit-under",
+						participants: ["test-orch-exact-limit-under"],
+						content: "fixture content",
+						createdBy: "test-orch-exact-limit-under",
+						createdAt: OLD_UPDATED_AT + i,
+						updatedAt: RECENT_UPDATED_AT,
+					} as never);
+				}
+			});
+
+			const result = await t.query(api.briefingNotes.list, {
+				topic: "fixture-topic-exact-limit-under",
+				updatedSince: SINCE_THRESHOLD,
+				limit: EXACT_LIMIT,
+				fields: "full",
+			});
+			const items = extractItems(result);
+			expect(items.length).toBe(UNDER_POPULATION);
+		});
+	});
 });
