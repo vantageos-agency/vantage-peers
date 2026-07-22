@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
@@ -103,6 +104,17 @@ function projectBriefingNoteLite(doc: Doc<"briefingNotes">): BriefingNoteLite {
 //   fields="full" (default) — full doc (backward-compatible)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// updatedSince widened-scan fix (same defect class as #1110 on billing, and
+// convex/tasks.ts `list`/`listByMission`, convex/missions.ts `list`): the
+// filter used to run in-memory after a `.take(limit)` that had already
+// bounded the page in creation-descending order — a note updated recently
+// but created outside that page was invisible while the response looked
+// complete. When updatedSince is supplied, the fetch is widened to
+// BRIEFING_NOTES_LIST_SCAN_CAP + 1 rows before the filter runs, then
+// re-sliced to `limit`. If the widened scan itself hits its cap, we refuse
+// to return a silently-incomplete page.
+export const BRIEFING_NOTES_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 		topic: v.optional(v.string()),
@@ -124,6 +136,8 @@ export const list = query({
 				`[briefingNotes.list] auto-clamp: limit=15 applied (fields=full, no explicit limit).`,
 			);
 		}
+		const needsWideScan = args.updatedSince !== undefined;
+		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"briefingNotes">[];
 
@@ -132,9 +146,18 @@ export const list = query({
 				.query("briefingNotes")
 				.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else {
-			rows = await ctx.db.query("briefingNotes").order("desc").take(limit);
+			rows = await ctx.db.query("briefingNotes").order("desc").take(fetchCap);
+		}
+
+		// Refuse to return a silently-incomplete page: if the widened scan
+		// itself hit its cap, there may be matching rows we never looked at.
+		// "I couldn't measure" must never render identically to "complete".
+		if (needsWideScan && rows.length > BRIEFING_NOTES_LIST_SCAN_CAP) {
+			throw new ConvexError(
+				`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic, or shrink the updatedSince window.`,
+			);
 		}
 
 		// v2.3.3 — updatedSince filter on updatedAt (fallback to _creationTime if missing)
@@ -144,6 +167,9 @@ export const list = query({
 				(r) => (r.updatedAt ?? r._creationTime) >= since,
 			);
 		}
+		// Re-bound to the requested page size now that the filter has run over
+		// the widened superset (no-op when a wide scan wasn't needed).
+		rows = rows.slice(0, limit);
 		// S3.3 B8 — cursor paging anchor: drop rows newer-or-equal to before.
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
