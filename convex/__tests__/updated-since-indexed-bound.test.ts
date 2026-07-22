@@ -22,6 +22,8 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { BRIEFING_NOTES_LIST_SCAN_CAP } from "../briefingNotes";
+import { MISSION_LIST_SCAN_CAP } from "../missions";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
 
@@ -201,5 +203,127 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 				"s",
 			),
 		);
+	});
+});
+
+// ── TASK A (this PR's follow-up): the removal of the false remedy from the
+// three non-indexed SCAN_CAP_EXCEEDED messages (missions.list,
+// briefingNotes.list, tasks.listByMission) was an untested claim — nothing
+// asserted its absence. Each test below forces the relevant handler to throw
+// SCAN_CAP_EXCEEDED and asserts (a) the message does NOT contain the false
+// remedy phrase and (b) the message DOES name the remedy it actually offers,
+// so a test that merely fails to throw, or throws an empty message, cannot
+// pass here.
+describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non-indexed branches", () => {
+	test("missions.list (project branch, no index for updatedSince): message omits the window remedy, names project/pilot/status", async () => {
+		const t = convexTest(schema, modules);
+		await t.run(async (ctx) => {
+			for (let i = 0; i < MISSION_LIST_SCAN_CAP + 1; i++) {
+				await ctx.db.insert("missions", {
+					name: `fictitious-overcap-mission-${i}`,
+					project: "fictitious-project-indexed-bound-missions",
+					status: "execute",
+					priority: "medium",
+					pilot: "test-orch-indexed-bound-missions",
+					agents: ["test-orch-indexed-bound-missions"],
+					createdBy: "test-orch-indexed-bound-missions",
+					createdAt: Date.now() + i,
+					updatedAt: Date.now() - 100_000_000,
+				} as never);
+			}
+		});
+
+		try {
+			await t.query(api.missions.list, {
+				project: "fictitious-project-indexed-bound-missions",
+				updatedSince: Date.now() - 1_000,
+				limit: 10,
+				fields: "full",
+			});
+			throw new Error("expected SCAN_CAP_EXCEEDED to throw");
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with project\/pilot\/status/s);
+			expect(message).not.toContain("shrink the updatedSince window");
+			expect(message).toContain("Narrow with project/pilot/status");
+		}
+	});
+
+	test("briefingNotes.list (topic branch, no index for updatedSince): message omits the window remedy, names topic", async () => {
+		const t = convexTest(schema, modules);
+		await t.run(async (ctx) => {
+			for (let i = 0; i < BRIEFING_NOTES_LIST_SCAN_CAP + 1; i++) {
+				await ctx.db.insert("briefingNotes", {
+					title: `fictitious-overcap-note-${i}`,
+					topic: "fictitious-topic-indexed-bound",
+					participants: ["test-orch-indexed-bound-notes"],
+					content: "fictitious content",
+					createdBy: "test-orch-indexed-bound-notes",
+					createdAt: Date.now() + i,
+					updatedAt: Date.now() - 100_000_000,
+				} as never);
+			}
+		});
+
+		try {
+			await t.query(api.briefingNotes.list, {
+				topic: "fictitious-topic-indexed-bound",
+				updatedSince: Date.now() - 1_000,
+				limit: 10,
+				fields: "full",
+			});
+			throw new Error("expected SCAN_CAP_EXCEEDED to throw");
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with topic/s);
+			expect(message).not.toContain("shrink the updatedSince window");
+			expect(message).toContain("Narrow with topic");
+		}
+	});
+
+	test("tasks.listByMission (missionId branch, no index for updatedSince): message omits the window remedy, names status", async () => {
+		const t = convexTest(schema, modules);
+		const missionId = await t.run(async (ctx) => {
+			return await ctx.db.insert("missions", {
+				name: "fictitious-mission-indexed-bound-listbymission",
+				project: "fictitious-project-indexed-bound-listbymission",
+				status: "execute",
+				priority: "medium",
+				pilot: "test-orch-indexed-bound-listbymission",
+				agents: ["test-orch-indexed-bound-listbymission"],
+				createdBy: "test-orch-indexed-bound-listbymission",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as never);
+		});
+		await t.run(async (ctx) => {
+			for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
+				await ctx.db.insert("tasks", {
+					title: `fictitious-overcap-mission-task-${i}`,
+					assignedTo: "test-orch-indexed-bound-listbymission",
+					priority: "medium",
+					status: "todo",
+					createdBy: "test-orch-indexed-bound-listbymission",
+					missionId,
+					createdAt: Date.now() + i,
+					updatedAt: Date.now() - 100_000_000,
+				} as never);
+			}
+		});
+
+		try {
+			await t.query(api.tasks.listByMission, {
+				missionId,
+				updatedSince: Date.now() - 1_000,
+				limit: 10,
+				fields: "full",
+			});
+			throw new Error("expected SCAN_CAP_EXCEEDED to throw");
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with status/s);
+			expect(message).not.toContain("shrink the updatedSince window");
+			expect(message).toContain("Narrow with status");
+		}
 	});
 });
