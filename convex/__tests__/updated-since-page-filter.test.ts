@@ -397,6 +397,22 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.list — SCAN_CAP_EXCEEDED", () => {
 		test("cap + 1 candidate rows on the assignedTo branch throws, naming the cap and how to narrow", async () => {
 			const t = convexTest(schema, modules);
+			// IMPORTANT — seed rows that ACTUALLY MATCH updatedSince, not stale ones.
+			//
+			// On this branch (assignedTo alone / assignedTo+status), `updatedSince`
+			// is now pushed into the query via a compound index ending in
+			// `updatedAt` (by_assignee_updatedAt / by_assignee_status_updatedAt —
+			// see convex/tasks.ts `list`). The scan cap is therefore checked
+			// against the number of rows that MATCH the window, not against a
+			// fixed-size pre-filter fetch. Seeding cap+1 STALE rows (updatedAt
+			// before the threshold) would make every one of them get excluded by
+			// the index range query itself, so the call would correctly return an
+			// empty page instead of throwing — that used to be exactly the bug
+			// this suite exists to catch (the cap firing regardless of whether
+			// anything matched). If someone "simplifies" this fixture back to
+			// stale rows, this test silently stops proving the cap still works
+			// and starts proving the old, now-fixed defect instead. Keep every
+			// seeded row's `updatedAt` >= SINCE_THRESHOLD.
 			await t.run(async (ctx) => {
 				for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
 					await ctx.db.insert("tasks", {
@@ -406,7 +422,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 						status: "todo",
 						createdBy: "test-orch-scan-cap-over",
 						createdAt: OLD_UPDATED_AT + i,
-						updatedAt: OLD_UPDATED_AT,
+						updatedAt: RECENT_UPDATED_AT,
 					} as never);
 				}
 			});

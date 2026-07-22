@@ -292,6 +292,16 @@ export default defineSchema({
 		// level so a single-project billing query is never a post-hoc filter
 		// over a truncated cross-project scan (same disease, same fix).
 		.index("by_status_project_completedAt", ["status", "project", "completedAt"])
+		// Day-132 live-defect fix: `updatedSince` on `tasks.list` was filtered
+		// IN-MEMORY after a fixed-size widened scan, so narrowing the window
+		// never reduced the number of candidates fetched and the scan cap bit
+		// into normal usage on exactly two branches (measured in production):
+		// `assignedTo` alone, and `assignedTo` + `status`. These two compound
+		// indexes end in `updatedAt` so the bound lives in the query itself —
+		// no index added for missions/briefingNotes, whose branches were not
+		// measured to exceed the cap.
+		.index("by_assignee_updatedAt", ["assignedTo", "updatedAt"])
+		.index("by_assignee_status_updatedAt", ["assignedTo", "status", "updatedAt"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).

@@ -391,6 +391,11 @@ export const list = query({
 		};
 
 		let allRows: TaskRow[];
+		// Set true only when the assignedTo/assignedTo+status branch below pushed
+		// the `updatedSince` bound into the query via a compound index. Drives
+		// the SCAN_CAP_EXCEEDED message: "shrink the window" is only offered
+		// when it can actually change the candidate count.
+		let usedIndexedUpdatedSinceBound = false;
 
 		// ── Guard: mutually-exclusive index-backed filters ────────────────────────
 		// assignedToInstance and assignedTo are both index-backed but there is no
@@ -478,9 +483,39 @@ export const list = query({
 				allRows = applyStatusFilter(base);
 			}
 		}
-		// Filter by assignee only
+		// Filter by assignee only — the two branches measured to blow the
+		// widened-scan cap in production. When `updatedSince` is supplied, push
+		// the bound into the query via a compound index ending in `updatedAt`
+		// (by_assignee_updatedAt / by_assignee_status_updatedAt) instead of
+		// fetching a fixed-size window and filtering in-memory: narrowing the
+		// window now actually reduces the rows the DB has to examine, and the
+		// scan cap applies to the true matching population, not a widened
+		// superset. createdBy (unindexed) is still applied in-memory below.
 		else if (assignedTo !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
+			if (updatedSince !== undefined) {
+				usedIndexedUpdatedSinceBound = true;
+				if (statuses !== undefined && statuses.length === 1) {
+					allRows = await ctx.db
+						.query("tasks")
+						.withIndex("by_assignee_status_updatedAt", (q) =>
+							q
+								.eq("assignedTo", assignedTo)
+								.eq("status", statuses[0])
+								.gte("updatedAt", updatedSince),
+						)
+						.order("desc")
+						.take(TASK_LIST_SCAN_CAP + 1);
+				} else {
+					const base = await ctx.db
+						.query("tasks")
+						.withIndex("by_assignee_updatedAt", (q) =>
+							q.eq("assignedTo", assignedTo).gte("updatedAt", updatedSince),
+						)
+						.order("desc")
+						.take(TASK_LIST_SCAN_CAP + 1);
+					allRows = applyStatusFilter(base);
+				}
+			} else if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
 					.withIndex("by_assignee", (q) =>
@@ -540,8 +575,18 @@ export const list = query({
 		// itself hit its cap, there may be matching rows we never looked at.
 		// "I couldn't measure" must never render identically to "complete".
 		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+			// "shrink the updatedSince window" is only offered when it can
+			// actually change the candidate count: on the assignedTo (+status)
+			// branch the bound is now pushed into the index, so narrowing the
+			// window is a real remedy. On every other branch — and whenever
+			// createdBy (unindexed) is the trigger — the fetch is still a
+			// fixed-size widened scan, so that advice would send the caller
+			// chasing a lever that does nothing; it is left out there.
+			const windowAdvice = usedIndexedUpdatedSinceBound
+				? " or shrink the updatedSince window"
+				: "";
 			throw new ConvexError(
-				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status, or shrink the updatedSince window.`,
+				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${windowAdvice}.`,
 			);
 		}
 
@@ -1188,9 +1233,14 @@ export const listByMission = query({
 		}
 
 		// Refuse a silently-incomplete page — see `list` above for rationale.
+		// Unlike `list`, this branch (missionId) was not measured to exceed the
+		// cap in production, so no index was added here — the fetch is still a
+		// fixed-size widened scan and "shrink the updatedSince window" would be
+		// a false remedy (narrowing the window doesn't change what got fetched).
+		// Left out of the message on purpose.
 		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
 			throw new ConvexError(
-				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status, or shrink the updatedSince window.`,
+				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
 			);
 		}
 
