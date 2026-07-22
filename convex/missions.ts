@@ -192,7 +192,7 @@ export const get = query({
 // is supplied, the per-branch fetch is widened to MISSION_LIST_SCAN_CAP + 1
 // rows before the filter runs, then re-sliced to `limit`. If the widened
 // scan itself hits its cap, we refuse to return a silently-incomplete page.
-const MISSION_LIST_SCAN_CAP = 2000;
+export const MISSION_LIST_SCAN_CAP = 2000;
 
 export const list = query({
 	args: {

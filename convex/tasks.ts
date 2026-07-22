@@ -310,7 +310,7 @@ export const getById = query({
 // return a silently-incomplete page — see the SCAN_CAP_EXCEEDED throw below.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TASK_LIST_SCAN_CAP = 2000;
+export const TASK_LIST_SCAN_CAP = 2000;
 
 export const list = query({
 	args: {

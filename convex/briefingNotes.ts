@@ -113,7 +113,7 @@ function projectBriefingNoteLite(doc: Doc<"briefingNotes">): BriefingNoteLite {
 // BRIEFING_NOTES_LIST_SCAN_CAP + 1 rows before the filter runs, then
 // re-sliced to `limit`. If the widened scan itself hits its cap, we refuse
 // to return a silently-incomplete page.
-const BRIEFING_NOTES_LIST_SCAN_CAP = 2000;
+export const BRIEFING_NOTES_LIST_SCAN_CAP = 2000;
 
 export const list = query({
 	args: {
