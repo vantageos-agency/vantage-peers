@@ -61,8 +61,8 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 
 		await t.mutation(api.iframeEmbedSessions.createSession, {
 			sessionId: "sess-002",
-			origin: "https://iris-rh.vantagepeers.com",
-			tenantId: "iris-rh",
+			origin: "https://acme-hr.vantagepeers.com",
+			tenantId: "acme-hr",
 			userId: "user-42",
 			expiresAt: NOW + ONE_HOUR,
 		});
@@ -71,7 +71,7 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 			sessionId: "sess-002",
 		});
 
-		expect(session?.tenantId).toBe("iris-rh");
+		expect(session?.tenantId).toBe("acme-hr");
 		expect(session?.userId).toBe("user-42");
 	});
 

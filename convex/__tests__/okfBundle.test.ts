@@ -480,14 +480,14 @@ describe("cross-namespace isolation (Eta REVISE iter 2)", () => {
 	});
 
 	test("non-Phase-1 project namespace maps to slug tail", () => {
-		expect(expectedOrgIdForNamespace("project/iris-rh")).toBe("iris-rh");
+		expect(expectedOrgIdForNamespace("project/acme-hr")).toBe("acme-hr");
 	});
 
 	test("matchesNamespaceScope keeps only rows for the requested tenant", () => {
 		const rowsA = [
 			{ _id: "a1", orgId: undefined }, // master
 			{ _id: "a2", orgId: null as unknown as undefined }, // master (legacy null)
-			{ _id: "b1", orgId: "iris-rh" }, // tenant B
+			{ _id: "b1", orgId: "acme-hr" }, // tenant B
 			{ _id: "b2", orgId: "acme" }, // tenant C
 		];
 		const keptForMaster = rowsA.filter((r) =>
@@ -496,7 +496,7 @@ describe("cross-namespace isolation (Eta REVISE iter 2)", () => {
 		expect(keptForMaster.map((r) => r._id)).toEqual(["a1", "a2"]);
 
 		const keptForIris = rowsA.filter((r) =>
-			matchesNamespaceScope(r, "project/iris-rh"),
+			matchesNamespaceScope(r, "project/acme-hr"),
 		);
 		expect(keptForIris.map((r) => r._id)).toEqual(["b1"]);
 	});

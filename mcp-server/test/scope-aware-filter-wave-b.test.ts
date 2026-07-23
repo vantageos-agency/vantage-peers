@@ -1,5 +1,5 @@
 /**
- * S3.1.B Wave B — scopeAwareFilter applied to Marie surface tools (3 sites).
+ * S3.1.B Wave B — scopeAwareFilter applied to Nadia surface tools (3 sites).
  *
  * Sprint S3.1.B
  * Mission     k57c7s478gw1a3e5gmhdeptg5n87z78n
@@ -8,7 +8,7 @@
  *           + j57bvz4c62mrfs024fay5vhqqs87zxph extension D9-D14
  * Precedent   Wave A SHA 251d183 (main)
  *
- * Tools covered in Wave B (Marie's primary read surface):
+ * Tools covered in Wave B (Nadia's primary read surface):
  *   1. list_briefing_notes  (tools.ts L3052)
  *   2. list_messages        (tools.ts L1614)
  *   3. list_peers           (tools.ts L1554)

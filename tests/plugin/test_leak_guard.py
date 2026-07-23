@@ -39,8 +39,8 @@ from client_identity_config import (  # noqa: E402
 )
 
 # Benign terms that MUST NOT match. A prior fleet purge used substring matching
-# and renamed "summaries" because it contains "marie" -- these pin that we do
-# word-boundary/token matching, not substrings.
+# and renamed "summaries" because it contains a guarded first name -- these pin
+# that we do word-boundary/token matching, not substrings.
 BENIGN_CORPUS = [
     "generate summaries of the day",
     "summaries and standups",
@@ -860,8 +860,9 @@ def test_leak_guard_main_fails_loud_without_any_vocabulary_source(monkeypatch, t
 # The boundary, and the two ways to get it wrong.
 #
 # v1 matched substrings, and a fleet purge renamed "summaries" because it
-# contains "marie". The fix was `\b`. But `_` is a WORD character, so `\b` never
-# fires between `marie_` and `iris` — and the guard went blind to client
+# contains a guarded first name. The fix was `\b`. But `_` is a WORD character,
+# so `\b` never fires between a guarded token and its snake_case neighbor
+# (e.g. `nadia_acme`) — and the guard went blind to client
 # identities inside snake_case identifiers: file names, function names, variable
 # names, namespace constants. Correcting an over-matcher produced an
 # under-matcher, and nobody looked back.
@@ -909,7 +910,7 @@ def test_client_identity_inside_snake_case_is_seen(template, real_client_identit
     if not orgs:
         pytest.fail("host config has no organizations to build this fixture from")
     token = orgs[0].lower().replace(" ", "_")
-    text = template.format(org=f"marie_{token}")
+    text = template.format(org=f"nadia_{token}")
 
     findings = scan_text(text, "snake", extra_client_patterns=real_client_patterns)
     assert findings, (
@@ -926,7 +927,7 @@ def test_snake_case_fix_did_not_reintroduce_substring_matching(text):
 
     Without this, "make the guard see snake_case" has an easy wrong answer — drop the
     boundary entirely — and we are back to renaming "summaries" because it contains
-    "marie".
+    a guarded first name.
 
     This takes the vocabulary from the SAME two-source resolver `main()` uses, so it
     RUNS ON CI. A false-positive test that only runs on the maintainer's laptop cannot
@@ -956,7 +957,7 @@ def test_a_leak_in_the_FILE_NAME_is_caught(tmp_path, real_client_identities, rea
         pytest.fail("host config has no organizations to build this fixture from")
     token = orgs[0].lower().replace(" ", "_")
 
-    f = tmp_path / f"patch_marie_{token}_scope.ts"
+    f = tmp_path / f"patch_nadia_{token}_scope.ts"
     f.write_text("// nothing incriminating whatsoever\nexport const x = 1;\n", encoding="utf-8")
 
     findings = client_data(scan_file(f, extra_client_patterns=real_client_patterns))
@@ -995,7 +996,7 @@ def _fictive_patterns(tmp_path):
         # snake_case — the blindness `\b` created. `_` is a WORD char, so `\b` never
         # fires between `patch_` and `zorblatt`.
         ("patch_zorblatt_holdings_scope.ts", True),
-        ("convex/migrations/patch_marie_zorblatt_holdings_scope.ts", True),
+        ("convex/migrations/patch_nadia_zorblatt_holdings_scope.ts", True),
         ("const ZORBLATT_HOLDINGS_NS = 1;", True),
         # separators that are not underscores must keep working
         ("zorblatt-holdings", True),

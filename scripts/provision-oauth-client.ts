@@ -9,15 +9,15 @@
  *
  * Usage:
  *   bun run scripts/provision-oauth-client.ts \
- *     --name "marie-iris-rh" \
- *     --scope-profile "marie-iris-rh" \
+ *     --name "acme-corp" \
+ *     --scope-profile "acme-corp" \
  *     --redirect-uri "https://claude.ai/api/mcp/auth_callback" \
  *     --base-url "https://vantage-peers-production.up.railway.app" \
  *     --master-token "$BEARER_SECRET_MASTER"
  *
  * Flags:
  *   --name           (required) human label for the client
- *   --scope-profile  (required) profileId (seeded: master, marie-iris-rh, client-generic)
+ *   --scope-profile  (required) profileId (seeded: master, acme-corp, client-generic)
  *   --redirect-uri   (repeatable) allowed OAuth redirect URI
  *   --base-url       server URL (defaults to PUBLIC_BASE_URL env or Railway prod)
  *   --master-token   master bearer token (defaults to BEARER_SECRET_MASTER env)
@@ -72,8 +72,8 @@ function parseArgs(argv: string[]): {
 
 function printHelp(): void {
 	console.log(`Usage: bun run scripts/provision-oauth-client.ts \\
-  --name "marie-iris-rh" \\
-  --scope-profile "marie-iris-rh" \\
+  --name "acme-corp" \\
+  --scope-profile "acme-corp" \\
   --redirect-uri "https://claude.ai/api/mcp/auth_callback" \\
   [--base-url "https://vantage-peers-production.up.railway.app"] \\
   [--master-token "$BEARER_SECRET_MASTER"]

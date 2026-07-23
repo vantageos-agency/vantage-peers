@@ -69,7 +69,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 			assertCanExportNamespace(noIdentityCtx, "team/whatever-org"),
 		).rejects.toThrow(/AUTH_NO_IDENTITY/);
 		await expect(
-			assertCanExportNamespace(noIdentityCtx, "project/iris-rh"),
+			assertCanExportNamespace(noIdentityCtx, "project/acme-hr"),
 		).rejects.toThrow(/AUTH_NO_IDENTITY/);
 	});
 

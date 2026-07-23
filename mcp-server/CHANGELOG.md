@@ -319,7 +319,7 @@ across audit, docs, hooks, security, and consistency dimensions. 15 PRs merged t
 
 ### Scope-aware filtering
 - `list_tasks` `fromAllowList[]` + case-insensitive matching (PR #654, #661).
-- 3 admin endpoints reinstated for Marie cohort (prior session).
+- 3 admin endpoints reinstated for Nadia cohort (prior session).
 
 ### Tenant trio
 - Persistent test tenant trio (alpha/beta/gamma) seeded on prod with bearers, scope_profiles, and seed data for cross-orchestrator E2E.
@@ -337,7 +337,7 @@ No runtime / API / schema changes. Documentation + metadata only.
 
 What changed since v2.4.12:
 - `mcp-server/package.json`: author restructured to "VantageOS AI Orchestrator Team" with contributors block (Pi, Laurent Perello, ElPi Corp). Dependency `@vantageos/mosaic@^0.1.2` added for Phase 1 Mosaic groundwork (PR #605, server-side createMosaicResource API ready for Phase 2 primitive swap).
-- `mcp-server/CHANGELOG.md`: version headers simplified to `X.Y.Z — YYYY-MM-DD` (Day N anchors dropped per Laurent verdict 2026-06-02 — dates are self-explanatory, day numbers added noise). Narrative client-name mentions (Marie/<client-org>/Cédric Delport) genericized to "early-access RH cohort" / "self-host incident" per RULE #7 pre-public scrub.
+- `mcp-server/CHANGELOG.md`: version headers simplified to `X.Y.Z — YYYY-MM-DD` (Day N anchors dropped per Laurent verdict 2026-06-02 — dates are self-explanatory, day numbers added noise). Narrative client-name mentions (Nadia/<client-org>/Cédric Delport) genericized to "early-access RH cohort" / "self-host incident" per RULE #7 pre-public scrub.
 - Root README rework (PR #611 + PR #610 + PR #616 chain): TL;DR + Mermaid architecture diagram + 5 hero features + 22-features collapsed details + 84-tools 8-groups + Backend: Convex 3-paths + attribution Credits section. README /team 404 hotfix landed in PR #616.
 
 Merged PRs in this republish window:

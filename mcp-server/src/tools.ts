@@ -3661,7 +3661,7 @@ export function registerTools(
 				// Non-master: filter must name an identity in the bearer's
 				// fromAllowList (case-insensitive). Using userId was wrong —
 				// orchestrators identify as "Helios"/"Clio"/etc., never as the
-				// profile name "helios-iris-rh". Fix mirrors check_messages
+				// profile name "helios-acme-hr". Fix mirrors check_messages
 				// L1383-1399 pattern (commit 24b39c5). Regression: 28db616.
 				{
 					const gateErr = listTasksGate(oauthCtx, assignedTo, createdBy);
@@ -8537,7 +8537,7 @@ export function registerTools(
 	// connector calls whoami first, then uses suggested_orchestrator_id as `from`
 	// on all subsequent send_message / create_task calls.
 	//
-	// Customer friction closed: Marie Day 92 Iris RH skill had to ask the user
+	// Customer friction closed: Nadia Day 92 Acme RH skill had to ask the user
 	// for orchestrator_id because no programmatic discovery path existed from
 	// the bearer scope context. Mission k57a36y8w5t085bqr23dsmvb2d882506 A3.
 	//

@@ -380,16 +380,17 @@ def load_raw_config(path: Path) -> dict:
 #: The boundary, and why it is NOT `\b`.
 #:
 #: `\b` is the reflex, and it is HALF-BLIND, because `_` is a WORD character in
-#: regex. So `\biris` finds no boundary between `marie_` and `iris`, and the guard
+#: regex. So `\bacme` finds no boundary between `nadia_` and `acme`, and the guard
 #: cannot see a client identity embedded in a snake_case identifier:
 #:
-#:     iris-rh                       -> caught
-#:     iris_rh                       -> caught
-#:     marie_iris_rh                 -> INVISIBLE
+#:     acme-hr                       -> caught
+#:     acme_hr                       -> caught
+#:     nadia_acme_hr                 -> INVISIBLE
 #:     patch_marie_iris_rh_scope.ts  -> INVISIBLE   <- and this file is on public main
 #:
 #: That is the SYMMETRIC error of the one this guard was built to avoid. The first
-#: purge did substring matching and renamed "summaries" because it contains "marie".
+#: purge did substring matching and renamed "summaries" because it contains the
+#: guarded first name.
 #: The fix was word boundaries — and the word-boundary fix introduced a NEW blindness,
 #: in exactly the place identifiers actually live: file names, function names,
 #: variable names, namespace constants. Correcting an over-matcher produced an
@@ -400,7 +401,7 @@ def load_raw_config(path: Path) -> dict:
 #: because in a path or an identifier that is exactly what they are.
 #:
 #: This keeps the benign corpus safe, and the tests pin it: in "summaries", the
-#: token "marie" is flanked by letters (`m`…`s`), so it still does not match. The
+#: guarded token is flanked by letters (`m`…`s`), so it still does not match. The
 #: guard gains snake_case sight without regaining substring blindness.
 _LEFT_BOUNDARY = r"(?<![A-Za-z0-9])"
 _RIGHT_BOUNDARY = r"(?![A-Za-z0-9])"

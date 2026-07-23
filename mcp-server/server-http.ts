@@ -934,7 +934,7 @@ app.get("/health", (c) =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Admin endpoints — master token only
-// Used by Pi to provision OAuth clients for external users (Marie, VIP).
+// Used by Pi to provision OAuth clients for external users (Nadia, VIP).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const admin = new Hono();

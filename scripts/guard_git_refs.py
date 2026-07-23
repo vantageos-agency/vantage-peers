@@ -25,7 +25,7 @@ WHY THE BOUNDARY MATTERS HERE MORE THAN ANYWHERE
 Branch names are built out of exactly the characters a naive `\\b` treats as word
 characters or as boundaries in the wrong direction:
 
-    fix/marie-iris-rh-drop-global    -> a real branch that was pushed
+    fix/nadia-acme-hr-drop-global    -> a real branch that was pushed
     feat/cedric-onboarding           -> a real branch that was pushed
 
 `_`, `-`, `/` and `.` are ALL separators in a ref, and the matcher must see through every

@@ -96,7 +96,7 @@ def test_must_block_multi_word_identity_through_every_separator(identity, sep, c
 MUST_PASS = [
     "fix/tenant-scoped-drop-global-day128",
     "feat/reindex-memories",
-    "fix/summaries-pagination",           # contains "marie"? no — but it is the shape that broke a prior purge
+    "fix/summaries-pagination",           # contains a guarded first name? no — but it is the shape that broke a prior purge
     "chore/client-side-rendering",
     "fix/marinade-timing",
     "main",

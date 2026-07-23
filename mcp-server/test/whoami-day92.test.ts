@@ -11,7 +11,7 @@
  *   2. E2E — live prod Railway endpoint using trio creds from .env.local.
  *      Skipped in CI (VP_TEST_MODE=1) and when creds are absent.
  *
- * Customer friction: Marie Day 92 Iris RH skill had to ASK the user for
+ * Customer friction: Nadia Day 92 Acme RH skill had to ASK the user for
  * orchestrator_id because there was no programmatic way to discover it from
  * the bearer. whoami closes that loop.
  *
