@@ -201,12 +201,18 @@ export const deleteBriefingNote = mutation({
 		const note = await ctx.db.get(args.noteId);
 		if (!note) throw new Error("Briefing note not found");
 
-		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
-			if (note.createdBy !== args.callerOrchestrator) {
-				throw new Error(
-					`Unauthorized: only ${note.createdBy} (creator) or system can delete this briefing note`,
-				);
-			}
+		if (args.callerOrchestrator === undefined) {
+			throw new Error(
+				"Unauthorized: callerOrchestrator is required to delete a briefing note — omitting it is refused, not exempted",
+			);
+		}
+		if (
+			args.callerOrchestrator !== "system" &&
+			note.createdBy !== args.callerOrchestrator
+		) {
+			throw new Error(
+				`Unauthorized: only ${note.createdBy} (creator) or system can delete this briefing note`,
+			);
 		}
 
 		await ctx.db.delete(args.noteId);

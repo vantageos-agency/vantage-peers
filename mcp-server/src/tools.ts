@@ -6673,11 +6673,14 @@ export function registerTools(
 	server.tool(
 		"update_bu",
 		"Update any mutable field on a business unit; only provided fields are patched, updatedAt auto-set. " +
-			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. " +
-			"EXAMPLE: update_bu buId='j57aaaaa...' status='live' revenueProjections={y1:10000,y2:80000,y3:300000}.",
+			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. RBAC: caller must be the BU's owning orchestrator or 'system'. " +
+			"EXAMPLE: update_bu buId='j57aaaaa...' callerOrchestrator='alpha' status='live' revenueProjections={y1:10000,y2:80000,y3:300000}.",
 		{
 			buId: buIdSchema.describe(
 				"Convex document ID of the business unit to update",
+			),
+			callerOrchestrator: creatorSchema.describe(
+				"Orchestrator identity making this call — must match the BU's owning orchestratorId or be 'system' (RBAC deny-by-default, checked against the target row, not the caller's claim alone)",
 			),
 			name: z.string().optional().describe("New name"),
 			description: z.string().optional().describe("New description"),
@@ -6706,6 +6709,7 @@ export function registerTools(
 		},
 		async ({
 			buId,
+			callerOrchestrator,
 			name,
 			description,
 			purpose,
@@ -6724,6 +6728,8 @@ export function registerTools(
 			managementFee,
 		}) => {
 			try {
+				const callerDenied = guardFrom(callerOrchestrator);
+				if (callerDenied) return callerDenied;
 				if (orchestratorId) {
 					const fromDenied = guardFrom(orchestratorId);
 					if (fromDenied) return fromDenied;
@@ -6731,6 +6737,7 @@ export function registerTools(
 
 				await convex.mutation("businessUnits:update" as any, {
 					buId: buId as any,
+					callerOrchestrator,
 					name,
 					description,
 					purpose,

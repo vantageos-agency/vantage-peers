@@ -58,6 +58,40 @@ type TaskStatus = (typeof TASK_STATUSES)[number];
  *
  * Throws ConvexError on unknown status values.
  */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// assertTaskCallerAuthorized — resource-derived ownership gate, shared by
+// update/complete/start. Authorization is derived from the TARGET task
+// (createdBy/assignedTo), never from the caller's own claim alone.
+//
+// Cross-tenant fix (S0 campaign k17b9z5yjgd8301r6dfawefpzs8b3a03): the prior
+// shape wrapped the entire check in `if (callerOrchestrator !== undefined)`,
+// so omitting the argument skipped verification instead of failing it — the
+// omission deleted the control rather than degrading it. Omitting the caller
+// now REFUSES (RBAC_DENIED), it never bypasses. "system" and matching
+// creator/assignee still pass unconditionally (regression-proofed by tests).
+// ─────────────────────────────────────────────────────────────────────────────
+function assertTaskCallerAuthorized(
+	task: { createdBy: string; assignedTo?: string },
+	callerOrchestrator: string | undefined,
+	taskId: string,
+): void {
+	if (callerOrchestrator === undefined) {
+		throw new ConvexError(
+			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId })}`,
+		);
+	}
+	const isAuthorized =
+		task.createdBy === callerOrchestrator ||
+		task.assignedTo === callerOrchestrator ||
+		callerOrchestrator === "system";
+	if (!isAuthorized) {
+		throw new ConvexError(
+			`RBAC_DENIED: ${callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, taskId })}`,
+		);
+	}
+}
+
 function expandTaskStatuses(
 	status: string | string[] | undefined,
 ): TaskStatus[] | undefined {
@@ -745,17 +779,7 @@ export const update = mutation({
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
-		if (args.callerOrchestrator !== undefined) {
-			const isAuthorized =
-				task.createdBy === args.callerOrchestrator ||
-				task.assignedTo === args.callerOrchestrator ||
-				args.callerOrchestrator === "system";
-			if (!isAuthorized) {
-				throw new ConvexError(
-					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, taskId })}`,
-				);
-			}
-		}
+		assertTaskCallerAuthorized(task, callerOrchestrator, taskId);
 
 		// Build patch object with only provided fields
 		const patch: Record<string, any> = { updatedAt: Date.now() };
@@ -808,17 +832,7 @@ export const complete = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		if (args.callerOrchestrator !== undefined) {
-			const isAuthorized =
-				task.createdBy === args.callerOrchestrator ||
-				task.assignedTo === args.callerOrchestrator ||
-				args.callerOrchestrator === "system";
-			if (!isAuthorized) {
-				throw new ConvexError(
-					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, taskId: args.taskId })}`,
-				);
-			}
-		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
 			throw new ConvexError(
@@ -1039,17 +1053,7 @@ export const start = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		if (args.callerOrchestrator !== undefined) {
-			const isAuthorized =
-				task.createdBy === args.callerOrchestrator ||
-				task.assignedTo === args.callerOrchestrator ||
-				args.callerOrchestrator === "system";
-			if (!isAuthorized) {
-				throw new ConvexError(
-					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, taskId: args.taskId })}`,
-				);
-			}
-		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
 
 		// Block if any dependsOn tasks are not yet done.
 		if (task.dependsOn && task.dependsOn.length > 0) {
@@ -1146,15 +1150,18 @@ export const deleteTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 
+		if (args.callerOrchestrator === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required to delete task ${args.taskId} — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
 		if (
-			args.callerOrchestrator !== undefined &&
-			args.callerOrchestrator !== "system"
+			args.callerOrchestrator !== "system" &&
+			task.createdBy !== args.callerOrchestrator
 		) {
-			if (task.createdBy !== args.callerOrchestrator) {
-				throw new ConvexError(
-					`RBAC_DENIED: Only ${task.createdBy} (creator) or system can delete task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, creator: task.createdBy, taskId: args.taskId })}`,
-				);
-			}
+			throw new ConvexError(
+				`RBAC_DENIED: Only ${task.createdBy} (creator) or system can delete task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, creator: task.createdBy, taskId: args.taskId })}`,
+			);
 		}
 
 		await ctx.db.delete(args.taskId);
@@ -1726,6 +1733,11 @@ export const bulkComplete = mutation({
 
 		// RBAC check: when callerOrchestrator is provided and is not "system",
 		// every matched task must have createdBy or assignedTo equal to caller.
+		// NOT the same class as the update/complete/start/deleteTask bug: this
+		// `!== undefined` is only reachable on the READ-ONLY dryRun preview path
+		// (any write requires dryRun=false, and BULK_CALLER_REQUIRED above
+		// already makes callerOrchestrator mandatory before a write can happen —
+		// omission never bypasses a mutation here, class sweep 2026-07-23).
 		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
 			const caller = args.callerOrchestrator;
 			const denied = cappedResults.find(

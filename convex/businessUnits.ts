@@ -107,6 +107,17 @@ export const create = mutation({
 export const update = mutation({
 	args: {
 		buId: v.id("businessUnits"),
+		// RBAC: caller identity claiming ownership — DISTINCT from the
+		// `orchestratorId` field below, which is the new lead-orchestrator
+		// VALUE being written. Cross-tenant fix (S0 campaign
+		// k17b9z5yjgd8301r6dfawefpzs8b3a03): the MCP layer previously reused
+		// `orchestratorId` as both the caller's claimed identity AND the
+		// write payload, and only checked that claim against the caller's own
+		// OAuth allowlist — never against the TARGET row's actual owner. A
+		// caller could claim its own identity and still rewrite anyone's BU.
+		// Authorization must be derived from the row being targeted
+		// (bu.orchestratorId), never from a value the caller supplies.
+		callerOrchestrator: v.string(),
 		name: v.optional(v.string()),
 		description: v.optional(v.string()),
 		purpose: v.optional(v.string()),
@@ -130,8 +141,16 @@ export const update = mutation({
 		if (bu === null) {
 			throw new Error(`Business unit ${args.buId} not found`);
 		}
+		if (
+			args.callerOrchestrator !== "system" &&
+			bu.orchestratorId !== args.callerOrchestrator
+		) {
+			throw new Error(
+				`RBAC_DENIED: ${args.callerOrchestrator} is not the owning orchestrator (${bu.orchestratorId}) of business unit ${args.buId}`,
+			);
+		}
 
-		const { buId, ...fields } = args;
+		const { buId, callerOrchestrator, ...fields } = args;
 
 		// Build patch object with only provided fields
 		const patch: Record<string, unknown> = { updatedAt: Date.now() };

@@ -80,7 +80,10 @@ describe("tasks.start — TASK_NOT_FOUND", () => {
 
 		let thrown: unknown;
 		try {
-			await t.mutation(api.tasks.start, { taskId: id });
+			await t.mutation(api.tasks.start, {
+				taskId: id,
+				callerOrchestrator: "system",
+			});
 		} catch (e) {
 			thrown = e;
 		}
@@ -220,7 +223,10 @@ describe("tasks.start — DEPENDENCY_NOT_DONE", () => {
 
 		let thrown: unknown;
 		try {
-			await t.mutation(api.tasks.start, { taskId: blocked });
+			await t.mutation(api.tasks.start, {
+				taskId: blocked,
+				callerOrchestrator: "sigma",
+			});
 		} catch (e) {
 			thrown = e;
 		}
@@ -257,7 +263,10 @@ describe("tasks.start — DEPENDENCY_NOT_DONE", () => {
 		);
 
 		await expect(
-			t.mutation(api.tasks.start, { taskId: task }),
+			t.mutation(api.tasks.start, {
+				taskId: task,
+				callerOrchestrator: "sigma",
+			}),
 		).resolves.toBeNull();
 	});
 });
@@ -276,6 +285,7 @@ describe("tasks.complete — TASK_NOT_FOUND", () => {
 		try {
 			await t.mutation(api.tasks.complete, {
 				taskId: id,
+				callerOrchestrator: "system",
 				completionNote: "done — PR #123 merged sha:abc1234",
 			});
 		} catch (e) {
@@ -301,6 +311,7 @@ describe("tasks.complete — COMPLETION_NOTE_REQUIRED", () => {
 		try {
 			await t.mutation(api.tasks.complete, {
 				taskId: id,
+				callerOrchestrator: "system",
 				completionNote: "",
 			});
 		} catch (e) {
@@ -320,6 +331,7 @@ describe("tasks.complete — COMPLETION_NOTE_REQUIRED", () => {
 		try {
 			await t.mutation(api.tasks.complete, {
 				taskId: id,
+				callerOrchestrator: "system",
 				completionNote: "   ",
 			});
 		} catch (e) {
@@ -371,6 +383,7 @@ describe("tasks.update — TASK_NOT_FOUND", () => {
 		try {
 			await t.mutation(api.tasks.update, {
 				taskId: id,
+				callerOrchestrator: "system",
 				title: "new title",
 			});
 		} catch (e) {

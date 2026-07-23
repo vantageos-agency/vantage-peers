@@ -744,11 +744,17 @@ describe("Messages", () => {
 			content: "Temporary",
 		});
 
-		await t.mutation(api.messages.deleteMessage, { messageId });
+		await t.mutation(api.messages.deleteMessage, {
+			messageId,
+			callerOrchestrator: "system",
+		});
 
 		// Deleting again should throw "Message not found"
 		await expect(
-			t.mutation(api.messages.deleteMessage, { messageId }),
+			t.mutation(api.messages.deleteMessage, {
+				messageId,
+				callerOrchestrator: "system",
+			}),
 		).rejects.toThrow("Message not found");
 	});
 

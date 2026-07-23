@@ -446,16 +446,19 @@ export const deleteMessage = mutation({
 		const message = await ctx.db.get(args.messageId);
 		if (!message) throw new Error("Message not found");
 
-		// RBAC: if callerOrchestrator provided, must match message.from
+		// RBAC: callerOrchestrator is required and must match message.from
+		if (args.callerOrchestrator === undefined) {
+			throw new Error(
+				"Unauthorized: callerOrchestrator is required to delete a message — omitting it is refused, not exempted",
+			);
+		}
 		if (
-			args.callerOrchestrator !== undefined &&
-			args.callerOrchestrator !== "system"
+			args.callerOrchestrator !== "system" &&
+			message.from !== args.callerOrchestrator
 		) {
-			if (message.from !== args.callerOrchestrator) {
-				throw new Error(
-					`Unauthorized: only ${message.from} (sender) or system can delete this message`,
-				);
-			}
+			throw new Error(
+				`Unauthorized: only ${message.from} (sender) or system can delete this message`,
+			);
 		}
 
 		// Cascade: delete all receipts for this message
