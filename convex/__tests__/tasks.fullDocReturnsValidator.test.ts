@@ -155,6 +155,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 		// complete_task mutation — should not throw
 		await t.mutation(api.tasks.complete, {
 			taskId: taskId as any,
+			callerOrchestrator: "system",
 			completionNote: "Done — PR #999 merged SHA abc1234def5678 evidence token",
 		});
 
@@ -174,6 +175,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 
 		await t.mutation(api.tasks.complete, {
 			taskId: taskId as any,
+			callerOrchestrator: "system",
 			completionNote: "Done — PR #888 merged SHA deadbeef123456 evidence token",
 		});
 
@@ -192,6 +194,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 
 		await t.mutation(api.tasks.update, {
 			taskId: taskId as any,
+			callerOrchestrator: "system",
 			status: "in_progress",
 		});
 
@@ -210,6 +213,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 
 		await t.mutation(api.tasks.update, {
 			taskId: taskId as any,
+			callerOrchestrator: "system",
 			status: "in_progress",
 		});
 

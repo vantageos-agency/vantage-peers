@@ -188,12 +188,18 @@ export const deleteDiary = mutation({
 		const entry = await ctx.db.get(args.diaryId);
 		if (!entry) throw new Error("Diary entry not found");
 
-		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
-			if (entry.orchestrator !== args.callerOrchestrator) {
-				throw new Error(
-					`Unauthorized: only ${entry.orchestrator} (owner) or system can delete this diary entry`,
-				);
-			}
+		if (args.callerOrchestrator === undefined) {
+			throw new Error(
+				"Unauthorized: callerOrchestrator is required to delete a diary entry — omitting it is refused, not exempted",
+			);
+		}
+		if (
+			args.callerOrchestrator !== "system" &&
+			entry.orchestrator !== args.callerOrchestrator
+		) {
+			throw new Error(
+				`Unauthorized: only ${entry.orchestrator} (owner) or system can delete this diary entry`,
+			);
 		}
 
 		await ctx.db.delete(args.diaryId);
