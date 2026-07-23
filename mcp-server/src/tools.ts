@@ -3028,9 +3028,9 @@ export function registerTools(
 			messageId: messageIdSchema.describe(
 				"Convex document ID of the message to delete",
 			),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be the sender or system. Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be the sender or system"),
 		},
 		{
 			readOnlyHint: false,
@@ -3040,8 +3040,10 @@ export function registerTools(
 		},
 		async ({ messageId, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 
 				const result = await convex.mutation("messages:deleteMessage" as any, {
 					messageId: messageId as any,
@@ -3933,9 +3935,9 @@ export function registerTools(
 				.optional()
 				.describe("When work completed (Unix ms)"),
 			dueDate: z.number().optional().describe("New due date (Unix ms)"),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be creator or assignee of the task (or 'system'). Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
 		{
 			readOnlyHint: false,
@@ -3962,8 +3964,10 @@ export function registerTools(
 			callerOrchestrator,
 		}) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 				if (assignedTo) {
 					const assigneeDenied = guardFrom(assignedTo);
 					if (assigneeDenied) return assigneeDenied;
@@ -4016,9 +4020,9 @@ export function registerTools(
 			completionNote: z
 				.string()
 				.describe("What was actually done — summary of work completed"),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be creator or assignee of the task (or 'system'). Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
 		{
 			readOnlyHint: false,
@@ -4028,8 +4032,10 @@ export function registerTools(
 		},
 		async ({ taskId, completionNote, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 
 				await convex.mutation("tasks:complete" as any, {
 					taskId: taskId as any,
@@ -4060,9 +4066,9 @@ export function registerTools(
 			"EXAMPLE: start_task taskId='k178d3ns...' callerOrchestrator='gamma'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to start"),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be creator or assignee of the task (or 'system'). Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
 		},
 		{
 			readOnlyHint: false,
@@ -4072,8 +4078,10 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 
 				await convex.mutation("tasks:start" as any, {
 					taskId: taskId as any,
@@ -4151,9 +4159,9 @@ export function registerTools(
 			"EXAMPLE: delete_task taskId='k178d3ns...' callerOrchestrator='alpha'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to delete"),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be creator or system. Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be creator or system"),
 		},
 		{
 			readOnlyHint: false,
@@ -4163,8 +4171,10 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 
 				const result = await convex.mutation("tasks:deleteTask" as any, {
 					taskId: taskId as any,
@@ -4199,9 +4209,9 @@ export function registerTools(
 				.array(taskIdSchema)
 				.optional()
 				.describe("Task IDs that are blocking this task"),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be creator or assignee of the task (or 'system'). Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be creator or assignee"),
 		},
 		{
 			readOnlyHint: false,
@@ -4211,17 +4221,20 @@ export function registerTools(
 		},
 		async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					status: "blocked",
-					callerOrchestrator,
 				};
 				if (reason) updateArgs.completionNote = reason;
 				if (blockedBy)
 					updateArgs.dependsOn = blockedBy.map((id: string) => id as any);
+				if (callerOrchestrator)
+					updateArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:update" as any, updateArgs);
 
@@ -4257,9 +4270,9 @@ export function registerTools(
 			dependsOn: z
 				.array(taskIdSchema)
 				.describe("Task IDs that must complete first"),
-			callerOrchestrator: creatorSchema.describe(
-				"RBAC — required, must be creator or assignee of the task (or 'system'). Omitting it is refused, not exempted.",
-			),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — must be creator or assignee"),
 		},
 		{
 			readOnlyHint: false,
@@ -4269,14 +4282,17 @@ export function registerTools(
 		},
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
 
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					dependsOn: dependsOn.map((id: string) => id as any),
-					callerOrchestrator,
 				};
+				if (callerOrchestrator)
+					updateArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:update" as any, updateArgs);
 
