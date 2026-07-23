@@ -105,7 +105,7 @@ export const patchMarieIrisRhScope = internalMutation({
 			namespaceReadPrefixes: NEW_READ_PREFIXES,
 			namespaceWritePrefixes: NEW_WRITE_PREFIXES,
 			description:
-				"Marie (Iris RH) — S1.2 Day 90 remediation: dropped `global` (D4 violation), renamed marie-iris-rh → iris-rh (D9 workspace naming). fromAllowList=[marie,victor], namespaces scoped to orchestrator/marie + orchestrator/victor + project/iris-rh.",
+				"Marie (the onboarding client) — S1.2 Day 90 remediation: dropped `global` (D4 violation), renamed marie-iris-rh → iris-rh (D9 workspace naming). fromAllowList=[marie,victor], namespaces scoped to orchestrator/marie + orchestrator/victor + project/iris-rh.",
 			updatedAt: Date.now(),
 		});
 

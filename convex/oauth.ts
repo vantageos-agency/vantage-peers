@@ -106,7 +106,7 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "marie-iris-rh",
 				description:
-					"Marie (Iris RH) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
+					"Marie (the onboarding client) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
 				fromAllowList: ["marie"],
 				namespaceReadPrefixes: [
 					"orchestrator/marie",
@@ -121,7 +121,7 @@ export const seedDefaultProfiles = mutation({
 					"global",
 				],
 			},
-			// Iris RH trio (Clio + Hélios + Victor) — Marie's 3 dual-host
+			// <redacted-client> trio (Clio + Hélios + Victor) — Marie's 3 dual-host
 			// orchestrator personas share a workspace (project/iris-rh) and
 			// every profile lists the other two's case variants in
 			// `fromAllowList` + their orchestrator namespaces in both prefix
@@ -132,7 +132,7 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "clio-iris-rh",
 				description:
-					"Clio (Marie / Iris RH ChatGPT orchestrator) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
+					"Clio (Marie / the onboarding client's ChatGPT orchestrator) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
 				fromAllowList: [
 					"Clio",
 					"clio",
@@ -169,7 +169,7 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "helios-iris-rh",
 				description:
-					"Hélios (Marie / Iris RH Claude.ai orchestrator) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
+					"Hélios (Marie / the onboarding client's Claude.ai orchestrator) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
 				fromAllowList: [
 					"Hélios",
 					"Helios",
