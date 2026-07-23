@@ -380,12 +380,12 @@ def load_raw_config(path: Path) -> dict:
 #: The boundary, and why it is NOT `\b`.
 #:
 #: `\b` is the reflex, and it is HALF-BLIND, because `_` is a WORD character in
-#: regex. So `\biris` finds no boundary between `marie_` and `iris`, and the guard
+#: regex. So `\bacme` finds no boundary between `nadia_` and `acme`, and the guard
 #: cannot see a client identity embedded in a snake_case identifier:
 #:
-#:     iris-rh                       -> caught
-#:     iris_rh                       -> caught
-#:     marie_iris_rh                 -> INVISIBLE
+#:     acme-hr                       -> caught
+#:     acme_hr                       -> caught
+#:     nadia_acme_hr                 -> INVISIBLE
 #:     patch_marie_iris_rh_scope.ts  -> INVISIBLE   <- and this file is on public main
 #:
 #: That is the SYMMETRIC error of the one this guard was built to avoid. The first

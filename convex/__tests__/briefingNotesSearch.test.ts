@@ -57,12 +57,12 @@ async function seedNote(
 describe("searchBriefingNotesByKeyword — cross-org isolation", () => {
 	test("Clerk-scoped caller cannot read foreign-org briefingNotes", async () => {
 		const t = createTestConvex();
-		await seedOrgMapping(t, "iris-rh");
+		await seedOrgMapping(t, "acme-hr");
 		await seedOrgMapping(t, "other-org");
 		await seedNote(t, {
 			title: "iris secret",
 			content: "alpha bravo charlie iris",
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 		});
 		await seedNote(t, {
 			title: "other secret",
@@ -76,7 +76,7 @@ describe("searchBriefingNotesByKeyword — cross-org isolation", () => {
 
 		const tIris = t.withIdentity({
 			subject: "user-iris",
-			organizationId: "iris-rh",
+			organizationId: "acme-hr",
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tIris.query(
@@ -94,7 +94,7 @@ describe("searchBriefingNotesByKeyword — cross-org isolation", () => {
 		await seedNote(t, {
 			title: "iris note",
 			content: "match query token",
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 		});
 		await seedNote(t, {
 			title: "other note",

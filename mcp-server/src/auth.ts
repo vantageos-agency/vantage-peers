@@ -188,8 +188,8 @@ export function checkFromAllowed(
 	if (ctx.fromAllowList.includes(from)) return null;
 	// Day 88 friction capitalize: surface the allowed values so the LLM caller
 	// can self-correct on the next attempt instead of guessing identifiers.
-	// Marie onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
-	// the actual allowlist was ["marie"].
+	// Nadia onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
+	// the actual allowlist was ["nadia"].
 	const allowed =
 		ctx.fromAllowList.length === 0
 			? "(none — this client has no allowed 'from' identities)"

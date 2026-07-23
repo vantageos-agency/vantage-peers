@@ -909,7 +909,7 @@ def test_client_identity_inside_snake_case_is_seen(template, real_client_identit
     if not orgs:
         pytest.fail("host config has no organizations to build this fixture from")
     token = orgs[0].lower().replace(" ", "_")
-    text = template.format(org=f"marie_{token}")
+    text = template.format(org=f"nadia_{token}")
 
     findings = scan_text(text, "snake", extra_client_patterns=real_client_patterns)
     assert findings, (
@@ -956,7 +956,7 @@ def test_a_leak_in_the_FILE_NAME_is_caught(tmp_path, real_client_identities, rea
         pytest.fail("host config has no organizations to build this fixture from")
     token = orgs[0].lower().replace(" ", "_")
 
-    f = tmp_path / f"patch_marie_{token}_scope.ts"
+    f = tmp_path / f"patch_nadia_{token}_scope.ts"
     f.write_text("// nothing incriminating whatsoever\nexport const x = 1;\n", encoding="utf-8")
 
     findings = client_data(scan_file(f, extra_client_patterns=real_client_patterns))
@@ -995,7 +995,7 @@ def _fictive_patterns(tmp_path):
         # snake_case — the blindness `\b` created. `_` is a WORD char, so `\b` never
         # fires between `patch_` and `zorblatt`.
         ("patch_zorblatt_holdings_scope.ts", True),
-        ("convex/migrations/patch_marie_zorblatt_holdings_scope.ts", True),
+        ("convex/migrations/patch_nadia_zorblatt_holdings_scope.ts", True),
         ("const ZORBLATT_HOLDINGS_NS = 1;", True),
         # separators that are not underscores must keep working
         ("zorblatt-holdings", True),

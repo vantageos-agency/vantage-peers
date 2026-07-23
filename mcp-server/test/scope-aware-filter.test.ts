@@ -6,7 +6,7 @@
  *   - memory j579y6f31g7xzgtgdnpgetdmjx87ztyj (D9-D14 extension)
  *
  * Wave A scope (this file): helpers + 2 tools (list_memories, get_memory).
- * Wave B follow-up: task k170618c4cqky8gmq6rr2pwrt187yfgm — Marie surface (4 tools).
+ * Wave B follow-up: task k170618c4cqky8gmq6rr2pwrt187yfgm — Nadia surface (4 tools).
  * Wave C follow-up: task k17fjd4dvp34k9q57t5e1qzrv187zz9n — remaining 21 sites.
  *
  * Harness note (friction declared in commit body):

@@ -259,7 +259,7 @@ Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `
 
 ---
 
-### §4.6 Concrete example — tenant Marie <client-org> / Hélios
+### §4.6 Concrete example — tenant Nadia <client-org> / Hélios
 
 **EN — This example anchors the Day 92 live regression (visio blocked) and its resolution.**
 
@@ -380,7 +380,7 @@ The envelope-safe cursor paging utility (`mcp-server/src/paging.ts`: `DEFAULT_LI
 
 - **(a) Residual weak point.** A non-MCP anonymous call site that explicitly passes `allowNoIdentityMaster: true` still resolves to master. This opt-in is only as safe as the audit of its call sites; it is not re-verified automatically on new call sites.
 - **(b) Legacy tenant e2e test regression.** The legacy-tenant (path 4) e2e test now falls under an empty scope by design (deny-by-default) and needs to be re-provisioned through the OAuth scoped-token path with explicit `namespaceReadPrefixes`/`namespaceWritePrefixes` before it will pass again.
-- **(c) `global` prefix in Marie's OAuth profile — undecided.** Whether a `global` namespace prefix belongs in Marie's scope profile is **not settled**. TODO: confirm intent with Laurent before assuming any behavior for this prefix.
+- **(c) `global` prefix in Nadia's OAuth profile — undecided.** Whether a `global` namespace prefix belongs in Nadia's scope profile is **not settled**. TODO: confirm intent with Laurent before assuming any behavior for this prefix.
 - **(d) No real-network e2e.** Isolation above is proven at the Convex-test-harness level (`convex-test` + `t.withIdentity(...)`). No end-to-end test against a live Clerk JWT / real deployment has been run — there is no test Clerk JWT infrastructure available yet.
 
 ### 7.5 Provenance

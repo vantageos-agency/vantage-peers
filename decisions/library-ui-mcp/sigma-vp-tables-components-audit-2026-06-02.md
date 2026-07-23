@@ -415,7 +415,7 @@
 
 ### Table : `oauth_clients`
 
-**Finalité business** : Clients OAuth 2.0 enregistrés dynamiquement (RFC 7591) — Claude.ai custom connector, Marie, clients VIP.
+**Finalité business** : Clients OAuth 2.0 enregistrés dynamiquement (RFC 7591) — Claude.ai custom connector, Nadia, clients VIP.
 **Cardinality typique** : small (<100)
 **Convex queries principales** : `oauth_clients.getByClientId`, `oauth_clients.list`
 **Convex mutations principales** : `oauth_clients.register`, `oauth_clients.revoke`

@@ -54,7 +54,7 @@ async function seedTaskWithOrgId(ctx: any): Promise<string> {
 		createdBy: "sigma",
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
-		orgId: "iris-rh", // the field missing from old validators
+		orgId: "acme-hr", // the field missing from old validators
 	});
 }
 
@@ -92,7 +92,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task with orgId");
 		// After fix: orgId is present in the returned document
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T2: get — task WITHOUT orgId (backward compat) ──────────────────────
@@ -123,7 +123,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task with orgId");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T4: getById — task WITHOUT orgId (backward compat) ──────────────────
@@ -161,7 +161,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 		// get should return the completed doc (with orgId still present)
 		const result = await t.query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("done");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T6: complete — task WITHOUT orgId ────────────────────────────────────
@@ -197,7 +197,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 
 		const result = await t.query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("in_progress");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T8: update — task WITHOUT orgId ──────────────────────────────────────
@@ -321,7 +321,7 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 				createdBy: "sigma",
 				createdAt: now,
 				updatedAt: now,
-				orgId: "iris-rh",
+				orgId: "acme-hr",
 			});
 		});
 
@@ -344,7 +344,7 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 		expect(result?.actualMinutes).toBe(15);
 		expect(typeof result?.startedAt).toBe("number");
 		expect(typeof result?.dueDate).toBe("number");
-		expect((result as any).orgId).toBe("iris-rh");
+		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T11: full optional fields — getById ──────────────────────────────────

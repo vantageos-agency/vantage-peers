@@ -42,7 +42,7 @@ describe("Cat A — issues #655 #644 #643 — listMessages tenantId returns shap
 				content: "ping",
 				sessionDay: 98,
 				createdAt: 1781100000000,
-				tenantId: "project/iris-rh",
+				tenantId: "project/acme-hr",
 			});
 		});
 
@@ -51,7 +51,7 @@ describe("Cat A — issues #655 #644 #643 — listMessages tenantId returns shap
 		// Post-fix it returns the row with tenantId preserved.
 		const rows = await t.query(api.messages.listMessages, {});
 		expect(rows.length).toBe(1);
-		expect(rows[0].tenantId).toBe("project/iris-rh");
+		expect(rows[0].tenantId).toBe("project/acme-hr");
 	});
 
 	test("messages without tenantId still list cleanly (optional field)", async () => {

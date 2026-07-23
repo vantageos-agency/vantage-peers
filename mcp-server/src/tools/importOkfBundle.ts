@@ -69,7 +69,7 @@ export function registerImportOkfBundle(
 		"import_okf_bundle",
 		"Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace. " +
 			"WHEN: use to restore a snapshot, migrate workspace data between tenants, or replay an export. " +
-			"EXAMPLE: import_okf_bundle storageId='abc...' targetNamespace='team/iris-rh' mode='merge'.",
+			"EXAMPLE: import_okf_bundle storageId='abc...' targetNamespace='team/acme-corp' mode='merge'.",
 		importOkfBundleArgsSchema,
 		{
 			readOnlyHint: false,

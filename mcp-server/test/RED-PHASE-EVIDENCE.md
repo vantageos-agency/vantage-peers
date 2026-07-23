@@ -136,8 +136,8 @@ U1-U5 + M1-M3 exercise `scopeFilterGet(ctx, row)` directly. They pass at both RE
 - U4 — master scope → foreign-tenant row returned
 - U5 — scoped caller, row outside scope → `null` (non-leaky 404)
 - M1 — cross-tenant: tenant-A row, tenant-B caller → `null`
-- M2 — namespace-prefix allowed: row `orchestrator/marie/x` + prefix `orchestrator/marie` → row returned
-- M3 — `fromAllowList` allowed: row.createdBy=`marie` + allowList=[`marie`] → row returned
+- M2 — namespace-prefix allowed: row `orchestrator/nadia/x` + prefix `orchestrator/nadia` → row returned
+- M3 — `fromAllowList` allowed: row.createdBy=`nadia` + allowList=[`nadia`] → row returned
 
 ### Reproduction
 

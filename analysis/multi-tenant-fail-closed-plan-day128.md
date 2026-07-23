@@ -6,11 +6,11 @@ Scoping pur, aucune ligne de fix. Mesuré corps-par-corps, pas au grep de surfac
 ## Verdict de sévérité (question de Pi : emergency vs pré-go-live)
 
 **Le trou est réel et localisé. La sévérité tient à UN fait de provisioning que je ne peux
-pas lire depuis le code : le `convexUrl` du tenant MCP de Marie / <client-org>.**
+pas lire depuis le code : le `convexUrl` du tenant MCP de Nadia / <client-org>.**
 
-- `convexUrl` de Marie = backend **partagé** (compassionate-goldfinch-737) → **EMERGENCY**.
+- `convexUrl` de Nadia = backend **partagé** (compassionate-goldfinch-737) → **EMERGENCY**.
   Elle voit les données de tous les orgs (voir mécanisme ci-dessous).
-- `convexUrl` de Marie = déploiement **dédié** → isolée par déploiement → non-emergency,
+- `convexUrl` de Nadia = déploiement **dédié** → isolée par déploiement → non-emergency,
   gate propre avant go-live du vecteur web.
 
 Escaladé à Pi/Laurent — eux seuls connaissent la valeur provisionnée (ou peuvent lire la
@@ -108,29 +108,29 @@ garde route.
 
 ## Verdict de sévérité — TRANCHÉ (lecture de table, Day 128)
 
-**NON-emergency.** Marie / <client-org> passe par le chemin (2) OAuth scopé, PAS le chemin (4)
+**NON-emergency.** Nadia / <client-org> passe par le chemin (2) OAuth scopé, PAS le chemin (4)
 troué. Preuve (npx convex data, autorisé par Laurent) :
 - `mcpTenants` (chemin 4) = un seul tenant `e2e-test` (compte de test). Aucune vraie cliente.
-- `oauth_scope_profiles` : profils Marie (`marie-<client-org>`, `<client-org>`, personas Hélios/Clio)
+- `oauth_scope_profiles` : profils Nadia (`nadia-<client-org>`, `<client-org>`, personas Hélios/Clio)
   avec namespaceReadPrefixes ÉTROITS (`orchestrator/marie`, `orchestrator/victor`,
   `project/marie`/`project/<client-org>`, `global`) — jamais `["*"]` (seul `master` l'a).
-Les guards de tools.ts s'appliquent sur ce chemin → Marie est bornée à ses namespaces.
+Les guards de tools.ts s'appliquent sur ce chemin → Nadia est bornée à ses namespaces.
 Les 2 trous (chemin 4 sans oauthContext ; withOrgScope fail-open) restent de vraies dettes
 de défense-en-profondeur à fermer, mais sans exposition cliente réelle aujourd'hui.
 
 ### Point de complétude à confirmer avec Laurent (finding Pi) — le prefix `global`
 
-Les profils OAuth de Marie incluent `global` dans namespaceReadPrefixes (et parfois write).
+Les profils OAuth de Nadia incluent `global` dans namespaceReadPrefixes (et parfois write).
 `global` porte des facts fleet-wide : règles, identité Laurent, feedback interne. Une
 cliente externe qui lit `global` voit donc de l'interne d'entreprise. **Est-ce
 intentionnel ?** Ne pas trancher l'intention seul (no-fabricated-decisions) — à confirmer
-avec Laurent. Si non intentionnel → retirer `global` du profil de Marie en T2/T3. Signalé
+avec Laurent. Si non intentionnel → retirer `global` du profil de Nadia en T2/T3. Signalé
 ici comme point de complétude, pas comme fuite cross-tenant (global n'est pas l'espace d'un
 autre client).
 
 ## Bloquant T0 → RÉSOLU (voir verdict ci-dessus)
 
-Question binaire ouverte : **le tenant MCP de Marie / <client-org> est-il provisionné sur le
+Question binaire ouverte : **le tenant MCP de Nadia / <client-org> est-il provisionné sur le
 backend partagé (compassionate-goldfinch-737) ou sur un déploiement Convex dédié ?**
 Le seed (scripts/seed-mcp-tenant.ts) prend `--convex-url` en argument, sans défaut → valeur
 inconnue depuis le code seul.
