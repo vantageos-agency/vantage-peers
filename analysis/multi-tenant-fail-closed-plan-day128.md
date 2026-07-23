@@ -112,8 +112,8 @@ garde route.
 troué. Preuve (npx convex data, autorisé par Laurent) :
 - `mcpTenants` (chemin 4) = un seul tenant `e2e-test` (compte de test). Aucune vraie cliente.
 - `oauth_scope_profiles` : profils Nadia (`nadia-<client-org>`, `<client-org>`, personas Hélios/Clio)
-  avec namespaceReadPrefixes ÉTROITS (`orchestrator/marie`, `orchestrator/victor`,
-  `project/marie`/`project/<client-org>`, `global`) — jamais `["*"]` (seul `master` l'a).
+  avec namespaceReadPrefixes ÉTROITS (`orchestrator/nadia`, `orchestrator/victor`,
+  `project/nadia`/`project/<client-org>`, `global`) — jamais `["*"]` (seul `master` l'a).
 Les guards de tools.ts s'appliquent sur ce chemin → Nadia est bornée à ses namespaces.
 Les 2 trous (chemin 4 sans oauthContext ; withOrgScope fail-open) restent de vraies dettes
 de défense-en-profondeur à fermer, mais sans exposition cliente réelle aujourd'hui.
