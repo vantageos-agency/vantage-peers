@@ -5389,8 +5389,25 @@ export function registerTools(
 						fields: fields ?? "lite",
 					},
 				);
+				// Day 141 fix (k17fyh3bqyh8ne1zd48sdee5958b2kk4): this query was
+				// reached exclusively through the MCP server's fixed
+				// service-account Clerk identity, which carries no per-caller
+				// org — Convex's own withOrgScope() therefore resolves every
+				// MCP call to the master branch and returns matches across
+				// tenants. The MCP boundary must enforce isolation itself.
+				// Mirrors the same scopeFilterList call already used by
+				// list_briefing_notes (line ~5288) and scopeFilterGet used by
+				// get_briefing_note (line ~5209) for this exact resource —
+				// briefingNotes rows carry `createdBy`, which scopeFilterList
+				// matches against oauthCtx.fromAllowList.
+				const filteredResults = scopeFilterList(
+					oauthCtx,
+					Array.isArray(results) ? (results as any[]) : [],
+				);
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+					content: [
+						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
+					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
