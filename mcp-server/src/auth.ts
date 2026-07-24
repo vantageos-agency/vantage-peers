@@ -22,7 +22,11 @@
  * OAuth connector can bootstrap discovery.
  */
 
-import { validateMasterBearer } from "@vantageos/cloud-identity";
+import {
+	isMasterScope as packageIsMasterScope,
+	validateMasterBearer,
+	type OAuthCtx as PackageOAuthCtx,
+} from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -158,14 +162,42 @@ export async function sha256Base64Url(input: string): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Adapts this module's local `OAuthContext` shape onto the package's
+ * framework-agnostic `OAuthCtx` (`@vantageos/cloud-identity`). This is a
+ * field-renaming adapter only — no master/wildcard DECISION is made here,
+ * that decision is entirely delegated to the package's `isMasterScope`. Local
+ * `OAuthContext` carries an extra `isMaster` boolean (set explicitly by the
+ * master-bearer-token middleware branch) alongside `scopeProfile`; the
+ * package's `OAuthCtx.scope` field consolidates both prior conditions
+ * (`ctx.isMaster || ctx.scopeProfile === "master"`) into the single `scope`
+ * field the package checks — the union of conditions is preserved exactly,
+ * only the representation changes.
+ */
+function toPackageOAuthCtx(ctx: OAuthContext): PackageOAuthCtx {
+	return {
+		scope: ctx.isMaster ? "master" : ctx.scopeProfile,
+		fromAllowList: ctx.fromAllowList,
+		namespaceReadPrefixes: ctx.namespaceReadPrefixes,
+		namespaceWritePrefixes: ctx.namespaceWritePrefixes,
+	};
+}
+
+/**
  * Returns true when the scope profile grants full, wildcard access. Master
  * admin sessions skip every downstream enforcement check.
+ *
+ * Delegates the actual master/wildcard decision to
+ * `@vantageos/cloud-identity`'s `isMasterScope` (0.3.0+) via `toPackageOAuthCtx`
+ * above — this repo no longer reimplements that check locally. `undefined` is
+ * handled here (returns false) because several call sites in tools.ts pass an
+ * optional `OAuthContext` (legacy bearer path has no oauthContext at all);
+ * the package's own guard requires a non-null `OAuthCtx` and throws otherwise
+ * (0.3.0's "never grant by absence" contract), so the undefined check must
+ * happen before delegating, not be silently absorbed by the package call.
  */
 export function isMasterScope(ctx: OAuthContext | undefined): boolean {
 	if (!ctx) return false;
-	if (ctx.isMaster) return true;
-	if (ctx.scopeProfile === "master") return true;
-	return ctx.fromAllowList.includes("*");
+	return packageIsMasterScope(toPackageOAuthCtx(ctx));
 }
 
 /**

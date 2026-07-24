@@ -1,5 +1,6 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
 import { ConvexError } from "convex/values";
+import { requireTenantId } from "@vantageos/cloud-identity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrgScope — resolved auth + multi-tenant scope context
@@ -101,8 +102,20 @@ export async function withOrgScope(
 		((identity as Record<string, unknown>).organizationSlug as string | undefined) ??
 		null;
 
-	// Internal master backwards-compat: no org → full access
-	if (!orgSlug) {
+	// Recognized service-account carve-out: the MCP server authenticates to
+	// Convex as a real, dedicated Clerk user with no org attached (see
+	// mcp-server/src/serviceAccountAuth.ts). That identity is granted master
+	// scope, but ONLY by matching its known, configured user id — never
+	// inferred from the mere absence of an org. This is the explicit-grant
+	// pattern @vantageos/cloud-identity 0.3.0 was built around (a right is
+	// never granted by absence): the master decision here is a named,
+	// by-id allowlist check, not a fallthrough.
+	const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
+	if (
+		!orgSlug &&
+		serviceAccountUserId &&
+		identity.subject === serviceAccountUserId
+	) {
 		return {
 			userId: identity.subject,
 			orgSlug: null,
@@ -116,6 +129,33 @@ export async function withOrgScope(
 			],
 			isMaster: true,
 		};
+	}
+
+	// Any other identity with no org attached: REFUSED. Uses the package's
+	// requireTenantId guard (@vantageos/cloud-identity) — the door this repo
+	// used to leave open ("no org → full access") is closed by reusing the
+	// package's refuse-on-absence semantics rather than hand-rolling a local
+	// isMaster/org check. requireTenantId throws when identity.orgId is
+	// missing/empty; we translate that throw into the same RBAC_DENIED
+	// ConvexError shape used by the rest of this module.
+	if (!orgSlug) {
+		try {
+			requireTenantId({ kind: "session", identity: { orgId: orgSlug } });
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			throw new ConvexError(
+				`RBAC_DENIED: ${message} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+		// requireTenantId ALWAYS throws when orgId is missing/empty (which it is,
+		// in this branch) — this line is unreachable at runtime, but it lets
+		// TypeScript narrow `orgSlug` to `string` below without a cast, and
+		// guarantees this function never falls through to the org-mapping
+		// lookup with a null orgSlug even if the package's contract ever
+		// changed underneath us.
+		throw new ConvexError(
+			`RBAC_DENIED: no organization attached — ${JSON.stringify({ orgSlug: null })}`,
+		);
 	}
 
 	// Look up org mapping

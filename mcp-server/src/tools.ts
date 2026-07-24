@@ -10,7 +10,11 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
+import {
+	LEGACY_WILDCARD_CTX,
+	scopeFilterGet,
+	scopeFilterList,
+} from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
@@ -1721,7 +1725,7 @@ export function registerTools(
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId,
 				});
-				const filtered = scopeFilterGet(oauthCtx, memory);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, memory);
 				if (filtered === null) {
 					return mcpError(`Memory not found: ${memoryId}`);
 				}
@@ -2157,7 +2161,7 @@ export function registerTools(
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId: episodeId,
 				});
-				const filtered = scopeFilterGet(oauthCtx, memory);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, memory);
 				if (filtered === null) {
 					return mcpError(`Episode not found: ${episodeId}`);
 				}
@@ -2262,7 +2266,7 @@ export function registerTools(
 					? (memories as any).value
 					: [];
 
-				const filteredList = scopeFilterList(oauthCtx, rawList);
+				const filteredList = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawList);
 
 				// Encode continueCursor → opaque nextCursor token for the MCP caller.
 				const backendNextCursor = (memories as any)?.continueCursor ?? null;
@@ -2437,7 +2441,7 @@ export function registerTools(
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
 				});
-				const filteredProfile = scopeFilterGet(oauthCtx, profile as any);
+				const filteredProfile = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, profile as any);
 				return {
 					content: [
 						{
@@ -2623,7 +2627,7 @@ export function registerTools(
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only rows whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
-				const filteredList = scopeFilterList(oauthCtx, rawList);
+				const filteredList = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawList);
 
 				// Encode continueCursor → opaque nextCursor token for the MCP caller.
 				const backendNextCursor = (memories as any)?.continueCursor ?? null;
@@ -3179,7 +3183,7 @@ export function registerTools(
 				});
 
 				const filteredProfiles = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(profiles) ? profiles : [],
 				);
 
@@ -3299,7 +3303,7 @@ export function registerTools(
 				});
 
 				const filteredMessages = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(messages) ? messages : [],
 				);
 
@@ -3497,7 +3501,7 @@ export function registerTools(
 				// name). Each receipt is matched against fromAllowList by mapping
 				// `recipient` onto the `createdBy` field scopeFilterList expects.
 				const filteredReceipts = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					envelope.receipts.map((r) => ({
 						...r,
 						createdBy: r.recipient as string | undefined,
@@ -4390,7 +4394,7 @@ export function registerTools(
 				});
 
 				const filteredTasks = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(tasks) ? tasks : [],
 				);
 
@@ -4660,7 +4664,7 @@ export function registerTools(
 				const mission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
-				const filteredMission = scopeFilterGet(oauthCtx, mission as any);
+				const filteredMission = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, mission as any);
 
 				return {
 					content: [
@@ -4887,7 +4891,7 @@ export function registerTools(
 					date,
 					orchestrator,
 				});
-				const filteredEntry = scopeFilterGet(oauthCtx, entry as any);
+				const filteredEntry = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, entry as any);
 
 				const baseText = JSON.stringify(filteredEntry, null, 2);
 				const text = appendMarkerIfEnabled(baseText, () => {
@@ -5206,7 +5210,7 @@ export function registerTools(
 				const note = await convex.query("briefingNotes:get" as any, {
 					noteId,
 				});
-				const filtered = scopeFilterGet(oauthCtx, note);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, note);
 				if (filtered === null) {
 					return mcpError(`Briefing note not found: ${noteId}`);
 				}
@@ -5286,7 +5290,7 @@ export function registerTools(
 				});
 
 				const filteredNotes = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(notes) ? notes : [],
 				);
 
@@ -5401,7 +5405,7 @@ export function registerTools(
 				// briefingNotes rows carry `createdBy`, which scopeFilterList
 				// matches against oauthCtx.fromAllowList.
 				const filteredResults = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results) ? (results as any[]) : [],
 				);
 				return {
@@ -5565,7 +5569,7 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
-				const filteredComponents = scopeFilterList(oauthCtx, rawItems as any);
+				const filteredComponents = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawItems as any);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -5628,7 +5632,7 @@ export function registerTools(
 					name,
 					type,
 				});
-				const filteredComponent = scopeFilterGet(oauthCtx, component as any);
+				const filteredComponent = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, component as any);
 
 				return {
 					content: [
@@ -5791,7 +5795,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 				const filteredResults = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results) ? results : [],
 				);
 				return {
@@ -5849,7 +5853,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 				const filteredResults = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results) ? results : [],
 				);
 				return {
@@ -6002,7 +6006,7 @@ export function registerTools(
 					createdBefore,
 				});
 				const filteredTasks = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(tasks) ? tasks : [],
 				);
 
@@ -6545,7 +6549,7 @@ export function registerTools(
 					createdBefore,
 				});
 				const filteredMandates = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(mandates) ? mandates : [],
 				);
 
@@ -6809,7 +6813,7 @@ export function registerTools(
 				const bu = await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
 				});
-				const filteredBu = scopeFilterGet(oauthCtx, bu as any);
+				const filteredBu = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, bu as any);
 
 				return {
 					content: [
@@ -6900,7 +6904,7 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
-				const filteredBus = scopeFilterList(oauthCtx, rawItems as any);
+				const filteredBus = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawItems as any);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -7116,7 +7120,7 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
-				const filteredMappings = scopeFilterList(oauthCtx, rawItems as any);
+				const filteredMappings = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawItems as any);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -7304,7 +7308,7 @@ export function registerTools(
 				}
 
 				const filteredIssues = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results) ? results : [],
 				);
 
@@ -7374,7 +7378,7 @@ export function registerTools(
 					repo,
 					issueNumber,
 				});
-				const filteredIssue = scopeFilterGet(oauthCtx, issue as any);
+				const filteredIssue = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, issue as any);
 
 				return {
 					content: [
@@ -7568,7 +7572,7 @@ export function registerTools(
 				const stats = await convex.query("issues:getStats" as any, {
 					project,
 				});
-				const filteredStats = scopeFilterGet(oauthCtx, stats as any);
+				const filteredStats = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, stats as any);
 
 				return {
 					content: [
@@ -7815,7 +7819,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 				const filteredResults = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results) ? results : [],
 				);
 
@@ -7877,7 +7881,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 				const filteredResults = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results) ? results : [],
 				);
 
@@ -7978,7 +7982,7 @@ export function registerTools(
 						},
 					);
 					const filteredResults = scopeFilterList(
-						oauthCtx,
+						oauthCtx ?? LEGACY_WILDCARD_CTX,
 						Array.isArray(results) ? results : [],
 					);
 					const payload = buildPayload(filteredResults);
@@ -8002,7 +8006,7 @@ export function registerTools(
 					createdBefore,
 				});
 				const filteredAll = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(allResults) ? allResults : [],
 				);
 				const payload = buildPayload(filteredAll);
@@ -8092,7 +8096,7 @@ export function registerTools(
 					"missionTemplates:getByName" as any,
 					{ name },
 				);
-				const filteredTemplate = scopeFilterGet(oauthCtx, template as any);
+				const filteredTemplate = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, template as any);
 
 				return {
 					content: [
@@ -8258,7 +8262,7 @@ export function registerTools(
 				const targetMission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
-				const filteredMission = scopeFilterGet(oauthCtx, targetMission as any);
+				const filteredMission = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, targetMission as any);
 				if (filteredMission == null) {
 					return mcpError(
 						"Mission not found or not accessible to current scope",
@@ -8473,7 +8477,7 @@ export function registerTools(
 					createdBefore,
 				});
 				const filteredErrors = scopeFilterList(
-					oauthCtx,
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(errors) ? errors : [],
 				);
 
@@ -8538,7 +8542,7 @@ export function registerTools(
 				const error = await convex.query("errorMonitor:getError" as any, {
 					errorId: errorId as any,
 				});
-				const filteredError = scopeFilterGet(oauthCtx, error as any);
+				const filteredError = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, error as any);
 				return {
 					content: [
 						{
@@ -9084,7 +9088,7 @@ export function registerTools(
 		async ({ taskId }) => {
 			try {
 				const row = await convex.query("tasks:getById" as any, { taskId });
-				const filtered = scopeFilterGet(oauthCtx, row);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Task not found: ${taskId}`);
 				}
@@ -9116,7 +9120,7 @@ export function registerTools(
 		async ({ patternId }) => {
 			try {
 				const row = await convex.query("fixPatterns:get" as any, { patternId });
-				const filtered = scopeFilterGet(oauthCtx, row);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
 				}
@@ -9148,7 +9152,7 @@ export function registerTools(
 		async ({ mandateId }) => {
 			try {
 				const row = await convex.query("mandates:get" as any, { mandateId });
-				const filtered = scopeFilterGet(oauthCtx, row);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Mandate not found: ${mandateId}`);
 				}
@@ -9187,7 +9191,7 @@ export function registerTools(
 				const row = await convex.query("githubRepoMapping:getByRepo" as any, {
 					repo,
 				});
-				const filtered = scopeFilterGet(oauthCtx, row);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Repo mapping not found: ${repo}`);
 				}
@@ -9224,7 +9228,7 @@ export function registerTools(
 				const row = await convex.query("messages:getById" as any, {
 					messageId,
 				});
-				const filtered = scopeFilterGet(oauthCtx, row);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Message not found: ${messageId}`);
 				}
@@ -9261,7 +9265,7 @@ export function registerTools(
 				const row = await convex.query("recurringTasks:getById" as any, {
 					recurringTaskId,
 				});
-				const filtered = scopeFilterGet(oauthCtx, row);
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Recurring task not found: ${recurringTaskId}`);
 				}

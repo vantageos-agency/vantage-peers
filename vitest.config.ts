@@ -24,6 +24,7 @@ export default defineConfig({
 			BEARER_SECRET_MASTER: "test-master-token",
 			PUBLIC_BASE_URL: "http://localhost:3000",
 			CONVEX_URL_INTERNAL: "http://localhost:9999",
+			CLERK_SERVICE_ACCOUNT_USER_ID: "test-service-account-user-id",
 		},
 	},
 });

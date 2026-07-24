@@ -26,6 +26,7 @@
 import { describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import {
+	LEGACY_WILDCARD_CTX,
 	isWildcardScope,
 	passesScopeFilter,
 	scopeFilterGet,
@@ -165,9 +166,14 @@ describe("U — passesScopeFilter (helper unit)", () => {
 		expect(passesScopeFilter(ctx, {})).toBe(false);
 	});
 
-	it("U6 legacy bearer (oauthCtx undefined) → true (backward-compat)", () => {
-		expect(passesScopeFilter(undefined, { createdBy: "anyone" })).toBe(true);
-		expect(passesScopeFilter(undefined, {})).toBe(true);
+	it("U6 legacy bearer (oauthCtx=LEGACY_WILDCARD_CTX, explicit opt-in) → true (backward-compat)", () => {
+		// 0.3.0: oauthCtx is mandatory — the legacy-bearer wildcard behaviour
+		// must be requested BY NAME via LEGACY_WILDCARD_CTX, never inferred
+		// from an omitted/undefined argument.
+		expect(passesScopeFilter(LEGACY_WILDCARD_CTX, { createdBy: "anyone" })).toBe(
+			true,
+		);
+		expect(passesScopeFilter(LEGACY_WILDCARD_CTX, {})).toBe(true);
 	});
 
 	// Bonus: belt-and-suspenders for the cross-tenant deny path. Not numbered
@@ -181,7 +187,7 @@ describe("U — passesScopeFilter (helper unit)", () => {
 	});
 
 	it("U8 isWildcardScope() mirrors legacy + master passthrough", () => {
-		expect(isWildcardScope(undefined)).toBe(true);
+		expect(isWildcardScope(LEGACY_WILDCARD_CTX)).toBe(true);
 		expect(isWildcardScope(masterCtx())).toBe(true);
 		expect(isWildcardScope(alphaCtx())).toBe(false);
 	});
