@@ -353,3 +353,110 @@ def test_ci_mode_resolves_via_hash_secret_with_no_host_file(tmp_path, monkeypatc
 
     findings = scan_perimeter(hash_vocab=resolved_vocab)
     assert findings == []
+
+
+# =============================================================================
+# STABLE, NON-REVERSIBLE per-term correlation index (PR #1120 addendum) --
+# same matched term -> same idx, different term -> different idx, in BOTH
+# vocabulary modes, and the index never contains or reveals the term.
+# =============================================================================
+
+
+def test_stable_index_same_term_same_index_hash_mode(tmp_path, monkeypatch, hash_vocab):
+    perimeter_dir = tmp_path / "convex"
+    perimeter_dir.mkdir()
+    leak_file = perimeter_dir / "oauth.ts"
+    leak_file.write_text(
+        "// onboarding scope for Zorblatt Holdings\n"
+        "// a second mention of Zorblatt Holdings elsewhere\n",
+        encoding="utf-8",
+    )
+
+    import source_prose_identity_guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "REPO_ROOT", tmp_path)
+
+    findings = scan_perimeter_file_prose("convex/oauth.ts", hash_vocab=hash_vocab)
+    assert len(findings) == 2
+
+    import re as _re
+
+    indexes = [_re.search(r"idx=([0-9a-f]+)", f).group(1) for f in findings]
+    assert indexes[0] == indexes[1], "same matched term must yield the same idx"
+    for f in findings:
+        assert "Zorblatt" not in f and "Zorblatt Holdings".lower() not in f.lower()
+
+
+def test_stable_index_different_terms_different_index_hash_mode(
+    tmp_path, monkeypatch, hash_vocab
+):
+    perimeter_dir = tmp_path / "convex"
+    perimeter_dir.mkdir()
+    leak_file = perimeter_dir / "oauth.ts"
+    leak_file.write_text(
+        "// onboarding scope for Zorblatt Holdings\n"
+        "// contact is Zara Quinlin for this account\n",
+        encoding="utf-8",
+    )
+
+    import source_prose_identity_guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "REPO_ROOT", tmp_path)
+
+    findings = scan_perimeter_file_prose("convex/oauth.ts", hash_vocab=hash_vocab)
+    assert len(findings) == 2
+
+    import re as _re
+
+    indexes = [_re.search(r"idx=([0-9a-f]+)", f).group(1) for f in findings]
+    assert indexes[0] != indexes[1], "different matched terms must yield different idx values"
+
+
+def test_stable_index_same_term_same_index_plaintext_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "VANTAGE_CLIENT_IDENTITIES", str(_write_host_config(tmp_path, FICTIVE_CONFIG))
+    )
+    perimeter_dir = tmp_path / "convex"
+    perimeter_dir.mkdir()
+    leak_file = perimeter_dir / "oauth.ts"
+    leak_file.write_text(
+        "// onboarding scope for Zorblatt Holdings\n"
+        "// a second mention of Zorblatt Holdings elsewhere\n",
+        encoding="utf-8",
+    )
+
+    import source_prose_identity_guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "REPO_ROOT", tmp_path)
+
+    from client_identity_config import resolve_client_data_patterns
+
+    patterns = resolve_client_data_patterns()
+    findings = scan_perimeter_file_prose("convex/oauth.ts", plaintext_patterns=patterns)
+    assert len(findings) == 2
+
+    import re as _re
+
+    indexes = [_re.search(r"idx=([0-9a-f]+)", f).group(1) for f in findings]
+    assert indexes[0] == indexes[1], "same matched term must yield the same idx"
+
+
+def test_stable_index_never_reveals_matched_term(tmp_path, monkeypatch, hash_vocab):
+    """NON-DISCLOSURE: the idx token itself must never equal, contain, or be
+    trivially derivable from the matched term."""
+    perimeter_dir = tmp_path / "convex"
+    perimeter_dir.mkdir()
+    leak_file = perimeter_dir / "oauth.ts"
+    leak_file.write_text(
+        "// onboarding scope for Zorblatt Holdings\n", encoding="utf-8"
+    )
+
+    import source_prose_identity_guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "REPO_ROOT", tmp_path)
+
+    findings = scan_perimeter_file_prose("convex/oauth.ts", hash_vocab=hash_vocab)
+    assert findings
+    for f in findings:
+        assert "zorblatt" not in f.lower()
+        assert "quinlin" not in f.lower()

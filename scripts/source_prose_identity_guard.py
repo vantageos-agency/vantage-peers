@@ -67,11 +67,20 @@ This file contains NO client name, anywhere, ever -- the vocabulary is
 resolved OUTSIDE this repo: either the host file (`VANTAGE_CLIENT_IDENTITIES`
 / `~/.claude/vantage-client-identities.json`, local dev) or the salted-hash
 CI secret (`VANTAGE_CLIENT_HASHES`).
+
+STABLE PER-TERM INDEX (PR #1120 addendum), non-disclosure preserved: each
+finding line also carries a short `(idx=<12 hex chars>)` token so a reader
+can tell "these findings are the same identity" from "these are different
+identities" WITHOUT the index ever naming, or being reversible to, which
+identity. See the block above `_plaintext_stable_index` for the full
+per-mode construction and why neither mode can leak the term through it.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -80,6 +89,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from client_identity_config import (  # noqa: E402
     ClientIdentityConfigError,
     hash_matcher_findings,
+    normalize_identity_token,
     resolve_vocabulary_or_fail,
 )
 
@@ -156,6 +166,56 @@ _REPO_PATH_OR_INVOCATION_RE = re.compile(
 )
 
 _PATH_PLACEHOLDER = " REPO_PATH_OR_INVOCATION "
+
+
+# --- STABLE, NON-REVERSIBLE per-term correlation index -----------------------
+# Two findings of the SAME matched client term must be tellable apart from two
+# findings of DIFFERENT terms -- without either finding ever naming the term.
+# The index is a short digest prefix, computed differently per vocabulary
+# mode, but the same SHAPE (`idx=<12 hex chars>`) either way:
+#
+#   HASH mode (CI, public logs): the index is a prefix of the digest
+#   `hash_matcher_findings` already returns -- `sha256(vocab_salt +
+#   normalized_ngram)`. `vocab_salt` is `VANTAGE_CLIENT_HASHES["salt"]`, a
+#   GitHub Actions secret value that is NEVER committed to this repo and
+#   NEVER echoed by this guard, the workflow, or `client_identity_config.py`
+#   (see `.github/workflows/plugin-vr-parity.yml`: the secret is only ever
+#   bound to an env var the job process reads, never printed). Because the
+#   salt stays secret, a hex prefix of the digest is NOT a dictionary-attack
+#   oracle: an attacker with only the public repo + public CI logs has the
+#   prefix but not the salt, and cannot enumerate candidate terms against it.
+#   Were the salt ever public, this prefix WOULD become attackable and this
+#   design would have to fall back to a first-appearance ordinal instead --
+#   it is not, so the prefix is used, and stays SAME across every finding of
+#   the same term within one run (the vocab salt is fixed for the run).
+#
+#   PLAINTEXT mode (host-local dev, `VANTAGE_CLIENT_IDENTITIES`): there is no
+#   pre-existing digest to prefix, so this module generates its OWN salt --
+#   fresh every process start, held only in memory, never persisted, never
+#   printed -- and hashes the matched, normalized text with it. Same
+#   guarantee, same shape, entirely local: nobody outside this one process,
+#   not even the same operator a second later, can invert this digest back
+#   to the matched identity, because the salt that produced it no longer
+#   exists anywhere once the process exits.
+_STABLE_INDEX_HEX_LEN = 12
+
+_PLAINTEXT_INDEX_SALT = secrets.token_hex(16)
+
+
+def _plaintext_stable_index(matched_text: str) -> str:
+    """Stable, non-reversible per-term index for a PLAINTEXT-mode finding.
+
+    `sha256(ephemeral_per_process_salt + normalize(matched_text))`,
+    truncated to `_STABLE_INDEX_HEX_LEN` hex chars. Stable across every
+    finding of the SAME term within this one process/run (the salt is fixed
+    for the run); not reversible, not replayable across runs, because the
+    salt is generated fresh per process and never leaves memory.
+    """
+    normalized = normalize_identity_token(matched_text)
+    digest = hashlib.sha256(
+        (_PLAINTEXT_INDEX_SALT + normalized).encode("utf-8")
+    ).hexdigest()
+    return digest[:_STABLE_INDEX_HEX_LEN]
 
 
 def _strip_repo_paths_and_invocations(prose: str) -> str:
@@ -257,8 +317,15 @@ def scan_perimeter_file_prose(
     plaintext_patterns: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Scan the PROSE (only) of one perimeter file. Returns human-readable
-    finding strings, `path:line: reason` -- never the raw matched plaintext
-    in hash mode (see `client_identity_config.hash_matcher_findings`)."""
+    finding strings, `path:line: [reason] (idx=<12 hex chars>)` -- never the
+    raw matched plaintext in hash mode (see
+    `client_identity_config.hash_matcher_findings`). `idx` is a STABLE,
+    NON-REVERSIBLE per-term correlation index (see the "STABLE,
+    NON-REVERSIBLE per-term correlation index" block above
+    `_plaintext_stable_index`): two findings sharing the same `idx` are
+    provably the same matched identity; two different `idx` values are
+    provably different identities -- without either finding ever naming
+    which."""
     abs_path = REPO_ROOT / rel_path
     try:
         content = abs_path.read_text(encoding="utf-8")
@@ -277,12 +344,17 @@ def scan_perimeter_file_prose(
         # string still does.
         prose = _strip_repo_paths_and_invocations(raw_prose)
         if hash_vocab is not None:
-            for _pattern_label, reason in hash_matcher_findings(prose, hash_vocab):
-                findings.append(f"{rel_path}:{line_no}: [{reason}]")
+            for digest, reason in hash_matcher_findings(prose, hash_vocab):
+                index = digest[:_STABLE_INDEX_HEX_LEN]
+                findings.append(f"{rel_path}:{line_no}: [{reason}] (idx={index})")
         if plaintext_patterns is not None:
             for pattern, reason in plaintext_patterns:
-                if re.search(pattern, prose, flags=re.IGNORECASE):
-                    findings.append(f"{rel_path}:{line_no}: [{reason}] (prose match)")
+                match = re.search(pattern, prose, flags=re.IGNORECASE)
+                if match:
+                    index = _plaintext_stable_index(match.group(0))
+                    findings.append(
+                        f"{rel_path}:{line_no}: [{reason}] (prose match) (idx={index})"
+                    )
     return findings
 
 
