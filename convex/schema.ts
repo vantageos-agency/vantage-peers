@@ -1027,7 +1027,7 @@ export default defineSchema({
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex
 	// dashboard or npx convex run after merge.
 	//
-	// clerkOrgSlug: the Clerk organisation slug (e.g. "acme-hr", "novalayer").
+	// clerkOrgSlug: the Clerk organisation slug (e.g. "acme-hr", "a-client-org").
 	//   Maps to `identity.organizationId ?? identity.organizationSlug` in Convex
 	//   auth helpers.
 	// allowedOrchestrators: which orchestrator pilots/assignees this org can see.
@@ -1039,12 +1039,12 @@ export default defineSchema({
 	//
 	// Seed rows (post-merge, Sigma runs npx convex run):
 	//   acme-hr   → allowedOrchestrators=["victor"], scopes=["view-own-tasks","view-own-missions","view-orchestrator-summary"]
-	//   novalayer → allowedOrchestrators=["phi"],    scopes=["view-own-tasks","view-own-missions"]
+	//   <redacted-client> → allowedOrchestrators=["phi"],    scopes=["view-own-tasks","view-own-missions"]
 	client_org_mapping: defineTable({
 		clerkOrgSlug: v.string(), // "acme-hr"
 		allowedOrchestrators: v.array(v.string()), // ["victor"] or ["*"] for master sentinel
 		scopes: v.array(v.string()), // ["view-own-tasks", "view-own-missions", ...]
-		displayName: v.string(), // "Iris RH"
+		displayName: v.string(), // "<redacted-client>"
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})

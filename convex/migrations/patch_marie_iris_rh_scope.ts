@@ -1,12 +1,22 @@
 // MANUAL INVOCATION REQUIRED post-deploy — DO NOT auto-run:
 //   bunx convex run "migrations/patch_marie_iris_rh_scope:patchMarieIrisRhScope" '{}'
 //
-// S1.2-mutation (Day 90): remediation of the security leak where scope_profile
-// `marie-iris-rh` retained `global` in namespaceReadPrefixes + namespaceWritePrefixes.
+// SCOPE NOTICE (PR #1120): this FILENAME carries the client slug in
+// cleartext. `scripts/source_prose_identity_guard.py` REQUIRED gate scans
+// this file's prose (comments/description) and is GREEN, but it
+// deliberately excludes repo file paths / this exact invocation line from
+// its match surface (class 1 of its declared scope) -- a green guard here
+// does NOT mean this file is clean of client identity; the filename itself
+// still is one. Open, tracked to close by RENAMING this file:
+// k171ksjnczs3k404nte7kk9m0h8b2a8g.
+//
+// S1.2-mutation (Day 90): remediation of the security leak where the
+// onboarding-client scope_profile (see OLD_PROFILE_ID below) retained
+// `global` in namespaceReadPrefixes + namespaceWritePrefixes.
 //
 // This migration:
 //   1. Drops `global` from both prefix lists (D4 enforcement)
-//   2. Renames profileId from `marie-iris-rh` to `iris-rh` (D9 workspace naming)
+//   2. Renames profileId from OLD_PROFILE_ID to NEW_PROFILE_ID (D9 workspace naming)
 //   3. Sets fromAllowList to ["marie", "victor"]
 //   4. Sets NEW_READ_PREFIXES / NEW_WRITE_PREFIXES (no global)
 //
@@ -17,7 +27,7 @@
 // D4 enforcement: NEW_READ_PREFIXES and NEW_WRITE_PREFIXES are verified to
 // contain no `global` or `*` entries — confirmed statically below.
 //
-// Idempotent: re-running leaves the row unchanged once profileId="iris-rh"
+// Idempotent: re-running leaves the row unchanged once profileId=NEW_PROFILE_ID
 // and global is absent from both prefix lists.
 //
 // Previous Day 88 migration added orchestrator/marie; this S1.2 migration
@@ -105,7 +115,7 @@ export const patchMarieIrisRhScope = internalMutation({
 			namespaceReadPrefixes: NEW_READ_PREFIXES,
 			namespaceWritePrefixes: NEW_WRITE_PREFIXES,
 			description:
-				"Marie (Iris RH) — S1.2 Day 90 remediation: dropped `global` (D4 violation), renamed marie-iris-rh → iris-rh (D9 workspace naming). fromAllowList=[marie,victor], namespaces scoped to orchestrator/marie + orchestrator/victor + project/iris-rh.",
+				"The onboarding client — S1.2 Day 90 remediation: dropped `global` (D4 violation), renamed OLD_PROFILE_ID → NEW_PROFILE_ID (D9 workspace naming). fromAllowList and namespace prefixes scoped per NEW_FROM_ALLOW_LIST / NEW_READ_PREFIXES above.",
 			updatedAt: Date.now(),
 		});
 

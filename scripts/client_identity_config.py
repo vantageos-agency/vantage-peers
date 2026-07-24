@@ -196,12 +196,21 @@ _MAX_NGRAM_WORDS = 4
 def hash_matcher_findings(text: str, vocab: dict) -> list[tuple[str, str]]:
     """Scan `text` for tokens whose normalized+salted hash appears in `vocab`.
 
-    Returns a list of (line_repr, reason) pairs -- NEVER the matched
-    plaintext n-gram itself (that would defeat the entire point of hash
-    matching: the whole design exists so the matched name never has to be
-    known or displayed by the CI-side matcher). `line_repr` is a generic,
-    non-identifying marker; callers (leak_guard.py) are responsible for
-    pairing this with file/line context without echoing the raw n-gram.
+    Returns a list of (digest, reason) pairs -- NEVER the matched plaintext
+    n-gram itself (that would defeat the entire point of hash matching: the
+    whole design exists so the matched name never has to be known or
+    displayed by the CI-side matcher). `digest` is the full sha256 hex
+    digest computed from `salt + normalized_ngram` -- it is a ONE-WAY value
+    (the salt is a CI secret, never present in this repo, so recovering the
+    ngram from `digest` requires both the secret salt AND a successful
+    dictionary attack against it) and callers MAY safely use a short PREFIX
+    of it as a same-run, cross-finding correlation index (see
+    `source_prose_identity_guard.scan_perimeter_file_prose`): the same
+    matched term always hashes to the same digest within one run (the vocab
+    salt is fixed for the run), so two findings sharing a digest prefix are
+    provably the same identity, without either finding ever naming it.
+    Callers (`leak_guard.py`) that do not need the correlation index simply
+    ignore the first element and pair the reason with file/line context.
 
     Tokenization: word-boundary split (mirrors the regex guard's separator
     class), 1-to-4-word sliding n-grams, each normalized identically to
@@ -231,7 +240,7 @@ def hash_matcher_findings(text: str, vocab: dict) -> list[tuple[str, str]]:
             if digest in hash_set and start not in seen:
                 findings.append(
                     (
-                        "matched client-identity hash vocabulary",
+                        digest,
                         "real client identifier (salted-hash vocabulary match, VANTAGE_CLIENT_HASHES)",
                     )
                 )

@@ -58,6 +58,30 @@ jobs:
           VANTAGE_CLIENT_HASHES: ${{ secrets.VANTAGE_CLIENT_HASHES }}
         run: pytest tests/plugin/test_leak_guard.py -v
 
+      # Source-surface guard (PR #1119/#1120): a client identity in a Convex
+      # `description:` field or a schema/migration comment is neither a
+      # packaged artifact nor a branch name, and is invisible to the two
+      # steps above. Runs on the same secret, same job, same SECRECY > PARITY
+      # ordering -- before the network-dependent VR parity step.
+      # REQUIRED HARD GATE (PR #1120): the pre-existing client-identity
+      # PROSE that blocked flipping this on (convex/oauth.ts,
+      # convex/migrations/patch_marie_iris_rh_scope.ts) is redacted. This
+      # step now runs the mechanism pytest suite (offline, fictive
+      # vocabulary) AND the real guard against this repo's own perimeter
+      # files, and FAILS THE JOB on any finding -- neither a disabled gate
+      # nor an advisory one. Its scope is deliberately narrower than "all
+      # client identity in this repo": see the DECLARED SCOPE comment block
+      # in `scripts/source_prose_identity_guard.py` for the two classes
+      # (repo file paths / invocation strings; the authorization identifier
+      # arrays) it excludes on purpose, and the task ids tracking each to
+      # closure.
+      - name: Source-prose identity guard (auth-profile perimeter)
+        env:
+          VANTAGE_CLIENT_HASHES: ${{ secrets.VANTAGE_CLIENT_HASHES }}
+        run: |
+          pytest tests/plugin/test_source_prose_identity_guard.py -v
+          python3 scripts/source_prose_identity_guard.py
+
       - name: VR parity gate (with secrecy-suspension)
         env:
           VANTAGE_REGISTRY_TOKEN: ${{ secrets.VANTAGE_REGISTRY_TOKEN }}

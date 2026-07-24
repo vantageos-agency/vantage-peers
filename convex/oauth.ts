@@ -77,9 +77,9 @@ const scopeProfileShape = v.object({
 // (no DB write, no audit log). When no row exists, the seed is inserted.
 //
 // Rows present in the DB but NOT in the catalog (operator-created profiles,
-// post-D9 rename survivors like `iris-rh`) are PRESERVED — this seed mutation
-// is never destructive. This obsoletes the bespoke catalog-drift migration
-// pattern shown in `convex/migrations/patch_marie_iris_rh_scope.ts`.
+// post-D9 rename survivors) are PRESERVED — this seed mutation is never
+// destructive. This obsoletes the bespoke catalog-drift migration pattern
+// shown in `convex/migrations/patch_marie_iris_rh_scope.ts`.
 //
 // Return shape: `{ inserted, updated, skipped }` arrays of profileId strings.
 // Master preserves full-access semantics of the BEARER_SECRET_MASTER path.
@@ -95,6 +95,16 @@ export const seedDefaultProfiles = mutation({
 	handler: async (ctx, args) => {
 		await requireMasterAuth(args.callerToken);
 
+		// SCOPE NOTICE (PR #1120): `profileId` / `fromAllowList` /
+		// `namespaceReadPrefixes` / `namespaceWritePrefixes` below carry the
+		// client slug in CLEARTEXT in this PUBLIC repo, on purpose -- they
+		// are the blocking authorization control, not decoration.
+		// `scripts/source_prose_identity_guard.py` is GREEN on this file's
+		// PROSE (comments/description) but never scans these arrays (class 2
+		// of its declared scope, by construction) -- a green guard here does
+		// NOT mean this file is clean of client identity; these arrays still
+		// spell it in cleartext. Open, tracked to close by moving these
+		// profiles from CODE to DATA: k170xwqveg15kzrqwvfq5ynqd58b263s.
 		const defaults = [
 			{
 				profileId: "master",
@@ -106,7 +116,7 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "marie-iris-rh",
 				description:
-					"Marie (Iris RH) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
+					"Marie (the onboarding client) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
 				fromAllowList: ["marie"],
 				namespaceReadPrefixes: [
 					"orchestrator/marie",
@@ -121,9 +131,9 @@ export const seedDefaultProfiles = mutation({
 					"global",
 				],
 			},
-			// Iris RH trio (Clio + Hélios + Victor) — Marie's 3 dual-host
-			// orchestrator personas share a workspace (project/iris-rh) and
-			// every profile lists the other two's case variants in
+			// <redacted-client> trio (Clio + Hélios + Victor) — 3 dual-host
+			// orchestrator personas sharing a project workspace; each profile
+			// lists the other two's case variants in
 			// `fromAllowList` + their orchestrator namespaces in both prefix
 			// arrays so each persona can switch hosts and continue the
 			// conversation without re-paste of credentials. The
@@ -132,7 +142,7 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "clio-iris-rh",
 				description:
-					"Clio (Marie / Iris RH ChatGPT orchestrator) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
+					"Clio (the onboarding client's ChatGPT orchestrator persona) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write the shared project workspace + the other two personas' orchestrator namespaces.",
 				fromAllowList: [
 					"Clio",
 					"clio",
@@ -169,7 +179,7 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "helios-iris-rh",
 				description:
-					"Hélios (Marie / Iris RH Claude.ai orchestrator) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write project/iris-rh shared workspace + the other two personas' orchestrator namespaces.",
+					"Hélios (the onboarding client's Claude.ai orchestrator persona) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write the shared project workspace + the other two personas' orchestrator namespaces.",
 				fromAllowList: [
 					"Hélios",
 					"Helios",
@@ -1043,7 +1053,8 @@ async function sha256Hex(input: string): Promise<string> {
 //     where scopeProfile = oldName OR newName
 //   - Append-only audit log: previousState + newState + actorTokenHash + reason
 //
-// Day 90 use-case: drops `global` from `marie-iris-rh`, renames to `iris-rh`.
+// Day 90 use-case: drops `global` from the onboarding-client scope profile,
+// renamed per D9 workspace-level naming (see patch_marie_iris_rh_scope.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const patchScopeProfileEmergency = mutation({
