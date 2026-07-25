@@ -8,7 +8,7 @@
         "@clerk/backend": "^3.11.4",
         "@mcp-ui/server": "^6.1.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
-        "@vantageos/cloud-identity": "^0.1.0",
+        "@vantageos/cloud-identity": "^0.3.0",
         "@vantageos/mosaic": "^0.1.2",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
@@ -209,7 +209,7 @@
 
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
 
-    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.1.0", "", {}, "sha512-uHA7X2vC2GhjR+jN5C3ZmSsC40+RTtbk2F54Rut/QTJ+9aVm5mxGbEVK8Bv2DjEBqW+bN2wJYQ+IwvFkXZ4BIg=="],
+    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.3.0", "", { "dependencies": { "zod": "^4.4.3" } }, "sha512-4Jdk3OS66+b0OBMplxkMwMGu2wDL0AqIi2Bw3ZzuzFJPeQ2LL7uGohCSK6tAbzKJ8CNwVhEWtTFhophlAai4ew=="],
 
     "@vantageos/mosaic": ["@vantageos/mosaic@0.1.2", "", { "dependencies": { "@lit-labs/react": "1.0.6", "@mcp-ui/server": "6.1.0", "@tanstack/react-virtual": "3.13.6", "dompurify": "3.2.4", "marked": "15.0.7", "zod": "3.25.28" }, "peerDependencies": { "@mcp-ui/client": "7.1.1", "react": "^19.1.0", "react-dom": "^19.1.0", "react-i18next": "15.5.2", "rxjs": "^7.8.0" }, "optionalPeers": ["@mcp-ui/client", "react-i18next", "rxjs"] }, "sha512-ZQScmdoQynePQpWIhsfjIPI0dCzqY4EDQzXKVWLiZGPbkO50c5KAPYb0KKf0UUsGqo8Uq0N++hUtFouAgMIXjA=="],
 
@@ -544,6 +544,8 @@
     "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.1", "", { "peerDependencies": { "zod": "^3.25 || ^4" } }, "sha512-pM/SU9d3YAggzi6MtR4h7ruuQlqKtad8e9S0fmxcMi+ueAK5Korys/aWcV9LIIHTVbj01NdzxcnXSN+O74ZIVA=="],
+
+    "@vantageos/cloud-identity/zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
 
     "@vantageos/mosaic/zod": ["zod@3.25.28", "", {}, "sha512-/nt/67WYKnr5by3YS7LroZJbtcCBurDKKPBPWWzaxvVCGuG/NOsiKkrjoOhI8mJ+SQUXEbUzeB3S+6XDUEEj7Q=="],
   }
