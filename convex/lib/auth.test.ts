@@ -99,10 +99,9 @@ describe("withOrgScope — no identity (MCP/CLI master)", () => {
 // 2. Identity with no orgId → isMaster=true, full data
 // =============================================================================
 
-describe("withOrgScope — no org (master scope)", () => {
-	test("tasks.list returns all tasks when authenticated with no org", async () => {
+describe("withOrgScope — no org, recognized service account → master scope", () => {
+	test("tasks.list returns all tasks when authenticated as the recognized service account (no org)", async () => {
 		const t = createTestConvex();
-		// Seed two tasks assigned to different orchestrators
 		await t.mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
@@ -118,10 +117,86 @@ describe("withOrgScope — no org (master scope)", () => {
 			createdBy: "sigma",
 		});
 
-		// Identity with no orgSlug → master scope
-		const tWithAuth = t.withIdentity({ subject: "user-laurent-123" });
+		// Subject matches CLERK_SERVICE_ACCOUNT_USER_ID (test env, see vitest.config) →
+		// explicit, by-id master grant. Never inferred from the mere absence of an org.
+		const tWithAuth = t.withIdentity({
+			subject: "test-service-account-user-id",
+		});
 		const result = await tWithAuth.query(api.tasks.list, {});
 		expect(result).toHaveLength(2);
+	});
+});
+
+// =============================================================================
+// 2b. Identity with no orgId that is NOT the recognized service account →
+// REFUSED. This is the door closed by this change: a right must never be
+// granted by absence — the class-of-defect this fix removes.
+// =============================================================================
+
+describe("withOrgScope — no org, ARBITRARY identity (not service account) → refused", () => {
+	test("tasks.list REFUSES an arbitrary no-org identity (not master, no data)", async () => {
+		const t = createTestConvex();
+		await t.mutation(api.tasks.create, {
+			title: "kappa task",
+			assignedTo: "kappa",
+			status: "todo",
+			priority: "medium",
+			createdBy: "kappa",
+		});
+		await t.mutation(api.tasks.create, {
+			title: "sigma task",
+			assignedTo: "sigma",
+			status: "todo",
+			priority: "medium",
+			createdBy: "sigma",
+		});
+
+		// An arbitrary valid Clerk identity with no org attached, and NOT matching
+		// CLERK_SERVICE_ACCOUNT_USER_ID. Pre-fix this fell through the
+		// "no org → full access" branch and got master scope + all rows.
+		const tWithAuth = t.withIdentity({ subject: "user-arbitrary-attacker" });
+		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
+			/No active organization/,
+		);
+	});
+});
+
+// =============================================================================
+// 2c. Normal org-scoped identity still gets only its own data (unaffected by
+// the service-account carve-out or the no-org refusal above).
+// =============================================================================
+
+describe("withOrgScope — normal org-scoped identity unaffected", () => {
+	test("tasks.list still returns only the mapped org's tasks", async () => {
+		const t = createTestConvex();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-hr",
+			allowedOrchestrators: ["victor"],
+			scopes: ["view-own-tasks", "view-own-missions"],
+		});
+		await t.mutation(api.tasks.create, {
+			title: "victor task",
+			assignedTo: "victor",
+			status: "todo",
+			priority: "medium",
+			createdBy: "victor",
+		});
+		await t.mutation(api.tasks.create, {
+			title: "kappa task",
+			assignedTo: "kappa",
+			status: "todo",
+			priority: "medium",
+			createdBy: "kappa",
+		});
+
+		const tWithAuth = t.withIdentity({
+			subject: "user-nadia-2",
+			organizationSlug: "acme-hr",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const result = await tWithAuth.query(api.tasks.list, {});
+		expect(result).toHaveLength(1);
+		expect(result[0].assignedTo).toBe("victor");
 	});
 });
 

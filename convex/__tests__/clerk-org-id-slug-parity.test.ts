@@ -250,38 +250,41 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // TEST 2 — No-org → master guard (Convex-direct bypass attempt)
 //
-// Scenario:
+// Scenario (post-fix, day141 door closure — a right is never granted by
+// absence):
 //   A Clerk identity WITHOUT an org (no organizationId, no organizationSlug)
-//   gets isMaster=true from withOrgScope (Laurent's internal account pattern).
-//   This is CORRECT for internal callers.
+//   used to get isMaster=true from withOrgScope unconditionally. That
+//   fallback is now closed: only the identity matching
+//   CLERK_SERVICE_ACCOUNT_USER_ID (the MCP server's recognized service
+//   account, see mcp-server/src/serviceAccountAuth.ts) is granted master when
+//   no org is attached. ANY OTHER no-org identity is REFUSED.
 //
-//   BUT: a DCR-registered client (no-org session, empty namespaceWritePrefixes=[])
-//   MUST be denied when it attempts to write to "team/<other-org>" namespace
-//   via the MCP boundary (auth.ts checkNamespaceWrite).
+//   Separately, and unaffected by the above: a DCR-registered client
+//   (no-org session, empty namespaceWritePrefixes=[]) MUST be denied when it
+//   attempts to write to "team/<other-org>" namespace via the MCP boundary
+//   (auth.ts checkNamespaceWrite).
 //
 //   The guard: checkNamespaceWrite(oauthCtx, "team/some-org") → Forbidden
 //   when oauthCtx.namespaceWritePrefixes=[] and scopeProfile="client-generic".
-//
-//   This test ensures no-org MCP clients cannot gain cross-tenant master access
-//   by exploiting the no-org → isMaster=true fallback that exists for internal
-//   Convex-direct callers (Laurent / Alpha).
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-org> access", () => {
-	test("Convex-direct: no-org identity resolves to isMaster=true (correct for Laurent/internal)", async () => {
+	test("Convex-direct: recognized service-account no-org identity resolves to isMaster=true", async () => {
 		const t = createT();
 
 		await t.run(async (ctx) => {
 			const mockCtx = {
 				...ctx,
 				auth: {
-					// No organizationId, no organizationSlug
+					// No organizationId, no organizationSlug — but subject matches the
+					// test env's CLERK_SERVICE_ACCOUNT_USER_ID (see vitest.config.ts).
 					getUserIdentity: async () => ({
-						subject: "user_no_org_laurent",
+						subject: "test-service-account-user-id",
 						issuer: "https://clerk.test",
-						tokenIdentifier: "https://clerk.test|user_no_org_laurent",
-						name: "Laurent",
-						email: "lp@alorsonsort.com",
+						tokenIdentifier:
+							"https://clerk.test|test-service-account-user-id",
+						name: "VantagePeers Service Account",
+						email: "service-account@vantagepeers.internal",
 						// organizationId: absent
 						// organizationSlug: absent
 					}),
@@ -292,11 +295,34 @@ describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-or
 				mockCtx as unknown as Parameters<typeof withOrgScope>[0],
 			);
 
-			// No-org identity → isMaster=true (withOrgScope line 75-88)
 			expect(scope.isMaster).toBe(true);
 			expect(scope.orgSlug).toBeNull();
-			// Full access granted at the Convex layer for internal callers
 			expect(scope.allowedOrchestrators).toContain("*");
+		});
+	});
+
+	test("Convex-direct: ARBITRARY no-org identity (not the service account) is REFUSED", async () => {
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			const mockCtx = {
+				...ctx,
+				auth: {
+					// No organizationId, no organizationSlug, and NOT the recognized
+					// service account. Pre-fix this fell through to isMaster=true.
+					getUserIdentity: async () => ({
+						subject: "user_no_org_arbitrary",
+						issuer: "https://clerk.test",
+						tokenIdentifier: "https://clerk.test|user_no_org_arbitrary",
+						name: "Arbitrary caller",
+						email: "arbitrary@example.com",
+					}),
+				},
+			};
+
+			await expect(
+				withOrgScope(mockCtx as unknown as Parameters<typeof withOrgScope>[0]),
+			).rejects.toThrow(/RBAC_DENIED.*No active organization/);
 		});
 	});
 

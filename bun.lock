@@ -11,6 +11,7 @@
         "@modelcontextprotocol/sdk": "^1.27.1",
         "@types/pdf-parse": "^1.1.5",
         "@vantageos/agent-engine": "0.1.0-alpha.4",
+        "@vantageos/cloud-identity": "^0.3.0",
         "ai": "^6.0.134",
         "convex": "^1.42.1",
         "convex-helpers": "^0.1.114",
@@ -42,7 +43,7 @@
         "@clerk/backend": "^3.11.4",
         "@mcp-ui/server": "^6.1.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
-        "@vantageos/cloud-identity": "^0.1.0",
+        "@vantageos/cloud-identity": "^0.3.0",
         "@vantageos/mosaic": "^0.1.2",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
@@ -316,7 +317,7 @@
 
     "@vantageos/agent-engine": ["@vantageos/agent-engine@0.1.0-alpha.4", "", { "dependencies": { "@convex-dev/agent": "0.6.4", "@convex-dev/aggregate": "^0.2.2", "@convex-dev/crons": "^0.2.2", "@convex-dev/rate-limiter": "^0.3.2", "@convex-dev/sharded-counter": "^0.2.1", "@convex-dev/workflow": "0.4.4", "@convex-dev/workpool": "0.4.7", "ai": "6.0.35", "convex": "1.42.1", "convex-helpers": "0.1.103" } }, "sha512-9RYRtgDhkPhlnOH087n44byREyg1s3hjckbBGPSgl3v3xOrdBz2B2AR4k8qYJHaEm0Sd5F+1lQtrwm8ZOUPmgw=="],
 
-    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.1.0", "", {}, "sha512-uHA7X2vC2GhjR+jN5C3ZmSsC40+RTtbk2F54Rut/QTJ+9aVm5mxGbEVK8Bv2DjEBqW+bN2wJYQ+IwvFkXZ4BIg=="],
+    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.3.0", "", { "dependencies": { "zod": "^4.4.3" } }, "sha512-4Jdk3OS66+b0OBMplxkMwMGu2wDL0AqIi2Bw3ZzuzFJPeQ2LL7uGohCSK6tAbzKJ8CNwVhEWtTFhophlAai4ew=="],
 
     "@vantageos/mosaic": ["@vantageos/mosaic@0.1.2", "", { "dependencies": { "@lit-labs/react": "1.0.6", "@mcp-ui/server": "6.1.0", "@tanstack/react-virtual": "3.13.6", "dompurify": "3.2.4", "marked": "15.0.7", "zod": "3.25.28" }, "peerDependencies": { "@mcp-ui/client": "7.1.1", "react": "^19.1.0", "react-dom": "^19.1.0", "react-i18next": "15.5.2", "rxjs": "^7.8.0" }, "optionalPeers": ["@mcp-ui/client", "react-i18next", "rxjs"] }, "sha512-ZQScmdoQynePQpWIhsfjIPI0dCzqY4EDQzXKVWLiZGPbkO50c5KAPYb0KKf0UUsGqo8Uq0N++hUtFouAgMIXjA=="],
 
@@ -733,6 +734,8 @@
     "@vantageos/agent-engine/ai": ["ai@6.0.35", "", { "dependencies": { "@ai-sdk/gateway": "3.0.14", "@ai-sdk/provider": "3.0.3", "@ai-sdk/provider-utils": "4.0.6", "@opentelemetry/api": "1.9.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-MxgtU6CjnegH1rhRfomM0gptKxP6r+9sxbLvYq36C1l85+o0LacqbXLdNVYzqab+lHN4q7ZP3QS8wZq4YkZahA=="],
 
     "@vantageos/agent-engine/convex-helpers": ["convex-helpers@0.1.103", "", { "peerDependencies": { "@standard-schema/spec": "^1.0.0", "convex": "^1.24.0", "hono": "^4.0.5", "react": "^17.0.2 || ^18.0.0 || ^19.0.0", "typescript": "^5.5", "zod": "^3.22.4 || ^4.0.15" }, "optionalPeers": ["@standard-schema/spec", "hono", "react", "typescript", "zod"], "bin": { "convex-helpers": "bin.cjs" } }, "sha512-czh1NqoNQBfheMhithZ+gR+e3ITqMxUkwTU9BYlMMK6FIjB8EKFL37zoF4TIJn3TUCgwu7xd99tQNoNW6e/Rag=="],
+
+    "@vantageos/cloud-identity/zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
 
     "@vantageos/mosaic/zod": ["zod@3.25.28", "", {}, "sha512-/nt/67WYKnr5by3YS7LroZJbtcCBurDKKPBPWWzaxvVCGuG/NOsiKkrjoOhI8mJ+SQUXEbUzeB3S+6XDUEEj7Q=="],
 

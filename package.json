@@ -42,6 +42,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/pdf-parse": "^1.1.5",
     "@vantageos/agent-engine": "0.1.0-alpha.4",
+    "@vantageos/cloud-identity": "^0.3.0",
     "ai": "^6.0.134",
     "convex": "^1.42.1",
     "convex-helpers": "^0.1.114",

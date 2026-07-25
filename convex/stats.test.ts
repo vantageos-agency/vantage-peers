@@ -16,8 +16,13 @@ const modules = Object.fromEntries(
 
 function createTestConvex() {
 	// orchestratorStats is gated by withOrgScope.
-	// All stats tests use master scope (no org attached → full access).
-	return convexTest(schema, modules).withIdentity({ subject: "user-test-master" });
+	// All stats tests use master scope. Post day141 door-closure, a no-org
+	// identity only resolves to master when its subject matches the
+	// recognized CLERK_SERVICE_ACCOUNT_USER_ID (see vitest.config.ts) — any
+	// other no-org identity is refused.
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	});
 }
 
 // ── Seed helpers ─────────────────────────────────────────────────────────────

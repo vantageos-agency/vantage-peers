@@ -856,7 +856,7 @@ describe("Tasks", () => {
 
 		// tasks.list is gated by withOrgScope — pass master identity (no org)
 		const piTasks = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { assignedTo: "pi" });
 		expect(piTasks).toHaveLength(2);
 		expect(piTasks.every((t: { assignedTo: string }) => t.assignedTo === "pi")).toBe(true);
@@ -982,7 +982,7 @@ describe("Missions", () => {
 
 		// missions.list is gated by withOrgScope — pass master identity (no org)
 		const vmMissions = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.missions.list, { project: "vantage-peers" });
 		expect(vmMissions).toHaveLength(2);
 		expect(vmMissions.every((m) => m.project === "vantage-peers")).toBe(true);
@@ -1464,7 +1464,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const liteRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { assignedTo: "pi", fields: "lite" });
 
 		expect(liteRows).toHaveLength(5);
@@ -1497,7 +1497,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		// Snapshot: lite payload must be < 50% of full payload by byte size
 		const fullRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
 
 		const liteBytes = JSON.stringify(liteRows).length;
@@ -1514,11 +1514,11 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		await t.mutation(api.tasks.create, { ...baseTask, title: "Full compat task" });
 
 		const noFieldsRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { assignedTo: "pi" });
 
 		const fullFieldsRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
 
 		// Both must include the full shape fields
@@ -1553,7 +1553,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const rows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: ["todo", "in_progress"] });
 
 		expect(rows).toHaveLength(2);
@@ -1576,11 +1576,11 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const arrayRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: ["todo"] });
 
 		const stringRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: "todo" });
 
 		expect(arrayRows).toHaveLength(1);
@@ -1609,11 +1609,11 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const activeRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: "active" });
 
 		const explicitRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: ["todo", "in_progress"] });
 
 		expect(activeRows).toHaveLength(2);
@@ -1637,7 +1637,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const openRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: "open" });
 
 		expect(openRows).toHaveLength(4);
@@ -1650,7 +1650,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		await expect(
 			t
-				.withIdentity({ subject: "user-pi" })
+				.withIdentity({ subject: "test-service-account-user-id" })
 				.query(api.tasks.list, { status: ["open", "active"] }),
 		).rejects.toThrow(/alias "open" is not allowed inside an array/);
 	});
@@ -1669,11 +1669,11 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const allRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, { status: "all" });
 
 		const unfilteredRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, {});
 
 		expect(allRows).toHaveLength(5);
@@ -1686,7 +1686,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		const t = createTestConvex();
 		await expect(
 			t
-				.withIdentity({ subject: "user-pi" })
+				.withIdentity({ subject: "test-service-account-user-id" })
 				.query(api.tasks.list, { status: ["all"] }),
 		).rejects.toThrow(/alias "all" is not allowed inside an array/);
 	});
@@ -1697,7 +1697,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		await expect(
 			t
-				.withIdentity({ subject: "user-pi" })
+				.withIdentity({ subject: "test-service-account-user-id" })
 				.query(api.tasks.list, { status: "bogus" }),
 		).rejects.toThrow(/invalid status: "bogus"/);
 	});
@@ -1732,7 +1732,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const openRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.missions.list, { status: "open" });
 
 		expect(openRows).toHaveLength(2);
@@ -1773,7 +1773,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const activeRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.missions.list, { status: "active" });
 
 		expect(activeRows).toHaveLength(2);
@@ -1803,7 +1803,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const allRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.missions.list, { status: "all" });
 
 		expect(allRows).toHaveLength(5);
@@ -1813,7 +1813,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		const t = createTestConvex();
 		await expect(
 			t
-				.withIdentity({ subject: "user-pi" })
+				.withIdentity({ subject: "test-service-account-user-id" })
 				.query(api.missions.list, { status: ["all"] }),
 		).rejects.toThrow(/alias "all" is not allowed inside an array/);
 	});
@@ -1835,7 +1835,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const liteRows = await t
-			.withIdentity({ subject: "user-pi" })
+			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.missions.list, { fields: "lite" });
 
 		expect(liteRows).toHaveLength(1);

@@ -33,7 +33,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
-import { scopeFilterGet } from "@vantageos/cloud-identity";
+import { LEGACY_WILDCARD_CTX, scopeFilterGet } from "@vantageos/cloud-identity";
 import { registerTools } from "../src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,11 +201,13 @@ describe("U — get_briefing_note slice (scopeFilterGet)", () => {
 	it("U2 backend returns null (note absent) → null (not-found shape preserved)", () => {
 		expect(scopeFilterGet(tenantACtx(), null)).toBeNull();
 		expect(scopeFilterGet(masterCtx(), null)).toBeNull();
-		expect(scopeFilterGet(undefined, null)).toBeNull();
+		// 0.3.0: oauthCtx is mandatory — undefined must be requested BY NAME via
+		// LEGACY_WILDCARD_CTX, never inferred from an omitted argument.
+		expect(scopeFilterGet(LEGACY_WILDCARD_CTX, null)).toBeNull();
 	});
 
-	it("U3 oauthCtx undefined (legacy bearer) → row returned regardless of tenancy", () => {
-		const out = scopeFilterGet(undefined, foreignNote);
+	it("U3 oauthCtx=LEGACY_WILDCARD_CTX (legacy bearer, explicit opt-in) → row returned regardless of tenancy", () => {
+		const out = scopeFilterGet(LEGACY_WILDCARD_CTX, foreignNote);
 		expect(out).not.toBeNull();
 		expect(out?._id).toBe("bn_foreign1");
 	});
