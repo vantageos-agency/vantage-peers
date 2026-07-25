@@ -142,6 +142,54 @@ AUDIT_LOG = "/tmp/pi-auth-prod-deploy.log"
 URL_MUTATION_RE = re.compile(r"https://[a-z0-9-]+\.convex\.cloud/api/mutation\b")
 URL_ACTION_RE = re.compile(r"https://[a-z0-9-]+\.convex\.cloud/api/action\b")
 
+# ---------------------------------------------------------------------------
+# DEV vs PROD discrimination for a `convex deploy` (Day-142, task k17256kq).
+#
+# A `convex deploy` has NO `--prod` flag: it reaches whatever deployment its
+# CONVEX_DEPLOY_KEY names. The shared tokenizer classifies the `deploy` VERB
+# as prod-surface unconditionally (correct for `block-deploy-without-qa`, which
+# gates dev AND prod on QA) -- so this Pi-authorization guard, whose intention
+# is "no PROD deploy without Pi", must NOT inherit that verb-only verdict for
+# the deploy case. It reads the DEPLOY TARGET from the command text, exactly
+# as `.claude/rules/deploy-target-explicit.md` requires the target be NAMED in
+# the command, never inherited.
+#
+#   CONVEX_DEPLOY_KEY=dev:...   -> DEV  -> ALLOW (zero friction, "dev d'abord")
+#   CONVEX_DEPLOY_KEY=prod:...  -> PROD -> require Pi authorization
+#   opaque ($VAR / absent / no recognized prefix) -> CONSERVATIVE -> require auth
+#
+# A convex deploy key is `<env>:<deployment-name>|<secret>`; only the `<env>`
+# prefix is read here -- the secret value is NEVER inspected, matched, or
+# printed. The inline assignment may be bare (`CONVEX_DEPLOY_KEY=dev:x cmd`) or
+# `env`-wrapped (`env CONVEX_DEPLOY_KEY=dev:x cmd`); both put the assignment as
+# a literal `CONVEX_DEPLOY_KEY=<val>` token in the command text.
+#
+# This discrimination is SCOPED to the `deploy` verb only. An EXPLICIT prod
+# surface -- a `--prod` flag (`env set --prod`, `import --prod`), a `--push`
+# code upload, or a raw `/api/mutation` / `/api/action` HTTP write -- names
+# prod on its own and is NEVER downgraded by a dev key.
+# ---------------------------------------------------------------------------
+DEPLOY_KEY_ASSIGN_RE = re.compile(
+    r"\bCONVEX_DEPLOY_KEY=(['\"]?)([^\s'\";|&]*)\1"
+)
+
+
+def deploy_key_env(command: str) -> str | None:
+    """The environment prefix of an inline `CONVEX_DEPLOY_KEY=<val>` assignment.
+
+    Returns "dev", "prod", or None (absent / opaque `$VAR` / unrecognized
+    prefix). Only the prefix before the first ':' is read -- the secret half of
+    the key (after the '|') is never inspected."""
+    m = DEPLOY_KEY_ASSIGN_RE.search(command)
+    if not m:
+        return None
+    val = m.group(2)
+    if val.startswith("dev:"):
+        return "dev"
+    if val.startswith("prod:"):
+        return "prod"
+    return None
+
 
 def _segment_prod_action(tokens):
     """The prod action carried by ONE tokenized segment, or None.
@@ -276,6 +324,45 @@ def is_prod_deploy(command: str) -> bool:
             )
             return True
     return False
+
+
+def deploy_surface_is_key_only(command: str) -> bool:
+    """True iff the ONLY prod surface in `command` is a bare `convex deploy`
+    verb (target reached via CONVEX_DEPLOY_KEY), with NO explicit-prod surface.
+
+    Explicit-prod surfaces -- a `--prod` flag, a `--push` code upload, or a raw
+    /api/mutation | /api/action HTTP write -- name prod on their own and are
+    never key-discriminated. When any is present this returns False, so the
+    dev-key downgrade cannot apply and Pi authorization stays required.
+
+    Only when this is True does `deploy_key_env()` decide dev-vs-prod: a
+    `deploy` verb has no `--prod` flag, so its target lives entirely in the key.
+    """
+    command = strip_heredocs(command)
+    saw_deploy_verb = False
+    for segment, tokens in iter_real_commands(command):
+        if URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment):
+            return False  # explicit HTTP prod write
+        if tokens is None:
+            low = segment.lower()
+            if "convex" in low and "--prod" in low:
+                return False
+            if "convex" in low and "deploy" in low:
+                saw_deploy_verb = True
+            continue
+        action = head_prod_action(tokens) or carries_prod_action(tokens)
+        if action is None:
+            continue
+        # A `deploy` verb reaches its target through CONVEX_DEPLOY_KEY -- it is
+        # key-discriminated. Anything else that targets prod (`--prod` flag on
+        # `env set` / `import` / `run`, or a `run --push` code upload -- whose
+        # verb_path head is `run`, never `deploy`) is an explicit prod surface
+        # the dev key must never downgrade.
+        if action.verb_path and action.verb_path[0] == "deploy":
+            saw_deploy_verb = True
+        else:
+            return False
+    return saw_deploy_verb
 
 
 def is_convex_run_only(command: str) -> bool:
@@ -425,6 +512,21 @@ def run_hook(command: str) -> int:
     Returns 0 (allow) or 2 (block).
     """
     if not is_prod_deploy(command):
+        return 0
+
+    # DEV deploy -- zero friction (Day-142, "dev d'abord"). When the ONLY prod
+    # surface is a `convex deploy` verb (target reached via CONVEX_DEPLOY_KEY)
+    # AND that inline key names the DEV environment, this guard's intention
+    # ("no PROD deploy without Pi") does not apply: allow. An explicit prod
+    # surface (`--prod`, `--push`, /api/mutation|action) makes
+    # deploy_surface_is_key_only() False, so it is never downgraded here.
+    if deploy_surface_is_key_only(command) and deploy_key_env(command) == "dev":
+        audit_log({
+            "ts": int(time.time()),
+            "verdict": "allow",
+            "reason": "dev-deploy-key",
+            "command": command[:200],
+        })
         return 0
 
     # Laurent override -- always allow
