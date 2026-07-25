@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * clerk-jwt-smoke.js — G3 post-deploy activation verifier for VantagePeers Cloud.
  *
@@ -37,13 +38,25 @@
  *   CLERK_SERVICE_ACCOUNT_USER_ID  - the service-account subject the door
  *                                    allowlists in convex/lib/auth.ts
  *
+ * Optional env:
+ *   CLERK_JWT_ISSUER_DOMAIN        - explicit override for the expected
+ *                                    Clerk issuer domain. When unset, the
+ *                                    domain is derived by reading
+ *                                    convex/auth.config.ts (the committed
+ *                                    single source of truth) — never
+ *                                    hardcoded. See deriveExpectedClerkDomain().
+ *
  * Output: single JSON object to stdout. Exit 0 iff passed === true.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createClerkClient } from "@clerk/backend";
 import { ConvexHttpClient } from "convex/browser";
 
-const CLERK_DOMAIN_EXPECTED = "https://sharp-sponge-67.clerk.accounts.dev";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const JWT_TEMPLATE = "convex";
 // The Convex query used to exercise withOrgScope's fail-closed door. Any
 // existing withOrgScope call site works: the no-org refusal / service-
@@ -63,6 +76,41 @@ function requireEnv(name) {
 		fail(`required env var ${name} is not set`);
 	}
 	return value;
+}
+
+// Derive the expected Clerk issuer domain from the single source of truth,
+// never a hardcoded literal (Eta REVISE on PR #1125, same class of fix as
+// vantage-registry #275 @58a022c).
+//
+// Precedence:
+//   1. CLERK_JWT_ISSUER_DOMAIN env var, if set (explicit override).
+//   2. convex/auth.config.ts's first provider `domain` field, read as plain
+//      text and extracted with a regex (this is a tiny static TS module —
+//      no TS import machinery needed for a JS script).
+// If NEITHER source yields a domain, fail loud rather than fall back to a
+// hardcoded literal.
+function deriveExpectedClerkDomain() {
+	const envOverride = process.env.CLERK_JWT_ISSUER_DOMAIN;
+	if (envOverride) {
+		return envOverride;
+	}
+
+	const authConfigPath = path.resolve(__dirname, "../../convex/auth.config.ts");
+	let source;
+	try {
+		source = readFileSync(authConfigPath, "utf8");
+	} catch {
+		fail(
+			"could not measure: cannot resolve expected Clerk issuer from CLERK_JWT_ISSUER_DOMAIN or convex/auth.config.ts",
+		);
+	}
+	const match = source.match(/domain:\s*["']([^"']+)["']/);
+	if (!match) {
+		fail(
+			"could not measure: cannot resolve expected Clerk issuer from CLERK_JWT_ISSUER_DOMAIN or convex/auth.config.ts",
+		);
+	}
+	return match[1];
 }
 
 // Claims-only JWT decode — NO signature verification performed here. This is
@@ -146,7 +194,7 @@ async function main() {
 
 	const clerk = createClerkClient({ secretKey: clerkSecretKey });
 
-	const domain = CLERK_DOMAIN_EXPECTED;
+	const domain = deriveExpectedClerkDomain();
 	// issuerMatch/audienceMatch start undetermined — they are DERIVED below
 	// from the claims of the first real JWT this script mints (never
 	// hardcoded). If no JWT is ever minted (deferral path), they stay null.
@@ -264,7 +312,7 @@ async function main() {
 			degraded: {
 				issuerMatch,
 				audienceMatch,
-				note: "config-parity only (auth.config.ts domain/applicationID vs deployed env) — no live Clerk->Convex round trip was completed",
+				note: "config-parity only (derived expected domain from CLERK_JWT_ISSUER_DOMAIN or convex/auth.config.ts) — no live Clerk->Convex round trip was completed",
 			},
 		};
 		report.passed = false;
