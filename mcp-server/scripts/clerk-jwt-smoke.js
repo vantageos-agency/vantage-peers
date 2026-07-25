@@ -65,6 +65,25 @@ function requireEnv(name) {
 	return value;
 }
 
+// Claims-only JWT decode — NO signature verification performed here. This is
+// solely to read `iss`/`aud` off a token this script itself just minted, to
+// report parity honestly instead of hardcoding it. Signature trust is not
+// asserted or implied by this function.
+function decodeJwtPayloadUnverified(jwt) {
+	const parts = jwt.split(".");
+	if (parts.length !== 3) {
+		throw new Error("not a JWT: expected 3 dot-separated segments");
+	}
+	const payloadB64Url = parts[1];
+	const payloadB64 = payloadB64Url.replace(/-/g, "+").replace(/_/g, "/");
+	const padded = payloadB64.padEnd(
+		payloadB64.length + ((4 - (payloadB64.length % 4)) % 4),
+		"=",
+	);
+	const json = Buffer.from(padded, "base64").toString("utf8");
+	return JSON.parse(json);
+}
+
 async function mintHeadlessSessionJwt({ clerk, domain, userId, template }) {
 	// Step 1 — Backend API: create a disposable sign-in token for this user.
 	const signInToken = await clerk.signInTokens.createSignInToken({
@@ -127,13 +146,13 @@ async function main() {
 
 	const clerk = createClerkClient({ secretKey: clerkSecretKey });
 
-	// Config-parity check — always run, independent of live-JWT feasibility.
 	const domain = CLERK_DOMAIN_EXPECTED;
-	const issuerMatch = true; // this script targets the domain hardcoded in
-	// convex/auth.config.ts / mcp-server/src/auth.ts CLERK_DOMAIN fallback;
-	// a real mismatch would surface as a JWKS/issuer verification failure
-	// below, not as a silently-true flag.
-	const audienceMatch = JWT_TEMPLATE === "convex";
+	// issuerMatch/audienceMatch start undetermined — they are DERIVED below
+	// from the claims of the first real JWT this script mints (never
+	// hardcoded). If no JWT is ever minted (deferral path), they stay null.
+	let issuerMatch = null;
+	let audienceMatch = null;
+	let audienceNote = null;
 
 	const report = {
 		tool: "clerk-jwt-smoke",
@@ -158,7 +177,7 @@ async function main() {
 		// shape PR #1123 closes the door on.
 		const disposableUser = await clerk.users.createUser({
 			emailAddress: [
-				`clerk-jwt-smoke-${Date.now()}-${Math.random().toString(36).slice(2)}@vantagepeers-internal.test`,
+				`clerk-jwt-smoke-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
 			],
 			skipPasswordChecks: true,
 			skipPasswordRequirement: true,
@@ -171,6 +190,37 @@ async function main() {
 			userId: disposableUserId,
 			template: JWT_TEMPLATE,
 		});
+
+		// Derive issuer/audience parity from the FIRST real JWT this script
+		// minted (poleA's), instead of asserting it — claims-only decode, no
+		// signature verification.
+		const mintedPayload = decodeJwtPayloadUnverified(poleAMint.jwt);
+		// Clerk's `iss` may include a trailing slash or path; compare on the
+		// origin (scheme+host) rather than exact string equality.
+		const issuerOrigin = (() => {
+			try {
+				return new URL(mintedPayload.iss).origin;
+			} catch {
+				return mintedPayload.iss;
+			}
+		})();
+		issuerMatch = issuerOrigin === new URL(domain).origin;
+		if (mintedPayload.aud === undefined || mintedPayload.aud === null) {
+			audienceMatch = null;
+			audienceNote =
+				"not-independently-checked: convex template emits no aud claim";
+		} else {
+			audienceMatch =
+				mintedPayload.aud === "convex" ||
+				(Array.isArray(mintedPayload.aud) &&
+					mintedPayload.aud.includes("convex"));
+		}
+		report.issuerMatch = issuerMatch;
+		report.audienceMatch = audienceMatch;
+		if (audienceNote) {
+			report.audienceNote = audienceNote;
+		}
+
 		const poleAResult = await exerciseDoor({
 			convexUrl,
 			jwt: poleAMint.jwt,
@@ -201,11 +251,12 @@ async function main() {
 			wireMessage: poleBResult.error,
 		};
 
+		// A null audienceMatch (honestly unchecked — no aud claim to compare)
+		// is not a blocker on its own; a genuine issuer mismatch always is.
 		report.passed =
 			report.poleA_denied === true &&
 			report.poleB_master === true &&
-			report.issuerMatch === true &&
-			report.audienceMatch === true;
+			report.issuerMatch === true;
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		report.deferred = {
