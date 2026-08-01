@@ -677,13 +677,21 @@ describe("LE — list_errors scope-aware", () => {
 		expect(res.content[0].text).toContain("err_b1");
 	});
 
-	it("LE-T2 non-master → NOT Forbidden", async () => {
+	// k177617dqg6z5c099p1rdp5rqn8b2rp0 — INTENDED BEHAVIOR CHANGE. errorLogs
+	// rows carry NEITHER createdBy NOR namespace in the real schema
+	// (convex/schema.ts:895) — this fixture's fields were fictional. Passing
+	// unmapped rows through scopeFilterList refused every non-master caller
+	// silently (refus-total), which is what this test previously asserted
+	// as acceptable ("NOT Forbidden"). The fix is structural: list_errors is
+	// now master-only, so non-master gets an EXPLICIT Forbidden instead of a
+	// silent empty list.
+	it("LE-T2 non-master → Forbidden (master-only tool, structural fix)", async () => {
 		const { tools } = captureTools(
 			{ "errorMonitor:listErrors": ERRORS_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_errors")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
 	it("LE-T3 legacy bearer → all 3 visible", async () => {
@@ -695,24 +703,26 @@ describe("LE — list_errors scope-aware", () => {
 		expect(res.content[0].text).toContain("err_b1");
 	});
 
-	it("LE-M1 alpha scope → beta error filtered out", async () => {
+	// k177617dqg6z5c099p1rdp5rqn8b2rp0 — INTENDED BEHAVIOR CHANGE. See LE-T2
+	// note above: errorLogs has no owner field, so there is no "alpha's own
+	// error" concept — master-only closes the surface entirely.
+	it("LE-M1 alpha scope → Forbidden, beta error never reached", async () => {
 		const { tools } = captureTools(
 			{ "errorMonitor:listErrors": ERRORS_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_errors")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 		expect(res.content[0].text).not.toContain("err_b1");
 	});
 
-	it("LE-M2 alpha scope → alpha error visible", async () => {
+	it("LE-M2 alpha scope → Forbidden (no client owner for this table)", async () => {
 		const { tools } = captureTools(
 			{ "errorMonitor:listErrors": ERRORS_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_errors")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("err_a1");
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 });
 
@@ -744,13 +754,16 @@ describe("GE — get_error scope-aware", () => {
 		expect(res.content[0].text).toContain("alpha error");
 	});
 
-	it("GE-T2 non-master in-scope → NOT Forbidden", async () => {
+	// k177617dqg6z5c099p1rdp5rqn8b2rp0 — INTENDED BEHAVIOR CHANGE, same as
+	// LE-T2 above: errorLogs has no client-owner field, get_error is now
+	// master-only.
+	it("GE-T2 non-master in-scope → Forbidden (master-only tool, structural fix)", async () => {
 		const { tools } = captureTools(
 			{ "errorMonitor:getError": alphaError },
 			alphaCtx(),
 		);
 		const res = await tools.get("get_error")!.handler({ errorId: "err_a" });
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
 	it("GE-T3 legacy bearer → row returned", async () => {
@@ -762,23 +775,22 @@ describe("GE — get_error scope-aware", () => {
 		expect(res.content[0].text).toContain("beta error");
 	});
 
-	it("GE-M1 cross-tenant alpha→beta → NOT Forbidden", async () => {
+	it("GE-M1 cross-tenant alpha→beta → Forbidden (master-only, no owner exists)", async () => {
 		const { tools } = captureTools(
 			{ "errorMonitor:getError": betaError },
 			alphaCtx(),
 		);
 		const res = await tools.get("get_error")!.handler({ errorId: "err_b" });
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("GE-M2 alpha caller, alpha error → content visible", async () => {
+	it("GE-M2 alpha caller, alpha error → Forbidden (no client owner for this table)", async () => {
 		const { tools } = captureTools(
 			{ "errorMonitor:getError": alphaError },
 			alphaCtx(),
 		);
 		const res = await tools.get("get_error")!.handler({ errorId: "err_a" });
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("alpha error");
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 });
 

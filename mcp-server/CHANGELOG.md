@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] — list_bus / list_mandates / list_errors refus-total close
+
+### Security
+
+- **Scope `list_bus`/`get_bu`, `list_mandates`/`get_mandate` to their owner; move `list_errors`/`get_error` to master-only.** These six handlers fed `scopeFilterList`/`scopeFilterGet` rows whose shape carried neither `createdBy` nor `namespace`, so the guard refused **every** non-master caller including the owner (the refus-total form measured in the S0 campaign). Per-table remedy, decided by measurement: `businessUnits` is owned by `orchestratorId` → named remap to `createdBy` before the filter (the `list_broadcast_status` precedent); `mandates` has two owners `requestedBy`/`fulfilledBy` → dual remap unioned by `_id` (a single remap would hide one party's own mandates); `errorLogs` has no client owner (fleet-ops monitoring) → its `defineTool` scope becomes `{ kind: "master" }`, a structural removal from the client surface (non-master now gets an explicit Forbidden instead of a silent empty list). Per tool: RED (owner refused) → GREEN with owner/deny/master poles moving independently; 28 new tests + updated `scope-aware-filter-wave-c3`; full CI-scoped suite green, tsc + scope-typecheck exit 0. Class sweep found 8 further same-class instances (`get_profile`, `list_peers`, `list_issues`, `get_issue`, `issue_stats`, `list_repo_mappings`, `get_repo_mapping`, `get_message`) — tracked as a follow-up, out of this PR's named scope. Closes VP `k177617dqg6z5c099p1rdp5rqn8b2rp0`.
+
 ## [Unreleased] — content-search multi-tenant scope (refus-total close)
 
 ### Security

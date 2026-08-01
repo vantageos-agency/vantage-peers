@@ -6956,10 +6956,33 @@ export function registerTools(
 					fields: fields ?? "lite",
 					createdBefore,
 				});
-				const filteredMandates = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(mandates) ? mandates : [],
-				);
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — mandates rows carry
+				// `requestedBy` AND `fulfilledBy` (schema.ts creatorValidator),
+				// NOT `createdBy` and NOT `namespace` — scopeFilterList
+				// discriminates on `createdBy`/`namespace` only, so passing rows
+				// through unmapped found no field to match against and refused
+				// EVERY non-master caller, requester and fulfiller included
+				// (refus-total — same defect class as list_broadcast_status
+				// pre-fix, tools.ts:~3502). A mandate has TWO legitimate client
+				// owners (either party to the agreement), so this remaps onto
+				// `createdBy` twice — once per side — and unions the surviving
+				// rows by `_id`, preserving the original newest-first order.
+				const mandateRows = Array.isArray(mandates) ? mandates : [];
+				const visibleIds = new Set<string>();
+				for (const field of ["requestedBy", "fulfilledBy"] as const) {
+					const mapped = (
+						mandateRows as Array<Record<string, unknown>>
+					).map((m) => ({ ...m, createdBy: m[field] as string | undefined }));
+					for (const row of scopeFilterList(
+						oauthCtx ?? LEGACY_WILDCARD_CTX,
+						mapped,
+					)) {
+						visibleIds.add(String((row as unknown as { _id: unknown })._id));
+					}
+				}
+				const filteredMandates = (
+					mandateRows as Array<Record<string, unknown> & { _id: unknown }>
+				).filter((m) => visibleIds.has(String(m._id)));
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
@@ -7230,13 +7253,21 @@ export function registerTools(
 		async ({ buId }) => {
 			try {
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
-				const bu = await convex.query("businessUnits:get" as any, {
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — same remap as list_bus above:
+				// businessUnits rows carry `orchestratorId`, not `createdBy`/
+				// `namespace`; unmapped this refused the lead orchestrator too.
+				const bu = (await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
-				});
-				const filteredBu = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					bu as any,
-				);
+				})) as (Record<string, unknown> & { orchestratorId?: string }) | null;
+				const filteredBu = bu
+					? scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, {
+							...bu,
+							createdBy: bu.orchestratorId,
+						})
+					: null;
+				if (filteredBu) {
+					delete (filteredBu as Record<string, unknown>).createdBy;
+				}
 
 				return {
 					content: [
@@ -7333,10 +7364,23 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — businessUnits rows carry
+				// `orchestratorId` (the BU's lead orchestrator), NOT `createdBy`
+				// and NOT `namespace` — scopeFilterList discriminates on
+				// `createdBy`/`namespace` only, so passing rows through unmapped
+				// found no field to match against and refused EVERY non-master
+				// caller, the lead orchestrator included (refus-total — same
+				// defect class as list_broadcast_status pre-fix, tools.ts:~3502,
+				// which established the sanctioned remedy: remap the tool's real
+				// ownership field onto `createdBy` BEFORE calling scopeFilterList,
+				// then strip the synthetic field back out of the response.
 				const filteredBus = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					rawItems as any,
-				);
+					(rawItems as Array<Record<string, unknown>>).map((bu) => ({
+						...bu,
+						createdBy: bu.orchestratorId as string | undefined,
+					})),
+				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -8955,10 +8999,20 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
+		// k177617dqg6z5c099p1rdp5rqn8b2rp0 — errorLogs rows (schema.ts) carry
+		// NEITHER a client-owner field (no `createdBy`-equivalent, no per-tenant
+		// namespace) NOR any conceivable client owner: they are fleet-operations
+		// monitoring data (deployment/functionName/stackTrace across ALL
+		// monitored deployments). scopeFilterList found nothing to discriminate
+		// on and refused EVERY non-master caller (refus-total — dead
+		// functionality, not isolation). Unlike list_bus/list_mandates there is
+		// no ownership field to remap onto `createdBy` — inventing one would be
+		// fabricating a tenant boundary that doesn't exist in the data. The
+		// correct remedy is structural removal from the client surface: this
+		// tool is now master-only. Intended behavior change — non-master
+		// callers previously got a silent empty list; they now get an explicit
+		// Forbidden error, and no longer see this tool's data at all.
+		{ kind: "master" },
 		"list_errors",
 		"List detected errors from monitored deployments with dedup counts and linked GitHub issue numbers. " +
 			"WHEN: use to triage production errors, identify recurring failures, or find the latest crash report. " +
@@ -8999,6 +9053,12 @@ export function registerTools(
 			title: "List errors",
 		},
 		async ({ deployment, limit, fields, cursor }) => {
+			// k177617dqg6z5c099p1rdp5rqn8b2rp0 — errorLogs has no client-owner
+			// field; the defineTool wrapper enforces master for oauthCtx callers,
+			// this redundant in-handler check covers the legacy-bearer path the
+			// same way delete_bu/guardMasterOnly already does elsewhere.
+			const masterDenied = guardMasterOnly("list_errors");
+			if (masterDenied) return masterDenied;
 			try {
 				// S3.3 B8 follow-up — decode opaque cursor → createdBefore anchor.
 				let createdBefore: number | undefined;
@@ -9015,17 +9075,15 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
-				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — master-only tool now; no
+				// per-row scope filter needed (errorLogs has no owner field).
 				const errors = await convex.query("errorMonitor:listErrors" as any, {
 					deployment,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
 				});
-				const filteredErrors = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(errors) ? errors : [],
-				);
+				const filteredErrors = Array.isArray(errors) ? errors : [];
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
@@ -9069,10 +9127,9 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
+		// k177617dqg6z5c099p1rdp5rqn8b2rp0 — see list_errors above: errorLogs
+		// has no client-owner field; master-only, same class fix.
+		{ kind: "master" },
 		"get_error",
 		"Fetch a single error log entry by Convex document ID, including full stack trace and issue linkage. " +
 			"WHEN: use after list_errors to retrieve the full stack trace for a specific error entry. " +
@@ -9089,15 +9146,17 @@ export function registerTools(
 			title: "Get error",
 		},
 		async ({ errorId }) => {
+			// k177617dqg6z5c099p1rdp5rqn8b2rp0 — redundant legacy-bearer guard,
+			// same pattern as list_errors above.
+			const masterDenied = guardMasterOnly("get_error");
+			if (masterDenied) return masterDenied;
 			try {
-				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — master-only tool now; no
+				// per-row scope filter needed (errorLogs has no owner field).
 				const error = await convex.query("errorMonitor:getError" as any, {
 					errorId: errorId as any,
 				});
-				const filteredError = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					error as any,
-				);
+				const filteredError = error;
 				return {
 					content: [
 						{
@@ -9771,8 +9830,29 @@ export function registerTools(
 		},
 		async ({ mandateId }) => {
 			try {
-				const row = await convex.query("mandates:get" as any, { mandateId });
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 -- same two-sided remap as
+				// list_mandates above: mandates rows carry `requestedBy` AND
+				// `fulfilledBy`, not `createdBy`/`namespace`; unmapped this
+				// refused BOTH parties to the mandate.
+				const row = (await convex.query("mandates:get" as any, {
+					mandateId,
+				})) as
+					| (Record<string, unknown> & {
+							requestedBy?: string;
+							fulfilledBy?: string;
+					  })
+					| null;
+				const visible =
+					row !== null &&
+					(scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, {
+						...row,
+						createdBy: row.requestedBy,
+					}) !== null ||
+						scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, {
+							...row,
+							createdBy: row.fulfilledBy,
+						}) !== null);
+				const filtered = visible ? row : null;
 				if (filtered === null) {
 					return mcpError(`Mandate not found: ${mandateId}`);
 				}
