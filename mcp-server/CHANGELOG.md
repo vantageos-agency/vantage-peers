@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] — content-search multi-tenant scope (refus-total close)
+
+### Security
+
+- **Scope three content-rendering MCP tools to their caller.** `list_messages`, `search_messages_by_keyword`, and `search_tasks_by_keyword` fed `scopeFilterList` rows whose rendered shape carried neither `createdBy` nor `namespace`, so the naive guard wrap would have refused **every** caller including the owner (the refus-total defect PR #1122 deliberately avoided for the two search tools; `list_messages` already exhibited it). Fix: message-shaped tools (`from` field) get a named `from`→`createdBy` remap before `scopeFilterList` with the synthetic field stripped on output (the `list_broadcast_status` precedent); `search_tasks_by_keyword` requests `fields=full` internally, filters against the real `createdBy`, then reprojects to the public `lite` shape (avoids changing the public tool shape). Per-tool RED→GREEN with four independent poles (cross-tenant reproduction, owner-only, deny-only, master-all): RED 8-fail without fix → GREEN 17/17. tsc exit 0. Unremapped-shape audit: all 22 `scopeFilterList` sites checked, only the two message sites needed the remap. Closes VP `k175j2jems5deccegp4p0fy4x98b4ypn` + `k1780azk7n8fdb7bpnx5n91sx18b5vjf`.
+
 ## 2.14.2 — 2026-06-30
 
 - fix(oauth): DCR `/register` rejects empty/missing/malformed `redirect_uris` (RFC 7591 §3.2.2 `invalid_redirect_uri`). Closes zombie-client class — clients with empty `redirectUris` arrays can no longer be created. Defense-in-depth: same guard at Convex `registerPublicClient`. TDD-strict RED-then-GREEN.
