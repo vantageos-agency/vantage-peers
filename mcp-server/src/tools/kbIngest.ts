@@ -36,6 +36,7 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
+import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Return type shapes (mirror Convex action returns validators)
@@ -83,7 +84,9 @@ export const storeDocumentChunkedArgsSchema = z.object({
 		),
 	filename: z
 		.string()
-		.describe("Original filename (e.g. 'spec.md', 'report.pdf'). Stored in chunk metadata."),
+		.describe(
+			"Original filename (e.g. 'spec.md', 'report.pdf'). Stored in chunk metadata.",
+		),
 	docId: z
 		.string()
 		.optional()
@@ -167,8 +170,21 @@ export function registerKbIngestTools(
 		return { orgId, namespacePrefix: prefix };
 	};
 
+	// All KB-ingest tools enforce tenant isolation in-handler via
+	// resolveOrgContext() (fails closed with AUTH_NO_ORG_ID for master/legacy),
+	// so their declared scope is "filtered".
+	const authCtx = { oauthCtx };
+	const kbFilteredScope = {
+		kind: "filtered" as const,
+		reason:
+			"tenant namespace derived in-handler from oauthCtx via resolveOrgContext(); fails closed with AUTH_NO_ORG_ID",
+	};
+
 	// ── store_document_chunked ──────────────────────────────────────────────────
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		kbFilteredScope,
 		"store_document_chunked",
 		STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION,
 		storeDocumentChunkedArgsSchema.shape,
@@ -217,7 +233,10 @@ export function registerKbIngestTools(
 	);
 
 	// ── soft_delete_document ───────────────────────────────────────────────────
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		kbFilteredScope,
 		"soft_delete_document",
 		SOFT_DELETE_DOCUMENT_TOOL_DESCRIPTION,
 		softDeleteDocumentArgsSchema.shape,
@@ -257,7 +276,10 @@ export function registerKbIngestTools(
 	);
 
 	// ── generate_upload_url ─────────────────────────────────────────────────────
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		kbFilteredScope,
 		"generate_upload_url",
 		GENERATE_UPLOAD_URL_TOOL_DESCRIPTION,
 		generateUploadUrlArgsSchema.shape,

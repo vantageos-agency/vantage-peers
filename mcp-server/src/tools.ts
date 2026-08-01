@@ -24,11 +24,12 @@ import {
 	isMasterScope,
 	type OAuthContext,
 } from "./auth.js";
+import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
+import { defineTool, type ToolAuthContext } from "./registerTool.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
-import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
@@ -1569,9 +1570,19 @@ export function registerTools(
 		);
 	};
 
+	// Auth context threaded into every defineTool registration. The wrapper reads
+	// the declared scope and applies the SAME shared predicates the in-handler
+	// guards use (checkNamespace*/checkFromAllowed/isMasterScope), so migrated
+	// tools are behavior-identical — the pre-check duplicates a gate the handler
+	// still runs. See registerTool.ts.
+	const authCtx: ToolAuthContext = { oauthCtx };
+
 	// ── store_memory ────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"store_memory",
 		"Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations. " +
 			"WHEN: use after any decision, rule, or lesson that must persist across sessions. " +
@@ -1662,7 +1673,10 @@ export function registerTools(
 
 	// ── soft_delete_memory ──────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"soft_delete_memory",
 		"Soft-delete a memory so it stops appearing in recall results while remaining in the audit log. " +
 			"WHEN: use to retire an outdated fact or superseded rule without permanent data loss. " +
@@ -1703,7 +1717,13 @@ export function registerTools(
 
 	// ── get_memory ──────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_memory",
 		"Fetch a single memory by its Convex document ID, including relations and episode metadata. " +
 			"WHEN: use when you have a specific memoryId from a prior recall/store and need the full record. " +
@@ -1725,7 +1745,10 @@ export function registerTools(
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId,
 				});
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, memory);
+				const filtered = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					memory,
+				);
 				if (filtered === null) {
 					return mcpError(`Memory not found: ${memoryId}`);
 				}
@@ -1744,7 +1767,10 @@ export function registerTools(
 	// Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
 	// see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"recall",
 		RECALL_TOOL_DESCRIPTION,
 		{
@@ -1811,7 +1837,10 @@ export function registerTools(
 	// Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
 	// see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"text_search",
 		TEXT_SEARCH_TOOL_DESCRIPTION,
 		{
@@ -1867,7 +1896,10 @@ export function registerTools(
 	// Mirrors text_search 1:1 (same Convex action `search:textSearch`).
 	// text_search is retained as a deprecated alias (removal re-targeted 2.11.0).
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"search_memories_by_keyword",
 		"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
 			"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. " +
@@ -1925,7 +1957,10 @@ export function registerTools(
 	// Mirrors recall 1:1 (same Convex action `search:recall`).
 	// recall is retained as a deprecated alias (removal re-targeted 2.11.0).
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"search_memories_by_semantic",
 		"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
 			"WHEN: use at session start or before decisions — prefer over search_memories_by_keyword for intent-based queries. " +
@@ -1990,7 +2025,10 @@ export function registerTools(
 
 	// ── hybrid_search ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"hybrid_search",
 		HYBRID_SEARCH_TOOL_DESCRIPTION,
 		{
@@ -2062,7 +2100,10 @@ export function registerTools(
 
 	// ── store_episode ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"store_episode",
 		"Store a structured episodic memory capturing context, goal, action, outcome, and insight from a past event. " +
 			"WHEN: use after completing a non-trivial task or encountering an unexpected failure or success. " +
@@ -2142,7 +2183,13 @@ export function registerTools(
 	// (no separate table — see hotfix 7f958d0). This calls memories:getMemory
 	// and asserts type='episode' so callers get a non-leaky 404 on wrong-type IDs.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_episode",
 		"Fetch a single episode by its memory document ID. Episodes are memories with type='episode' carrying context/goal/action/outcome/insight + severity. " +
 			"WHEN: use when you have an episodeId from store_episode or a prior search and need the full record. " +
@@ -2161,7 +2208,10 @@ export function registerTools(
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId: episodeId,
 				});
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, memory);
+				const filtered = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					memory,
+				);
 				if (filtered === null) {
 					return mcpError(`Episode not found: ${episodeId}`);
 				}
@@ -2181,7 +2231,10 @@ export function registerTools(
 	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
 	// Thin wrapper on memories:listMemories with type='episode' forced.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"list_episodes",
 		"List episodes (memories with type='episode') ordered newest first. " +
 			"WHEN: use to enumerate episodes by namespace or creator before recall/audit. " +
@@ -2266,7 +2319,10 @@ export function registerTools(
 					? (memories as any).value
 					: [];
 
-				const filteredList = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawList);
+				const filteredList = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rawList,
+				);
 
 				// Encode continueCursor → opaque nextCursor token for the MCP caller.
 				const backendNextCursor = (memories as any)?.continueCursor ?? null;
@@ -2300,7 +2356,10 @@ export function registerTools(
 	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
 	// Thin wrapper on search:textSearch with type='episode' forced.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"search_episodes_by_keyword",
 		"BM25 full-text keyword search restricted to episodes (memories with type='episode'). " +
 			"WHEN: use when search_episodes_by_semantic returns too-broad results and you need an exact phrase or ID inside an episode field. " +
@@ -2356,7 +2415,10 @@ export function registerTools(
 	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
 	// Thin wrapper on search:recall with type='episode' forced.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"search_episodes_by_semantic",
 		"Semantic vector search restricted to episodes (memories with type='episode'), ranked by cosine similarity. " +
 			"WHEN: use to recall structured past events by intent — failure modes, lessons, similar contexts. " +
@@ -2418,7 +2480,13 @@ export function registerTools(
 
 	// ── get_profile ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_profile",
 		"Fetch an orchestrator profile with static identity and dynamic session state fields. " +
 			"WHEN: use to check peer status, capabilities, or current task before assigning work. " +
@@ -2441,7 +2509,10 @@ export function registerTools(
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
 				});
-				const filteredProfile = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, profile as any);
+				const filteredProfile = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					profile as any,
+				);
 				return {
 					content: [
 						{
@@ -2458,7 +2529,10 @@ export function registerTools(
 
 	// ── update_profile ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "orchestratorId" },
 		"update_profile",
 		"Create or update an orchestrator profile with static identity facts and dynamic session state. " +
 			"WHEN: call on each session start to update lastSeen/sessionCount, or when role/capabilities change. " +
@@ -2531,7 +2605,10 @@ export function registerTools(
 
 	// ── list_memories ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "read", namespaceArg: "namespace" },
 		"list_memories",
 		"List active (isLatest=true) memories for a namespace, ordered newest first. " +
 			"WHEN: use to audit what a namespace contains or to paginate all entries without a query. " +
@@ -2627,7 +2704,10 @@ export function registerTools(
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only rows whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
-				const filteredList = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawList);
+				const filteredList = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rawList,
+				);
 
 				// Encode continueCursor → opaque nextCursor token for the MCP caller.
 				const backendNextCursor = (memories as any)?.continueCursor ?? null;
@@ -2669,7 +2749,10 @@ export function registerTools(
 
 	// ── send_message ────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "from" },
 		"send_message",
 		"Send a message to one, many, or all orchestrators via channel routing (broadcast / role DM / instance DM). " +
 			"WHEN: use to notify peers of task completion, handoff, or decision; creates one receipt per recipient. " +
@@ -2840,7 +2923,14 @@ export function registerTools(
 
 	// ── check_messages ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"recipient restricted in-handler to identities the token may speak as (fromAllowList/userId)",
+		},
 		"check_messages",
 		"Check for unread messages addressed to a recipient role, returning receiptIds for acknowledgment. " +
 			"WHEN: call at session start and after long pauses to drain the inbox before starting work. " +
@@ -2970,7 +3060,14 @@ export function registerTools(
 
 	// ── mark_as_read ────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"receiptIds are caller-scoped opaque handles issued by check_messages; ownership enforced in messages:markAsRead",
+		},
 		"mark_as_read",
 		"Mark one or more message receipts as read using receiptIds from check_messages. " +
 			"WHEN: call immediately after processing each batch of messages returned by check_messages. " +
@@ -3023,7 +3120,10 @@ export function registerTools(
 
 	// ── delete_message ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"delete_message",
 		"Delete a message and all its receipts; only the original sender or system may delete. " +
 			"WHEN: use to retract a mistaken broadcast or sensitive content before recipients read it. " +
@@ -3070,7 +3170,10 @@ export function registerTools(
 
 	// ── set_summary ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "orchestratorId" },
 		"set_summary",
 		"Update the current-work summary for an orchestrator instance, visible via list_peers. " +
 			"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
@@ -3121,7 +3224,13 @@ export function registerTools(
 
 	// ── list_peers ──────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_peers",
 		"List all orchestrator profiles with current status, summary, and session info, newest first. " +
 			"WHEN: use before assigning work or sending a DM to confirm who is active and what they are doing. " +
@@ -3234,7 +3343,13 @@ export function registerTools(
 
 	// ── list_messages ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_messages",
 		"List historical messages filtered by session day or sender, newest first; use check_messages for unread. " +
 			"WHEN: use for audit, recap, or debugging a specific day's message traffic. " +
@@ -3368,7 +3483,13 @@ export function registerTools(
 	// BM25 keyword search over message content. Backed by Convex
 	// `messages:searchMessagesByKeyword` using the `search_content` searchIndex.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_messages_by_keyword",
 		"BM25 full-text keyword search over message content, ranked by relevance. " +
 			"WHEN: use for post-incident audit or to find peer DMs by topic — e.g. 'find messages about deploy' across the recent sessionDay window. " +
@@ -3437,9 +3558,10 @@ export function registerTools(
 				// then strip the synthetic field back out of the response.
 				const filteredResults = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					(Array.isArray(results) ? (results as Array<Record<string, unknown>>) : []).map(
-						(m) => ({ ...m, createdBy: m.from as string | undefined }),
-					),
+					(Array.isArray(results)
+						? (results as Array<Record<string, unknown>>)
+						: []
+					).map((m) => ({ ...m, createdBy: m.from as string | undefined })),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
 				return {
 					content: [
@@ -3475,7 +3597,13 @@ export function registerTools(
 	//      (messageId/from/channel/createdAt/truncated) is always returned
 	//      intact so a scoped caller still knows the broadcast exists.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_broadcast_status",
 		"Show read/unread receipt status for a broadcast message by messageId. " +
 			"WHEN: use after send_message to confirm all recipients acknowledged a critical announcement. " +
@@ -3569,7 +3697,10 @@ export function registerTools(
 
 	// ── create_task ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"create_task",
 		"Create a task assigned to an orchestrator with priority, status tracking, and optional mission link. " +
 			"WHEN: use to delegate work, track a deliverable, or instantiate a step from a mission plan. " +
@@ -3672,7 +3803,13 @@ export function registerTools(
 
 	// ── list_tasks ──────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "scoped in-handler via listTasksGate(oauthCtx, ...)",
+		},
 		"list_tasks",
 		LIST_TASKS_TOOL_DESCRIPTION,
 		listTasksArgsSchema.shape,
@@ -3781,7 +3918,14 @@ export function registerTools(
 	// ── bulk_complete_tasks ─────────────────────────────────────────────────────
 	// PR-F — bulk close cron-spam tasks in one mutation. dryRun=true by default.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"bulkComplete is scoped by callerOrchestrator inside tasks:bulkComplete",
+		},
 		BULK_COMPLETE_TASKS_TOOL_NAME,
 		BULK_COMPLETE_TASKS_TOOL_DESCRIPTION,
 		bulkCompleteTasksArgsSchema.shape,
@@ -3816,7 +3960,13 @@ export function registerTools(
 	// which uses the `search_title` searchIndex. Filter axes: assignedTo, status,
 	// project, missionId — all pushed into the index for sub-linear scan.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_tasks_by_keyword",
 		"BM25 full-text keyword search over task titles, ranked by relevance. " +
 			"WHEN: use to find tasks by topic/keyword when list_tasks filters are too broad — e.g. 'find tasks about hook' across all assignees. " +
@@ -3899,7 +4049,9 @@ export function registerTools(
 				);
 				const filteredFull = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(results) ? (results as Array<Record<string, unknown>>) : [],
+					Array.isArray(results)
+						? (results as Array<Record<string, unknown>>)
+						: [],
 				);
 				const projected = wantsFull
 					? filteredFull
@@ -3929,7 +4081,10 @@ export function registerTools(
 	// query is never a post-hoc filter over a truncated cross-project scan —
 	// the same "bound applied after the fetch" disease as the period fix.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		BILLING_SUMMARY_BY_PROJECT_TOOL_NAME,
 		BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION,
 		billingSummaryByProjectArgsSchema.shape,
@@ -3974,7 +4129,10 @@ export function registerTools(
 
 	// ── update_task ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"update_task",
 		"Update any mutable field on a task; only provided fields are patched, updatedAt auto-set. " +
 			"WHEN: use to reassign, reprioritize, or add context to an existing task without recreating it. " +
@@ -4082,7 +4240,10 @@ export function registerTools(
 
 	// ── complete_task ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"complete_task",
 		"Mark a task as done with a mandatory completionNote; always notify the creator via send_message after. " +
 			"WHEN: call when all deliverables are committed or verified — never complete without a proof token in the note. " +
@@ -4133,7 +4294,10 @@ export function registerTools(
 
 	// ── start_task ──────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"start_task",
 		"Set a task to in_progress and record the startedAt timestamp for duration tracking. " +
 			"WHEN: call as the first action when picking up a task to signal activity and enable metrics. " +
@@ -4178,7 +4342,10 @@ export function registerTools(
 
 	// ── checkout_task ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"checkout_task",
 		"Atomically claim a todo task, preventing race conditions when multiple orchestrators compete. " +
 			"WHEN: use before start_task in multi-orchestrator queues to ensure exclusive ownership. " +
@@ -4226,7 +4393,10 @@ export function registerTools(
 
 	// ── delete_task ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"delete_task",
 		"Permanently delete a task; only the creator or system role may delete. " +
 			"WHEN: use to remove erroneously created tasks or test artifacts — prefer complete_task for real work. " +
@@ -4271,7 +4441,10 @@ export function registerTools(
 
 	// ── block_task ──────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"block_task",
 		"Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked. " +
 			"WHEN: use when external dependency or missing input prevents progress — record the specific blocker. " +
@@ -4332,7 +4505,10 @@ export function registerTools(
 
 	// ── add_task_dependency ─────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"add_task_dependency",
 		"Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
@@ -4390,7 +4566,13 @@ export function registerTools(
 
 	// ── list_tasks_by_mission ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_tasks_by_mission",
 		"List all tasks linked to a mission, optionally filtered by status, newest first. " +
 			"WHEN: use to review mission progress or find blocked/open tasks within a specific mission. " +
@@ -4507,7 +4689,10 @@ export function registerTools(
 
 	// ── create_mission ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"create_mission",
 		"Create a mission grouping related tasks under a project with a pilot orchestrator and agent list. " +
 			"WHEN: use when starting a multi-task initiative that needs lifecycle tracking and progress reporting. " +
@@ -4592,7 +4777,13 @@ export function registerTools(
 
 	// ── list_missions ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "non-master restricted in-handler to pilot===oauthCtx.userId",
+		},
 		"list_missions",
 		"List missions filtered by project, pilot, or status, newest first with cursor paging support. " +
 			"WHEN: use to audit active missions, find missions by pilot, or check cross-project progress. " +
@@ -4714,7 +4905,13 @@ export function registerTools(
 
 	// ── get_mission ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_mission",
 		"Fetch a single mission by Convex ID with full details: status, pilot, agents, progress, and dates. " +
 			"WHEN: use before assigning tasks or reporting to get the canonical mission state. " +
@@ -4734,7 +4931,10 @@ export function registerTools(
 				const mission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
-				const filteredMission = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, mission as any);
+				const filteredMission = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					mission as any,
+				);
 
 				return {
 					content: [
@@ -4752,7 +4952,10 @@ export function registerTools(
 
 	// ── update_mission ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "pilot" },
 		"update_mission",
 		"Update any mutable field on a mission; only provided fields are patched, updatedAt auto-set. " +
 			"WHEN: use to advance status, update progress percentage, or change pilot/agents mid-flight. " +
@@ -4830,7 +5033,10 @@ export function registerTools(
 
 	// ── update_mission_status ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"update_mission_status",
 		"Change a mission's lifecycle status in a single call without touching other fields. " +
 			"WHEN: use as a lightweight alternative to update_mission when only the status changes. " +
@@ -4872,7 +5078,10 @@ export function registerTools(
 
 	// ── write_diary ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "orchestrator" },
 		"write_diary",
 		"Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
 			"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
@@ -4937,7 +5146,13 @@ export function registerTools(
 
 	// ── get_diary ───────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_diary",
 		"Fetch a diary entry for a specific date and orchestrator, returning null if none exists. " +
 			"WHEN: use to review what an orchestrator did on a given day for recap or handoff briefing. " +
@@ -4961,7 +5176,10 @@ export function registerTools(
 					date,
 					orchestrator,
 				});
-				const filteredEntry = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, entry as any);
+				const filteredEntry = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					entry as any,
+				);
 
 				const baseText = JSON.stringify(filteredEntry, null, 2);
 				const text = appendMarkerIfEnabled(baseText, () => {
@@ -4990,7 +5208,14 @@ export function registerTools(
 
 	// ── list_diaries ────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"non-master restricted in-handler to orchestrator/createdBy===oauthCtx.userId",
+		},
 		"list_diaries",
 		"List diary entries filtered by orchestrator or author, newest first with cursor paging support. " +
 			"WHEN: use to review recent history across sessions or audit a period of activity. " +
@@ -5108,7 +5333,10 @@ export function registerTools(
 
 	// ── create_briefing_note ────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"create_briefing_note",
 		"Create a structured briefing note capturing a topic discussion with participants, decisions, and memory links. " +
 			"WHEN: use after key architectural, product, or operational discussions to record decisions durably. " +
@@ -5196,7 +5424,10 @@ export function registerTools(
 
 	// ── update_briefing_note ────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"update_briefing_note",
 		updateBriefingNoteDescription,
 		updateBriefingNoteSchema.shape,
@@ -5261,7 +5492,13 @@ export function registerTools(
 	// S3.1.C0 — single-row read with scope-aware filter (mirrors get_memory).
 	// scopeFilterGet collapses cross-tenant rows to a non-leaky "not found".
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_briefing_note",
 		"Fetch a single briefing note by ID with all fields: title, topic, participants, content, decisions, and links. " +
 			"WHEN: use when you have a specific noteId and need the full structured record for a handoff or recap. " +
@@ -5295,7 +5532,13 @@ export function registerTools(
 
 	// ── list_briefing_notes ─────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_briefing_notes",
 		LIST_BRIEFING_NOTES_TOOL_DESCRIPTION,
 		{
@@ -5422,7 +5665,13 @@ export function registerTools(
 	// BM25 keyword search over briefing note content. Backed by Convex
 	// `briefingNotes:searchBriefingNotesByKeyword` using the `search_content` searchIndex.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_briefing_notes_by_keyword",
 		SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION,
 		{
@@ -5491,7 +5740,10 @@ export function registerTools(
 
 	// ── register_component ──────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"register_component",
 		"Register or upsert a component (agent/skill/hook/plugin) in the VantagePeers registry by name+type. " +
 			"WHEN: use when publishing a new version of an agent skill or hook so peers can discover and use it. " +
@@ -5563,7 +5815,13 @@ export function registerTools(
 
 	// ── list_components ─────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_components",
 		LIST_COMPONENTS_TOOL_DESCRIPTION,
 		{
@@ -5639,7 +5897,10 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
-				const filteredComponents = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawItems as any);
+				const filteredComponents = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rawItems as any,
+				);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -5680,7 +5941,13 @@ export function registerTools(
 
 	// ── get_component ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_component",
 		"Fetch a single component by name and type, returning the full source content and metadata. " +
 			"WHEN: use before invoking a skill to read its interface, version, and implementation. " +
@@ -5702,7 +5969,10 @@ export function registerTools(
 					name,
 					type,
 				});
-				const filteredComponent = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, component as any);
+				const filteredComponent = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					component as any,
+				);
 
 				return {
 					content: [
@@ -5720,7 +5990,10 @@ export function registerTools(
 
 	// ── update_component ────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"update_component",
 		"Update a component's content, version, or team; only provided fields are patched. " +
 			"WHEN: use to bump a skill version or fix content without re-registering from scratch. " +
@@ -5781,7 +6054,10 @@ export function registerTools(
 
 	// ── delete_component ────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"delete_component",
 		"Permanently delete a component from the registry by Convex document ID. " +
 			"WHEN: use to remove deprecated or test components that should no longer be discoverable. " +
@@ -5819,7 +6095,13 @@ export function registerTools(
 	// Retained for one minor version as a back-compat shim. New callers should
 	// use `search_components_by_keyword`. To be removed in 2.11.0.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_components",
 		// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
 		// @cursorPagingException relevance-ranked-not-chronological
@@ -5884,7 +6166,13 @@ export function registerTools(
 	// Mirrors search_components 1:1 (same Convex query `components:search`).
 	// search_components is retained as a deprecated alias until 2.11.0.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_components_by_keyword",
 		"BM25 / substring keyword search over components by name or team with optional type filter. " +
 			"WHEN: use before register_component to check if a similar component already exists in the registry. " +
@@ -5939,7 +6227,10 @@ export function registerTools(
 
 	// ── create_recurring_task ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"create_recurring_task",
 		"Create a recurring task template that auto-generates tasks on a cron schedule. " +
 			"WHEN: use for daily standups, weekly reviews, or any repeating work item pattern. " +
@@ -6014,7 +6305,13 @@ export function registerTools(
 
 	// ── list_recurring_tasks ────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_recurring_tasks",
 		"List recurring task templates filtered by assignee or active status, newest first. " +
 			"WHEN: use to audit which schedules are active or find templates to pause/resume/update. " +
@@ -6119,7 +6416,10 @@ export function registerTools(
 
 	// ── pause_recurring_task ────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"pause_recurring_task",
 		"Pause a recurring task template to stop auto-creating tasks until explicitly resumed. " +
 			"WHEN: use during holidays, freezes, or when the assignee is unavailable for a period. " +
@@ -6153,7 +6453,10 @@ export function registerTools(
 
 	// ── resume_recurring_task ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"resume_recurring_task",
 		"Resume a paused recurring task template and recalculate its next scheduled run time. " +
 			"WHEN: use after a pause period ends to re-enable automatic task generation. " +
@@ -6187,7 +6490,10 @@ export function registerTools(
 
 	// ── delete_recurring_task ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"delete_recurring_task",
 		"Permanently delete a recurring task template, stopping all future scheduled task generation. " +
 			"WHEN: use when a recurring process is retired and should never generate tasks again. " +
@@ -6221,7 +6527,14 @@ export function registerTools(
 
 	// ── update_recurring_task ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"from identity resolved from a nested arg; enforced in-handler by guardFrom",
+		},
 		"update_recurring_task",
 		"Update a recurring task template's fields; cronExpression change auto-recalculates nextRunAt. " +
 			"WHEN: use to change assignee, schedule, or priority of an active recurring template. " +
@@ -6279,7 +6592,10 @@ export function registerTools(
 
 	// ── create_mandate ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "requestedBy" },
 		"create_mandate",
 		"Create a cross-orchestrator service mandate with agreed token budget and spending limits. " +
 			"WHEN: use when one orchestrator commissions work from another with formal budget accountability. " +
@@ -6359,7 +6675,10 @@ export function registerTools(
 
 	// ── accept_mandate ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"accept_mandate",
 		"Accept a mandate by the fulfilledBy orchestrator, advancing status from requested to accepted. " +
 			"WHEN: call when the fulfiller confirms they can deliver the service within the agreed budget. " +
@@ -6404,7 +6723,10 @@ export function registerTools(
 
 	// ── update_mandate ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"update_mandate",
 		"Update a mandate's status, tokensCost, or linkedTaskIds; only fulfilledBy or system may update. " +
 			"WHEN: use to record spend progress, link created tasks, or advance status to delivered. " +
@@ -6464,7 +6786,10 @@ export function registerTools(
 
 	// ── settle_mandate ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"settle_mandate",
 		"Settle a mandate by confirming delivery and recording the final token cost; sets status to settled. " +
 			"WHEN: call after verifying the delivered work meets the mandate scope — closes the billing cycle. " +
@@ -6515,7 +6840,14 @@ export function registerTools(
 
 	// ── validate_mandate_spending ───────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"stateless spend-limit validation keyed on a caller-supplied mandateId; no cross-tenant enumeration",
+		},
 		"validate_mandate_spending",
 		"Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
 			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
@@ -6549,7 +6881,13 @@ export function registerTools(
 
 	// ── list_mandates ───────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_mandates",
 		"List mandates filtered by requestedBy, fulfilledBy, or status, newest first with cursor paging. " +
 			"WHEN: use to audit active service agreements or track billing between orchestrator pairs. " +
@@ -6662,7 +7000,10 @@ export function registerTools(
 
 	// ── create_bu ───────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "orchestratorId" },
 		"create_bu",
 		"Create a new business unit with strategy, business model, team composition, and KPIs. " +
 			"WHEN: use when launching a new revenue line or formalizing an existing product unit. " +
@@ -6761,7 +7102,10 @@ export function registerTools(
 
 	// ── update_bu ───────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"update_bu",
 		"Update any mutable field on a business unit; only provided fields are patched, updatedAt auto-set. " +
 			"WHEN: use to update status, revenue projections, or team composition as the BU evolves. RBAC: caller must be the BU's owning orchestrator or 'system'. " +
@@ -6863,7 +7207,13 @@ export function registerTools(
 
 	// ── get_bu ──────────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_bu",
 		"Fetch a single business unit by Convex document ID, returning null if not found. " +
 			"WHEN: use before updating or reporting on a BU to get the current canonical state. " +
@@ -6883,7 +7233,10 @@ export function registerTools(
 				const bu = await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
 				});
-				const filteredBu = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, bu as any);
+				const filteredBu = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					bu as any,
+				);
 
 				return {
 					content: [
@@ -6901,7 +7254,13 @@ export function registerTools(
 
 	// ── list_bus ────────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_bus",
 		LIST_BUS_TOOL_DESCRIPTION,
 		{
@@ -6974,7 +7333,10 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
-				const filteredBus = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawItems as any);
+				const filteredBus = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rawItems as any,
+				);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -7013,7 +7375,10 @@ export function registerTools(
 
 	// ── delete_bu ───────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"delete_bu",
 		"Permanently delete a business unit by Convex document ID — this action is irreversible. " +
 			"WHEN: use only for test BUs or entities created in error; prefer status update for real BUs. " +
@@ -7054,7 +7419,10 @@ export function registerTools(
 
 	// ── add_repo_mapping ────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
 			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
@@ -7113,7 +7481,13 @@ export function registerTools(
 
 	// ── list_repo_mappings ──────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_repo_mappings",
 		"List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support. " +
 			"WHEN: use to audit which repos are monitored and verify routing before adding new mappings. " +
@@ -7190,7 +7564,10 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
-				const filteredMappings = scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawItems as any);
+				const filteredMappings = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rawItems as any,
+				);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -7231,7 +7608,10 @@ export function registerTools(
 
 	// ── remove_repo_mapping ─────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"remove_repo_mapping",
 		"Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
 			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
@@ -7277,7 +7657,13 @@ export function registerTools(
 
 	// ── list_issues ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_issues",
 		"List tracked GitHub issues filtered by project, status, or assigned orchestrator, newest first. " +
 			"WHEN: use to triage open issues, find in-progress fixes, or review a project's bug backlog. " +
@@ -7424,7 +7810,13 @@ export function registerTools(
 
 	// ── get_issue ───────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_issue",
 		"Fetch a single GitHub issue by repo name and issue number, returning full tracking details. " +
 			"WHEN: use when routing a specific GitHub webhook event or verifying fix status on a known issue. " +
@@ -7448,7 +7840,10 @@ export function registerTools(
 					repo,
 					issueNumber,
 				});
-				const filteredIssue = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, issue as any);
+				const filteredIssue = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					issue as any,
+				);
 
 				return {
 					content: [
@@ -7470,7 +7865,10 @@ export function registerTools(
 
 	// ── update_issue_status ─────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"update_issue_status",
 		"Update the tracked status of a GitHub issue (open/in_progress/fixed/verified/closed). " +
 			"WHEN: use when work begins, a fix is committed, or QA confirms resolution. " +
@@ -7521,7 +7919,10 @@ export function registerTools(
 
 	// ── link_commit_to_issue ────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"link_commit_to_issue",
 		"Link a fix commit SHA to a GitHub issue, recording the fixer and time of resolution. " +
 			"WHEN: use immediately after pushing a fix commit so the issue has an auditable commit reference. " +
@@ -7571,7 +7972,10 @@ export function registerTools(
 
 	// ── verify_issue ────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"verify_issue",
 		"Mark a GitHub issue as verified, confirming the fix was tested and the issue is resolved. " +
 			"WHEN: use after QA or the reporter confirms the fix works in the target environment. " +
@@ -7619,7 +8023,13 @@ export function registerTools(
 
 	// ── issue_stats ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"issue_stats",
 		"Get issue count statistics grouped by status, optionally scoped to a single project. " +
 			"WHEN: use for daily health checks or project retrospectives to measure issue throughput. " +
@@ -7642,7 +8052,10 @@ export function registerTools(
 				const stats = await convex.query("issues:getStats" as any, {
 					project,
 				});
-				const filteredStats = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, stats as any);
+				const filteredStats = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					stats as any,
+				);
 
 				return {
 					content: [
@@ -7660,7 +8073,10 @@ export function registerTools(
 
 	// ── create_fix_pattern ──────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"create_fix_pattern",
 		"Create a fix pattern in the knowledge base documenting symptom, root cause, and optional validated fix. " +
 			"WHEN: use after resolving a non-trivial bug so future agents can find and reuse the solution. " +
@@ -7743,7 +8159,10 @@ export function registerTools(
 
 	// ── add_fix_attempt ─────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"add_fix_attempt",
 		"Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
 			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
@@ -7795,7 +8214,10 @@ export function registerTools(
 
 	// ── validate_fix ────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"validate_fix",
 		"Set or update the validated fix description on a fix pattern after confirming it works. " +
 			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
@@ -7844,7 +8266,13 @@ export function registerTools(
 	// "_by_semantic" is the canonical suffix per the CRUD baseline doctrine.
 	// To be removed in 2.11.0.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_fix_patterns",
 		// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
 		// @cursorPagingException semantic-action-not-chronological
@@ -7912,7 +8340,13 @@ export function registerTools(
 	// Mirrors search_fix_patterns 1:1 (same Convex action `search:searchFixPatterns`).
 	// search_fix_patterns is retained as a deprecated alias until 2.11.0.
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"search_fix_patterns_by_semantic",
 		"Semantic vector search over fix patterns by symptom description, ranked by relevance. " +
 			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
@@ -7971,7 +8405,13 @@ export function registerTools(
 
 	// ── list_fix_patterns ───────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_fix_patterns",
 		"List fix patterns filtered by source project, newest first with cursor paging support. " +
 			"WHEN: use to audit the knowledge base or review all patterns for a specific project. " +
@@ -8100,7 +8540,10 @@ export function registerTools(
 
 	// ── link_issue_to_pattern ───────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"link_issue_to_pattern",
 		"Link a VantagePeers issue to a fix pattern creating a bidirectional reference. " +
 			"WHEN: use after creating a fix pattern for an issue to connect the symptom record with the bug tracker. " +
@@ -8145,7 +8588,13 @@ export function registerTools(
 
 	// ── get_mission_template ────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_mission_template",
 		"Fetch a mission template by name with all steps, or null if not found. " +
 			"WHEN: use before instantiate_template_into_mission to inspect steps and verify the template exists. " +
@@ -8166,7 +8615,10 @@ export function registerTools(
 					"missionTemplates:getByName" as any,
 					{ name },
 				);
-				const filteredTemplate = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, template as any);
+				const filteredTemplate = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					template as any,
+				);
 
 				return {
 					content: [
@@ -8184,7 +8636,10 @@ export function registerTools(
 
 	// ── update_mission_template ─────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"update_mission_template",
 		"Create or upsert a mission template by name; existing templates are overwritten. " +
 			"WHEN: use to define or refine reusable multi-step workflow blueprints for recurring mission types. " +
@@ -8279,7 +8734,13 @@ export function registerTools(
 
 	// ── instantiate_template_into_mission ───────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"instantiate_template_into_mission",
 		"Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator. " +
 			"WHEN: use after create_mission to fan out a standard workflow from a template in one call. " +
@@ -8332,7 +8793,10 @@ export function registerTools(
 				const targetMission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
-				const filteredMission = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, targetMission as any);
+				const filteredMission = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					targetMission as any,
+				);
 				if (filteredMission == null) {
 					return mcpError(
 						"Mission not found or not accessible to current scope",
@@ -8366,7 +8830,10 @@ export function registerTools(
 
 	// ── add_deployment ──────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"add_deployment",
 		"Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
 			"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
@@ -8442,7 +8909,10 @@ export function registerTools(
 
 	// ── remove_deployment ───────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"remove_deployment",
 		"Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
 			"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
@@ -8482,7 +8952,13 @@ export function registerTools(
 
 	// ── list_errors ─────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"list_errors",
 		"List detected errors from monitored deployments with dedup counts and linked GitHub issue numbers. " +
 			"WHEN: use to triage production errors, identify recurring failures, or find the latest crash report. " +
@@ -8590,7 +9066,13 @@ export function registerTools(
 
 	// ── get_error ───────────────────────────────────────────────────────────────
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_error",
 		"Fetch a single error log entry by Convex document ID, including full stack trace and issue linkage. " +
 			"WHEN: use after list_errors to retrieve the full stack trace for a specific error entry. " +
@@ -8612,7 +9094,10 @@ export function registerTools(
 				const error = await convex.query("errorMonitor:getError" as any, {
 					errorId: errorId as any,
 				});
-				const filteredError = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, error as any);
+				const filteredError = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					error as any,
+				);
 				return {
 					content: [
 						{
@@ -8645,7 +9130,14 @@ export function registerTools(
 	//   - non-master with empty fromAllowList → null
 	//   - legacy bearer (no oauthCtx) → null
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"returns only the caller's own resolved scope; exposes no cross-tenant data",
+		},
 		"whoami",
 		"Returns the orchestrator identity baked into the current bearer's scope context. " +
 			"WHEN: call this on skill startup to avoid asking the user for their orchestrator_id. " +
@@ -8732,7 +9224,13 @@ export function registerTools(
 	//
 	// Day 92 F1 — mission k57a36y8w5t085bqr23dsmvb2d882506
 
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason: "stateless payload linter; performs no data access",
+		},
 		"validate_task_payload",
 		"Dry-run lint for VP write-path tools — checks all validation axes and returns failures with fix snippets. " +
 			"WHEN: call before create_task / update_task / complete_task / send_message to catch all violations in one pass. " +
@@ -8781,7 +9279,10 @@ export function registerTools(
 	// === B2 §1 CANONICAL ALIASES — backward-compat legacy names retained ===
 
 	// register_repo_mapping → was add_repo_mapping [ALIAS of add_repo_mapping — C0.3 master-only]
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"register_repo_mapping",
 		"[ALIAS of add_repo_mapping] Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
 			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
@@ -8816,7 +9317,10 @@ export function registerTools(
 	);
 
 	// delete_repo_mapping → was remove_repo_mapping [ALIAS of remove_repo_mapping — C0.3 master-only]
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"delete_repo_mapping",
 		"[ALIAS of remove_repo_mapping] Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
 			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
@@ -8848,7 +9352,10 @@ export function registerTools(
 	);
 
 	// register_deployment → was add_deployment [ALIAS of add_deployment — C0.1 master-only]
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"register_deployment",
 		"[ALIAS of add_deployment] Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
 			"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
@@ -8896,7 +9403,10 @@ export function registerTools(
 	);
 
 	// delete_deployment → was remove_deployment [ALIAS of remove_deployment — C0.1 master-only]
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"delete_deployment",
 		"[ALIAS of remove_deployment] Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
 			"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
@@ -8928,7 +9438,14 @@ export function registerTools(
 	);
 
 	// check_mandate_spending → was validate_mandate_spending (not C0-gated — read-only check)
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"alias of validate_mandate_spending; stateless spend-limit validation",
+		},
 		"check_mandate_spending",
 		"[ALIAS of validate_mandate_spending] Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
 			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
@@ -8959,7 +9476,10 @@ export function registerTools(
 	);
 
 	// check_fix → was validate_fix [ALIAS of validate_fix — C0.5 master-only]
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		"check_fix",
 		"[ALIAS of validate_fix] Set or update the validated fix description on a fix pattern after confirming it works. " +
 			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
@@ -8992,7 +9512,10 @@ export function registerTools(
 	);
 
 	// create_fix_attempt → was add_fix_attempt (not C0-gated — uses guardFrom(createdBy))
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "createdBy" },
 		"create_fix_attempt",
 		"[ALIAS of add_fix_attempt] Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
 			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
@@ -9033,7 +9556,10 @@ export function registerTools(
 	);
 
 	// create_task_dependency → was add_task_dependency (not C0-gated — uses callerOrchestrator auth)
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"create_task_dependency",
 		"[ALIAS of add_task_dependency] Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
@@ -9066,7 +9592,10 @@ export function registerTools(
 	);
 
 	// update_summary → was set_summary (not C0-gated — uses orchestratorId auth)
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "orchestratorId" },
 		"update_summary",
 		"[ALIAS of set_summary] Update the current-work summary for an orchestrator instance, visible via list_peers. " +
 			"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
@@ -9099,7 +9628,10 @@ export function registerTools(
 	);
 
 	// create_diary → was write_diary (not C0-gated — uses guardFrom(author) when present)
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "author" },
 		"create_diary",
 		"[ALIAS of write_diary] Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
 			"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
@@ -9141,7 +9673,13 @@ export function registerTools(
 	// ── get_task ────────────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix (task k172735brsw6bc3j2dkkkfxqrx88kkjq).
 	// Pi reported get_<entity>_by_id surface incomplete. Convex tasks:getById exists.
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_task",
 		"Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note. " +
 			"WHEN: use when you have a specific taskId from list_tasks/create_task and need the full record (brief, VERIFICATION block, completionNote). " +
@@ -9173,7 +9711,13 @@ export function registerTools(
 
 	// ── get_fix_pattern ─────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix. Convex fixPatterns:get exists.
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_fix_pattern",
 		"Fetch a single fix pattern by its Convex document ID, including all linked fix attempts. " +
 			"WHEN: use when you have a patternId from list_fix_patterns/search_fix_patterns and need the full record with attempts history. " +
@@ -9205,7 +9749,13 @@ export function registerTools(
 
 	// ── get_mandate ─────────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix. Convex mandates:get exists.
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_mandate",
 		"Fetch a single spending mandate by its Convex document ID with limits, current spend, and approver chain. " +
 			"WHEN: use when you have a mandateId from list_mandates and need the full record before validateSpending/settleMandate. " +
@@ -9238,7 +9788,13 @@ export function registerTools(
 	// ── get_repo_mapping ────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix. Convex githubRepoMapping:getByRepo exists.
 	// Lookup key is `repo` (string e.g. "vantageos-agency/vantage-peers-plugin"), not a doc ID.
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_repo_mapping",
 		"Fetch a single GitHub repo→VP project mapping by repo slug (owner/name). " +
 			"WHEN: use when you have a repo identifier (e.g. from a webhook or PR URL) and need the canonical VP project mapping. " +
@@ -9279,7 +9835,13 @@ export function registerTools(
 	// Convex messages:getById landed in Phase 2a (PR #735, commit 2ebdaba).
 	// Note: episodes were dropped from Phase 2b scope — episodes are stored as
 	// memories with episode metadata (no separate table), use get_memory instead.
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_message",
 		"Fetch a single peer message by its Convex document ID with full body, channel, sender, sessionDay, and tenant scope. " +
 			"WHEN: use when you have a messageId from list_messages/check_messages and need the raw row (e.g. for read-receipt audit, delete confirmation, or referencing in a fix pattern). " +
@@ -9314,7 +9876,13 @@ export function registerTools(
 	// ── get_recurring_task ──────────────────────────────────────────────────────
 	// Day 100 — Phase 2b get_by_id surface fix. Convex recurringTasks:getById
 	// landed in Phase 2a (PR #735, commit 2ebdaba).
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+		},
 		"get_recurring_task",
 		"Fetch a single recurring task definition by its Convex document ID with cron schedule, prompt, assignee, and last-fire metadata. " +
 			"WHEN: use when you have a recurringTaskId from list_recurring_tasks and need the full row before pause_recurring_task / update_recurring_task / delete_recurring_task. " +
@@ -9351,7 +9919,7 @@ export function registerTools(
 	// ── export_okf_bundle (T3 — OKF Phase 1) ────────────────────────────────────
 	// Thin proxy to convex action `okfBundle:exportOkfBundle`. Registered last
 	// so its argument schema does not pollute other tool handlers' closures.
-	registerExportOkfBundle(server, convex);
+	registerExportOkfBundle(server, convex, oauthCtx);
 
 	// ── validate_okf_bundle (B1 — OKF Phase 2-A) ──────────────────────────────
 	// Thin proxy to convex action `okfBundleNode:validateOkfBundle`. Read-only;
@@ -9363,7 +9931,7 @@ export function registerTools(
 	// Thin proxy to convex action `okfBundleNode:importOkfBundle`. Mutation;
 	// imports memories+briefings+tasks into target namespace with dedup-by-content.
 	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17fja9v7pgnf25yvzkwrj5ch5891bb3.
-	registerImportOkfBundle(server, convex);
+	registerImportOkfBundle(server, convex, oauthCtx);
 
 	// ── store_document_chunked + soft_delete_document (B5 — KB ingest) ─────────
 	// Thin proxies to convex actions `kb:storeDocumentChunked` and
@@ -9376,7 +9944,10 @@ export function registerTools(
 	// Advisory scan of VP tasks+messages+memories for fleet/state claims without
 	// VP-Sources footer (Eta heuristic, Pi-approved Option C).
 	// Mission k571gcctka8mq5jbkgpj0a0b2n892ctg.
-	server.tool(
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
 		IMPROVISATION_DIGEST_TOOL_NAME,
 		IMPROVISATION_DIGEST_TOOL_DESCRIPTION,
 		improvisationDigestArgsSchema.shape,

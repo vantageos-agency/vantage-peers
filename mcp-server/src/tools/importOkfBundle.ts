@@ -21,6 +21,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import type { OAuthContext } from "../auth.js";
+import { defineTool } from "../registerTool.js";
 
 export interface ImportOkfBundleResult {
 	imported: { memories: number; briefings: number; tasks: number };
@@ -64,8 +66,12 @@ export const importOkfBundleArgsSchema = {
 export function registerImportOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
+	oauthCtx?: OAuthContext,
 ): void {
-	server.tool(
+	defineTool(
+		server,
+		{ oauthCtx },
+		{ kind: "write", namespaceArg: "targetNamespace" },
 		"import_okf_bundle",
 		"Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace. " +
 			"WHEN: use to restore a snapshot, migrate workspace data between tenants, or replay an export. " +

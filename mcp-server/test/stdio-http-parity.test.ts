@@ -67,7 +67,10 @@ describe("stdio ↔ HTTP transport parity (single registry)", () => {
 
 	it("src/tools.ts is the single source of tool registration (>= 80 tools)", () => {
 		const src = read(TOOLS_TS);
-		const toolCount = countMatches(src, /\bserver\.tool\s*\(/g);
+		// S2 (vp-multitenant-zero-hole-v1): every registration now flows through
+		// the mandatory-scope wrapper `defineTool(server, authCtx, <scope>, …)`
+		// instead of a bare `server.tool(…)`. Count the wrapper form.
+		const toolCount = countMatches(src, /\bdefineTool\s*\(/g);
 		// Sanity floor — at the time of Day 102 lock we have ~114. Test must
 		// scream if the registry shrinks unexpectedly OR if anyone tries to
 		// move registrations back into the transport bins.
