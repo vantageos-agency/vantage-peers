@@ -3302,10 +3302,22 @@ export function registerTools(
 					createdBefore,
 				});
 
+				// k1780azk7n8fdb7bpnx5n91sx18b5vjf — refus-total fix. Message rows
+				// carry `from` (schema.ts:149, creatorValidator), NOT `createdBy`
+				// and NOT `namespace`. Passing rows through unmapped finds no
+				// field to discriminate on and refuses EVERY non-master caller,
+				// sender included. Same remedy as search_messages_by_keyword
+				// (tools.ts ~3399-3423): remap `from`->`createdBy` before
+				// scopeFilterList, then strip the synthetic field back out.
 				const filteredMessages = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(messages) ? messages : [],
-				);
+					(Array.isArray(messages) ? messages : []).map(
+						(m: Record<string, unknown>) => ({
+							...m,
+							createdBy: m.from as string | undefined,
+						}),
+					),
+				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
@@ -3410,8 +3422,29 @@ export function registerTools(
 						fields: fields ?? "lite",
 					},
 				);
+				// k175j2jems5deccegp4p0fy4x98b4ypn — cross-tenant content leak fix.
+				// Convex's searchMessagesByKeyword is reached through the MCP
+				// server's fixed service-account identity for legacy bearer
+				// callers, so scope isolation must be enforced at this boundary.
+				// Message rows carry `from` (schema.ts:149, creatorValidator), NOT
+				// `createdBy` and NOT `namespace` — scopeFilterList discriminates
+				// on `createdBy`/`namespace` only, so passing rows through
+				// unmapped would find no field to match against and refuse EVERY
+				// non-master caller, sender included (refus-total — same defect
+				// class as list_broadcast_status pre-fix, tools.ts:3502-3509,
+				// which established the sanctioned remedy: remap the tool's real
+				// ownership field onto `createdBy` BEFORE calling scopeFilterList,
+				// then strip the synthetic field back out of the response.
+				const filteredResults = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					(Array.isArray(results) ? (results as Array<Record<string, unknown>>) : []).map(
+						(m) => ({ ...m, createdBy: m.from as string | undefined }),
+					),
+				).map(({ createdBy: _createdBy, ...rest }) => rest);
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+					content: [
+						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
+					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3829,6 +3862,29 @@ export function registerTools(
 			fields,
 		}) => {
 			try {
+				// k175j2jems5deccegp4p0fy4x98b4ypn — cross-tenant content leak fix.
+				// Task rows DO carry `createdBy` (schema.ts:258) and the FULL
+				// branch of tasks:searchTasksByKeyword renders it — but this
+				// tool's default requested mode is "lite", and the lite
+				// projection (tasks.ts:2119-2126) STRIPS createdBy before it
+				// ever reaches this handler. Calling scopeFilterList on a lite
+				// row would find no createdBy/namespace to discriminate on and
+				// refuse every non-master caller, owner included (refus-total).
+				//
+				// Chosen remedy: always request fields="full" from Convex
+				// (internal transport only), apply scopeFilterList against the
+				// real createdBy, then reproject to the tool's public lite
+				// shape when the caller asked for lite (default) or didn't
+				// specify. This preserves the documented public tool shape —
+				// callers relying on the existing lite payload see no schema
+				// change. Rejected alternative: add createdBy to the lite
+				// projection in tasks.ts — cheaper (no extra internal fields
+				// transferred) but changes the PUBLIC shape of every lite
+				// caller across the fleet (a breaking contract change reaching
+				// every existing client of search_tasks_by_keyword, list_tasks
+				// lite mode, etc.), for a benefit that is purely internal to
+				// this one MCP-layer filter step.
+				const wantsFull = fields === "full";
 				const results = await convex.query(
 					"tasks:searchTasksByKeyword" as any,
 					{
@@ -3838,11 +3894,25 @@ export function registerTools(
 						project,
 						missionId,
 						limit: limit ?? 20,
-						fields: fields ?? "lite",
+						fields: "full",
 					},
 				);
+				const filteredFull = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					Array.isArray(results) ? (results as Array<Record<string, unknown>>) : [],
+				);
+				const projected = wantsFull
+					? filteredFull
+					: filteredFull.map((t) => ({
+							_id: t._id,
+							title: t.title,
+							status: t.status,
+							priority: t.priority,
+							assignedTo: t.assignedTo,
+							missionId: t.missionId,
+						}));
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+					content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
