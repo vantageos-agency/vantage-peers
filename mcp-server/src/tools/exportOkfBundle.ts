@@ -22,6 +22,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import type { OAuthContext } from "../auth.js";
+import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types (mirror the Convex action return shape)
@@ -104,8 +106,12 @@ export const exportOkfBundleArgsSchema = {
 export function registerExportOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
+	oauthCtx?: OAuthContext,
 ): void {
-	server.tool(
+	defineTool(
+		server,
+		{ oauthCtx },
+		{ kind: "read", namespaceArg: "namespace" },
 		"export_okf_bundle",
 		"Export a VantagePeers namespace as an OKF v0.1 bundle (tarball). " +
 			"WHEN: use to ship a snapshot to Knowledge Catalog / RAG bridge / audit. " +

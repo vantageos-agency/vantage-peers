@@ -21,6 +21,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types (mirror the Convex action return shape)
@@ -75,7 +76,14 @@ export function registerValidateOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
 ): void {
-	server.tool(
+	defineTool(
+		server,
+		{},
+		{
+			kind: "public",
+			reason:
+				"stateless bundle schema validation; reads only the caller-supplied bundle, no VP data access",
+		},
 		"validate_okf_bundle",
 		"Validate an OKF v0.1 bundle (tarball) against the spec (RFC §3.5) without " +
 			"importing it. WHEN: use as a preview check before calling import_okf_bundle, " +

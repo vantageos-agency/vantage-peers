@@ -32,11 +32,16 @@ import { describe, expect, it } from "vitest";
 const SRC = readFileSync(resolve(__dirname, "../tools.ts"), "utf-8");
 
 function extractListDiariesGuardBlock(): string {
-	const startRe = /server\.tool\(\s*\n?\s*"list_diaries"/m;
+	// Anchor on the tool's NAME line — registration-shape-agnostic, matching both
+	// the legacy `server.tool("list_diaries", …)` form and the mandatory-scope
+	// `defineTool(server, authCtx, <scope>, "list_diaries", …)` wrapper (S2).
+	const startRe = /^\t+"list_diaries",$/m;
 	const m = startRe.exec(SRC);
-	if (!m) throw new Error("Could not locate list_diaries registration in tools.ts");
+	if (!m)
+		throw new Error("Could not locate list_diaries registration in tools.ts");
 	const tryIdx = SRC.indexOf("try {", m.index);
-	if (tryIdx === -1) throw new Error("Could not find try{ in list_diaries handler");
+	if (tryIdx === -1)
+		throw new Error("Could not find try{ in list_diaries handler");
 	return SRC.slice(tryIdx, tryIdx + 3000);
 }
 

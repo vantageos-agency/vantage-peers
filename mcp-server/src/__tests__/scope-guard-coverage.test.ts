@@ -60,11 +60,13 @@ const READ_TOOLS_THAT_NEED_GUARD = [
 ];
 
 function extractHandlerBody(toolName: string): string | null {
-	// Find the registration line then take the next ~120 lines as a window.
-	// This covers any handler body without getting confused by `return` keywords
-	// appearing inside nested if-blocks (which would prematurely truncate a
-	// greedy regex).
-	const startRe = new RegExp(`server\\.tool\\(\\s*\\n?\\s*"${toolName}"`, "m");
+	// Anchor on the tool's NAME line (its own line, e.g. `\t\t"list_peers",`).
+	// This is registration-shape-agnostic: it matches whether the call is the
+	// legacy `server.tool("name", …)` form or the mandatory-scope
+	// `defineTool(server, authCtx, <scope>, "name", …)` wrapper form
+	// (mission vp-multitenant-zero-hole-v1, S2). Description/EXAMPLE lines never
+	// match because they end in ` +` (concatenation), not `",`.
+	const startRe = new RegExp(`^\\t+"${toolName}",$`, "m");
 	const m = startRe.exec(SRC);
 	if (!m) return null;
 	const tryIdx = SRC.indexOf("try {", m.index);

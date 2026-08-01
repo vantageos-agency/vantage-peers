@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/registerTool.ts",
+    "src/auth.ts",
+    "src/__tests__/registerTool-scope-enforcement.test.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
