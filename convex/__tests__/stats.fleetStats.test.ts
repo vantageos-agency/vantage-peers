@@ -18,6 +18,10 @@
  *       any prod deploy.
  *   T3  totals equal the sum of their own byStatus breakdown (no double count,
  *       no silent drop).
+ *   T4  messages amendment (Laurent scope extension) — seeded messages +
+ *       messageReceipts in a known read/unread split → exact
+ *       messages.total and messages.byReadStatus counts, including explicit
+ *       0 when a bucket is empty.
  */
 
 import { convexTest } from "convex-test";
@@ -100,6 +104,31 @@ async function seedMissionTemplate(ctx: any, overrides: Record<string, unknown> 
 		createdBy: "sigma",
 		createdAt: now,
 		updatedAt: now,
+		...overrides,
+	});
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function seedMessage(ctx: any, overrides: Record<string, unknown> = {}): Promise<string> {
+	return await ctx.db.insert("messages", {
+		from: "sigma",
+		channel: "broadcast",
+		content: "Test message",
+		createdAt: Date.now(),
+		...overrides,
+	});
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function seedMessageReceipt(
+	ctx: any,
+	messageId: string,
+	overrides: Record<string, unknown> = {},
+): Promise<string> {
+	return await ctx.db.insert("messageReceipts", {
+		messageId,
+		recipient: "tau",
+		// readAt omitted by default -> unread, per convex/schema.ts semantics.
 		...overrides,
 	});
 }
@@ -215,5 +244,42 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 		expect(result.tasks.total).toBe(tasksSum);
 		expect(result.missions.total).toBe(5);
 		expect(result.tasks.total).toBe(5);
+	});
+
+	// ── T4: messages amendment — exact total + read/unread split ─────────────
+	test("T4: fleetStats.messages returns exact total and read/unread split, including explicit 0", async () => {
+		const t = convexTest(schema, modules);
+
+		await t.run(async (ctx) => {
+			// 2 messages, fanned out to 5 receipts total: 3 unread, 2 read.
+			const m1 = await seedMessage(ctx, { content: "M1" });
+			const m2 = await seedMessage(ctx, { content: "M2" });
+
+			await seedMessageReceipt(ctx, m1, { recipient: "tau" }); // unread (no readAt)
+			await seedMessageReceipt(ctx, m1, { recipient: "phi" }); // unread (no readAt)
+			await seedMessageReceipt(ctx, m1, { recipient: "pi", readAt: Date.now() }); // read
+			await seedMessageReceipt(ctx, m2, { recipient: "tau", readAt: Date.now() }); // read
+			await seedMessageReceipt(ctx, m2, { recipient: "phi" }); // unread (no readAt)
+		});
+
+		const result = await t.query(api.stats.fleetStats, {});
+
+		expect(result.messages.total).toBe(2);
+		expect(result.messages.byReadStatus).toEqual({ read: 2, unread: 3 });
+	});
+
+	// ── T4b: explicit 0 when no messages/receipts are seeded at all ──────────
+	test("T4b: fleetStats.messages is explicit 0/0 when no messages exist", async () => {
+		const t = convexTest(schema, modules);
+
+		await t.run(async (ctx) => {
+			// Seed unrelated tables only — no messages, no receipts.
+			await seedBu(ctx);
+		});
+
+		const result = await t.query(api.stats.fleetStats, {});
+
+		expect(result.messages.total).toBe(0);
+		expect(result.messages.byReadStatus).toEqual({ read: 0, unread: 0 });
 	});
 });

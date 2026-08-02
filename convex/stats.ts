@@ -239,7 +239,7 @@ const TASK_STATUSES = [
  */
 async function countAllStreamed(
 	ctx: QueryCtx,
-	table: "businessUnits" | "missionTemplates",
+	table: "businessUnits" | "missionTemplates" | "messages",
 ): Promise<number> {
 	let total = 0;
 	for await (const _row of ctx.db.query(table)) {
@@ -267,6 +267,35 @@ async function countByStatusStreamed(
 	return total;
 }
 
+/**
+ * Streams every row of `messageReceipts` and splits the count into
+ * read/unread buckets.
+ *
+ * Modeling decision: read state lives on `messageReceipts.readAt` (see
+ * convex/schema.ts) — `undefined` means unread, a numeric ms-epoch means
+ * read. There is one receipt row PER RECIPIENT per message (a broadcast
+ * message fans out into N receipt rows), so this counts receipts, not
+ * messages — the correct unit for "how many read/unread notifications exist
+ * across the fleet". `by_recipient_unread` and `by_instance_unread` both
+ * require an equality prefix (recipient / recipientInstanceId) that a
+ * fleet-wide count does not have, so — same as `countAllStreamed` — this
+ * streams the full table via `for await`, never `.collect()`/`.take()`.
+ */
+async function countReceiptsByReadStatusStreamed(
+	ctx: QueryCtx,
+): Promise<{ read: number; unread: number }> {
+	let read = 0;
+	let unread = 0;
+	for await (const receipt of ctx.db.query("messageReceipts")) {
+		if (receipt.readAt === undefined) {
+			unread++;
+		} else {
+			read++;
+		}
+	}
+	return { read, unread };
+}
+
 export const fleetStats = query({
 	args: {},
 	returns: v.object({
@@ -292,6 +321,13 @@ export const fleetStats = query({
 			}),
 		}),
 		missionTemplates: v.object({ total: v.number() }),
+		messages: v.object({
+			total: v.number(),
+			byReadStatus: v.object({
+				read: v.number(),
+				unread: v.number(),
+			}),
+		}),
 		generatedAt: v.number(),
 	}),
 	handler: async (ctx) => {
@@ -333,11 +369,20 @@ export const fleetStats = query({
 		// missionTemplates — no status dimension, count all rows.
 		const missionTemplatesTotal = await countAllStreamed(ctx, "missionTemplates");
 
+		// messages — total message rows (streamed), plus read/unread split
+		// sourced from messageReceipts.readAt (see modeling note above the
+		// helper). Both explicit-0-safe: an empty table yields { read: 0,
+		// unread: 0 } via the initialized counters in the helper, never an
+		// omitted key.
+		const messagesTotal = await countAllStreamed(ctx, "messages");
+		const messagesByReadStatus = await countReceiptsByReadStatusStreamed(ctx);
+
 		return {
 			bus: { total: busTotal },
 			missions: { total: missionsTotal, byStatus: missionsByStatus },
 			tasks: { total: tasksTotal, byStatus: tasksByStatus },
 			missionTemplates: { total: missionTemplatesTotal },
+			messages: { total: messagesTotal, byReadStatus: messagesByReadStatus },
 			generatedAt: Date.now(),
 		};
 	},

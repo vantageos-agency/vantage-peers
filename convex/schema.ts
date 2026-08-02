@@ -109,6 +109,38 @@ export default defineSchema({
 		.index("by_creator", ["createdBy", "isLatest"])
 		.index("by_namespace_type", ["namespace", "type", "isLatest"]),
 
+	// ── chunks ───────────────────────────────────────────────────────────────────
+	// Convergence KB (VP task k170s8gd4zj5f8aews4ja2xdwn8bqvj4, mission
+	// convergence). Ported from @vantageos/corpus's component/schema.ts
+	// (Talos, alpha, BM25-only) so data-lake absorbs corpus's distinct value:
+	// documentary chunks with (orgId, scope) isolation and NATIVE Convex BM25
+	// search — zero embeddings, zero external API call. This is a SECOND,
+	// independent isolation axis from `memories.namespace` / kb's
+	// `team/<orgId>/<docId>` convention — mirrors corpus's `searchCorpus`
+	// contract 1:1 so BU consumers (vantage-paperasse et al.) can migrate
+	// off @vantageos/corpus without a data-shape change.
+	//
+	// Deny-by-default: orgId is the FIRST field of every index — a query with
+	// no orgId cannot resolve an index and is refused at the argument-
+	// validation layer in convex/chunks.ts (requireOrgScope), never a
+	// silent full scan.
+	chunks: defineTable({
+		orgId: v.string(),
+		scope: v.string(),
+		chunk_id: v.string(),
+		text: v.string(),
+		section_title: v.optional(v.string()),
+		legal_references: v.array(v.string()),
+		source_ref: v.string(),
+		createdAt: v.number(),
+	})
+		.index("by_org_scope", ["orgId", "scope"])
+		.index("by_org_scope_chunk", ["orgId", "scope", "chunk_id"])
+		.searchIndex("search_text", {
+			searchField: "text",
+			filterFields: ["orgId", "scope"],
+		}),
+
 	// ── profiles ────────────────────────────────────────────────────────────────
 	// One row per INSTANCE. orchestratorId = role (pi/tau/phi).
 	// instanceId = unique running copy (pi-chromebook, pi-vps, tau-client-acme).

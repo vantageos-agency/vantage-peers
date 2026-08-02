@@ -4,9 +4,13 @@
  * k177xw1r3qr5fkv3dr5f2jcfhs8bqz7f).
  *
  * Invokes the server-side `stats:fleetStats` Convex query, which counts
- * bus/missions/tasks/missionTemplates via an internal paginate-loop (never a
- * single unbounded `.collect()` — see convex/stats.ts for the approach).
- * These are TRUE totals — no MCP SCAN_CAP floors ("at least N") anywhere.
+ * bus/missions/tasks/missionTemplates/messages via streaming `for await`
+ * counters (never a single unbounded `.collect()` — see convex/stats.ts for
+ * the approach). These are TRUE totals — no MCP SCAN_CAP floors ("at least
+ * N") anywhere.
+ *
+ * messages.byReadStatus counts `messageReceipts` rows split on `readAt`
+ * (undefined = unread, set = read) — one receipt per recipient per message.
  *
  * Idempotent, read-only. Never prints CONVEX_DEPLOY_KEY or any other token.
  *
@@ -61,6 +65,10 @@ async function main() {
 	for (const [status, count] of Object.entries(stats.tasks.byStatus)) {
 		console.log(`  ${status.padEnd(12)} ${count}`);
 	}
+	console.log("");
+	console.log(`messages total:           ${stats.messages.total}`);
+	console.log(`  read         ${stats.messages.byReadStatus.read}`);
+	console.log(`  unread       ${stats.messages.byReadStatus.unread}`);
 	console.log("");
 	console.log("--- raw JSON ---");
 	console.log(JSON.stringify(stats, null, 2));
