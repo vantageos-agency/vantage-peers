@@ -171,7 +171,16 @@ describe("GISS — get_issue scope-aware", () => {
 		expect(res.content[0].text).toContain("alpha issue");
 	});
 
-	it("GISS-T2 non-master in-scope → NOT Forbidden", async () => {
+	// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8) —
+	// INTENDED BEHAVIOR CHANGE mirroring LE-T2/GE-T2 above: issues rows carry
+	// NEITHER createdBy NOR namespace in the real schema (convex/schema.ts:421)
+	// — this fixture's fields were fictional. Passing unmapped rows through
+	// scopeFilterGet refused every non-master caller silently (refus-total),
+	// which is what this test previously asserted as acceptable
+	// ("NOT Forbidden"). get_issue is now master-only (same table, same
+	// reasoning as list_issues/list_errors), so non-master gets an EXPLICIT
+	// Forbidden instead of a silent null.
+	it("GISS-T2 non-master in-scope → Forbidden (master-only tool, structural fix)", async () => {
 		const { tools } = captureTools(
 			{ "issues:getByRepoNumber": alphaIssue },
 			alphaCtx(),
@@ -179,7 +188,7 @@ describe("GISS — get_issue scope-aware", () => {
 		const res = await tools
 			.get("get_issue")!
 			.handler({ repo: "x/y", issueNumber: 1 });
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
 	it("GISS-T3 legacy bearer → row returned", async () => {
@@ -193,7 +202,7 @@ describe("GISS — get_issue scope-aware", () => {
 		expect(res.content[0].text).toContain("beta issue");
 	});
 
-	it("GISS-M1 cross-tenant alpha→beta → NOT Forbidden", async () => {
+	it("GISS-M1 cross-tenant alpha→beta → Forbidden (master-only, no owner exists)", async () => {
 		const { tools } = captureTools(
 			{ "issues:getByRepoNumber": betaIssue },
 			alphaCtx(),
@@ -201,10 +210,10 @@ describe("GISS — get_issue scope-aware", () => {
 		const res = await tools
 			.get("get_issue")!
 			.handler({ repo: "x/y", issueNumber: 2 });
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("GISS-M2 alpha caller, alpha issue → content visible", async () => {
+	it("GISS-M2 alpha caller, alpha issue → Forbidden (no client owner for this table)", async () => {
 		const { tools } = captureTools(
 			{ "issues:getByRepoNumber": alphaIssue },
 			alphaCtx(),
@@ -212,8 +221,7 @@ describe("GISS — get_issue scope-aware", () => {
 		const res = await tools
 			.get("get_issue")!
 			.handler({ repo: "x/y", issueNumber: 1 });
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("alpha issue");
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 });
 
@@ -239,13 +247,19 @@ describe("IST — issue_stats scope-aware", () => {
 		expect(res.content[0].text).toContain('"open": 3');
 	});
 
-	it("IST-T2 non-master in-scope → NOT Forbidden", async () => {
+	// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8) —
+	// INTENDED BEHAVIOR CHANGE: issue_stats returns an AGGREGATE counts object
+	// (issues:getStats), not per-row data. There is no createdBy/namespace to
+	// discriminate on for an aggregate; this fixture's fields were fictional.
+	// issue_stats is now master-only, mirroring list_errors' fleet-aggregate
+	// reasoning.
+	it("IST-T2 non-master in-scope → Forbidden (master-only tool, structural fix)", async () => {
 		const { tools } = captureTools(
 			{ "issues:getStats": STATS_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("issue_stats")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
 	it("IST-T3 legacy bearer → stats returned", async () => {
@@ -257,23 +271,22 @@ describe("IST — issue_stats scope-aware", () => {
 		expect(res.content[0].text).toContain('"open": 3');
 	});
 
-	it("IST-M1 cross-tenant beta caller, alpha-owned stats → NOT Forbidden", async () => {
+	it("IST-M1 cross-tenant beta caller, alpha-owned stats → Forbidden (master-only, no owner exists)", async () => {
 		const { tools } = captureTools(
 			{ "issues:getStats": STATS_FIXTURE },
 			betaCtx(),
 		);
 		const res = await tools.get("issue_stats")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("IST-M2 alpha caller, alpha-owned stats → content visible", async () => {
+	it("IST-M2 alpha caller, alpha-owned stats → Forbidden (no client owner for this table)", async () => {
 		const { tools } = captureTools(
 			{ "issues:getStats": STATS_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("issue_stats")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain('"open": 3');
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 });
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] — final refus-total sweep (8 tools) → remaining: 0
+
+### Security
+
+- **Close the last 8 same-class refus-total instances on the client MCP surface.** `get_profile`, `list_peers`, `list_repo_mappings`, `get_repo_mapping`, `get_message` fed `scopeFilterList`/`scopeFilterGet` rows lacking `createdBy`/`namespace` → named remap of the real ownership field (`profiles.orchestratorId`, `githubRepoMapping.orchestrator`, `messages.from`) → `createdBy` before the filter, synthetic field stripped (the `list_broadcast_status` precedent). `list_issues`, `get_issue`, `issue_stats` have no client-owner field (fleet routing/aggregate data; sibling mutations already master-only) → `defineTool` scope `{ kind: "master" }`, structural removal from the client surface. Per tool RED→GREEN with four independent poles; 37 new tests (4 files) + updated `scope-aware-filter-wave-c2`/`c3` (stale fixtures that asserted the old leak as acceptable, aligned to the merged `list_errors` template). RED without fix: 18 owner-pole failures; full CI-scoped suite 2679/2679 green; tsc + scope-typecheck exit 0. **Final class sweep: `remaining: 0`** — every remaining `scopeFilterList`/`scopeFilterGet` site operates on a table with native `createdBy`/`namespace` or already remaps its non-native owner; `check_messages`/`mark_as_read`/`list_tasks`/`list_missions`/`list_diaries` use dedicated non-`scopeFilterList` gates (out of this defect class). Closes VP `k1759mg282aqy6t7c91gnk10598bn4sv`; completes mission `vp-multitenant-zero-hole-v1`.
+
 ## [Unreleased] — list_bus / list_mandates / list_errors refus-total close
 
 ### Security

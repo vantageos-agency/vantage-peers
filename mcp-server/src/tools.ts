@@ -2509,10 +2509,36 @@ export function registerTools(
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
 				});
-				const filteredProfile = scopeFilterGet(
+				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+				// profiles rows (schema.ts:118) carry `orchestratorId`, NOT
+				// `createdBy` and NOT `namespace` -- scopeFilterGet finds nothing
+				// to discriminate on and refuses EVERY non-master caller,
+				// including the owner (refus-total). Same remedy as
+				// list_broadcast_status/list_messages: remap
+				// orchestratorId->createdBy before scopeFilterGet, then strip the
+				// synthetic field back out.
+				const profileWithCreatedBy =
+					profile == null
+						? null
+						: {
+								...(profile as Record<string, unknown>),
+								createdBy: (profile as Record<string, unknown>)
+									.orchestratorId as string | undefined,
+							};
+				const scoped = scopeFilterGet(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					profile as any,
+					profileWithCreatedBy as any,
 				);
+				const filteredProfile =
+					scoped == null
+						? null
+						: (() => {
+								const { createdBy: _createdBy, ...rest } = scoped as Record<
+									string,
+									unknown
+								>;
+								return rest;
+							})();
 				return {
 					content: [
 						{
@@ -3291,9 +3317,22 @@ export function registerTools(
 					createdBefore,
 				});
 
+				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+				// profiles rows (schema.ts:118) carry `orchestratorId`, NOT
+				// `createdBy` and NOT `namespace` -- scopeFilterList finds nothing
+				// to discriminate on and refuses EVERY non-master caller,
+				// including the owner (refus-total). Same remedy as get_profile:
+				// remap orchestratorId->createdBy before scopeFilterList, then
+				// strip the synthetic field back out (the output projection below
+				// never reads `createdBy`, so no explicit strip is needed).
 				const filteredProfiles = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(profiles) ? profiles : [],
+					(Array.isArray(profiles) ? profiles : []).map(
+						(p: Record<string, unknown>) => ({
+							...p,
+							createdBy: p.orchestratorId as string | undefined,
+						}),
+					),
 				);
 
 				const peers = filteredProfiles.map((p: any) => ({
@@ -7608,10 +7647,21 @@ export function registerTools(
 						? (envelope as { nextCursor: string | null }).nextCursor
 						: null;
 
+				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+				// githubRepoMapping rows (schema.ts:482) carry `orchestrator`, NOT
+				// `createdBy` and NOT `namespace` -- scopeFilterList finds nothing
+				// to discriminate on and refuses EVERY non-master caller,
+				// including the owner (refus-total). Same remedy as
+				// list_broadcast_status/list_messages: remap
+				// orchestrator->createdBy before scopeFilterList, then strip the
+				// synthetic field back out.
 				const filteredMappings = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					rawItems as any,
-				);
+					(rawItems as Record<string, unknown>[]).map((r) => ({
+						...r,
+						createdBy: r.orchestrator as string | undefined,
+					})),
+				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
 				// Re-compute nextCursor from filtered set (scope filter may shrink page)
 				let nextCursor: string | null = backendNextCursor;
@@ -7704,10 +7754,20 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
+		// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+		// issues rows (schema.ts:421) carry NEITHER a client-owner field (no
+		// `createdBy`-equivalent, no per-tenant namespace) NOR any conceivable
+		// client owner -- `assignedOrchestrator`/`fixedBy`/`verifiedBy` are
+		// fleet-operations routing fields, not tenant ownership. scopeFilterList
+		// found nothing to discriminate on and refused EVERY non-master caller
+		// (refus-total). This mirrors list_errors (tools.ts ~9002): the write
+		// mutations on this same table (update_issue_status, link_commit_to_issue,
+		// verify_issue) are already `{ kind: "master" }`, confirming issues is
+		// fleet-internal GitHub tracking data, never client-scoped. Correct
+		// remedy is structural removal from the client surface: master-only.
+		// Intended behavior change -- non-master callers previously got a
+		// silent empty list; they now get an explicit Forbidden error.
+		{ kind: "master" },
 		"list_issues",
 		"List tracked GitHub issues filtered by project, status, or assigned orchestrator, newest first. " +
 			"WHEN: use to triage open issues, find in-progress fixes, or review a project's bug backlog. " +
@@ -7857,10 +7917,11 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
+		// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+		// same decision as list_issues immediately above -- issues rows carry no
+		// conceivable client-owner field; this is fleet-internal GitHub tracking
+		// data. Master-only, mirroring the sibling write mutations on this table.
+		{ kind: "master" },
 		"get_issue",
 		"Fetch a single GitHub issue by repo name and issue number, returning full tracking details. " +
 			"WHEN: use when routing a specific GitHub webhook event or verifying fix status on a known issue. " +
@@ -8070,10 +8131,13 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
+		// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+		// issue_stats returns an aggregate counts object (issues:getStats), not
+		// per-row data -- there is no createdBy/namespace to discriminate on for
+		// an aggregate, and fabricating one would misrepresent a fleet-wide
+		// count as tenant-scoped. Same fleet-aggregate reasoning as list_errors;
+		// master-only.
+		{ kind: "master" },
 		"issue_stats",
 		"Get issue count statistics grouped by status, optionally scoped to a single project. " +
 			"WHEN: use for daily health checks or project retrospectives to measure issue throughput. " +
@@ -9897,7 +9961,34 @@ export function registerTools(
 				const row = await convex.query("githubRepoMapping:getByRepo" as any, {
 					repo,
 				});
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+				// githubRepoMapping rows (schema.ts:482) carry `orchestrator`, NOT
+				// `createdBy` and NOT `namespace` -- scopeFilterGet finds nothing
+				// to discriminate on and refuses EVERY non-master caller,
+				// including the owner (refus-total). Remap orchestrator->createdBy
+				// before scopeFilterGet, then strip the synthetic field back out.
+				const rowWithCreatedBy =
+					row == null
+						? null
+						: {
+								...(row as Record<string, unknown>),
+								createdBy: (row as Record<string, unknown>)
+									.orchestrator as string | undefined,
+							};
+				const scoped = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rowWithCreatedBy as any,
+				);
+				const filtered =
+					scoped == null
+						? null
+						: (() => {
+								const { createdBy: _createdBy, ...rest } = scoped as Record<
+									string,
+									unknown
+								>;
+								return rest;
+							})();
 				if (filtered === null) {
 					return mcpError(`Repo mapping not found: ${repo}`);
 				}
@@ -9940,7 +10031,38 @@ export function registerTools(
 				const row = await convex.query("messages:getById" as any, {
 					messageId,
 				});
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
+				// message rows (schema.ts:148) carry `from` (creatorValidator), NOT
+				// `createdBy` and NOT `namespace` -- scopeFilterGet finds nothing to
+				// discriminate on and refuses EVERY non-master caller, including
+				// the sender (refus-total). Same remedy already applied to
+				// list_messages/search_messages_by_keyword/list_broadcast_status,
+				// but this single-row get was missed in that sweep: remap
+				// from->createdBy before scopeFilterGet, then strip the synthetic
+				// field back out.
+				const rowWithCreatedBy =
+					row == null
+						? null
+						: {
+								...(row as Record<string, unknown>),
+								createdBy: (row as Record<string, unknown>).from as
+									| string
+									| undefined,
+							};
+				const scoped = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					rowWithCreatedBy as any,
+				);
+				const filtered =
+					scoped == null
+						? null
+						: (() => {
+								const { createdBy: _createdBy, ...rest } = scoped as Record<
+									string,
+									unknown
+								>;
+								return rest;
+							})();
 				if (filtered === null) {
 					return mcpError(`Message not found: ${messageId}`);
 				}

@@ -621,13 +621,23 @@ describe("LISS — list_issues scope-aware", () => {
 		expect(res.content[0].text).toContain("iss_b1");
 	});
 
-	it("LISS-T2 non-master → NOT Forbidden", async () => {
+	// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8) —
+	// INTENDED BEHAVIOR CHANGE: issues rows carry NEITHER createdBy NOR
+	// namespace in the real schema (convex/schema.ts:421) — this fixture's
+	// fields were fictional. Passing unmapped rows through scopeFilterList
+	// refused every non-master caller silently (refus-total), which is what
+	// this test previously asserted as acceptable ("NOT Forbidden"). The
+	// write mutations on this same table (update_issue_status,
+	// link_commit_to_issue, verify_issue) are already master-only, confirming
+	// issues is fleet-internal data — list_issues is now master-only too, so
+	// non-master gets an EXPLICIT Forbidden instead of a silent empty list.
+	it("LISS-T2 non-master → Forbidden (master-only tool, structural fix)", async () => {
 		const tools = captureTools(
 			{ "issues:listByProject": ISSUES_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_issues")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
 	it("LISS-T3 legacy bearer → all rows visible", async () => {
@@ -637,24 +647,23 @@ describe("LISS — list_issues scope-aware", () => {
 		expect(res.content[0].text).toContain("iss_b1");
 	});
 
-	it("LISS-M1 alpha scope → beta issue filtered out", async () => {
+	it("LISS-M1 alpha scope → Forbidden, beta issue never reached", async () => {
 		const tools = captureTools(
 			{ "issues:listByProject": ISSUES_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_issues")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
+		expect(isForbiddenResponse(res)).toBe(true);
 		expect(res.content[0].text).not.toContain("iss_b1");
 	});
 
-	it("LISS-M2 alpha scope → alpha issue visible", async () => {
+	it("LISS-M2 alpha scope → Forbidden (no client owner for this table)", async () => {
 		const tools = captureTools(
 			{ "issues:listByProject": ISSUES_FIXTURE },
 			alphaCtx(),
 		);
 		const res = await tools.get("list_issues")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("iss_a1");
+		expect(isForbiddenResponse(res)).toBe(true);
 	});
 });
 
