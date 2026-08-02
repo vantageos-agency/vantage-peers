@@ -1,6 +1,7 @@
 import { v } from "convex/values";
+import type { QueryCtx } from "./_generated/server";
 import { query } from "./_generated/server";
-import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import { withOrgScope, requireScope, filterByOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orchestratorStats — server-side aggregation for the VantagePeers Dashboard
@@ -171,5 +172,173 @@ export const orchestratorStats = query({
 		console.timeEnd("orchestratorStats");
 
 		return result;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// fleetStats — REAL, server-side totals for the VantagePeers Cloud fleet.
+//
+// Problem: MCP tools (list_missions/list_tasks) paginate with a SCAN_CAP
+// (~2000 rows) so they can only ever report a floor ("at least N"), never a
+// true total. Counting must happen server-side, inside Convex, where a single
+// tool call has no MCP response cap — but a single Convex function execution
+// still has a 16MB data limit.
+//
+// Approach chosen: STREAMING COUNT via `for await (const row of query)`, the
+// idiom Convex's own guidelines specify for exactly this situation ("When
+// using async iteration, don't use `.collect()` or `.take(n)` on the result
+// of a query — instead use `for await` syntax"). This streams rows lazily
+// from the database rather than materializing the whole matching set in
+// memory, so it cannot OOM regardless of table size. It is ALSO the correct
+// choice operationally: Convex only permits a single `.paginate()` cursor per
+// function execution (verified against the real dev deployment — a second
+// `.paginate()` call, even from a separate nested `ctx.runQuery`, throws
+// "This query or mutation function ran multiple paginated queries"), so
+// `.paginate()` cannot be looped 10+ times (once per status) inside one
+// query. `for await` has no such restriction and can be used any number of
+// times in a single execution.
+//   - missions and tasks are counted PER STATUS using `.withIndex("by_status",
+//     ...)` (both tables have a `by_status` index — see convex/schema.ts) —
+//     one `for await` stream per status, only incrementing a counter, never
+//     buffering matched rows.
+//   - businessUnits ("bus") and missionTemplates have no status dimension to
+//     slice by, so they are counted with the SAME streaming pattern against
+//     the full table (no index needed — small control tables).
+//   - Every status enum literal is initialized to 0 before the loop runs, so a
+//     status with zero rows is returned as an explicit 0, never omitted
+//     (measurement-integrity: a missing key would be indistinguishable from
+//     "didn't check").
+//
+// Auth: internal fleet-operations surface, same gate as orchestratorStats —
+// master scope (Laurent / Alpha) sees the full fleet; client orgs need the
+// "view-stats-aggregated" scope. There is no per-row org filtering here
+// (these are fleet-wide totals, not tenant-scoped data), so a client org
+// without that scope is rejected outright rather than silently filtered.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MISSION_STATUSES = [
+	"brainstorm",
+	"plan",
+	"execute",
+	"validate",
+	"complete",
+] as const;
+
+const TASK_STATUSES = [
+	"todo",
+	"in_progress",
+	"review",
+	"blocked",
+	"done",
+] as const;
+
+/**
+ * Streams every row of `table` and counts it. Never `.collect()`/`.take()` —
+ * `for await` lazily pulls one row at a time from the database, so a table of
+ * any size cannot be materialized in memory at once and cannot OOM.
+ */
+async function countAllStreamed(
+	ctx: QueryCtx,
+	table: "businessUnits" | "missionTemplates",
+): Promise<number> {
+	let total = 0;
+	for await (const _row of ctx.db.query(table)) {
+		total++;
+	}
+	return total;
+}
+
+/**
+ * Streams every row of `table` matching `status` via the table's `by_status`
+ * index and counts it. Same streaming guarantee as `countAllStreamed` — bounds
+ * the working set to one row at a time, cannot OOM.
+ */
+async function countByStatusStreamed(
+	ctx: QueryCtx,
+	table: "missions" | "tasks",
+	status: string,
+): Promise<number> {
+	let total = 0;
+	for await (const _row of ctx.db
+		.query(table)
+		.withIndex("by_status", (q) => q.eq("status", status as never))) {
+		total++;
+	}
+	return total;
+}
+
+export const fleetStats = query({
+	args: {},
+	returns: v.object({
+		bus: v.object({ total: v.number() }),
+		missions: v.object({
+			total: v.number(),
+			byStatus: v.object({
+				brainstorm: v.number(),
+				plan: v.number(),
+				execute: v.number(),
+				validate: v.number(),
+				complete: v.number(),
+			}),
+		}),
+		tasks: v.object({
+			total: v.number(),
+			byStatus: v.object({
+				todo: v.number(),
+				in_progress: v.number(),
+				review: v.number(),
+				blocked: v.number(),
+				done: v.number(),
+			}),
+		}),
+		missionTemplates: v.object({ total: v.number() }),
+		generatedAt: v.number(),
+	}),
+	handler: async (ctx) => {
+		// ── Beta multi-tenant scope gate ─────────────────────────────────────
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		if (!scope.isMaster) {
+			requireScope(scope, "view-stats-aggregated");
+		}
+
+		// bus (businessUnits) — no status dimension, count all rows.
+		const busTotal = await countAllStreamed(ctx, "businessUnits");
+
+		// missions — per-status via by_status index, explicit 0 for empty statuses.
+		const missionsByStatus: Record<(typeof MISSION_STATUSES)[number], number> = {
+			brainstorm: 0,
+			plan: 0,
+			execute: 0,
+			validate: 0,
+			complete: 0,
+		};
+		for (const status of MISSION_STATUSES) {
+			missionsByStatus[status] = await countByStatusStreamed(ctx, "missions", status);
+		}
+		const missionsTotal = Object.values(missionsByStatus).reduce((a, b) => a + b, 0);
+
+		// tasks — per-status via by_status index, explicit 0 for empty statuses.
+		const tasksByStatus: Record<(typeof TASK_STATUSES)[number], number> = {
+			todo: 0,
+			in_progress: 0,
+			review: 0,
+			blocked: 0,
+			done: 0,
+		};
+		for (const status of TASK_STATUSES) {
+			tasksByStatus[status] = await countByStatusStreamed(ctx, "tasks", status);
+		}
+		const tasksTotal = Object.values(tasksByStatus).reduce((a, b) => a + b, 0);
+
+		// missionTemplates — no status dimension, count all rows.
+		const missionTemplatesTotal = await countAllStreamed(ctx, "missionTemplates");
+
+		return {
+			bus: { total: busTotal },
+			missions: { total: missionsTotal, byStatus: missionsByStatus },
+			tasks: { total: tasksTotal, byStatus: tasksByStatus },
+			missionTemplates: { total: missionTemplatesTotal },
+			generatedAt: Date.now(),
+		};
 	},
 });
