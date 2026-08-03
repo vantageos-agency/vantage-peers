@@ -108,6 +108,39 @@ async function collectAllPages<T>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Dedup lookup driver (Bug #1134 fix).
+//
+// Each `_find*ByX` V8 internal query returns ONE bounded page (`{ id, isDone,
+// continueCursor }`). This driver loops calling the query with an advancing
+// cursor and SHORT-CIRCUITS the instant a match is found, so at most one
+// bounded page is read once a hit exists — and a full miss costs many
+// separate bounded executions rather than a single unbounded one (see the
+// comment block in `convex/okfBundle.ts` above the three helpers for why an
+// in-process loop over `.paginate()` inside a single execution would NOT be
+// sufficient).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface DedupPageResult {
+	id: string | null;
+	isDone: boolean;
+	continueCursor: string;
+}
+
+async function findExistingIdByPaginating(
+	runQuery: (cursor: string | null) => Promise<DedupPageResult>,
+): Promise<string | null> {
+	let cursor: string | null = null;
+	// Hard ceiling on hop count — same rationale as `collectAllPages()`.
+	for (let hop = 0; hop < 4096; hop++) {
+		const res = await runQuery(cursor);
+		if (res.id !== null) return res.id;
+		if (res.isDone) return null;
+		cursor = res.continueCursor;
+	}
+	return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Public types (mirror the V8 module — kept exported for the MCP wrapper)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -903,10 +936,13 @@ export const importOkfBundle = action({
 			if (parsed === null) continue;
 
 			if (parsed.kind === "memory") {
-				const existing = (await ctx.runQuery(
-					"okfBundle:_findMemoryByContent" as never,
-					{ namespace: args.targetNamespace, content: parsed.content } as never,
-				)) as string | null;
+				const existing = await findExistingIdByPaginating((cursor) =>
+					ctx.runQuery("okfBundle:_findMemoryByContent" as never, {
+						namespace: args.targetNamespace,
+						content: parsed.content,
+						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
+					} as never),
+				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
@@ -925,10 +961,13 @@ export const importOkfBundle = action({
 				}
 				out.imported.memories++;
 			} else if (parsed.kind === "briefing") {
-				const existing = (await ctx.runQuery(
-					"okfBundle:_findBriefingByTitleAndContent" as never,
-					{ title: parsed.title, content: parsed.content } as never,
-				)) as string | null;
+				const existing = await findExistingIdByPaginating((cursor) =>
+					ctx.runQuery("okfBundle:_findBriefingByTitleAndContent" as never, {
+						title: parsed.title,
+						content: parsed.content,
+						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
+					} as never),
+				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
@@ -948,10 +987,13 @@ export const importOkfBundle = action({
 				}
 				out.imported.briefings++;
 			} else if (parsed.kind === "task") {
-				const existing = (await ctx.runQuery(
-					"okfBundle:_findTaskByTitleAndDescription" as never,
-					{ title: parsed.title, description: parsed.description } as never,
-				)) as string | null;
+				const existing = await findExistingIdByPaginating((cursor) =>
+					ctx.runQuery("okfBundle:_findTaskByTitleAndDescription" as never, {
+						title: parsed.title,
+						description: parsed.description,
+						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
+					} as never),
+				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
