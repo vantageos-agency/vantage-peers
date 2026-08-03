@@ -108,6 +108,54 @@ async function collectAllPages<T>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Dedup lookup driver (Bug #1134 fix).
+//
+// Each `_find*ByX` V8 internal query returns ONE bounded page (`{ id, isDone,
+// continueCursor }`). This driver loops calling the query with an advancing
+// cursor and SHORT-CIRCUITS the instant a match is found, so at most one
+// bounded page is read once a hit exists — and a full miss costs many
+// separate bounded executions rather than a single unbounded one (see the
+// comment block in `convex/okfBundle.ts` above the three helpers for why an
+// in-process loop over `.paginate()` inside a single execution would NOT be
+// sufficient).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface DedupPageResult {
+	id: string | null;
+	isDone: boolean;
+	continueCursor: string;
+}
+
+async function findExistingIdByPaginating(
+	runQuery: (cursor: string | null) => Promise<DedupPageResult>,
+): Promise<string | null> {
+	let cursor: string | null = null;
+	// Hard ceiling on hop count — same rationale as `collectAllPages()`.
+	for (let hop = 0; hop < 4096; hop++) {
+		const res = await runQuery(cursor);
+		if (res.id !== null) return res.id;
+		if (res.isDone) return null;
+		cursor = res.continueCursor;
+	}
+	// Ceiling exceeded (4096 hops × 256 rows = 1 048 576 rows scanned without a
+	// definitive answer). Silently returning `null` here would report a
+	// genuine duplicate as "not found" for a target table above ~1M rows,
+	// causing the import to reinsert it — a correctness bug, not just a perf
+	// one. We THROW rather than log-and-continue: the caller
+	// (`importOkfBundle`) has no safe fallback once dedup truth is unknown,
+	// and reinserting the row silently is worse than failing the import loudly
+	// so the operator can re-run against a narrower namespace/window or raise
+	// the ceiling. Mirrors `collectAllPages()`'s `truncated` signal, but dedup
+	// has no partial-success mode to degrade into, so throw instead of flag.
+	throw new Error(
+		"OKF_IMPORT_DEDUP_CEILING_EXCEEDED: findExistingIdByPaginating hit the " +
+			"4096-hop pagination ceiling without a definitive match/no-match " +
+			"result. Refusing to treat this as \"not found\" to avoid silently " +
+			"reinserting a duplicate row.",
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Public types (mirror the V8 module — kept exported for the MCP wrapper)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -903,72 +951,72 @@ export const importOkfBundle = action({
 			if (parsed === null) continue;
 
 			if (parsed.kind === "memory") {
-				const existing = (await ctx.runQuery(
-					"okfBundle:_findMemoryByContent" as never,
-					{ namespace: args.targetNamespace, content: parsed.content } as never,
-				)) as string | null;
+				const existing = await findExistingIdByPaginating((cursor) =>
+					ctx.runQuery(internal.okfBundle._findMemoryByContent, {
+						namespace: args.targetNamespace,
+						content: parsed.content,
+						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
+					}),
+				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(
-						"okfBundle:_insertImportedMemory" as never,
-						{
-							namespace: args.targetNamespace,
-							type: parsed.type,
-							content: parsed.content,
-							createdBy: parsed.createdBy,
-							now,
-						} as never,
-					);
+					await ctx.runMutation(internal.okfBundle._insertImportedMemory, {
+						namespace: args.targetNamespace,
+						type: parsed.type,
+						content: parsed.content,
+						createdBy: parsed.createdBy,
+						now,
+					});
 				}
 				out.imported.memories++;
 			} else if (parsed.kind === "briefing") {
-				const existing = (await ctx.runQuery(
-					"okfBundle:_findBriefingByTitleAndContent" as never,
-					{ title: parsed.title, content: parsed.content } as never,
-				)) as string | null;
+				const existing = await findExistingIdByPaginating((cursor) =>
+					ctx.runQuery(internal.okfBundle._findBriefingByTitleAndContent, {
+						title: parsed.title,
+						content: parsed.content,
+						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
+					}),
+				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(
-						"okfBundle:_insertImportedBriefing" as never,
-						{
-							title: parsed.title,
-							topic: parsed.topic,
-							participants: parsed.participants,
-							content: parsed.content,
-							createdBy: parsed.createdBy,
-							now,
-						} as never,
-					);
+					await ctx.runMutation(internal.okfBundle._insertImportedBriefing, {
+						title: parsed.title,
+						topic: parsed.topic,
+						participants: parsed.participants,
+						content: parsed.content,
+						createdBy: parsed.createdBy,
+						now,
+					});
 				}
 				out.imported.briefings++;
 			} else if (parsed.kind === "task") {
-				const existing = (await ctx.runQuery(
-					"okfBundle:_findTaskByTitleAndDescription" as never,
-					{ title: parsed.title, description: parsed.description } as never,
-				)) as string | null;
+				const existing = await findExistingIdByPaginating((cursor) =>
+					ctx.runQuery(internal.okfBundle._findTaskByTitleAndDescription, {
+						title: parsed.title,
+						description: parsed.description,
+						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
+					}),
+				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(
-						"okfBundle:_insertImportedTask" as never,
-						{
-							title: parsed.title,
-							description: parsed.description,
-							assignedTo: parsed.assignedTo,
-							priority: parsed.priority,
-							status: parsed.status,
-							createdBy: parsed.createdBy,
-							now,
-						} as never,
-					);
+					await ctx.runMutation(internal.okfBundle._insertImportedTask, {
+						title: parsed.title,
+						description: parsed.description,
+						assignedTo: parsed.assignedTo,
+						priority: parsed.priority,
+						status: parsed.status,
+						createdBy: parsed.createdBy,
+						now,
+					});
 				}
 				out.imported.tasks++;
 			}

@@ -418,44 +418,110 @@ export function assembleBundle(
 // import pipeline (auth → fetch → unpack → validate → per-entry parse+insert)
 // and delegates DB writes to these V8-runtime helpers. Dedup strategy is
 // content-equality scoped to the target namespace (memories) or to a small
-// title+body lookup (briefings, tasks). First-cut O(N) per import — index
-// optimisation deferred to a separate PR.
+// title+body lookup (briefings, tasks).
+//
+// Bug #1134: the original helpers ran an unbounded `ctx.db.query(...).collect()`
+// over the WHOLE index range (all rows for a namespace / all briefingNotes /
+// all tasks) inside a single query execution. Once a namespace or table grows
+// past the Convex 16 MB single-execution read ceiling, the dedup lookup — and
+// therefore the whole import — throws mid-pipeline.
+//
+// Fix: mirror the paginated-fetch idiom already used by the export path
+// (`_fetchMemoriesForBundle` et al., see comment block above). Each helper now
+// returns ONE bounded page (`BUNDLE_PAGE_SIZE` rows) plus a cursor; the
+// Node-runtime caller (`okfBundleNode.ts` `findExistingIdByPaginating()`)
+// drives the cursor loop ACROSS SEPARATE FUNCTION INVOCATIONS and short-
+// circuits the moment a match is found. Because each invocation is its own
+// Convex execution, no single execution ever reads more than one page — the
+// worst case (no match, full-table scan) costs many bounded executions
+// instead of one unbounded one. In-process loop-and-discard within a single
+// handler would NOT fix this: Convex's read ceiling is cumulative across all
+// reads performed during one execution, so multiple `.paginate()` calls
+// inside the same handler still sum toward the same 16 MB budget.
+//
+// Match predicate is UNCHANGED from the original implementation:
+//   - memory:   namespace + isLatest==true (index scope) AND content equality
+//   - briefing: title equality AND content equality (unscoped by namespace,
+//     same as before — briefingNotes dedup was never namespace-scoped and
+//     this PR does not change that semantic)
+//   - task:     title equality AND description equality (unscoped, same as
+//     before)
 // ─────────────────────────────────────────────────────────────────────────────
 
+const DEDUP_RESULT_VALIDATOR = v.object({
+	id: v.union(v.string(), v.null()),
+	isDone: v.boolean(),
+	continueCursor: v.string(),
+});
+
 export const _findMemoryByContent = internalQuery({
-	args: { namespace: v.string(), content: v.string() },
-	handler: async (ctx, { namespace, content }) => {
-		const rows = await ctx.db
+	args: {
+		namespace: v.string(),
+		content: v.string(),
+		paginationOpts: PAGINATION_OPTS_VALIDATOR,
+	},
+	returns: DEDUP_RESULT_VALIDATOR,
+	handler: async (ctx, { namespace, content, paginationOpts }) => {
+		const result = await ctx.db
 			.query("memories")
 			.withIndex("by_namespace", (q) =>
 				q.eq("namespace", namespace).eq("isLatest", true),
 			)
-			.collect();
-		const hit = rows.find((r) => r.content === content);
-		return hit ? hit._id : null;
+			.paginate(paginationOpts);
+		const hit = result.page.find(
+			(r) => r.namespace === namespace && r.content === content,
+		);
+		return {
+			id: hit ? hit._id : null,
+			isDone: result.isDone,
+			continueCursor: result.continueCursor,
+		};
 	},
 });
 
 export const _findBriefingByTitleAndContent = internalQuery({
-	args: { title: v.string(), content: v.string() },
-	handler: async (ctx, { title, content }) => {
-		const rows = await ctx.db
+	args: {
+		title: v.string(),
+		content: v.string(),
+		paginationOpts: PAGINATION_OPTS_VALIDATOR,
+	},
+	returns: DEDUP_RESULT_VALIDATOR,
+	handler: async (ctx, { title, content, paginationOpts }) => {
+		const result = await ctx.db
 			.query("briefingNotes")
 			.withIndex("by_topic")
-			.collect();
-		const hit = rows.find((r) => r.title === title && r.content === content);
-		return hit ? hit._id : null;
+			.paginate(paginationOpts);
+		const hit = result.page.find(
+			(r) => r.title === title && r.content === content,
+		);
+		return {
+			id: hit ? hit._id : null,
+			isDone: result.isDone,
+			continueCursor: result.continueCursor,
+		};
 	},
 });
 
 export const _findTaskByTitleAndDescription = internalQuery({
-	args: { title: v.string(), description: v.string() },
-	handler: async (ctx, { title, description }) => {
-		const rows = await ctx.db.query("tasks").withIndex("by_status").collect();
-		const hit = rows.find(
+	args: {
+		title: v.string(),
+		description: v.string(),
+		paginationOpts: PAGINATION_OPTS_VALIDATOR,
+	},
+	returns: DEDUP_RESULT_VALIDATOR,
+	handler: async (ctx, { title, description, paginationOpts }) => {
+		const result = await ctx.db
+			.query("tasks")
+			.withIndex("by_status")
+			.paginate(paginationOpts);
+		const hit = result.page.find(
 			(r) => r.title === title && (r.description ?? "") === description,
 		);
-		return hit ? hit._id : null;
+		return {
+			id: hit ? hit._id : null,
+			isDone: result.isDone,
+			continueCursor: result.continueCursor,
+		};
 	},
 });
 
