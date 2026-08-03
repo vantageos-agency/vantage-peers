@@ -13,20 +13,29 @@
 // (`findExistingIdByPaginating` in okfBundleNode.ts) drives the cursor loop
 // across separate bounded executions and short-circuits on first match.
 //
-// TDD RULE #12 — RED asserts the OLD unbounded-collect behavior (a single
-// query call returns every row, ignoring page size); GREEN asserts the NEW
-// helper never returns more than one page's worth of rows AND correctness
-// (match found → correct _id, no match → null) is preserved.
+// TDD RULE #12 — this file contains GREEN correctness + bound tests only. It
+// asserts the NEW helper never returns more than one page's worth of rows
+// per execution AND correctness (match found → correct _id, no match →
+// null) is preserved. It does NOT contain a RED test: the RED case (the OLD
+// unbounded `.collect()` behavior reading the whole index range in one call)
+// was proven externally against the pre-fix code via `git stash` + manual
+// re-run, not as a persisted test in this file — `convex-test` cannot
+// literally reproduce the production 16 MB execution-ceiling crash the old
+// code was vulnerable to (see honesty note below), so there is no reliable
+// automated RED assertion to keep here.
+//
+// Also included: an explicit negative test documenting that the
+// briefing/task dedup predicates are NOT namespace-scoped (a known,
+// pre-existing gap tracked separately — NOT fixed in this PR). See the
+// "cross-namespace dedup scope" describe block below.
 //
 // Honesty note on harness limits: `convex-test` does not enforce the real
 // Convex 16 MB execution ceiling (there is no in-memory OOM at this scale),
-// so the RED test below cannot literally reproduce a production crash. What
-// it CAN and DOES prove, mechanically, against the CURRENT (old) production
-// code before this PR: a single call to the helper reads the WHOLE index
-// range (N rows) in one shot with no page-size ceiling. The GREEN suite below
-// proves the NEW helper caps each single call to `paginationOpts.numItems`
-// rows regardless of table size, which is the structural fix for the 16 MB
-// risk (bounded reads per execution, short-circuited by the caller on match).
+// so no test in this file can literally reproduce a production crash. What
+// the GREEN suite below CAN and DOES prove, mechanically: the NEW helper
+// caps each single call to `paginationOpts.numItems` rows regardless of
+// table size, which is the structural fix for the 16 MB risk (bounded reads
+// per execution, short-circuited by the caller on match).
 //
 // Mission: k5779qbxhwrfjmj02t31yvehns8911jp. Bug: #1134.
 // Orchestrator: Sigma — VantagePeers | 2026-08-03
@@ -311,5 +320,73 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 			cursor = page.continueCursor;
 		}
 		expect(found).toBe(targetId);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Known gap — briefing/task dedup is NOT namespace/tenant scoped.
+//
+// Unlike `_findMemoryByContent` (which takes a `namespace` arg and filters
+// on it), `_findBriefingByTitleAndContent` and `_findTaskByTitleAndDescription`
+// take no namespace/tenant argument at all — they scan `briefingNotes` /
+// `tasks` globally via `by_topic` / `by_status` indexes. This is a
+// PRE-EXISTING cross-tenant side channel, OUT OF SCOPE for this PR (#1134
+// only bounds the reads; it does not add scoping to the predicate). This
+// test documents the gap explicitly so the current behavior is a verified,
+// intentional state rather than an implicit assumption. A follow-up ticket
+// tracks adding tenant scoping to these two predicates — do NOT change the
+// predicate here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("KNOWN GAP — briefing/task dedup predicates are not namespace-scoped (pre-existing, out of scope for #1134)", () => {
+	test("_findBriefingByTitleAndContent: matches a title+content pair regardless of which 'tenant' inserted it (no namespace arg exists to scope by)", async () => {
+		const t = createTestConvex();
+		// Simulate two different "tenants" by varying an unrelated field
+		// (topic) — there is no namespace/ownerId field on briefingNotes for
+		// this predicate to scope on in the first place.
+		const tenantAId = await t.run(async (ctx) =>
+			ctx.db.insert("briefingNotes", {
+				title: "Cross-Tenant Briefing",
+				topic: "tenant-a-topic",
+				participants: ["sigma"],
+				content: "Shared briefing content across tenants.",
+				createdBy: "sigma",
+				createdAt: NOW,
+			}),
+		);
+
+		// A "tenant B" import lookup for the identical title+content finds
+		// tenant A's row — this is the documented gap, not a bug fixed here.
+		const page = await t.query(internal.okfBundle._findBriefingByTitleAndContent, {
+			title: "Cross-Tenant Briefing",
+			content: "Shared briefing content across tenants.",
+			paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+		});
+
+		expect(page.id).toBe(tenantAId);
+	});
+
+	test("_findTaskByTitleAndDescription: matches a title+description pair regardless of which 'tenant' inserted it (no namespace arg exists to scope by)", async () => {
+		const t = createTestConvex();
+		const tenantAId = await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: "Cross-Tenant Task",
+				description: "Shared task description across tenants.",
+				assignedTo: "sigma",
+				priority: "medium",
+				status: "todo",
+				createdBy: "sigma",
+				createdAt: NOW,
+				updatedAt: NOW,
+			}),
+		);
+
+		const page = await t.query(internal.okfBundle._findTaskByTitleAndDescription, {
+			title: "Cross-Tenant Task",
+			description: "Shared task description across tenants.",
+			paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+		});
+
+		expect(page.id).toBe(tenantAId);
 	});
 });

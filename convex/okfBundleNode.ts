@@ -137,7 +137,22 @@ async function findExistingIdByPaginating(
 		if (res.isDone) return null;
 		cursor = res.continueCursor;
 	}
-	return null;
+	// Ceiling exceeded (4096 hops × 256 rows = 1 048 576 rows scanned without a
+	// definitive answer). Silently returning `null` here would report a
+	// genuine duplicate as "not found" for a target table above ~1M rows,
+	// causing the import to reinsert it — a correctness bug, not just a perf
+	// one. We THROW rather than log-and-continue: the caller
+	// (`importOkfBundle`) has no safe fallback once dedup truth is unknown,
+	// and reinserting the row silently is worse than failing the import loudly
+	// so the operator can re-run against a narrower namespace/window or raise
+	// the ceiling. Mirrors `collectAllPages()`'s `truncated` signal, but dedup
+	// has no partial-success mode to degrade into, so throw instead of flag.
+	throw new Error(
+		"OKF_IMPORT_DEDUP_CEILING_EXCEEDED: findExistingIdByPaginating hit the " +
+			"4096-hop pagination ceiling without a definitive match/no-match " +
+			"result. Refusing to treat this as \"not found\" to avoid silently " +
+			"reinserting a duplicate row.",
+	);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -937,80 +952,71 @@ export const importOkfBundle = action({
 
 			if (parsed.kind === "memory") {
 				const existing = await findExistingIdByPaginating((cursor) =>
-					ctx.runQuery("okfBundle:_findMemoryByContent" as never, {
+					ctx.runQuery(internal.okfBundle._findMemoryByContent, {
 						namespace: args.targetNamespace,
 						content: parsed.content,
 						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
-					} as never),
+					}),
 				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(
-						"okfBundle:_insertImportedMemory" as never,
-						{
-							namespace: args.targetNamespace,
-							type: parsed.type,
-							content: parsed.content,
-							createdBy: parsed.createdBy,
-							now,
-						} as never,
-					);
+					await ctx.runMutation(internal.okfBundle._insertImportedMemory, {
+						namespace: args.targetNamespace,
+						type: parsed.type,
+						content: parsed.content,
+						createdBy: parsed.createdBy,
+						now,
+					});
 				}
 				out.imported.memories++;
 			} else if (parsed.kind === "briefing") {
 				const existing = await findExistingIdByPaginating((cursor) =>
-					ctx.runQuery("okfBundle:_findBriefingByTitleAndContent" as never, {
+					ctx.runQuery(internal.okfBundle._findBriefingByTitleAndContent, {
 						title: parsed.title,
 						content: parsed.content,
 						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
-					} as never),
+					}),
 				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(
-						"okfBundle:_insertImportedBriefing" as never,
-						{
-							title: parsed.title,
-							topic: parsed.topic,
-							participants: parsed.participants,
-							content: parsed.content,
-							createdBy: parsed.createdBy,
-							now,
-						} as never,
-					);
+					await ctx.runMutation(internal.okfBundle._insertImportedBriefing, {
+						title: parsed.title,
+						topic: parsed.topic,
+						participants: parsed.participants,
+						content: parsed.content,
+						createdBy: parsed.createdBy,
+						now,
+					});
 				}
 				out.imported.briefings++;
 			} else if (parsed.kind === "task") {
 				const existing = await findExistingIdByPaginating((cursor) =>
-					ctx.runQuery("okfBundle:_findTaskByTitleAndDescription" as never, {
+					ctx.runQuery(internal.okfBundle._findTaskByTitleAndDescription, {
 						title: parsed.title,
 						description: parsed.description,
 						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
-					} as never),
+					}),
 				);
 				if (existing !== null) {
 					out.skipped++;
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(
-						"okfBundle:_insertImportedTask" as never,
-						{
-							title: parsed.title,
-							description: parsed.description,
-							assignedTo: parsed.assignedTo,
-							priority: parsed.priority,
-							status: parsed.status,
-							createdBy: parsed.createdBy,
-							now,
-						} as never,
-					);
+					await ctx.runMutation(internal.okfBundle._insertImportedTask, {
+						title: parsed.title,
+						description: parsed.description,
+						assignedTo: parsed.assignedTo,
+						priority: parsed.priority,
+						status: parsed.status,
+						createdBy: parsed.createdBy,
+						now,
+					});
 				}
 				out.imported.tasks++;
 			}
