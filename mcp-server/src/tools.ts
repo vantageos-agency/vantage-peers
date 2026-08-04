@@ -3037,7 +3037,14 @@ export function registerTools(
 						limit,
 					},
 				);
-				const { messages, truncated, nextSince, pendingOnYou } = result as {
+				const {
+					messages,
+					truncated,
+					nextSince,
+					pendingOnYouTotal,
+					slaBreachedTotal,
+					slaBreachedTop,
+				} = result as {
 					messages: Array<{
 						receiptId: string;
 						from: string;
@@ -3048,12 +3055,18 @@ export function registerTools(
 					}>;
 					truncated: boolean;
 					nextSince: number | null;
-					// Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — server-derived
-					// queue of `blocked` tasks whose unblock authority is this
-					// caller. Note: `staleInProgress` is ALSO returned by the
-					// Convex query but is not yet threaded through this MCP tool
-					// (pre-existing gap, out of scope here — see completion note).
-					pendingOnYou?: Array<{
+					// Day 156 (measurement-integrity: volume drowns the signal) —
+					// server-derived summary of `blocked` tasks whose unblock
+					// authority is this caller. The FULL pendingOnYou array is no
+					// longer returned (was flooding check_messages every 3-min
+					// cron tick with ~110 entries) — only the totals plus the
+					// top-N slaBreached entries (already sorted + capped
+					// server-side). Note: `staleInProgress` is ALSO returned by
+					// the Convex query but is not yet threaded through this MCP
+					// tool (pre-existing gap, out of scope here).
+					pendingOnYouTotal: number;
+					slaBreachedTotal: number;
+					slaBreachedTop: Array<{
 						taskId: string;
 						title: string;
 						assignee: string;
@@ -3063,25 +3076,15 @@ export function registerTools(
 					}>;
 				};
 
-				// Day 152 — SLA-breached entries (>=3 cycles waiting on the
+				// Day 152/156 — SLA-breached entries (>=3 cycles waiting on the
 				// caller, Laurent decision) are surfaced as a distinct ALERT
-				// section, never buried in the normal list.
-				const breached = (pendingOnYou ?? []).filter(
-					(e) => e.slaBreached,
-				);
-				const waiting = (pendingOnYou ?? []).filter(
-					(e) => !e.slaBreached,
-				);
-
-				const breachedBlock =
-					breached.length > 0
-						? `\n\n⚠️ SLA-BREACHED pendingOnYou (>=3 cycles waiting on you):\n${JSON.stringify(breached, null, 2)}`
+				// section, never buried in the normal list. The server already
+				// filtered/sorted/capped — this is rendering only.
+				const remainder = slaBreachedTotal - slaBreachedTop.length;
+				const pendingBlock =
+					pendingOnYouTotal > 0
+						? `\n\npendingOnYou: ${pendingOnYouTotal} total, ${slaBreachedTotal} SLA-breached (top ${slaBreachedTop.length} shown)${remainder > 0 ? ` (+${remainder} more not shown)` : ""}:\n${JSON.stringify(slaBreachedTop, null, 2)}`
 						: "";
-				const waitingBlock =
-					waiting.length > 0
-						? `\n\npendingOnYou (blocked tasks waiting on you to unblock):\n${JSON.stringify(waiting, null, 2)}`
-						: "";
-				const pendingBlock = breachedBlock + waitingBlock;
 
 				if (messages.length === 0) {
 					return {
