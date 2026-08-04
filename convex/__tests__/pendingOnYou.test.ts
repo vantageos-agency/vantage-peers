@@ -226,6 +226,46 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 		).toBe(false);
 	});
 
+	test("NEG-excluded: tags=[deferred] → NOT present in pendingOnYou despite SLA-breach age", async () => {
+		const t = convexTest(schema, modules);
+		const taskId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[REVIEW] deferred-tagged, should be excluded",
+			3 * CYCLE_MS + 60_000,
+			["deferred"],
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(
+			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+		).toBe(false);
+	});
+
+	test("NEG-excluded: tags=[Dormant] (mixed-case) → NOT present in pendingOnYou despite SLA-breach age", async () => {
+		const t = convexTest(schema, modules);
+		const taskId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[REVIEW] mixed-case-dormant-tagged, should be excluded",
+			3 * CYCLE_MS + 60_000,
+			["Dormant"],
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(
+			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+		).toBe(false);
+	});
+
 	test("POS-included (regression guard): non-dormant tags → present with slaBreached true", async () => {
 		const t = convexTest(schema, modules);
 		const taskId = await seedBlockedTaskWithAge(
