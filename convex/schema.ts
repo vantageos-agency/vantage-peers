@@ -812,7 +812,9 @@ export default defineSchema({
 	//
 	// Defaults are seeded by errorMonitorFilters.seedDefaultRules. Sigma/Pi
 	// can add or disable rules without redeploying via addFilterRule /
-	// disableFilterRule public mutations.
+	// disableFilterRule — internalMutation (admin-only, invoked with a deploy
+	// key via `npx convex run`; converted from public to close a DoS-adjacent
+	// suppression surface, see errorMonitorFilters.ts).
 	//
 	// Linked: memory j573cwcs3znp0xsvtg34x435jh84b0eg, pattern m978zeg4b2e9nx67z2hg5rwgfs85hf7f.
 	errorMonitorFilterRules: defineTable({
