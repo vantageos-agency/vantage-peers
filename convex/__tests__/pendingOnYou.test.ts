@@ -156,3 +156,82 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 		expect(entry.cyclesWaiting).toBeLessThan(3);
 	});
 });
+
+describe("pendingOnYou — deliberately-parked exclusion (Day 152, 2nd occurrence)", () => {
+	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedBlockedTaskWithAge(
+		t: any,
+		assignedTo: string,
+		createdBy: string,
+		title: string,
+		ageMs: number,
+	): Promise<string> {
+		const now = Date.now();
+		return await t.run(async (ctx: any) => {
+			return await ctx.db.insert("tasks", {
+				title,
+				assignedTo,
+				priority: "high" as const,
+				status: "blocked" as const,
+				createdBy,
+				createdAt: now - ageMs,
+				updatedAt: now - ageMs,
+			});
+		});
+	}
+
+	test("POS-excluded: [DORMANTE] parked task past SLA age → NOT in pendingOnYou", async () => {
+		const t = convexTest(schema, modules);
+		await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[DORMANTE — ne pas exécuter] wait SI ET QUAND la facturation repart",
+			3 * CYCLE_MS + 60_000,
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.pendingOnYou).toEqual([]);
+	});
+
+	test("POS-excluded: [BACKLOG] parked task past SLA age → NOT in pendingOnYou", async () => {
+		const t = convexTest(schema, modules);
+		await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[BACKLOG] revisit later",
+			3 * CYCLE_MS + 60_000,
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.pendingOnYou).toEqual([]);
+	});
+
+	test("NEG-included: normal-title blocked task past SLA age → present (regression guard)", async () => {
+		const t = convexTest(schema, modules);
+		const taskId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[PROD-DEPLOY-AUTHORIZED] normal blocked task",
+			3 * CYCLE_MS + 60_000,
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.pendingOnYou.length).toBe(1);
+		expect(result.pendingOnYou[0].taskId).toBe(taskId);
+		expect(result.pendingOnYou[0].slaBreached).toBe(true);
+	});
+});

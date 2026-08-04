@@ -39,6 +39,19 @@ export const DEFAULT_PENDING_ON_YOU_CYCLE_MS = 30 * 60 * 1000; // 30 min
 /** Laurent decision (Day 152): SLA breach = 3 cycles waiting on the caller. */
 export const SLA_BREACH_CYCLES = 3;
 
+// Day 152 (2nd occurrence, Eta advisory) — a `blocked` task can be
+// DELIBERATELY parked on an external condition (e.g. "resume when billing
+// restarts") rather than actually awaiting the caller's decision. Such a
+// task is nobody's pending action and must not surface as slaBreached.
+//
+// Root-fix (not implemented here, requires a schema change): a distinct
+// `parked`/`deferred` task STATUS separate from `blocked`, so parking is a
+// structural fact rather than a string convention. This regex is the
+// advisory-level fix — a title-marker heuristic, not the root fix — chosen
+// because Day-152 constraints forbid a schema change for this pass.
+export const PARKED_TITLE_RE =
+	/\[(DORMANTE|PARKED|DEFERRED|BACKLOG)\]|ne pas ex[ée]cuter/i;
+
 const OVERRIDE_RE = /\/\/\s*allow-no-time-line:\s*(.{6,})/;
 
 /**
@@ -264,6 +277,7 @@ export async function computePendingOnYou(
 	const entries: PendingOnYouEntry[] = [];
 	for (const task of blockedTasks) {
 		if (task.createdBy !== caller) continue;
+		if (PARKED_TITLE_RE.test(task.title)) continue;
 		const age = now - task.updatedAt;
 		const cyclesWaiting = Math.floor(age / cycleMs);
 		entries.push({
