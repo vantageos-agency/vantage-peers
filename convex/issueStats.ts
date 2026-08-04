@@ -39,25 +39,7 @@ export const calculateStats = internalAction({
 			args.since ??
 			new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-		const issuesResp = await fetch(
-			`https://api.github.com/repos/${owner}/${repoName}/issues?state=all&since=${sinceDate}&per_page=100&sort=created&direction=desc`,
-			{
-				headers: {
-					Authorization: `Bearer ${token}`,
-					Accept: "application/vnd.github.v3+json",
-					"User-Agent": "vantagepeers-bot/1.0",
-				},
-			},
-		);
-
-		if (!issuesResp.ok) {
-			console.error(
-				`[IssueStats] Failed to fetch issues: ${issuesResp.status}`,
-			);
-			return null;
-		}
-
-		const issues = (await issuesResp.json()) as Array<{
+		let issues: Array<{
 			number: number;
 			title: string;
 			created_at: string;
@@ -66,6 +48,34 @@ export const calculateStats = internalAction({
 			pull_request?: unknown;
 			comments_url: string;
 		}>;
+
+		try {
+			const issuesResp = await fetch(
+				`https://api.github.com/repos/${owner}/${repoName}/issues?state=all&since=${sinceDate}&per_page=100&sort=created&direction=desc`,
+				{
+					headers: {
+						Authorization: `Bearer ${token}`,
+						Accept: "application/vnd.github.v3+json",
+						"User-Agent": "vantagepeers-bot/1.0",
+					},
+				},
+			);
+
+			if (!issuesResp.ok) {
+				console.error(
+					`[IssueStats] Failed to fetch issues: ${issuesResp.status}`,
+				);
+				return null;
+			}
+
+			issues = (await issuesResp.json()) as typeof issues;
+		} catch (err) {
+			console.error(
+				`[IssueStats] issues fetch failed for ${owner}/${repoName}: `,
+				err,
+			);
+			return null;
+		}
 
 		const realIssues = issues.filter((i) => !i.pull_request);
 
