@@ -24,10 +24,14 @@
 // code was vulnerable to (see honesty note below), so there is no reliable
 // automated RED assertion to keep here.
 //
-// Also included: an explicit negative test documenting that the
-// briefing/task dedup predicates are NOT namespace-scoped (a known,
-// pre-existing gap tracked separately — NOT fixed in this PR). See the
-// "cross-namespace dedup scope" describe block below.
+// Follow-up (task k175emjxz6d1pdb5qjv824m9sd8bs6fj, #1134 convex-reviewer
+// finding): the briefing/task dedup predicates WERE not namespace-scoped —
+// a documented, pre-existing cross-tenant side channel. That gap is now
+// CLOSED: both helpers take a `namespace` arg and scope via the same
+// `expectedOrgIdForNamespace` / `matchesNamespaceScope` helpers already used
+// by the export-side reads (`_fetchBriefingNotesForBundle`,
+// `_fetchTasksForBundle`). See the "cross-tenant dedup scope (FIXED)"
+// describe block below for the bipolar RED-before-GREEN proof.
 //
 // Honesty note on harness limits: `convex-test` does not enforce the real
 // Convex 16 MB execution ceiling (there is no in-memory OOM at this scale),
@@ -246,6 +250,7 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 		const firstPage = await t.query(
 			internal.okfBundle._findBriefingByTitleAndContent,
 			{
+				namespace: "project/elpi-corp",
 				title: "Target Briefing",
 				content: "Target briefing body.",
 				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
@@ -259,6 +264,7 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 			const page: DedupPage = await t.query(
 				internal.okfBundle._findBriefingByTitleAndContent,
 				{
+					namespace: "project/elpi-corp",
 					title: "Target Briefing",
 					content: "Target briefing body.",
 					paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
@@ -294,6 +300,7 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 		const firstPage = await t.query(
 			internal.okfBundle._findTaskByTitleAndDescription,
 			{
+				namespace: "project/elpi-corp",
 				title: "Target Task",
 				description: "Target task description.",
 				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
@@ -307,6 +314,7 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 			const page: DedupPage = await t.query(
 				internal.okfBundle._findTaskByTitleAndDescription,
 				{
+					namespace: "project/elpi-corp",
 					title: "Target Task",
 					description: "Target task description.",
 					paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
@@ -324,51 +332,73 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Known gap — briefing/task dedup is NOT namespace/tenant scoped.
+// FIXED — cross-tenant dedup side-channel (task k175emjxz6d1pdb5qjv824m9sd8bs6fj,
+// follow-up from the #1134 convex-reviewer finding).
 //
-// Unlike `_findMemoryByContent` (which takes a `namespace` arg and filters
-// on it), `_findBriefingByTitleAndContent` and `_findTaskByTitleAndDescription`
-// take no namespace/tenant argument at all — they scan `briefingNotes` /
-// `tasks` globally via `by_topic` / `by_status` indexes. This is a
-// PRE-EXISTING cross-tenant side channel, OUT OF SCOPE for this PR (#1134
-// only bounds the reads; it does not add scoping to the predicate). This
-// test documents the gap explicitly so the current behavior is a verified,
-// intentional state rather than an implicit assumption. A follow-up ticket
-// tracks adding tenant scoping to these two predicates — do NOT change the
-// predicate here.
+// `_findBriefingByTitleAndContent` / `_findTaskByTitleAndDescription` used to
+// take no namespace/tenant argument at all — they scanned `briefingNotes` /
+// `tasks` globally via bare `by_topic` / `by_status` indexes. A tenant-A
+// import whose title+content EXACTLY matched a tenant-B row would silently
+// skip the insert ("dedup hit") instead of importing A's own copy — the
+// presence/absence of that skip leaked the existence of B's title+content to
+// A. Fixed by threading a `namespace` arg through both helpers and scoping
+// via the SAME `expectedOrgIdForNamespace` / `matchesNamespaceScope` mapping
+// already used by the export-side reads, reusing the existing `by_orgId`
+// index (no new index needed).
+//
+// RED-before-GREEN: reverting the `namespace` scoping in `okfBundle.ts`
+// (dropping the `.eq("orgId", expectedOrgId)` index scope and the
+// `matchesNamespaceScope` predicate guard) makes the first assertion in each
+// "does NOT dedup" test below FAIL — `page.id` resolves to the OTHER
+// tenant's row instead of `null`, reproducing the leak this fix closes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("KNOWN GAP — briefing/task dedup predicates are not namespace-scoped (pre-existing, out of scope for #1134)", () => {
-	test("_findBriefingByTitleAndContent: matches a title+content pair regardless of which 'tenant' inserted it (no namespace arg exists to scope by)", async () => {
+describe("FIXED — cross-tenant dedup side-channel closed (bipolar: cross-tenant blocked, same-tenant still works)", () => {
+	test("_findBriefingByTitleAndContent: tenant A does NOT dedup against tenant B's identical title+content — imports its own copy", async () => {
 		const t = createTestConvex();
-		// Simulate two different "tenants" by varying an unrelated field
-		// (topic) — there is no namespace/ownerId field on briefingNotes for
-		// this predicate to scope on in the first place.
-		const tenantAId = await t.run(async (ctx) =>
+		const tenantBId = await t.run(async (ctx) =>
 			ctx.db.insert("briefingNotes", {
 				title: "Cross-Tenant Briefing",
-				topic: "tenant-a-topic",
+				topic: "tenant-b-topic",
 				participants: ["sigma"],
 				content: "Shared briefing content across tenants.",
 				createdBy: "sigma",
 				createdAt: NOW,
+				orgId: "tenant-b",
 			}),
 		);
 
-		// A "tenant B" import lookup for the identical title+content finds
-		// tenant A's row — this is the documented gap, not a bug fixed here.
-		const page = await t.query(internal.okfBundle._findBriefingByTitleAndContent, {
-			title: "Cross-Tenant Briefing",
-			content: "Shared briefing content across tenants.",
-			paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
-		});
+		// Tenant A's import lookup (namespace "team/tenant-a" -> orgId "tenant-a")
+		// must NOT find tenant B's row, even though title+content match exactly.
+		const crossTenantPage = await t.query(
+			internal.okfBundle._findBriefingByTitleAndContent,
+			{
+				namespace: "team/tenant-a",
+				title: "Cross-Tenant Briefing",
+				content: "Shared briefing content across tenants.",
+				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+			},
+		);
+		expect(crossTenantPage.id).toBe(null);
+		expect(crossTenantPage.id).not.toBe(tenantBId);
 
-		expect(page.id).toBe(tenantAId);
+		// Same-tenant dedup must still work: tenant B's own subsequent lookup
+		// against its own prior row DOES find it.
+		const sameTenantPage = await t.query(
+			internal.okfBundle._findBriefingByTitleAndContent,
+			{
+				namespace: "team/tenant-b",
+				title: "Cross-Tenant Briefing",
+				content: "Shared briefing content across tenants.",
+				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+			},
+		);
+		expect(sameTenantPage.id).toBe(tenantBId);
 	});
 
-	test("_findTaskByTitleAndDescription: matches a title+description pair regardless of which 'tenant' inserted it (no namespace arg exists to scope by)", async () => {
+	test("_findTaskByTitleAndDescription: tenant A does NOT dedup against tenant B's identical title+description — imports its own copy", async () => {
 		const t = createTestConvex();
-		const tenantAId = await t.run(async (ctx) =>
+		const tenantBId = await t.run(async (ctx) =>
 			ctx.db.insert("tasks", {
 				title: "Cross-Tenant Task",
 				description: "Shared task description across tenants.",
@@ -378,15 +408,57 @@ describe("KNOWN GAP — briefing/task dedup predicates are not namespace-scoped 
 				createdBy: "sigma",
 				createdAt: NOW,
 				updatedAt: NOW,
+				orgId: "tenant-b",
 			}),
 		);
 
-		const page = await t.query(internal.okfBundle._findTaskByTitleAndDescription, {
-			title: "Cross-Tenant Task",
-			description: "Shared task description across tenants.",
-			paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
-		});
+		const crossTenantPage = await t.query(
+			internal.okfBundle._findTaskByTitleAndDescription,
+			{
+				namespace: "team/tenant-a",
+				title: "Cross-Tenant Task",
+				description: "Shared task description across tenants.",
+				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+			},
+		);
+		expect(crossTenantPage.id).toBe(null);
+		expect(crossTenantPage.id).not.toBe(tenantBId);
 
-		expect(page.id).toBe(tenantAId);
+		const sameTenantPage = await t.query(
+			internal.okfBundle._findTaskByTitleAndDescription,
+			{
+				namespace: "team/tenant-b",
+				title: "Cross-Tenant Task",
+				description: "Shared task description across tenants.",
+				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+			},
+		);
+		expect(sameTenantPage.id).toBe(tenantBId);
+	});
+
+	test("master tenant ('project/elpi-corp') dedup lookup does not match a client-org-scoped row with the same title+content", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) =>
+			ctx.db.insert("briefingNotes", {
+				title: "Master vs Org Briefing",
+				topic: "org-scoped",
+				participants: ["sigma"],
+				content: "Same title and content, different scope.",
+				createdBy: "sigma",
+				createdAt: NOW,
+				orgId: "acme-hr",
+			}),
+		);
+
+		const masterPage = await t.query(
+			internal.okfBundle._findBriefingByTitleAndContent,
+			{
+				namespace: "project/elpi-corp",
+				title: "Master vs Org Briefing",
+				content: "Same title and content, different scope.",
+				paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor: null },
+			},
+		);
+		expect(masterPage.id).toBe(null);
 	});
 });
