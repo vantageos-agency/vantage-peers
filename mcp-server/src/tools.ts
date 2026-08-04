@@ -3037,7 +3037,7 @@ export function registerTools(
 						limit,
 					},
 				);
-				const { messages, truncated, nextSince } = result as {
+				const { messages, truncated, nextSince, pendingOnYou } = result as {
 					messages: Array<{
 						receiptId: string;
 						from: string;
@@ -3048,11 +3048,34 @@ export function registerTools(
 					}>;
 					truncated: boolean;
 					nextSince: number | null;
+					// Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — server-derived
+					// queue of `blocked` tasks whose unblock authority is this
+					// caller. Note: `staleInProgress` is ALSO returned by the
+					// Convex query but is not yet threaded through this MCP tool
+					// (pre-existing gap, out of scope here — see completion note).
+					pendingOnYou?: Array<{
+						taskId: string;
+						title: string;
+						assignee: string;
+						age: number;
+					}>;
 				};
+
+				const pendingBlock =
+					pendingOnYou && pendingOnYou.length > 0
+						? `\n\npendingOnYou (blocked tasks waiting on you to unblock):\n${JSON.stringify(pendingOnYou, null, 2)}`
+						: "";
 
 				if (messages.length === 0) {
 					return {
-						content: [{ type: "text", text: "No new messages." }],
+						content: [
+							{
+								type: "text",
+								text: pendingBlock
+									? `No new messages.${pendingBlock}`
+									: "No new messages.",
+							},
+						],
 					};
 				}
 
@@ -3066,9 +3089,10 @@ export function registerTools(
 				}));
 
 				const body = JSON.stringify(payload, null, 2);
-				const text = truncated
-					? `${body}\n— truncated. Resume with check_messages since=${nextSince}`
-					: body;
+				const text =
+					(truncated
+						? `${body}\n— truncated. Resume with check_messages since=${nextSince}`
+						: body) + pendingBlock;
 
 				return {
 					content: [

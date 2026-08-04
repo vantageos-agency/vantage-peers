@@ -170,6 +170,72 @@ export async function getStaleInProgressThresholdMs(
 		: DEFAULT_STALE_THRESHOLD_MS;
 }
 
+/**
+ * Bound on the blocked-task scan in computePendingOnYou — mirrors the
+ * assignee-scoped index scan of computeStaleInProgress. There is no
+ * `by_createdBy` index on `tasks`, so this scans the `by_status` index
+ * (status, createdAt) newest-first and caps at PENDING_ON_YOU_SCAN_CAP rows
+ * rather than collecting every blocked task fleet-wide.
+ */
+const PENDING_ON_YOU_SCAN_CAP = 200;
+
+export type PendingOnYouEntry = {
+	taskId: Id<"tasks">;
+	title: string;
+	assignee: string; // who is waiting (task.assignedTo)
+	age: number; // ms since updatedAt
+};
+
+/**
+ * Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — server-derived "pendingOnYou"
+ * queue. Finds `blocked` tasks whose unblock authority is `caller`.
+ *
+ * Signal used: `task.createdBy === caller`. This is the most robust
+ * already-present signal for "who must unblock" — the task creator is the
+ * one who requested the work and is structurally the party a `blocked`
+ * status is waiting on (e.g. PROD-DEPLOY-AUTHORIZED / PR-MERGE-AUTHORIZED /
+ * REVIEW / ETA-GATE gates are opened by whoever authored the task). Unlike
+ * `assignedTo` (who is DOING the work and already sees it via
+ * computeStaleInProgress), `createdBy` names who the assignee is BLOCKED on.
+ * Title/description markers are NOT parsed here — `createdBy` is already
+ * present on every task and is not the forgeable `origin` field (see
+ * comment above on `enforceClosureGate`'s Day-130 followup); it is a plain,
+ * always-set string, not a new schema field.
+ *
+ * Follow-up (documented, not implemented): unclosed token/merge/review
+ * REQUESTS that are represented purely as unread `messages` (not tasks) are
+ * NOT scanned here — there is no cheap index to distinguish a "request
+ * awaiting decision" message from any other unread message without a new
+ * field. If that signal is needed, it should be added as its own bounded
+ * scan, not folded into this one silently.
+ *
+ * Bound: scans the `by_status` (status, createdAt) index, newest-first,
+ * capped at PENDING_ON_YOU_SCAN_CAP rows — never an unbounded `.collect()`.
+ */
+export async function computePendingOnYou(
+	ctx: QueryCtx | MutationCtx,
+	caller: string,
+	now: number,
+): Promise<PendingOnYouEntry[]> {
+	const blockedTasks = await ctx.db
+		.query("tasks")
+		.withIndex("by_status", (q) => q.eq("status", "blocked"))
+		.order("desc")
+		.take(PENDING_ON_YOU_SCAN_CAP);
+
+	const entries: PendingOnYouEntry[] = [];
+	for (const task of blockedTasks) {
+		if (task.createdBy !== caller) continue;
+		entries.push({
+			taskId: task._id,
+			title: task.title,
+			assignee: task.assignedTo,
+			age: now - task.updatedAt,
+		});
+	}
+	return entries;
+}
+
 export type StaleInProgressEntry = {
 	taskId: Id<"tasks">;
 	title: string;

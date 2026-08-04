@@ -5,12 +5,24 @@ import { mutation, query } from "./_generated/server";
 import { requireScope, withOrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import { computeStaleInProgress } from "./lib/taskClosureGate";
+import {
+	computeStaleInProgress,
+	computePendingOnYou,
+} from "./lib/taskClosureGate";
 
 const staleInProgressValidator = v.array(
 	v.object({
 		taskId: v.id("tasks"),
 		title: v.string(),
+		age: v.number(),
+	}),
+);
+
+const pendingOnYouValidator = v.array(
+	v.object({
+		taskId: v.id("tasks"),
+		title: v.string(),
+		assignee: v.string(),
 		age: v.number(),
 	}),
 );
@@ -254,6 +266,7 @@ export const checkNewMessagesEnvelope = query({
 		truncated: v.boolean(),
 		nextSince: v.union(v.number(), v.null()),
 		staleInProgress: staleInProgressValidator,
+		pendingOnYou: pendingOnYouValidator,
 	}),
 	handler: async (ctx, args) => {
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
@@ -381,13 +394,19 @@ export const checkNewMessagesEnvelope = query({
 		// is the ONLY path staleInProgress is delivered on: mcp-server calls
 		// exclusively checkNewMessagesEnvelope (tools.ts:2776); the legacy
 		// checkNewMessages array contract stays frozen (see its own comment).
+		const now = Date.now();
 		const staleInProgress = await computeStaleInProgress(
 			ctx,
 			args.recipient,
-			Date.now(),
+			now,
 		);
 
-		return { messages, truncated, nextSince, staleInProgress };
+		// Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — mirrors staleInProgress:
+		// server-derived on every call, never a stored flag. Surfaces `blocked`
+		// tasks whose unblock authority is this recipient (createdBy === caller).
+		const pendingOnYou = await computePendingOnYou(ctx, args.recipient, now);
+
+		return { messages, truncated, nextSince, staleInProgress, pendingOnYou };
 	},
 });
 
