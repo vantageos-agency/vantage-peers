@@ -24,6 +24,8 @@ const pendingOnYouValidator = v.array(
 		title: v.string(),
 		assignee: v.string(),
 		age: v.number(),
+		cyclesWaiting: v.number(),
+		slaBreached: v.boolean(),
 	}),
 );
 

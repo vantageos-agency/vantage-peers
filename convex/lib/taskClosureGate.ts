@@ -27,6 +27,18 @@ const BILLABLE_PROJECTS_KEY = "billableProjects";
 const STALE_THRESHOLD_KEY = "staleInProgressThresholdMs";
 const DEFAULT_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Day 152 — SLA-AGE extension. `check_messages` is polled by an EXTERNAL
+// orchestrator cron (not a Convex cron), so the "cycle" period cannot be
+// read from any Convex cron definition — it is config-driven, mirroring
+// `getStaleInProgressThresholdMs`. Ops aligns `PENDING_ON_YOU_CYCLE_MS` in
+// taskClosureConfig to the REAL external polling cadence; the default here
+// (30 min) is a placeholder until ops seeds the real value.
+const PENDING_ON_YOU_CYCLE_KEY = "pendingOnYouCycleMs";
+export const DEFAULT_PENDING_ON_YOU_CYCLE_MS = 30 * 60 * 1000; // 30 min
+
+/** Laurent decision (Day 152): SLA breach = 3 cycles waiting on the caller. */
+export const SLA_BREACH_CYCLES = 3;
+
 const OVERRIDE_RE = /\/\/\s*allow-no-time-line:\s*(.{6,})/;
 
 /**
@@ -184,7 +196,31 @@ export type PendingOnYouEntry = {
 	title: string;
 	assignee: string; // who is waiting (task.assignedTo)
 	age: number; // ms since updatedAt
+	cyclesWaiting: number; // Day 152 — age / cycle period, floored
+	slaBreached: boolean; // Day 152 — cyclesWaiting >= SLA_BREACH_CYCLES
 };
+
+/**
+ * Reads the configured pendingOnYou cycle period (ms), default
+ * DEFAULT_PENDING_ON_YOU_CYCLE_MS (30 min). Ops seeds
+ * taskClosureConfig["pendingOnYouCycleMs"] to match the real external
+ * check_messages polling cadence.
+ */
+export async function getPendingOnYouCycleMs(
+	ctx: QueryCtx | MutationCtx,
+): Promise<number> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", PENDING_ON_YOU_CYCLE_KEY))
+		.unique();
+	if (row === null || row.value.length === 0) {
+		return DEFAULT_PENDING_ON_YOU_CYCLE_MS;
+	}
+	const parsed = Number(row.value[0]);
+	return Number.isFinite(parsed) && parsed > 0
+		? parsed
+		: DEFAULT_PENDING_ON_YOU_CYCLE_MS;
+}
 
 /**
  * Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — server-derived "pendingOnYou"
@@ -217,6 +253,8 @@ export async function computePendingOnYou(
 	caller: string,
 	now: number,
 ): Promise<PendingOnYouEntry[]> {
+	const cycleMs = await getPendingOnYouCycleMs(ctx);
+
 	const blockedTasks = await ctx.db
 		.query("tasks")
 		.withIndex("by_status", (q) => q.eq("status", "blocked"))
@@ -226,11 +264,15 @@ export async function computePendingOnYou(
 	const entries: PendingOnYouEntry[] = [];
 	for (const task of blockedTasks) {
 		if (task.createdBy !== caller) continue;
+		const age = now - task.updatedAt;
+		const cyclesWaiting = Math.floor(age / cycleMs);
 		entries.push({
 			taskId: task._id,
 			title: task.title,
 			assignee: task.assignedTo,
-			age: now - task.updatedAt,
+			age,
+			cyclesWaiting,
+			slaBreached: cyclesWaiting >= SLA_BREACH_CYCLES,
 		});
 	}
 	return entries;

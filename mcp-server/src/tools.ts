@@ -3058,13 +3058,30 @@ export function registerTools(
 						title: string;
 						assignee: string;
 						age: number;
+						cyclesWaiting: number;
+						slaBreached: boolean;
 					}>;
 				};
 
-				const pendingBlock =
-					pendingOnYou && pendingOnYou.length > 0
-						? `\n\npendingOnYou (blocked tasks waiting on you to unblock):\n${JSON.stringify(pendingOnYou, null, 2)}`
+				// Day 152 — SLA-breached entries (>=3 cycles waiting on the
+				// caller, Laurent decision) are surfaced as a distinct ALERT
+				// section, never buried in the normal list.
+				const breached = (pendingOnYou ?? []).filter(
+					(e) => e.slaBreached,
+				);
+				const waiting = (pendingOnYou ?? []).filter(
+					(e) => !e.slaBreached,
+				);
+
+				const breachedBlock =
+					breached.length > 0
+						? `\n\n⚠️ SLA-BREACHED pendingOnYou (>=3 cycles waiting on you):\n${JSON.stringify(breached, null, 2)}`
 						: "";
+				const waitingBlock =
+					waiting.length > 0
+						? `\n\npendingOnYou (blocked tasks waiting on you to unblock):\n${JSON.stringify(waiting, null, 2)}`
+						: "";
+				const pendingBlock = breachedBlock + waitingBlock;
 
 				if (messages.length === 0) {
 					return {

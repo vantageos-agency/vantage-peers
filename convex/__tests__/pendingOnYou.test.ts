@@ -90,3 +90,69 @@ describe("pendingOnYou — checkNewMessagesEnvelope (Day 133)", () => {
 		expect(result.pendingOnYou).toEqual([]);
 	});
 });
+
+describe("pendingOnYou SLA-AGE (Day 152)", () => {
+	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedBlockedTaskWithAge(
+		t: any,
+		assignedTo: string,
+		createdBy: string,
+		title: string,
+		ageMs: number,
+	): Promise<string> {
+		const now = Date.now();
+		return await t.run(async (ctx: any) => {
+			return await ctx.db.insert("tasks", {
+				title,
+				assignedTo,
+				priority: "high" as const,
+				status: "blocked" as const,
+				createdBy,
+				createdAt: now - ageMs,
+				updatedAt: now - ageMs,
+			});
+		});
+	}
+
+	test("POS: age >= 3 cycles → slaBreached true, cyclesWaiting >= 3", async () => {
+		const t = convexTest(schema, modules);
+		await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[PROD-DEPLOY-AUTHORIZED] sla breach case",
+			3 * CYCLE_MS + 60_000,
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.pendingOnYou.length).toBe(1);
+		const entry = result.pendingOnYou[0];
+		expect(entry.slaBreached).toBe(true);
+		expect(entry.cyclesWaiting).toBeGreaterThanOrEqual(3);
+	});
+
+	test("NEG: age < 3 cycles (1 cycle) → slaBreached false, cyclesWaiting < 3", async () => {
+		const t = convexTest(schema, modules);
+		await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[REVIEW] not yet breached",
+			1 * CYCLE_MS,
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.pendingOnYou.length).toBe(1);
+		const entry = result.pendingOnYou[0];
+		expect(entry.slaBreached).toBe(false);
+		expect(entry.cyclesWaiting).toBeLessThan(3);
+	});
+});
