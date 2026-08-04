@@ -37,7 +37,6 @@ import { v } from "convex/values";
 import {
 	internalMutation,
 	internalQuery,
-	mutation,
 	query,
 } from "./_generated/server";
 
@@ -426,7 +425,32 @@ export const seedDefaultRules = internalMutation({
 
 // Public admin surface — used by Sigma/Pi to add or disable a rule at runtime.
 
-export const addFilterRule = mutation({
+// Dedup key — the 4-tuple that defines "the same rule" for idempotency
+// purposes. `reason` and `priority` are intentionally excluded: two calls
+// that differ only in wording/priority for an otherwise-identical matcher
+// are still the same functional rule and must not duplicate rows.
+function sameRuleTuple(
+	a: { functionName: string; errorMessageRegex: string; regexFlags?: string; severity: FilterSeverity },
+	b: { functionName: string; errorMessageRegex: string; regexFlags?: string; severity: FilterSeverity },
+): boolean {
+	return (
+		a.functionName === b.functionName &&
+		a.errorMessageRegex === b.errorMessageRegex &&
+		(a.regexFlags ?? "") === (b.regexFlags ?? "") &&
+		a.severity === b.severity
+	);
+}
+
+// v1.0.2 — converted to internalMutation. addFilterRule/disableFilterRule
+// were PUBLIC mutations with no auth check: any client could insert a broad
+// `functionName:"*"` skip rule and silence ALL GitHub-issue creation
+// (DoS-adjacent suppression surface). Same precedent as
+// `setPendingAliasReleases` below (Eta delta-review PR #530). Grep of
+// mcp-server/src + convex confirmed no live public caller (MCP tool or
+// dashboard) — only test code called `api.errorMonitorFilters.addFilterRule`.
+// Runtime/admin usage via `npx convex run ... --prod` (deploy key) can still
+// call internalMutation, so this does not break the orchestrator's use.
+export const addFilterRule = internalMutation({
 	args: {
 		functionName: v.string(),
 		errorMessageRegex: v.string(),
@@ -443,6 +467,27 @@ export const addFilterRule = mutation({
 		} catch (err) {
 			throw new Error(`Invalid errorMessageRegex: ${(err as Error).message}`);
 		}
+
+		// Idempotency guard — an identical ACTIVE rule (same functionName,
+		// errorMessageRegex, regexFlags, severity) is a no-op that returns the
+		// existing row's _id instead of inserting a duplicate. Table is small
+		// (admin config, not tenant data), so an in-memory scan over the active
+		// index is acceptable and avoids a new compound index for a rare path.
+		// Bounded via `.take(500)` rather than `.collect()` — the very bug this
+		// mutation fixes proves the table can grow unexpectedly (11 dup rows
+		// found in prod). A duplicate created beyond the first 500 active rows
+		// would not be caught here; that is an acceptable degradation for an
+		// admin table (dedupeFilterRules below is the authoritative cleanup
+		// path and pages through the full table).
+		const activeRules = await ctx.db
+			.query("errorMonitorFilterRules")
+			.withIndex("by_active", (q) => q.eq("active", true))
+			.take(500);
+		const existing = activeRules.find((r) => sameRuleTuple(r, args));
+		if (existing) {
+			return existing._id;
+		}
+
 		return await ctx.db.insert("errorMonitorFilterRules", {
 			functionName: args.functionName,
 			errorMessageRegex: args.errorMessageRegex,
@@ -453,6 +498,95 @@ export const addFilterRule = mutation({
 			createdAt: Date.now(),
 			priority: args.priority,
 		});
+	},
+});
+
+/**
+ * Admin dedup helper — collapses groups of active rules sharing the same
+ * (functionName, errorMessageRegex, regexFlags, severity) tuple down to one
+ * (the oldest, by `createdAt` then `_creationTime` as tiebreak), disabling
+ * the rest via the existing `active:false` soft-disable convention.
+ *
+ * Idempotent — running it twice disables nothing on the second pass, since
+ * after the first pass each group has exactly one active member left.
+ *
+ * Intended for one-shot runtime use by an orchestrator (e.g. to collapse
+ * accidental duplicates created by repeated `addFilterRule` calls prior to
+ * this idempotency guard shipping). Never called from the hot path.
+ */
+// Safety cap for `dedupeFilterRules` — this is an admin table, not tenant
+// data, so `.collect()` is normally acceptable, but the very bug this
+// mutation fixes proves the table CAN grow unexpectedly (11 dup rows found
+// in prod). Rather than an unbounded `.collect()`, page through in bounded
+// batches and warn (not throw) if the cap is hit — dedupe is a cleanup tool,
+// so partial progress on an oversized table is safer than aborting: a
+// second invocation continues collapsing what's left (idempotent).
+const DEDUPE_PAGE_SIZE = 500;
+const DEDUPE_MAX_ROWS = 5000;
+
+export const dedupeFilterRules = internalMutation({
+	args: {},
+	returns: v.number(),
+	handler: async (ctx) => {
+		type ActiveRule = {
+			_id: import("./_generated/dataModel").Id<"errorMonitorFilterRules">;
+			functionName: string;
+			errorMessageRegex: string;
+			regexFlags?: string;
+			severity: FilterSeverity;
+			createdAt: number;
+			_creationTime: number;
+		};
+		const activeRules: ActiveRule[] = [];
+		let cursor: string | null = null;
+		for (;;) {
+			const page = await ctx.db
+				.query("errorMonitorFilterRules")
+				.withIndex("by_active", (q) => q.eq("active", true))
+				.paginate({ cursor, numItems: DEDUPE_PAGE_SIZE });
+			activeRules.push(...page.page);
+			if (activeRules.length >= DEDUPE_MAX_ROWS) {
+				console.warn(
+					`[dedupeFilterRules] hit DEDUPE_MAX_ROWS=${DEDUPE_MAX_ROWS} active rows — ` +
+						"stopping early, table is larger than expected for an admin config " +
+						"table. Re-run after this pass; dedupe is idempotent.",
+				);
+				break;
+			}
+			if (page.isDone) break;
+			cursor = page.continueCursor;
+		}
+
+		const groups = new Map<string, typeof activeRules>();
+		for (const rule of activeRules) {
+			const key = [
+				rule.functionName,
+				rule.errorMessageRegex,
+				rule.regexFlags ?? "",
+				rule.severity,
+			].join(" ");
+			const group = groups.get(key);
+			if (group) {
+				group.push(rule);
+			} else {
+				groups.set(key, [rule]);
+			}
+		}
+
+		let disabled = 0;
+		for (const group of groups.values()) {
+			if (group.length <= 1) continue;
+			const sorted = [...group].sort((a, b) => {
+				if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+				return a._creationTime - b._creationTime;
+			});
+			// Keep the oldest (index 0), disable the rest.
+			for (const rule of sorted.slice(1)) {
+				await ctx.db.patch(rule._id, { active: false });
+				disabled++;
+			}
+		}
+		return disabled;
 	},
 });
 
@@ -474,7 +608,9 @@ export const incrementRuleMatch = internalMutation({
 	},
 });
 
-export const disableFilterRule = mutation({
+// v1.0.2 — converted to internalMutation, same rationale as addFilterRule
+// above (no live public caller; DoS-adjacent surface if left public).
+export const disableFilterRule = internalMutation({
 	args: { ruleId: v.id("errorMonitorFilterRules") },
 	returns: v.null(),
 	handler: async (ctx, args) => {

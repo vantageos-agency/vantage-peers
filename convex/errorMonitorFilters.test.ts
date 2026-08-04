@@ -666,3 +666,144 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 		expect(aliases).toEqual([]);
 	});
 });
+
+// =============================================================================
+// addFilterRule idempotency + dedupeFilterRules — Issue k177wm2b duplication fix
+// Prod had 11 identical active rules created by repeated addFilterRule calls
+// (no dedup guard). This block locks the fix: identical adds are a no-op, and
+// dedupeFilterRules collapses existing duplicate groups down to one (oldest).
+// =============================================================================
+describe("addFilterRule — idempotency", () => {
+	const modules = import.meta.glob("./**/*.ts");
+
+	const dupArgs = {
+		functionName: "*",
+		errorMessageRegex: "(Uncaught ConvexError|ArgumentValidationError)",
+		reason: "dup test rule",
+		severity: "skip" as const,
+		priority: 100,
+	};
+
+	test("calling addFilterRule twice with an identical tuple creates only ONE active row and returns the same _id", async () => {
+		const t = convexTest(schema, modules);
+		const id1 = await t.mutation(internal.errorMonitorFilters.addFilterRule, dupArgs);
+		const id2 = await t.mutation(internal.errorMonitorFilters.addFilterRule, dupArgs);
+		expect(id2).toBe(id1);
+
+		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		const matching = rows.filter(
+			(r) =>
+				r.active &&
+				r.functionName === dupArgs.functionName &&
+				r.errorMessageRegex === dupArgs.errorMessageRegex &&
+				r.severity === dupArgs.severity,
+		);
+		expect(matching).toHaveLength(1);
+	});
+
+	test("addFilterRule with a DIFFERENT tuple (different regex) still inserts a new row", async () => {
+		const t = convexTest(schema, modules);
+		const id1 = await t.mutation(internal.errorMonitorFilters.addFilterRule, dupArgs);
+		const id2 = await t.mutation(internal.errorMonitorFilters.addFilterRule, {
+			...dupArgs,
+			errorMessageRegex: "some other regex",
+		});
+		expect(id2).not.toBe(id1);
+
+		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		expect(rows.filter((r) => r.active)).toHaveLength(2);
+	});
+
+	test("addFilterRule with a DIFFERENT severity still inserts a new row (tuple includes severity)", async () => {
+		const t = convexTest(schema, modules);
+		const id1 = await t.mutation(internal.errorMonitorFilters.addFilterRule, dupArgs);
+		const id2 = await t.mutation(internal.errorMonitorFilters.addFilterRule, {
+			...dupArgs,
+			severity: "log-only",
+		});
+		expect(id2).not.toBe(id1);
+	});
+});
+
+describe("dedupeFilterRules", () => {
+	const modules = import.meta.glob("./**/*.ts");
+
+	async function seedDuplicates(
+		t: ReturnType<typeof convexTest<(typeof schema)["tables"]>>,
+		count: number,
+	) {
+		// Insert N identical active rows directly, bypassing addFilterRule's
+		// dedup guard, to reproduce the prod shape (11 duplicate rows created
+		// before the idempotency guard existed).
+		const ids: string[] = [];
+		for (let i = 0; i < count; i++) {
+			const id = await t.run(async (ctx) => {
+				return await ctx.db.insert("errorMonitorFilterRules", {
+					functionName: "*",
+					errorMessageRegex: "(Uncaught ConvexError|ArgumentValidationError)",
+					reason: `seed dup ${i}`,
+					severity: "skip",
+					active: true,
+					createdAt: 1_000 + i, // ascending — row 0 is the oldest
+					priority: 100,
+				});
+			});
+			ids.push(id as unknown as string);
+		}
+		return ids;
+	}
+
+	test("collapses N identical active rows down to exactly 1, disabling N-1 (keeps the oldest)", async () => {
+		const t = convexTest(schema, modules);
+		const ids = await seedDuplicates(t, 11);
+
+		const disabledCount = await t.mutation(
+			internal.errorMonitorFilters.dedupeFilterRules,
+			{},
+		);
+		expect(disabledCount).toBe(10);
+
+		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		const active = rows.filter((r) => r.active);
+		expect(active).toHaveLength(1);
+		// Oldest row (createdAt: 1000, seed index 0) must be the survivor.
+		expect(active[0]._id).toBe(ids[0]);
+	});
+
+	test("is a no-op on a second run (idempotent)", async () => {
+		const t = convexTest(schema, modules);
+		await seedDuplicates(t, 11);
+
+		await t.mutation(internal.errorMonitorFilters.dedupeFilterRules, {});
+		const secondRunDisabled = await t.mutation(
+			internal.errorMonitorFilters.dedupeFilterRules,
+			{},
+		);
+		expect(secondRunDisabled).toBe(0);
+	});
+
+	test("does not touch rules that are genuinely distinct", async () => {
+		const t = convexTest(schema, modules);
+		await t.mutation(internal.errorMonitorFilters.addFilterRule, {
+			functionName: "tasks:complete",
+			errorMessageRegex: "Unauthorized",
+			reason: "distinct rule A",
+			severity: "skip",
+		});
+		await t.mutation(internal.errorMonitorFilters.addFilterRule, {
+			functionName: "missions:update",
+			errorMessageRegex: "ArgumentValidationError",
+			reason: "distinct rule B",
+			severity: "skip",
+		});
+
+		const disabledCount = await t.mutation(
+			internal.errorMonitorFilters.dedupeFilterRules,
+			{},
+		);
+		expect(disabledCount).toBe(0);
+
+		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		expect(rows.filter((r) => r.active)).toHaveLength(2);
+	});
+});
