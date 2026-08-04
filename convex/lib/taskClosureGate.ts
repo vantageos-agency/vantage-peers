@@ -39,6 +39,32 @@ export const DEFAULT_PENDING_ON_YOU_CYCLE_MS = 30 * 60 * 1000; // 30 min
 /** Laurent decision (Day 152): SLA breach = 3 cycles waiting on the caller. */
 export const SLA_BREACH_CYCLES = 3;
 
+// Day 156 (measurement-integrity: volume drowns the signal) — the envelope
+// no longer returns the FULL pendingOnYou array (was flooding check_messages
+// every 3-min cron tick with ~110 entries). Only the top-N slaBreached
+// entries (sorted by cyclesWaiting DESC) are returned, alongside the totals.
+// This getter mirrors getPendingOnYouCycleMs/getStaleInProgressThresholdMs
+// exactly: indexed by_key unique lookup, Number.isFinite && >0 guard.
+const SLA_BREACHED_TOP_N_KEY = "slaBreachedTopN";
+export const SLA_BREACHED_TOP_N_DEFAULT = 10;
+
+/** Reads the configured slaBreachedTop cap, default SLA_BREACHED_TOP_N_DEFAULT. */
+export async function getSlaBreachedTopN(
+	ctx: QueryCtx | MutationCtx,
+): Promise<number> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", SLA_BREACHED_TOP_N_KEY))
+		.unique();
+	if (row === null || row.value.length === 0) {
+		return SLA_BREACHED_TOP_N_DEFAULT;
+	}
+	const parsed = Number(row.value[0]);
+	return Number.isFinite(parsed) && parsed > 0
+		? parsed
+		: SLA_BREACHED_TOP_N_DEFAULT;
+}
+
 const OVERRIDE_RE = /\/\/\s*allow-no-time-line:\s*(.{6,})/;
 
 /**

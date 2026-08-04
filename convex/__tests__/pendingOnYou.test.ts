@@ -51,9 +51,9 @@ async function seedBlockedTask(
 }
 
 describe("pendingOnYou — checkNewMessagesEnvelope (Day 133)", () => {
-	test("POS: blocked task created by the caller → pendingOnYou lists it with full taskId", async () => {
+	test("POS: blocked task created by the caller → counted in pendingOnYouTotal", async () => {
 		const t = convexTest(schema, modules);
-		const taskId = await seedBlockedTask(
+		await seedBlockedTask(
 			t,
 			"eta",
 			"victor",
@@ -64,14 +64,10 @@ describe("pendingOnYou — checkNewMessagesEnvelope (Day 133)", () => {
 			recipient: "victor",
 		});
 
-		expect(result.pendingOnYou).toBeDefined();
-		expect(result.pendingOnYou.length).toBe(1);
-		const entry = result.pendingOnYou[0];
-		expect(entry.taskId).toBe(taskId);
-		expect(entry.taskId.length).toBeGreaterThan(0);
-		expect(entry.title).toBe("[PROD-DEPLOY-AUTHORIZED] ship v2");
-		expect(entry.assignee).toBe("eta");
-		expect(typeof entry.age).toBe("number");
+		expect(result.pendingOnYouTotal).toBe(1);
+		// not slaBreached (fresh task, age ~0) → not in slaBreachedTop.
+		expect(result.slaBreachedTotal).toBe(0);
+		expect(result.slaBreachedTop).toEqual([]);
 	});
 
 	test("NEG: blocked task created by someone else → NOT listed for the caller", async () => {
@@ -87,7 +83,9 @@ describe("pendingOnYou — checkNewMessagesEnvelope (Day 133)", () => {
 			recipient: "victor",
 		});
 
-		expect(result.pendingOnYou).toEqual([]);
+		expect(result.pendingOnYouTotal).toBe(0);
+		expect(result.slaBreachedTotal).toBe(0);
+		expect(result.slaBreachedTop).toEqual([]);
 	});
 });
 
@@ -132,8 +130,10 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 			recipient: "victor",
 		});
 
-		expect(result.pendingOnYou.length).toBe(1);
-		const entry = result.pendingOnYou[0];
+		expect(result.pendingOnYouTotal).toBe(1);
+		expect(result.slaBreachedTotal).toBe(1);
+		expect(result.slaBreachedTop.length).toBe(1);
+		const entry = result.slaBreachedTop[0];
 		expect(entry.slaBreached).toBe(true);
 		expect(entry.cyclesWaiting).toBeGreaterThanOrEqual(3);
 	});
@@ -152,10 +152,9 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 			recipient: "victor",
 		});
 
-		expect(result.pendingOnYou.length).toBe(1);
-		const entry = result.pendingOnYou[0];
-		expect(entry.slaBreached).toBe(false);
-		expect(entry.cyclesWaiting).toBeLessThan(3);
+		expect(result.pendingOnYouTotal).toBe(1);
+		expect(result.slaBreachedTotal).toBe(0);
+		expect(result.slaBreachedTop).toEqual([]);
 	});
 });
 
@@ -201,8 +200,9 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			recipient: "victor",
 		});
 
+		expect(result.pendingOnYouTotal).toBe(0);
 		expect(
-			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
 		).toBe(false);
 	});
 
@@ -221,8 +221,9 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			recipient: "victor",
 		});
 
+		expect(result.pendingOnYouTotal).toBe(0);
 		expect(
-			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
 		).toBe(false);
 	});
 
@@ -241,8 +242,9 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			recipient: "victor",
 		});
 
+		expect(result.pendingOnYouTotal).toBe(0);
 		expect(
-			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
 		).toBe(false);
 	});
 
@@ -261,8 +263,9 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			recipient: "victor",
 		});
 
+		expect(result.pendingOnYouTotal).toBe(0);
 		expect(
-			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
 		).toBe(false);
 	});
 
@@ -281,10 +284,96 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			recipient: "victor",
 		});
 
-		const entry = result.pendingOnYou.find(
+		expect(result.pendingOnYouTotal).toBe(1);
+		expect(result.slaBreachedTotal).toBe(1);
+		const entry = result.slaBreachedTop.find(
 			(e: { taskId: string }) => e.taskId === taskId,
 		);
 		expect(entry).toBeDefined();
 		expect(entry?.slaBreached).toBe(true);
+	});
+});
+
+describe("slaBreachedTop CAP (Day 156, measurement-integrity: volume drowns the signal)", () => {
+	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedBlockedTaskWithAge(
+		t: any,
+		assignedTo: string,
+		createdBy: string,
+		title: string,
+		ageMs: number,
+	): Promise<string> {
+		const now = Date.now();
+		return await t.run(async (ctx: any) => {
+			return await ctx.db.insert("tasks", {
+				title,
+				assignedTo,
+				priority: "high" as const,
+				status: "blocked" as const,
+				createdBy,
+				createdAt: now - ageMs,
+				updatedAt: now - ageMs,
+			});
+		});
+	}
+
+	test("under-cap: 3 slaBreached tasks → slaBreachedTop.length===3, slaBreachedTotal===3", async () => {
+		const t = convexTest(schema, modules);
+		for (let i = 0; i < 3; i++) {
+			await seedBlockedTaskWithAge(
+				t,
+				"eta",
+				"victor",
+				`[REVIEW] under-cap breach ${i}`,
+				3 * CYCLE_MS + 60_000 + i * 1_000,
+			);
+		}
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.slaBreachedTop.length).toBe(3);
+		expect(result.slaBreachedTotal).toBe(3);
+	});
+
+	test("over-cap: 12 slaBreached tasks with distinct increasing ages → slaBreachedTop capped at 10, slaBreachedTotal===12, sorted by cyclesWaiting DESC", async () => {
+		const t = convexTest(schema, modules);
+		const TASK_COUNT = 12;
+		// increasing ages: task i has age = 3*CYCLE_MS + 60_000 + i * CYCLE_MS
+		// so higher i = older = higher cyclesWaiting. The 2 smallest-age tasks
+		// (i=0, i=1) must be excluded from the top-10 by cyclesWaiting DESC.
+		for (let i = 0; i < TASK_COUNT; i++) {
+			await seedBlockedTaskWithAge(
+				t,
+				"eta",
+				"victor",
+				`[REVIEW] over-cap breach ${i}`,
+				3 * CYCLE_MS + 60_000 + i * CYCLE_MS,
+			);
+		}
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(result.slaBreachedTotal).toBe(12);
+		expect(result.slaBreachedTop.length).toBe(10);
+
+		// sorted DESC by cyclesWaiting: first entry has the highest
+		// cyclesWaiting (the oldest task, i=11).
+		for (let i = 1; i < result.slaBreachedTop.length; i++) {
+			expect(result.slaBreachedTop[i - 1].cyclesWaiting).toBeGreaterThanOrEqual(
+				result.slaBreachedTop[i].cyclesWaiting,
+			);
+		}
+		expect(result.slaBreachedTop[0].title).toBe("[REVIEW] over-cap breach 11");
+
+		// the 2 smallest-age tasks (i=0, i=1) are absent from the top-10.
+		const titles = result.slaBreachedTop.map((e) => e.title);
+		expect(titles).not.toContain("[REVIEW] over-cap breach 0");
+		expect(titles).not.toContain("[REVIEW] over-cap breach 1");
 	});
 });
