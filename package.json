@@ -33,7 +33,8 @@
     "test": "vitest run",
     "test:mcp": "bun scripts/test-mcp.ts",
     "test:e2e:mcp-crud": "vitest run tests/e2e/mcp-crud-baseline.spec.ts --config tests/e2e/vitest.config.ts --reporter=verbose",
-    "dev": "npx convex dev"
+    "dev": "npx convex dev",
+    "check:generated": "convex codegen && git diff --exit-code convex/_generated"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.37",
