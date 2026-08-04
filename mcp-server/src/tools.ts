@@ -29,6 +29,7 @@ import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { defineTool, type ToolAuthContext } from "./registerTool.js";
+import { renderPendingOnYouBlock } from "./renderPendingOnYou.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
@@ -3080,11 +3081,11 @@ export function registerTools(
 				// caller, Laurent decision) are surfaced as a distinct ALERT
 				// section, never buried in the normal list. The server already
 				// filtered/sorted/capped — this is rendering only.
-				const remainder = slaBreachedTotal - slaBreachedTop.length;
-				const pendingBlock =
-					pendingOnYouTotal > 0
-						? `\n\npendingOnYou: ${pendingOnYouTotal} total, ${slaBreachedTotal} SLA-breached (top ${slaBreachedTop.length} shown)${remainder > 0 ? ` (+${remainder} more not shown)` : ""}:\n${JSON.stringify(slaBreachedTop, null, 2)}`
-						: "";
+				const pendingBlock = renderPendingOnYouBlock({
+					pendingOnYouTotal,
+					slaBreachedTotal,
+					slaBreachedTop,
+				});
 
 				if (messages.length === 0) {
 					return {
