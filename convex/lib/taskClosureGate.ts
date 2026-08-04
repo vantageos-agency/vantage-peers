@@ -27,6 +27,18 @@ const BILLABLE_PROJECTS_KEY = "billableProjects";
 const STALE_THRESHOLD_KEY = "staleInProgressThresholdMs";
 const DEFAULT_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Day 152 — SLA-AGE extension. `check_messages` is polled by an EXTERNAL
+// orchestrator cron (not a Convex cron), so the "cycle" period cannot be
+// read from any Convex cron definition — it is config-driven, mirroring
+// `getStaleInProgressThresholdMs`. Ops aligns `PENDING_ON_YOU_CYCLE_MS` in
+// taskClosureConfig to the REAL external polling cadence; the default here
+// (30 min) is a placeholder until ops seeds the real value.
+const PENDING_ON_YOU_CYCLE_KEY = "pendingOnYouCycleMs";
+export const DEFAULT_PENDING_ON_YOU_CYCLE_MS = 30 * 60 * 1000; // 30 min
+
+/** Laurent decision (Day 152): SLA breach = 3 cycles waiting on the caller. */
+export const SLA_BREACH_CYCLES = 3;
+
 const OVERRIDE_RE = /\/\/\s*allow-no-time-line:\s*(.{6,})/;
 
 /**
@@ -168,6 +180,102 @@ export async function getStaleInProgressThresholdMs(
 	return Number.isFinite(parsed) && parsed > 0
 		? parsed
 		: DEFAULT_STALE_THRESHOLD_MS;
+}
+
+/**
+ * Bound on the blocked-task scan in computePendingOnYou — mirrors the
+ * assignee-scoped index scan of computeStaleInProgress. There is no
+ * `by_createdBy` index on `tasks`, so this scans the `by_status` index
+ * (status, createdAt) newest-first and caps at PENDING_ON_YOU_SCAN_CAP rows
+ * rather than collecting every blocked task fleet-wide.
+ */
+const PENDING_ON_YOU_SCAN_CAP = 200;
+
+export type PendingOnYouEntry = {
+	taskId: Id<"tasks">;
+	title: string;
+	assignee: string; // who is waiting (task.assignedTo)
+	age: number; // ms since updatedAt
+	cyclesWaiting: number; // Day 152 — age / cycle period, floored
+	slaBreached: boolean; // Day 152 — cyclesWaiting >= SLA_BREACH_CYCLES
+};
+
+/**
+ * Reads the configured pendingOnYou cycle period (ms), default
+ * DEFAULT_PENDING_ON_YOU_CYCLE_MS (30 min). Ops seeds
+ * taskClosureConfig["pendingOnYouCycleMs"] to match the real external
+ * check_messages polling cadence.
+ */
+export async function getPendingOnYouCycleMs(
+	ctx: QueryCtx | MutationCtx,
+): Promise<number> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", PENDING_ON_YOU_CYCLE_KEY))
+		.unique();
+	if (row === null || row.value.length === 0) {
+		return DEFAULT_PENDING_ON_YOU_CYCLE_MS;
+	}
+	const parsed = Number(row.value[0]);
+	return Number.isFinite(parsed) && parsed > 0
+		? parsed
+		: DEFAULT_PENDING_ON_YOU_CYCLE_MS;
+}
+
+/**
+ * Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — server-derived "pendingOnYou"
+ * queue. Finds `blocked` tasks whose unblock authority is `caller`.
+ *
+ * Signal used: `task.createdBy === caller`. This is the most robust
+ * already-present signal for "who must unblock" — the task creator is the
+ * one who requested the work and is structurally the party a `blocked`
+ * status is waiting on (e.g. PROD-DEPLOY-AUTHORIZED / PR-MERGE-AUTHORIZED /
+ * REVIEW / ETA-GATE gates are opened by whoever authored the task). Unlike
+ * `assignedTo` (who is DOING the work and already sees it via
+ * computeStaleInProgress), `createdBy` names who the assignee is BLOCKED on.
+ * Title/description markers are NOT parsed here — `createdBy` is already
+ * present on every task and is not the forgeable `origin` field (see
+ * comment above on `enforceClosureGate`'s Day-130 followup); it is a plain,
+ * always-set string, not a new schema field.
+ *
+ * Follow-up (documented, not implemented): unclosed token/merge/review
+ * REQUESTS that are represented purely as unread `messages` (not tasks) are
+ * NOT scanned here — there is no cheap index to distinguish a "request
+ * awaiting decision" message from any other unread message without a new
+ * field. If that signal is needed, it should be added as its own bounded
+ * scan, not folded into this one silently.
+ *
+ * Bound: scans the `by_status` (status, createdAt) index, newest-first,
+ * capped at PENDING_ON_YOU_SCAN_CAP rows — never an unbounded `.collect()`.
+ */
+export async function computePendingOnYou(
+	ctx: QueryCtx | MutationCtx,
+	caller: string,
+	now: number,
+): Promise<PendingOnYouEntry[]> {
+	const cycleMs = await getPendingOnYouCycleMs(ctx);
+
+	const blockedTasks = await ctx.db
+		.query("tasks")
+		.withIndex("by_status", (q) => q.eq("status", "blocked"))
+		.order("desc")
+		.take(PENDING_ON_YOU_SCAN_CAP);
+
+	const entries: PendingOnYouEntry[] = [];
+	for (const task of blockedTasks) {
+		if (task.createdBy !== caller) continue;
+		const age = now - task.updatedAt;
+		const cyclesWaiting = Math.floor(age / cycleMs);
+		entries.push({
+			taskId: task._id,
+			title: task.title,
+			assignee: task.assignedTo,
+			age,
+			cyclesWaiting,
+			slaBreached: cyclesWaiting >= SLA_BREACH_CYCLES,
+		});
+	}
+	return entries;
 }
 
 export type StaleInProgressEntry = {
