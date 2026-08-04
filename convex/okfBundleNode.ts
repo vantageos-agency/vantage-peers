@@ -975,6 +975,7 @@ export const importOkfBundle = action({
 			} else if (parsed.kind === "briefing") {
 				const existing = await findExistingIdByPaginating((cursor) =>
 					ctx.runQuery(internal.okfBundle._findBriefingByTitleAndContent, {
+						namespace: args.targetNamespace,
 						title: parsed.title,
 						content: parsed.content,
 						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
@@ -986,6 +987,7 @@ export const importOkfBundle = action({
 				}
 				if (args.mode !== "dry-run") {
 					await ctx.runMutation(internal.okfBundle._insertImportedBriefing, {
+						namespace: args.targetNamespace,
 						title: parsed.title,
 						topic: parsed.topic,
 						participants: parsed.participants,
@@ -998,6 +1000,7 @@ export const importOkfBundle = action({
 			} else if (parsed.kind === "task") {
 				const existing = await findExistingIdByPaginating((cursor) =>
 					ctx.runQuery(internal.okfBundle._findTaskByTitleAndDescription, {
+						namespace: args.targetNamespace,
 						title: parsed.title,
 						description: parsed.description,
 						paginationOpts: { numItems: BUNDLE_PAGE_SIZE, cursor },
@@ -1009,6 +1012,7 @@ export const importOkfBundle = action({
 				}
 				if (args.mode !== "dry-run") {
 					await ctx.runMutation(internal.okfBundle._insertImportedTask, {
+						namespace: args.targetNamespace,
 						title: parsed.title,
 						description: parsed.description,
 						assignedTo: parsed.assignedTo,

@@ -481,18 +481,31 @@ export const _findMemoryByContent = internalQuery({
 
 export const _findBriefingByTitleAndContent = internalQuery({
 	args: {
+		namespace: v.string(),
 		title: v.string(),
 		content: v.string(),
 		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	returns: DEDUP_RESULT_VALIDATOR,
-	handler: async (ctx, { title, content, paginationOpts }) => {
+	handler: async (ctx, { namespace, title, content, paginationOpts }) => {
+		// Follow-up to #1134 (task k175emjxz6d1pdb5qjv824m9sd8bs6fj): the
+		// original bare `.withIndex("by_topic")` scan had no tenant dimension at
+		// all, so an import from tenant A could dedup-match a row owned by
+		// tenant B — the presence/absence of that "skip" leaked B's data across
+		// the tenant boundary. Scope by the SAME `orgId` derivation already
+		// used by the export-side reads above (`expectedOrgIdForNamespace` +
+		// `matchesNamespaceScope`), reusing the existing `by_orgId` index — no
+		// new index needed.
+		const expectedOrgId = expectedOrgIdForNamespace(namespace);
 		const result = await ctx.db
 			.query("briefingNotes")
-			.withIndex("by_topic")
+			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
 			.paginate(paginationOpts);
 		const hit = result.page.find(
-			(r) => r.title === title && r.content === content,
+			(r) =>
+				matchesNamespaceScope(r, namespace) &&
+				r.title === title &&
+				r.content === content,
 		);
 		return {
 			id: hit ? hit._id : null,
@@ -504,18 +517,25 @@ export const _findBriefingByTitleAndContent = internalQuery({
 
 export const _findTaskByTitleAndDescription = internalQuery({
 	args: {
+		namespace: v.string(),
 		title: v.string(),
 		description: v.string(),
 		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	returns: DEDUP_RESULT_VALIDATOR,
-	handler: async (ctx, { title, description, paginationOpts }) => {
+	handler: async (ctx, { namespace, title, description, paginationOpts }) => {
+		// Same cross-tenant fix as `_findBriefingByTitleAndContent` above —
+		// see that comment for the full rationale.
+		const expectedOrgId = expectedOrgIdForNamespace(namespace);
 		const result = await ctx.db
 			.query("tasks")
-			.withIndex("by_status")
+			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
 			.paginate(paginationOpts);
 		const hit = result.page.find(
-			(r) => r.title === title && (r.description ?? "") === description,
+			(r) =>
+				matchesNamespaceScope(r, namespace) &&
+				r.title === title &&
+				(r.description ?? "") === description,
 		);
 		return {
 			id: hit ? hit._id : null,
@@ -549,6 +569,7 @@ export const _insertImportedMemory = internalMutation({
 
 export const _insertImportedBriefing = internalMutation({
 	args: {
+		namespace: v.string(),
 		title: v.string(),
 		topic: v.string(),
 		participants: v.array(v.string()),
@@ -556,7 +577,14 @@ export const _insertImportedBriefing = internalMutation({
 		createdBy: creatorValidator,
 		now: v.number(),
 	},
+	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
+		// Tag the imported row with the SAME orgId the dedup lookup above scopes
+		// on, so a subsequent import of the same tenant's bundle actually finds
+		// its own prior copy instead of missing it because orgId was never
+		// written (the row would silently fall outside the tenant's scope on
+		// every future dedup lookup, forcing perpetual duplicate imports).
+		const orgId = expectedOrgIdForNamespace(args.namespace);
 		return await ctx.db.insert("briefingNotes", {
 			title: args.title,
 			topic: args.topic,
@@ -564,12 +592,14 @@ export const _insertImportedBriefing = internalMutation({
 			content: args.content,
 			createdBy: args.createdBy,
 			createdAt: args.now,
+			orgId,
 		});
 	},
 });
 
 export const _insertImportedTask = internalMutation({
 	args: {
+		namespace: v.string(),
 		title: v.string(),
 		description: v.optional(v.string()),
 		assignedTo: v.string(),
@@ -589,7 +619,10 @@ export const _insertImportedTask = internalMutation({
 		createdBy: creatorValidator,
 		now: v.number(),
 	},
+	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
+		// Same orgId-tagging rationale as `_insertImportedBriefing` above.
+		const orgId = expectedOrgIdForNamespace(args.namespace);
 		return await ctx.db.insert("tasks", {
 			title: args.title,
 			description: args.description,
@@ -599,6 +632,7 @@ export const _insertImportedTask = internalMutation({
 			createdBy: args.createdBy,
 			createdAt: args.now,
 			updatedAt: args.now,
+			orgId,
 		});
 	},
 });
