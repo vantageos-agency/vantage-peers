@@ -51,28 +51,55 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Module-coverage guard (no deployment needed)
-        # Every convex/*.ts module (excluding _generated/, http.ts entry
-        # points that are exempt, and test dirs) must have a matching
-        # `import type * as <mod> from "../<mod>.js"` line in api.d.ts.
-        # This is the check that would have caught the okfBundleDurable
-        # drift with zero network access.
+        # Every Convex module file under convex/, INCLUDING nested ones
+        # (convex/lib/*.ts, convex/migrations/*.ts, convex/_helpers/*.ts),
+        # must have a matching `import type * as <id> from "../<path>.js"`
+        # line in api.d.ts. Codegen indexes every module it finds
+        # recursively (it does not care whether the file "looks like a
+        # helper"), so this glob MUST stay recursive and MUST stay in sync
+        # with what `npx convex codegen` actually emits — verify against
+        # api.d.ts directly if the exclusion list below is ever touched,
+        # never guess from file naming conventions.
+        #
+        # Exclusions verified against the current convex/_generated/api.d.ts
+        # (checked by grepping actual import lines, not assumed):
+        #   - *.test.ts / *.spec.ts: test files, never imported by api.d.ts.
+        #   - schema.ts, auth.config.ts, convex.config.ts: config-only
+        #     modules with no exported Convex functions; confirmed absent
+        #     from api.d.ts's import list.
+        #   - http.ts, crons.ts ARE regular modules with entries in
+        #     api.d.ts (`import type * as http ...`, `... as crons ...`)
+        #     and are therefore NOT excluded — they must keep matching.
+        #
+        # The api.d.ts identifier for a nested file replaces "/" with "_"
+        # (e.g. convex/lib/auth.ts -> lib_auth), but the import PATH string
+        # keeps the "/" (`"../lib/auth.js"`), so this check greps on the
+        # path, which is stable regardless of any local identifier
+        # renaming codegen applies to avoid name collisions (e.g.
+        # convex/components.ts is aliased to `components_` in api.d.ts but
+        # its import path is still "../components.js").
         run: |
           set -euo pipefail
           missing=0
-          for f in convex/*.ts; do
-            mod="$(basename "$f" .ts)"
-            case "$mod" in
-              *.test|*.spec|auth.config|convex.config|schema) continue ;;
+          while IFS= read -r f; do
+            rel="${f#convex/}"
+            rel="${rel%.ts}"
+            base="$(basename "$rel")"
+            case "$base" in
+              *.test|*.spec) continue ;;
             esac
-            if ! grep -q "\"\\.\\./${mod}\\.js\"" convex/_generated/api.d.ts; then
-              echo "::error::convex/${mod}.ts has no matching entry in convex/_generated/api.d.ts — run 'npx convex codegen' and commit the result"
+            case "$rel" in
+              schema|auth.config|convex.config) continue ;;
+            esac
+            if ! grep -qF "\"../${rel}.js\"" convex/_generated/api.d.ts; then
+              echo "::error::convex/${rel}.ts has no matching entry in convex/_generated/api.d.ts — run 'npx convex codegen' and commit the result"
               missing=1
             fi
-          done
+          done < <(find convex -name '*.ts' -not -path 'convex/_generated/*')
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          echo "All convex/*.ts modules have a matching api.d.ts entry."
+          echo "All Convex modules (recursive, including nested lib/migrations/_helpers) have a matching api.d.ts entry."
 
       - name: Full codegen drift check (requires CONVEX_DEPLOY_KEY_DEV)
         if: ${{ secrets.CONVEX_DEPLOY_KEY_DEV != '' }}

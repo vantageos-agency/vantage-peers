@@ -34,7 +34,7 @@
     "test:mcp": "bun scripts/test-mcp.ts",
     "test:e2e:mcp-crud": "vitest run tests/e2e/mcp-crud-baseline.spec.ts --config tests/e2e/vitest.config.ts --reporter=verbose",
     "dev": "npx convex dev",
-    "check:generated": "convex codegen && git diff --exit-code convex/_generated"
+    "check:generated": "echo 'Requires CONVEX_DEPLOY_KEY/CONVEX_DEPLOYMENT set (live deployment) — fails with \"No CONVEX_DEPLOYMENT set\" otherwise; see .github/workflows/check-generated.yml header for details.' && convex codegen && git diff --exit-code convex/_generated"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.37",
