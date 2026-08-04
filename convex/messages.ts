@@ -5,11 +5,7 @@ import { mutation, query } from "./_generated/server";
 import { requireScope, withOrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import {
-	computeStaleInProgress,
-	computePendingOnYou,
-	getSlaBreachedTopN,
-} from "./lib/taskClosureGate";
+import { computeStaleInProgress } from "./lib/taskClosureGate";
 
 const staleInProgressValidator = v.array(
 	v.object({
@@ -18,15 +14,6 @@ const staleInProgressValidator = v.array(
 		age: v.number(),
 	}),
 );
-
-const pendingOnYouEntryValidator = v.object({
-	taskId: v.id("tasks"),
-	title: v.string(),
-	assignee: v.string(),
-	age: v.number(),
-	cyclesWaiting: v.number(),
-	slaBreached: v.boolean(),
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessage — send a message to one, many, or all orchestrators
@@ -267,9 +254,6 @@ export const checkNewMessagesEnvelope = query({
 		truncated: v.boolean(),
 		nextSince: v.union(v.number(), v.null()),
 		staleInProgress: staleInProgressValidator,
-		pendingOnYouTotal: v.number(),
-		slaBreachedTotal: v.number(),
-		slaBreachedTop: v.array(pendingOnYouEntryValidator),
 	}),
 	handler: async (ctx, args) => {
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
@@ -404,26 +388,11 @@ export const checkNewMessagesEnvelope = query({
 			now,
 		);
 
-		// Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — mirrors staleInProgress:
-		// server-derived on every call, never a stored flag. Surfaces `blocked`
-		// tasks whose unblock authority is this recipient (createdBy === caller).
-		const pendingOnYou = await computePendingOnYou(ctx, args.recipient, now);
-		const pendingOnYouTotal = pendingOnYou.length;
-		const breached = pendingOnYou.filter((e) => e.slaBreached);
-		const slaBreachedTotal = breached.length;
-		const topN = await getSlaBreachedTopN(ctx);
-		const slaBreachedTop = [...breached]
-			.sort((a, b) => b.cyclesWaiting - a.cyclesWaiting)
-			.slice(0, topN);
-
 		return {
 			messages,
 			truncated,
 			nextSince,
 			staleInProgress,
-			pendingOnYouTotal,
-			slaBreachedTotal,
-			slaBreachedTop,
 		};
 	},
 });
