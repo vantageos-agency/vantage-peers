@@ -2,22 +2,31 @@
 /**
  * convex/__tests__/pendingOnYou.test.ts
  *
- * Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c, mission pi-pending-on-me-queue-v1)
- * — checkNewMessagesEnvelope must surface `pendingOnYou`: `blocked` tasks
- * whose unblock authority is the caller (createdBy === recipient), derived
- * on every call, never a stored flag. Mirrors staleInProgress.test.ts.
+ * Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) introduced `pendingOnYou`
+ * (`blocked` tasks whose unblock authority is the caller) wired directly
+ * into `checkNewMessagesEnvelope`'s returned envelope. Laurent (task
+ * k17c4ejer172fgj9t1h027hswn8bvv4w, categorical decision): "les messages
+ * ce sont des messages, pas de liste de tâches dans un retour check
+ * message." — the pendingOnYou/slaBreached fields are REMOVED from the
+ * envelope. `check_messages` now returns messages + pagination +
+ * staleInProgress only.
  *
- * Cases:
- *   POS: blocked task created by the caller ("victor") → pendingOnYou
- *        non-empty, full 32-char taskId, correct assignee/title/age.
- *   NEG: blocked task created by SOMEONE ELSE (not the caller) → NOT
- *        listed for the caller — unblock authority belongs to a different
- *        party.
+ * `computePendingOnYou`/`getSlaBreachedTopN`/`isDormant` in
+ * `convex/lib/taskClosureGate.ts` are left intact (unwired, not deleted) —
+ * a future dedicated opt-in `list_pending_on_me` tool may reuse them. This
+ * file now tests:
+ *   1. `checkNewMessagesEnvelope` output has NO pendingOnYouTotal /
+ *      slaBreachedTotal / slaBreachedTop keys (the regression guard for
+ *      this removal).
+ *   2. `computePendingOnYou` the FUNCTION still works correctly at the
+ *      lib level (POS/NEG authority + SLA-age + dormant-tag exclusion),
+ *      called directly rather than through the envelope.
  */
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { computePendingOnYou } from "../lib/taskClosureGate";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -30,11 +39,13 @@ const modules = Object.fromEntries(
 );
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function seedBlockedTask(
+async function seedBlockedTaskWithAge(
 	t: any,
 	assignedTo: string,
 	createdBy: string,
 	title: string,
+	ageMs: number,
+	tags?: string[],
 ): Promise<string> {
 	const now = Date.now();
 	return await t.run(async (ctx: any) => {
@@ -44,79 +55,76 @@ async function seedBlockedTask(
 			priority: "high" as const,
 			status: "blocked" as const,
 			createdBy,
-			createdAt: now,
-			updatedAt: now,
+			createdAt: now - ageMs,
+			updatedAt: now - ageMs,
+			...(tags !== undefined ? { tags } : {}),
 		});
 	});
 }
 
-describe("pendingOnYou — checkNewMessagesEnvelope (Day 133)", () => {
-	test("POS: blocked task created by the caller → counted in pendingOnYouTotal", async () => {
+describe("checkNewMessagesEnvelope — no pendingOnYou/slaBreached fields (Laurent k17c4ejer172fgj9t1h027hswn8bvv4w)", () => {
+	test("envelope keys are exactly messages/truncated/nextSince/staleInProgress — no task-list fields", async () => {
 		const t = convexTest(schema, modules);
-		await seedBlockedTask(
+		await seedBlockedTaskWithAge(
 			t,
 			"eta",
 			"victor",
 			"[PROD-DEPLOY-AUTHORIZED] ship v2",
+			0,
 		);
 
 		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "victor",
 		});
 
-		expect(result.pendingOnYouTotal).toBe(1);
-		// not slaBreached (fresh task, age ~0) → not in slaBreachedTop.
-		expect(result.slaBreachedTotal).toBe(0);
-		expect(result.slaBreachedTop).toEqual([]);
+		expect(result).not.toHaveProperty("pendingOnYouTotal");
+		expect(result).not.toHaveProperty("slaBreachedTotal");
+		expect(result).not.toHaveProperty("slaBreachedTop");
+		expect(Object.keys(result).sort()).toEqual(
+			["messages", "nextSince", "staleInProgress", "truncated"].sort(),
+		);
+	});
+});
+
+describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
+	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
+
+	test("POS: blocked task created by the caller → counted", async () => {
+		const t = convexTest(schema, modules);
+		await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[PROD-DEPLOY-AUTHORIZED] ship v2",
+			0,
+		);
+
+		const entries = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
+		);
+
+		expect(entries.length).toBe(1);
+		expect(entries[0].slaBreached).toBe(false);
 	});
 
 	test("NEG: blocked task created by someone else → NOT listed for the caller", async () => {
 		const t = convexTest(schema, modules);
-		await seedBlockedTask(
+		await seedBlockedTaskWithAge(
 			t,
 			"eta",
 			"pi",
 			"[REVIEW] someone else's gate",
+			0,
 		);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
+		const entries = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
+		);
 
-		expect(result.pendingOnYouTotal).toBe(0);
-		expect(result.slaBreachedTotal).toBe(0);
-		expect(result.slaBreachedTop).toEqual([]);
+		expect(entries.length).toBe(0);
 	});
-});
 
-describe("pendingOnYou SLA-AGE (Day 152)", () => {
-	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
-
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	async function seedBlockedTaskWithAge(
-		t: any,
-		assignedTo: string,
-		createdBy: string,
-		title: string,
-		ageMs: number,
-		tags?: string[],
-	): Promise<string> {
-		const now = Date.now();
-		return await t.run(async (ctx: any) => {
-			return await ctx.db.insert("tasks", {
-				title,
-				assignedTo,
-				priority: "high" as const,
-				status: "blocked" as const,
-				createdBy,
-				createdAt: now - ageMs,
-				updatedAt: now - ageMs,
-				...(tags !== undefined ? { tags } : {}),
-			});
-		});
-	}
-
-	test("POS: age >= 3 cycles → slaBreached true, cyclesWaiting >= 3", async () => {
+	test("POS: age >= 3 cycles → slaBreached true", async () => {
 		const t = convexTest(schema, modules);
 		await seedBlockedTaskWithAge(
 			t,
@@ -126,19 +134,16 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 			3 * CYCLE_MS + 60_000,
 		);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
+		const entries = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
+		);
 
-		expect(result.pendingOnYouTotal).toBe(1);
-		expect(result.slaBreachedTotal).toBe(1);
-		expect(result.slaBreachedTop.length).toBe(1);
-		const entry = result.slaBreachedTop[0];
-		expect(entry.slaBreached).toBe(true);
-		expect(entry.cyclesWaiting).toBeGreaterThanOrEqual(3);
+		expect(entries.length).toBe(1);
+		expect(entries[0].slaBreached).toBe(true);
+		expect(entries[0].cyclesWaiting).toBeGreaterThanOrEqual(3);
 	});
 
-	test("NEG: age < 3 cycles (1 cycle) → slaBreached false, cyclesWaiting < 3", async () => {
+	test("NEG: age < 3 cycles → slaBreached false", async () => {
 		const t = convexTest(schema, modules);
 		await seedBlockedTaskWithAge(
 			t,
@@ -148,46 +153,17 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 			1 * CYCLE_MS,
 		);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
+		const entries = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
+		);
 
-		expect(result.pendingOnYouTotal).toBe(1);
-		expect(result.slaBreachedTotal).toBe(0);
-		expect(result.slaBreachedTop).toEqual([]);
+		expect(entries.length).toBe(1);
+		expect(entries[0].slaBreached).toBe(false);
 	});
-});
 
-describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
-	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
-
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	async function seedBlockedTaskWithAge(
-		t: any,
-		assignedTo: string,
-		createdBy: string,
-		title: string,
-		ageMs: number,
-		tags?: string[],
-	): Promise<string> {
-		const now = Date.now();
-		return await t.run(async (ctx: any) => {
-			return await ctx.db.insert("tasks", {
-				title,
-				assignedTo,
-				priority: "high" as const,
-				status: "blocked" as const,
-				createdBy,
-				createdAt: now - ageMs,
-				updatedAt: now - ageMs,
-				...(tags !== undefined ? { tags } : {}),
-			});
-		});
-	}
-
-	test("NEG-excluded: tags=[dormant] → NOT present in pendingOnYou despite SLA-breach age", async () => {
+	test("NEG-excluded: tags=[dormant] → excluded despite SLA-breach age", async () => {
 		const t = convexTest(schema, modules);
-		const taskId = await seedBlockedTaskWithAge(
+		await seedBlockedTaskWithAge(
 			t,
 			"eta",
 			"victor",
@@ -196,82 +172,16 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			["dormant"],
 		);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.pendingOnYouTotal).toBe(0);
-		expect(
-			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
-		).toBe(false);
-	});
-
-	test("NEG-excluded: tags=[parked] → NOT present in pendingOnYou despite SLA-breach age", async () => {
-		const t = convexTest(schema, modules);
-		const taskId = await seedBlockedTaskWithAge(
-			t,
-			"eta",
-			"victor",
-			"[REVIEW] parked-tagged, should be excluded",
-			3 * CYCLE_MS + 60_000,
-			["parked"],
+		const entries = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.pendingOnYouTotal).toBe(0);
-		expect(
-			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
-		).toBe(false);
-	});
-
-	test("NEG-excluded: tags=[deferred] → NOT present in pendingOnYou despite SLA-breach age", async () => {
-		const t = convexTest(schema, modules);
-		const taskId = await seedBlockedTaskWithAge(
-			t,
-			"eta",
-			"victor",
-			"[REVIEW] deferred-tagged, should be excluded",
-			3 * CYCLE_MS + 60_000,
-			["deferred"],
-		);
-
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.pendingOnYouTotal).toBe(0);
-		expect(
-			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
-		).toBe(false);
-	});
-
-	test("NEG-excluded: tags=[Dormant] (mixed-case) → NOT present in pendingOnYou despite SLA-breach age", async () => {
-		const t = convexTest(schema, modules);
-		const taskId = await seedBlockedTaskWithAge(
-			t,
-			"eta",
-			"victor",
-			"[REVIEW] mixed-case-dormant-tagged, should be excluded",
-			3 * CYCLE_MS + 60_000,
-			["Dormant"],
-		);
-
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.pendingOnYouTotal).toBe(0);
-		expect(
-			result.slaBreachedTop.some((e: { taskId: string }) => e.taskId === taskId),
-		).toBe(false);
+		expect(entries.length).toBe(0);
 	});
 
 	test("POS-included (regression guard): non-dormant tags → present with slaBreached true", async () => {
 		const t = convexTest(schema, modules);
-		const taskId = await seedBlockedTaskWithAge(
+		await seedBlockedTaskWithAge(
 			t,
 			"eta",
 			"victor",
@@ -280,100 +190,11 @@ describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
 			["security"],
 		);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.pendingOnYouTotal).toBe(1);
-		expect(result.slaBreachedTotal).toBe(1);
-		const entry = result.slaBreachedTop.find(
-			(e: { taskId: string }) => e.taskId === taskId,
+		const entries = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
 		);
-		expect(entry).toBeDefined();
-		expect(entry?.slaBreached).toBe(true);
-	});
-});
 
-describe("slaBreachedTop CAP (Day 156, measurement-integrity: volume drowns the signal)", () => {
-	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
-
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	async function seedBlockedTaskWithAge(
-		t: any,
-		assignedTo: string,
-		createdBy: string,
-		title: string,
-		ageMs: number,
-	): Promise<string> {
-		const now = Date.now();
-		return await t.run(async (ctx: any) => {
-			return await ctx.db.insert("tasks", {
-				title,
-				assignedTo,
-				priority: "high" as const,
-				status: "blocked" as const,
-				createdBy,
-				createdAt: now - ageMs,
-				updatedAt: now - ageMs,
-			});
-		});
-	}
-
-	test("under-cap: 3 slaBreached tasks → slaBreachedTop.length===3, slaBreachedTotal===3", async () => {
-		const t = convexTest(schema, modules);
-		for (let i = 0; i < 3; i++) {
-			await seedBlockedTaskWithAge(
-				t,
-				"eta",
-				"victor",
-				`[REVIEW] under-cap breach ${i}`,
-				3 * CYCLE_MS + 60_000 + i * 1_000,
-			);
-		}
-
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.slaBreachedTop.length).toBe(3);
-		expect(result.slaBreachedTotal).toBe(3);
-	});
-
-	test("over-cap: 12 slaBreached tasks with distinct increasing ages → slaBreachedTop capped at 10, slaBreachedTotal===12, sorted by cyclesWaiting DESC", async () => {
-		const t = convexTest(schema, modules);
-		const TASK_COUNT = 12;
-		// increasing ages: task i has age = 3*CYCLE_MS + 60_000 + i * CYCLE_MS
-		// so higher i = older = higher cyclesWaiting. The 2 smallest-age tasks
-		// (i=0, i=1) must be excluded from the top-10 by cyclesWaiting DESC.
-		for (let i = 0; i < TASK_COUNT; i++) {
-			await seedBlockedTaskWithAge(
-				t,
-				"eta",
-				"victor",
-				`[REVIEW] over-cap breach ${i}`,
-				3 * CYCLE_MS + 60_000 + i * CYCLE_MS,
-			);
-		}
-
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "victor",
-		});
-
-		expect(result.slaBreachedTotal).toBe(12);
-		expect(result.slaBreachedTop.length).toBe(10);
-
-		// sorted DESC by cyclesWaiting: first entry has the highest
-		// cyclesWaiting (the oldest task, i=11).
-		for (let i = 1; i < result.slaBreachedTop.length; i++) {
-			expect(result.slaBreachedTop[i - 1].cyclesWaiting).toBeGreaterThanOrEqual(
-				result.slaBreachedTop[i].cyclesWaiting,
-			);
-		}
-		expect(result.slaBreachedTop[0].title).toBe("[REVIEW] over-cap breach 11");
-
-		// the 2 smallest-age tasks (i=0, i=1) are absent from the top-10.
-		const titles = result.slaBreachedTop.map((e) => e.title);
-		expect(titles).not.toContain("[REVIEW] over-cap breach 0");
-		expect(titles).not.toContain("[REVIEW] over-cap breach 1");
+		expect(entries.length).toBe(1);
+		expect(entries[0].slaBreached).toBe(true);
 	});
 });
