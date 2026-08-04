@@ -101,6 +101,7 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 		createdBy: string,
 		title: string,
 		ageMs: number,
+		tags?: string[],
 	): Promise<string> {
 		const now = Date.now();
 		return await t.run(async (ctx: any) => {
@@ -112,6 +113,7 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 				createdBy,
 				createdAt: now - ageMs,
 				updatedAt: now - ageMs,
+				...(tags !== undefined ? { tags } : {}),
 			});
 		});
 	}
@@ -154,5 +156,95 @@ describe("pendingOnYou SLA-AGE (Day 152)", () => {
 		const entry = result.pendingOnYou[0];
 		expect(entry.slaBreached).toBe(false);
 		expect(entry.cyclesWaiting).toBeLessThan(3);
+	});
+});
+
+describe("pendingOnYou dormant-tag exclusion (Day 154)", () => {
+	const CYCLE_MS = 1_800_000; // DEFAULT_PENDING_ON_YOU_CYCLE_MS
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedBlockedTaskWithAge(
+		t: any,
+		assignedTo: string,
+		createdBy: string,
+		title: string,
+		ageMs: number,
+		tags?: string[],
+	): Promise<string> {
+		const now = Date.now();
+		return await t.run(async (ctx: any) => {
+			return await ctx.db.insert("tasks", {
+				title,
+				assignedTo,
+				priority: "high" as const,
+				status: "blocked" as const,
+				createdBy,
+				createdAt: now - ageMs,
+				updatedAt: now - ageMs,
+				...(tags !== undefined ? { tags } : {}),
+			});
+		});
+	}
+
+	test("NEG-excluded: tags=[dormant] → NOT present in pendingOnYou despite SLA-breach age", async () => {
+		const t = convexTest(schema, modules);
+		const taskId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[REVIEW] dormant-tagged, should be excluded",
+			3 * CYCLE_MS + 60_000,
+			["dormant"],
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(
+			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+		).toBe(false);
+	});
+
+	test("NEG-excluded: tags=[parked] → NOT present in pendingOnYou despite SLA-breach age", async () => {
+		const t = convexTest(schema, modules);
+		const taskId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[REVIEW] parked-tagged, should be excluded",
+			3 * CYCLE_MS + 60_000,
+			["parked"],
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		expect(
+			result.pendingOnYou.some((e: { taskId: string }) => e.taskId === taskId),
+		).toBe(false);
+	});
+
+	test("POS-included (regression guard): non-dormant tags → present with slaBreached true", async () => {
+		const t = convexTest(schema, modules);
+		const taskId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"[REVIEW] security-tagged, should be included",
+			3 * CYCLE_MS + 60_000,
+			["security"],
+		);
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "victor",
+		});
+
+		const entry = result.pendingOnYou.find(
+			(e: { taskId: string }) => e.taskId === taskId,
+		);
+		expect(entry).toBeDefined();
+		expect(entry?.slaBreached).toBe(true);
 	});
 });

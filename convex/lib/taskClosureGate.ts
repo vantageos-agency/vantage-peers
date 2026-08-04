@@ -191,6 +191,29 @@ export async function getStaleInProgressThresholdMs(
  */
 const PENDING_ON_YOU_SCAN_CAP = 200;
 
+/**
+ * Day 154 (k17fj34st7jp61tx1va2x46qq98btfxc, doctrine derive-never-type) —
+ * dormant/parked-task exclusion from pendingOnYou/slaBreached. The marker is
+ * a structured, dedicated `tags` entry on the task — NEVER a title-substring
+ * heuristic (a prior title-regex approach was explicitly REJECTED). A future
+ * dedicated `parked` task STATUS is the heavier alternative if tags prove
+ * insufficient.
+ */
+export const DORMANT_TAGS: ReadonlySet<string> = new Set([
+	"dormant",
+	"parked",
+	"deferred",
+]);
+
+/**
+ * Returns true iff `task.tags` exists and contains (case-insensitively) any
+ * member of DORMANT_TAGS.
+ */
+export function isDormant(task: { tags?: string[] }): boolean {
+	if (task.tags === undefined) return false;
+	return task.tags.some((tag) => DORMANT_TAGS.has(tag.toLowerCase()));
+}
+
 export type PendingOnYouEntry = {
 	taskId: Id<"tasks">;
 	title: string;
@@ -264,6 +287,9 @@ export async function computePendingOnYou(
 	const entries: PendingOnYouEntry[] = [];
 	for (const task of blockedTasks) {
 		if (task.createdBy !== caller) continue;
+		// Day 154 — dormant/parked tasks are structurally excluded from BOTH
+		// pendingOnYou and slaBreached (never surfaced as an entry at all).
+		if (isDormant(task)) continue;
 		const age = now - task.updatedAt;
 		const cyclesWaiting = Math.floor(age / cycleMs);
 		entries.push({
