@@ -132,6 +132,28 @@ export const DEFAULT_FILTER_RULES: ReadonlyArray<FilterRule> = [
 		severity: "log-only",
 		priority: 90,
 	},
+	// Issue #1132 -- stale/pre-rename Convex function identifiers. Diagnostic
+	// confirmed the caller-side defect is ALREADY FIXED: no live code
+	// references these 9 names anymore (callers were migrated to the correct
+	// post-rename identifiers, e.g. `memories:getMemory`, `issues:getByRepoNumber`,
+	// `tasks:list`). The recurring "Could not find public function for 'X'"
+	// noise now originates from old-deployed/external clients still calling
+	// pre-rename mappings, not from a live bug in this repo. Demoted to
+	// "log-only" (still recorded for trend analysis) instead of "skip" so the
+	// catalogue keeps visibility if the volume spikes. The alternation is
+	// closed on both sides by the literal quotes surrounding the function
+	// name in the error message, so it matches ONLY these 9 exact names --
+	// a genuinely new missing-function error (any other name) still falls
+	// through to "create-issue".
+	{
+		functionName: "*",
+		errorMessageRegex:
+			/Could not find public function for '(?:tasks:listTasks|memories:getById|memories:list|memories:get|memories:recall|diary:getById|licenses:get|issues:get|missionTemplates:getMissionTemplateByName)'/,
+		reason:
+			"Stale pre-rename function identifier from old-deployed/external caller -- #1132, caller-side already fixed on live code",
+		severity: "log-only",
+		priority: 80,
+	},
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
