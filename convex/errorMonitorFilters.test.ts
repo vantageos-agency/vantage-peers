@@ -171,13 +171,21 @@ describe("D98 Cat D — Uncaught ConvexError: → log-only (no GH issue)", () =>
 });
 
 describe("DEFAULT_FILTER_RULES sanity", () => {
-	test("ships the acceptance-criteria rules + D90 transient + D98 ConvexError classifier", () => {
+	test("ships the acceptance-criteria rules + D90 transient + D98 ConvexError classifier + #1132 stale-fn classifier", () => {
 		// D90 added the transient retry-class wildcard rule (#632).
 		// D98 k17fzba8 Cat D added a fourth wildcard rule for "Uncaught
-		// ConvexError:" typed business errors. Total expected: 4.
-		expect(DEFAULT_FILTER_RULES).toHaveLength(4);
+		// ConvexError:" typed business errors.
+		// #1132 added a fifth wildcard rule for stale pre-rename function
+		// identifiers ("Could not find public function for 'X'"). Total: 5.
+		expect(DEFAULT_FILTER_RULES).toHaveLength(5);
 		const fns = DEFAULT_FILTER_RULES.map((r) => r.functionName).sort();
-		expect(fns).toEqual(["*", "*", "missions:update", "tasks:complete"]);
+		expect(fns).toEqual([
+			"*",
+			"*",
+			"*",
+			"missions:update",
+			"tasks:complete",
+		]);
 		for (const r of DEFAULT_FILTER_RULES) {
 			// D98 Cat D introduces "log-only" severity in addition to "skip".
 			expect(["skip", "log-only"]).toContain(r.severity);
@@ -351,6 +359,84 @@ describe("evaluateFilter — priority precedence", () => {
 		// priority 1 beats undefined-treated-as-0 → "create-issue" wins
 		expect(decision.severity).toBe("create-issue");
 		expect(decision.matchedRule?.reason).toBe("explicit pri 1");
+	});
+});
+
+// =============================================================================
+// Issue #1132 — stale/pre-rename function identifier classifier
+// Caller-side defect already fixed on live code; this rule only demotes the
+// residual "Could not find public function for 'X'" noise from
+// old-deployed/external clients still calling the 9 pre-rename names.
+// =============================================================================
+describe("evaluateFilter — #1132 stale pre-rename function identifiers", () => {
+	const DEPRECATED_NAMES = [
+		"tasks:listTasks",
+		"memories:getById",
+		"memories:list",
+		"memories:get",
+		"memories:recall",
+		"diary:getById",
+		"licenses:get",
+		"issues:get",
+		"missionTemplates:getMissionTemplateByName",
+	];
+
+	test.each(DEPRECATED_NAMES)(
+		"'%s' → log-only (no GH issue)",
+		(deprecatedName) => {
+			const decision = evaluateFilter({
+				functionName: "someCaller:whatever",
+				errorMessage: `Could not find public function for '${deprecatedName}'`,
+			});
+			expect(decision.severity).toBe("log-only");
+			expect(decision.shouldCreateIssue).toBe(false);
+			expect(decision.matchedRule?.reason).toContain("#1132");
+		},
+	);
+
+	test("NEGATIVE CONTROL — a genuinely unknown function name still creates an issue", () => {
+		// Proves the rule does NOT broadly suppress all "Could not find public
+		// function" errors — only the 9 known-deprecated identifiers.
+		const decision = evaluateFilter({
+			functionName: "someCaller:whatever",
+			errorMessage: "Could not find public function for 'widgets:frobnicate'",
+		});
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.matchedRule).toBeNull();
+	});
+
+	test("NEGATIVE CONTROL — a substring/prefix of a deprecated name is NOT matched", () => {
+		// "memories:get" is a prefix of "memories:getById" and "memories:getFoo"
+		// is a plausible near-miss. The quote-delimited regex must not match
+		// either as a stand-in for the exact deprecated names.
+		const decision = evaluateFilter({
+			functionName: "someCaller:whatever",
+			errorMessage: "Could not find public function for 'memories:getFoo'",
+		});
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.matchedRule).toBeNull();
+	});
+
+	test("a non-'Could not find' error mentioning a deprecated name is unaffected", () => {
+		const decision = evaluateFilter({
+			functionName: "someCaller:whatever",
+			errorMessage:
+				"Uncaught Error: unrelated crash near memories:get usage in helper",
+		});
+		expect(decision.severity).toBe("create-issue");
+		expect(decision.shouldCreateIssue).toBe(true);
+		expect(decision.matchedRule).toBeNull();
+	});
+
+	test("matches regardless of the erroring caller's own functionName (wildcard)", () => {
+		const decision = evaluateFilter({
+			functionName: "totally:different:caller",
+			errorMessage: "Could not find public function for 'issues:get'",
+		});
+		expect(decision.severity).toBe("log-only");
+		expect(decision.shouldCreateIssue).toBe(false);
 	});
 });
 
