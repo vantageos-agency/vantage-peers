@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
@@ -410,6 +410,14 @@ export const markAsRead = mutation({
 		// client (issue #1064) — only an explicitly-thrown ConvexError's .data
 		// payload survives the wire.
 		receiptIds: v.array(v.string()),
+		// k179nrp3apj700pm0h1ckewm2h8b3nz7 — ownership gate. When provided, every
+		// resolved receipt MUST belong to this recipient or the whole call is
+		// rejected (RBAC_DENIED). Optional only to stay behavior-preserving for
+		// legacy/system callers that predate the MCP-layer guard (mirrors the
+		// deleteMessage callerOrchestrator pattern above); the MCP tool now
+		// ALWAYS passes it (tools.ts mark_as_read), closing the cross-owner hole
+		// where any caller could mark another orchestrator's mail read.
+		callerOrchestrator: v.optional(creatorValidator),
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
@@ -427,7 +435,16 @@ export const markAsRead = mutation({
 		let count = 0;
 		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
-			if (receipt !== null && receipt.readAt === undefined) {
+			if (receipt === null) continue;
+			if (
+				args.callerOrchestrator !== undefined &&
+				receipt.recipient !== args.callerOrchestrator
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: ${args.callerOrchestrator} is not the recipient of receipt ${receiptId} — mark_as_read denied`,
+				);
+			}
+			if (receipt.readAt === undefined) {
 				await ctx.db.patch(receiptId, { readAt: now });
 				count++;
 			}
