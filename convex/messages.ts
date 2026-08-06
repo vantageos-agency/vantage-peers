@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
@@ -48,6 +48,14 @@ export const sendMessage = mutation({
 
 		// Resolve recipients — channel can be a role or instanceId
 		// If channel contains "-" (e.g. "pi-vps"), treat as instance-level
+		//
+		// Bounce contract (task k17dr97dwpe07n9zfgzzypkfm18bv6ws): a channel that
+		// resolves to ZERO real recipients — unknown role, non-existent instance,
+		// reserved non-target word, empty string, or an unknown comma-list part
+		// — is refused with an actionable ConvexError instead of silently
+		// succeeding with no receipts written. The recipient set is DERIVED from
+		// the org (the `profiles` table), never a hardcoded denylist — mirrors
+		// the broadcast branch below.
 		let recipients: string[];
 		if (args.channel === "broadcast") {
 			// Dynamic: get all registered orchestrators from profiles
@@ -57,10 +65,40 @@ export const sendMessage = mutation({
 			];
 			recipients = orchestratorIds.filter((o) => o !== args.from);
 		} else {
-			recipients = args.channel
+			const profiles = await ctx.db.query("profiles").collect();
+			const knownRoles = new Set(profiles.map((p) => p.orchestratorId));
+			const knownInstances = new Set(
+				profiles
+					.map((p) => p.instanceId)
+					.filter((id): id is string => id !== undefined),
+			);
+
+			const rawParts = args.channel
 				.split(",")
 				.map((s) => s.trim())
-				.filter((s) => s.length > 0 && s !== args.from);
+				.filter((s) => s.length > 0);
+
+			const bounce = () => {
+				throw new ConvexError(
+					`recipient error / message non livré : "${args.channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`,
+				);
+			};
+
+			if (rawParts.length === 0) {
+				bounce();
+			}
+			for (const part of rawParts) {
+				if (part === args.from) continue; // sender excluding itself never needs to resolve
+				const isKnown = knownRoles.has(part) || knownInstances.has(part);
+				if (!isKnown) {
+					bounce();
+				}
+			}
+
+			recipients = rawParts.filter((s) => s !== args.from);
+			if (recipients.length === 0) {
+				bounce();
+			}
 		}
 
 		for (const recipient of recipients) {

@@ -46,6 +46,22 @@ const createT = async () => {
 			project: "vantage-peers",
 			active: true,
 		});
+		// The PR opened/synchronize handler notifies "eta" (hardcoded, http.ts)
+		// and the merged-PR path notifies "sigma" (the mapped orchestrator) via
+		// messages.sendMessage — real recipients are now derived from the
+		// `profiles` table (task k17dr97dwpe07n9zfgzzypkfm18bv6ws bounce fix).
+		await ctx.db.insert("profiles", {
+			orchestratorId: "eta",
+			name: "eta",
+			static: { role: "eta", workspace: "test", capabilities: [] },
+			dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+		});
+		await ctx.db.insert("profiles", {
+			orchestratorId: "sigma",
+			name: "sigma",
+			static: { role: "sigma", workspace: "test", capabilities: [] },
+			dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+		});
 	});
 	return t;
 };

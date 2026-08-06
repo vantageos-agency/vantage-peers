@@ -34,6 +34,25 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// Messages suite factory: real recipients are now derived from the
+// `profiles` table (task k17dr97dwpe07n9zfgzzypkfm18bv6ws bounce fix) — seed
+// the standard pi/tau/phi trio so every legitimate send in this describe
+// block resolves to >=1 real recipient instead of bouncing.
+async function createMessagingTestConvex() {
+	const t = convexTest(schema, modules);
+	await t.run(async (ctx) => {
+		for (const orchestratorId of ["pi", "tau", "phi"]) {
+			await ctx.db.insert("profiles", {
+				orchestratorId,
+				name: orchestratorId,
+				static: { role: orchestratorId, workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			});
+		}
+	});
+	return t;
+}
+
 // =============================================================================
 // 1. Memories
 // =============================================================================
@@ -519,7 +538,7 @@ describe("Profiles", () => {
 
 describe("Messages", () => {
 	test("send message creates message + receipts", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -539,7 +558,7 @@ describe("Messages", () => {
 	});
 
 	test("send broadcast creates receipts for all other orchestrators", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		// Create profiles so broadcast can resolve recipients dynamically
 		await t.mutation(api.profiles.upsertProfile, {
@@ -588,7 +607,7 @@ describe("Messages", () => {
 	});
 
 	test("check new messages returns unread", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "tau",
@@ -611,7 +630,7 @@ describe("Messages", () => {
 	});
 
 	test("mark as read sets readAt", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "tau",
@@ -631,7 +650,7 @@ describe("Messages", () => {
 	});
 
 	test("after mark as read, checkNewMessages returns empty", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "tau",
@@ -655,7 +674,7 @@ describe("Messages", () => {
 	});
 
 	test("list messages by sender", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -683,7 +702,7 @@ describe("Messages", () => {
 	});
 
 	test("delete message cascades receipts", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		// Send a message from pi to tau — creates 1 message + 1 receipt
 		const messageId = await t.mutation(api.messages.sendMessage, {
@@ -716,7 +735,7 @@ describe("Messages", () => {
 	});
 
 	test("delete message rejects non-sender caller", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -734,7 +753,7 @@ describe("Messages", () => {
 	});
 
 	test("delete message throws on non-existent messageId", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		// Send one message so we have a valid-shape ID, then delete it to get a
 		// missing ID for the error path
@@ -761,7 +780,7 @@ describe("Messages", () => {
 	// ── Issue #323 regression tests ──────────────────────────────────────────
 
 	test("markAsRead rejects a messages-table ID passed as a receiptId (wrong table)", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		// Insert a message and get its _id (from the messages table, NOT messageReceipts)
 		const messageId = await t.mutation(api.messages.sendMessage, {
@@ -780,7 +799,7 @@ describe("Messages", () => {
 	});
 
 	test("checkNewMessages response omits messageId field from each result object", async () => {
-		const t = createTestConvex();
+		const t = await createMessagingTestConvex();
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "phi",

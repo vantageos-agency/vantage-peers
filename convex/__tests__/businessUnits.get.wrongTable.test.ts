@@ -76,6 +76,14 @@ const newTask = (t: ReturnType<typeof createT>) =>
 describe("businessUnits:get — wrong-table ID (issue #1064, reads)", () => {
 	test("a messages-table ID yields an actionable ConvexError naming buId", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "sigma",
+				name: "sigma",
+				static: { role: "sigma", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "sigma",

@@ -64,6 +64,15 @@ async function seedTemplateAndMapping(t: ReturnType<typeof makeConvex>) {
 			project: "vantage-memory",
 			active: true,
 		});
+		// Webhook notify paths send to "sigma" (the mapped orchestrator) via
+		// messages.sendMessage — real recipients are now derived from the
+		// `profiles` table (task k17dr97dwpe07n9zfgzzypkfm18bv6ws bounce fix).
+		await ctx.db.insert("profiles", {
+			orchestratorId: "sigma",
+			name: "sigma",
+			static: { role: "sigma", workspace: "test", capabilities: [] },
+			dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+		});
 	});
 }
 

@@ -28,6 +28,33 @@ const createT = () => convexTest(schema, modules);
 // Helper: seed a message from "alpha" to one or more recipients via sendMessage.
 // channel is the comma-separated recipient list (as sendMessage expects).
 // ---------------------------------------------------------------------------
+async function ensureProfile(t: ReturnType<typeof createT>, token: string) {
+	const isInstance = token.includes("-");
+	const orchestratorId = isInstance ? token.split("-")[0] : token;
+	const instanceId = isInstance ? token : undefined;
+	await t.run(async (ctx) => {
+		const existing = isInstance
+			? await ctx.db
+					.query("profiles")
+					.withIndex("by_instance", (q) => q.eq("instanceId", instanceId))
+					.first()
+			: await ctx.db
+					.query("profiles")
+					.withIndex("by_orchestrator", (q) =>
+						q.eq("orchestratorId", orchestratorId),
+					)
+					.first();
+		if (existing) return;
+		await ctx.db.insert("profiles", {
+			orchestratorId,
+			instanceId,
+			name: token,
+			static: { role: orchestratorId, workspace: "test", capabilities: [] },
+			dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+		});
+	});
+}
+
 async function seed(
 	t: ReturnType<typeof createT>,
 	opts: {
@@ -36,6 +63,11 @@ async function seed(
 		content?: string;
 	},
 ) {
+	for (const part of opts.channel.split(",").map((s) => s.trim())) {
+		if (part.length > 0) {
+			await ensureProfile(t, part);
+		}
+	}
 	await t.mutation(api.messages.sendMessage, {
 		from: opts.from ?? "alpha",
 		channel: opts.channel,
