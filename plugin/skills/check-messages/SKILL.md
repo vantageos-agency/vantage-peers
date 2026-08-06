@@ -7,7 +7,7 @@ description: >
   even if they don't say "check-messages" explicitly.
 allowed-tools: mcp__vantage-peers__* Bash Read
 metadata:
-  version: "3.2.0"
+  version: "3.1.0"
   user-invocable: true
 license: Proprietary
 ---
@@ -18,14 +18,18 @@ Check unread VantagePeers messages and, in autonomous mode, auto-pick the next u
 
 A cron firing that finds NOTHING NEW produces **ZERO text output. Not one word.** No "court", no "ok", no "standby", no summary, no echo of any style instruction. Text costs quota at every cron firing, around the clock, across the whole fleet. The ONLY legal outputs of this skill are: (a) displayed messages when messages exist, (b) a standby block when the blocked/queue STATE CHANGED since the previous firing, (c) task execution output. Everything else is silence.
 
-Incident Day 127: orchestrators emitted a literal one-word reply ("court") on every cron firing, some in endless self-chaining loops — pure quota burn observed fleet-wide by Laurent.
+Incident Day 127: orchestrators emitted a literal one-word reply ("court") on every cron firing, some in endless self-chaining loops — pure quota burn observed fleet-wide.
 
 ## WORKFLOW
 
 **Step 1 — Detect mode**
 
-- Read first 20 lines of `CLAUDE.md`. If "You are Pi" + workspace `/home/laurentperello/coding/ElPi Corp` → **HUMAN MODE**.
-- Else (any VPS orchestrator) → **AUTONOMOUS MODE**. Default to autonomous if in doubt.
+HUMAN MODE is opt-in via a HOST-SIDE marker that lives outside every repo and every published package. Never key it on a hardcoded filesystem path or a person's name: a published plugin must not carry its maintainer's home directory — that is an internal-identifier leak, and it is meaningless to any external user of the plugin.
+
+- **HUMAN MODE** iff the marker is present: env `VANTAGE_HUMAN_MODE=1`, or the file `~/.claude/vantage-human-mode` exists.
+- **AUTONOMOUS MODE** otherwise. No marker = autonomous.
+
+This degrades in the safe direction: an interactive operator who forgets the marker gets an autonomous run, which is immediately visible. The reverse default would silently freeze a VPS orchestrator waiting on a human who is not there.
 
 **Step 2 — Check messages**
 
@@ -48,28 +52,6 @@ Filter to tasks completed since the previous check cycle (recent `completedAt`/`
 
 Why pull-not-push, plus anti-patterns, in `references/pi-pull-doctrine.md`.
 
-**Step 2.5b — HUMAN MODE only: stale in_progress sweep (task-closure discipline, Day 130)**
-
-Also pull `list_tasks createdBy="pi" status="in_progress"`. For each task where the work is verifiably finished (pull the artifact — PR state, file, message evidence — never the peer's word):
-
-- Send the assignee an immediate closure demand citing the evidence, OR close it yourself as creator with a completionNote citing the evidence and why Pi closed it.
-- Client-project tasks (Pujol) MUST close with the decimal-hours time line (`pujol-time-tracking.md`) — if the assignee closes, the demand names that requirement; billing derives from these lines.
-
-An unclosed finished task is unbilled work. Rule: `.claude/rules/task-closure-discipline.md`.
-
-**Step 2.6 — HUMAN MODE only: pull the pending-on-me queue (never infer quiet from an empty inbox)**
-
-An empty inbox is not proof the fleet is quiet — the silence contract makes a peer that is waiting on a Pi decision go silent. Pull the pending-on-me queue every cycle:
-
-1. If the server returns a `pendingOnYou` signal, display it directly — it is the canonical queue.
-2. Otherwise (degraded), reconstruct it from state:
-   - `list_tasks createdBy="pi" status="blocked"` — tokens / reviews / merges Pi owes.
-   - Fleet PRs OPEN + MERGEABLE + reviewer-APPROVED awaiting Pi's merge (from tracked review tasks / prior messages).
-3. Each queue item is an ACTION Pi must take (issue a token, merge, create a review task), not a status line. RESOLVE it or explicitly PARK it with a written reason this cycle. A merge waiting more than three cycles is escalated to the operator that same cycle (Merge SLA).
-4. If the queue is empty, output nothing — the silence contract holds.
-
-Rule: `.claude/rules/pi-no-passive-block.md`. Degraded queue vs canonical server queue: the server `pendingOnYou` is authoritative; note any divergence.
-
 **Step 3 — AUTONOMOUS MODE only: auto-pick + execute next task**
 
 1. `list_tasks assignedTo=<role> status=todo` (no limit, or 50).
@@ -78,32 +60,19 @@ Rule: `.claude/rules/pi-no-passive-block.md`. Degraded queue vs canonical server
 4. `start_task`. Execute per its `description`/`VERIFICATION`/`TESTS` blocks.
 5. On completion: `complete_task` with detailed completionNote. **Chain at most ONCE per cron firing**: re-invoke `/check-messages` only if the completed task plausibly unblocked another (a dependsOn now satisfied). NEVER re-invoke when the todo queue was empty at Step 3.1 — the next cron firing covers it. Self-chaining on an empty queue is the endless-loop failure (Day 127).
 
-**Step 3.5 — AUTONOMOUS MODE only: auto-nudge a stalled wait (the signal travels from both ends)**
-
-A waiting orchestrator never stays mute on a merge/token/review it has been owed for cycles. At each firing, check whether this orchestrator has a task of its own that has awaited an authority's action (a merge, a token, a review) for three or more cycles:
-
-1. If yes, emit ONE `[NUDGE]` to the authority (channel = the authority) citing: the full 32-char taskId, the PR/state, `cyclesWaiting`, and the action expected.
-2. Idempotent — exactly one nudge per stage. Do NOT re-emit at the next firing while still at the same stage. Re-arm at the next stage (e.g. re-nudge at six cycles if still waiting), never in a tight loop.
-3. This does NOT break the silence contract: with no wait of three or more cycles, emit nothing.
-4. Prefer the server `cyclesWaiting` when present; degraded, compute the age from the task's `updatedAt`.
-
-Rule: `.claude/rules/pi-no-passive-block.md` (Merge SLA — the symmetric nudge).
-
 **Step 4 — Fallback if no todo task**
 
 Empty queue or all blocked on deps:
 1. Compare to the PREVIOUS firing (memory of the session): if the blocked-list and queue state are IDENTICAL, output NOTHING and stop — see SILENCE CONTRACT.
 2. Only if the state CHANGED (new blocker, task newly frozen/unfrozen): output the 3-line standby block (role, instance, "blocked on: [list]").
-3. Do NOT ask Laurent/Pi what to do next. Do NOT invent work. Do NOT re-invoke this skill.
+3. Do NOT ask the user/Pi what to do next. Do NOT invent work. Do NOT re-invoke this skill.
 
 ## RULES
 
 - Always mark messages as read after displaying.
 - Respond immediately to any message asking a question / requesting action.
-- AUTONOMOUS: NEVER produce output asking Laurent/Pi what to do next. Pick a task or standby.
+- AUTONOMOUS: NEVER produce output asking the user/Pi what to do next. Pick a task or standby.
 - AUTONOMOUS: a no-change firing is SILENT (zero text). Echoing a style instruction ("court", "ok", "noté") as the whole reply is banned — it is quota burn, not compliance.
 - AUTONOMOUS: never re-invoke /check-messages from a firing that found an empty queue. One firing = at most one chain, and only on a plausible unblock.
 - HUMAN: display + mark read + respond if needed. Do NOT auto-pick (Pi is interactive).
 - HUMAN: always run Step 2.5. Pi never relies on a peer push to learn a dispatched task is done — pull is the source of truth.
-- HUMAN: always run Step 2.6. An empty inbox is never proof the fleet is quiet — pull the pending-on-me queue and resolve or park each item (`pi-no-passive-block.md`).
-- AUTONOMOUS: run Step 3.5 — a wait of three or more cycles on a merge/token/review emits exactly one `[NUDGE]` to the authority, idempotent per stage. A ready wait is never left mute.
