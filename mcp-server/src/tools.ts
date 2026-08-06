@@ -3094,19 +3094,20 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason:
-				"receiptIds are caller-scoped opaque handles issued by check_messages; ownership enforced in messages:markAsRead",
-		},
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"mark_as_read",
 		"Mark one or more message receipts as read using receiptIds from check_messages. " +
 			"WHEN: call immediately after processing each batch of messages returned by check_messages. " +
-			"EXAMPLE: mark_as_read receiptIds=['j57aaaaa...', 'j57bbbbb...'].",
+			"EXAMPLE: mark_as_read receiptIds=['j57aaaaa...', 'j57bbbbb...'] callerOrchestrator='pi'.",
 		{
 			receiptIds: z
 				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
 				.describe("Receipt IDs to mark as read — array or single string"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe(
+					"Orchestrator marking its own receipts as read — required for scoped (non-master) OAuth clients; enforced fleet-wide against each receipt's recipient in messages:markAsRead",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -3114,7 +3115,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Mark messages as read",
 		},
-		async ({ receiptIds }) => {
+		async ({ receiptIds, callerOrchestrator }) => {
 			try {
 				let receiptIdsArray: string[];
 				if (Array.isArray(receiptIds)) {
@@ -3133,6 +3134,7 @@ export function registerTools(
 				}
 				const count = await convex.mutation("messages:markAsRead" as any, {
 					receiptIds: receiptIdsArray,
+					callerOrchestrator,
 				});
 
 				return {
@@ -3968,7 +3970,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"bulkComplete is scoped by callerOrchestrator inside tasks:bulkComplete",
+				"claimed callerOrchestrator identity is guarded MCP-side (guardFrom) before dispatch; tasks:bulkComplete then scopes matched tasks against that verified identity",
 		},
 		BULK_COMPLETE_TASKS_TOOL_NAME,
 		BULK_COMPLETE_TASKS_TOOL_DESCRIPTION,
@@ -3981,6 +3983,20 @@ export function registerTools(
 		},
 		async ({ filter, dryRun, completionNoteTemplate, callerOrchestrator }) => {
 			try {
+				// k179nrp3apj700pm0h1ckewm2h8b3nz7 — the "filtered" declaration above
+				// claimed enforcement lives in tasks:bulkComplete, but that Convex
+				// handler only checks ownership of MATCHED TASKS against a
+				// client-SUPPLIED callerOrchestrator — it never verifies the caller
+				// claiming that identity actually IS it. A scoped (non-master) OAuth
+				// client could pass any other orchestrator's name and bulk-close
+				// that orchestrator's tasks. Mirrors delete_message (tools.ts
+				// ~3157-3181): guard the claimed identity against the caller's own
+				// fromAllowList before the mutation runs.
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const result = await convex.mutation("tasks:bulkComplete" as any, {
 					filter,
 					dryRun,
