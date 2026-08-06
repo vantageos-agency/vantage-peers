@@ -32,6 +32,14 @@ const createT = () => convexTest(schema, modules);
 describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)", () => {
 	test("rejects marking a receipt read when callerOrchestrator is not the recipient", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "tau",
+				name: "tau",
+				static: { role: "tau", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -68,6 +76,14 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 
 	test("positive control: the true recipient can mark its own receipt read", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "tau",
+				name: "tau",
+				static: { role: "tau", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "pi",
