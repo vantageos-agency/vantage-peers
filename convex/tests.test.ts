@@ -71,7 +71,7 @@ describe("Memories", () => {
 
 		expect(memoryId).toBeDefined();
 
-		const memory = await t.query(api.memories.getMemory, { memoryId });
+		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		expect(memory!.content).toBe("VantagePeers uses Convex as its backend");
 		expect(memory!.type).toBe("project");
@@ -107,7 +107,7 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const alphaResult = await t.query(api.memories.listMemories, {
+		const alphaResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
 			namespace: "project/alpha",
 		});
 
@@ -144,7 +144,7 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const projectResult = await t.query(api.memories.listMemories, {
+		const projectResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
 			namespace: "global",
 			type: "project",
 		});
@@ -166,12 +166,12 @@ describe("Memories", () => {
 
 		await t.mutation(api.memories.softDeleteMemory, { memoryId });
 
-		const memory = await t.query(api.memories.getMemory, { memoryId });
+		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		expect(memory!.isLatest).toBe(false);
 
 		// Should not appear in default (isLatest=true) listing
-		const listedResult = await t.query(api.memories.listMemories, {
+		const listedResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
 			namespace: "global",
 		});
 		expect(listedResult.value.find((m) => m._id === memoryId)).toBeUndefined();
@@ -198,21 +198,21 @@ describe("Memories", () => {
 		});
 
 		// Original should now have isLatest=false
-		const original = await t.query(api.memories.getMemory, {
+		const original = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
 			memoryId: originalId,
 		});
 		expect(original).not.toBeNull();
 		expect(original!.isLatest).toBe(false);
 
 		// Updated should have isLatest=true
-		const updated = await t.query(api.memories.getMemory, {
+		const updated = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
 			memoryId: updatedId,
 		});
 		expect(updated).not.toBeNull();
 		expect(updated!.isLatest).toBe(true);
 
 		// Default listing should only show the updated version
-		const listedResult = await t.query(api.memories.listMemories, {
+		const listedResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
 			namespace: "global",
 		});
 		expect(listedResult.value).toHaveLength(1);
@@ -231,7 +231,7 @@ describe("Memories", () => {
 			// relations intentionally omitted
 		});
 
-		const memory = await t.query(api.memories.getMemory, { memoryId });
+		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		if (memory === null) throw new Error("memory must not be null");
 		expect(Array.isArray(memory.relations)).toBe(true);
@@ -261,7 +261,7 @@ describe("Episodes", () => {
 		expect(episodeId).toBeDefined();
 
 		// Retrieve via getMemory to verify structure
-		const memory = await t.query(api.memories.getMemory, {
+		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
 			memoryId: episodeId,
 		});
 		expect(memory).not.toBeNull();
@@ -319,7 +319,7 @@ describe("Episodes", () => {
 			severity: "critical",
 		});
 
-		const alphaEpisodes = await t.query(api.episodes.listEpisodes, {
+		const alphaEpisodes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.episodes.listEpisodes, {
 			namespace: "project/alpha",
 		});
 
@@ -366,7 +366,7 @@ describe("Episodes", () => {
 			severity: "critical",
 		});
 
-		const criticals = await t.query(api.episodes.getCriticalInsights, {});
+		const criticals = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.episodes.getCriticalInsights, {});
 
 		expect(criticals).toHaveLength(2);
 		expect(criticals.every((c) => c.insight !== undefined)).toBe(true);
@@ -407,7 +407,7 @@ describe("Profiles", () => {
 		);
 		expect(profileId).toBeDefined();
 
-		const profile = await t.query(api.profiles.getProfile, {
+		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
 			orchestratorId: "pi",
 		});
 		expect(profile).not.toBeNull();
@@ -432,7 +432,7 @@ describe("Profiles", () => {
 			},
 		});
 
-		const profile = await t.query(api.profiles.getProfile, {
+		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
 			instanceId: "pi-vps",
 		});
 		expect(profile).not.toBeNull();
@@ -440,7 +440,7 @@ describe("Profiles", () => {
 		expect(profile!.dynamic.sessionCount).toBe(2);
 
 		// Should not create a duplicate — list should have exactly 1
-		const allProfiles = await t.query(api.profiles.listProfiles, {
+		const allProfiles = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.listProfiles, {
 			orchestratorId: "pi",
 		});
 		expect(allProfiles).toHaveLength(1);
@@ -451,7 +451,7 @@ describe("Profiles", () => {
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
-		const profile = await t.query(api.profiles.getProfile, {
+		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
 			orchestratorId: "pi",
 		});
 		expect(profile).not.toBeNull();
@@ -478,7 +478,7 @@ describe("Profiles", () => {
 			},
 		});
 
-		const allProfiles = await t.query(api.profiles.listProfiles, {});
+		const allProfiles = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.listProfiles, {});
 		expect(allProfiles).toHaveLength(2);
 	});
 
@@ -496,7 +496,7 @@ describe("Profiles", () => {
 			sessionCountDelta: 1,
 		});
 
-		const profile = await t.query(api.profiles.getProfile, {
+		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
 			instanceId: "pi-vps",
 		});
 		expect(profile).not.toBeNull();
@@ -519,7 +519,7 @@ describe("Profiles", () => {
 		});
 		const after = Date.now();
 
-		const profile = await t.query(api.profiles.getProfile, {
+		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
 			instanceId: "pi-vps",
 		});
 		expect(profile).not.toBeNull();
@@ -549,7 +549,7 @@ describe("Messages", () => {
 		expect(messageId).toBeDefined();
 
 		// Tau should have an unread message
-		const tauMessages = await t.query(api.messages.checkNewMessages, {
+		const tauMessages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
 		expect(tauMessages).toHaveLength(1);
@@ -587,20 +587,20 @@ describe("Messages", () => {
 		});
 
 		// Tau should get the broadcast
-		const tauMessages = await t.query(api.messages.checkNewMessages, {
+		const tauMessages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
 		expect(tauMessages).toHaveLength(1);
 		expect(tauMessages[0].content).toBe("Announcement: deploy complete");
 
 		// Phi should get the broadcast
-		const phiMessages = await t.query(api.messages.checkNewMessages, {
+		const phiMessages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "phi",
 		});
 		expect(phiMessages).toHaveLength(1);
 
 		// Pi (the sender) should NOT get the broadcast
-		const piMessages = await t.query(api.messages.checkNewMessages, {
+		const piMessages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "pi",
 		});
 		expect(piMessages).toHaveLength(0);
@@ -621,7 +621,7 @@ describe("Messages", () => {
 			content: "Message 2 for Pi",
 		});
 
-		const piMessages = await t.query(api.messages.checkNewMessages, {
+		const piMessages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "pi",
 		});
 		expect(piMessages).toHaveLength(2);
@@ -638,7 +638,7 @@ describe("Messages", () => {
 			content: "Read me",
 		});
 
-		const messages = await t.query(api.messages.checkNewMessages, {
+		const messages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "pi",
 		});
 		expect(messages).toHaveLength(1);
@@ -658,7 +658,7 @@ describe("Messages", () => {
 			content: "One-time message",
 		});
 
-		const before = await t.query(api.messages.checkNewMessages, {
+		const before = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "pi",
 		});
 		expect(before).toHaveLength(1);
@@ -667,7 +667,7 @@ describe("Messages", () => {
 			receiptIds: [before[0].receiptId],
 		});
 
-		const after = await t.query(api.messages.checkNewMessages, {
+		const after = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "pi",
 		});
 		expect(after).toHaveLength(0);
@@ -694,7 +694,7 @@ describe("Messages", () => {
 			content: "Tau message",
 		});
 
-		const piMessages = await t.query(api.messages.listMessages, {
+		const piMessages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.listMessages, {
 			from: "pi",
 		});
 		expect(piMessages).toHaveLength(2);
@@ -712,7 +712,7 @@ describe("Messages", () => {
 		});
 
 		// Verify receipt exists before deletion
-		const before = await t.query(api.messages.checkNewMessages, {
+		const before = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
 		expect(before).toHaveLength(1);
@@ -728,7 +728,7 @@ describe("Messages", () => {
 		expect(result.receiptsDeleted).toBe(1);
 
 		// Message should no longer appear in tau's inbox
-		const after = await t.query(api.messages.checkNewMessages, {
+		const after = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
 		expect(after).toHaveLength(0);
@@ -807,7 +807,7 @@ describe("Messages", () => {
 			content: "Field-projection test",
 		});
 
-		const messages = await t.query(api.messages.checkNewMessages, {
+		const messages = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
 
@@ -851,7 +851,7 @@ describe("Tasks", () => {
 		const taskId = await t.mutation(api.tasks.create, sampleTask);
 		expect(taskId).toBeDefined();
 
-		const task = await t.query(api.tasks.get, { taskId });
+		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.title).toBe("Write unit tests");
 		expect(task!.status).toBe("todo");
@@ -893,7 +893,7 @@ describe("Tasks", () => {
 			priority: "urgent",
 		});
 
-		const task = await t.query(api.tasks.get, { taskId });
+		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.title).toBe("Write unit tests (updated)");
 		expect(task!.priority).toBe("urgent");
@@ -909,7 +909,7 @@ describe("Tasks", () => {
 			callerOrchestrator: "pi" as const,
 		});
 
-		const task = await t.query(api.tasks.get, { taskId });
+		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.status).toBe("in_progress");
 		expect(task!.startedAt).toBeDefined();
@@ -943,7 +943,7 @@ describe("Tasks", () => {
 			completionNote: "All 30 tests pass, coverage at 95%",
 		});
 
-		const task = await t.query(api.tasks.get, { taskId });
+		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.status).toBe("done");
 		expect(task!.completedAt).toBeDefined();
@@ -974,7 +974,7 @@ describe("Missions", () => {
 		const missionId = await t.mutation(api.missions.create, sampleMission);
 		expect(missionId).toBeDefined();
 
-		const mission = await t.query(api.missions.get, { missionId });
+		const mission = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId });
 		expect(mission).not.toBeNull();
 		expect(mission!.name).toBe("Launch VantagePeers v1");
 		expect(mission!.status).toBe("plan");
@@ -1019,7 +1019,7 @@ describe("Missions", () => {
 			progress: 50,
 		});
 
-		const mission = await t.query(api.missions.get, { missionId });
+		const mission = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId });
 		expect(mission).not.toBeNull();
 		expect(mission!.name).toBe("Launch VantagePeers v1.1");
 		expect(mission!.priority).toBe("urgent");
@@ -1036,7 +1036,7 @@ describe("Missions", () => {
 			status: "execute",
 		});
 
-		const mission = await t.query(api.missions.get, { missionId });
+		const mission = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId });
 		expect(mission).not.toBeNull();
 		expect(mission!.status).toBe("execute");
 	});
@@ -1060,7 +1060,7 @@ describe("Diary", () => {
 
 		expect(diaryId).toBeDefined();
 
-		const entry = await t.query(api.diary.get, {
+		const entry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "pi",
 		});
@@ -1088,7 +1088,7 @@ describe("Diary", () => {
 		// Should return the same ID (upsert)
 		expect(secondId).toBe(firstId);
 
-		const entry = await t.query(api.diary.get, {
+		const entry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "pi",
 		});
@@ -1112,7 +1112,7 @@ describe("Diary", () => {
 			content: "Tau's diary for March 25",
 		});
 
-		const piEntry = await t.query(api.diary.get, {
+		const piEntry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "pi",
 		});
@@ -1120,7 +1120,7 @@ describe("Diary", () => {
 		expect(piEntry!.content).toBe("Pi's diary for March 25");
 		expect(piEntry!.orchestrator).toBe("pi");
 
-		const tauEntry = await t.query(api.diary.get, {
+		const tauEntry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "tau",
 		});
@@ -1150,11 +1150,11 @@ describe("Diary", () => {
 		});
 
 		// List all
-		const all = await t.query(api.diary.list, {});
+		const all = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.list, {});
 		expect(all).toHaveLength(3);
 
 		// List by orchestrator
-		const piEntries = await t.query(api.diary.list, { orchestrator: "pi" });
+		const piEntries = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.list, { orchestrator: "pi" });
 		expect(piEntries).toHaveLength(2);
 		expect(piEntries.every((e) => e.orchestrator === "pi")).toBe(true);
 	});
@@ -1183,7 +1183,7 @@ describe("Briefing Notes", () => {
 
 		expect(noteId).toBeDefined();
 
-		const note = await t.query(api.briefingNotes.get, { noteId });
+		const note = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.get, { noteId });
 		expect(note).not.toBeNull();
 		expect(note!.title).toBe("Architecture Review: Memory Layer");
 		expect(note!.topic).toBe("architecture");
@@ -1218,19 +1218,19 @@ describe("Briefing Notes", () => {
 			createdBy: "pi",
 		});
 
-		const archNotes = await t.query(api.briefingNotes.list, {
+		const archNotes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 			topic: "architecture",
 		});
 		expect(archNotes).toHaveLength(2);
 		expect(archNotes.every((n) => n.topic === "architecture")).toBe(true);
 
-		const planningNotes = await t.query(api.briefingNotes.list, {
+		const planningNotes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 			topic: "planning",
 		});
 		expect(planningNotes).toHaveLength(1);
 
 		// List all
-		const allNotes = await t.query(api.briefingNotes.list, {});
+		const allNotes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {});
 		expect(allNotes).toHaveLength(3);
 	});
 });
@@ -1271,7 +1271,7 @@ describe("MCP Tenants", () => {
 		expect(tenantId).toBeDefined();
 
 		// getTenantByTokenHash returns the tenant but enabled=false
-		const result = await t.query(api.mcpTenants.getTenantByTokenHash, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, {
 			tokenHash,
 		});
 		expect(result).not.toBeNull();
@@ -1298,7 +1298,7 @@ describe("MCP Tenants", () => {
 			tenantId,
 		});
 
-		const result = await t.query(api.mcpTenants.getTenantByTokenHash, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, {
 			tokenHash,
 		});
 		expect(result).not.toBeNull();
@@ -1324,7 +1324,7 @@ describe("MCP Tenants", () => {
 		});
 
 		// Verify enabled first
-		const enabled = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const enabled = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(enabled!.enabled).toBe(true);
 
 		// Now disable
@@ -1333,7 +1333,7 @@ describe("MCP Tenants", () => {
 			tenantId,
 		});
 
-		const disabled = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const disabled = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(disabled).not.toBeNull();
 		expect(disabled!.enabled).toBe(false);
 	});
@@ -1355,7 +1355,7 @@ describe("MCP Tenants", () => {
 			tenantId,
 		});
 
-		const result = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(result).toBeNull();
 	});
 
@@ -1375,7 +1375,7 @@ describe("MCP Tenants", () => {
 		await t.mutation(api.mcpTenants.revokeTenant, { callerToken: MASTER_TOKEN, tenantId });
 		await t.mutation(api.mcpTenants.revokeTenant, { callerToken: MASTER_TOKEN, tenantId });
 
-		const result = await t.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(result).toBeNull();
 	});
 
@@ -1383,7 +1383,7 @@ describe("MCP Tenants", () => {
 		const t = createTestConvex();
 
 		const unknownHash = await sha256hex("does-not-exist-token");
-		const result = await t.query(api.mcpTenants.getTenantByTokenHash, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, {
 			tokenHash: unknownHash,
 		});
 		expect(result).toBeNull();
@@ -1423,7 +1423,7 @@ describe("MCP Tenants", () => {
 			convexUrl: "https://tenant-b.convex.cloud",
 		});
 
-		const tenants = await t.query(api.mcpTenants.listTenants, {
+		const tenants = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.listTenants, {
 			callerToken: MASTER_TOKEN,
 		});
 		expect(tenants).toHaveLength(2);
@@ -1893,7 +1893,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 			createdBy: "tau",
 		});
 
-		const liteRows = await t.query(api.briefingNotes.list, { fields: "lite" });
+		const liteRows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, { fields: "lite" });
 
 		expect(liteRows).toHaveLength(2);
 
@@ -1943,7 +1943,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 			missionId,
 		});
 
-		const rows = await t.query(api.tasks.listByMission, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 			missionId,
 			status: "active",
 			fields: "lite",
@@ -2003,7 +2003,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			title: "sigma-2",
 		});
 
-		const rows = await t.query(api.tasks.list, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			createdBy: "sigma",
 			fields: "lite",
 			limit: 100,
@@ -2036,7 +2036,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			assignedTo: "sigma",
 		});
 
-		const rows = await t.query(api.tasks.list, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			createdBy: "pi",
 			assignedTo: "sigma",
 			limit: 100,
@@ -2062,7 +2062,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			title: "new-task",
 		});
 
-		const rows = await t.query(api.tasks.list, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			updatedSince: cutoff,
 			limit: 100,
 		});
@@ -2083,7 +2083,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			});
 		}
 
-		const rows = await t.query(api.tasks.list, { assignedTo: "sigma" });
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, { assignedTo: "sigma" });
 		expect(rows.length).toBeLessThanOrEqual(30);
 	});
 
@@ -2097,7 +2097,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			});
 		}
 
-		const rows = await t.query(api.tasks.list, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: "sigma",
 			fields: "lite",
 		});
@@ -2115,7 +2115,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			});
 		}
 
-		const rows = await t.query(api.tasks.list, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: "sigma",
 			limit: 50,
 		});

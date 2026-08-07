@@ -75,7 +75,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Task B" });
 		});
 
-		const result = await t.query(api.tasks.listPaginated, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 		});
 
@@ -99,7 +99,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Done task", status: "done" });
 		});
 
-		const result = await t.query(api.tasks.listPaginated, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			status: "blocked",
 		});
@@ -119,7 +119,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Medium task", priority: "medium" });
 		});
 
-		const result = await t.query(api.tasks.listPaginated, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			priority: "urgent",
 		});
@@ -138,7 +138,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Pi task", assignedTo: "pi" });
 		});
 
-		const result = await t.query(api.tasks.listPaginated, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			assignedTo: "sigma",
 		});
@@ -157,7 +157,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Pi blocked", assignedTo: "pi", status: "blocked" });
 		});
 
-		const result = await t.query(api.tasks.listPaginated, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			assignedTo: "sigma",
 			status: "blocked",
@@ -176,7 +176,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 		});
 
 		// Must not throw — orgId is accepted as a passthrough arg.
-		const result = await t.query(api.tasks.listPaginated, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			orgId: "novalayer",
 		});
@@ -198,7 +198,7 @@ describe("tasks.list — Day 116 B1 arg extension (priority + orgId)", () => {
 		});
 
 		// Must not throw ArgumentValidationError on extra fields.
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			priority: "high",
 			orgId: "novalayer",
 			fields: "lite",
@@ -217,7 +217,7 @@ describe("tasks.list — Day 116 B1 arg extension (priority + orgId)", () => {
 			await seedTask(ctx, { title: "Low", priority: "low" });
 		});
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			priority: "urgent",
 			limit: 50,
 		}) as Array<Record<string, unknown>>;

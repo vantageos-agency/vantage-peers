@@ -89,7 +89,10 @@ describe("searchBriefingNotesByKeyword — cross-org isolation", () => {
 		expect(titles).not.toContain("fleet master note");
 	});
 
-	test("master (no identity) sees all briefingNotes", async () => {
+	// SEC-AUDIT Day 156: no-identity no longer resolves to master (fail-closed
+	// default). The recognized service-account identity (CLERK_SERVICE_ACCOUNT_USER_ID,
+	// see vitest.config env) is the only remaining explicit master grant.
+	test("master (recognized service-account identity) sees all briefingNotes", async () => {
 		const t = createTestConvex();
 		await seedNote(t, {
 			title: "iris note",
@@ -106,11 +109,29 @@ describe("searchBriefingNotesByKeyword — cross-org isolation", () => {
 			content: "match query token",
 		});
 
-		const results = await t.query(
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const results = await tMaster.query(
 			api.briefingNotes.searchBriefingNotesByKeyword,
 			{ query: "match query token" },
 		);
 
 		expect(results.length).toBe(3);
+	});
+
+	test("anonymous (no identity) caller is refused — RBAC_DENIED", async () => {
+		const t = createTestConvex();
+		await seedNote(t, {
+			title: "fleet note",
+			content: "match query token",
+		});
+
+		await expect(
+			t.query(api.briefingNotes.searchBriefingNotesByKeyword, {
+				query: "match query token",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });

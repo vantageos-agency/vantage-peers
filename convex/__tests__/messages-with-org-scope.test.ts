@@ -158,7 +158,7 @@ describe("listMessages — withOrgScope enforcement", () => {
 		await seedMessage(t, { content: "fleet msg no tenant" });
 
 		// No identity — master path (m977mqck)
-		const results = await t.query(api.messages.listMessages, {});
+		const results = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.listMessages, {});
 
 		expect(results.length).toBe(3);
 	});
@@ -199,7 +199,7 @@ describe("listMessages — withOrgScope enforcement", () => {
 		expect(clerkResults.every((r) => r.tenantId === "tenant-a")).toBe(true);
 
 		// Master caller, limit=20: scan-all semantics — gets up to 20 rows (mix)
-		const masterResults = await t.query(api.messages.listMessages, {
+		const masterResults = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.listMessages, {
 			limit: 20,
 		});
 		expect(masterResults.length).toBe(20);
@@ -287,7 +287,7 @@ describe("searchMessagesByKeyword — withOrgScope enforcement", () => {
 		});
 
 		// No identity — master path (m977mqck)
-		const results = await t.query(api.messages.searchMessagesByKeyword, {
+		const results = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.searchMessagesByKeyword, {
 			query: "master search token foobarbaz",
 		});
 

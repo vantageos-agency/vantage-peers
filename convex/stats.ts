@@ -81,7 +81,7 @@ export const orchestratorStats = query({
 		// Master scope (Laurent / Alpha) returns all orchestrators unchanged.
 		// Client orgs with "view-stats-aggregated" see their own orchestrators.
 		// Client orgs with "cross-tenant-read" bypass orchestrator filtering.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		if (!scope.scopes.includes("view-stats-aggregated") && !scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
@@ -332,7 +332,7 @@ export const fleetStats = query({
 	}),
 	handler: async (ctx) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}

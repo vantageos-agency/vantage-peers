@@ -49,7 +49,7 @@ describe("Cat A — issues #655 #644 #643 — listMessages tenantId returns shap
 		// Pre-fix this call would throw:
 		//   ReturnsValidationError: Object contains extra field `tenantId`
 		// Post-fix it returns the row with tenantId preserved.
-		const rows = await t.query(api.messages.listMessages, {});
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.listMessages, {});
 		expect(rows.length).toBe(1);
 		expect(rows[0].tenantId).toBe("project/acme-hr");
 	});
@@ -67,7 +67,7 @@ describe("Cat A — issues #655 #644 #643 — listMessages tenantId returns shap
 			});
 		});
 
-		const rows = await t.query(api.messages.listMessages, {});
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.messages.listMessages, {});
 		expect(rows.length).toBe(1);
 		expect(rows[0].tenantId).toBeUndefined();
 	});
@@ -80,7 +80,7 @@ describe("Cat A — issue #642 — profiles.listProfiles accepts `limit`", () =>
 		// Pre-#642-fix the args validator would throw on `limit` field:
 		//   ArgumentValidationError: Object contains extra field `limit`
 		// Post-fix (v2.4.12 patch already shipped) the call accepts limit.
-		const rows = await t.query(api.profiles.listProfiles, {
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.listProfiles, {
 			fields: "lite",
 			limit: 20,
 		});
@@ -90,7 +90,7 @@ describe("Cat A — issue #642 — profiles.listProfiles accepts `limit`", () =>
 
 	test("listProfiles with limit alone does NOT throw", async () => {
 		const t = createTestConvex();
-		const rows = await t.query(api.profiles.listProfiles, { limit: 5 });
+		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.listProfiles, { limit: 5 });
 		expect(Array.isArray(rows)).toBe(true);
 	});
 });

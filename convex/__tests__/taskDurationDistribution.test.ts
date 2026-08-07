@@ -68,7 +68,7 @@ describe("tasks.taskDurationDistribution", () => {
 			await seedDoneTask(t, "known-project", v, now - 1000 - i);
 		}
 
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 		});
@@ -92,7 +92,7 @@ describe("tasks.taskDurationDistribution", () => {
 		await seedDoneTask(t, "in-window-project", 15, now - 500);
 		await seedDoneTask(t, "out-of-window-project", 999999, now - 1_000_000_000);
 
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 		});
@@ -106,7 +106,7 @@ describe("tasks.taskDurationDistribution", () => {
 		const now = Date.now();
 
 		// Nothing in range at all.
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 		});
@@ -139,7 +139,7 @@ describe("tasks.taskDurationDistribution", () => {
 		await seedDoneTask(t, undefined, 40, now - 1600);
 		await seedDoneTask(t, undefined, 50, now - 1800);
 
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 		});
@@ -156,7 +156,7 @@ describe("tasks.taskDurationDistribution", () => {
 		await seedDoneTask(t, "corrupt-project", 60, now - 1000);
 		await seedDoneTask(t, "corrupt-project", -2377, now - 1500);
 
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 		});
@@ -188,7 +188,7 @@ describe("tasks.taskDurationDistribution", () => {
 			}
 		});
 
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 		});
@@ -203,7 +203,7 @@ describe("tasks.taskDurationDistribution", () => {
 		await seedDoneTask(t, "alpha-project", 20, now - 1000);
 		await seedDoneTask(t, "beta-project", 999, now - 1000);
 
-		const result = await t.query(api.tasks.taskDurationDistribution, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 			from: now - 10_000,
 			to: now,
 			project: "alpha-project",
@@ -216,7 +216,7 @@ describe("tasks.taskDurationDistribution", () => {
 	test("rejects to < from", async () => {
 		const t = convexTest(schema, modules);
 		await expect(
-			t.query(api.tasks.taskDurationDistribution, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.taskDurationDistribution, {
 				from: 1000,
 				to: 500,
 			}),

@@ -61,17 +61,25 @@ async function seedOrgMapping(
 // helper functions (filterByOrgScope, requireScope) directly below.
 
 // =============================================================================
-// 1. No Clerk identity → master scope (MCP server / Convex CLI / internal callers)
+// 1. No Clerk identity → FAIL-CLOSED (SEC-AUDIT Day 156)
 // =============================================================================
 //
-// MCP server callers authenticate via Convex deploy key (no Clerk JWT) and the
-// Convex CLI runs server-side without an identity. Both paths must retain full
-// Alpha behaviour (master scope, all data visible). Beta dashboard security is
-// preserved at the next branch (org mapping lookup) for Clerk-authenticated
-// callers — see test #3 (Forbidden when org missing) and #5 (inactive).
+// Superseded assumption (pre-Day-156): "MCP server callers authenticate via
+// Convex deploy key (no Clerk JWT) — no-identity must resolve to master."
+// That assumption was wrong: mcp-server/src/authenticatedConvexClient.ts is
+// fail-closed and refuses to send ANY Convex query/mutation/action without a
+// freshly-minted service-account Clerk token — the MCP server never reaches
+// Convex with no identity at all. The no-identity branch was therefore
+// reachable only by a genuinely anonymous, unauthenticated direct caller of
+// the public Convex API (no MCP, no dashboard, no Clerk session needed) —
+// exactly the cross-tenant leak SEC-AUDIT Day 156 closes. `tasks.list` (and
+// `missions.list`) now fail-closed on no identity; the one legitimate
+// internal-fleet no-identity caller (convex/http.ts's HMAC-verified GitHub
+// webhook) uses `internal.tasks.listForWebhook` / `internal.missions.listForWebhook`
+// instead, which is structurally unreachable from any client.
 
-describe("withOrgScope — no identity (MCP/CLI master)", () => {
-	test("tasks.list returns all tasks when no auth identity (MCP/CLI path)", async () => {
+describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
+	test("tasks.list REFUSES an anonymous caller with no Clerk identity", async () => {
 		const t = createTestConvex();
 		// Seed two tasks assigned to different orchestrators
 		await t.mutation(api.tasks.create, {
@@ -89,8 +97,28 @@ describe("withOrgScope — no identity (MCP/CLI master)", () => {
 			createdBy: "sigma",
 		});
 
-		// No .withIdentity() call → identity = null → master scope
-		const result = await t.query(api.tasks.list, {});
+		// No .withIdentity() call → identity = null → fail-closed, RBAC_DENIED.
+		await expect(t.query(api.tasks.list, {})).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("tasks.listForWebhook (internal) still returns all tasks for the HMAC-verified GitHub webhook path", async () => {
+		const t = createTestConvex();
+		await t.mutation(api.tasks.create, {
+			title: "kappa task",
+			assignedTo: "kappa",
+			status: "todo",
+			priority: "medium",
+			createdBy: "kappa",
+		});
+		await t.mutation(api.tasks.create, {
+			title: "sigma task",
+			assignedTo: "sigma",
+			status: "todo",
+			priority: "medium",
+			createdBy: "sigma",
+		});
+
+		const result = await t.query(internal.tasks.listForWebhook, {});
 		expect(result).toHaveLength(2);
 	});
 });

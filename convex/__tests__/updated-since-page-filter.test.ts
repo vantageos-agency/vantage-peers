@@ -96,7 +96,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-page-filter",
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -124,7 +124,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-page-filter-2",
 				limit: PAGE_LIMIT,
 				fields: "full",
@@ -178,7 +178,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.listByMission, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 				missionId,
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -220,7 +220,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.listByMission, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 				missionId,
 				limit: PAGE_LIMIT,
 				fields: "full",
@@ -262,7 +262,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.missions.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fixture-project-mission-page-filter",
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -292,7 +292,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.missions.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fixture-project-mission-page-filter-2",
 				limit: PAGE_LIMIT,
 				fields: "full",
@@ -330,7 +330,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.briefingNotes.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 				topic: "fixture-topic-page-filter",
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -358,7 +358,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.briefingNotes.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 				topic: "fixture-topic-page-filter-2",
 				limit: PAGE_LIMIT,
 				fields: "full",
@@ -428,7 +428,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 
 			await expect(
-				t.query(api.tasks.list, {
+				t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 					assignedTo: "test-orch-scan-cap-over",
 					updatedSince: SINCE_THRESHOLD,
 					limit: PAGE_LIMIT,
@@ -467,7 +467,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-scan-cap-atcap",
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -510,7 +510,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 
 			await expect(
-				t.query(api.tasks.listByMission, {
+				t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 					missionId,
 					updatedSince: SINCE_THRESHOLD,
 					limit: PAGE_LIMIT,
@@ -564,7 +564,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.listByMission, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 				missionId,
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -597,7 +597,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 
 			await expect(
-				t.query(api.missions.list, {
+				t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 					project: "fixture-project-mission-scan-cap-over",
 					updatedSince: SINCE_THRESHOLD,
 					limit: PAGE_LIMIT,
@@ -640,7 +640,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.missions.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fixture-project-mission-scan-cap-atcap",
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -669,7 +669,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 
 			await expect(
-				t.query(api.briefingNotes.list, {
+				t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 					topic: "fixture-topic-scan-cap-over",
 					updatedSince: SINCE_THRESHOLD,
 					limit: PAGE_LIMIT,
@@ -708,7 +708,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.briefingNotes.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 				topic: "fixture-topic-scan-cap-atcap",
 				updatedSince: SINCE_THRESHOLD,
 				limit: PAGE_LIMIT,
@@ -752,7 +752,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-exact-limit-over",
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -778,7 +778,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-exact-limit-under",
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -820,7 +820,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.listByMission, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 				missionId,
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -860,7 +860,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.tasks.listByMission, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 				missionId,
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -890,7 +890,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.missions.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fixture-project-mission-exact-limit-over",
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -918,7 +918,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.missions.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fixture-project-mission-exact-limit-under",
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -946,7 +946,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.briefingNotes.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 				topic: "fixture-topic-exact-limit-over",
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,
@@ -972,7 +972,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}
 			});
 
-			const result = await t.query(api.briefingNotes.list, {
+			const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 				topic: "fixture-topic-exact-limit-under",
 				updatedSince: SINCE_THRESHOLD,
 				limit: EXACT_LIMIT,

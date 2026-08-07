@@ -574,7 +574,7 @@ export const listMessages = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.list.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -745,7 +745,7 @@ export const listByChannel = query({
 	),
 	handler: async (ctx, { channel, limit }) => {
 		const take = limit ?? 100;
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 
 		// Fail-closed channel scoping: messages carry no orgId/tenantId column
 		// (schema.ts), so channel-name proximity to the caller's own scope is the
@@ -831,7 +831,7 @@ export const searchMessagesByKeyword = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
 
 		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null

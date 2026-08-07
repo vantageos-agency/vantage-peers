@@ -129,7 +129,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: "test-orch-tau",
 			status: ["todo"],
 			project: "__nonexistent-fixture-slug__",
@@ -144,7 +144,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedToInstance: "test-instance-tau-laptop",
 			status: ["todo"],
 			project: "__nonexistent-fixture-slug__",
@@ -161,7 +161,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			project: "fixture-project-real",
 			limit: 20,
 			fields: "full",
@@ -175,7 +175,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: "test-orch-tau",
 			status: ["todo"],
 			limit: 20,
@@ -191,7 +191,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			project: "fixture-project-other",
 			status: ["todo"],
 			limit: 20,
@@ -208,7 +208,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: "test-orch-tau",
 			project: "fixture-project-real",
 			status: ["todo"],
@@ -228,7 +228,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		const t = convexTest(schema, modules);
 		await t.run(seedTaskRows);
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedToInstance: "test-instance-tau-laptop",
 			project: "fixture-project-real",
 			status: ["todo"],
@@ -253,7 +253,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		await t.run(seedTaskRows);
 
 		await expect(
-			t.query(api.tasks.list, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedToInstance: "test-instance-tau-laptop",
 				assignedTo: "test-orch-tau",
 				limit: 5,
@@ -269,7 +269,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 		// Broader query (assignedTo alone, no project): 13 rows exist.
 		const broad = extractItems(
-			await t.query(api.tasks.list, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-tau",
 				status: ["todo"],
 				limit: 20,
@@ -282,7 +282,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 		// exist and must be exactly 5 — never the broad count, and never padded
 		// out to `limit` with rows that don't match project.
 		const narrow = extractItems(
-			await t.query(api.tasks.list, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: "test-orch-tau",
 				project: "fixture-project-real",
 				status: ["todo"],
