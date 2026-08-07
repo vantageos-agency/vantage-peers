@@ -52,8 +52,12 @@ export interface WithOrgScopeOptions {
  *   FAIL-CLOSED: isMaster=false, allowedOrchestrators=[], scopes=[]. This is
  *   the default for any new or client-facing call site — absence of identity
  *   on a client-facing surface must never resolve to full access.
- * - No org attached (identity present) → isMaster=true (existing Alpha
- *   callers, Laurent — unchanged, distinct from the no-identity case above).
+ * - No org attached (identity present) → isMaster=true ONLY when the identity's
+ *   subject matches the configured CLERK_SERVICE_ACCOUNT_USER_ID allowlist (the
+ *   MCP server service account). ANY OTHER no-org identity is REFUSED with
+ *   RBAC_DENIED via requireTenantId — master is a named by-id grant, never
+ *   inferred from the mere absence of an org (see the service-account carve-out
+ *   and the refuse-on-absence branch below; fixed in #1123).
  * - Org slug present → looks up client_org_mapping; throws if missing/inactive.
  *
  * Call this at the top of any query/mutation that serves dashboard Beta clients.
