@@ -11,7 +11,12 @@
  *       · master bearer (admin shortcut, scopeProfile=master)
  *       · OAuth access_token (scoped, persisted in oauth_access_tokens)
  *       · legacy mcpTenants bearer (internal orchestrators on their own deployment)
- *   - Per-request ConvexHttpClient pointed at the resolved deployment
+ *   - Per-request ConvexHttpClient pointed at the resolved deployment, with
+ *     the CALLER'S identity attached (see selectConvexClientForRequest in
+ *     src/authenticatedConvexClient.ts) — the caller's own Clerk JWT on the
+ *     Clerk-team path, the MCP server's service-account identity otherwise.
+ *     Never a plain, identity-less client (P0 fix 2026-08-07: Convex's
+ *     withOrgScope fail-closed on null identity, RBAC_DENIED for everyone).
  *   - Stateless mode: fresh McpServer + transport per request (no session state)
  *
  * OAuth state (clients, codes, access/refresh tokens, scope profiles) is
@@ -32,7 +37,6 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { timingSafeEqual } from "@vantageos/cloud-identity";
-import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -42,6 +46,7 @@ import {
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
+import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -1504,8 +1509,16 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	const tenant = c.get("tenant");
 	const oauthCtx = c.get("oauthContext");
 
-	// Per-request Convex client bound to the resolved deployment
-	const convex = new ConvexHttpClient(tenant.convexUrl);
+	// Per-request Convex client bound to the resolved deployment, carrying
+	// the IDENTITY matching how this caller authenticated — never a plain,
+	// identity-less client. Fixes the P0 regression where every /mcp call
+	// (fleet AND legitimate external clients) reached Convex with
+	// ctx.auth.getUserIdentity() === null after #1156 removed the
+	// allowNoIdentityMaster fail-open carve-out (which had been the actual
+	// cross-tenant security hole). See selectConvexClientForRequest's doc
+	// comment (authenticatedConvexClient.ts) for the full identity-selection
+	// rationale per auth path.
+	const convex = selectConvexClientForRequest(tenant.convexUrl, oauthCtx);
 
 	// Fresh McpServer per request — stateless mode, no session leakage
 	const server = new McpServer({
