@@ -157,7 +157,7 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 			await seedMissionTemplate(ctx, { name: "Tmpl A" });
 		});
 
-		const result = await t.query(api.stats.fleetStats, {});
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.fleetStats, {});
 
 		expect(result.bus.total).toBe(2);
 
@@ -205,7 +205,7 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 			await seedMission(ctx, { name: "Complete noise", status: "complete" });
 		});
 
-		const result = await t.query(api.stats.fleetStats, {});
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.fleetStats, {});
 
 		expect(result.tasks.byStatus.in_progress).toBe(3);
 		expect(result.missions.byStatus.validate).toBe(16);
@@ -229,7 +229,7 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 			await seedTask(ctx, { status: "done" });
 		});
 
-		const result = await t.query(api.stats.fleetStats, {});
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.fleetStats, {});
 
 		const missionsSum = Object.values(result.missions.byStatus).reduce(
 			(a, b) => a + b,
@@ -262,7 +262,7 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 			await seedMessageReceipt(ctx, m2, { recipient: "phi" }); // unread (no readAt)
 		});
 
-		const result = await t.query(api.stats.fleetStats, {});
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.fleetStats, {});
 
 		expect(result.messages.total).toBe(2);
 		expect(result.messages.byReadStatus).toEqual({ read: 2, unread: 3 });
@@ -277,7 +277,7 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 			await seedBu(ctx);
 		});
 
-		const result = await t.query(api.stats.fleetStats, {});
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.fleetStats, {});
 
 		expect(result.messages.total).toBe(0);
 		expect(result.messages.byReadStatus).toEqual({ read: 0, unread: 0 });

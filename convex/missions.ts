@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalQuery } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,148 +196,204 @@ export const get = query({
 // scan itself hits its cap, we refuse to return a silently-incomplete page.
 export const MISSION_LIST_SCAN_CAP = 2000;
 
+interface MissionsListArgs {
+	project?: string;
+	pilot?: string;
+	status?: string | string[];
+	limit?: number;
+	fields?: "lite" | "full";
+	updatedSince?: number;
+	createdBefore?: number;
+}
+
+// Shared handler body for missions.list (public, org-scoped) and
+// missions.listForWebhook (internal, master-scoped — SEC-AUDIT Day 156: the
+// only genuine no-identity caller was convex/http.ts's GitHub webhook
+// handler, itself gated by HMAC signature verification, not by Clerk
+// identity. Splitting the caller lets the public surface go fail-closed
+// (withOrgScope default) without breaking that internal, structurally
+// unreachable-by-clients call site.
+async function runMissionsList(
+	ctx: QueryCtx,
+	args: MissionsListArgs,
+	scope: OrgScope,
+) {
+	requireScope(scope, "view-own-missions");
+
+	const statuses = expandMissionStatuses(args.status);
+	const lite = args.fields === "lite";
+	const project = args.project;
+	const pilot = args.pilot;
+	const updatedSince = args.updatedSince;
+	// v2.3.3 — auto-clamp limit when fields=full + no explicit limit
+	const explicitLimit = args.limit !== undefined;
+	let limit = args.limit ?? 50;
+	if (!explicitLimit && !lite) {
+		limit = 30;
+		console.warn(
+			`[missions.list] auto-clamp: limit=30 applied (fields=full, no explicit limit).`,
+		);
+	}
+	const needsWideScan = updatedSince !== undefined;
+	const fetchCap = needsWideScan ? MISSION_LIST_SCAN_CAP + 1 : limit;
+
+	type MissionRow = Doc<"missions">;
+	const applyStatusFilter = (rows: MissionRow[]) => {
+		if (statuses === undefined) return rows;
+		if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
+		return rows.filter((r) => statuses.includes(r.status as MissionStatus));
+	};
+
+	let allRows: MissionRow[];
+
+	// Guard: project + pilot together is NOT covered by any compound index.
+	// The branches below pick ONE of {project, pilot} — silently combining
+	// both without a matching index would risk applying only one filter
+	// and returning a result silently broader than the question asked.
+	// Refuse loudly instead (same class fix as convex/tasks.ts `list`).
+	if (project !== undefined && pilot !== undefined) {
+		throw new Error(
+			`missions.list: project and pilot cannot be combined in a single call ` +
+				`(received project="${project}" pilot="${pilot}"). ` +
+				`Call list once per filter, or drop one of the two args.`,
+		);
+	}
+
+	// Filter by project + single status — use compound index
+	if (project !== undefined && statuses !== undefined && statuses.length === 1) {
+		allRows = await ctx.db
+			.query("missions")
+			.withIndex("by_project", (q) =>
+				q.eq("project", project).eq("status", statuses[0]),
+			)
+			.order("desc")
+			.take(fetchCap);
+	}
+	// Filter by project only (or project + multi-status filtered in-memory)
+	else if (project !== undefined) {
+		const base = await ctx.db
+			.query("missions")
+			.withIndex("by_project", (q) => q.eq("project", project))
+			.order("desc")
+			.take(fetchCap);
+		allRows = applyStatusFilter(base);
+	}
+	// Filter by pilot + single status — use compound index
+	else if (pilot !== undefined && statuses !== undefined && statuses.length === 1) {
+		allRows = await ctx.db
+			.query("missions")
+			.withIndex("by_pilot", (q) =>
+				q.eq("pilot", pilot as MissionRow["pilot"]).eq("status", statuses[0]),
+			)
+			.order("desc")
+			.take(fetchCap);
+	}
+	// Filter by pilot only (or pilot + multi-status filtered in-memory)
+	else if (pilot !== undefined) {
+		const base = await ctx.db
+			.query("missions")
+			.withIndex("by_pilot", (q) => q.eq("pilot", pilot as MissionRow["pilot"]))
+			.order("desc")
+			.take(fetchCap);
+		allRows = applyStatusFilter(base);
+	}
+	// Filter by status only
+	else if (statuses !== undefined) {
+		if (statuses.length === 1) {
+			allRows = await ctx.db
+				.query("missions")
+				.withIndex("by_status", (q) => q.eq("status", statuses[0]))
+				.order("desc")
+				.take(fetchCap);
+		} else {
+			const base = await ctx.db.query("missions").order("desc").take(fetchCap);
+			allRows = applyStatusFilter(base);
+		}
+	}
+	// No filters — return all, newest first
+	else {
+		allRows = await ctx.db.query("missions").order("desc").take(fetchCap);
+	}
+
+	// Refuse to return a silently-incomplete page: if the widened scan
+	// itself hit its cap, there may be matching rows we never looked at.
+	// "I couldn't measure" must never render identically to "complete".
+	// No branch here was measured to exceed the cap in production (unlike
+	// tasks.list's assignedTo branches), so no index was added and the
+	// fetch is still a fixed-size widened scan — "shrink the updatedSince
+	// window" would be a false remedy and is left out of the message.
+	if (needsWideScan && allRows.length > MISSION_LIST_SCAN_CAP) {
+		throw new ConvexError(
+			`missions.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${MISSION_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with project/pilot/status.`,
+		);
+	}
+
+	// v2.3.3 — updatedSince in-memory filter
+	let filtered = allRows;
+	if (updatedSince !== undefined) {
+		filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
+	}
+	// Re-bound to the requested page size now that the filter has run over
+	// the widened superset (no-op when a wide scan wasn't needed).
+	filtered = filtered.slice(0, limit);
+	// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
+	if (args.createdBefore !== undefined) {
+		const before = args.createdBefore;
+		filtered = filtered.filter((r) => r._creationTime < before);
+	}
+
+	const scoped = filterByOrgScope(filtered, scope);
+	if (lite) return scoped.map(projectMissionLite);
+	return scoped;
+}
+
+const missionsListArgsValidator = {
+	project: v.optional(v.string()),
+	pilot: v.optional(creatorValidator),
+	status: v.optional(v.union(v.string(), v.array(v.string()))),
+	limit: v.optional(v.number()),
+	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+	updatedSince: v.optional(v.number()),
+	// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
+	createdBefore: v.optional(v.number()),
+};
+
 export const list = query({
-	args: {
-		project: v.optional(v.string()),
-		pilot: v.optional(creatorValidator),
-		status: v.optional(v.union(v.string(), v.array(v.string()))),
-		limit: v.optional(v.number()),
-		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
-		updatedSince: v.optional(v.number()),
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
-		createdBefore: v.optional(v.number()),
-	},
+	args: missionsListArgsValidator,
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
-		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
-		requireScope(scope, "view-own-missions");
+		// ── Beta multi-tenant scope gate — fail-closed default (SEC-AUDIT Day
+		// 156): no Clerk identity is no longer master. The only legitimate
+		// no-identity caller (GitHub webhook, HMAC-verified) uses
+		// listForWebhook (internalQuery) below instead.
+		const scope = await withOrgScope(ctx);
+		return await runMissionsList(ctx, args, scope);
+	},
+});
 
-		const statuses = expandMissionStatuses(args.status);
-		const lite = args.fields === "lite";
-		const project = args.project;
-		const pilot = args.pilot;
-		const updatedSince = args.updatedSince;
-		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit
-		const explicitLimit = args.limit !== undefined;
-		let limit = args.limit ?? 50;
-		if (!explicitLimit && !lite) {
-			limit = 30;
-			console.warn(
-				`[missions.list] auto-clamp: limit=30 applied (fields=full, no explicit limit).`,
-			);
-		}
-		const needsWideScan = updatedSince !== undefined;
-		const fetchCap = needsWideScan ? MISSION_LIST_SCAN_CAP + 1 : limit;
-
-		type MissionRow = Doc<"missions">;
-		const applyStatusFilter = (rows: MissionRow[]) => {
-			if (statuses === undefined) return rows;
-			if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
-			return rows.filter((r) => statuses.includes(r.status as MissionStatus));
+// Internal-only mirror of `list`, used exclusively by convex/http.ts's
+// GitHub webhook handler (HMAC-signature-verified, not Clerk-identity
+// gated). `internal.*` functions are never exposed to `api.*` clients — no
+// MCP tool, dashboard route, or direct Convex client call can reach this,
+// which is the structural (not disciplinary) guard SEC-AUDIT Day 156
+// requires for a genuine internal-fleet-only surface.
+export const listForWebhook = internalQuery({
+	args: missionsListArgsValidator,
+	handler: async (ctx, args) => {
+		const masterScope: OrgScope = {
+			userId: "internal-webhook",
+			orgSlug: null,
+			allowedOrchestrators: ["*"],
+			scopes: [
+				"cross-tenant-read",
+				"view-own-tasks",
+				"view-own-missions",
+				"view-stats-aggregated",
+				"view-orchestrator-summary",
+			],
+			isMaster: true,
 		};
-
-		let allRows: MissionRow[];
-
-		// Guard: project + pilot together is NOT covered by any compound index.
-		// The branches below pick ONE of {project, pilot} — silently combining
-		// both without a matching index would risk applying only one filter
-		// and returning a result silently broader than the question asked.
-		// Refuse loudly instead (same class fix as convex/tasks.ts `list`).
-		if (project !== undefined && pilot !== undefined) {
-			throw new Error(
-				`missions.list: project and pilot cannot be combined in a single call ` +
-					`(received project="${project}" pilot="${pilot}"). ` +
-					`Call list once per filter, or drop one of the two args.`,
-			);
-		}
-
-		// Filter by project + single status — use compound index
-		if (project !== undefined && statuses !== undefined && statuses.length === 1) {
-			allRows = await ctx.db
-				.query("missions")
-				.withIndex("by_project", (q) =>
-					q.eq("project", project).eq("status", statuses[0]),
-				)
-				.order("desc")
-				.take(fetchCap);
-		}
-		// Filter by project only (or project + multi-status filtered in-memory)
-		else if (project !== undefined) {
-			const base = await ctx.db
-				.query("missions")
-				.withIndex("by_project", (q) => q.eq("project", project))
-				.order("desc")
-				.take(fetchCap);
-			allRows = applyStatusFilter(base);
-		}
-		// Filter by pilot + single status — use compound index
-		else if (pilot !== undefined && statuses !== undefined && statuses.length === 1) {
-			allRows = await ctx.db
-				.query("missions")
-				.withIndex("by_pilot", (q) =>
-					q.eq("pilot", pilot).eq("status", statuses[0]),
-				)
-				.order("desc")
-				.take(fetchCap);
-		}
-		// Filter by pilot only (or pilot + multi-status filtered in-memory)
-		else if (pilot !== undefined) {
-			const base = await ctx.db
-				.query("missions")
-				.withIndex("by_pilot", (q) => q.eq("pilot", pilot))
-				.order("desc")
-				.take(fetchCap);
-			allRows = applyStatusFilter(base);
-		}
-		// Filter by status only
-		else if (statuses !== undefined) {
-			if (statuses.length === 1) {
-				allRows = await ctx.db
-					.query("missions")
-					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
-					.order("desc")
-					.take(fetchCap);
-			} else {
-				const base = await ctx.db.query("missions").order("desc").take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// No filters — return all, newest first
-		else {
-			allRows = await ctx.db.query("missions").order("desc").take(fetchCap);
-		}
-
-		// Refuse to return a silently-incomplete page: if the widened scan
-		// itself hit its cap, there may be matching rows we never looked at.
-		// "I couldn't measure" must never render identically to "complete".
-		// No branch here was measured to exceed the cap in production (unlike
-		// tasks.list's assignedTo branches), so no index was added and the
-		// fetch is still a fixed-size widened scan — "shrink the updatedSince
-		// window" would be a false remedy and is left out of the message.
-		if (needsWideScan && allRows.length > MISSION_LIST_SCAN_CAP) {
-			throw new ConvexError(
-				`missions.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${MISSION_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with project/pilot/status.`,
-			);
-		}
-
-		// v2.3.3 — updatedSince in-memory filter
-		let filtered = allRows;
-		if (updatedSince !== undefined) {
-			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
-		}
-		// Re-bound to the requested page size now that the filter has run over
-		// the widened superset (no-op when a wide scan wasn't needed).
-		filtered = filtered.slice(0, limit);
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			filtered = filtered.filter((r) => r._creationTime < before);
-		}
-
-		const scoped = filterByOrgScope(filtered, scope);
-		if (lite) return scoped.map(projectMissionLite);
-		return scoped;
+		return await runMissionsList(ctx, args, masterScope);
 	},
 });
 

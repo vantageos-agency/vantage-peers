@@ -52,7 +52,7 @@ export const getDashboardSummary = query({
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// Master scope (no org): full dashboard, all orchestrators.
 		// Client org: filtered to their allowedOrchestrators.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		// getDashboardSummary requires either master or aggregated stats scope.
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
@@ -154,7 +154,7 @@ export const getProjectSummary = query({
 	),
 	handler: async (ctx) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}

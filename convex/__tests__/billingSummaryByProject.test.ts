@@ -57,7 +57,7 @@ describe("tasks.billingSummaryByProject", () => {
 		// Unattributed — no actualMinutes
 		await seedDoneTask(t, "vantage-immo", undefined, now - 500);
 
-		const result = await t.query(api.tasks.billingSummaryByProject, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.billingSummaryByProject, {
 			startDate: now - 10_000,
 			endDate: now,
 		});
@@ -75,7 +75,7 @@ describe("tasks.billingSummaryByProject", () => {
 	test("rejects endDate < startDate", async () => {
 		const t = convexTest(schema, modules);
 		await expect(
-			t.query(api.tasks.billingSummaryByProject, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.billingSummaryByProject, {
 				startDate: 1000,
 				endDate: 500,
 			}),
@@ -123,7 +123,7 @@ describe("tasks.billingSummaryByProject", () => {
 		const windowEnd = now;
 		await seedDoneTask(t, "target-project", 3, now - 500);
 
-		const result = await t.query(api.tasks.billingSummaryByProject, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.billingSummaryByProject, {
 			startDate: windowStart,
 			endDate: windowEnd,
 		});
@@ -141,7 +141,7 @@ describe("tasks.billingSummaryByProject", () => {
 		await seedDoneTask(t, "corrupt-project", 60, now - 1000);
 		await seedDoneTask(t, "corrupt-project", -2377, now - 1500); // corrupt row
 
-		const result = await t.query(api.tasks.billingSummaryByProject, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.billingSummaryByProject, {
 			startDate: now - 10_000,
 			endDate: now,
 		});
@@ -180,7 +180,7 @@ describe("tasks.billingSummaryByProject", () => {
 
 		await seedDoneTask(t, "small-window-project", 15, now - 500);
 
-		const result = await t.query(api.tasks.billingSummaryByProject, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.billingSummaryByProject, {
 			startDate: now - 10_000,
 			endDate: now,
 		});
@@ -198,7 +198,7 @@ describe("tasks.billingSummaryByProject", () => {
 		await seedDoneTask(t, "alpha-project", 20, now - 1000);
 		await seedDoneTask(t, "beta-project", 40, now - 1000);
 
-		const result = await t.query(api.tasks.billingSummaryByProject, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.billingSummaryByProject, {
 			startDate: now - 10_000,
 			endDate: now,
 			project: "alpha-project",

@@ -281,7 +281,7 @@ export const searchBriefingNotesByKeyword = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

@@ -89,7 +89,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 			}
 		});
 
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: ASSIGNEE,
 			status: "todo",
 			updatedSince: SINCE_THRESHOLD,
@@ -146,7 +146,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 		// WIDE window: threshold before every row's updatedAt -> every row is
 		// a candidate -> TASK_LIST_SCAN_CAP + 1 candidates -> overflow.
 		await expect(
-			t.query(api.tasks.list, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: ASSIGNEE,
 				status: "todo",
 				updatedSince: ROW_UPDATED_AT - 1,
@@ -157,7 +157,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 
 		// NARROW window: threshold after every row's updatedAt -> zero rows
 		// are candidates -> no overflow, empty (correct) result.
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: ASSIGNEE,
 			status: "todo",
 			updatedSince: ROW_UPDATED_AT + 1,
@@ -203,7 +203,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 		// WIDE window: threshold before every row's updatedAt -> every row is
 		// a candidate -> TASK_LIST_SCAN_CAP + 1 candidates -> overflow.
 		await expect(
-			t.query(api.tasks.list, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: ASSIGNEE,
 				updatedSince: ROW_UPDATED_AT - 1,
 				limit: 10,
@@ -213,7 +213,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 
 		// NARROW window: threshold after every row's updatedAt -> zero rows
 		// are candidates -> no overflow, empty (correct) result.
-		const result = await t.query(api.tasks.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 			assignedTo: ASSIGNEE,
 			updatedSince: ROW_UPDATED_AT + 1,
 			limit: 10,
@@ -246,7 +246,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 		});
 
 		await expect(
-			t.query(api.tasks.list, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: ASSIGNEE,
 				updatedSince: RECENT_UPDATED_AT - 1_000,
 				limit: 10,
@@ -289,7 +289,7 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non
 		});
 
 		try {
-			await t.query(api.missions.list, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fictitious-project-indexed-bound-missions",
 				updatedSince: Date.now() - 1_000,
 				limit: 10,
@@ -321,7 +321,7 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non
 		});
 
 		try {
-			await t.query(api.briefingNotes.list, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
 				topic: "fictitious-topic-indexed-bound",
 				updatedSince: Date.now() - 1_000,
 				limit: 10,
@@ -367,7 +367,7 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non
 		});
 
 		try {
-			await t.query(api.tasks.listByMission, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
 				missionId,
 				updatedSince: Date.now() - 1_000,
 				limit: 10,
