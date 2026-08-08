@@ -1125,23 +1125,34 @@ export const start = mutation({
 			}
 		}
 
-		// Block if caller has a different unclosed in_progress task.
+		// Block if caller has a different unclosed in_progress task IN THE SAME
+		// `project` (repo/stream) as the task being started. Day 156
+		// (mission vp-concurrent-active-tasks-per-stream-v1, T1) — relaxed from
+		// "one in_progress task per orchestrator" (unbounded) to "one
+		// in_progress task per orchestrator PER DISTINCT project". Tasks with
+		// `project === undefined` are treated as one shared "default" stream
+		// (conservative default — preserves pre-relaxation behavior for
+		// un-projected tasks; only projected tasks gain concurrency).
 		// Skip for "system" — it is never an assignee and has no task queue.
 		if (args.callerOrchestrator && args.callerOrchestrator !== "system") {
 			const callerOrc = args.callerOrchestrator;
+			const taskProject = task.project;
 			const inProgressTasks = await ctx.db
 				.query("tasks")
-				.withIndex("by_assignee", (q) =>
-					q.eq("assignedTo", callerOrc).eq("status", "in_progress"),
+				.withIndex("by_assignee_project", (q) =>
+					q
+						.eq("assignedTo", callerOrc)
+						.eq("project", taskProject)
+						.eq("status", "in_progress"),
 				)
-				.take(1);
+				.take(2);
 
-			if (
-				inProgressTasks.length > 0 &&
-				inProgressTasks[0]._id !== args.taskId
-			) {
+			const conflict = inProgressTasks.find(
+				(t) => t._id !== args.taskId,
+			);
+			if (conflict !== undefined) {
 				throw new ConvexError(
-					`TASK_START_BLOCKED: Cannot start task ${args.taskId} — caller ${callerOrc} has an unclosed in_progress task "${inProgressTasks[0].title}". Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: inProgressTasks[0]._id, currentInProgressTitle: inProgressTasks[0].title, attemptedTaskId: args.taskId })}`,
+					`TASK_START_BLOCKED: Cannot start task ${args.taskId} — caller ${callerOrc} has an unclosed in_progress task "${conflict.title}" in project ${JSON.stringify(taskProject ?? null)}. Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, attemptedTaskId: args.taskId, project: taskProject ?? null })}`,
 				);
 			}
 		}
