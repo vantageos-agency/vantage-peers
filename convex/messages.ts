@@ -63,7 +63,87 @@ export const sendMessage = mutation({
 			const orchestratorIds = [
 				...new Set(profiles.map((p) => p.orchestratorId)),
 			];
-			recipients = orchestratorIds.filter((o) => o !== args.from);
+
+			// Cross-tenant leak fix (mission fix-broadcast-org-scoped-v1, T1):
+			// bound the broadcast fan-out to the EMITTER's own tenant, derived
+			// from withOrgScope(ctx) — never from the client-supplied
+			// args.tenantId (unauthenticated/self-declared, see T0 audit
+			// analysis/broadcast-org-scope-audit-t0-day157.md). Resolved
+			// FAIL-CLOSED (no allowNoIdentityMaster) — consistent with the
+			// Day-156 SEC-AUDIT doctrine. The MCP server forwards its
+			// service-account identity, which resolves to master via the
+			// CLERK_SERVICE_ACCOUNT_USER_ID carve-out (lib/auth.ts:111-121),
+			// so legitimate internal broadcasts still resolve to master. An
+			// anonymous/no-identity caller resolves to isMaster=false with an
+			// empty allowedOrchestrators, so it falls into the client branch
+			// below and yields zero recipients — the existing zero-recipient
+			// bounce fires (no fail-open path to the internal fleet).
+			const scope = await withOrgScope(ctx);
+
+			// convex-reviewer CRITICAL (mission fix-broadcast-org-scoped-v1, T1
+			// REVISE): scope.isMaster is OVERLOADED — it is also true for a
+			// CLIENT org whose client_org_mapping row carries the ["*"] read
+			// sentinel (lib/auth.ts:182: isMaster =
+			// allowedOrchestrators.includes("*")). Gating the fleet-wide
+			// master branch on isMaster alone would let a client
+			// (mis)configured with ["*"] fan out to the entire internal
+			// fleet + other tenants. The true internal master (service
+			// account / Laurent, lib/auth.ts:77-89 and :123-135) is the ONLY
+			// case with orgSlug === null — a client's isMaster=true always
+			// carries a set orgSlug (lib/auth.ts:177-183). So the
+			// fleet-wide branch is gated on BOTH isMaster AND orgSlug===null;
+			// this discriminant is applied locally here, not in lib/auth.ts
+			// (shared type, out of scope for this fix).
+			if (scope.isMaster && scope.orgSlug === null) {
+				// True internal/master emitter: exclude every orchestrator bound
+				// to any client tenant — active OR inactive — so an internal
+				// broadcast never reaches a client orchestrator, the exact leak
+				// reported in the T0 audit. Inactive mappings are included in
+				// the exclusion set deliberately: an inactive client_org_mapping
+				// row still identifies that orchestratorId as CLIENT-bound, not
+				// internal — dropping the isActive filter here would let a
+				// merely-disabled client's orchestrator silently rejoin the
+				// internal broadcast pool, which is itself a leak class. This
+				// is independent of whether that inactive org could ever
+				// authenticate (it can't — withOrgScope throws Forbidden on
+				// inactive orgs); the exclusion is about the identity of the
+				// orchestratorId, not the org's ability to log in.
+				const mappings = await ctx.db.query("client_org_mapping").collect();
+				const clientBound = new Set<string>();
+				for (const mapping of mappings) {
+					for (const orchestratorId of mapping.allowedOrchestrators) {
+						if (orchestratorId !== "*") clientBound.add(orchestratorId);
+					}
+				}
+				recipients = orchestratorIds.filter(
+					(o) => o !== args.from && !clientBound.has(o),
+				);
+			} else {
+				// Client-scoped emitter (including a client-org isMaster=true
+				// with orgSlug set — the ["*"] read-sentinel case): recipients
+				// bounded to this org's own allowedOrchestrators — never
+				// another tenant, never the internal fleet. A ["*"]
+				// allowedOrchestrators list never matches a real
+				// orchestratorId (the literal string "*" is not a
+				// registered orchestrator), so this yields zero recipients
+				// and the bounce below fires — fail-closed, not a leak.
+				const allowed = new Set(scope.allowedOrchestrators);
+				recipients = orchestratorIds.filter(
+					(o) => o !== args.from && allowed.has(o),
+				);
+			}
+
+			// Zero-recipient bounce contract (task k17dr97dwpe07n9zfgzzypkfm18bv6ws)
+			// extends to the tenant-scoped broadcast: an anonymous/no-identity
+			// caller resolves to isMaster=false with allowedOrchestrators=[],
+			// so it would otherwise silently "succeed" with zero receipts
+			// written. Fail-closed here means an explicit refusal, never a
+			// fall-through to the internal fleet.
+			if (recipients.length === 0) {
+				throw new ConvexError(
+					`recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur.`,
+				);
+			}
 		} else {
 			const profiles = await ctx.db.query("profiles").collect();
 			const knownRoles = new Set(profiles.map((p) => p.orchestratorId));

@@ -580,7 +580,7 @@ describe("Messages", () => {
 			dynamic: { currentTask: undefined, lastSeen: Date.now(), sessionCount: 1 },
 		});
 
-		await t.mutation(api.messages.sendMessage, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "broadcast",
 			content: "Announcement: deploy complete",
