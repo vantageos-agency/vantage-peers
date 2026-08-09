@@ -198,6 +198,7 @@ export default defineSchema({
 			v.literal("execute"),
 			v.literal("validate"),
 			v.literal("complete"),
+			v.literal("cancelled"),
 		),
 		priority: v.union(
 			v.literal("urgent"),
@@ -217,6 +218,10 @@ export default defineSchema({
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
 		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
+		// Terminal cancelled status (Day 157) — creator-only, mandatory reason.
+		// Never counted as done/complete; excluded from open/active aliases.
+		cancelledBy: v.optional(creatorValidator),
+		cancelReason: v.optional(v.string()),
 	})
 		.index("by_project", ["project", "status"])
 		.index("by_pilot", ["pilot", "status"])
@@ -244,6 +249,7 @@ export default defineSchema({
 			v.literal("review"),
 			v.literal("blocked"),
 			v.literal("done"),
+			v.literal("cancelled"),
 		),
 		completionNote: v.optional(v.string()), // what was actually done — written on complete/review
 		assignedToInstance: v.optional(v.string()), // instance-level assignment: "pi-vps", "tau-chromebook"
@@ -267,6 +273,10 @@ export default defineSchema({
 		// The billing closure gate reads this field, never `createdBy`
 		// (which is a caller-supplied, forgeable string on a public mutation).
 		origin: v.optional(taskOriginValidator),
+		// Terminal cancelled status (Day 157) — creator-only, mandatory reason.
+		// Never counted as done/complete; excluded from open/active aliases.
+		cancelledBy: v.optional(creatorValidator),
+		cancelReason: v.optional(v.string()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])

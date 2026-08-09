@@ -31,6 +31,7 @@ const statusValidator = v.union(
 	v.literal("review"),
 	v.literal("blocked"),
 	v.literal("done"),
+	v.literal("cancelled"),
 );
 
 // Valid task status values for runtime validation
@@ -40,6 +41,7 @@ const TASK_STATUSES = [
 	"review",
 	"blocked",
 	"done",
+	"cancelled",
 ] as const;
 type TaskStatus = (typeof TASK_STATUSES)[number];
 
@@ -155,6 +157,9 @@ const taskFullValidator = v.object({
 	orgId: v.optional(v.string()),
 	// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
 	origin: v.optional(taskOriginValidator),
+	// Day 157 — terminal cancelled status (see schema.ts).
+	cancelledBy: v.optional(creatorValidator),
+	cancelReason: v.optional(v.string()),
 });
 
 type TaskLite = {
@@ -824,10 +829,12 @@ export const update = mutation({
 		dependsOn: v.optional(v.array(v.id("tasks"))),
 		completionNote: v.optional(v.string()),
 		assignedToInstance: v.optional(v.string()),
+		// Mandatory reason when status is being set to "cancelled" (Day 157).
+		cancelReason: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { taskId, callerOrchestrator, ...fields } = args;
+		const { taskId, callerOrchestrator, cancelReason, ...fields } = args;
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -842,6 +849,28 @@ export const update = mutation({
 			if (value !== undefined) {
 				patch[key] = value;
 			}
+		}
+
+		// Day 157 — cancelled is a terminal status, settable only by the task's
+		// CREATOR (stricter than assertTaskCallerAuthorized above, which also
+		// allows the assignee), and requires a non-empty reason. Mirrors the
+		// deleteTask RBAC (convex/tasks.ts deleteTask) but never deletes data.
+		if (patch.status === "cancelled") {
+			if (
+				callerOrchestrator !== "system" &&
+				task.createdBy !== callerOrchestrator
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: Only ${task.createdBy} (creator) or system can cancel task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, creator: task.createdBy, taskId })}`,
+				);
+			}
+			if (!cancelReason || cancelReason.trim() === "") {
+				throw new ConvexError(
+					`CANCEL_REASON_REQUIRED: cancelReason is required to cancel task ${taskId} — ${JSON.stringify({ taskId })}`,
+				);
+			}
+			patch.cancelledBy = callerOrchestrator;
+			patch.cancelReason = cancelReason;
 		}
 
 		// Day 130 closure gate — `update` is a second path that can also

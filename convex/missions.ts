@@ -18,10 +18,18 @@ const missionStatusValidator = v.union(
 	v.literal("execute"),
 	v.literal("validate"),
 	v.literal("complete"),
+	v.literal("cancelled"),
 );
 
 // Valid mission status values for runtime validation
-const MISSION_STATUSES = ["brainstorm", "plan", "execute", "validate", "complete"] as const;
+const MISSION_STATUSES = [
+	"brainstorm",
+	"plan",
+	"execute",
+	"validate",
+	"complete",
+	"cancelled",
+] as const;
 type MissionStatus = (typeof MISSION_STATUSES)[number];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +168,9 @@ export const get = query({
 			updatedAt: v.number(),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			// Day 157 — terminal cancelled status (see schema.ts).
+			cancelledBy: v.optional(creatorValidator),
+			cancelReason: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -404,6 +415,7 @@ export const listForWebhook = internalQuery({
 export const update = mutation({
 	args: {
 		missionId: v.id("missions"),
+		callerOrchestrator: v.optional(creatorValidator),
 		name: v.optional(v.string()),
 		description: v.optional(v.string()),
 		project: v.optional(v.string()),
@@ -415,10 +427,12 @@ export const update = mutation({
 		startDate: v.optional(v.number()),
 		targetDate: v.optional(v.number()),
 		progress: v.optional(v.number()),
+		// Mandatory reason when status is being set to "cancelled" (Day 157).
+		cancelReason: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { missionId, ...fields } = args;
+		const { missionId, callerOrchestrator, cancelReason, ...fields } = args;
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) {
 			throw new Error(`Mission ${missionId} not found`);
@@ -430,6 +444,32 @@ export const update = mutation({
 			if (value !== undefined) {
 				patch[key] = value;
 			}
+		}
+
+		// Day 157 — cancelled is a terminal status, settable only by the
+		// mission's CREATOR, and requires a non-empty reason. Mirrors the
+		// tasks.update cancel gate (convex/tasks.ts update).
+		if (patch.status === "cancelled") {
+			if (callerOrchestrator === undefined) {
+				throw new ConvexError(
+					`RBAC_DENIED: callerOrchestrator is required to cancel mission ${missionId} — omitting it is refused, not exempted — ${JSON.stringify({ missionId })}`,
+				);
+			}
+			if (
+				callerOrchestrator !== "system" &&
+				mission.createdBy !== callerOrchestrator
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: Only ${mission.createdBy} (creator) or system can cancel mission ${missionId} — ${JSON.stringify({ caller: callerOrchestrator, creator: mission.createdBy, missionId })}`,
+				);
+			}
+			if (!cancelReason || cancelReason.trim() === "") {
+				throw new ConvexError(
+					`CANCEL_REASON_REQUIRED: cancelReason is required to cancel mission ${missionId} — ${JSON.stringify({ missionId })}`,
+				);
+			}
+			patch.cancelledBy = callerOrchestrator;
+			patch.cancelReason = cancelReason;
 		}
 
 		await ctx.db.patch(missionId, patch);
