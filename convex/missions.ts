@@ -450,6 +450,14 @@ export const update = mutation({
 		// mission's CREATOR, and requires a non-empty reason. Mirrors the
 		// tasks.update cancel gate (convex/tasks.ts update).
 		if (patch.status === "cancelled") {
+			// MAJOR #4 (convex-reviewer REVISE) — mirrors the tasks.update guard:
+			// a mission already closed as "complete" is terminal and cannot be
+			// re-terminated as cancelled.
+			if (mission.status === "complete") {
+				throw new ConvexError(
+					`CANNOT_CANCEL_DONE: mission ${missionId} is already complete — a completed mission cannot be cancelled — ${JSON.stringify({ missionId })}`,
+				);
+			}
 			if (callerOrchestrator === undefined) {
 				throw new ConvexError(
 					`RBAC_DENIED: callerOrchestrator is required to cancel mission ${missionId} — omitting it is refused, not exempted — ${JSON.stringify({ missionId })}`,

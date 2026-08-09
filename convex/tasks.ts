@@ -266,6 +266,9 @@ export const get = query({
 			orgId: v.optional(v.string()),
 			// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
 			origin: v.optional(taskOriginValidator),
+			// Day 157 — terminal cancelled status (see schema.ts).
+			cancelledBy: v.optional(creatorValidator),
+			cancelReason: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -313,6 +316,9 @@ export const getById = query({
 			orgId: v.optional(v.string()),
 			// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
 			origin: v.optional(taskOriginValidator),
+			// Day 157 — terminal cancelled status (see schema.ts).
+			cancelledBy: v.optional(creatorValidator),
+			cancelReason: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -856,6 +862,16 @@ export const update = mutation({
 		// allows the assignee), and requires a non-empty reason. Mirrors the
 		// deleteTask RBAC (convex/tasks.ts deleteTask) but never deletes data.
 		if (patch.status === "cancelled") {
+			// MAJOR #4 (convex-reviewer REVISE) — a task already closed as "done"
+			// carries a billable completedAt/actualMinutes. Flipping it to
+			// cancelled would silently erode billingSummaryByProject while
+			// keeping the stale timestamps. Done is a terminal state; it cannot
+			// be re-terminated as cancelled.
+			if (task.status === "done") {
+				throw new ConvexError(
+					`CANNOT_CANCEL_DONE: task ${taskId} is already done — a completed task cannot be cancelled — ${JSON.stringify({ taskId })}`,
+				);
+			}
 			if (
 				callerOrchestrator !== "system" &&
 				task.createdBy !== callerOrchestrator
@@ -871,6 +887,19 @@ export const update = mutation({
 			}
 			patch.cancelledBy = callerOrchestrator;
 			patch.cancelReason = cancelReason;
+		} else if (cancelReason !== undefined) {
+			// MINOR #6 (convex-reviewer REVISE) — cancelReason must never be
+			// silently dropped. If the task is already cancelled and this call
+			// isn't changing status away from it, persist the updated reason.
+			// Otherwise (task isn't cancelled and this call isn't cancelling
+			// it), refuse rather than accept-and-discard the field.
+			if (task.status === "cancelled") {
+				patch.cancelReason = cancelReason;
+			} else {
+				throw new ConvexError(
+					`CANCEL_REASON_NOT_APPLICABLE: cancelReason was provided but task ${taskId} is not being cancelled and is not already cancelled (status="${task.status}") — pass status="cancelled" to cancel, or omit cancelReason — ${JSON.stringify({ taskId, status: task.status })}`,
+				);
+			}
 		}
 
 		// Day 130 closure gate — `update` is a second path that can also
@@ -1386,6 +1415,9 @@ export const listOverdue = query({
 			.filter((q) =>
 				q.and(
 					q.neq(q.field("status"), "done"),
+					// Day 157 — a cancelled task is a terminal, non-actionable state;
+					// it must never surface as "overdue" (MAJOR #2, convex-reviewer).
+					q.neq(q.field("status"), "cancelled"),
 					q.neq(q.field("dueDate"), undefined),
 					q.lt(q.field("dueDate"), now),
 				),

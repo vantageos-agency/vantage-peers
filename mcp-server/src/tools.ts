@@ -312,12 +312,22 @@ export const listTasksArgsSchema = z.object({
 				"review",
 				"blocked",
 				"done",
+				"cancelled",
 				"open",
 				"active",
 				"all",
 			]),
 			z
-				.array(z.enum(["todo", "in_progress", "review", "blocked", "done"]))
+				.array(
+					z.enum([
+						"todo",
+						"in_progress",
+						"review",
+						"blocked",
+						"done",
+						"cancelled",
+					]),
+				)
 				.min(1),
 		])
 		.optional()
