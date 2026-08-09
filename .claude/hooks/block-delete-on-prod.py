@@ -25,9 +25,14 @@ try:
 
     if tool_name in BLOCKED_TOOLS:
         print(
-            "BLOCKED: Destructive operations are not allowed on production data.\n"
-            "Use complete_task with a completionNote instead of delete_task.\n"
-            "Close tasks, never delete them.",
+            "BLOCKED: destructive operations are not allowed on production data.\n"
+            "This task or mission is not deletable — if it was created in error, "
+            "cancel it instead: call update_task (or update_mission) with "
+            "status='cancelled', callerOrchestrator=<the creator>, and a mandatory "
+            "cancelReason explaining why. A cancelled row stays in the record, is "
+            "excluded from open/active queues, and is never counted as done.\n"
+            "Do not use complete_task to close it out — that would falsely mark "
+            "erroneous work as done.",
             file=sys.stderr,
         )
         sys.exit(2)

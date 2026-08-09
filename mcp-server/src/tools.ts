@@ -312,12 +312,22 @@ export const listTasksArgsSchema = z.object({
 				"review",
 				"blocked",
 				"done",
+				"cancelled",
 				"open",
 				"active",
 				"all",
 			]),
 			z
-				.array(z.enum(["todo", "in_progress", "review", "blocked", "done"]))
+				.array(
+					z.enum([
+						"todo",
+						"in_progress",
+						"review",
+						"blocked",
+						"done",
+						"cancelled",
+					]),
+				)
 				.min(1),
 		])
 		.optional()
@@ -571,6 +581,7 @@ const taskStatusValues = [
 	"review",
 	"blocked",
 	"done",
+	"cancelled",
 ] as const;
 const taskStatusAliases = ["open", "active", "all"] as const;
 export const taskStatusSchema = z
@@ -583,6 +594,7 @@ const missionStatusValues = [
 	"execute",
 	"validate",
 	"complete",
+	"cancelled",
 ] as const;
 const missionStatusAliases = ["open", "active", "all"] as const;
 export const missionStatusSchema = z
@@ -4230,6 +4242,14 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
+			cancelReason: z
+				.string()
+				.optional()
+				.describe(
+					"Mandatory when status='cancelled': non-empty reason. Only the task's " +
+						"creator (or 'system') may set status='cancelled'; callerOrchestrator " +
+						"must be the creator.",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -4254,6 +4274,7 @@ export function registerTools(
 			completedAt,
 			dueDate,
 			callerOrchestrator,
+			cancelReason,
 		}) => {
 			try {
 				if (callerOrchestrator) {
@@ -4282,6 +4303,7 @@ export function registerTools(
 					completedAt,
 					dueDate,
 					callerOrchestrator,
+					cancelReason,
 				});
 
 				return {
@@ -5035,6 +5057,18 @@ export function registerTools(
 			startDate: z.number().optional().describe("New start date (Unix ms)"),
 			targetDate: z.number().optional().describe("New target date (Unix ms)"),
 			progress: z.number().optional().describe("New progress (0-100)"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe(
+					"Required when status='cancelled': must be the mission's creator (or 'system').",
+				),
+			cancelReason: z
+				.string()
+				.optional()
+				.describe(
+					"Mandatory when status='cancelled': non-empty reason. Only the mission's " +
+						"creator (or 'system') may set status='cancelled'.",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -5055,11 +5089,17 @@ export function registerTools(
 			startDate,
 			targetDate,
 			progress,
+			callerOrchestrator,
+			cancelReason,
 		}) => {
 			try {
 				if (pilot) {
 					const pilotDenied = guardFrom(pilot);
 					if (pilotDenied) return pilotDenied;
+				}
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
 				}
 
 				await convex.mutation("missions:update" as any, {
@@ -5075,6 +5115,8 @@ export function registerTools(
 					startDate,
 					targetDate,
 					progress,
+					callerOrchestrator,
+					cancelReason,
 				});
 
 				return {

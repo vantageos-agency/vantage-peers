@@ -85,6 +85,7 @@ export const listActiveMissionsForSweep = internalMutation({
 				v.literal("execute"),
 				v.literal("validate"),
 				v.literal("complete"),
+				v.literal("cancelled"),
 			),
 		}),
 	),
@@ -105,7 +106,8 @@ export const listActiveMissionsForSweep = internalMutation({
 				| "plan"
 				| "execute"
 				| "validate"
-				| "complete";
+				| "complete"
+				| "cancelled";
 		}> = [];
 
 		for (const status of OPEN_STATUSES) {
