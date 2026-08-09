@@ -382,3 +382,55 @@ This is a LOWER-BOUND proxy — not every workspace directory necessarily has an
 - **`convex/crons.ts`'s 8 server-side cron functions are analyzed only for their ABSENCE of contribution to MCP-tool frequency** (POINT 3a) — their own internal-function payload weight is not measured; they are out of the 123-tool perimeter entirely.
 - **This audit does not re-verify T0's per-tool `capListResponseBytes` line citations by re-reading every cited line** — the 21 call-site line numbers (tools.ts:2352 through 9238) are carried from T0's original sweep, cross-checked only by the aggregate `grep -c capListResponseBytes` count (21, matches) in POINT 3/4 above, not individually re-diffed against source this pass.
 - **The specific new `limit` value for the `list_tasks` broad-alias tightening fix (POINT 5/6, item 3) is not chosen or estimated by this audit** — the lever is identified, the number is left to the implementation PR.
+
+## 8. Surface de consommation COMPLÈTE — au-delà des payloads de réponse (Pi FLOOR clarification, Day 157)
+
+Les §0–§7 mesurent UNE source : la taille des **réponses** des outils MCP. Pi (task k174q6rg, cadrage FLOOR) : les 7 points sont un plancher, pas une frontière. Toute source de consommation entre dans l'audit. Voici les autres, mesurées firsthand — et l'une d'elles **domine** les payloads de réponse.
+
+### 8a. Le coût FIXE par tour de contexte (l'éléphant que §0–§7 ratait)
+
+Chaque tour de contexte charge, AVANT toute réponse d'outil :
+
+| Source | Taille | Commande | Fréquence |
+|---|---|---|---|
+| Règles always-loaded (`.claude/rules/*.md`, 7 fichiers) | **34 024 B** | `wc -c .claude/rules/*.md \| tail -1` ; `grep -l -i 'Always loaded' .claude/rules/*.md \| wc -l` → 7/7 | chaque tour |
+| `CLAUDE.md` | **9 240 B** | `wc -c CLAUDE.md` | chaque tour |
+| **Sous-total fixe** | **43 264 B/tour** | `echo $((34024+9240))` | chaque tour |
+| Corps du skill `check-messages` réinjecté | **8 245 B** | `wc -c .claude/skills/check-messages/SKILL.md` | **chaque cycle cron** (~5 min) |
+
+Comparaison décisive : le §0 couronnait `list_tasks` (#1 des réponses) à **~0,5 KB/appel**. Le coût FIXE de contexte est **~43 KB/tour** + **~8 KB/cycle cron** pour le seul corps de skill — soit **~85× la réponse `list_tasks`**, et il est payé AVANT qu'un seul outil ne réponde. Sur la base fleet du §0 (28 workspaces × ~288 cycles/j), le seul corps `check-messages` réinjecté ≈ 8 245 B × 288 × 28 ≈ **~66 MB/jour**, et les règles+CLAUDE ≈ 43 264 B × (tours/j) — un ordre de grandeur au-dessus des ~4 MB/j de `list_tasks`. **La vraie cible d'optimisation quota n'est PAS les payloads d'outils : c'est le contexte fixe réinjecté à chaque cycle.**
+
+### 8b. Autres sources mesurées
+
+| Source | Taille | Commande | Note |
+|---|---|---|---|
+| Descriptions d'outils MCP (dans `tools.ts`) | **~52 078 B** | `grep -oE '"[^"]{60,}"' mcp-server/src/tools.ts \| wc -c` | chargées avec les schémas ; certaines très verbeuses (ex. `dispatch-message` grid) |
+| Corps des autres skills (réinjectés à l'invocation) | dispatch-task-create **19 087 B**, mission-bootstrap **13 703 B**, dispatch-message **12 639 B**, dispatch-subagent **9 222 B** | `wc -c .claude/skills/*/SKILL.md` | payés à chaque invocation du skill |
+| Index mémoire `MEMORY.md` | **439 B** | `wc -c .../memory/MEMORY.md` | négligeable (bien conçu — pointeurs, pas contenu) |
+| Payloads de réponse d'outils | voir §0–§7 | (cf. supra) | axe déjà audité |
+| Schémas d'outils chargés en contexte | **mitigé** par le mécanisme deferred-tools (noms only dans le system-reminder ; schémas complets chargés à la demande via `ToolSearch`) — coût réel = nb de `ToolSearch` × taille schéma, non pas 123 schémas/tour | — | la conception deferred-tools EST déjà le correctif de cette source |
+
+### 8c. Classes de défaut (élargies)
+
+- **Classe A — contexte fixe non-budgété** : rules (34 KB) + CLAUDE.md (9 KB) rechargés chaque tour/cycle sans plafond ni budget déclaré. Aucun mécanisme n'en mesure ni n'en borne la croissance ; 7 règles always-loaded aujourd'hui, rien n'empêche la 8e, 12e, 20e. C'est la source #1 par coût réel et elle n'était dans AUCUN audit avant celui-ci.
+- **Classe B — réinjection de corps de skill par cron** : le cron `check-messages` réinjecte 8,2 KB de corps de skill à chaque cycle, alors que le skill est identique d'un cycle à l'autre. Le contenu est stable ; sa réinjection intégrale est du gaspillage pur.
+- **Classe C** (déjà §4) : `capListResponseBytes` scopé à la classe `list_*` → search_*/export non plafonnés.
+- **Classe D** (déjà §4) : incohérence `fields ?? "full"` sur 3 outils.
+
+### 8d. Chemins de correctif (classes A/B, les plus rentables)
+
+1. **Budget de contexte fixe déclaré + plafond** (classe A) — mesurer `wc -c .claude/rules/*.md CLAUDE.md` en gate CI, alerter si > seuil (ex. 40 KB). Gain : borne la source #1. Coût : un hook CI. Risque : aucun (mesure). **ROI le plus élevé de tout l'audit** — 1 gate borne ~43 KB/tour fleet-wide.
+2. **Élaguer les règles always-loaded** (classe A) — 34 KB / 7 fichiers ; auditer lesquelles doivent vraiment être always-loaded vs chargeables à la demande. Gain : proportionnel à ce qui sort du always-loaded. Coût : revue par règle. Risque : une règle mal dé-priorisée rate son cycle → à faire règle-par-règle avec justification.
+3. **Ne pas réinjecter le corps de skill stable par cron** (classe B) — le cron pourrait référencer le skill par hash/version plutôt que réinjecter 8,2 KB de corps identique. Gain : ~8 KB/cycle × 288 × 28 ≈ ~66 MB/j fleet. Coût : changement du mécanisme cron/skill-loading (hors backend Convex — côté harness Claude Code). Risque : le skill doit rester résolvable. **NB : cette source est hors du dépôt vantage-peers** — c'est le mécanisme cron du harness, pas le code Convex/MCP ; correctif à porter côté config cron, pas ici.
+
+### 8e. Ce que CETTE section ne couvre pas (non-couverture, honnête)
+
+- **Logs** : aucune source de log per-tour identifiée comme injectée en contexte ; non mesuré (pas de télémétrie).
+- **Le coût per-token exact** : toutes les tailles sont en OCTETS (`wc -c`), pas en tokens. Le ratio octets→tokens (~3,5–4 B/token en anglais/français, moins pour du code/JSON) n'est pas appliqué — multiplier par ~0,27 pour un ordre de grandeur en tokens.
+- **La réinjection par cron (classe B)** vit dans le harness Claude Code / la config cron, PAS dans `vantage-peers` — mesurée ici mais non corrigeable dans ce dépôt ; correctif à router ailleurs.
+- **Les schémas d'outils complets** : mitigés par deferred-tools ; le coût résiduel (taille × nb ToolSearch/session) n'est pas mesuré per-session.
+- Fréquence per-tour exacte des règles/CLAUDE : dépend du modèle de contexte (fresh-context-par-cron vs session longue) ; borne haute = chaque tour, borne basse = 1×/session.
+
+### 8f. Résumé décision RÉVISÉ (remplace mentalement le §0 pour la priorisation)
+
+Le chiffre qui décide, révisé : **le coût FIXE de contexte (~43 KB/tour rules+CLAUDE + ~8 KB/cycle corps de skill) domine tout payload de réponse d'outil de ~1–2 ordres de grandeur.** Correctif #1 par ROI : **un gate CI qui mesure et borne `wc -c .claude/rules/*.md CLAUDE.md`** (classe A). Les correctifs payload (§6) restent valides mais sont secondaires en coût réel.
