@@ -386,16 +386,18 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `list_tasks` | List tasks filtered by assignee, status, project, priority |
 | `list_tasks_by_mission` | List all tasks belonging to a specific mission |
 | `search_tasks_by_keyword` | BM25 full-text search over task titles |
-| `update_task` | Update any task fields |
+| `update_task` | Update any task fields — incl. **cancel** (`status="cancelled"` + `cancelReason`, creator-only) |
 | `complete_task` | Mark a task as done with a mandatory completion note |
 | `start_task` | Claim a task and set status to `in_progress` |
 | `checkout_task` | Atomically claim a task (conflict-safe for multi-instance) |
-| `delete_task` | Delete a task by ID |
+| `delete_task` | Delete a task by ID (blocked in prod — **cancel** an erroneous task via `status="cancelled"` instead) |
 | `block_task` | Mark a task as blocked with optional reason |
 | `add_task_dependency` | Add dependency tasks that must complete first |
 | `create_task_dependency` | Alias of `add_task_dependency` |
 
 </details>
+
+**Task & mission statuses:** `todo` → `in_progress` → `review` → `done` (terminal), plus `blocked` (waiting on a dependency) and `cancelled` (terminal). A task or mission created in error is retired with **`cancelled`** — settable only by its creator, with a mandatory `cancelReason`. A cancelled row is excluded from the `open`/`active` list filters and is never counted as `done`; an already-`done` task (or `complete` mission) cannot be cancelled. Prefer cancelling over deleting — `delete_task` is blocked in production.
 
 <details>
 <summary><b>Missions + Templates (8 tools)</b></summary>
@@ -405,7 +407,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `create_mission` | Create a mission grouping related tasks under a project |
 | `get_mission` | Fetch a single mission by ID |
 | `list_missions` | List missions filtered by project, pilot, status |
-| `update_mission` | Update mission fields |
+| `update_mission` | Update mission fields — incl. **cancel** (`status="cancelled"` + `cancelReason`, creator-only) |
 | `update_mission_status` | Advance a mission through its lifecycle stages |
 | `get_mission_template` | Fetch a configurable mission template by name |
 | `update_mission_template` | Create or upsert a mission template |
