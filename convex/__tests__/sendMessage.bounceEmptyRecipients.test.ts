@@ -136,11 +136,20 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 		await seedProfile(t, "eta");
 		await seedProfile(t, "tau");
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
-			from: "pi",
-			channel: "broadcast",
-			content: "hello everyone",
-		});
+		// Broadcast is resolved fail-closed via withOrgScope(ctx) — the
+		// service-account identity (MCP server's real internal-fleet
+		// identity) resolves to master via the CLERK_SERVICE_ACCOUNT_USER_ID
+		// carve-out. vitest.config.ts sets
+		// CLERK_SERVICE_ACCOUNT_USER_ID="test-service-account-user-id".
+		const messageId = await t
+			.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+				typeof t.withIdentity
+			>[0])
+			.mutation(api.messages.sendMessage, {
+				from: "pi",
+				channel: "broadcast",
+				content: "hello everyone",
+			});
 		expect(messageId).toBeDefined();
 
 		const receipts = await t.run((ctx) => ctx.db.query("messageReceipts").collect());
