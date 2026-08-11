@@ -1,159 +1,179 @@
 ---
 name: daily-start
-description: >
-  Run the morning session-start routine — load VantagePeers context, present routines and pending tasks, and either ask the user for the day's goals (human mode) or auto-pick the next unblocked task via dispatch-task-start (autonomous mode). Use this skill whenever the user says "daily start", "morning routine", "begin day", "what should I work on", "start the day", "morning plan", "daily planning", "what's on my plate today", "plan today", "session start" — even if they don't say "daily-start" explicitly.
-description_fr: >
-  Mobilisez la routine de demarrage de session du matin — chargez le contexte VantagePeers, presentez les routines et les taches en attente, puis demandez a l'utilisateur ses objectifs du jour (mode humain) ou laissez le skill choisir automatiquement la prochaine tache non bloquee via dispatch-task-start (mode autonome). Invoquez ce skill des que votre interlocuteur dit "demarrage du jour", "routine du matin", "commencez la journee", "sur quoi travailler", "plan du jour", "demarrage de session" — meme sans mentionner explicitement "daily-start".
-allowed-tools: "mcp__vantage-peers__recall, mcp__vantage-peers__list_missions, mcp__vantage-peers__list_tasks"
+description: This skill should be used when the user asks to "start the day", "morning plan", "daily planning", "what's on my plate today", "plan today", "session start", "daily start", or mentions wanting to organize their day or review pending tasks -- even if they don't say "daily-start" explicitly.
 metadata:
   version: "3.0.0"
   user-invocable: true
 license: Proprietary
 ---
 
-Session-start routine: detect mode, load VP context, show routines + pending, then either prompt the user for goals (human) or chain to `dispatch-task-start` on the highest-priority unblocked task (autonomous). When the user's stated goal needs a new mission scaffold, chain to `mission-bootstrap` instead of raw `create_mission`.
+You open the working day for one orchestrator. You run once at session start.
 
-**Canonical source**: VantageRegistry (`get_skill_content name=daily-start`). The local `.claude/skills/daily-start/SKILL.md` in each workspace MUST be a byte-exact mirror of the VR canonical content. End of hand-copy — fetch from VR, do not edit locally.
+You are one half of a pair. `close-day` writes a handover under a fixed memory name;
+you read that exact name. A handover produced every evening and thrown away every
+morning is the cheapest waste in the fleet, and it was the state before this version.
 
-V3 PRINCIPLE — NEVER RAW `start_task` AT SESSION-START. Every transition from "task picked" to "task running" goes through `dispatch-task-start` so the IRP-sequence hook (`enforce-irp-sequence.py`) cannot block on a stale `in_progress` task left over from the previous session. Same rule applies whether Pi confirms a human-mode pick or sigma/eta auto-pick autonomously.
+Two modes:
+- **Human mode (Pi on the Chromebook)** — reports to the operator and advances the standing objective.
+- **Autonomous mode (every other orchestrator)** — never asks a question, picks its own next task.
 
-V3 PRINCIPLE — NEW MISSION ⇒ `mission-bootstrap`. When the user's stated goal is "start a mission for X" / "scaffold mission Y" / "new mission Z", do not call `create_mission` directly. Chain to the `mission-bootstrap` skill, which wires VERIFICATION/TESTS-compliant child tasks and pre-satisfies the task-quality hook.
-
-## WORKFLOW
-
-**Step 1 — Detect mode (human vs autonomous)**
-
-HUMAN MODE is opt-in via a HOST-SIDE marker that lives outside every repo and every published package. Never key it on a hardcoded filesystem path or a person's name: a published plugin must not carry its maintainer's home directory — that is an internal-identifier leak, and it is meaningless to any external user of the plugin.
-
-- **HUMAN MODE** iff the marker is present: env `VANTAGE_HUMAN_MODE=1`, or the file `~/.claude/vantage-human-mode` exists.
-- **AUTONOMOUS MODE** otherwise (any VPS orchestrator: sigma, alpha, lambda, victor, tau, phi, omega, eta, zeta, proxima, verify, scan, etc.). No marker = autonomous.
-
-This degrades in the safe direction: an interactive operator who forgets the marker gets an autonomous run, which is immediately visible. The reverse default would silently freeze a VPS orchestrator waiting on a human who is not there.
-
-**Step 2 — Load context (silent, both modes)**
-
-Run these in parallel where possible:
-- `mcp__vantage-peers__recall` query="today priorities urgent pending" namespace="global"
-- `mcp__vantage-peers__recall` query="reference CLI commands tools" namespace="global"
-- `mcp__vantage-peers__list_missions` status="active"
-- `mcp__vantage-peers__list_tasks` assignedTo=<your role> status="todo" fields="lite" limit=20
-- `mcp__vantage-peers__list_tasks` assignedTo=<your role> status="in_progress" fields="lite" limit=20
-
-Read if present: `context/routines.md`, `PROGRESS.md`, `context/current-priorities.md`, `context/goals.md`. Run `date` for day-of-week + date.
-
-**Step 3 — Stale in_progress sweep (both modes)**
-
-For each task returned in `status=in_progress`:
-- If genuinely finished (evidence exists): close via `complete_task` with evidence-bound `completionNote` (URL / SHA / PR# / VP id / ratio / counted artifact / file path — ≥40 chars).
-- If genuinely still in progress: leave it.
-- If dead (cancelled scope, superseded): `update_task status="blocked"` with a clear blocker note.
-
-This step exists so Step 5A / Step 6H never trips `enforce-irp-sequence.py`.
+**Every count you display is derived from a command whose output you paste. None is typed.**
 
 ---
 
-## HUMAN MODE (Pi on Chromebook)
+## Step 1 — Identity and date (silent)
 
-**Step 4H — Present routines + pending**
+Read the first 20 lines of `CLAUDE.md` for the orchestrator role. Derive `instanceId` from
+the hostname: `{role}-vps` or `{role}-chromebook`. Run `date -I` for the date.
+
+Human mode iff the header says "You are Pi" AND the workspace is the Chromebook Pi one.
+Otherwise autonomous. In doubt, autonomous — a silent orchestrator is a safer failure than
+one that interrupts a human.
+
+## Step 2 — Register the message cron (autonomous and human alike)
+
+Crons do not survive a restart in this environment, so they are re-registered every session,
+here, once:
 
 ```
-ROUTINES FOR TODAY ([day], [date]):
-
-Daily:
-- [ ] Check calendar — summarize today's schedule
-- [ ] Check emails (1/3) — morning triage
-- [ ] Check emails (2/3) — afternoon follow-up
-- [ ] Check emails (3/3) — evening sweep, inbox zero
-- [ ] BIP diary entry (end of session)
-- [ ] PROGRESS.md update (end of session)
-
-Weekly (if triggered):
-- [ ] [routine name] — [details]
-
-Monthly (if triggered):
-- [ ] [routine name] — [details]
-
-PENDING FROM LAST SESSION:
-- [ ] [task title] (k<id>, priority=<p>, status=<s>)
+CronCreate cron='*/10 * * * *' prompt='/check-messages' recurring=true durable=true
 ```
 
-**Step 5H — Ask for today's goals**
+Ten minutes. If a cron with that prompt is already live in this session, do not create a second.
 
-Ask the user: "What do you want to accomplish today beyond routines?" Wait. One answer.
+## Step 3 — Read yesterday's handover
 
-**Step 6H — Branch on goal shape**
+```
+mcp__vantage-peers__recall query="handover-close-day" namespace="orchestrator/{role}" limit=1
+```
 
-Classify the user's stated goal:
-- **"Start a mission for X" / "scaffold mission Y" / "new mission for Z"** → chain to `mission-bootstrap` skill with the mission brief. Do NOT call `create_mission` directly.
-- **"Work on task k<id>" / "continue task X"** → if that task is in `todo`, chain to `dispatch-task-start` skill with that taskId. If already `in_progress`, resume.
-- **Free-form goals (no explicit task/mission)** → merge with routines + pending into a prioritized list (see Step 7H).
+`handover-close-day` is the fixed name `close-day` writes under. Read it before anything
+else: it carries what was left open, what is expected first today, and any branch that
+survived the night with its written reason.
 
-**Step 7H — Prioritize and write**
+If no handover exists, the previous day did not close. Say so plainly, and treat closing it
+as the first work of today.
 
-Merge routines + pending + the user's goals into one priority-ordered list:
+## Step 4 — Repository state, before any other count
 
-1. Revenue-generating — client delivery, sales, closing
-2. Pipeline — offers, outreach, lead gen
-3. System building — agents, skills, plugins, website
-4. Routines — email, calendar, admin
-5. Process improvement — internal tooling, documentation
+A count read from a tree that is behind the remote is not evidence. Synchronise first, then
+measure:
 
-Write the list to `PROGRESS.md` under today's `#### Today's goals (priority order)` section.
+```
+git fetch --prune -q origin
+git status --porcelain | wc -l          # uncommitted files
+git ls-remote --heads origin | wc -l    # remote branches
+git for-each-ref --sort=-committerdate --format='%(committerdate:short) %(refname:short)' refs/remotes/origin
+```
 
-**Step 8H — Confirm and start**
+Read the result against two rules:
 
-Show the final plan. Say: "Plan set. Starting with [first task]."
-- If first task is a VantagePeers `todo` task → chain to `dispatch-task-start` with its taskId. Never raw `start_task`.
-- If first item is a routine (no VP task yet) → execute directly. No `start_task` needed.
-- If first item is a new mission scaffolding need → chain to `mission-bootstrap`.
+- **Uncommitted files must be zero.** They are not. Each one is decided now — committed or
+  discarded — before any new work starts. A file left undecided overnight is how a
+  workstation reaches a hundred of them.
+- **A branch older than yesterday is a day that never closed.** Closing it is the first work
+  of today, ahead of the queue. Land what it carries or prove its content is elsewhere; never
+  delete on the strength of its name.
 
----
+Then open the day's branch from a synced `main`. The same branch closes tonight — one branch,
+one day, opened here and closed by `close-day`. Never a second one.
 
-## AUTONOMOUS MODE (every orchestrator except Pi Chromebook)
+Display:
 
-**Step 4A — Auto-pick highest-priority unblocked task**
+```
+REPOSITORY:
+- uncommitted files: <N>   (must reach 0 before work starts)
+- remote branches: <N>     (any branch older than yesterday = an unclosed day)
+- day branch: <name> opened from main @<sha>
+```
 
-From the `status=todo` list returned in Step 2:
-- Sort by `priority` (urgent > high > medium > low), then by `_creationTime` (oldest first).
-- For each candidate, check `dependsOn`. If any dependency is not `status=done`, skip.
-- The first candidate whose dependencies are all `done` (or who has none) wins.
+## Step 5 — Messages before work
 
-If no candidate exists (queue empty or all blocked):
-- Produce a 3-line standby summary: role, instance, "queue empty awaiting dispatch" or "blocked on: [list of dep taskIds]".
-- Do NOT ask anyone for next steps. Do NOT invent work. Exit silently.
+```
+mcp__vantage-peers__check_messages recipient={role} recipientInstanceId={instanceId}
+```
 
-**Step 5A — Dispatch via `dispatch-task-start`**
+Read the inbox before starting anything. A countermand, a blocker, or a review verdict
+waiting there changes what you should pick. Starting a task while an order cancelling it sits
+unread is the failure this step exists to prevent. Mark read, answer what asks for an answer.
 
-Chain to the `dispatch-task-start` skill with the picked `taskId`. That skill re-sweeps any stale in_progress task, calls `start_task` with the new taskId, and returns control. NEVER call `mcp__vantage-peers__start_task` directly from this skill.
+## Step 6 — Close what the night left open
 
-**Step 6A — Execute + loop**
+```
+mcp__vantage-peers__list_tasks assignedTo={role} status="in_progress"
+```
 
-Execute the task per its description / VERIFICATION / TESTS blocks. On completion: `complete_task` with evidence-bound `completionNote` (URL / SHA / PR# / VP id / ratio / counted artifact / file path — ≥40 chars). Re-invoke this skill (or `check-messages`) to chain to the next task.
+For each task whose work is actually finished, `complete_task` now, with its real time line.
+A task left open overnight loses that line, and on a billable project the line is the invoice.
+A genuinely unfinished task stays in progress and is named in today's plan.
 
-**Step 7A — Never ask the user / Pi**
+## Step 7 — Your own blocked queue
 
-Autonomous orchestrators NEVER produce "What do you want to accomplish today?" or "Which task should I pick?" output. Decide from the queue or stand by. Only escalate via `send_message` to `pi-chromebook` for a genuine blocker. Any such `send_message` MUST open with `[INFO ONLY]` / `[STATUS]` / `[DONE]` or reference `task k<id>` (no-task-in-message hook) and MUST end with the signature line `Orchestrator: <Name> — <Team> | YYYY-MM-DD` (signature hook).
+```
+mcp__vantage-peers__list_tasks assignedTo={role} status="blocked"
+```
+
+For each, name who owes the unblock. Anything waiting three cycles or more gets exactly one
+`[NUDGE]` to that authority. Starting new work while your own queue silently waits on someone
+is how a delivery dies without anyone noticing.
+
+## Step 8 — Pick the work
+
+```
+mcp__vantage-peers__list_tasks assignedTo={role} status="todo"
+```
+
+Sort by priority (urgent, high, medium, low), then oldest first. Pick the first task whose
+dependencies are all done.
+
+**A task that names no sellable product is not started.** It goes back to its creator with
+that question. This is the gate that keeps a day from being spent on the fleet's own tooling.
+
+If no candidate exists, say so in three lines — role, instance, what blocks — and stop. Do not
+invent work. Do not ask anyone what to do. The message cron re-fires when work arrives.
+
+**Human mode** additionally: after reporting the state above, advance the standing objective.
+Read the current north star from the project memory, identify the next brick, and bring an
+arbitrated decision — not a question. The operator gives the vision; you execute and
+anticipate. Do not open the day by asking what to do.
+
+## Step 9 — Start
+
+`start_task` on the picked task, write the active-task flag, and begin. No floating between
+the plan and the work.
+
+Complete each task as it finishes, with its evidence and its time. Then stop. **Do not loop
+back to pick another task on your own** — the message cron is what re-fires the session. A
+skill that re-invokes itself runs all night on an empty queue.
 
 ---
 
 ## RULES
 
-- Never skip Step 1 (mode detect) + Step 2 (context load) + Step 3 (stale sweep).
-- Default `list_tasks` calls: `fields="lite"`, `limit=20`.
-- Routines: human mode only. Autonomous ignores them unless scheduled as a VP task.
-- New mission scaffolding ALWAYS chains to `mission-bootstrap`. Never raw `create_mission`.
-- Task start ALWAYS chains to `dispatch-task-start`. Never raw `start_task`.
-- Evidence-Bound Done (Day 76): every `complete_task` / `update_task→review|done` cites a verifiable proof token, ≥40 chars. Hook `enforce-evidence-bound-completion` (contentHash fb62f24e1658f52794b642256500c370bfc1987c4dd5fb9c43217e7848326ab1) blocks claim-words-only completions.
-- No time / duration estimates anywhere (block-time-estimates hook).
-
-## EXAMPLES
-
-See `references/examples.md` for full walk-throughs of: human free-form goals, human mission-bootstrap branch, autonomous auto-pick + dispatch, and autonomous empty-queue standby.
-
-## CANONICAL SOURCE
-
-This skill lives in VantageRegistry. Fetch the body via `mcp__vantage-registry__get_skill_content name=daily-start`. Re-sync local copies byte-exact whenever VR is updated — never edit a workspace SKILL.md directly.
+- Every displayed count carries the command that produced it. A typed count is wrong tomorrow.
+- Steps 1 to 5 are mandatory in both modes, in this order. The repository state comes before
+  the task queue: work started on a dirty tree ends up on a branch nobody closes.
+- One branch per day, opened here, closed by `close-day`. Never a second branch, never a
+  branch left open across a night without a written reason.
+- Never delete a branch on the strength of its name. Prove its content is in `main`, or that
+  the catalogue holds it, or that a newer version supersedes it.
+- Autonomous mode never asks the operator or the coordinator what to do next. It picks, or it
+  stands by. Genuine blockers travel as one message and then standby.
+- No writing to `PROGRESS.md`. VantagePeers is the source of truth.
+- A task with no named sellable product is not started.
 
 ## SELLABLE AS
 
-`vantage-peers` plugin — wraps `list_missions` / `list_tasks` / `recall` / `start_task` into a single mode-aware session-start routine that hooks-safely dispatches the day's first task (via `dispatch-task-start`) or scaffolds a new mission (via `mission-bootstrap`).
+`perello-daily-planner` — part of the `perello-executive` plugin, paired with `close-day`.
+
+## Changelog
+
+- **v3.0.0** — Pairs with `close-day` through the fixed `handover-close-day` memory name, which
+  was written every evening and never read. Adds: message-cron registration at ten minutes;
+  inbox before work; repository state measured on a synced tree, with the day's branch opened
+  here and an older branch treated as an unclosed day; overnight in-progress closure with its
+  time line; own blocked queue with a single nudge; the sellable-product gate at pick time.
+  Removes the endless self-chaining loop, which contradicted `check-messages`, the question
+  "what do you want to accomplish today", which contradicted proactive mode, and the writes to
+  `PROGRESS.md`.
+- **v2.0.0** — Two modes, human and autonomous.
