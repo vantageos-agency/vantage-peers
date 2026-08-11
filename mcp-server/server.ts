@@ -65,7 +65,7 @@ const convex = new ConvexHttpClient(convexUrl);
 
 const server = new McpServer({
 	name: "vantage-peers",
-	version: "2.17.0",
+	version: "2.18.0",
 });
 
 // stdio transport has no OAuth identity → pass oauthCtx=undefined to opt into

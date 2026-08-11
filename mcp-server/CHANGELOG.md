@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — S8 CORE tool-exposure filter
+## [2.18.0] — 2026-08-11
 
 ### Changed
 - **Expose only the CORE tool surface (mission `vp-mcp-alias-cleanup-v1`, S8).** A data-driven allowlist (`mcp-server/tool-exposure.json`, `{"core":[...]}`) masks every tool whose `T2_verdict` is not `CORE` in `analysis/vantagepeers/vp-restructuring/vp-by-tool-day158.csv`. Masking ≠ deletion: non-CORE tools stay registered + handler-wired and are `disable()`d so `tools/list` does not advertise them; reverting = removing a line from the data file. Exposed = CORE ∩ registered = **66** tools; masked = **43** (registered 109). The exposure list is derived from the CSV, never typed; a name in the file matching no registered tool makes the server refuse to start, naming it. Applied at the single shared `registerTools` surface, so both stdio and HTTP transports (online clients) inherit the reduced surface. 5 CORE names from the day158 CSV are #1169-removed aliases whose CORE survivors stay exposed (zero capability lost). Tests: `test/tool-exposure.test.ts` 2/2, full suite 1071 passed / 0 failed, tsc 0.
