@@ -87,7 +87,7 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 
 		let caught: unknown;
 		try {
-			await t.query(api.memories.getMemory, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
 				memoryId: missionId as unknown as Id<"memories">,
 			});
 			throw new Error("getMemory did not throw — expected a ConvexError");
@@ -115,7 +115,7 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 	test("positive control: a real memoryId still returns the document", async () => {
 		const t = createT();
 		const memoryId = await newMemory(t);
-		const doc = await t.query(api.memories.getMemory, { memoryId });
+		const doc = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
 		expect(doc?._id).toBe(memoryId);
 		expect(doc?.content).toBe("Probe memory");
 	});
@@ -131,7 +131,7 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 		// a `null` return, not an error. Widening the validator must not turn a
 		// benign miss into a throw.
 		await expect(
-			t.query(api.memories.getMemory, { memoryId }),
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId }),
 		).resolves.toBeNull();
 	});
 });

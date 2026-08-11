@@ -157,7 +157,7 @@ http.route({
 			}
 
 			// 5. Idempotency: skip if mission already exists for this issue
-			const existingMissions = await ctx.runQuery(api.missions.list, {
+			const existingMissions = await ctx.runQuery(internal.missions.listForWebhook, {
 				project,
 				limit: 200,
 			});
@@ -178,7 +178,7 @@ http.route({
 			// bundled fix (e.g. Cat A k17e611z4 = "close issues #655, #644,
 			// #643, #642"). Spawn a single [Bridge] task instead of the full
 			// T0..T(N-1) cascade.
-			const openTasksRaw = await ctx.runQuery(api.tasks.list, {
+			const openTasksRaw = await ctx.runQuery(internal.tasks.listForWebhook, {
 				status: ["todo", "in_progress", "review", "blocked"],
 				assignedTo: orchestrator,
 				limit: 200,

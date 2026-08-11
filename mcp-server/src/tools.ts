@@ -312,12 +312,22 @@ export const listTasksArgsSchema = z.object({
 				"review",
 				"blocked",
 				"done",
+				"cancelled",
 				"open",
 				"active",
 				"all",
 			]),
 			z
-				.array(z.enum(["todo", "in_progress", "review", "blocked", "done"]))
+				.array(
+					z.enum([
+						"todo",
+						"in_progress",
+						"review",
+						"blocked",
+						"done",
+						"cancelled",
+					]),
+				)
 				.min(1),
 		])
 		.optional()
@@ -435,8 +445,8 @@ export const billingSummaryByProjectArgsSchema = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const RECALL_TOOL_DESCRIPTION =
-	"DEPRECATED ALIAS of search_memories_by_semantic — semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
-	"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. New callers: use search_memories_by_semantic. " +
+	"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
+	"WHEN: use at session start or before decisions — prefer over text_search for intent-based queries. " +
 	"EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.\n\n" +
 	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
 	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
@@ -449,8 +459,8 @@ export const HYBRID_SEARCH_TOOL_DESCRIPTION =
 	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
 
 export const TEXT_SEARCH_TOOL_DESCRIPTION =
-	"DEPRECATED ALIAS of search_memories_by_keyword — BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
-	"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. New callers: use search_memories_by_keyword. " +
+	"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
+	"WHEN: use when recall returns too-broad results and you need a specific exact phrase or ID. " +
 	"EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.\n\n" +
 	"VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.\n\n" +
 	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'.";
@@ -571,6 +581,7 @@ const taskStatusValues = [
 	"review",
 	"blocked",
 	"done",
+	"cancelled",
 ] as const;
 const taskStatusAliases = ["open", "active", "all"] as const;
 export const taskStatusSchema = z
@@ -583,6 +594,7 @@ const missionStatusValues = [
 	"execute",
 	"validate",
 	"complete",
+	"cancelled",
 ] as const;
 const missionStatusAliases = ["open", "active", "all"] as const;
 export const missionStatusSchema = z
@@ -1762,10 +1774,9 @@ export function registerTools(
 	);
 
 	// ── recall ──────────────────────────────────────────────────────────────────
-	// DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_semantic. Retained
-	// as a back-compat shim. New callers should use `search_memories_by_semantic`.
-	// Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
-	// see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
+	// Canonical semantic memory-search tool (fleet-primary, 118 call-sites).
+	// The former `search_memories_by_semantic` twin was removed day159
+	// (mission vp-mcp-alias-cleanup-v1, S2) — usage, not the code label, decides.
 
 	defineTool(
 		server,
@@ -1832,10 +1843,9 @@ export function registerTools(
 	);
 
 	// ── text_search ─────────────────────────────────────────────────────────────
-	// DEPRECATED (Day 101 v2.8.0) — alias of search_memories_by_keyword. Retained
-	// as a back-compat shim. New callers should use `search_memories_by_keyword`.
-	// Removal target re-targeted to 2.11.0 (slipped past 2.9.0 — episode-only PR;
-	// see FOLLOW-UP task k1754apqtcjpre2vd5ghbkcmzn88mhwf for arbitrage).
+	// Canonical BM25 keyword memory-search tool (fleet-primary, 18 call-sites).
+	// The former `search_memories_by_keyword` twin was removed day159
+	// (mission vp-mcp-alias-cleanup-v1, S2) — usage, not the code label, decides.
 
 	defineTool(
 		server,
@@ -1884,138 +1894,6 @@ export function registerTools(
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// ── search_memories_by_keyword ─────────────────────────────────────────────
-	// Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
-	// Mirrors text_search 1:1 (same Convex action `search:textSearch`).
-	// text_search is retained as a deprecated alias (removal re-targeted 2.11.0).
-
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "read", namespaceArg: "namespace" },
-		"search_memories_by_keyword",
-		"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
-			"WHEN: use when search_memories_by_semantic returns too-broad results and you need a specific exact phrase or ID. " +
-			"EXAMPLE: search_memories_by_keyword query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.",
-		{
-			query: z.string().describe("Search query text"),
-			namespace: z
-				.string()
-				.optional()
-				.describe("Namespace filter (e.g. 'global', 'project/my-project')"),
-			type: memoryTypeSchema.optional().describe("Filter by memory type"),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(200)
-				.optional()
-				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
-			fields: z
-				.enum(["lite", "full"])
-				.optional()
-				.describe(
-					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
-				),
-		},
-		{
-			readOnlyHint: true,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Search memories by keyword (BM25)",
-		},
-		async ({ query, namespace, type, limit, fields }) => {
-			try {
-				const nsDenied = guardRead(namespace);
-				if (nsDenied) return nsDenied;
-
-				const results = await convex.action("search:textSearch" as any, {
-					query,
-					namespace,
-					type,
-					limit: limit ?? 20,
-					fields: fields ?? "lite",
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// ── search_memories_by_semantic ────────────────────────────────────────────
-	// Day 101 v2.8.0 — canonical name under MCP CRUD baseline doctrine.
-	// Mirrors recall 1:1 (same Convex action `search:recall`).
-	// recall is retained as a deprecated alias (removal re-targeted 2.11.0).
-
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "read", namespaceArg: "namespace" },
-		"search_memories_by_semantic",
-		"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
-			"WHEN: use at session start or before decisions — prefer over search_memories_by_keyword for intent-based queries. " +
-			"EXAMPLE: search_memories_by_semantic query='Pi feedback rules' namespace='global' type='feedback' limit=20.",
-		{
-			query: z
-				.string()
-				.describe("Natural language query to search for relevant memories"),
-			namespace: z
-				.string()
-				.optional()
-				.describe("Filter to a specific namespace — omit to search all"),
-			type: memoryTypeSchema
-				.optional()
-				.describe("Filter to a specific memory type — omit to search all"),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(200)
-				.optional()
-				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
-			fields: z
-				.enum(["lite", "full"])
-				.optional()
-				.describe(
-					"'lite' returns compact payload (less tokens), 'full' is default. v2.4.9+.",
-				),
-		},
-		{
-			readOnlyHint: true,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Search memories by semantic (vector cosine)",
-		},
-		async ({ query, namespace, type, limit, fields }) => {
-			try {
-				const nsDenied = guardRead(namespace);
-				if (nsDenied) return nsDenied;
-
-				const results = await convex.action("search:recall" as any, {
-					query,
-					namespace,
-					type,
-					limit: limit ?? 20,
-					fields: fields ?? "lite",
-				});
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(results, null, 2),
-						},
-					],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3094,19 +2972,20 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{
-			kind: "filtered",
-			reason:
-				"receiptIds are caller-scoped opaque handles issued by check_messages; ownership enforced in messages:markAsRead",
-		},
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"mark_as_read",
 		"Mark one or more message receipts as read using receiptIds from check_messages. " +
 			"WHEN: call immediately after processing each batch of messages returned by check_messages. " +
-			"EXAMPLE: mark_as_read receiptIds=['j57aaaaa...', 'j57bbbbb...'].",
+			"EXAMPLE: mark_as_read receiptIds=['j57aaaaa...', 'j57bbbbb...'] callerOrchestrator='pi'.",
 		{
 			receiptIds: z
 				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
 				.describe("Receipt IDs to mark as read — array or single string"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe(
+					"Orchestrator marking its own receipts as read — required for scoped (non-master) OAuth clients; enforced fleet-wide against each receipt's recipient in messages:markAsRead",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -3114,7 +2993,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Mark messages as read",
 		},
-		async ({ receiptIds }) => {
+		async ({ receiptIds, callerOrchestrator }) => {
 			try {
 				let receiptIdsArray: string[];
 				if (Array.isArray(receiptIds)) {
@@ -3133,6 +3012,7 @@ export function registerTools(
 				}
 				const count = await convex.mutation("messages:markAsRead" as any, {
 					receiptIds: receiptIdsArray,
+					callerOrchestrator,
 				});
 
 				return {
@@ -3968,7 +3848,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"bulkComplete is scoped by callerOrchestrator inside tasks:bulkComplete",
+				"claimed callerOrchestrator identity is guarded MCP-side (guardFrom) before dispatch; tasks:bulkComplete then scopes matched tasks against that verified identity",
 		},
 		BULK_COMPLETE_TASKS_TOOL_NAME,
 		BULK_COMPLETE_TASKS_TOOL_DESCRIPTION,
@@ -3981,6 +3861,20 @@ export function registerTools(
 		},
 		async ({ filter, dryRun, completionNoteTemplate, callerOrchestrator }) => {
 			try {
+				// k179nrp3apj700pm0h1ckewm2h8b3nz7 — the "filtered" declaration above
+				// claimed enforcement lives in tasks:bulkComplete, but that Convex
+				// handler only checks ownership of MATCHED TASKS against a
+				// client-SUPPLIED callerOrchestrator — it never verifies the caller
+				// claiming that identity actually IS it. A scoped (non-master) OAuth
+				// client could pass any other orchestrator's name and bulk-close
+				// that orchestrator's tasks. Mirrors delete_message (tools.ts
+				// ~3157-3181): guard the claimed identity against the caller's own
+				// fromAllowList before the mutation runs.
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
 				const result = await convex.mutation("tasks:bulkComplete" as any, {
 					filter,
 					dryRun,
@@ -4214,6 +4108,14 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
+			cancelReason: z
+				.string()
+				.optional()
+				.describe(
+					"Mandatory when status='cancelled': non-empty reason. Only the task's " +
+						"creator (or 'system') may set status='cancelled'; callerOrchestrator " +
+						"must be the creator.",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -4238,6 +4140,7 @@ export function registerTools(
 			completedAt,
 			dueDate,
 			callerOrchestrator,
+			cancelReason,
 		}) => {
 			try {
 				if (callerOrchestrator) {
@@ -4266,6 +4169,7 @@ export function registerTools(
 					completedAt,
 					dueDate,
 					callerOrchestrator,
+					cancelReason,
 				});
 
 				return {
@@ -4556,7 +4460,7 @@ export function registerTools(
 		"add_task_dependency",
 		"Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
-			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
+			"EXAMPLE: add_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
 			taskId: taskIdSchema.describe(
 				"Convex document ID of the task that depends on others",
@@ -5019,6 +4923,18 @@ export function registerTools(
 			startDate: z.number().optional().describe("New start date (Unix ms)"),
 			targetDate: z.number().optional().describe("New target date (Unix ms)"),
 			progress: z.number().optional().describe("New progress (0-100)"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe(
+					"Required when status='cancelled': must be the mission's creator (or 'system').",
+				),
+			cancelReason: z
+				.string()
+				.optional()
+				.describe(
+					"Mandatory when status='cancelled': non-empty reason. Only the mission's " +
+						"creator (or 'system') may set status='cancelled'.",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -5039,11 +4955,17 @@ export function registerTools(
 			startDate,
 			targetDate,
 			progress,
+			callerOrchestrator,
+			cancelReason,
 		}) => {
 			try {
 				if (pilot) {
 					const pilotDenied = guardFrom(pilot);
 					if (pilotDenied) return pilotDenied;
+				}
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
 				}
 
 				await convex.mutation("missions:update" as any, {
@@ -5059,6 +4981,8 @@ export function registerTools(
 					startDate,
 					targetDate,
 					progress,
+					callerOrchestrator,
+					cancelReason,
 				});
 
 				return {
@@ -5129,7 +5053,7 @@ export function registerTools(
 		"write_diary",
 		"Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
 			"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
-			"EXAMPLE: create_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
+			"EXAMPLE: write_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
 		{
 			date: z.string().describe("ISO date string — e.g. '2026-03-25'"),
 			orchestrator: creatorSchema.describe("Which orchestrator is writing"),
@@ -6135,9 +6059,10 @@ export function registerTools(
 	);
 
 	// ── search_components ───────────────────────────────────────────────────────
-	// DEPRECATED (Day 102 v2.10.0) — alias of search_components_by_keyword.
-	// Retained for one minor version as a back-compat shim. New callers should
-	// use `search_components_by_keyword`. To be removed in 2.11.0.
+	// ── search_components ─────────────────────────────────────────────────────
+	// Canonical component-search tool (fleet-primary). The former
+	// `search_components_by_keyword` twin was removed day159
+	// (mission vp-mcp-alias-cleanup-v1, S2) — usage, not the code label, decides.
 
 	defineTool(
 		server,
@@ -6153,8 +6078,8 @@ export function registerTools(
 		// anchor would skip high-relevance older matches in favor of newer
 		// low-relevance ones, breaking the search contract. Pagination on
 		// semantic search should be score-based (offset / topK), not time-based.
-		"DEPRECATED ALIAS of search_components_by_keyword — search components by name or team substring with optional type filter. " +
-			"WHEN: use before register_component to check if a similar component already exists in the registry. New callers: use search_components_by_keyword. " +
+		"Search components by name or team substring with optional type filter. " +
+			"WHEN: use before register_component to check if a similar component already exists in the registry. " +
 			"EXAMPLE: search_components query='check-tasks' type='skill' limit=10.",
 		{
 			query: z
@@ -6184,70 +6109,6 @@ export function registerTools(
 		async ({ query, type, limit, fields }) => {
 			try {
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
-				const results = await convex.query("components:search" as any, {
-					query,
-					type,
-					limit: limit ?? 20,
-					fields: fields ?? "lite",
-				});
-				const filteredResults = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(results) ? results : [],
-				);
-				return {
-					content: [
-						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
-					],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// ── search_components_by_keyword ───────────────────────────────────────────
-	// Day 102 v2.10.0 — canonical name under MCP CRUD baseline doctrine (PR-C).
-	// Mirrors search_components 1:1 (same Convex query `components:search`).
-	// search_components is retained as a deprecated alias until 2.11.0.
-
-	defineTool(
-		server,
-		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
-		"search_components_by_keyword",
-		"BM25 / substring keyword search over components by name or team with optional type filter. " +
-			"WHEN: use before register_component to check if a similar component already exists in the registry. " +
-			"EXAMPLE: search_components_by_keyword query='check-tasks' type='skill' limit=10.",
-		{
-			query: z
-				.string()
-				.describe("Search term to match against component name or team"),
-			type: componentTypeSchema.optional().describe("Filter by component type"),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(200)
-				.optional()
-				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
-			fields: z
-				.enum(["lite", "full"])
-				.optional()
-				.describe(
-					"'lite' returns compact payload (less tokens), 'full' is default.",
-				),
-		},
-		{
-			readOnlyHint: true,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Search components by keyword",
-		},
-		async ({ query, type, limit, fields }) => {
-			try {
 				const results = await convex.query("components:search" as any, {
 					query,
 					type,
@@ -6895,7 +6756,7 @@ export function registerTools(
 		"validate_mandate_spending",
 		"Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
 			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
-			"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
+			"EXAMPLE: validate_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
 		{
 			mandateId: mandateIdSchema.describe("Mandate ID to validate against"),
 			proposedAmount: z
@@ -7514,7 +7375,7 @@ export function registerTools(
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
 			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
-			"EXAMPLE: register_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
+			"EXAMPLE: add_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
 		{
 			repo: z
 				.string()
@@ -7714,7 +7575,7 @@ export function registerTools(
 		"remove_repo_mapping",
 		"Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
 			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
-			"EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.",
+			"EXAMPLE: remove_repo_mapping repo='vantageos-agency/vantage-peers'.",
 		{
 			repo: z
 				.string()
@@ -8279,7 +8140,7 @@ export function registerTools(
 		"add_fix_attempt",
 		"Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
 			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
-			"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
+			"EXAMPLE: add_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
 		{
 			patternId: patternIdSchema.describe("ID of the fix pattern"),
 			description: z.string().describe("What was tried — the fix approach"),
@@ -8334,7 +8195,7 @@ export function registerTools(
 		"validate_fix",
 		"Set or update the validated fix description on a fix pattern after confirming it works. " +
 			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
-			"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
+			"EXAMPLE: validate_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
 		{
 			patternId: patternIdSchema.describe("ID of the fix pattern"),
 			validatedFix: z.string().describe("Description of the validated fix"),
@@ -8374,10 +8235,10 @@ export function registerTools(
 	);
 
 	// ── search_fix_patterns ─────────────────────────────────────────────────────
-	// DEPRECATED (Day 102 v2.10.0) — alias of search_fix_patterns_by_semantic.
-	// Underlying behavior is embedding-similarity ranking (NOT BM25), hence
-	// "_by_semantic" is the canonical suffix per the CRUD baseline doctrine.
-	// To be removed in 2.11.0.
+	// ── search_fix_patterns ───────────────────────────────────────────────────
+	// Canonical fix-pattern-search tool (fleet-primary). The former
+	// `search_fix_patterns_by_semantic` twin was removed day159
+	// (mission vp-mcp-alias-cleanup-v1, S2) — usage, not the code label, decides.
 
 	defineTool(
 		server,
@@ -8392,8 +8253,8 @@ export function registerTools(
 		// Rationale: backed by `convex.action("search:searchFixPatterns")` which
 		// runs an embedding-similarity ranker; cursor paging by `createdBefore`
 		// would corrupt relevance ordering. Same rationale as search_components.
-		"DEPRECATED ALIAS of search_fix_patterns_by_semantic — semantic search over fix patterns by symptom description, ranked by relevance. " +
-			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. New callers: use search_fix_patterns_by_semantic. " +
+		"Semantic search over fix patterns by symptom description, ranked by relevance. " +
+			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
 			"EXAMPLE: search_fix_patterns query='message disappears after sending on mobile' limit=5.",
 		{
 			query: z
@@ -8424,74 +8285,6 @@ export function registerTools(
 		async ({ query, limit, fields }) => {
 			try {
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
-				const results = await convex.action("search:searchFixPatterns" as any, {
-					query,
-					limit: limit ?? 20,
-					fields: fields ?? "lite",
-				});
-				const filteredResults = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(results) ? results : [],
-				);
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(filteredResults, null, 2),
-						},
-					],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// ── search_fix_patterns_by_semantic ────────────────────────────────────────
-	// Day 102 v2.10.0 — canonical name under MCP CRUD baseline doctrine (PR-C).
-	// Mirrors search_fix_patterns 1:1 (same Convex action `search:searchFixPatterns`).
-	// search_fix_patterns is retained as a deprecated alias until 2.11.0.
-
-	defineTool(
-		server,
-		authCtx,
-		{
-			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
-		},
-		"search_fix_patterns_by_semantic",
-		"Semantic vector search over fix patterns by symptom description, ranked by relevance. " +
-			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
-			"EXAMPLE: search_fix_patterns_by_semantic query='message disappears after sending on mobile' limit=5.",
-		{
-			query: z
-				.string()
-				.describe(
-					"Describe the problem — e.g. 'message disappears after sending'",
-				),
-			limit: z
-				.number()
-				.int()
-				.min(1)
-				.max(200)
-				.optional()
-				.describe("Max items to return. Default 20 (envelope-safe). Cap 200."),
-			fields: z
-				.enum(["lite", "full"])
-				.optional()
-				.describe(
-					"'lite' returns compact payload (less tokens), 'full' is default.",
-				),
-		},
-		{
-			readOnlyHint: true,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Search fix patterns by semantic",
-		},
-		async ({ query, limit, fields }) => {
-			try {
 				const results = await convex.action("search:searchFixPatterns" as any, {
 					query,
 					limit: limit ?? 20,
@@ -8950,7 +8743,7 @@ export function registerTools(
 		"add_deployment",
 		"Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
 			"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
-			"EXAMPLE: register_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
+			"EXAMPLE: add_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
 		{
 			name: z
 				.string()
@@ -9029,7 +8822,7 @@ export function registerTools(
 		"remove_deployment",
 		"Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
 			"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
-			"EXAMPLE: delete_deployment name='vantage-prod'.",
+			"EXAMPLE: remove_deployment name='vantage-prod'.",
 		{
 			name: z
 				.string()
@@ -9401,400 +9194,6 @@ export function registerTools(
 					},
 				],
 			};
-		},
-	);
-
-	// === B2 §1 CANONICAL ALIASES — backward-compat legacy names retained ===
-
-	// register_repo_mapping → was add_repo_mapping [ALIAS of add_repo_mapping — C0.3 master-only]
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "master" },
-		"register_repo_mapping",
-		"[ALIAS of add_repo_mapping] Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
-			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
-			"EXAMPLE: register_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
-		{
-			repo: z.string(),
-			orchestrator: z.string(),
-			project: z.string().optional(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Register repo mapping (alias)",
-		},
-		async ({ repo, orchestrator, project }) => {
-			const masterDenied = guardMasterOnly("register_repo_mapping");
-			if (masterDenied) return masterDenied;
-			try {
-				const result = await convex.mutation("githubRepoMapping:add" as any, {
-					repo,
-					orchestrator,
-					...(project !== undefined ? { project } : {}),
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// delete_repo_mapping → was remove_repo_mapping [ALIAS of remove_repo_mapping — C0.3 master-only]
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "master" },
-		"delete_repo_mapping",
-		"[ALIAS of remove_repo_mapping] Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
-			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
-			"EXAMPLE: delete_repo_mapping repo='vantageos-agency/vantage-peers'.",
-		{
-			repo: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: true,
-			title: "Delete repo mapping (alias)",
-		},
-		async ({ repo }) => {
-			const masterDenied = guardMasterOnly("delete_repo_mapping");
-			if (masterDenied) return masterDenied;
-			try {
-				const result = await convex.mutation(
-					"githubRepoMapping:remove" as any,
-					{ repo },
-				);
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// register_deployment → was add_deployment [ALIAS of add_deployment — C0.1 master-only]
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "master" },
-		"register_deployment",
-		"[ALIAS of add_deployment] Register a Convex deployment for proactive error monitoring via 5-minute cron polling. " +
-			"WHEN: use when setting up a new deployment that should auto-create GitHub issues on detected errors. " +
-			"EXAMPLE: register_deployment name='vantage-prod' deploymentUrl='https://vantage-prod.convex.cloud' deployKeyEnvVar='DEPLOY_KEY_PROD' githubRepo='vantageos-agency/vantage-peers' orchestrator='alpha'.",
-		{
-			name: z.string(),
-			deploymentUrl: z.string(),
-			deployKeyEnvVar: z.string(),
-			githubRepo: z.string(),
-			orchestrator: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Register deployment (alias)",
-		},
-		async ({
-			name,
-			deploymentUrl,
-			deployKeyEnvVar,
-			githubRepo,
-			orchestrator,
-		}) => {
-			const masterDenied = guardMasterOnly("register_deployment");
-			if (masterDenied) return masterDenied;
-			try {
-				const result = await convex.mutation(
-					"errorMonitor:addDeployment" as any,
-					{
-						name,
-						deploymentUrl,
-						deployKeyEnvVar,
-						githubRepo,
-						orchestrator,
-					},
-				);
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// delete_deployment → was remove_deployment [ALIAS of remove_deployment — C0.1 master-only]
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "master" },
-		"delete_deployment",
-		"[ALIAS of remove_deployment] Deactivate a monitored deployment, stopping cron polling while preserving the historical record. " +
-			"WHEN: use when a deployment is retired or moved to a different monitoring config. " +
-			"EXAMPLE: delete_deployment name='vantage-prod'.",
-		{
-			name: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: true,
-			title: "Delete deployment (alias)",
-		},
-		async ({ name }) => {
-			const masterDenied = guardMasterOnly("delete_deployment");
-			if (masterDenied) return masterDenied;
-			try {
-				const result = await convex.mutation(
-					"errorMonitor:removeDeployment" as any,
-					{ name },
-				);
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// check_mandate_spending → was validate_mandate_spending (not C0-gated — read-only check)
-	defineTool(
-		server,
-		authCtx,
-		{
-			kind: "public",
-			reason:
-				"alias of validate_mandate_spending; stateless spend-limit validation",
-		},
-		"check_mandate_spending",
-		"[ALIAS of validate_mandate_spending] Check whether a proposed token spend is within a mandate's AP2 spending limits. " +
-			"WHEN: call before each service transaction to prevent over-spend and get within/exceeded status. " +
-			"EXAMPLE: check_mandate_spending mandateId='j57aaaaa...' proposedAmount=500.",
-		{
-			mandateId: mandateIdSchema,
-			proposedAmount: z.number(),
-		},
-		{
-			readOnlyHint: true,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Check mandate spending (alias)",
-		},
-		async ({ mandateId, proposedAmount }) => {
-			try {
-				const result = await convex.query("mandates:validateSpending" as any, {
-					mandateId,
-					proposedAmount,
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// check_fix → was validate_fix [ALIAS of validate_fix — C0.5 master-only]
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "master" },
-		"check_fix",
-		"[ALIAS of validate_fix] Set or update the validated fix description on a fix pattern after confirming it works. " +
-			"WHEN: use after a fix attempt succeeds to promote it as the canonical solution on the pattern. " +
-			"EXAMPLE: check_fix patternId='j57aaaaa...' validatedFix='Add suppressHydrationWarning to date elements'.",
-		{
-			patternId: patternIdSchema,
-			validatedFix: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Check/validate fix (alias)",
-		},
-		async ({ patternId, validatedFix }) => {
-			const masterDenied = guardMasterOnly("check_fix");
-			if (masterDenied) return masterDenied;
-			try {
-				const result = await convex.mutation("fixPatterns:validate" as any, {
-					patternId,
-					validatedFix,
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// create_fix_attempt → was add_fix_attempt (not C0-gated — uses guardFrom(createdBy))
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "from", fromArg: "createdBy" },
-		"create_fix_attempt",
-		"[ALIAS of add_fix_attempt] Add a fix attempt record to a pattern with description, outcome, and optional commit reference. " +
-			"WHEN: use after each fix attempt (successful or not) to build a complete fix history. " +
-			"EXAMPLE: create_fix_attempt patternId='j57aaaaa...' description='Added suppressHydrationWarning' worked=true why='Prevents mismatches' createdBy='beta'.",
-		{
-			patternId: patternIdSchema,
-			description: z.string(),
-			worked: z.boolean(),
-			why: z.string().optional(),
-			commitSha: z.string().optional(),
-			createdBy: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Create fix attempt (alias)",
-		},
-		async ({ patternId, description, worked, why, commitSha, createdBy }) => {
-			const fromDenied = guardFrom(createdBy);
-			if (fromDenied) return fromDenied;
-			try {
-				const result = await convex.mutation("fixPatterns:addAttempt" as any, {
-					patternId,
-					description,
-					worked,
-					...(why !== undefined ? { why } : {}),
-					...(commitSha !== undefined ? { commitSha } : {}),
-					createdBy,
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// create_task_dependency → was add_task_dependency (not C0-gated — uses callerOrchestrator auth)
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "from", fromArg: "callerOrchestrator" },
-		"create_task_dependency",
-		"[ALIAS of add_task_dependency] Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
-			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
-			"EXAMPLE: create_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
-		{
-			taskId: taskIdSchema,
-			dependsOn: z.array(taskIdSchema),
-			callerOrchestrator: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Create task dependency (alias)",
-		},
-		async ({ taskId, dependsOn, callerOrchestrator }) => {
-			try {
-				const result = await convex.mutation("tasks:update" as any, {
-					taskId,
-					dependsOn,
-					callerOrchestrator,
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// update_summary → was set_summary (not C0-gated — uses orchestratorId auth)
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "from", fromArg: "orchestratorId" },
-		"update_summary",
-		"[ALIAS of set_summary] Update the current-work summary for an orchestrator instance, visible via list_peers. " +
-			"WHEN: call at the start of each session and after major context switches to keep peers informed. " +
-			"EXAMPLE: update_summary orchestratorId='alpha' instanceId='alpha-vps' summary='Standardizing 86 tool descriptions for B2'.",
-		{
-			orchestratorId: z.string(),
-			instanceId: z.string().optional(),
-			summary: z.string(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Update summary (alias)",
-		},
-		async ({ orchestratorId, instanceId, summary }) => {
-			try {
-				const result = await convex.mutation("profiles:updateDynamic" as any, {
-					orchestratorId,
-					...(instanceId !== undefined ? { instanceId } : {}),
-					dynamic: { summary },
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
-		},
-	);
-
-	// create_diary → was write_diary (not C0-gated — uses guardFrom(author) when present)
-	defineTool(
-		server,
-		authCtx,
-		{ kind: "from", fromArg: "author" },
-		"create_diary",
-		"[ALIAS of write_diary] Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers. " +
-			"WHEN: call at end of session to record what was accomplished, learned, and what blocked progress. " +
-			"EXAMPLE: create_diary date='2026-06-06' orchestrator='gamma' content='Standardized 86 descriptions...'.",
-		{
-			date: z.string(),
-			orchestrator: z.string(),
-			content: z.string(),
-			author: z.string().optional(),
-		},
-		{
-			readOnlyHint: false,
-			openWorldHint: false,
-			destructiveHint: false,
-			title: "Create diary entry (alias)",
-		},
-		async ({ date, orchestrator, content, author }) => {
-			assertContentSize(content, "content");
-			if (author !== undefined) {
-				const fromDenied = guardFrom(author);
-				if (fromDenied) return fromDenied;
-			}
-			try {
-				const result = await convex.mutation("diary:write" as any, {
-					date,
-					orchestrator,
-					content,
-					...(author !== undefined ? { author } : {}),
-				});
-				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-				};
-			} catch (error: any) {
-				return mcpConvexError(error);
-			}
 		},
 	);
 

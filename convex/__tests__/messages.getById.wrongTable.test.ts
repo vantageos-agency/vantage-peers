@@ -57,6 +57,14 @@ const decodePayload = (caught: unknown): WrongTablePayload => {
 describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 	test("a messageReceipts-table ID yields an actionable ConvexError naming messageId", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "sigma",
+				name: "sigma",
+				static: { role: "sigma", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		await t.mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "sigma",
@@ -121,6 +129,14 @@ describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 
 	test("positive control: a real messageId still returns the document", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "sigma",
+				name: "sigma",
+				static: { role: "sigma", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "sigma",
@@ -133,6 +149,14 @@ describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 
 	test("contract preserved: a valid messages ID that no longer exists returns null, does NOT throw", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "sigma",
+				name: "sigma",
+				static: { role: "sigma", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "sigma",

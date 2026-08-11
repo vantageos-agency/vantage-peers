@@ -87,7 +87,7 @@ describe("missions.get — orgId returns-validator regression", () => {
 
 		// Before the fix this call triggered a 500: orgId was in the stored doc
 		// but absent from the returns validator → Convex rejects the response.
-		const result = await t.query(api.missions.get, { missionId: missionId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId: missionId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.name).toBe("Mission with orgId");
@@ -103,7 +103,7 @@ describe("missions.get — orgId returns-validator regression", () => {
 			missionId = await seedMissionWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.missions.get, { missionId: missionId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId: missionId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.name).toBe("Mission without orgId");
@@ -127,7 +127,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 			priority: "urgent",
 		});
 
-		const result = await t.query(api.missions.get, { missionId: missionId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId: missionId as any });
 		expect(result?.priority).toBe("urgent");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
@@ -145,7 +145,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 			priority: "low",
 		});
 
-		const result = await t.query(api.missions.get, { missionId: missionId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId: missionId as any });
 		expect(result?.priority).toBe("low");
 		expect((result as any).orgId).toBeUndefined();
 	});
@@ -163,7 +163,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 			status: "validate",
 		});
 
-		const result = await t.query(api.missions.get, { missionId: missionId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId: missionId as any });
 		expect(result?.status).toBe("validate");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
@@ -179,7 +179,7 @@ describe("missions.list — regression guard (no returns validator — smoke)", 
 			await seedMissionWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.missions.list, { fields: "lite", limit: 10 });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, { fields: "lite", limit: 10 });
 
 		expect(Array.isArray(result)).toBe(true);
 		const items = result as Array<Record<string, unknown>>;

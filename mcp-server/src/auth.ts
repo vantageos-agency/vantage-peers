@@ -52,6 +52,18 @@ export type OAuthContext = {
 	expiresAt: number;
 	/** True when this request came in on the master bearer token (admin path). */
 	isMaster: boolean;
+	/**
+	 * The raw, already-verified Clerk session JWT presented by the caller —
+	 * set ONLY on the Clerk-team path (2.5, tryVerifyClerkJwt succeeded).
+	 * server-http.ts forwards this exact token to Convex via
+	 * ConvexHttpClient.setAuth() so `ctx.auth.getUserIdentity()` resolves to
+	 * THIS caller's own org, never the MCP server's service-account identity.
+	 * Every other path (master / OAuth / DCR / legacy) leaves this undefined
+	 * and gets the service-account (master) Convex identity instead — see
+	 * server-http.ts's per-request client selection and the P0 fix note
+	 * there for why that is fail-closed-safe.
+	 */
+	clerkJwt?: string;
 };
 
 declare module "hono" {
@@ -491,6 +503,11 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				namespaceWritePrefixes: [`team/${orgId}`],
 				expiresAt: clerkResult.exp * 1000,
 				isMaster: false,
+				// Forward the caller's own verified Clerk JWT to Convex — see
+				// OAuthContext.clerkJwt doc comment. This is the P0 fix: without
+				// this, server-http.ts had no way to attach any identity to the
+				// per-request Convex client for this path.
+				clerkJwt: token,
 			});
 			await next();
 			return;

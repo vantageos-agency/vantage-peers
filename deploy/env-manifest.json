@@ -1,0 +1,46 @@
+{
+	"vantage-peers": {
+		"convex": {
+			"dev": {
+				"deployment": "efficient-guineapig-356",
+				"deployKeyEnvVar": "CONVEX_DEPLOY_KEY_DEV_VP",
+				"required": [
+					"CLERK_JWT_ISSUER_DOMAIN",
+					"CLERK_SERVICE_ACCOUNT_USER_ID",
+					"CLERK_SECRET_KEY",
+					"AI_GATEWAY_API_KEY"
+				]
+			},
+			"prod": {
+				"deployment": "compassionate-goldfinch-737",
+				"deployKeyEnvVar": "CONVEX_DEPLOY_KEY",
+				"required": [
+					"CLERK_JWT_ISSUER_DOMAIN",
+					"CLERK_SERVICE_ACCOUNT_USER_ID",
+					"CLERK_SECRET_KEY",
+					"BEARER_SECRET_MASTER",
+					"AI_GATEWAY_API_KEY"
+				]
+			}
+		},
+		"railway": {
+			"prod": {
+				"service": "vantage-peers-production",
+				"required": ["CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID"],
+				"optional": ["CLERK_DOMAIN", "CLERK_JWT_TEMPLATE"],
+				"autoDeployFromMain": true
+			}
+		},
+		"localCredsMap": {
+			"clerk-secret-key": "CLERK_SECRET_KEY_VANTAGE_PEERS",
+			"clerk-service-account-user-id": "CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS",
+			"convex-prod-deploy-key": "CONVEX_DEPLOY_KEY",
+			"convex-dev-deploy-key": "CONVEX_DEPLOY_KEY_DEV_VP"
+		},
+		"notes": {
+			"clerk-issuer-domain": "canonical name = CLERK_JWT_ISSUER_DOMAIN on BOTH convex deployments; prod also historically carried the same value under the legacy name CLERK_ISSUER_URL (unused by auth.config.ts).",
+			"convex-prod-deploy-key": "BARE name CONVEX_DEPLOY_KEY (NOT suffixed).",
+			"auto-deploy-asymmetry": "Railway MCP auto-deploys from main on merge; Convex functions require a manual token-gated `npx convex deploy`."
+		}
+	}
+}

@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
@@ -48,6 +48,14 @@ export const sendMessage = mutation({
 
 		// Resolve recipients — channel can be a role or instanceId
 		// If channel contains "-" (e.g. "pi-vps"), treat as instance-level
+		//
+		// Bounce contract (task k17dr97dwpe07n9zfgzzypkfm18bv6ws): a channel that
+		// resolves to ZERO real recipients — unknown role, non-existent instance,
+		// reserved non-target word, empty string, or an unknown comma-list part
+		// — is refused with an actionable ConvexError instead of silently
+		// succeeding with no receipts written. The recipient set is DERIVED from
+		// the org (the `profiles` table), never a hardcoded denylist — mirrors
+		// the broadcast branch below.
 		let recipients: string[];
 		if (args.channel === "broadcast") {
 			// Dynamic: get all registered orchestrators from profiles
@@ -55,12 +63,122 @@ export const sendMessage = mutation({
 			const orchestratorIds = [
 				...new Set(profiles.map((p) => p.orchestratorId)),
 			];
-			recipients = orchestratorIds.filter((o) => o !== args.from);
+
+			// Cross-tenant leak fix (mission fix-broadcast-org-scoped-v1, T1):
+			// bound the broadcast fan-out to the EMITTER's own tenant, derived
+			// from withOrgScope(ctx) — never from the client-supplied
+			// args.tenantId (unauthenticated/self-declared, see T0 audit
+			// analysis/broadcast-org-scope-audit-t0-day157.md). Resolved
+			// FAIL-CLOSED (no allowNoIdentityMaster) — consistent with the
+			// Day-156 SEC-AUDIT doctrine. The MCP server forwards its
+			// service-account identity, which resolves to master via the
+			// CLERK_SERVICE_ACCOUNT_USER_ID carve-out (lib/auth.ts:111-121),
+			// so legitimate internal broadcasts still resolve to master. An
+			// anonymous/no-identity caller resolves to isMaster=false with an
+			// empty allowedOrchestrators, so it falls into the client branch
+			// below and yields zero recipients — the existing zero-recipient
+			// bounce fires (no fail-open path to the internal fleet).
+			const scope = await withOrgScope(ctx);
+
+			// convex-reviewer CRITICAL (mission fix-broadcast-org-scoped-v1, T1
+			// REVISE): scope.isMaster is OVERLOADED — it is also true for a
+			// CLIENT org whose client_org_mapping row carries the ["*"] read
+			// sentinel (lib/auth.ts:182: isMaster =
+			// allowedOrchestrators.includes("*")). Gating the fleet-wide
+			// master branch on isMaster alone would let a client
+			// (mis)configured with ["*"] fan out to the entire internal
+			// fleet + other tenants. The true internal master (service
+			// account / Laurent, lib/auth.ts:77-89 and :123-135) is the ONLY
+			// case with orgSlug === null — a client's isMaster=true always
+			// carries a set orgSlug (lib/auth.ts:177-183). So the
+			// fleet-wide branch is gated on BOTH isMaster AND orgSlug===null;
+			// this discriminant is applied locally here, not in lib/auth.ts
+			// (shared type, out of scope for this fix).
+			if (scope.isMaster && scope.orgSlug === null) {
+				// True internal/master emitter: exclude every orchestrator bound
+				// to any client tenant — active OR inactive — so an internal
+				// broadcast never reaches a client orchestrator, the exact leak
+				// reported in the T0 audit. Inactive mappings are included in
+				// the exclusion set deliberately: an inactive client_org_mapping
+				// row still identifies that orchestratorId as CLIENT-bound, not
+				// internal — dropping the isActive filter here would let a
+				// merely-disabled client's orchestrator silently rejoin the
+				// internal broadcast pool, which is itself a leak class. This
+				// is independent of whether that inactive org could ever
+				// authenticate (it can't — withOrgScope throws Forbidden on
+				// inactive orgs); the exclusion is about the identity of the
+				// orchestratorId, not the org's ability to log in.
+				const mappings = await ctx.db.query("client_org_mapping").collect();
+				const clientBound = new Set<string>();
+				for (const mapping of mappings) {
+					for (const orchestratorId of mapping.allowedOrchestrators) {
+						if (orchestratorId !== "*") clientBound.add(orchestratorId);
+					}
+				}
+				recipients = orchestratorIds.filter(
+					(o) => o !== args.from && !clientBound.has(o),
+				);
+			} else {
+				// Client-scoped emitter (including a client-org isMaster=true
+				// with orgSlug set — the ["*"] read-sentinel case): recipients
+				// bounded to this org's own allowedOrchestrators — never
+				// another tenant, never the internal fleet. A ["*"]
+				// allowedOrchestrators list never matches a real
+				// orchestratorId (the literal string "*" is not a
+				// registered orchestrator), so this yields zero recipients
+				// and the bounce below fires — fail-closed, not a leak.
+				const allowed = new Set(scope.allowedOrchestrators);
+				recipients = orchestratorIds.filter(
+					(o) => o !== args.from && allowed.has(o),
+				);
+			}
+
+			// Zero-recipient bounce contract (task k17dr97dwpe07n9zfgzzypkfm18bv6ws)
+			// extends to the tenant-scoped broadcast: an anonymous/no-identity
+			// caller resolves to isMaster=false with allowedOrchestrators=[],
+			// so it would otherwise silently "succeed" with zero receipts
+			// written. Fail-closed here means an explicit refusal, never a
+			// fall-through to the internal fleet.
+			if (recipients.length === 0) {
+				throw new ConvexError(
+					`recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur.`,
+				);
+			}
 		} else {
-			recipients = args.channel
+			const profiles = await ctx.db.query("profiles").collect();
+			const knownRoles = new Set(profiles.map((p) => p.orchestratorId));
+			const knownInstances = new Set(
+				profiles
+					.map((p) => p.instanceId)
+					.filter((id): id is string => id !== undefined),
+			);
+
+			const rawParts = args.channel
 				.split(",")
 				.map((s) => s.trim())
-				.filter((s) => s.length > 0 && s !== args.from);
+				.filter((s) => s.length > 0);
+
+			const bounce = () => {
+				throw new ConvexError(
+					`recipient error / message non livré : "${args.channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`,
+				);
+			};
+
+			if (rawParts.length === 0) {
+				bounce();
+			}
+			for (const part of rawParts) {
+				if (part === args.from) continue; // sender excluding itself never needs to resolve
+				const isKnown = knownRoles.has(part) || knownInstances.has(part);
+				if (!isKnown) {
+					bounce();
+				}
+			}
+
+			recipients = rawParts.filter((s) => s !== args.from);
+			if (recipients.length === 0) {
+				bounce();
+			}
 		}
 
 		for (const recipient of recipients) {
@@ -410,6 +528,14 @@ export const markAsRead = mutation({
 		// client (issue #1064) — only an explicitly-thrown ConvexError's .data
 		// payload survives the wire.
 		receiptIds: v.array(v.string()),
+		// k179nrp3apj700pm0h1ckewm2h8b3nz7 — ownership gate. When provided, every
+		// resolved receipt MUST belong to this recipient or the whole call is
+		// rejected (RBAC_DENIED). Optional only to stay behavior-preserving for
+		// legacy/system callers that predate the MCP-layer guard (mirrors the
+		// deleteMessage callerOrchestrator pattern above); the MCP tool now
+		// ALWAYS passes it (tools.ts mark_as_read), closing the cross-owner hole
+		// where any caller could mark another orchestrator's mail read.
+		callerOrchestrator: v.optional(creatorValidator),
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
@@ -427,7 +553,16 @@ export const markAsRead = mutation({
 		let count = 0;
 		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
-			if (receipt !== null && receipt.readAt === undefined) {
+			if (receipt === null) continue;
+			if (
+				args.callerOrchestrator !== undefined &&
+				receipt.recipient !== args.callerOrchestrator
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: ${args.callerOrchestrator} is not the recipient of receipt ${receiptId} — mark_as_read denied`,
+				);
+			}
+			if (receipt.readAt === undefined) {
 				await ctx.db.patch(receiptId, { readAt: now });
 				count++;
 			}
@@ -519,7 +654,7 @@ export const listMessages = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.list.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -690,7 +825,7 @@ export const listByChannel = query({
 	),
 	handler: async (ctx, { channel, limit }) => {
 		const take = limit ?? 100;
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 
 		// Fail-closed channel scoping: messages carry no orgId/tenantId column
 		// (schema.ts), so channel-name proximity to the caller's own scope is the
@@ -776,7 +911,7 @@ export const searchMessagesByKeyword = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		requireScope(scope, "view-own-tasks");
 
 		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null

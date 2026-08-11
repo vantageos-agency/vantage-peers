@@ -186,6 +186,24 @@ def test_dev_key_with_explicit_prod_env_set_blocks():
     assert rc == 2, "an explicit --prod surface is never downgraded by a dev key"
 
 
+# --- DEV-DOOR MESSAGE REDIRECT (Laurent Day 156 friction fix) ---------------
+# Prod protection unchanged: a prod-tinted deploy with no Pi token still BLOCKS.
+# The block MESSAGE must now NAME the DEV door so the orchestrator stops
+# fighting the prod gauntlet and switches to the one-line dev command.
+
+def test_prod_block_message_names_dev_door():
+    rc, out = run_hook(f"CONVEX_DEPLOY_KEY={_PROD} npx convex deploy --yes")
+    assert rc == 2, "prod deploy without Pi token must still block"
+    assert "convex dev --once" in out, (
+        f"block message must name the DEV door, out={out}"
+    )
+
+
+def test_convex_dev_once_passes():
+    rc, _ = run_hook("npx convex dev --once")
+    assert rc == 0, "a bare `npx convex dev --once` is never blocked by this guard"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

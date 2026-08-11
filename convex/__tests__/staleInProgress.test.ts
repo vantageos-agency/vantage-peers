@@ -89,6 +89,14 @@ describe("staleInProgress — checkNewMessagesEnvelope (Day 130, the real path)"
 describe("checkNewMessages — frozen legacy contract (Day 130 regression guard)", () => {
 	test("checkNewMessages still returns a bare array, no staleInProgress wrapper", async () => {
 		const t = convexTest(schema, modules);
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "tau",
+				name: "tau",
+				static: { role: "tau", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		await t.mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",

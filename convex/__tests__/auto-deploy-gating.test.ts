@@ -71,6 +71,15 @@ async function seedRepoMapping(t: ReturnType<typeof makeTestConvex>) {
 			project: "vantage-memory",
 			active: true,
 		});
+		// The merged-PR notify path sends to "sigma" (the mapped orchestrator) via
+		// messages.sendMessage — real recipients are now derived from the
+		// `profiles` table (task k17dr97dwpe07n9zfgzzypkfm18bv6ws bounce fix).
+		await ctx.db.insert("profiles", {
+			orchestratorId: "sigma",
+			name: "sigma",
+			static: { role: "sigma", workspace: "test", capabilities: [] },
+			dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+		});
 	});
 }
 

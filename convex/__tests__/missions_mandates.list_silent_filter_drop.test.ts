@@ -49,7 +49,7 @@ describe("missions.list — project + pilot refused loudly (not silently resolve
 		});
 
 		await expect(
-			t.query(api.missions.list, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 				project: "fixture-project-real",
 				pilot: "test-pilot-tau",
 				limit: 5,
@@ -75,7 +75,7 @@ describe("missions.list — project + pilot refused loudly (not silently resolve
 			});
 		});
 
-		const result = await t.query(api.missions.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.list, {
 			project: "fixture-project-real",
 			limit: 5,
 		});
@@ -101,7 +101,7 @@ describe("mandates.list — requestedBy + fulfilledBy refused loudly (not silent
 		});
 
 		await expect(
-			t.query(api.mandates.list, {
+			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mandates.list, {
 				requestedBy: "test-orch-tau",
 				fulfilledBy: "test-orch-eta",
 				limit: 5,
@@ -125,7 +125,7 @@ describe("mandates.list — requestedBy + fulfilledBy refused loudly (not silent
 			});
 		});
 
-		const result = await t.query(api.mandates.list, {
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mandates.list, {
 			requestedBy: "test-orch-tau",
 			limit: 5,
 		});

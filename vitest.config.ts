@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 /**
  * Root vitest config for the vantage-memory monorepo.
@@ -19,6 +19,13 @@ export default defineConfig({
 	test: {
 		globals: false,
 		environment: "node",
+		// resources/ vendors separate repos (e.g. vantage-peers-dashboard, a
+		// standalone UI project) whose *.test.* files reference paths that do
+		// not exist in this tree and pollute every unscoped `vitest run` with
+		// spurious reds. They are NOT part of this backend monorepo's suite
+		// (Laurent Day 155: "exclure resources/ de la config vitest"). Extraction
+		// of the vendored dashboard to its own repo remains the real fix.
+		exclude: [...configDefaults.exclude, "resources/**"],
 		env: {
 			VP_TEST_MODE: "1",
 			BEARER_SECRET_MASTER: "test-master-token",

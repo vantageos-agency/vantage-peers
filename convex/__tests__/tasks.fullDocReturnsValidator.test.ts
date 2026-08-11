@@ -87,7 +87,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 		// This call triggered a 500 before the fix because orgId was in the doc
 		// but absent from the returns validator.
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task with orgId");
@@ -103,7 +103,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 			taskId = await seedTaskWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task without orgId");
@@ -119,7 +119,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 			taskId = await seedTaskWithOrgId(ctx);
 		});
 
-		const result = await t.query(api.tasks.getById, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.getById, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task with orgId");
@@ -134,7 +134,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 			taskId = await seedTaskWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.tasks.getById, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.getById, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task without orgId");
@@ -160,7 +160,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 		});
 
 		// get should return the completed doc (with orgId still present)
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("done");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
@@ -179,7 +179,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 			completionNote: "Done — PR #888 merged SHA deadbeef123456 evidence token",
 		});
 
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("done");
 		expect((result as any).orgId).toBeUndefined();
 	});
@@ -198,7 +198,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 			status: "in_progress",
 		});
 
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("in_progress");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
@@ -217,7 +217,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 			status: "in_progress",
 		});
 
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("in_progress");
 		expect((result as any).orgId).toBeUndefined();
 	});
@@ -233,7 +233,7 @@ describe("tasks.list — regression guard (summary projection unchanged)", () =>
 			await seedTaskWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.tasks.list, { fields: "lite", limit: 10 });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, { fields: "lite", limit: 10 });
 
 		expect(Array.isArray(result)).toBe(true);
 		const items = result as Array<Record<string, unknown>>;
@@ -330,7 +330,7 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 		});
 
 		// tasks.get must return the full doc without returns-validator 500
-		const result = await t.query(api.tasks.get, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Full optional fields task");
@@ -381,7 +381,7 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 		});
 
 		// tasks.getById must return the full doc including all optional fields
-		const result = await t.query(api.tasks.getById, { taskId: taskId as any });
+		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.getById, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Full optional fields via getById");

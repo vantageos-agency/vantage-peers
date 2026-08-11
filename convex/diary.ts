@@ -132,7 +132,7 @@ export const list = query({
 		// applied here inline since diary rows expose `orchestrator` rather than
 		// `pilot`/`assignedTo`. No org-specific literal is hardcoded: the allow
 		// list comes entirely from the caller's resolved OrgScope.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster && args.orchestrator !== undefined) {
 			if (!scope.allowedOrchestrators.includes(args.orchestrator)) {
 				return [];

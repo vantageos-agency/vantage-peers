@@ -355,6 +355,14 @@ describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exem
 describe("messages.deleteMessage — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot delete A's message by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: TENANT_B,
+				name: TENANT_B,
+				static: { role: TENANT_B, workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: TENANT_A,
 			channel: TENANT_B,
@@ -370,6 +378,14 @@ describe("messages.deleteMessage — omitting callerOrchestrator is refused, not
 
 	test("second assertion — sender A still deletes its own message", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: TENANT_B,
+				name: TENANT_B,
+				static: { role: TENANT_B, workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 		const messageId = await t.mutation(api.messages.sendMessage, {
 			from: TENANT_A,
 			channel: TENANT_B,

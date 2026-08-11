@@ -107,7 +107,7 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 			severity: "minor",
 		});
 
-		const row = await t.query(api.memories.getMemory, { memoryId });
+		const row = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
 		expect(row).not.toBeNull();
 		expect(row?._id).toBe(memoryId);
 		expect(row?.type).toBe("episode");
@@ -134,7 +134,7 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 			return tmp;
 		});
 
-		const row = await t.query(api.memories.getMemory, { memoryId: id });
+		const row = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId: id });
 		expect(row).toBeNull();
 	});
 });

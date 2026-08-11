@@ -158,7 +158,7 @@ export const getMemory = query({
     );
     const doc = await ctx.db.get(memoryId);
     if (doc === null) return null;
-    const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+    const scope = await withOrgScope(ctx);
     if (!isNamespaceAllowedForScope(scope, doc.namespace)) return null;
     return doc;
   },
@@ -223,7 +223,7 @@ export const listMemories = query({
   },
   returns: listMemoriesResultValidator,
   handler: async (ctx, args) => {
-    const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+    const scope = await withOrgScope(ctx);
     if (!isNamespaceAllowedForScope(scope, args.namespace)) {
       return { value: [], continueCursor: null, isDone: true };
     }

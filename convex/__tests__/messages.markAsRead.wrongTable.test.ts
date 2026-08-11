@@ -84,6 +84,14 @@ describe("decodePayload — both runtime shapes of ConvexError.data", () => {
 describe("markAsRead — wrong-table ID (issue #1064)", () => {
 	test("rejects a messages-table ID at position [1] with an actionable ConvexError payload", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "tau",
+				name: "tau",
+				static: { role: "tau", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 
 		// Real messageReceipts._id at position [0] — must NOT be the thing that
 		// triggers the rejection; the bad element is at [1].
@@ -137,6 +145,14 @@ describe("markAsRead — wrong-table ID (issue #1064)", () => {
 
 	test("positive control: a real messageReceipts id passes and returns the expected count", async () => {
 		const t = createT();
+		await t.run((ctx) =>
+			ctx.db.insert("profiles", {
+				orchestratorId: "pi",
+				name: "pi",
+				static: { role: "pi", workspace: "test", capabilities: [] },
+				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+			}),
+		);
 
 		await t.mutation(api.messages.sendMessage, {
 			from: "tau",
