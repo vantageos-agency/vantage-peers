@@ -12,6 +12,14 @@ VANTAGEPEERS = 2 PRODUITS DISTINCTS — NE JAMAIS MÉLANGER.
 
 ---
 
+## LANGUE — conversations FR, artefacts EN
+
+- **Conversations avec Laurent : en français.** Toujours répondre en français.
+- **Tous les artefacts : en anglais** — docs, README, runbooks, code + commentaires, messages de commit, corps de PR destinés à la réutilisation flotte.
+- Ne jamais basculer la conversation en anglais parce que l'artefact qu'on vient de produire est en anglais. (Day 158 — Laurent a signalé ce mélange.) Cf. mémoire `j57fpq5jy7602p3ww74x1641ed8c957m` + règle VR `communication-style`.
+
+---
+
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns.
