@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.17.0] — 2026-08-11
+
+### Removed
+- 14 duplicate alias tools removed (mission `vp-mcp-alias-cleanup-v1`, S2, merged in #1169), keeping the fleet-used survivor of each pair — decided by call-site usage, never the code's `DEPRECATED ALIAS` label. Registered tool count 123→109. Context-token saving 1347 (11.1%) of the tool-list surface. Full list + arbitration in the root `CHANGELOG.md` and `elpi-corp/.../S1-arbitrated-pairs-day159.md`.
+
 ## [Unreleased] — final refus-total sweep (8 tools) → remaining: 0
 
 ### Security
