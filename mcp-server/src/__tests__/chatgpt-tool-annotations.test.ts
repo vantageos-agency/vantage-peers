@@ -82,18 +82,18 @@ function buildMockConvex(): ConvexHttpClient {
 // Day 88 baseline: 34 readOnly + 41 write + 9 destructive = 84 tools.
 // Day 100 Phase 1+2b: +6 readOnly get_by_id tools (get_task, get_fix_pattern,
 //   get_mandate, get_repo_mapping, get_message, get_recurring_task).
-// B2 alias sweep + Day 92: +get_briefing_note, +whoami, +validate_task_payload,
-//   +check_mandate_spending (readOnly aliases); +delete_repo_mapping,
-//   +delete_deployment (destructive aliases).
-// Total at Day 100 B2: 44 readOnly + 11 destructive + 48 write = 103 tools.
+// Day 92: +get_briefing_note, +whoami, +validate_task_payload (readOnly).
+// Day 159 alias cleanup (mission vp-mcp-alias-cleanup-v1 S2): the 14 condemned
+//   duplicate aliases were removed, so the former alias entries in these sets
+//   (check_mandate_spending, search_memories_by_*, search_components_by_keyword,
+//   search_fix_patterns_by_semantic readOnly; delete_repo_mapping,
+//   delete_deployment destructive) are dropped — only their survivors remain.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const READ_ONLY_TOOLS = new Set([
 	"get_memory",
 	"recall",
 	"text_search",
-	"search_memories_by_keyword",
-	"search_memories_by_semantic",
 	"hybrid_search",
 	"get_profile",
 	"list_memories",
@@ -133,19 +133,15 @@ const READ_ONLY_TOOLS = new Set([
 	// Day 100 — Phase 2b get_by_id surface additions (same task; episodes dropped — uses get_memory)
 	"get_message",
 	"get_recurring_task",
-	// Day 92 + B2 alias sweep — read-only tools added after Day 88
+	// Day 92 read-only tools added after Day 88
 	"get_briefing_note",
 	"whoami",
 	"validate_task_payload",
-	"check_mandate_spending",
 	// Day 102 — CRUD baseline PR-B episode 5-op surface (mission k575kc1r)
 	"get_episode",
 	"list_episodes",
 	"search_episodes_by_keyword",
 	"search_episodes_by_semantic",
-	// Day 102 — CRUD baseline PR-C rename-only safe subset (mission k575kc1r)
-	"search_components_by_keyword",
-	"search_fix_patterns_by_semantic",
 	// Day 102 — CRUD baseline PR-C-bis option B 3-entity searchIndex (mission k575kc1r)
 	"search_tasks_by_keyword",
 	"search_messages_by_keyword",
@@ -175,9 +171,6 @@ const DESTRUCTIVE_TOOLS = new Set([
 	"delete_bu",
 	"remove_repo_mapping",
 	"remove_deployment",
-	// B2 alias sweep — destructive aliases added after Day 88
-	"delete_repo_mapping",
-	"delete_deployment",
 ]);
 
 describe("ChatGPT Apps SDK tool annotations (Day 88)", () => {
@@ -264,7 +257,7 @@ describe("ChatGPT Apps SDK tool annotations (Day 88)", () => {
 			}
 		}
 		expect(mismatches, mismatches.join("\n")).toEqual([]);
-		// Day 88 baseline: 9. B2 alias sweep adds delete_repo_mapping + delete_deployment.
+		// Day 88 baseline: 9 destructive survivors (day159 removed the 2 alias twins).
 		expect(DESTRUCTIVE_TOOLS.size).toBeGreaterThanOrEqual(9);
 	});
 

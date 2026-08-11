@@ -569,7 +569,7 @@ it("update_component rejects non-master token without scope gate", async () => {
 | 13 | `add_deployment` | Deployment | No auth check — any token can register a deployment |
 | 14 | `remove_deployment` | Deployment | No auth check — any token can deactivate monitoring |
 
-> Tool names above reflect current prod names. After §1 naming migration: `add_repo_mapping→register_repo_mapping`, `remove_repo_mapping→delete_repo_mapping`, `validate_fix→check_fix`, `add_deployment→register_deployment`, `remove_deployment→delete_deployment`.
+> Tool names above reflect the surviving canonical names. NOTE (day159, mission vp-mcp-alias-cleanup-v1 S2): the earlier §1 rename plan (`add_repo_mapping→register_repo_mapping`, `remove_repo_mapping→delete_repo_mapping`, `validate_fix→check_fix`, `add_deployment→register_deployment`, `remove_deployment→delete_deployment`) was **reversed by fleet-usage arbitration** — the `add_*`/`remove_*`/`validate_*` names are the fleet-used survivors and the `register_*`/`delete_*`/`check_*` twins were deleted. The `server.tool(...)` snippet above is an illustrative auth-check example only, not a naming directive.
 
 **Eta-endorsed C0 sub-batch structure (6 PRs, ordered by domain):**
 

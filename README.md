@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm weekly downloads](https://img.shields.io/npm/dw/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
-[![MCP tools: 116](https://img.shields.io/badge/MCP_tools-116_registered-green)]()
+[![MCP tools: 109](https://img.shields.io/badge/MCP_tools-109_registered-green)]()
 
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
@@ -18,7 +18,7 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## TL;DR
 
-Multi-agent Claude Code crews share one persistent brain via 116 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
+Multi-agent Claude Code crews share one persistent brain via 109 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
 
 ## Deploy on Railway (1-click)
 
@@ -53,7 +53,7 @@ flowchart LR
     A1[Claude Code agent A] -->|stdio| MCP
     A2[Claude Code agent B] -->|stdio| MCP
     A3[Cursor / Codex / etc.] -->|stdio| MCP
-    MCP[vantage-peers-mcp<br/>116 MCP tools] -->|HTTPS| Convex
+    MCP[vantage-peers-mcp<br/>109 MCP tools] -->|HTTPS| Convex
     Convex[(Convex Cloud<br/>real-time DB<br/>vector search)]
     Convex -.shared by all agents.-> A1
     Convex -.shared by all agents.-> A2
@@ -210,7 +210,7 @@ Top 5 capabilities, in order of impact:
 1. **Semantic memory + recall** — store typed facts; retrieve by meaning via 1536-dim vector search (`text-embedding-3-small`). Hybrid search (vector + BM25 + RRF fusion) available.
 2. **Inter-agent messaging** — real-time channel/DM/broadcast routing with per-recipient read receipts. Multi-instance aware (route to a role or a specific instance).
 3. **Task + mission orchestration** — typed task lifecycle with dependencies, atomic `checkout_task` for multi-instance conflict safety, missions for multi-step workflows (configurable templates: IRP, repo-fix, new-feature).
-4. **Fix-pattern KB** — every validated bug fix becomes a searchable pattern (symptom → root cause → fix). `search_fix_patterns_by_semantic` BEFORE debugging cuts repeat-mistake rate.
+4. **Fix-pattern KB** — every validated bug fix becomes a searchable pattern (symptom → root cause → fix). `search_fix_patterns` BEFORE debugging cuts repeat-mistake rate.
 5. **Proactive error monitoring** — hourly cron polls Convex deployments for new errors, dedups, auto-files GitHub issues. MTTR dropped from 4-day median to 28 minutes on the VantageOS fleet.
 
 <details>
@@ -322,7 +322,7 @@ VantagePeers is a standard MCP server — works with any client supporting the M
 
 See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for copy-paste config snippets per tool.
 
-## MCP Tools Reference (116 tools)
+## MCP Tools Reference (109 tools)
 
 <details>
 <summary><b>Memory + Episodes (14 tools)</b></summary>
@@ -333,10 +333,8 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `get_memory` | Retrieve a single memory entry by ID |
 | `list_memories` | List memories by namespace with optional type filter |
 | `soft_delete_memory` | Soft-delete a memory entry by ID |
-| `search_memories_by_semantic` | Semantic vector search over memories, filtered by namespace/type |
-| `recall` | Alias of `search_memories_by_semantic` |
-| `search_memories_by_keyword` | BM25 full-text keyword search over memories |
-| `text_search` | Alias of `search_memories_by_keyword` |
+| `recall` | Semantic vector search over memories, filtered by namespace/type |
+| `text_search` | BM25 full-text keyword search over memories |
 | `hybrid_search` | Combined vector + BM25 search via RRF fusion |
 | `store_episode` | Store a structured episodic memory (context, goal, action, outcome, insight) |
 | `get_episode` | Fetch a single episode by memory document ID |
@@ -355,7 +353,6 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `update_profile` | Create or update an orchestrator profile |
 | `list_peers` | List all registered agent instances and their current summaries |
 | `set_summary` | Set a status summary visible to other agents via `list_peers` |
-| `update_summary` | Alias of `set_summary` |
 | `whoami` | Returns the orchestrator identity baked into the current bearer's scope context |
 
 </details>
@@ -393,7 +390,6 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `delete_task` | Delete a task by ID (blocked in prod — **cancel** an erroneous task via `status="cancelled"` instead) |
 | `block_task` | Mark a task as blocked with optional reason |
 | `add_task_dependency` | Add dependency tasks that must complete first |
-| `create_task_dependency` | Alias of `add_task_dependency` |
 
 </details>
 
@@ -421,7 +417,6 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | Tool | Description |
 |------|-------------|
 | `write_diary` | Write a daily diary entry for an agent instance |
-| `create_diary` | Alias of `write_diary` |
 | `get_diary` | Retrieve a diary entry by orchestrator and date |
 | `list_diaries` | List diary entries with date range and orchestrator filters |
 | `create_briefing_note` | Create a briefing note with topic, participants, decisions |
@@ -433,9 +428,9 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 </details>
 
 <details>
-<summary><b>Components (7 tools)</b></summary>
+<summary><b>Components (6 tools)</b></summary>
 
-**Components (7):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components_by_keyword`, `search_components` (alias)
+**Components (6):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components`
 
 </details>
 
@@ -447,9 +442,9 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 </details>
 
 <details>
-<summary><b>Mandates (8 tools)</b></summary>
+<summary><b>Mandates (7 tools)</b></summary>
 
-**Mandates (8):** `create_mandate`, `accept_mandate`, `update_mandate`, `settle_mandate`, `validate_mandate_spending`, `check_mandate_spending` (alias), `list_mandates`, `get_mandate`
+**Mandates (7):** `create_mandate`, `accept_mandate`, `update_mandate`, `settle_mandate`, `validate_mandate_spending`, `list_mandates`, `get_mandate`
 
 </details>
 
@@ -461,18 +456,18 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 </details>
 
 <details>
-<summary><b>GitHub Issues + Repo Mappings (13 tools)</b></summary>
+<summary><b>GitHub Issues + Repo Mappings (11 tools)</b></summary>
 
 **Issues (7):** `list_issues`, `get_issue`, `update_issue_status`, `link_commit_to_issue`, `verify_issue`, `issue_stats`, `link_issue_to_pattern`
 
-**Repo mappings (6):** `add_repo_mapping`, `register_repo_mapping` (alias), `list_repo_mappings`, `remove_repo_mapping`, `delete_repo_mapping` (alias), `get_repo_mapping`
+**Repo mappings (4):** `add_repo_mapping`, `list_repo_mappings`, `remove_repo_mapping`, `get_repo_mapping`
 
 </details>
 
 <details>
-<summary><b>Fix Patterns (9 tools)</b></summary>
+<summary><b>Fix Patterns (7 tools)</b></summary>
 
-**Fix patterns (9):** `create_fix_pattern`, `get_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `create_fix_attempt` (alias), `validate_fix`, `check_fix` (alias), `search_fix_patterns_by_semantic`, `search_fix_patterns` (alias)
+**Fix patterns (7):** `create_fix_pattern`, `get_fix_pattern`, `list_fix_patterns`, `add_fix_attempt`, `validate_fix`, `search_fix_patterns`, `link_issue_to_pattern`
 
 </details>
 
@@ -484,9 +479,9 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 </details>
 
 <details>
-<summary><b>Deployments (4 tools)</b></summary>
+<summary><b>Deployments (2 tools)</b></summary>
 
-**Deployments (4):** `add_deployment`, `register_deployment` (alias), `remove_deployment`, `delete_deployment` (alias)
+**Deployments (2):** `add_deployment`, `remove_deployment`
 
 </details>
 
@@ -776,8 +771,8 @@ Memory types: `user` (facts about the user), `feedback` (behavioral corrections)
 
 Three search strategies via `@convex-dev/rag`:
 
-1. **Vector** — cosine similarity on 1536-dim embeddings (`text-embedding-3-small`). Used by `search_memories_by_semantic` (alias `recall`) and `search_fix_patterns_by_semantic` (alias `search_fix_patterns`).
-2. **Text** — BM25 full-text matching. Exposed via `search_memories_by_keyword` (alias `text_search`).
+1. **Vector** — cosine similarity on 1536-dim embeddings (`text-embedding-3-small`). Used by `recall` and `search_fix_patterns`.
+2. **Text** — BM25 full-text matching. Exposed via `text_search`.
 3. **Hybrid** — vector + text combined via Reciprocal Rank Fusion. Exposed via `hybrid_search`.
 
 Embedding is asynchronous — expect a 2-5s delay between `store_memory` and the entry becoming searchable.
@@ -789,7 +784,7 @@ A **role** (e.g., `pi`, `sigma`) is a logical identity. An **instance** (e.g., `
 ## Testing
 
 ```bash
-# MCP smoke tests — all 116 tools against a live Convex deployment
+# MCP smoke tests — all 109 tools against a live Convex deployment
 bun scripts/test-mcp.ts
 
 # Convex function unit tests
@@ -810,10 +805,10 @@ Drop this into any agent's `CLAUDE.md` to enable the memory protocol:
 
 You have access to VantagePeers via MCP tools.
 
-1. On session start: `search_memories_by_semantic` your namespace for relevant context.
+1. On session start: `recall` your namespace for relevant context.
 2. After every failure: `store_episode` with context/goal/action/outcome/insight.
-3. Before repeating a mistake: `search_memories_by_semantic` similar past episodes.
-4. Before fixing a bug: `search_fix_patterns_by_semantic` to check if it's been seen before.
+3. Before repeating a mistake: `recall` similar past episodes.
+4. Before fixing a bug: `search_fix_patterns` to check if it's been seen before.
 5. Store non-obvious learnings via `store_memory`.
 6. Use `orchestrator/[name]` for personal namespace, `global` for shared.
 ```
@@ -834,7 +829,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) — install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) — two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) — orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) — all 116 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) — all 109 MCP tools
 
 ## Contributing
 
