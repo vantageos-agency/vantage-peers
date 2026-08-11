@@ -35,13 +35,49 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const HERE = new URL(".", import.meta.url);
 const DUMP_SCRIPT = new URL("./support/dump-tool-names.mjs", HERE);
+// mcp-server package root (this file lives at mcp-server/test/)
+const PKG_ROOT = fileURLToPath(new URL("..", HERE));
+const DIST_ENTRY = join(PKG_ROOT, "dist", "server.js");
+
+// This test imports the BUILT bundle (dist/server.js) via a child-process
+// dump harness — it needs a real compiled server, not source, because the
+// registration-point interception loader stubs modules at import time.
+// A fresh clone / clean CI checkout has no dist/ yet, so build it once here
+// before any test runs. Guarded on existence so repeated local runs (with a
+// still-fresh dist/) stay fast.
+beforeAll(() => {
+	if (existsSync(DIST_ENTRY)) return;
+	const build = spawnSync("npm", ["run", "build"], {
+		cwd: PKG_ROOT,
+		encoding: "utf-8",
+		shell: process.platform === "win32",
+	});
+	if (build.status !== 0) {
+		throw new Error(
+			`tool-exposure.test.ts: "npm run build" failed (status ${build.status}) while ` +
+				`preparing dist/server.js for the fresh-clone test harness.\n--- stdout ---\n${build.stdout}\n--- stderr ---\n${build.stderr}`,
+		);
+	}
+	if (!existsSync(DIST_ENTRY)) {
+		throw new Error(
+			`tool-exposure.test.ts: "npm run build" reported success but ${DIST_ENTRY} is still missing.`,
+		);
+	}
+}, 120_000);
 
 // The core (exposed) names ARE the data file — read it, never duplicate it
 // in code. The arbitration (which tools are CORE) can grow without touching
