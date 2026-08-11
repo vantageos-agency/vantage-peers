@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [2.17.0] — 2026-08-11
+
+(vantage-peers-mcp package release: 14 duplicate alias tools removed — mission vp-mcp-alias-cleanup-v1)
 
 ### Removed
 - **chore(mcp): remove 14 duplicate alias tools, keeping the fleet-used survivor of each pair** (mission `vp-mcp-alias-cleanup-v1`, S2; arbitration `elpi-corp/analysis/vantagepeers/vp-restructuring/S1-arbitrated-pairs-day159.md`). The survivor of each pair was chosen by **fleet call-site usage, never the code's `DEPRECATED ALIAS` label** (which was inverted for the memory-search tools — the code labelled the fleet-primary `recall`/`text_search` as the aliases). Removed → survivor kept: `create_diary`→`write_diary`, `create_fix_attempt`→`add_fix_attempt`, `check_fix`→`validate_fix`, `check_mandate_spending`→`validate_mandate_spending`, `delete_repo_mapping`→`remove_repo_mapping`, `register_repo_mapping`→`add_repo_mapping`, `delete_deployment`→`remove_deployment`, `register_deployment`→`add_deployment`, `update_summary`→`set_summary`, `create_task_dependency`→`add_task_dependency`, `search_components_by_keyword`→`search_components`, `search_fix_patterns_by_semantic`→`search_fix_patterns`, `search_memories_by_semantic`→`recall`, `search_memories_by_keyword`→`text_search`. Context-token saving: **1347 tokens (11.1%)** of the tool-list surface. TDD strict RED→GREEN: `mcp-server/src/__tests__/alias-cleanup-day159.test.ts` asserts each survivor IS registered and each condemned is NOT — RED 14 fail against current code → GREEN 28/28. Registered tool count 123→109. `npm run build` (tsc) exit 0. Surviving tool descriptions/examples that cross-referenced a deleted twin were cleaned. Deletion trace retained in `elpi-corp/analysis/vantagepeers/vp-restructuring/vp-by-tool-day158.csv` (status `SUPPRIMÉ`).
