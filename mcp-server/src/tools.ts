@@ -16,6 +16,9 @@ import {
 	scopeFilterList,
 } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
 	checkFromAllowed,
@@ -1552,11 +1555,100 @@ export const validateTaskPayloadOutputSchema = z.object({
 // Main export: register all tools against a server + convex client pair
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool exposure filter — DATA-DRIVEN CORE allowlist (S8, mission
+// vp-mcp-alias-cleanup-v1). Only tool names listed in `core` inside
+// tool-exposure.json are registered/advertised to clients; every other tool
+// stays fully present in the code + DB, just not exposed. The list lives as
+// DATA, never a code constant — reverting = editing tool-exposure.json.
+// VP_TOOL_EXPOSURE_PATH overrides the path for tests only.
+//
+// Derived from analysis/vantagepeers/vp-restructuring/vp-by-tool-day158.csv
+// (outil column where T2_verdict == "CORE"), intersected with the
+// actually-registered tool-name set — see tool-exposure.json's own header.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function resolveToolExposurePath(): string {
+	if (process.env.VP_TOOL_EXPOSURE_PATH) {
+		return resolve(process.env.VP_TOOL_EXPOSURE_PATH);
+	}
+	// This module resolves at "<mcp-server>/src/tools.ts" when run from source
+	// (bun run server.ts) and at "<mcp-server>/dist/src/tools.js" when run from
+	// the tsc build (dist/server.js) — tool-exposure.json always lives at the
+	// mcp-server package root, one directory further up in the built case.
+	const here = dirname(fileURLToPath(import.meta.url));
+	const fromSource = resolve(here, "../tool-exposure.json");
+	const fromDist = resolve(here, "../../tool-exposure.json");
+	try {
+		readFileSync(fromSource, "utf-8");
+		return fromSource;
+	} catch {
+		return fromDist;
+	}
+}
+
+function loadCoreToolNames(): string[] {
+	const path = resolveToolExposurePath();
+
+	let raw: string;
+	try {
+		raw = readFileSync(path, "utf-8");
+	} catch (err) {
+		throw new Error(
+			`tool-exposure: failed to read ${path}: ${(err as Error).message}`,
+		);
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (err) {
+		throw new Error(
+			`tool-exposure: invalid JSON in ${path}: ${(err as Error).message}`,
+		);
+	}
+
+	const core = (parsed as { core?: unknown })?.core;
+	if (!Array.isArray(core) || !core.every((n) => typeof n === "string")) {
+		throw new Error(`tool-exposure: "core" must be an array of strings in ${path}`);
+	}
+	return core;
+}
+
 export function registerTools(
 	server: McpServer,
 	convex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
 ): void {
+	// Intercept EVERY server.tool(...) call made below (directly or through
+	// defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
+	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive
+	// this same `server` instance) so only CORE names are actually advertised.
+	//
+	// The registration itself always goes through — the tool stays fully
+	// present in the code + handler wiring (masking ≠ deletion; a non-CORE
+	// tool's handler is still reachable in-process, e.g. by existing unit
+	// tests that capture registrations against a stub McpServer). What is
+	// masked is client-facing ADVERTISEMENT: a non-CORE tool is immediately
+	// `.disable()`d on its returned RegisteredTool, which is the MCP SDK's own
+	// mechanism for keeping a tool out of `tools/list` (server/mcp.js filters
+	// `tool.enabled` when building that list) while refusing `tools/call` on
+	// it with an explicit "Tool <name> disabled" error — never a silent
+	// unregistration.
+	const coreToolNames = new Set(loadCoreToolNames());
+	const allRegisteredNames = new Set<string>();
+	const realTool = server.tool.bind(server);
+	// biome-ignore lint/suspicious/noExplicitAny: narrowing the overloaded McpServer#tool signature for interception.
+	(server as any).tool = (name: string, ...rest: unknown[]) => {
+		allRegisteredNames.add(name);
+		// @ts-expect-error — forwarding to the real overloaded signature.
+		const registered = realTool(name, ...rest);
+		if (!coreToolNames.has(name) && registered && typeof registered.disable === "function") {
+			registered.disable();
+		}
+		return registered;
+	};
+
 	// ── scope guards (no-op when oauthCtx is undefined — legacy bearer path) ────
 	const guardFrom = (from: string) => {
 		const err = checkFromAllowed(oauthCtx, from);
@@ -9581,4 +9673,13 @@ export function registerTools(
 			}
 		},
 	);
+
+	const missingCoreNames = [...coreToolNames].filter(
+		(name) => !allRegisteredNames.has(name),
+	);
+	if (missingCoreNames.length > 0) {
+		throw new Error(
+			`tool-exposure: core name(s) not found among registered tools: ${missingCoreNames.join(", ")}`,
+		);
+	}
 }
