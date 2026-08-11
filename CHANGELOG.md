@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased] — hooks: approval survives invariant head-hash change + version-control .claude/hooks
+
+### Fixed
+- **A review approval survives a head-hash change when the reviewed content did not move (k179q540).** `enforce-eta-approval-before-npm-publish.py` now carries an Eta approval forward on a SHA mismatch when the reviewed content is invariant, handling both cases distinctly: single-commit (squash) merge → whole-tree identity; rebase onto an advanced main → file-by-file on the touched files only (derived from git via `merge-base` + `diff --name-only`, never typed). Refuses and names the changed file otherwise. Closes the class where a whole review cycle was paid for a zero-content head-hash change (six occurrences across two repos in one morning). 3-case RED→GREEN TDD.
+
+### Changed
+- **`.claude/hooks/` is now version-controlled** (removed from `.gitignore`; all 44 hooks tracked). Guards were previously on-disk + VR-catalog only, never auditable in-repo.
+
 ## [2.18.0] — 2026-08-11
 
 (vantage-peers-mcp package release: S8 CORE tool-exposure filter — mission vp-mcp-alias-cleanup-v1)
