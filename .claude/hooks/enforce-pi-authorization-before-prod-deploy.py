@@ -564,6 +564,9 @@ def run_hook(command: str) -> int:
         print(
             "BLOCKED: Convex prod deploy without Pi-signed authorization.\n"
             "\n"
+            "Pour DEV : utilise `npx convex dev --once` (aucun garde prod ne s'applique). "
+            "Le jeton Pi / la preuve QA ne sont requis QUE pour la PROD.\n"
+            "\n"
             "Day 82 standing rule (Laurent, mission k57a32vgtyy9x2gjqe456n6hhs87er7v):\n"
             "  Pi = fleet authority for prod deploys. System autonomous, not Laurent-dependent.\n"
             "\n"
