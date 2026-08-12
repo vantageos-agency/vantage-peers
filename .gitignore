@@ -10,10 +10,9 @@ package-lock.json
 convex/_generated/
 apps/
 
-# Claude Code — never commit settings, hooks, or local state
+# Claude Code — never commit settings or local state (hooks ARE version-controlled)
 .claude/settings.json
 .claude/settings.local.json
-.claude/hooks/
 .claude/agents/
 .claude/agent-memory/
 .claude/references/
