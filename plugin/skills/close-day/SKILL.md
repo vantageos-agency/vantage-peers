@@ -7,16 +7,16 @@ description: >
   "bonne nuit", "wrap up", "call it a day", "close session", "daily close",
   or mentions ending their work session -- even if they don't say "close-day" explicitly.
 metadata:
-  version: "2.0.0"
+  version: "2.2.0"
   user-invocable: true
 license: Proprietary
 ---
 
 You close the working day for one orchestrator. You run once at session end.
 
-You are one half of a pair. `daily-start` opened the day's branch this morning and will read
-the handover you write tonight, under the fixed memory name `handover-close-day`. What you
-leave behind is what tomorrow starts from.
+You are one half of a pair. `daily-start` opened the day's branch this morning and will read,
+tomorrow, the index you leave in Step 9 — then follow its ids to the handover and the rest.
+What you leave behind is what tomorrow starts from, and an id written short is a dead end.
 
 **Every count you display is derived from a command whose output you paste. None is typed.**
 
@@ -132,7 +132,7 @@ happened today. Build the context from the tasks you closed, the messages exchan
 surprised or defeated you.
 
 `mcp__vantage-peers__write_diary` with date, orchestrator, what was done, the decisions, the
-blockers, the lessons.
+blockers, the lessons. Keep the id it returns — Step 9 carries it.
 
 ## Step 7 — Harvest the friction
 
@@ -145,6 +145,7 @@ and truncates a hard one.
   and `VERIFICATION:` / `TESTS:` sections. Do not fix it here — scope it.
 - **You only know it hurts** — store it: `namespace="audit/friction"`, `type="reference"`,
   content `friction: <area> | observed: <what> | impact: <cost> | hypothesis: <guess or none>`.
+  Keep the ids — Step 9 carries them.
 
 Zero friction is allowed. But a day with zero friction and nothing shipped is itself the
 signal, and you say so.
@@ -159,23 +160,82 @@ snapshot for next week's aggregation.
 ```
 mcp__vantage-peers__store_memory
   namespace="orchestrator/{role}" type="project"
-  content="handover-close-day | date: <date> | ..."
+  content="handover-close-day | date: <YYYY-MM-DD> | day <N>
+  ..."
 ```
 
-**The name `handover-close-day` is fixed.** `daily-start` recalls exactly that string tomorrow
-morning. Change it here and the handover is written into the void.
+The first line is a fixed header: the marker, the date, the day number. Everything after it is
+free. Keep the id the call returns — Step 9 carries it.
+
+Each evening writes a NEW record. Nothing is overwritten and nothing is deleted: the handovers
+are a log, and the log is the traceability. What changes is only how tomorrow finds the right
+one — see Step 9.
 
 It carries: what is left open and why, what to start with tomorrow, any branch kept with its
-reason, the blocked tasks and who owes each unblock, the sales-terms line, and the counts of
-improvement tasks and friction memories harvested.
+reason, the blocked tasks and who owes each unblock, the sales-terms line, and the friction
+harvested.
 
-## Step 9 — Close
+## Step 9 — Close, and leave a single index behind
 
-`mcp__vantage-peers__set_summary` orchestratorId={role}, instanceId={instanceId},
-summary="Session closed — {date}".
+This is the only thing tomorrow morning reads first. It is not a status line — it is the index
+of everything this session wrote, so the morning follows ids instead of searching.
+
+```
+mcp__vantage-peers__set_summary orchestratorId={role} instanceId={instanceId}
+  summary="close-day | date: <YYYY-MM-DD> | day <N>
+handover: <memory id from Step 8>
+diary: <diary id from Step 6>
+friction: <memory id>, <memory id>   (or: none)
+briefing: <briefing note id>          (or: none)"
+```
+
+Three properties make this work, and all three are the point:
+
+1. **It is a single field on your own record, overwritten each session.** There is exactly one,
+   always the latest. No ranking, no similarity, nothing to disambiguate.
+2. **Every id is written in full**, copied from the call that returned it. An abbreviated id
+   sends tomorrow to a dead end.
+3. **The date and day number are in the header**, so tomorrow can check that what it found is
+   what it expected, instead of assuming.
+
+A search is never the way in. `recall` ranks by resemblance, and every handover ever written
+resembles every other — asking it for "the handover" returns an arbitrary one, sometimes months
+old. The index removes the question.
 
 Then one line to the user: tasks closed, time totalled, branches before and after, disk before
 and after, what shipped, handover id.
+
+## Step 10 — Cut the message cron
+
+```
+CronList          # find the job whose prompt is /check-messages
+CronDelete <id>   # cut it
+```
+
+`daily-start` re-registers it tomorrow morning. Left running, it fires every ten minutes all
+night on an empty queue — quota spent around the clock, on every station, for nothing.
+
+Cite the id you cut. If none was live, say so: it means this session never registered one, which
+is itself worth knowing.
+
+## Step 11 — Tell pi the day is closed
+
+The last act. Until it is sent, pi does not know your station is down and keeps counting on you.
+
+```
+mcp__vantage-peers__send_message
+  from="{role}" fromInstanceId="{instanceId}" channel="pi"
+  content="[DONE] day <N> closed — <date>
+evidence:  index left behind: <the whole Step 9 summary, copied>. Cron cut: <id> (or: none was live).
+finding:   <the sales-terms line from Step 5 — what a client can use tonight that they could not yesterday>
+action:    <what is left open and who owes it, or: nothing>
+next:      <what you start tomorrow, taken from the handover>
+
+Orchestrator: <Name> — <Team> | <date>"
+```
+
+The evidence line carries the whole index, copied, so pi can follow the same ids you left
+without having to ask you for them.
 
 ---
 
@@ -189,7 +249,13 @@ and after, what shipped, handover id.
 - Never delete a branch, a file, or a rule on the strength of its name. Prove the content is
   elsewhere. On a conflict, the most recent wins.
 - The diary is mandatory and written autonomously. Never ask the user for its content.
-- The handover memory name is fixed and shared with `daily-start`. It is not a free-text choice.
+- Nothing written on a previous evening is ever overwritten or deleted. The handovers are a log.
+- Step 9 is the index and the only entry point tomorrow uses. It carries the date, the day
+  number, and the full id of everything this session wrote. An id written short is a dead end.
+- The message cron is cut here and re-registered tomorrow morning. A cron left running fires
+  all night on an empty queue, on every station.
+- The day is not closed until pi has been told. A station that goes quiet without saying so is
+  a station pi keeps counting on.
 - A client task closes with its decimal-hours time line, or it does not close.
 
 ## SELLABLE AS
@@ -198,6 +264,15 @@ and after, what shipped, handover id.
 
 ## Changelog
 
+- **v2.2.0** — Two acts were missing at the end of the day. The message cron is now cut here
+  (Step 10) instead of firing all night on an empty queue across every station, and pi is told
+  the day is closed (Step 11) instead of learning it by chance — a station that goes quiet
+  without saying so is one the coordinator keeps counting on.
+- **v2.1.0** — Step 9 stops being a status line and becomes the index of the session: date, day
+  number, and the full id of the handover, the diary, the friction memories and the briefing
+  note. It is a single always-current field, so tomorrow follows ids instead of searching — a
+  search ranked by resemblance returned handovers months old, because every handover resembles
+  every other. Nothing is overwritten: the evening records stay a log, only the way in changes.
 - **v2.0.0** — Repository hygiene becomes a measured step, before/after, like the disk: the
   previous version told every orchestrator to create a branch each evening and never to close
   one, which produced dozens of abandoned branches across four repositories. The day's branch
