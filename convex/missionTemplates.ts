@@ -26,6 +26,7 @@ const templateDocValidator = v.object({
 	createdBy: creatorValidator,
 	createdAt: v.number(),
 	updatedAt: v.number(),
+	deletedAt: v.optional(v.number()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,10 +37,15 @@ export const getByName = query({
 	args: { name: v.string() },
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
-		return await ctx.db
+		const template = await ctx.db
 			.query("missionTemplates")
 			.withIndex("by_name", (q) => q.eq("name", args.name))
 			.unique();
+		// Soft-deleted templates are invisible to reads, like a superseded memory.
+		if (template !== null && template.deletedAt !== undefined) {
+			return null;
+		}
+		return template;
 	},
 });
 
@@ -85,6 +91,45 @@ export const upsert = mutation({
 			createdAt: now,
 			updatedAt: now,
 		});
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// softDelete — marks a mission template as no longer active (audit-preserving)
+// Mirrors memories.softDeleteMemory's motif: PATCH a flag rather than hard
+// `ctx.db.delete`, so the row (and its history) survives for audit. Templates
+// carry no RAG entries, so only the flag-patch half of that motif applies.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const softDelete = mutation({
+	args: {
+		templateId: v.optional(v.id("missionTemplates")),
+		name: v.optional(v.string()),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (args.templateId === undefined && args.name === undefined) {
+			throw new Error("Provide either templateId or name");
+		}
+
+		const template = args.templateId
+			? await ctx.db.get(args.templateId)
+			: await ctx.db
+					.query("missionTemplates")
+					.withIndex("by_name", (q) => q.eq("name", args.name as string))
+					.unique();
+
+		if (template === null || template === undefined) {
+			const ref = args.templateId ?? args.name;
+			throw new Error(`Mission template ${ref} not found`);
+		}
+
+		await ctx.db.patch(template._id, {
+			deletedAt: Date.now(),
+			updatedAt: Date.now(),
+		});
+
+		return null;
 	},
 });
 
@@ -215,7 +260,8 @@ export const instantiateTemplateIntoMission = mutation({
 			.query("missionTemplates")
 			.withIndex("by_name", (q) => q.eq("name", args.templateName))
 			.unique();
-		if (!template) {
+		// A soft-deleted template is invisible to reads, like a superseded memory.
+		if (!template || template.deletedAt !== undefined) {
 			throw new Error(`Template not found: "${args.templateName}"`);
 		}
 

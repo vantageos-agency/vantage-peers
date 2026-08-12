@@ -8834,6 +8834,68 @@ export function registerTools(
 		},
 	);
 
+	// ── soft_delete_mission_template ────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "master" },
+		"soft_delete_mission_template",
+		"Soft-delete a mission template so it stops appearing in reads (getByName, instantiate) while remaining in the audit log. " +
+			"Mirrors soft_delete_memory's audit-preserving flag-patch motif — no hard delete. " +
+			"WHEN: use to retire a verification-probe or obsolete template without permanent data loss. " +
+			"EXAMPLE: soft_delete_mission_template name='_probe-1180-brief'.",
+		{
+			templateId: convexIdSchema("templateId")
+				.optional()
+				.describe(
+					"Convex document ID of the template to soft-delete. Provide this or name.",
+				),
+			name: z
+				.string()
+				.optional()
+				.describe(
+					"Unique name of the template to soft-delete. Provide this or templateId.",
+				),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Delete mission template (soft)",
+		},
+		async ({ templateId, name }) => {
+			try {
+				const denied = guardMasterOnly("soft_delete_mission_template");
+				if (denied) return denied;
+
+				if (templateId === undefined && name === undefined) {
+					return mcpError("Provide either templateId or name");
+				}
+
+				await convex.mutation("missionTemplates:softDelete" as any, {
+					templateId: templateId as any,
+					name,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{ deleted: true, templateId, name },
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── add_deployment ──────────────────────────────────────────────────────────
 
 	defineTool(
