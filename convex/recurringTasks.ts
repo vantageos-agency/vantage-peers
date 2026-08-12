@@ -291,40 +291,67 @@ export const processDueTasks = internalMutation({
 			.collect();
 
 		let created = 0;
+		let failed = 0;
 
 		for (const recurring of dueTasks) {
 			if (recurring.nextRunAt > now) continue;
 
-			// Create the task
-			await ctx.db.insert("tasks", {
-				title: recurring.title,
-				description: recurring.description,
-				assignedTo: recurring.assignedTo,
-				priority: recurring.priority,
-				project: recurring.project,
-				tags: recurring.tags,
-				status: "todo",
-				createdBy: recurring.createdBy,
-				createdAt: now,
-				updatedAt: now,
-			});
+			// Per-row isolation (#1167): a single poison recurring row — e.g. a
+			// malformed cronExpression that makes getNextRunTime throw, or an
+			// insert that fails validation — must NEVER abort the whole batch.
+			// Without this guard the entire mutation aborted every 15-min tick,
+			// so no task was ever created and the cron surfaced the generic
+			// "Your request couldn't be completed" error indefinitely.
+			try {
+				// Compute the next run FIRST: a malformed cronExpression makes
+				// getNextRunTime throw, and it must throw BEFORE any insert so a
+				// poison row creates no task at all (the catch below does not
+				// roll back an insert that already succeeded).
+				const nextRunAt = getNextRunTime(recurring.cronExpression, now);
 
-			// Update the recurring task
-			const nextRunAt = getNextRunTime(recurring.cronExpression, now);
-			await ctx.db.patch(recurring._id, {
-				lastCreatedAt: now,
-				nextRunAt,
-				updatedAt: now,
-			});
+				// Create the task
+				await ctx.db.insert("tasks", {
+					title: recurring.title,
+					description: recurring.description,
+					assignedTo: recurring.assignedTo,
+					priority: recurring.priority,
+					project: recurring.project,
+					tags: recurring.tags,
+					status: "todo",
+					createdBy: recurring.createdBy,
+					createdAt: now,
+					updatedAt: now,
+				});
 
-			created++;
+				// Update the recurring task
+				await ctx.db.patch(recurring._id, {
+					lastCreatedAt: now,
+					nextRunAt,
+					updatedAt: now,
+				});
+
+				created++;
+			} catch (err) {
+				failed++;
+				console.error(
+					`Recurring tasks: skipped row ${recurring._id} — ${
+						err instanceof Error ? err.message : String(err)
+					}`,
+				);
+				continue;
+			}
 		}
 
 		if (created > 0) {
 			console.log(`Recurring tasks: created ${created} task(s)`);
 		}
+		if (failed > 0) {
+			console.error(
+				`Recurring tasks: ${failed} row(s) skipped due to per-row errors`,
+			);
+		}
 
-		return { created };
+		return { created, failed };
 	},
 });
 
