@@ -20,6 +20,7 @@ const templateDocValidator = v.object({
 	_creationTime: v.number(),
 	name: v.string(),
 	description: v.optional(v.string()),
+	brief: v.optional(v.string()),
 	steps: v.array(stepValidator),
 	isDefault: v.boolean(),
 	createdBy: creatorValidator,
@@ -50,6 +51,7 @@ export const upsert = mutation({
 	args: {
 		name: v.string(),
 		description: v.optional(v.string()),
+		brief: v.optional(v.string()),
 		steps: v.array(stepValidator),
 		isDefault: v.optional(v.boolean()),
 		createdBy: creatorValidator,
@@ -65,6 +67,7 @@ export const upsert = mutation({
 		if (existing !== null) {
 			await ctx.db.patch(existing._id, {
 				description: args.description,
+				brief: args.brief ?? existing.brief,
 				steps: args.steps,
 				isDefault: args.isDefault ?? existing.isDefault,
 				updatedAt: now,
@@ -75,6 +78,7 @@ export const upsert = mutation({
 		return await ctx.db.insert("missionTemplates", {
 			name: args.name,
 			description: args.description,
+			brief: args.brief,
 			steps: args.steps,
 			isDefault: args.isDefault ?? false,
 			createdBy: args.createdBy,
@@ -223,6 +227,17 @@ export const instantiateTemplateIntoMission = mutation({
 
 		const now = Date.now();
 		const createdBy = args.callerOrchestrator ?? "system";
+
+		// Copy the template's brief onto the mission ONLY when the mission
+		// doesn't already carry one. Instance-specific fields supplied by the
+		// caller at mission creation (pilot, project, name, dates, ...) are
+		// never touched here — this patches `brief` alone.
+		if (template.brief !== undefined && mission.brief === undefined) {
+			await ctx.db.patch(args.missionId, {
+				brief: template.brief,
+				updatedAt: now,
+			});
+		}
 
 		// Helper: simple {{key}} interpolation
 		const contextMap = args.context;

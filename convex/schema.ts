@@ -610,6 +610,7 @@ export default defineSchema({
 	missionTemplates: defineTable({
 		name: v.string(),
 		description: v.optional(v.string()),
+		brief: v.optional(v.string()), // Reused as the mission's brief on instantiation when the caller supplies none.
 		steps: v.array(
 			v.object({
 				title: v.string(),
