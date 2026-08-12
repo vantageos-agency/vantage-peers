@@ -39,9 +39,21 @@ What does this PR do?
 - [ ] Relevant vitest suite passes (cite ratio)
 - [ ] New MCP tools have corresponding tests (RULE #24 schema mirror)
 
+## Residual, declared
+
+<!-- What this delivery knowingly leaves open, and why it is safe today. If that safety is a snapshot (true now, could drift) rather than a property (true by construction), say so. Name what you did NOT close rather than let it be discovered. -->
+
+- ...
+
 ## Related Issues
 
-Closes #
+Related: #
+
+<!--
+  Link the issue; do NOT auto-close it here. An issue closes on a MEASURED activation
+  (prod read-back, online proof), never on a merge — code merged is not code live.
+  Write `Closes #<n>` ONLY when the merge itself IS the activation (e.g. a docs/template PR).
+-->
 
 <!-- Every PR updates docs + CHANGELOG (RULE #25). Signature below is required by enforce-signature. -->
 
