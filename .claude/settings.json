@@ -1,0 +1,386 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(.claude/**)",
+      "Read(CLAUDE.md)",
+      "Read(CHANGELOG.md)",
+      "Read(package.json)",
+      "Read(convex/**)",
+      "Read(mcp-server/**)",
+      "Read(content/**)",
+      "Read(components/**)",
+      "Read(app/**)",
+      "Agent(*)",
+      "Skill(*)",
+      "mcp__vantage-peers__*",
+      "mcp__convex__*",
+      "Bash(gh:*)",
+      "Bash(npm:*)",
+      "Bash(railway:*)",
+      "Bash(npx convex deploy:*)",
+      "Bash(npx convex run:*)",
+      "Read(**)",
+      "Write(**)",
+      "Edit(**)",
+      "Bash(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "Write(.claude/skills/**/*.md)",
+      "Write(.claude/skills/**/*.json)",
+      "Edit(.claude/skills/**/*.md)",
+      "Edit(.claude/skills/**/*.json)",
+      "Write(.claude/agents/**/*.md)",
+      "Edit(.claude/agents/**/*.md)",
+      "Write(.claude/hooks/**/*.py)",
+      "Edit(.claude/hooks/**/*.py)",
+      "Write(.claude/commands/**/*.md)",
+      "Edit(.claude/commands/**/*.md)",
+      "Bash(git push:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh pr comment:*)"
+    ],
+    "deny": [
+      "Write(**/.ssh/**)",
+      "Edit(**/.ssh/**)",
+      "Read(**/.ssh/**)",
+      "Write(.claude/settings.json)",
+      "Edit(.claude/settings.json)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [],
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/elpi-corp/.claude/hooks/enforce-brief-template.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/elpi-corp/.claude/hooks/enforce-signature.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/block-time-estimates.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__send_message|mcp__vantage-peers__create_task|mcp__vantage-peers__update_task|mcp__vantage-peers__create_mission|mcp__vantage-peers__update_mission|mcp__vantage-peers__create_briefing_note|mcp__vantage-peers__store_memory|mcp__vantage-peers__write_diary",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/block-time-estimates.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-no-claude-trailer.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/elpi-corp/.claude/hooks/enforce-signature.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/block-deploy-without-qa.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/auto-inject-signature.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-eta-approval-before-npm-publish.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-self-gate-before-review.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-pr-opened-via-skill.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__delete_task|mcp__vantage-peers__delete_mission|mcp__vantage-peers__delete_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/block-delete-on-prod.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__start_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-irp-sequence.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-no-task-in-message.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/enforce-fresh-state-in-messages.py",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pi-authorization-before-pr-merge.py",
+            "timeout": 20
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-eta-approval-before-npm-publish.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__complete_task|mcp__vantage-peers__update_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-evidence-bound-completion.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__create_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__update_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__complete_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-friction-field.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__create_mission",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__update_mission",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__create_briefing_note",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__store_memory",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__write_diary",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/block-time-estimates.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__send_message|mcp__vantage-peers__create_task|mcp__vantage-peers__update_task|mcp__vantage-peers__complete_task|mcp__vantage-peers__create_briefing_note|mcp__vantage-peers__store_memory|mcp__vantage-peers__create_mission|mcp__vantage-peers__block_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-full-ids.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__vantage-peers__send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-evidence-bound-notify.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__complete_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/qa-breadcrumb.py",
+            "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/irp-breadcrumb.py",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|mcp__vantage-peers__send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ORCHESTRATOR_ROLE=sigma python3 /root/coding/vantage-memory/.claude/hooks/enforce-iter-message.py",
+            "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/monitor-npm-version-vs-deployed.py\""
+          }
+        ]
+      }
+    ]
+  },
+  "includeCoAuthoredBy": false
+}

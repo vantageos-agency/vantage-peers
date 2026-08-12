@@ -8,6 +8,7 @@
 
 ### Changed
 - **`.claude/hooks/` is now version-controlled** (removed from `.gitignore`; all 44 hooks tracked). Guards were previously on-disk + VR-catalog only, never auditable in-repo.
+- **ALL of `.claude` is now version-controlled** (task `k170vg5r`, Laurent directive). The `.gitignore` previously excluded `.claude/settings.json`, `settings.local.json`, `agents/`, `agent-memory/`, `references/`, `skills/` and the lock patterns, so agents/skills/settings were invisible, unreviewable, and wiped on the next branch switch (the FLAG-B class: a file that is gitignored-but-would-be-clobbered). The excludes are removed and replaced by a re-inclusion block placed AFTER the repo-wide `__pycache__/`/`*.pyc` rules so last-match-wins: `!.claude/` + `!.claude/**/` (the middle line is mandatory — without re-including the directories git never descends into them) + `!.claude/**`, then the only exceptions — regenerated caches and the run lock, not content: `.claude/**/__pycache__/`, `.claude/**/*.pyc`, `.claude/**/.pytest_cache/`, `.claude/scheduled_tasks.lock`. Secret pre-scan (values redacted) on all 137 would-be-tracked files: clean — `settings.local.json` `env` is `{VP_ORCHESTRATOR: sigma}` only, no key/token. `git status --porcelain --ignored .claude` non-exception ignored count 25→0; tracked `.claude` files 63→137; zero cache/lock staged; zero tracked-and-ignored (FLAG-B) file.
 
 ## [2.18.0] — 2026-08-11
 
