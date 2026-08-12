@@ -10,15 +10,11 @@ package-lock.json
 convex/_generated/
 apps/
 
-# Claude Code — never commit settings or local state (hooks ARE version-controlled)
-.claude/settings.json
-.claude/settings.local.json
-.claude/agents/
-.claude/agent-memory/
-.claude/references/
-.claude/skills/
-.claude/scheduled_tasks.lock
-.claude/*.lock
+# Claude Code — ALL of .claude is version-controlled (Laurent directive, task k170vg5r).
+# What protects a workstation must be readable and reviewable by the fleet; a .claude
+# file left untracked is invisible, unreviewed, and wiped on the next branch switch.
+# The re-inclusion and its only exceptions live at the END of this file — after the
+# repo-wide __pycache__/ + *.pyc rules — so the last-matching rule wins for .claude.
 .playwright-mcp/
 _archive/
 mcp-server/dist/
@@ -31,3 +27,16 @@ mcp-server/dist/
 # hits in its bytecode, invisible to the guard because the guard refused to open it.)
 __pycache__/
 *.pyc
+
+# .claude is tracked in full (task k170vg5r). Re-include everything under it,
+# overriding the repo-wide __pycache__/ + *.pyc rules above for the .claude subtree.
+# The middle line (!.claude/**/) is MANDATORY: without re-including the directories
+# themselves, git never descends into an excluded dir and the globs below match nothing.
+!.claude/
+!.claude/**/
+!.claude/**
+# The only exceptions — regenerated caches and run locks: not content, rebuilt on their own.
+.claude/**/__pycache__/
+.claude/**/*.pyc
+.claude/**/.pytest_cache/
+.claude/scheduled_tasks.lock
