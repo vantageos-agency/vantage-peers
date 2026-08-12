@@ -7,7 +7,7 @@ description: >
   even if they don't say "check-messages" explicitly.
 allowed-tools: mcp__vantage-peers__* Bash Read
 metadata:
-  version: "3.2.0"
+  version: "3.3.0"
   user-invocable: true
 license: Proprietary
 ---
@@ -76,7 +76,9 @@ Rule: `.claude/rules/pi-no-passive-block.md`. Degraded queue vs canonical server
 2. `list_tasks assignedTo=<role> status=in_progress` — close any actually done via `complete_task` + completionNote (stale cleanup).
 3. Sort by priority (urgent > high > medium > low) then `_creationTime` oldest first. Pick FIRST task whose `dependsOn` are all `done` (or empty).
 4. `start_task`. Execute per its `description`/`VERIFICATION`/`TESTS` blocks.
-5. On completion: `complete_task` with detailed completionNote. **Chain at most ONCE per cron firing**: re-invoke `/check-messages` only if the completed task plausibly unblocked another (a dependsOn now satisfied). NEVER re-invoke when the todo queue was empty at Step 3.1 — the next cron firing covers it. Self-chaining on an empty queue is the endless-loop failure.
+5. On completion: `complete_task` with detailed completionNote, then **CHAIN — go straight back to 3.1 and pick the next unblocked task**. Keep chaining while the queue yields one. The stop condition is DERIVED from the queue, never counted: stop when the pick returns no task whose `dependsOn` are all `done`. An unblocked task is the order already given — never ask the operator or the coordinator whether to continue (`unblocked-task-is-the-order.md`).
+   - **The one hard stop**: when the pick yields NOTHING, stop and emit nothing. Re-invoking this skill on an empty queue is the endless-loop failure the silence contract exists to prevent — the next cron firing covers it.
+   - **Loop guard**: if a chain iteration completes no task (same queue, no progress), stop immediately and report the blocker. Chaining requires real progress each turn.
 
 **Step 3.5 — AUTONOMOUS MODE only: auto-nudge a stalled wait (the signal travels from both ends)**
 
@@ -102,7 +104,7 @@ Empty queue or all blocked on deps:
 - Respond immediately to any message asking a question / requesting action.
 - AUTONOMOUS: NEVER produce output asking the operator what to do next. Pick a task or standby.
 - AUTONOMOUS: a no-change firing is SILENT (zero text). Echoing a style instruction ("court", "ok", "noté") as the whole reply is banned — it is quota burn, not compliance.
-- AUTONOMOUS: never re-invoke /check-messages from a firing that found an empty queue. One firing = at most one chain, and only on a plausible unblock.
+- AUTONOMOUS: chain while the queue yields an unblocked task; stop when it yields none. The stop condition is derived from the queue, never a counted cap. Never re-invoke on an empty queue, and never ask whether to continue while unblocked work remains.
 - HUMAN: display + mark read + respond if needed. Do NOT auto-pick (the coordinator is interactive).
 - HUMAN: always run Step 2.5. The coordinator never relies on a peer push to learn a dispatched task is done — pull is the source of truth.
 - HUMAN: always run Step 2.6. An empty inbox is never proof the fleet is quiet — pull the pending-on-me queue and resolve or park each item (`pi-no-passive-block.md`).
