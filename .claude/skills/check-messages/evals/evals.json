@@ -1,0 +1,41 @@
+{
+  "skill_name": "check-messages",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "check messages",
+      "expected_output": "Autonomous-mode firing where the todo queue contains two unblocked tasks (taskId A and taskId B, both dependsOn empty/done). The routine auto-picks and executes A, completes it, then chains to and executes B within the same firing — no permission prompt, no stop after A.",
+      "files": [],
+      "expectations": [
+        "start_task and complete_task are called for taskId A",
+        "the routine re-invokes /check-messages (or equivalently continues) and processes taskId B in the same firing, after taskId A",
+        "no text output asks the operator whether to continue to the second task",
+        "the firing does not stop after completing only taskId A while an unblocked taskId B remains in the todo queue"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "check messages",
+      "expected_output": "Autonomous-mode firing where check_messages returns no unread messages and list_tasks returns no unblocked todo task (queue empty). The routine produces zero text output and does not re-invoke itself.",
+      "files": [],
+      "expectations": [
+        "the assistant emits zero characters of text output for this firing",
+        "mcp__vantage-peers__start_task is never called",
+        "the routine does not self re-invoke /check-messages after finding an empty queue",
+        "no standby block, summary, or acknowledgement word (e.g. 'court', 'ok', 'standby') is produced when queue state is unchanged from the previous firing"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "check messages",
+      "expected_output": "Autonomous-mode firing where the only todo task has an unsatisfied dependsOn (its dependency task is not status=done). The routine does not start the blocked task and stops cleanly, emitting at most a legitimate standby block if the blocked state changed since the previous firing.",
+      "files": [],
+      "expectations": [
+        "mcp__vantage-peers__start_task is never called on the dependency-blocked task",
+        "no task execution output is produced for the blocked task",
+        "if the blocked-list state changed since the previous firing, output is limited to the 3-line standby block (role, instance, blocked-on list); otherwise output is zero characters",
+        "the routine does not ask the operator what to do next and does not invent alternative work"
+      ]
+    }
+  ]
+}

@@ -50,6 +50,33 @@ export const getByName = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// listNames — the live source of truth for "which template names exist".
+//
+// Root cause this closes (Day 159): the mission-template guard hook
+// (enforce-mission-template.py) can only be as good as the source it probes.
+// Without a query exposing the LIVE table, the only sources available were a
+// hardcoded whitelist or a cached/static manifest file — both drift the moment
+// a new template is upserted (e.g. orchestrator-config-update-v1), refusing a
+// template that genuinely exists. This query IS the live source: wire
+// MISSION_TEMPLATE_PROBE_CMD at each station to a command that calls it, so
+// the guard always interrogates the real table instead of a stale copy.
+//
+// Mirrors getByName's soft-delete convention: a template with deletedAt set is
+// invisible, exactly like a superseded memory.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listNames = query({
+	args: {},
+	returns: v.array(v.string()),
+	handler: async (ctx) => {
+		const templates = await ctx.db.query("missionTemplates").take(1000);
+		return templates
+			.filter((t) => t.deletedAt === undefined)
+			.map((t) => t.name);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // upsert — create or update a template by name
 // ─────────────────────────────────────────────────────────────────────────────
 

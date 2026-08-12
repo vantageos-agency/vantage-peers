@@ -15,6 +15,22 @@ baked into the list was wrongly refused). It is resolved at runtime, in order:
      caller cites as a template (the regex is the only gate). The static list is
      GONE; a fresh template is never refused for being "unknown".
 
+CANONICAL PROBE (Day 159 — Sigma, root-cause close). Priority #2 above (a
+cached manifest file) is the ANTI-PATTERN that caused Pi's defect: a static
+8-name snapshot went stale the instant `orchestrator-config-update-v1` was
+created via `missionTemplates.upsert`, and the guard wrongly refused a
+template that genuinely exists in the table. The authoritative fix is to wire
+`MISSION_TEMPLATE_PROBE_CMD` at every station to a command that reads the LIVE
+table via the new `missionTemplates.listNames` query, e.g.:
+
+    export MISSION_TEMPLATE_PROBE_CMD='npx convex run missionTemplates:listNames --prod'
+
+(swap `--prod` for a dev deployment target as appropriate). This always
+reflects the current table — no manifest file, no cache, no drift. A static
+manifest/cached list must never be treated as the source of truth; it exists
+only as a last-resort fallback for environments where the probe genuinely
+cannot reach Convex.
+
 ANTI-GENERIC GATE (Day 156 — Sigma P4). `mission-generic-v1` on a BUILD /
 construction mission is refused, because a build almost always has a specific
 template. It passes only when the brief cites a template search proving none
