@@ -58,6 +58,48 @@ def test_red2_generic_on_build_mission_is_blocked():
 
 
 # ---------------------------------------------------------------------------
+# Day 159 — Pi's defect reproduction: a STALE 8-name source refuses a REAL
+# template created via upsert AFTER the source was cached (orchestrator-config
+# -update-v1). The fix is a LIVE source (missionTemplates.listNames) that
+# reflects the table at call time, not a frozen snapshot.
+# ---------------------------------------------------------------------------
+STALE_EIGHT = [
+    "issue-resolution-v3", "hook-development-v1", "mission-generic-v1",
+    "convex-schema-migration-v1", "clerk-auth-fix-v1", "mcp-tool-add-v1",
+    "railway-deploy-v1", "docs-sync-v1",
+]
+
+
+def test_red3_real_template_refused_against_stale_cached_list():
+    """RED pole: a freshly-upserted real template, probed against the STALE
+    8-name set (Pi's actual defect), is wrongly BLOCKED."""
+    brief = "Cloud mission. Template: orchestrator-config-update-v1\nUpdate the orchestrator config."
+    rc, out = run_hook(brief, probe_json=STALE_EIGHT)
+    assert rc == 2, f"stale source must reproduce the defect (block), rc={rc} out={out}"
+    assert "orchestrator-config-update-v1" not in out or "BLOCKED" in out
+
+
+def test_green3_real_template_accepted_against_live_source():
+    """GREEN pole: the SAME template, probed against a LIVE source that
+    includes it (as convex missionTemplates.listNames would, since the table
+    now has 9 rows including the new one), is ACCEPTED."""
+    brief = "Cloud mission. Template: orchestrator-config-update-v1\nUpdate the orchestrator config."
+    live = STALE_EIGHT + ["orchestrator-config-update-v1"]
+    rc, out = run_hook(brief, probe_json=live)
+    assert rc == 0, f"live source must accept the real template, rc={rc} out={out}"
+
+
+def test_two_faced_probe_invented_name_still_refused_with_live_source():
+    """A guard that accepts everything guards nothing: with a LIVE source
+    present (including the real newly-created template), an INVENTED name
+    that exists NOWHERE in that live set must still be REFUSED."""
+    brief = "Cloud mission. Template: totally-made-up-nonexistent-v7\nDo work."
+    live = STALE_EIGHT + ["orchestrator-config-update-v1"]
+    rc, out = run_hook(brief, probe_json=live)
+    assert rc == 2, f"an invented name absent from the live set must block, rc={rc} out={out}"
+
+
+# ---------------------------------------------------------------------------
 # MUST_PASS probes
 # ---------------------------------------------------------------------------
 def test_pass_known_static_template_still_ok():
