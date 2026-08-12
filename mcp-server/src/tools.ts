@@ -8650,6 +8650,12 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe("Human-readable description of the template"),
+			brief: z
+				.string()
+				.optional()
+				.describe(
+					"Reusable mission brief carried by the template. Copied onto a mission's own `brief` at instantiate_template_into_mission time when that mission has none — avoids retyping the same cadrage at every instantiation.",
+				),
 			steps: z
 				.array(
 					z.object({
@@ -8696,7 +8702,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Update mission template",
 		},
-		async ({ name, description, steps, createdBy, isDefault }) => {
+		async ({ name, description, brief, steps, createdBy, isDefault }) => {
 			try {
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
@@ -8706,6 +8712,7 @@ export function registerTools(
 					{
 						name,
 						description,
+						brief,
 						steps,
 						createdBy,
 						isDefault,
@@ -8741,6 +8748,7 @@ export function registerTools(
 		},
 		"instantiate_template_into_mission",
 		"Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator. " +
+			"If the target mission has no brief yet, the template's own brief (if any) is copied onto it — the mission's brief, once set, is never overwritten. " +
 			"WHEN: use after create_mission to fan out a standard workflow from a template in one call. " +
 			"EXAMPLE: instantiate_template_into_mission templateName='issue-resolution-v2' missionId='k57a36y8...' callerOrchestrator='alpha'.",
 		{
