@@ -625,6 +625,12 @@ export default defineSchema({
 		createdBy: creatorValidator,
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		// Soft-delete marker — mirrors memories.softDeleteMemory's audit-preserving
+		// PATCH-a-flag motif. Chose a timestamp (not a boolean like memories'
+		// `isLatest`) because it also records *when* the template was retired,
+		// which the memories table gets for free via `updatedAt` alongside the
+		// flag — a lone boolean here would lose that provenance. undefined = active.
+		deletedAt: v.optional(v.number()),
 	})
 		.index("by_name", ["name"])
 		.index("by_default", ["isDefault"]),
