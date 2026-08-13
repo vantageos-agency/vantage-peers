@@ -2,7 +2,7 @@
 name: daily-start
 description: This skill should be used when the user asks to "start the day", "morning plan", "daily planning", "what's on my plate today", "plan today", "session start", "daily start", or mentions wanting to organize their day or review pending tasks -- even if they don't say "daily-start" explicitly.
 metadata:
-  version: "3.2.0"
+  version: "3.3.0"
   user-invocable: true
 license: Proprietary
 ---
@@ -44,12 +44,22 @@ Ten minutes. If a cron with that prompt is already live in this session, do not 
 
 ## Step 3 — Open yesterday's index, then follow its ids
 
-`close-day` leaves one index — the summary field on your own peer record. It is a single
-always-current value, so it is READ, never searched:
+`close-day` leaves one index in a field dedicated to it — `dynamic.endOfDayIndex` on your own peer
+record. It is a single always-current value, so it is READ, never searched:
 
 ```
-mcp__vantage-peers__list_peers          # find your own row, read its summary field
+mcp__vantage-peers__get_profile orchestratorId={role} instanceId={instanceId}
+                                        # read dynamic.endOfDayIndex
 ```
+
+**Read `dynamic.endOfDayIndex`, never `dynamic.currentTask`.** `currentTask` carries only the live,
+volatile status, and it is overwritten by the first `set_summary` of the day — including this
+station's own, later this session. The index survives precisely because it lives in its own field.
+Reading the wrong one returns whatever was written most recently, which looks like an index and is
+not.
+
+Resolution takes the instance, not the role alone: a profile lookup by role with no instance can
+return nothing while the record exists.
 
 The index carries a date, a day number, and the full id of everything the previous session
 wrote: the handover, the diary, the friction memories, any briefing note.
@@ -211,6 +221,9 @@ skill that re-invokes itself runs all night on an empty queue.
   the catalogue holds it, or that a newer version supersedes it.
 - Yesterday's state is READ from the index and followed by id. It is never searched: a search
   ranks by resemblance and every handover resembles every other.
+- The index is `dynamic.endOfDayIndex`, never `dynamic.currentTask`. `currentTask` is the live
+  status, overwritten by the first write of any day; reading it returns something that looks
+  like an index and is not.
 - The date carried by the index is compared to the day expected. A mismatch is stated, never
   assumed away.
 - Autonomous mode never asks anyone what to do. It chooses, then proposes its choice to pi and
@@ -227,6 +240,10 @@ skill that re-invokes itself runs all night on an empty queue.
 
 ## Changelog
 
+- **v3.3.0** — The index is read from its own field, `dynamic.endOfDayIndex`, instead of the live
+  status field. Sharing one field meant the morning's first write destroyed the handover before
+  anyone read it, and nothing recorded that it had existed. Adds the resolution note: a profile
+  lookup takes the instance, not the role alone.
 - **v3.2.0** — The station reports that it is up and names the task it proposes to start, then
   waits for the coordinator to confirm or redirect before starting. A station running silently
   cannot be directed, and a queue sorted correctly on one station can still be the wrong thing
