@@ -134,6 +134,10 @@ export default defineSchema({
 		// Dynamic profile — updated each session
 		dynamic: v.object({
 			currentTask: v.optional(v.string()),
+			// Durable end-of-day index (close-day step 9) — distinct from
+			// `currentTask` (live session summary) so a next-morning
+			// daily-start write does not clobber it. mission k574p02m DEFECT 1.
+			endOfDayIndex: v.optional(v.string()),
 			lastSeen: v.number(), // ms since epoch
 			sessionCount: v.number(),
 		}),

@@ -3188,6 +3188,14 @@ export function registerTools(
 				.optional()
 				.describe("Instance ID — e.g. 'pi-chromebook', 'pi-vps', 'tau-vps-1'"),
 			summary: z.string().describe("1-2 sentence summary of current work"),
+			endOfDayIndex: z
+				.string()
+				.optional()
+				.describe(
+					"Durable end-of-day index (close-day step 9 only) — kept separate " +
+						"from `summary` so the next daily-start's live-status write does " +
+						"not clobber it. Omit for normal live-status updates.",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -3195,7 +3203,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Set instance summary",
 		},
-		async ({ orchestratorId, instanceId, summary }) => {
+		async ({ orchestratorId, instanceId, summary, endOfDayIndex }) => {
 			try {
 				const fromDenied = guardFrom(orchestratorId);
 				if (fromDenied) return fromDenied;
@@ -3204,6 +3212,7 @@ export function registerTools(
 					orchestratorId,
 					instanceId,
 					currentTask: summary,
+					endOfDayIndex,
 					lastSeen: Date.now(),
 				});
 
