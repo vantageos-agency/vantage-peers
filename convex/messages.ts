@@ -623,6 +623,13 @@ export const deleteMessage = mutation({
 // listMessages — get messages for a day or from a sender (history/replay)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const MESSAGES_LIST_SCAN_CAP = 2000;
+
 export const listMessages = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -659,6 +666,8 @@ export const listMessages = query({
 
 		const limit = args.limit ?? 100;
 		const before = args.createdBefore;
+		const needsWideScan = before !== undefined;
+		const fetchCap = needsWideScan ? MESSAGES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"messages">[];
 
@@ -684,7 +693,7 @@ export const listMessages = query({
 				.filter((q) =>
 					args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
 				)
-				.take(limit);
+				.take(fetchCap);
 
 			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
 			rows = rows.filter((r) => r.tenantId === orgSlug);
@@ -696,16 +705,16 @@ export const listMessages = query({
 					.query("messages")
 					.withIndex("by_day", (q) => q.eq("sessionDay", sessionDay))
 					.order("asc")
-					.take(limit);
+					.take(fetchCap);
 			} else if (args.from !== undefined) {
 				const from = args.from;
 				rows = await ctx.db
 					.query("messages")
 					.withIndex("by_from", (q) => q.eq("from", from))
 					.order("desc")
-					.take(limit);
+					.take(fetchCap);
 			} else {
-				rows = await ctx.db.query("messages").order("desc").take(limit);
+				rows = await ctx.db.query("messages").order("desc").take(fetchCap);
 			}
 		}
 
@@ -714,7 +723,7 @@ export const listMessages = query({
 			rows = rows.filter((r) => r._creationTime < before);
 		}
 
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 

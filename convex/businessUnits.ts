@@ -252,6 +252,8 @@ function decodeCursor(cursor: string | undefined): CursorPayload | undefined {
 	}
 }
 
+export const BUSINESS_UNITS_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
@@ -276,10 +278,22 @@ export const list = query({
 		// Decode cursor payload; fall back to createdBefore legacy anchor
 		const cursorPayload = decodeCursor(args.cursor);
 
-		// For the fetch we over-fetch so we can apply cursor filter and detect hasMore.
-		// When a cursor is present we may need to skip some same-ms rows, so fetch
-		// generously (limit * 4 + 10) to survive same-millisecond clusters in tests.
-		const fetchLimit = cursorPayload ? limit * 4 + 10 : limit + 1;
+		// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+		// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m).
+		// mission k574p02m DEFECT 2, lot 2 — the previous `limit * 4 + 10` fixed
+		// multiplier is a FALLIBLE buffer: `.take(fetchLimit)` always re-reads
+		// only the TOP `fetchLimit` rows of the WHOLE ordering (not an offset
+		// continuation), so once the cursor anchor's true position exceeds this
+		// fixed window the anchor is never found, every row is filtered out,
+		// and the page comes back empty before the true end. Widen the fetch to
+		// the same scan cap the other carriers use instead of a multiplier that
+		// degrades with page depth.
+		// mission k574p02m lot 2 — Eta REVISE: widen on EITHER cursor source.
+		// The legacy `createdBefore` back-compat path also filters after
+		// `.take(fetchLimit)`, so it must widen too or it undershoots deep
+		// pages the same way the cursor path used to.
+		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
+		const fetchLimit = wide ? BUSINESS_UNITS_LIST_SCAN_CAP + 1 : limit + 1;
 
 		let rows: Doc<"businessUnits">[];
 		if (args.orchestratorId !== undefined && args.status === undefined) {

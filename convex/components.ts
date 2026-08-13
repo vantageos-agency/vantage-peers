@@ -126,6 +126,8 @@ function decodeComponentCursor(cursor: string | undefined): ComponentCursorPaylo
 	}
 }
 
+export const COMPONENTS_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
@@ -150,9 +152,20 @@ export const list = query({
 		// Decode cursor payload; fall back to createdBefore legacy anchor
 		const cursorPayload = decodeComponentCursor(args.cursor);
 
-		// Over-fetch to apply cursor filter and detect hasMore.
-		// Same-millisecond cluster safety: fetch limit * 4 + 10 when cursor present.
-		const fetchLimit = cursorPayload ? limit * 4 + 10 : limit + 1;
+		// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+		// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m).
+		// mission k574p02m DEFECT 2, lot 2 — the previous `limit * 4 + 10` fixed
+		// multiplier is a FALLIBLE buffer: `.take(fetchLimit)` always re-reads
+		// only the TOP `fetchLimit` rows of the WHOLE ordering (not an offset
+		// continuation), so once the cursor anchor's true position exceeds this
+		// fixed window the anchor is never found and the page comes back empty
+		// before the true end. Widen the fetch to the shared scan cap.
+		// mission k574p02m lot 2 — Eta REVISE: widen on EITHER cursor source.
+		// The legacy `createdBefore` back-compat path also filters after
+		// `.take(fetchLimit)`, so it must widen too or it undershoots deep
+		// pages the same way the cursor path used to.
+		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
+		const fetchLimit = wide ? COMPONENTS_LIST_SCAN_CAP + 1 : limit + 1;
 
 		let rows: Doc<"components">[];
 		if (args.team !== undefined && args.type !== undefined) {

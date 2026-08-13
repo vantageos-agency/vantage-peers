@@ -259,6 +259,13 @@ export const getByRepoNumber = query({
 // listByProject — list issues by project with optional status filter
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const ISSUES_LIST_BY_PROJECT_SCAN_CAP = 2000;
+
 export const listByProject = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -270,13 +277,17 @@ export const listByProject = query({
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan
+			? ISSUES_LIST_BY_PROJECT_SCAN_CAP + 1
+			: limit;
 		// The by_project index only has ["project"], so we query by project
 		// and filter status in-memory if needed
 		let results = await ctx.db
 			.query("issues")
 			.withIndex("by_project", (q) => q.eq("project", args.project))
 			.order("desc")
-			.take(limit);
+			.take(fetchCap);
 
 		if (args.status !== undefined) {
 			results = results.filter((r) => r.status === args.status);
@@ -285,13 +296,15 @@ export const listByProject = query({
 			const before = args.createdBefore;
 			results = results.filter((r) => r._creationTime < before);
 		}
-		return results;
+		return results.slice(0, limit);
 	},
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listByOrchestrator — list issues by assignedOrchestrator with optional status
 // ─────────────────────────────────────────────────────────────────────────────
+
+export const ISSUES_LIST_BY_ORCHESTRATOR_SCAN_CAP = 2000;
 
 export const listByOrchestrator = query({
 	args: {
@@ -304,6 +317,10 @@ export const listByOrchestrator = query({
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan
+			? ISSUES_LIST_BY_ORCHESTRATOR_SCAN_CAP + 1
+			: limit;
 		let rows: Doc<"issues">[];
 		if (args.status !== undefined) {
 			const statusFilter = args.status;
@@ -313,7 +330,7 @@ export const listByOrchestrator = query({
 					q.eq("assignedOrchestrator", args.assignedOrchestrator).eq("status", statusFilter),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else {
 			rows = await ctx.db
 				.query("issues")
@@ -321,19 +338,21 @@ export const listByOrchestrator = query({
 					q.eq("assignedOrchestrator", args.assignedOrchestrator),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		}
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listByStatus — list all issues matching a given status (no orchestrator filter)
 // ─────────────────────────────────────────────────────────────────────────────
+
+export const ISSUES_LIST_BY_STATUS_SCAN_CAP = 2000;
 
 export const listByStatus = query({
 	args: {
@@ -346,16 +365,20 @@ export const listByStatus = query({
 	returns: v.array(v.any()),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan
+			? ISSUES_LIST_BY_STATUS_SCAN_CAP + 1
+			: limit;
 		let rows: Doc<"issues">[] = await ctx.db
 			.query("issues")
 			.withIndex("by_status", (q) => q.eq("status", args.status))
 			.order("desc")
-			.take(limit);
+			.take(fetchCap);
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 

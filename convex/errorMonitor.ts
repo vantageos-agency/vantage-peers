@@ -485,6 +485,13 @@ export const listDeployments = query({
 	},
 });
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const ERROR_MONITOR_LIST_ERRORS_SCAN_CAP = 2000;
+
 export const listErrors = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -517,21 +524,25 @@ export const listErrors = query({
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
 		const deployment = args.deployment;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan
+			? ERROR_MONITOR_LIST_ERRORS_SCAN_CAP + 1
+			: limit;
 		let rows: Doc<"errorLogs">[];
 		if (deployment) {
 			rows = await ctx.db
 				.query("errorLogs")
 				.withIndex("by_deployment", (q) => q.eq("deployment", deployment))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else {
-			rows = await ctx.db.query("errorLogs").order("desc").take(limit);
+			rows = await ctx.db.query("errorLogs").order("desc").take(fetchCap);
 		}
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 
