@@ -45,7 +45,7 @@ v1.3.0 validation source (replaces the v1.2.0 Convex-fetch path for defect 2):
     3. `gh api repos/<owner>/<repo>/issues/<N>/comments --paginate` (fail-LOUD on gh error).
     4. Filter comments whose body matches /Eta APPROVED/i; take the LATEST.
     5. Parse `ETA_APPROVED_COMMIT_SHA: <sha>` from that comment body.
-    6. SHA: comment_sha must pin the commit actually being shipped (age dropped v1.4.0).
+    6. AGE: comment created_at must be within TASK_MAX_AGE_MS (60 min).
     7. SHA: parsed approved-sha compared to git HEAD via the tree-aware check (defect 3).
     8. SECURITY: approval comment author .user.login must be in ALLOWED_APPROVAL_AUTHORS
        (default ["elpiarthera"], overridable via ETA_APPROVAL_AUTHORS).
@@ -103,11 +103,7 @@ VERSION = "1.3.3"
 # ─────────────────────────────────────────────────────────────────────────────
 
 AUDIT_LOG = "/tmp/eta-approval-npm-publish.log"
-# v1.4.0 (2026-08-13): TASK_MAX_AGE_MS removed. The guard now compares the SHA
-# the evidence pins to the SHA being shipped; no window size closes the wrong-
-# acceptance hole (recent evidence pinning ANOTHER commit passing in silence),
-# and widening the window is not a remedy — see docs/probe-spec-evidence-pins-
-# the-commit-2026-08-13.md.
+TASK_MAX_AGE_MS = 3_600_000  # 60 minutes in milliseconds
 
 # Default allowlist of GitHub logins permitted to post an Eta APPROVED verdict.
 # Single-tenant fleet: every orchestrator posts to GitHub as `elpiarthera` (the
@@ -767,7 +763,7 @@ def validate_pr_approval(
       - body has a POSITIVE verdict /\\bAPPROVED\\b/i and NO negative-verdict marker
       - SHA binding: explicit `ETA_APPROVED_COMMIT_SHA:` line, OR the operator's
         `# eta-approved-sha` value (full / ≥7-char prefix) appears literally in body
-    Among qualifying comments, the LATEST by created_at wins; it must pin the SHA shipped.
+    Among qualifying comments, the LATEST by created_at wins; it must be < 60 min old.
 
     v1.3.2: `cwd` is the resolved publish directory — origin is resolved from THERE
     (any subdir of the target repo works), not from the hook process cwd.
@@ -833,12 +829,22 @@ def validate_pr_approval(
     latest, comment_sha = max(qualifying, key=lambda pair: created_ms(pair[0]))
     author = ((latest.get("user") or {}).get("login") or "").lower()
 
-    # v1.4.0: the AGE gate is gone. The property that matters is not how old
-    # the comment is, it is whether comment_sha pins the commit being shipped
-    # — main() step 2 (cmd_sha vs comment_sha) and step 3 (comment_sha vs
-    # git HEAD via validate_commit_sha) enforce exactly that, downstream.
-    # Old evidence pinning THIS commit must PASS; recent evidence pinning
-    # ANOTHER commit must BLOCK — no age check can deliver either property.
+    # 5. AGE — comment created_at within window
+    created_at_ms = _parse_iso_to_ms(latest.get("created_at", ""))
+    if created_at_ms is None:
+        return False, (
+            f"Eta APPROVED comment on PR #{pr_number} has unparsable created_at "
+            f"'{latest.get('created_at')}' — fail closed"
+        ), ""
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000
+    age_ms = now_ms - created_at_ms
+    if age_ms > TASK_MAX_AGE_MS:
+        age_min = int(age_ms / 60_000)
+        return False, (
+            f"Eta APPROVED comment on PR #{pr_number} is {age_min} min old — "
+            "authorization window is 60 min, obtain a fresh Eta APPROVED verdict"
+        ), ""
+
     return True, f"ok:pr#{pr_number} author={author}", comment_sha
 
 
@@ -896,10 +902,14 @@ def validate_task(task_id: str, mock_json: str | None) -> tuple[bool, str]:
             f"task '{task_id}' missing timestamp for age check "
             "(tried completedAt/updatedAt/createdAt) — fail closed"
         )
-    # v1.4.0: age branch dropped (see validate_pr_approval). age_anchor /
-    # age_field are still resolved above for the "missing timestamp" instrument
-    # check (unreadability), but no longer gate on how old the verdict is.
-    _ = (age_anchor, age_field)  # retained for readability of the block above
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000
+    age_ms = now_ms - age_anchor
+    if age_ms > TASK_MAX_AGE_MS:
+        age_min = int(age_ms / 60_000)
+        return False, (
+            f"task '{task_id}' Eta APPROVED verdict is {age_min} min old (field: {age_field}) — "
+            "authorization window is 60 min, obtain a fresh Eta APPROVED verdict"
+        )
 
     return True, "ok"
 
@@ -937,7 +947,7 @@ def block_message(reason: str) -> str:
         "  - Verdict is read from the PR's GitHub comments (gh CLI).\n"
         "  - The approval comment must cite ETA_APPROVED_COMMIT_SHA: <sha>.\n"
         "  - The cited SHA must equal git HEAD (post-merge identical tree OK).\n"
-        "  - The approval comment must pin the SHA being published and be by an allowlisted author.\n"
+        "  - The approval comment must be < 60 min old and by an allowlisted author.\n"
         "\n"
         "Required order:\n"
         "  1. PR created\n"

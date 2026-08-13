@@ -61,8 +61,8 @@ cause (la QA manquante doit devenir explicite dans le cycle suivant).
 import json
 import os
 import re
-import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -74,10 +74,10 @@ from _lib.command_predicate import (  # noqa: E402
     iter_real_commands,
 )
 
-VERSION = "4.0.0"
+VERSION = "3.0.0"
 
 BREADCRUMB = "/tmp/.qa-passed"
-SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+MAX_AGE_SECONDS = 3600  # 1 heure
 
 OVERRIDE_RE = re.compile(r"#\s*allow-no-qa:\s*(\S.{5,})", re.IGNORECASE)
 
@@ -224,105 +224,11 @@ def is_prod_deploy(cmd: str) -> bool:
     return False
 
 
-def shipped_sha(cwd: str | None = None) -> str | None:
-    """Resolve the commit actually being deployed via `git rev-parse HEAD`.
-    Returns None (never raises) if git is unavailable — callers treat None as
-    an instrument failure, not as an automatic pass."""
+def qa_is_fresh() -> bool:
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=cwd,
-        )
-        if result.returncode != 0:
-            return None
-        out = result.stdout.strip()
-        return out or None
-    except Exception:
-        return None
-
-
-def read_qa_breadcrumb() -> tuple[str, str]:
-    """Reads BREADCRUMB (JSON: {"sha": <hex>, "writer": <name>}) and returns
-    (sha, writer). Raises FileNotFoundError / OSError / ValueError on any
-    failure to read or parse — the caller distinguishes ABSENCE from
-    UNREADABILITY from MALFORMED, each a NAMED refusal, never collapsed."""
-    with open(BREADCRUMB, "r", encoding="utf-8") as fh:
-        raw = fh.read()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"malformed JSON: {exc}") from exc
-    sha = (data.get("sha") or "").strip()
-    writer = (data.get("writer") or "unknown").strip()
-    if not SHA_RE.match(sha):
-        raise ValueError(f"breadcrumb 'sha' field is not a valid hex SHA: {sha!r}")
-    return sha, writer
-
-
-def qa_pins_shipped_commit(cwd: str | None = None) -> tuple[str, str]:
-    """Returns (verdict, message). verdict in {"pass", "block", "refuse"}.
-
-    Replaces the age window (v3.0.0 qa_is_fresh) with the property that
-    actually matters: does the QA witness NAME the commit being shipped.
-    Recent evidence pinning ANOTHER commit is a BLOCK, not a silent PASS —
-    that was the wrong-acceptance hole an age window can never close."""
-    try:
-        evidence_sha, writer = read_qa_breadcrumb()
-    except FileNotFoundError:
-        return "refuse", (
-            f"REFUSING TO JUDGE: QA breadcrumb ({BREADCRUMB}) — absent, "
-            "no QA evidence has been written for any commit"
-        )
-    except OSError as exc:
-        return "refuse", (
-            f"REFUSING TO JUDGE: QA breadcrumb ({BREADCRUMB}) — unreadable: {exc}"
-        )
-    except ValueError as exc:
-        return "refuse", (
-            f"REFUSING TO JUDGE: QA breadcrumb ({BREADCRUMB}) — malformed: {exc}"
-        )
-
-    ship_sha = shipped_sha(cwd=cwd)
-    if not ship_sha:
-        return "refuse", (
-            "REFUSING TO JUDGE: git HEAD — `git rev-parse HEAD` failed, cannot "
-            "resolve the commit being deployed"
-        )
-
-    match = (
-        evidence_sha.lower() == ship_sha.lower()
-        or ship_sha.lower().startswith(evidence_sha.lower())
-        or evidence_sha.lower().startswith(ship_sha.lower())
-    )
-    if not match:
-        return "block", (
-            f"QA evidence pins commit {evidence_sha} (written by {writer}), but the "
-            f"commit being deployed is {ship_sha}. MISMATCH — this evidence does not "
-            "cover this deploy, however recent it is."
-        )
-    return "pass", f"QA evidence pins {evidence_sha} (written by {writer}), matches deployed {ship_sha}."
-
-
-def _resolve_deploy_cwd(command: str, data: dict) -> str | None:
-    """Resolve the directory the deploy actually runs in (v4.0.0), same shape
-    as enforce-eta-approval-before-npm-publish.resolve_publish_dir: a leading
-    `cd <abspath>` on the first line wins, else the PreToolUse payload cwd,
-    else the hook process cwd. Needed because `git rev-parse HEAD` run from
-    the hook's OWN cwd (often the session root, not the deploy target) names
-    the wrong commit as "shipped"."""
-    first_line = command.split("\n", 1)[0]
-    m = re.match(r"""^\s*cd\s+(['"]?)([^\s&;|'"]+)\1""", first_line)
-    if m:
-        candidate = m.group(2).strip()
-        if os.path.isabs(candidate) and os.path.isdir(candidate):
-            return candidate
-    payload_cwd = (data.get("cwd") or "").strip()
-    if payload_cwd and os.path.isdir(payload_cwd):
-        return payload_cwd
-    return os.getcwd()
+        return (time.time() - os.path.getmtime(BREADCRUMB)) <= MAX_AGE_SECONDS
+    except OSError:
+        return False
 
 
 def main() -> int:
@@ -331,7 +237,6 @@ def main() -> int:
         return 0
 
     command = data.get("tool_input", {}).get("command", "") or ""
-    deploy_cwd = _resolve_deploy_cwd(command, data)
 
     # Override documente, lu sur la commande BRUTE : il VIT DANS UN COMMENTAIRE,
     # et le tokenizer retire les commentaires. Le lire apres nettoyage tuerait
@@ -342,31 +247,22 @@ def main() -> int:
     if not is_prod_deploy(command):
         return 0
 
-    verdict, detail = qa_pins_shipped_commit(cwd=deploy_cwd)
-    if verdict == "pass":
+    if qa_is_fresh():
         return 0
-
-    if verdict == "refuse":
-        print(f"BLOCKED by block-deploy-without-qa: {detail}", file=sys.stderr)
-        return 2
 
     print(
         "BLOCKED by block-deploy-without-qa: deploiement Convex vers la production "
-        "sans QA pour CE commit.\n"
-        f"  {detail}\n"
+        "sans QA recente.\n"
         "  Pour DEV : utilise `npx convex dev --once` (aucun garde prod ne s'applique). "
         "Le jeton Pi / la preuve QA ne sont requis QUE pour la PROD.\n"
-        "  Passez la QA (T6) — tests + verification SUR CE COMMIT — puis relancez le "
-        "deploiement.\n"
+        f"  Le temoin QA ({BREADCRUMB}) est absent ou perime (> 1h).\n"
+        "  Passez la QA (T6) — tests + verification — puis relancez le deploiement.\n"
         "\n"
         "  Override documente (hotfix client-impacting uniquement) :\n"
         "    npx convex deploy --yes  # allow-no-qa: <raison >= 6 caracteres>\n"
         "\n"
         "  Ce hook decide sur l'ACTION, pas sur le texte : ajouter '# convex dev' "
-        "en commentaire ne l'ouvre plus (bypass corrige Day 128). Il decide "
-        "desormais sur le COMMIT PINNE par la preuve QA, pas sur son AGE "
-        "(v4.0.0 — un delai plus large n'aurait jamais ferme le trou de "
-        "l'acceptation a tort).",
+        "en commentaire ne l'ouvre plus (bypass corrige Day 128).",
         file=sys.stderr,
     )
     return 2
