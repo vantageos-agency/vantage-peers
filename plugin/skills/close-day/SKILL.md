@@ -7,7 +7,7 @@ description: >
   "bonne nuit", "wrap up", "call it a day", "close session", "daily close",
   or mentions ending their work session -- even if they don't say "close-day" explicitly.
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
   user-invocable: true
 license: Proprietary
 ---
@@ -182,17 +182,25 @@ of everything this session wrote, so the morning follows ids instead of searchin
 
 ```
 mcp__vantage-peers__set_summary orchestratorId={role} instanceId={instanceId}
-  summary="close-day | date: <YYYY-MM-DD> | day <N>
+  summary="<one line: what you closed today — the live, visible status>"
+  endOfDayIndex="close-day | date: <YYYY-MM-DD> | day <N>
 handover: <memory id from Step 8>
 diary: <diary id from Step 6>
 friction: <memory id>, <memory id>   (or: none)
 briefing: <briefing note id>          (or: none)"
 ```
 
+**Two distinct fields, and the distinction is the whole point.** `summary` is the live status —
+volatile, overwritten by every station the moment it starts a session, including tomorrow morning.
+`endOfDayIndex` is the handover, and nothing overwrites it until the next close-day. Writing the
+index into `summary` is what used to destroy it: the first `set_summary` of the morning wiped the
+index before anyone read it, and nothing recorded that it had ever existed.
+
 Three properties make this work, and all three are the point:
 
-1. **It is a single field on your own record, overwritten each session.** There is exactly one,
-   always the latest. No ranking, no similarity, nothing to disambiguate.
+1. **It is a single dedicated field on your own record, overwritten only by close-day.** There is
+   exactly one, always the latest. No ranking, no similarity, nothing to disambiguate — and the
+   morning's own writes cannot touch it.
 2. **Every id is written in full**, copied from the call that returned it. An abbreviated id
    sends tomorrow to a dead end.
 3. **The date and day number are in the header**, so tomorrow can check that what it found is
@@ -226,7 +234,7 @@ The last act. Until it is sent, pi does not know your station is down and keeps 
 mcp__vantage-peers__send_message
   from="{role}" fromInstanceId="{instanceId}" channel="pi"
   content="[DONE] day <N> closed — <date>
-evidence:  index left behind: <the whole Step 9 summary, copied>. Cron cut: <id> (or: none was live).
+evidence:  index left behind: <the whole Step 9 endOfDayIndex, copied>. Cron cut: <id> (or: none was live).
 finding:   <the sales-terms line from Step 5 — what a client can use tonight that they could not yesterday>
 action:    <what is left open and who owes it, or: nothing>
 next:      <what you start tomorrow, taken from the handover>
@@ -252,6 +260,8 @@ without having to ask you for them.
 - Nothing written on a previous evening is ever overwritten or deleted. The handovers are a log.
 - Step 9 is the index and the only entry point tomorrow uses. It carries the date, the day
   number, and the full id of everything this session wrote. An id written short is a dead end.
+- The index goes in `endOfDayIndex`, never in `summary`. `summary` is the live status and the
+  morning overwrites it before anyone reads it; an index written there is destroyed silently.
 - The message cron is cut here and re-registered tomorrow morning. A cron left running fires
   all night on an empty queue, on every station.
 - The day is not closed until pi has been told. A station that goes quiet without saying so is
@@ -264,6 +274,11 @@ without having to ask you for them.
 
 ## Changelog
 
+- **v2.3.0** — The index moves out of `summary` and into its own field, `endOfDayIndex`. Written
+  into `summary`, it was destroyed every morning before anyone read it: `summary` is the live
+  status and the first write of the day overwrites it, leaving no trace that an index had ever
+  existed. The two fields now carry two different things — volatile status, and the handover that
+  only close-day may overwrite.
 - **v2.2.0** — Two acts were missing at the end of the day. The message cron is now cut here
   (Step 10) instead of firing all night on an empty queue across every station, and pi is told
   the day is closed (Step 11) instead of learning it by chance — a station that goes quiet
