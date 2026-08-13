@@ -21,6 +21,7 @@ const profileDocValidator = v.object({
   }),
   dynamic: v.object({
     currentTask: v.optional(v.string()),
+    endOfDayIndex: v.optional(v.string()),
     lastSeen: v.number(),
     sessionCount: v.number(),
   }),
@@ -83,6 +84,7 @@ export const upsertProfile = mutation({
     })),
     dynamic: v.optional(v.object({
       currentTask: v.optional(v.string()),
+      endOfDayIndex: v.optional(v.string()),
       lastSeen: v.number(),
       sessionCount: v.number(),
     })),
@@ -140,6 +142,9 @@ export const updateDynamic = mutation({
     orchestratorId: v.string(),
     instanceId: v.optional(v.string()),
     currentTask: v.optional(v.string()),
+    // Durable end-of-day index — written only when explicitly passed,
+    // independent of `currentTask` (mission k574p02m DEFECT 1 fix).
+    endOfDayIndex: v.optional(v.string()),
     // Optional: defaults to Date.now() server-side if omitted (fixes #261)
     lastSeen: v.optional(v.number()),
     sessionCountDelta: v.optional(v.number()),
@@ -178,6 +183,12 @@ export const updateDynamic = mutation({
         },
         dynamic: {
           currentTask: args.currentTask,
+          // Durable index is explicit-only: written only when the caller
+          // passes `endOfDayIndex` (close-day). Never seeded from
+          // `currentTask` — that would freeze the index to an arbitrary
+          // live status. Undefined here means "no index yet" — the honest
+          // state until close-day writes it (mission k574p02m fix).
+          endOfDayIndex: args.endOfDayIndex,
           lastSeen,
           sessionCount: 1,
         },
@@ -188,6 +199,17 @@ export const updateDynamic = mutation({
     await ctx.db.patch(profile._id, {
       dynamic: {
         currentTask: args.currentTask ?? profile.dynamic.currentTask,
+        // Explicit arg always wins. Otherwise, preserve the existing
+        // durable index untouched — live-status writes (which never pass
+        // `endOfDayIndex`) must never seed or clobber it from `currentTask`.
+        // If no index has ever been written, this stays undefined — the
+        // honest "no index yet" state until close-day writes it explicitly
+        // (mission k574p02m DEFECT 1 fix — see
+        // profiles.summaryIndexClobber.test.ts).
+        endOfDayIndex:
+          args.endOfDayIndex !== undefined
+            ? args.endOfDayIndex
+            : profile.dynamic.endOfDayIndex,
         lastSeen,
         sessionCount:
           profile.dynamic.sessionCount + (args.sessionCountDelta ?? 0),
@@ -256,6 +278,13 @@ export const getProfileWithMemories = query({
 // listProfiles — list all profiles (all instances)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/missions.ts MISSION_LIST_SCAN_CAP, convex/briefingNotes.ts
+// BRIEFING_NOTES_LIST_SCAN_CAP). When paginating via `createdBefore`, the
+// post-take filter only finds rows older than the cursor if the FETCH is
+// wide enough to include them — mission k574p02m DEFECT 2 fix.
+export const PROFILES_LIST_SCAN_CAP = 2000;
+
 export const listProfiles = query({
   args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -267,6 +296,11 @@ export const listProfiles = query({
   returns: v.array(profileDocValidator),
   handler: async (ctx, args) => {
     const take = args.limit ?? 50;
+    // Widen the fetch whenever a cursor is present, so the post-take
+    // `createdBefore` filter has candidate rows older than the anchor to
+    // find (mirrors tasks.ts `needsWideScan` / `fetchCap`).
+    const needsWideScan = args.createdBefore !== undefined;
+    const fetchCap = needsWideScan ? PROFILES_LIST_SCAN_CAP + 1 : take;
     let rows: Doc<"profiles">[];
     if (args.orchestratorId !== undefined) {
       rows = await ctx.db
@@ -275,9 +309,9 @@ export const listProfiles = query({
           q.eq("orchestratorId", args.orchestratorId!),
         )
         .order("desc")
-        .take(take);
+        .take(fetchCap);
     } else {
-      rows = await ctx.db.query("profiles").order("desc").take(take);
+      rows = await ctx.db.query("profiles").order("desc").take(fetchCap);
     }
     // S3.3 B8 follow-up — post-take createdBefore filter mirrors briefingNotes
     // pattern (convex/briefingNotes.ts:96-134, GREEN of PR #635). Profiles use
@@ -286,6 +320,6 @@ export const listProfiles = query({
       const before = args.createdBefore;
       rows = rows.filter((r) => r._creationTime < before);
     }
-    return rows;
+    return rows.slice(0, take);
   },
 });
