@@ -125,6 +125,13 @@ export const create = mutation({
 // list — list recurring tasks with optional filters
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const RECURRING_TASKS_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -136,6 +143,10 @@ export const list = query({
 	},
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan
+			? RECURRING_TASKS_LIST_SCAN_CAP + 1
+			: limit;
 
 		let rows: Doc<"recurringTasks">[];
 		if (args.assignedTo !== undefined) {
@@ -143,7 +154,7 @@ export const list = query({
 				.query("recurringTasks")
 				.withIndex("by_assignee", (q) => q.eq("assignedTo", args.assignedTo!))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 			if (args.active !== undefined) {
 				rows = rows.filter((t) => t.active === args.active);
 			}
@@ -152,9 +163,9 @@ export const list = query({
 				.query("recurringTasks")
 				.withIndex("by_active", (q) => q.eq("active", args.active!))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else {
-			rows = await ctx.db.query("recurringTasks").order("desc").take(limit);
+			rows = await ctx.db.query("recurringTasks").order("desc").take(fetchCap);
 		}
 
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
@@ -162,7 +173,7 @@ export const list = query({
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 

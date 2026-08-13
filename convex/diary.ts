@@ -97,6 +97,13 @@ export const get = query({
 // list — list diary entries by orchestrator, ordered by date desc
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const DIARY_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -124,6 +131,11 @@ export const list = query({
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
+		// Widen the fetch whenever a cursor is present, so the post-take
+		// `createdBefore` filter has candidate rows older than the anchor to
+		// find (mirrors profiles.ts `needsWideScan` / `fetchCap`).
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan ? DIARY_LIST_SCAN_CAP + 1 : limit;
 
 		// Fail-closed org scoping: diary has no orgId/tenantId column
 		// (convex/schema.ts ~272-287), so a non-master caller is restricted to
@@ -148,8 +160,8 @@ export const list = query({
 							q.eq("orchestrator", orchestrator),
 						)
 						.order("desc")
-						.take(limit)
-				: await ctx.db.query("diary").order("desc").take(limit);
+						.take(fetchCap)
+				: await ctx.db.query("diary").order("desc").take(fetchCap);
 
 		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
 		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
@@ -168,7 +180,9 @@ export const list = query({
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		// Re-bound to the requested page size now that the filter has run over
+		// the widened superset (no-op when a wide scan wasn't needed).
+		return rows.slice(0, limit);
 	},
 });
 

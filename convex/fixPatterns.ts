@@ -235,6 +235,13 @@ export const get = query({
 // listByProject — list patterns for a given project
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const FIX_PATTERNS_LIST_BY_PROJECT_SCAN_CAP = 2000;
+
 export const listByProject = query({
 	args: {
 		sourceProject: v.string(),
@@ -262,22 +269,29 @@ export const listByProject = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan
+			? FIX_PATTERNS_LIST_BY_PROJECT_SCAN_CAP + 1
+			: limit;
 		let rows = await ctx.db
 			.query("fixPatterns")
 			.withIndex("by_project", (q) => q.eq("sourceProject", args.sourceProject))
 			.order("desc")
-			.take(args.limit ?? 50);
+			.take(fetchCap);
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listAll — list all patterns ordered by creation time (newest first)
 // ─────────────────────────────────────────────────────────────────────────────
+
+export const FIX_PATTERNS_LIST_ALL_SCAN_CAP = 2000;
 
 export const listAll = query({
 	args: {
@@ -305,15 +319,15 @@ export const listAll = query({
 		}),
 	),
 	handler: async (ctx, args) => {
-		let rows = await ctx.db
-			.query("fixPatterns")
-			.order("desc")
-			.take(args.limit ?? 50);
+		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan ? FIX_PATTERNS_LIST_ALL_SCAN_CAP + 1 : limit;
+		let rows = await ctx.db.query("fixPatterns").order("desc").take(fetchCap);
 		if (args.createdBefore !== undefined) {
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 

@@ -178,6 +178,13 @@ export const settle = mutation({
 // list — list mandates with optional filters, newest first
 // ─────────────────────────────────────────────────────────────────────────────
 
+// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
+// paginating via `createdBefore`, the post-take filter only finds rows
+// older than the cursor if the FETCH is wide enough to include them —
+// mission k574p02m DEFECT 2, lot 2.
+export const MANDATES_LIST_SCAN_CAP = 2000;
+
 export const list = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -191,6 +198,8 @@ export const list = query({
 	returns: v.array(mandateObject),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 50;
+		const needsWideScan = args.createdBefore !== undefined;
+		const fetchCap = needsWideScan ? MANDATES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"mandates">[];
 
@@ -215,7 +224,7 @@ export const list = query({
 					q.eq("requestedBy", args.requestedBy!).eq("status", args.status!),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else if (args.requestedBy !== undefined) {
 			rows = await ctx.db
 				.query("mandates")
@@ -223,7 +232,7 @@ export const list = query({
 					q.eq("requestedBy", args.requestedBy!),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else if (args.fulfilledBy !== undefined && args.status !== undefined) {
 			rows = await ctx.db
 				.query("mandates")
@@ -231,7 +240,7 @@ export const list = query({
 					q.eq("fulfilledBy", args.fulfilledBy!).eq("status", args.status!),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else if (args.fulfilledBy !== undefined) {
 			rows = await ctx.db
 				.query("mandates")
@@ -239,15 +248,15 @@ export const list = query({
 					q.eq("fulfilledBy", args.fulfilledBy!),
 				)
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else if (args.status !== undefined) {
 			rows = await ctx.db
 				.query("mandates")
 				.withIndex("by_status", (q) => q.eq("status", args.status!))
 				.order("desc")
-				.take(limit);
+				.take(fetchCap);
 		} else {
-			rows = await ctx.db.query("mandates").order("desc").take(limit);
+			rows = await ctx.db.query("mandates").order("desc").take(fetchCap);
 		}
 
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
@@ -255,7 +264,7 @@ export const list = query({
 			const before = args.createdBefore;
 			rows = rows.filter((r) => r._creationTime < before);
 		}
-		return rows;
+		return rows.slice(0, limit);
 	},
 });
 
