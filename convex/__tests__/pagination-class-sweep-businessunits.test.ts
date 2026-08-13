@@ -76,4 +76,53 @@ describe("businessUnits.list cursor pagination — fixed-buffer fetchLimit under
 		expect(missing).toEqual([]);
 		expect(collectedIds.size).toBe(TOTAL);
 	});
+
+	// mission k574p02m lot 2 — Eta REVISE. The fetchLimit widening was gated
+	// on `cursorPayload` only. The LEGACY `createdBefore` back-compat path
+	// (no cursor arg) still falls through to `limit + 1` (narrow), so a
+	// client paginating by `createdBefore` re-reads only the top page each
+	// time and silently drops everything older than page 1.
+	test("RED/GREEN: legacy createdBefore pagination must return every seeded business unit", async () => {
+		const t = convexTest(schema, modules);
+		const TOTAL = 130;
+		const seededIds: string[] = [];
+
+		for (let i = 0; i < TOTAL; i++) {
+			const id: string = await t.mutation(api.businessUnits.create, {
+				name: `sweep-bu-legacy-${i}`,
+				description: "d",
+				purpose: "p",
+				orchestratorId: "sigma",
+				status: "idea",
+				businessModel: "m",
+				targetCustomers: "c",
+				services: [],
+				pricing: "free",
+				revenueProjections: { y1: 0, y2: 0, y3: 0 },
+				coreTeam: { agents: [], skills: [], hooks: [], plugins: [] },
+				coreProcesses: [],
+				dependencies: [],
+				kpis: [],
+			});
+			seededIds.push(id);
+		}
+
+		const collected: BuRow[] = [];
+		let createdBefore: number | undefined;
+		let pages = 0;
+		while (pages < 20) {
+			pages++;
+			const page: { items: BuRow[] } = await t.query(api.businessUnits.list, {
+				createdBefore,
+			});
+			if (page.items.length === 0) break;
+			collected.push(...page.items);
+			createdBefore = page.items[page.items.length - 1]._creationTime;
+		}
+
+		const collectedIds = new Set(collected.map((r) => r._id));
+		const missing = seededIds.filter((id) => !collectedIds.has(id));
+		expect(missing).toEqual([]);
+		expect(collectedIds.size).toBe(TOTAL);
+	});
 });

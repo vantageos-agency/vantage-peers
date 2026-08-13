@@ -62,4 +62,44 @@ describe("components.list cursor pagination — fixed-buffer fetchLimit undersho
 		expect(missing).toEqual([]);
 		expect(collectedIds.size).toBe(TOTAL);
 	});
+
+	// mission k574p02m lot 2 — Eta REVISE. The fetchLimit widening was gated
+	// on `cursorPayload` only. The LEGACY `createdBefore` back-compat path
+	// (no cursor arg) still falls through to `limit + 1` (narrow).
+	test("RED/GREEN: legacy createdBefore pagination must return every seeded component", async () => {
+		const t = convexTest(schema, modules);
+		const TOTAL = 130;
+		const seededIds: string[] = [];
+
+		for (let i = 0; i < TOTAL; i++) {
+			const result: { componentId: string; created: boolean } = await t.mutation(
+				api.components.register,
+				{
+					name: `sweep-component-legacy-${i}`,
+					type: "skill",
+					content: "content",
+					createdBy: "sigma",
+				},
+			);
+			seededIds.push(result.componentId);
+		}
+
+		const collected: ComponentRow[] = [];
+		let createdBefore: number | undefined;
+		let pages = 0;
+		while (pages < 20) {
+			pages++;
+			const page: { items: ComponentRow[] } = await t.query(api.components.list, {
+				createdBefore,
+			});
+			if (page.items.length === 0) break;
+			collected.push(...page.items);
+			createdBefore = page.items[page.items.length - 1]._creationTime;
+		}
+
+		const collectedIds = new Set(collected.map((r) => r._id));
+		const missing = seededIds.filter((id) => !collectedIds.has(id));
+		expect(missing).toEqual([]);
+		expect(collectedIds.size).toBe(TOTAL);
+	});
 });

@@ -102,9 +102,12 @@ export const list = query({
 		// continuation), so once the cursor anchor's true position exceeds this
 		// fixed window the anchor is never found and the page comes back empty
 		// before the true end. Widen the fetch to the shared scan cap.
-		const fetchLimit = cursorPayload
-			? GITHUB_REPO_MAPPING_LIST_SCAN_CAP + 1
-			: limit + 1;
+		// mission k574p02m lot 2 — Eta REVISE: widen on EITHER cursor source.
+		// The legacy `createdBefore` back-compat path also filters after
+		// `.take(fetchLimit)`, so it must widen too or it undershoots deep
+		// pages the same way the cursor path used to.
+		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
+		const fetchLimit = wide ? GITHUB_REPO_MAPPING_LIST_SCAN_CAP + 1 : limit + 1;
 
 		let rows: Doc<"githubRepoMapping">[] = await ctx.db
 			.query("githubRepoMapping")

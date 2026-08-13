@@ -288,7 +288,12 @@ export const list = query({
 		// and the page comes back empty before the true end. Widen the fetch to
 		// the same scan cap the other carriers use instead of a multiplier that
 		// degrades with page depth.
-		const fetchLimit = cursorPayload ? BUSINESS_UNITS_LIST_SCAN_CAP + 1 : limit + 1;
+		// mission k574p02m lot 2 — Eta REVISE: widen on EITHER cursor source.
+		// The legacy `createdBefore` back-compat path also filters after
+		// `.take(fetchLimit)`, so it must widen too or it undershoots deep
+		// pages the same way the cursor path used to.
+		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
+		const fetchLimit = wide ? BUSINESS_UNITS_LIST_SCAN_CAP + 1 : limit + 1;
 
 		let rows: Doc<"businessUnits">[];
 		if (args.orchestratorId !== undefined && args.status === undefined) {
