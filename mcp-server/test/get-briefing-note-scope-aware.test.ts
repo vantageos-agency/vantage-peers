@@ -154,7 +154,25 @@ function captureRegisteredTools(oauthCtx?: OAuthContext): Map<string, CapturedTo
 			annotations: Record<string, unknown>,
 			handler: (args: any) => any,
 		) => {
-			tools.set(name, { name, description, schema, annotations, handler });
+			// mission k17at41v7e6re4ht9wbf3cvdah8cepjc GREEN fix
+			// (registerTool.ts `buildStrictInputSchema`): `defineTool` now hands
+			// `server.tool` a `z.object(rawShape).strict()` ZodObject instead of
+			// the bare raw-shape record. Unwrap `.shape` so this test keeps
+			// reading the same per-field validators it always did.
+			const maybeZodObject = schema as { shape?: unknown };
+			const unwrapped =
+				maybeZodObject.shape !== undefined &&
+				typeof maybeZodObject.shape === "object" &&
+				maybeZodObject.shape !== null
+					? (maybeZodObject.shape as Record<string, unknown>)
+					: schema;
+			tools.set(name, {
+				name,
+				description,
+				schema: unwrapped,
+				annotations,
+				handler,
+			});
 		},
 	} as any;
 	const mockConvex = {
