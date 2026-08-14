@@ -40,7 +40,24 @@ const fakeServer = {
 			// Handler functions (3-arg `tool(name, desc, handler)` form) are not
 			// arg-shape objects — guard against recording a function as a shape.
 			typeof shape !== "function";
-		registry.set(name, isShapeObject ? (shape as ZodShape) : {});
+		if (!isShapeObject) {
+			registry.set(name, {});
+			return;
+		}
+		// mission k17at41v7e6re4ht9wbf3cvdah8cepjc GREEN fix
+		// (registerTool.ts `buildStrictInputSchema`): `defineTool` now hands
+		// `server.tool` a full `z.object(rawShape).strict()` ZodObject instance
+		// instead of the bare raw-shape record, so unknown args are rejected
+		// loud instead of silently stripped. Unwrap `.shape` to keep this
+		// contract test reading the SAME per-field validators it always did.
+		const maybeZodObject = shape as { shape?: unknown };
+		const unwrapped =
+			maybeZodObject.shape !== undefined &&
+			typeof maybeZodObject.shape === "object" &&
+			maybeZodObject.shape !== null
+				? (maybeZodObject.shape as ZodShape)
+				: (shape as ZodShape);
+		registry.set(name, unwrapped);
 	},
 } as unknown as Parameters<typeof registerTools>[0];
 
