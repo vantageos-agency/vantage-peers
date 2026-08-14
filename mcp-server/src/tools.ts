@@ -591,6 +591,26 @@ export const taskStatusSchema = z
 	.enum(taskStatusValues)
 	.describe("Task status");
 
+// Day 159 — update_task must not advertise "blocked" as a settable status:
+// the server (convex/tasks.ts `update`) refuses status="blocked" through this
+// verb (BLOCK_VIA_UPDATE_REFUSED) and redirects to block_task, which carries
+// the anti-anonymous-block gate (a cited blockedOnTaskId or an explicit
+// "# blocked-on-nobody: <reason>" marker). Keep the schema in sync so a
+// client is refused loud at the tool-input layer, not just server-side.
+const taskStatusValuesExcludingBlocked = taskStatusValues.filter(
+	(s) => s !== "blocked",
+) as Exclude<(typeof taskStatusValues)[number], "blocked">[];
+export const updateTaskStatusSchema = z
+	.enum(
+		taskStatusValuesExcludingBlocked as [
+			Exclude<(typeof taskStatusValues)[number], "blocked">,
+			...Exclude<(typeof taskStatusValues)[number], "blocked">[],
+		],
+	)
+	.describe(
+		'New status. NOT "blocked" — use block_task to block (it names who is charged to unblock you).',
+	);
+
 const missionStatusValues = [
 	"brainstorm",
 	"plan",
@@ -1147,6 +1167,7 @@ export const blockTaskOutputSchema = z.object({
 	taskId: z.string(),
 	status: z.literal("blocked"),
 	reason: z.string().optional(),
+	blockedOnTaskId: z.string().optional(),
 });
 
 // add_task_dependency
@@ -4210,7 +4231,7 @@ export function registerTools(
 			tags: flexArrayOptional.describe("New tags"),
 			assignedTo: assigneeSchema.optional().describe("Reassign to"),
 			priority: prioritySchema.optional().describe("New priority"),
-			status: taskStatusSchema.optional().describe("New status"),
+			status: updateTaskStatusSchema.optional(),
 			dependsOn: z
 				.array(taskIdSchema)
 				.optional()
@@ -4523,7 +4544,10 @@ export function registerTools(
 		"block_task",
 		"Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked. " +
 			"WHEN: use when external dependency or missing input prevents progress — record the specific blocker. " +
-			"EXAMPLE: block_task taskId='k178d3ns...' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
+			"A block is a commitment, not just a journal entry: cite blockedOnTaskId (a live task owned by " +
+			"someone else) so the responder is charged to unblock you, OR mark the reason with " +
+			"'# blocked-on-nobody: <reason>' when nobody in the fleet owns the obstacle. " +
+			"EXAMPLE: block_task taskId='k178d3ns...' blockedOnTaskId='k17bbbbb...' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to block"),
 			reason: z.string().optional().describe("Why the task is blocked"),
@@ -4531,6 +4555,12 @@ export function registerTools(
 				.array(taskIdSchema)
 				.optional()
 				.describe("Task IDs that are blocking this task"),
+			blockedOnTaskId: taskIdSchema
+				.optional()
+				.describe(
+					"The live task (assigned to someone else) this task waits on. Required unless " +
+						"reason contains an explicit '# blocked-on-nobody: <reason>' marker.",
+				),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
@@ -4541,31 +4571,36 @@ export function registerTools(
 			destructiveHint: true,
 			title: "Block task",
 		},
-		async ({ taskId, reason, blockedBy, callerOrchestrator }) => {
+		async ({ taskId, reason, blockedBy, blockedOnTaskId, callerOrchestrator }) => {
 			try {
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
 				}
 
-				const updateArgs: Record<string, any> = {
+				const blockArgs: Record<string, any> = {
 					taskId: taskId as any,
-					status: "blocked",
 				};
-				if (reason) updateArgs.completionNote = reason;
-				if (blockedBy)
-					updateArgs.dependsOn = blockedBy.map((id: string) => id as any);
-				if (callerOrchestrator)
-					updateArgs.callerOrchestrator = callerOrchestrator;
+				if (reason) blockArgs.reason = reason;
+				if (blockedOnTaskId) blockArgs.blockedOnTaskId = blockedOnTaskId as any;
+				if (callerOrchestrator) blockArgs.callerOrchestrator = callerOrchestrator;
 
-				await convex.mutation("tasks:update" as any, updateArgs);
+				await convex.mutation("tasks:blockTask" as any, blockArgs);
+
+				if (blockedBy && blockedBy.length > 0) {
+					await convex.mutation("tasks:update" as any, {
+						taskId: taskId as any,
+						dependsOn: blockedBy.map((id: string) => id as any),
+						...(callerOrchestrator ? { callerOrchestrator } : {}),
+					});
+				}
 
 				return {
 					content: [
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ taskId, status: "blocked", reason },
+								{ taskId, status: "blocked", reason, blockedOnTaskId },
 								null,
 								2,
 							),

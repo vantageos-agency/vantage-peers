@@ -857,6 +857,17 @@ export const update = mutation({
 			}
 		}
 
+		// Day 159 — the anonymous-block gate must live at the STATUS boundary,
+		// not the verb. `blockTask` refuses an anonymous block, but `update`
+		// accepts `status: statusValidator` (which includes "blocked") with no
+		// verification — a second, ungated door to the exact defect blockTask
+		// exists to close. Refuse here and redirect to block_task.
+		if (patch.status === "blocked") {
+			throw new ConvexError(
+				`BLOCK_VIA_UPDATE_REFUSED: setting status="blocked" through update_task is refused — a block must name the task charged to lift it. Use block_task with blockedOnTaskId=<live task owned by someone else>, or a "# blocked-on-nobody: <reason>" marker for a genuinely ownerless obstacle — ${JSON.stringify({ taskId })}`,
+			);
+		}
+
 		// Day 157 — cancelled is a terminal status, settable only by the task's
 		// CREATOR (stricter than assertTaskCallerAuthorized above, which also
 		// allows the assignee), and requires a non-empty reason. Mirrors the
@@ -923,7 +934,177 @@ export const update = mutation({
 		}
 
 		await ctx.db.patch(taskId, patch);
+
+		if (patch.status === "done") {
+			await unblockWaitersOn(ctx, taskId, patch.completedAt ?? Date.now());
+		}
+
 		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// unblockWaitersOn — reciprocal half of the block_task commitment (Day 159).
+// When `doneTaskId` transitions to "done", every task that named it via
+// blockedOnTaskId is swept back to "todo" and its assignee is notified
+// through the existing messages/messageReceipts path (same shape sendMessage
+// writes for a single-recipient channel — see convex/messages.ts:184-196).
+// Called from both `complete` and `update` (the two paths that can close a
+// task to "done" — see the Day 130 closure-gate comment on `update` below).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function unblockWaitersOn(
+	ctx: MutationCtx,
+	doneTaskId: import("./_generated/dataModel").Id<"tasks">,
+	now: number,
+): Promise<void> {
+	const doneTask = await ctx.db.get(doneTaskId);
+	const waiters = await ctx.db
+		.query("tasks")
+		.withIndex("by_blockedOnTaskId", (q) => q.eq("blockedOnTaskId", doneTaskId))
+		.collect();
+
+	for (const waiter of waiters) {
+		if (waiter.status !== "blocked") continue;
+
+		await ctx.db.patch(waiter._id, {
+			status: "todo",
+			blockedOnTaskId: undefined,
+			updatedAt: now,
+		});
+
+		const content =
+			`UNBLOCKED: task ${waiter._id} ("${waiter.title}") is unblocked — ` +
+			`${doneTaskId} ("${doneTask?.title ?? "unknown"}") is now done. Status reset to todo — ${JSON.stringify(
+				{ taskId: waiter._id, unblockedBy: doneTaskId },
+			)}`;
+
+		const messageId = await ctx.db.insert("messages", {
+			from: "system",
+			channel: waiter.assignedTo,
+			content,
+			createdAt: now,
+		});
+		await ctx.db.insert("messageReceipts", {
+			messageId,
+			recipient: waiter.assignedTo,
+			readAt: undefined,
+		});
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// blockTask — server-side gate for the "who is charged to unblock me" defect
+// (Day 159). A block note is a journal; a task in the responder's queue is a
+// commitment. Extends the same layer/refusal shape as the complete_task
+// closure gate: this refusal lives on the server, so it holds for every
+// station without distribution.
+//
+// Two accepted shapes, ANONYMOUS blocking forbidden in both:
+//   1. blockedOnTaskId set — cited task must (a) exist, (b) be neither done
+//      nor cancelled, (c) be assigned to someone OTHER than this task's own
+//      assignee (you don't wait on yourself).
+//   2. blockedOnTaskId omitted — an obstacle nobody in the fleet owns
+//      (operator decision, third-party outage). REQUIRES an explicit
+//      "# blocked-on-nobody: <reason>" marker in `reason`; the reason is
+//      stored in blockedOnNobodyReason.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BLOCKED_ON_NOBODY_MARKER = /#\s*blocked-on-nobody:\s*(.+)/is;
+
+export const blockTask = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+		reason: v.optional(v.string()),
+		blockedOnTaskId: v.optional(v.id("tasks")),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+
+		const patch: Record<string, unknown> = {
+			status: "blocked",
+			updatedAt: Date.now(),
+			blockedOnTaskId: undefined,
+			blockedOnNobodyReason: undefined,
+		};
+
+		if (args.blockedOnTaskId !== undefined) {
+			const blocker = await ctx.db.get(args.blockedOnTaskId);
+			if (blocker === null) {
+				throw new ConvexError(
+					`BLOCKED_ON_TASK_NOT_FOUND: cited task ${args.blockedOnTaskId} does not exist — cite a real, live task ID, or omit blockedOnTaskId and mark the reason with "# blocked-on-nobody: <reason>" if no one owns this obstacle — ${JSON.stringify({ taskId: args.taskId, blockedOnTaskId: args.blockedOnTaskId })}`,
+				);
+			}
+			if (blocker.status === "done" || blocker.status === "cancelled") {
+				throw new ConvexError(
+					`BLOCKED_ON_TASK_CLOSED: cited task ${args.blockedOnTaskId} is already "${blocker.status}" — a closed request blocks no one. Cite a live task, or complete it and let the reciprocal unblock fire — ${JSON.stringify({ taskId: args.taskId, blockedOnTaskId: args.blockedOnTaskId, blockerStatus: blocker.status })}`,
+				);
+			}
+			if (blocker.assignedTo === task.assignedTo) {
+				throw new ConvexError(
+					`BLOCKED_ON_OWN_TASK: cited task ${args.blockedOnTaskId} is assigned to ${blocker.assignedTo}, the same assignee as ${args.taskId} — you cannot block on your own task. Cite a task owned by someone else, or omit blockedOnTaskId and mark the reason with "# blocked-on-nobody: <reason>" — ${JSON.stringify({ taskId: args.taskId, blockedOnTaskId: args.blockedOnTaskId, assignedTo: task.assignedTo })}`,
+				);
+			}
+			patch.blockedOnTaskId = args.blockedOnTaskId;
+			if (args.reason) patch.completionNote = args.reason;
+		} else {
+			const reason = args.reason ?? "";
+			const marker = reason.match(BLOCKED_ON_NOBODY_MARKER);
+			if (!marker || marker[1].trim() === "") {
+				throw new ConvexError(
+					`BLOCKED_LINK_REQUIRED: block_task requires EITHER blockedOnTaskId citing a live task assigned to someone else, OR an explicit "# blocked-on-nobody: <reason>" marker in reason (for an obstacle nobody in the fleet owns — operator decision, third-party outage). Anonymous blocking is refused, never blocking itself — ${JSON.stringify({ taskId: args.taskId })}`,
+				);
+			}
+			patch.blockedOnNobodyReason = reason;
+			patch.completionNote = reason;
+		}
+
+		await ctx.db.patch(args.taskId, patch);
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listUnlinkedBlocked — migration inventory query (Day 159). Lists tasks
+// ALREADY in status="blocked" carrying neither blockedOnTaskId nor
+// blockedOnNobodyReason — pre-existing rows from before this gate shipped.
+// Read-only: never mutates. This is the invisible-debt inventory Pi's audit
+// asked for.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listUnlinkedBlocked = query({
+	args: {},
+	returns: v.array(
+		v.object({
+			taskId: v.id("tasks"),
+			title: v.string(),
+			assignedTo: v.string(),
+			createdBy: v.string(),
+			updatedAt: v.number(),
+		}),
+	),
+	handler: async (ctx) => {
+		const blocked = await ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", "blocked"))
+			.collect();
+		return blocked
+			.filter((t) => t.blockedOnTaskId === undefined && t.blockedOnNobodyReason === undefined)
+			.map((t) => ({
+				taskId: t._id,
+				title: t.title,
+				assignedTo: t.assignedTo,
+				createdBy: t.createdBy,
+				updatedAt: t.updatedAt,
+			}));
 	},
 });
 
@@ -981,6 +1162,8 @@ export const complete = mutation({
 		}
 
 		await ctx.db.patch(args.taskId, patch);
+
+		await unblockWaitersOn(ctx, args.taskId, now);
 
 		// Auto-link: if task title contains #NNN, update the corresponding issue
 		const issueMatch = task.title.match(/#(\d+)/);
