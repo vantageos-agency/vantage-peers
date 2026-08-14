@@ -281,6 +281,21 @@ export default defineSchema({
 		// Never counted as done/complete; excluded from open/active aliases.
 		cancelledBy: v.optional(creatorValidator),
 		cancelReason: v.optional(v.string()),
+		// Day 159 — a block that names a commitment, not just a journal entry.
+		// blockedOnTaskId: the live task (assigned to someone else) this task
+		// waits on. blockTask validates existence/openness/other-assignee at
+		// call time; when the cited task reaches "done" every waiter here is
+		// swept back to "todo" (convex/tasks.ts unblockWaitersOn). Mutually
+		// exclusive with blockedOnNobodyReason in practice (blockTask sets
+		// exactly one), both kept optional so pre-existing "blocked" rows with
+		// neither field are valid (see migration list query
+		// convex/tasks.ts:listUnlinkedBlocked).
+		blockedOnTaskId: v.optional(v.id("tasks")),
+		// Explicit "# blocked-on-nobody: <reason>" marker text — required to
+		// block WITHOUT a blockedOnTaskId (nobody in the fleet owns the
+		// obstacle: operator decision, third-party outage). Forbids ANONYMOUS
+		// blocking without forbidding blocking itself.
+		blockedOnNobodyReason: v.optional(v.string()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])
@@ -316,6 +331,9 @@ export default defineSchema({
 		// measured to exceed the cap.
 		.index("by_assignee_updatedAt", ["assignedTo", "updatedAt"])
 		.index("by_assignee_status_updatedAt", ["assignedTo", "status", "updatedAt"])
+		// Day 159 — reciprocal unblock: find every task waiting on a given
+		// task so it can be swept back to "todo" the moment that task closes.
+		.index("by_blockedOnTaskId", ["blockedOnTaskId"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).
