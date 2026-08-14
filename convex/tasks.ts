@@ -857,6 +857,17 @@ export const update = mutation({
 			}
 		}
 
+		// Day 159 — the anonymous-block gate must live at the STATUS boundary,
+		// not the verb. `blockTask` refuses an anonymous block, but `update`
+		// accepts `status: statusValidator` (which includes "blocked") with no
+		// verification — a second, ungated door to the exact defect blockTask
+		// exists to close. Refuse here and redirect to block_task.
+		if (patch.status === "blocked") {
+			throw new ConvexError(
+				`BLOCK_VIA_UPDATE_REFUSED: setting status="blocked" through update_task is refused — a block must name the task charged to lift it. Use block_task with blockedOnTaskId=<live task owned by someone else>, or a "# blocked-on-nobody: <reason>" marker for a genuinely ownerless obstacle — ${JSON.stringify({ taskId })}`,
+			);
+		}
+
 		// Day 157 — cancelled is a terminal status, settable only by the task's
 		// CREATOR (stricter than assertTaskCallerAuthorized above, which also
 		// allows the assignee), and requires a non-empty reason. Mirrors the

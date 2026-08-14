@@ -591,6 +591,26 @@ export const taskStatusSchema = z
 	.enum(taskStatusValues)
 	.describe("Task status");
 
+// Day 159 — update_task must not advertise "blocked" as a settable status:
+// the server (convex/tasks.ts `update`) refuses status="blocked" through this
+// verb (BLOCK_VIA_UPDATE_REFUSED) and redirects to block_task, which carries
+// the anti-anonymous-block gate (a cited blockedOnTaskId or an explicit
+// "# blocked-on-nobody: <reason>" marker). Keep the schema in sync so a
+// client is refused loud at the tool-input layer, not just server-side.
+const taskStatusValuesExcludingBlocked = taskStatusValues.filter(
+	(s) => s !== "blocked",
+) as Exclude<(typeof taskStatusValues)[number], "blocked">[];
+export const updateTaskStatusSchema = z
+	.enum(
+		taskStatusValuesExcludingBlocked as [
+			Exclude<(typeof taskStatusValues)[number], "blocked">,
+			...Exclude<(typeof taskStatusValues)[number], "blocked">[],
+		],
+	)
+	.describe(
+		'New status. NOT "blocked" — use block_task to block (it names who is charged to unblock you).',
+	);
+
 const missionStatusValues = [
 	"brainstorm",
 	"plan",
@@ -4211,7 +4231,7 @@ export function registerTools(
 			tags: flexArrayOptional.describe("New tags"),
 			assignedTo: assigneeSchema.optional().describe("Reassign to"),
 			priority: prioritySchema.optional().describe("New priority"),
-			status: taskStatusSchema.optional().describe("New status"),
+			status: updateTaskStatusSchema.optional(),
 			dependsOn: z
 				.array(taskIdSchema)
 				.optional()

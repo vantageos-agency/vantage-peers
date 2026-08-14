@@ -209,6 +209,100 @@ describe("tasks — reciprocal unblock on complete", () => {
 	});
 });
 
+describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
+	test("RED->GREEN: update({status:'blocked'}) with no link/marker is REFUSED, redirects to block_task", async () => {
+		const t = createT();
+		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		const error = await t
+			.mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "sigma",
+				status: "blocked",
+			})
+			.catch((e) => e);
+
+		expect(getConvexErrorMessage(error)).toContain("BLOCK_VIA_UPDATE_REFUSED");
+
+		const task = await t.run(async (ctx) => await ctx.db.get(taskId));
+		expect(task?.status).toBe("todo");
+	});
+
+	test("update({status:'blocked'}) is refused even when a live blockedOnTaskId-shaped caller tries to sneak it in via update (verb bypass closed)", async () => {
+		const t = createT();
+		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
+		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		// update has no blockedOnTaskId arg at all — this proves the refusal
+		// fires purely off status="blocked", not off a missing link field.
+		const error = await t
+			.mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "sigma",
+				status: "blocked",
+			})
+			.catch((e) => e);
+
+		expect(getConvexErrorMessage(error)).toContain("BLOCK_VIA_UPDATE_REFUSED");
+		void blockerId;
+	});
+
+	test("MUST_PASS regression: update({status:'todo'}) still succeeds", async () => {
+		const t = createT();
+		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma", status: "in_progress" });
+
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "sigma",
+			status: "todo",
+		});
+
+		const task = await t.run(async (ctx) => await ctx.db.get(taskId));
+		expect(task?.status).toBe("todo");
+	});
+
+	test("MUST_PASS regression: update({status:'in_progress'}) still succeeds", async () => {
+		const t = createT();
+		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "sigma",
+			status: "in_progress",
+		});
+
+		const task = await t.run(async (ctx) => await ctx.db.get(taskId));
+		expect(task?.status).toBe("in_progress");
+	});
+
+	test("MUST_PASS regression: update({status:'done'}) still succeeds AND still fires the reciprocal unblock", async () => {
+		const t = createT();
+		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
+		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		await t.mutation(api.tasks.blockTask, {
+			taskId,
+			callerOrchestrator: "sigma",
+			blockedOnTaskId: blockerId,
+			reason: "Waiting on eta's PR merge",
+		});
+
+		await t.mutation(api.tasks.update, {
+			taskId: blockerId,
+			callerOrchestrator: "eta",
+			status: "done",
+			completionNote: "Closed via generic update path, ratio 7/7",
+		});
+
+		const blocker = await t.run(async (ctx) => await ctx.db.get(blockerId));
+		expect(blocker?.status).toBe("done");
+
+		const unblocked = await t.run(async (ctx) => await ctx.db.get(taskId));
+		expect(unblocked?.status).toBe("todo");
+		expect(unblocked?.blockedOnTaskId).toBeUndefined();
+	});
+});
+
 describe("tasks.listUnlinkedBlocked — migration inventory", () => {
 	test("lists pre-existing blocked tasks with neither link nor marker, never mutates them", async () => {
 		const t = createT();
