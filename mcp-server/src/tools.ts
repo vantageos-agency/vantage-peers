@@ -1620,10 +1620,22 @@ export function registerTools(
 	convex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
 ): void {
-	// Intercept EVERY server.tool(...) call made below (directly or through
-	// defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
-	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive
-	// this same `server` instance) so only CORE names are actually advertised.
+	// Intercept EVERY server.tool(...) / server.registerTool(...) call made
+	// below (directly or through defineTool()/registerExportOkfBundle()/
+	// registerImportOkfBundle()/registerKbIngestTools()/
+	// registerValidateOkfBundle() — they all receive this same `server`
+	// instance) so only CORE names are actually advertised.
+	//
+	// Both entry points are intercepted because defineTool() registers
+	// through `server.registerTool(name, config, cb)` (the config-object API,
+	// not the deprecated positional `server.tool(...)` overload) — this is
+	// the Day-159 incident fix: a `.strict()` Zod schema instance fails the
+	// legacy `tool()` overload's raw-shape/annotations disambiguation and
+	// crashes the server at boot (see registerTool.ts `defineTool` doc
+	// comment). `registerTool` accepts a schema instance directly. Any
+	// call site still using the legacy `.tool(...)` overload is masked too,
+	// so this interception layer holds regardless of which entry point a
+	// given registration helper uses.
 	//
 	// The registration itself always goes through — the tool stays fully
 	// present in the code + handler wiring (masking ≠ deletion; a non-CORE
@@ -1637,16 +1649,30 @@ export function registerTools(
 	// unregistration.
 	const coreToolNames = new Set(loadCoreToolNames());
 	const allRegisteredNames = new Set<string>();
+	const maskIfNotCore = (name: string, registered: unknown) => {
+		allRegisteredNames.add(name);
+		if (
+			!coreToolNames.has(name) &&
+			registered &&
+			typeof (registered as { disable?: unknown }).disable === "function"
+		) {
+			(registered as { disable: () => void }).disable();
+		}
+		return registered;
+	};
 	const realTool = server.tool.bind(server);
 	// biome-ignore lint/suspicious/noExplicitAny: narrowing the overloaded McpServer#tool signature for interception.
 	(server as any).tool = (name: string, ...rest: unknown[]) => {
-		allRegisteredNames.add(name);
 		// @ts-expect-error — forwarding to the real overloaded signature.
 		const registered = realTool(name, ...rest);
-		if (!coreToolNames.has(name) && registered && typeof registered.disable === "function") {
-			registered.disable();
-		}
-		return registered;
+		return maskIfNotCore(name, registered);
+	};
+	const realRegisterTool = server.registerTool.bind(server);
+	// biome-ignore lint/suspicious/noExplicitAny: narrowing the overloaded McpServer#registerTool signature for interception.
+	(server as any).registerTool = (name: string, ...rest: unknown[]) => {
+		// @ts-expect-error — forwarding to the real overloaded signature.
+		const registered = realRegisterTool(name, ...rest);
+		return maskIfNotCore(name, registered);
 	};
 
 	// ── scope guards (no-op when oauthCtx is undefined — legacy bearer path) ────

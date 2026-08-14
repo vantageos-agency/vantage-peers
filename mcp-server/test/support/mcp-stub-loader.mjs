@@ -23,6 +23,19 @@ const STUBS = {
 				globalThis.__VP_TOOLS__.push(entry);
 				return entry;
 			}
+			// \`server.registerTool(name, config, handler)\` — the config-object
+			// entry point defineTool() uses since the Day-159 boot fix (an
+			// already-built strict ZodObject schema instance fails the legacy
+			// \`tool()\` overload's raw-shape/annotations disambiguation and
+			// crashes registration; see registerTool.ts \`defineTool\` doc
+			// comment). Same recording semantics as \`tool()\` above.
+			registerTool(name, ...rest) {
+				const entry = { name, enabled: true };
+				entry.disable = () => { entry.enabled = false; };
+				entry.enable = () => { entry.enabled = true; };
+				globalThis.__VP_TOOLS__.push(entry);
+				return entry;
+			}
 			async connect() {}
 		}
 	`,

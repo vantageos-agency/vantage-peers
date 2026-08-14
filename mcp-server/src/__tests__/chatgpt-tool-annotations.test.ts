@@ -64,6 +64,21 @@ function buildCapturingServer(): {
 			tools.set(name, { description, annotations });
 			return {};
 		},
+		registerTool(...args: unknown[]): unknown {
+			// `server.registerTool(name, config, handler)` — the config-object
+			// entry point defineTool() uses since the Day-159 boot fix (see
+			// registerTool.ts). Annotations live on `config.annotations`.
+			const name = args[0] as string;
+			const config = args[1] as {
+				description?: string;
+				annotations?: CapturedTool["annotations"];
+			};
+			tools.set(name, {
+				description: config.description ?? "",
+				annotations: config.annotations,
+			});
+			return {};
+		},
 	} as unknown as McpServer;
 
 	return { server: fakeServer, tools };

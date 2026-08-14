@@ -125,6 +125,13 @@ function captureTools(oauthCtx?: OAuthContext): Map<string, CapturedTool> {
 		) => {
 			tools.set(name, { name, handler });
 		},
+		registerTool: (
+			name: string,
+			config: { description?: string },
+			handler: (args: Record<string, unknown>) => Promise<unknown>,
+		) => {
+			tools.set(name, { name, handler });
+		},
 	} as Parameters<typeof registerTools>[0];
 
 	// whoami never calls Convex — stub is sufficient

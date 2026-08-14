@@ -29,7 +29,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { z } from "zod";
+import { z } from "zod";
 import {
 	checkFromAllowed,
 	checkNamespaceRead,
@@ -147,11 +147,56 @@ function enforceScope(
 }
 
 /**
+ * Wraps a tool's raw zod shape in a STRICT object schema.
+ *
+ * Root cause fixed here (mission k17at41v7e6re4ht9wbf3cvdah8cepjc, restored
+ * after the Day-159 revert of #1189/#1191): the MCP SDK parses
+ * `request.params.arguments` against the tool's declared input schema in its
+ * default (non-strict) mode BEFORE our handler ever runs
+ * (@modelcontextprotocol/sdk server/mcp.js `validateToolInput` ->
+ * `safeParseAsync`). Zod's default object mode silently STRIPS any key not
+ * declared in the shape — an unrecognized parameter from a stale/frozen
+ * client tool-list (or a typo) vanishes with zero signal, and the call still
+ * returns success. `.strict()` makes zod reject the parse instead, and the
+ * SDK surfaces that as a loud `McpError(InvalidParams, ...)` — before our
+ * handler, before Convex — naming every unrecognized key by name (zod's
+ * `unrecognized_keys` issue lists them verbatim).
+ *
+ * This does NOT affect legitimate optional params: a declared-but-omitted
+ * field (e.g. `endOfDayIndex` missing from a stale client) still parses fine
+ * under `.strict()` — strict mode only rejects keys ABSENT from the shape,
+ * never keys present-but-undefined.
+ */
+export function buildStrictInputSchema(
+	shape: z.ZodRawShape,
+): z.ZodObject<z.ZodRawShape> {
+	return z.object(shape).strict();
+}
+
+/**
  * Register a tool through the mandatory-scope wrapper.
  *
  * Positional drop-in for `server.tool(name, description, schema, annotations?,
  * handler)` with `scope` promoted to the 3rd argument (right after `ctx`).
  * `scope` is required by the type — omitting it is a compile error.
+ *
+ * REGISTRATION PATH (Day-159 incident fix, see buildStrictInputSchema doc
+ * above): the deprecated `server.tool(name, description, schema, ...)`
+ * legacy overload distinguishes "a raw params shape was passed" from "an
+ * already-built Zod schema instance was passed" via
+ * `isZodRawShapeCompat(firstArg)` — and a `.strict()` ZodObject FAILS that
+ * check (it IS a schema instance, not a raw shape record), so the SDK
+ * mis-parses it as `ToolAnnotations` and throws
+ * `Tool <name> expected a Zod schema or ToolAnnotations, but received an
+ * unrecognized object` at registration time — the server cannot boot. The
+ * SDK's non-deprecated `server.registerTool(name, config, cb)` API accepts
+ * `config.inputSchema` as EITHER a raw shape OR a full Zod schema instance
+ * (see node_modules/@modelcontextprotocol/sdk dist server/mcp.js
+ * `getZodSchemaObject`, which returns a schema instance as-is instead of
+ * routing it through the raw-shape/annotations disambiguation). Handing the
+ * strict schema to `registerTool` therefore both boots successfully AND
+ * gets the strict validation applied by the SDK's own `validateToolInput`
+ * before our handler runs.
  */
 export function defineTool(
 	server: McpServer,
@@ -178,12 +223,19 @@ export function defineTool(
 		return handler(args, extra);
 	};
 
-	// The SDK overload accepts (name, description, schema, annotations?, handler).
+	// STRICT wrap: reject any arg key not in `schema` instead of silently
+	// stripping it (see buildStrictInputSchema doc comment above).
+	const strictSchema = buildStrictInputSchema(schema);
+
+	// Registered via the config-object API (not the deprecated positional
+	// `server.tool(...)` overload) — that overload's raw-shape/annotations
+	// disambiguation cannot accept an already-built strict ZodObject without
+	// throwing at boot. See defineTool doc comment above.
 	// biome-ignore lint/suspicious/noExplicitAny: SDK overload set is wider than our spec type.
-	const tool = server.tool.bind(server) as any;
-	if (annotations) {
-		tool(name, description, schema, annotations, guardedHandler);
-	} else {
-		tool(name, description, schema, guardedHandler);
-	}
+	const registerTool = server.registerTool.bind(server) as any;
+	registerTool(
+		name,
+		{ description, inputSchema: strictSchema, annotations },
+		guardedHandler,
+	);
 }

@@ -60,6 +60,13 @@ function captureTools(convex: ConvexHttpClient): Map<string, CapturedTool> {
 			) => Promise<unknown>;
 			captured.set(name, { name, handler });
 		},
+		registerTool: (...allArgs: unknown[]) => {
+			const name = allArgs[0] as string;
+			const handler = allArgs[allArgs.length - 1] as (
+				args: unknown,
+			) => Promise<unknown>;
+			captured.set(name, { name, handler });
+		},
 	};
 	registerTools(fakeServer as never, convex, undefined);
 	return captured;

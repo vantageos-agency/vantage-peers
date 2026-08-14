@@ -23,6 +23,7 @@
 	"scripts": {
 		"generate:api": "cd .. && npx convex-helpers ts-api-spec --prod --output-file mcp-server/api.ts",
 		"build": "tsc --project tsconfig.json",
+		"postbuild": "node scripts/boot-check.mjs",
 		"typecheck:scope": "tsc -p tsconfig.typecheck-scope.json",
 		"prepublishOnly": "npm run build",
 		"dev": "bun run server.ts",

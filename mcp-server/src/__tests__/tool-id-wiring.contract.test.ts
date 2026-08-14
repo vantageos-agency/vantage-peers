@@ -42,6 +42,20 @@ const fakeServer = {
 			typeof shape !== "function";
 		registry.set(name, isShapeObject ? (shape as ZodShape) : {});
 	},
+	// `server.registerTool(name, config, handler)` — the config-object entry
+	// point defineTool() uses since the Day-159 boot fix (see
+	// registerTool.ts). `config.inputSchema` is now an already-built strict
+	// ZodObject instance (not a raw shape record), so unwrap `.shape` to keep
+	// recording the same per-field validator map this test always walked.
+	registerTool: (
+		name: string,
+		config?: { inputSchema?: { shape?: unknown } },
+	) => {
+		const shape = config?.inputSchema?.shape;
+		const isShapeObject =
+			shape !== null && shape !== undefined && typeof shape === "object";
+		registry.set(name, isShapeObject ? (shape as ZodShape) : {});
+	},
 } as unknown as Parameters<typeof registerTools>[0];
 
 const fakeConvex = {} as Parameters<typeof registerTools>[1];

@@ -115,6 +115,13 @@ function captureTools(
 		) => {
 			tools.set(name, { name, handler });
 		},
+		registerTool: (
+			name: string,
+			_config: Record<string, unknown>,
+			handler: (args: any) => any,
+		) => {
+			tools.set(name, { name, handler });
+		},
 	} as any;
 	const mockConvex = {
 		query: async (queryPath: string, _args: any) => {

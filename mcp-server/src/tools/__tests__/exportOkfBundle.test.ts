@@ -38,6 +38,26 @@ function makeServer(): { calls: ToolRegistration[]; server: unknown } {
 		) => {
 			calls.push({ name, description, schema, annotations, handler });
 		},
+		// `server.registerTool(name, config, handler)` — the config-object
+		// entry point defineTool() uses since the Day-159 boot fix (see
+		// registerTool.ts).
+		registerTool: (
+			name: string,
+			config: {
+				description?: string;
+				inputSchema?: unknown;
+				annotations?: unknown;
+			},
+			handler: (args: Record<string, unknown>) => Promise<unknown>,
+		) => {
+			calls.push({
+				name,
+				description: config.description ?? "",
+				schema: config.inputSchema,
+				annotations: config.annotations,
+				handler,
+			});
+		},
 	};
 	return { calls, server };
 }
