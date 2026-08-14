@@ -119,11 +119,6 @@
           },
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-eta-approval-before-npm-publish.py",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
           },
           {
@@ -187,16 +182,6 @@
             "type": "command",
             "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pi-authorization-before-pr-merge.py",
             "timeout": 20
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-eta-approval-before-npm-publish.py",
-            "timeout": 5
           }
         ]
       },
