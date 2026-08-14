@@ -113,6 +113,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib.command_predicate import (  # noqa: E402
+    INTERPRETER_RE,
     carries_prod_action,
     head_prod_action,
     iter_real_commands,
@@ -256,6 +257,25 @@ def fetch_task(task_id: str) -> dict | None:
 HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?\n\1\b", re.DOTALL)
 
 
+# ---------------------------------------------------------------------------
+# strip_quoted_strings -- PORTED VERBATIM from
+# enforce-eta-approval-before-npm-publish.py (defect C fix, v1.4.0). Removes
+# content inside single/double quotes so a prod-deploy command CITED inside a
+# quoted string (a review comment, a commit message) is not read as a real
+# deploy -- mirroring how the npm-publish guard uses it.
+# ---------------------------------------------------------------------------
+def strip_quoted_strings(command: str) -> str:
+    """Remove content inside single/double quotes to avoid false positives
+    on text like `git commit -m "docs about npm publish flow"`.
+    Day 79 v1.0.1 fix §B from sigma -- original regex matched publish patterns
+    inside commit message strings, blocking legitimate `git commit` calls."""
+    # Remove "..." (double-quoted)
+    command = re.sub(r'"[^"]*"', '""', command)
+    # Remove '...' (single-quoted)
+    command = re.sub(r"'[^']*'", "''", command)
+    return command
+
+
 def strip_heredocs(command: str) -> str:
     """Remove heredoc bodies: they are DATA fed to a program's stdin, not
     commands the shell runs. Without this, prose or code inside a heredoc
@@ -284,6 +304,18 @@ def is_prod_deploy(command: str) -> bool:
     "..."`) are all handled by `iter_real_commands()`.
     """
     command = strip_heredocs(command)
+    # v1.4.0 (defect C): a prod-deploy command CITED inside a QUOTED STRING
+    # (a review comment, a commit message) must not be read as a real deploy.
+    # Quote-stripping only runs when the RAW command carries NO interpreter
+    # payload (`bash -c '...'`, `eval '...'`, `env -S '...'`, ...): those
+    # payloads are REAL commands the shell executes, extracted by
+    # `iter_real_commands()`'s own INTERPRETER_RE recursion on the UNSTRIPPED
+    # text -- stripping their quotes first would blind that recursion to a
+    # genuine deploy the same way SURVIVOR C blinded the old bare-deploy
+    # lookahead. This mirrors the ordering discipline in the npm-publish
+    # guard's is_fleet_publish() (interpreter unwrap wins over quote-strip).
+    if not INTERPRETER_RE.search(command):
+        command = strip_quoted_strings(command)
     for segment, tokens in iter_real_commands(command):
         if URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment):
             return True

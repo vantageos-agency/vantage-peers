@@ -95,8 +95,12 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
-VERSION = "1.3.3"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib.command_predicate import iter_real_commands  # noqa: E402
+
+VERSION = "1.4.0"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -172,20 +176,9 @@ INLINE_TASK_RE = re.compile(r"k[a-z0-9]{15,40}")
 SHA_FULL_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA_SHORT_RE = re.compile(r"^[0-9a-f]{7,12}$")
 
-# Patterns that indicate fleet-impact npm publish
-FLEET_PACKAGE_PATTERNS = [
-    r"@vantageos/",
-    r"@elpiarthera/",
-    r"\bvantage-[a-z-]+(?:-mcp|-cli|-sdk)?\b",
-]
-
-# Commands that trigger publish
-PUBLISH_CMD_PATTERNS = [
-    r"\bnpm\s+publish\b",
-    r"\bpnpm\s+publish\b",
-    r"\byarn\s+publish\b",
-    r"\bbun\s+publish\b",
-]
+# Fleet-impact package NAME test — applied to the `name` field READ from
+# package.json in the resolved publish dir (v1.4.0), never to command text.
+FLEET_PACKAGE_NAME_RE = re.compile(r"^(@vantageos/|@elpiarthera/|vantage-[a-z-]+)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,85 +199,101 @@ def strip_quoted_strings(command: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v1.3.3 defect 5 fix: extract and unwrap interpreter-command invocations
+# v1.4.0 — publish-verb detection via the SHARED action tokenizer (defect A).
+#
+# `iter_real_commands()` (`_lib/command_predicate.py`) already: normalizes
+# line continuations, quote-aware strips comments, quote-aware splits on
+# `; && || | ( ) \n`, RECURSES into `bash -c` / `sh -c` / `zsh -c` / `-lc` /
+# `eval` / `env -S` / interpreter wrappers, and — critically for this hook —
+# `strip_transparent()` treats npm/pnpm/yarn/bun/deno uniformly as RUNNERS:
+# any of them followed by a non-`run|exec|dlx|x` verb has the runner token
+# ITSELF stripped, so `npm publish`, `pnpm -F pkg publish`,
+# `npm --workspace=@x/pkg publish`, `bun publish`, `deno publish` all
+# normalize to a real command HEAD of literally `publish` — regardless of
+# flag order, `--workspace`/`-F`, or which package manager was typed. This is
+# "is this a publish action at all", decided on the ACTION, never on an
+# enumerated per-form regex list.
+#
+# `jsr` is not an npm-family RUNNER in the shared tokenizer (jsr registries
+# are npm-independent), so it needs one explicit two-token check below — the
+# one irreducible addition, not a lengthened motif list.
 # ─────────────────────────────────────────────────────────────────────────────
-def extract_interpreter_commands(command: str, depth: int = 0) -> list[str]:
-    """Extract inner commands from shell interpreter invocations.
-
-    v1.3.3 fix for defect 5: when a publish command is wrapped in a shell
-    interpreter invocation (e.g., `bash -c 'npm publish'`), detect and UNWRAP it
-    to analyze the actual command instead of stripping it.
-
-    Detects patterns:
-      - bash/sh/zsh -c '<inner>' or "<inner>"
-      - bash/sh/zsh -lc '<inner>' or "<inner>"
-
-    Handles ONE level of nesting (depth limit 1) to avoid infinite loops.
-    Returns a list of extracted inner commands; empty if no interpreter invocation found.
-    """
-    if depth > 1:
-        # Prevent infinite recursion on malformed input
-        return []
-
-    # Match: bash|sh|zsh (-c|-lc) followed by quoted argument
-    # Pattern: <shell> (-c|-lc) ['"]<inner>['"]
-    patterns = [
-        # bash -c 'cmd' or bash -c "cmd"
-        r'(?:bash|sh|zsh)\s+(?:-c|-lc)\s+[\'"]([^\'"]+)[\'"]',
-        # Also match without space before quote (edge case)
-        r'(?:bash|sh|zsh)\s+(?:-c|-lc)[\s\'"]([^\'"]*)[\'"]',
-    ]
-
-    results = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, command):
-            inner = match.group(1)
-            if inner:
-                results.append(inner)
-                # Recursively check if the inner command is itself wrapped
-                nested = extract_interpreter_commands(inner, depth + 1)
-                results.extend(nested)
-
-    return results
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Fleet publish detection (v1.3.3 fix: unwrap interpreter commands)
-# ─────────────────────────────────────────────────────────────────────────────
-def is_fleet_publish(command: str) -> bool:
-    """Returns True if command is a publish targeting a fleet package.
-
-    v1.3.3: First tries to extract and unwrap interpreter-command invocations
-    (bash -c, sh -c, zsh -c, -lc). If found, checks the inner commands.
-    Otherwise, strips quoted strings to avoid false positives in commit messages.
-    """
-    # First, try to extract interpreter-wrapped commands (defect 5 fix)
-    inner_commands = extract_interpreter_commands(command)
-    if inner_commands:
-        # Recursively check each inner command (without stripping, as they are real commands)
-        for inner in inner_commands:
-            if is_fleet_publish_inner(inner):
-                return True
-        # If no inner command is a fleet publish, return False
+def _segment_is_publish(tokens: list[str]) -> bool:
+    """True if a tokenized segment (after strip_transparent) is a publish
+    invocation of ANY package manager."""
+    if not tokens:
         return False
+    if tokens[0] == "publish":
+        return True  # npm/pnpm/yarn/bun/deno — normalized by strip_transparent
+    if tokens[0] == "jsr" and len(tokens) > 1 and tokens[1] == "publish":
+        return True
+    return False
 
-    # Otherwise, strip quoted strings to avoid false positives in git-commit messages, etc.
-    sanitized = strip_quoted_strings(command)
-    return is_fleet_publish_inner(sanitized)
+
+def is_publish_action(command: str) -> bool:
+    """True if `command` contains a publish invocation from ANY package
+    manager, in any flag order / workspace form / interpreter-wrapped form —
+    decided on the resolved command HEAD, never on command prose."""
+    for _segment, tokens in iter_real_commands(command):
+        if tokens and _segment_is_publish(tokens):
+            return True
+    return False
 
 
-def is_fleet_publish_inner(command: str) -> bool:
-    """Core publish detection logic. Checks if a (possibly sanitized) command is a fleet publish.
-    This is the inner function used by is_fleet_publish after extraction/stripping."""
-    cmd_lower = command.lower()
-    has_publish = any(re.search(p, cmd_lower) for p in PUBLISH_CMD_PATTERNS)
-    if not has_publish:
-        return False
-    # Tarball name or scoped package mention in same command
-    has_fleet_pkg = any(re.search(p, command, re.IGNORECASE) for p in FLEET_PACKAGE_PATTERNS)
-    # Tarball path containing fleet pattern
-    has_tarball = re.search(r"vantageos-|elpiarthera-|vantage-[a-z-]+-\d+\.\d+\.\d+\.tgz", command)
-    return bool(has_fleet_pkg or has_tarball)
+def read_package_name(publish_dir: str) -> tuple[str | None, str]:
+    """Read the `name` field of package.json in `publish_dir`.
+
+    Returns (name, "ok") on success, or (None, diagnostic) on ANY failure
+    (missing file, invalid JSON, missing name field). Never a silent
+    passthrough — the caller REFUSES loud when this can't be read."""
+    pkg_path = os.path.join(publish_dir, "package.json")
+    try:
+        with open(pkg_path) as f:
+            pkg = json.load(f)
+    except FileNotFoundError:
+        return None, f"no package.json in resolved publish dir '{publish_dir}'"
+    except json.JSONDecodeError as e:
+        return None, f"package.json in '{publish_dir}' is not valid JSON: {e}"
+    except OSError as e:
+        return None, f"could not read package.json in '{publish_dir}': {e}"
+    name = pkg.get("name")
+    if not name or not isinstance(name, str):
+        return None, f"package.json in '{publish_dir}' has no string 'name' field"
+    return name, "ok"
+
+
+def classify_publish(command: str, data: dict | None = None) -> tuple[bool, str]:
+    """Decide whether `command` is a FLEET-impact publish. Returns
+    (is_fleet_publish, diagnostic).
+
+    v1.4.0 (defects A+B fix):
+      1. Publish-verb detection is action-based (is_publish_action), not a
+         per-form regex list (defect A).
+      2. The publish DIRECTORY is resolved via resolve_publish_dir(), fixed
+         (defect B) to parse a leading `cd <abspath>` in BOTH the newline
+         form and the `&&`-joined form.
+      3. Fleet-ness is decided by READING package.json#name in the RESOLVED
+         directory — never by whether a fleet name is typed in the command.
+         If a publish verb is detected but the dir/package.json cannot be
+         read, this REFUSES LOUD (returns True with a REFUSED-UNREADABLE
+         diagnostic) rather than silently passing.
+    """
+    if not is_publish_action(command):
+        return False, "not a publish action"
+    publish_dir = resolve_publish_dir(command, data)
+    name, diag = read_package_name(publish_dir)
+    if name is None:
+        return True, f"REFUSED-UNREADABLE: publish action detected but {diag}"
+    if FLEET_PACKAGE_NAME_RE.match(name):
+        return True, f"fleet package '{name}' in '{publish_dir}'"
+    return False, f"non-fleet package '{name}' in '{publish_dir}'"
+
+
+def is_fleet_publish(command: str, data: dict | None = None) -> bool:
+    """Boolean convenience wrapper around classify_publish() — kept for
+    call-site brevity and self-test compatibility."""
+    is_fleet, _ = classify_publish(command, data)
+    return is_fleet
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -584,9 +593,13 @@ def resolve_publish_dir(command: str, data: dict | None = None) -> str:
     """Resolve the directory where `npm publish` actually runs (v1.3.2, defect 4).
 
     Precedence:
-      a. A leading `cd <abspath>` on the FIRST line of the command — authoritative
-         for our `cd <abspath>\\nnpm publish` pattern. Used only if the path is
-         ABSOLUTE and exists.
+      a. A leading `cd <abspath>` on the FIRST line of the command — authoritative.
+         v1.4.0 (defect B fix): matches BOTH the `cd <abspath>\\nnpm publish`
+         newline form AND the ordinary `cd <abspath> && npm publish` form (the
+         prior regex's `$` end-anchor only matched the newline form, silently
+         falling back to data["cwd"]/os.getcwd() — the WRONG repo — for the
+         far more common `&&`-joined form). Used only if the path is ABSOLUTE
+         and exists.
       b. data["cwd"] from the PreToolUse payload, if a non-empty existing dir.
       c. os.getcwd().
 
@@ -601,8 +614,15 @@ def resolve_publish_dir(command: str, data: dict | None = None) -> str:
     data = data or {}
 
     # (a) leading `cd <path>` on the first line — the robust primary signal.
+    # v1.4.0 (defect B): matches EITHER the bare newline form (path runs to
+    # end of line) OR the `&&`/`;`/`|`-joined form (path stops at the
+    # operator, rest of the line ignored here — the publish verb itself is
+    # detected separately by is_publish_action()).
     first_line = command.split("\n", 1)[0]
-    m = re.match(r"""^\s*cd\s+(['"]?)([^\n&;|]+?)\1\s*$""", first_line)
+    m = re.match(
+        r"""^\s*cd\s+(['"]?)([^\n&;|]+?)\1(?:\s*(?:&&|;|\|).*)?\s*$""",
+        first_line,
+    )
     if m:
         candidate = m.group(2).strip()
         if os.path.isabs(candidate) and os.path.isdir(candidate):
@@ -1453,9 +1473,57 @@ def run_self_tests() -> None:
     cmd = 'git commit -m "npm publish docs"'
     tests.append(("T31: git commit with publish in string → NOT fleet publish", not is_fleet_publish(cmd)))
 
-    # T32: non-fleet publish → skip (not detected as fleet)
-    cmd = "npm publish my-private-app"
-    tests.append(("T32: non-fleet publish → skip (not fleet)", not is_fleet_publish(cmd)))
+    # T32: non-fleet publish → skip (not detected as fleet). v1.4.0: fleet-ness
+    # is decided by package.json#name in the resolved dir, so this now needs a
+    # real fixture (the old command-text-only assertion no longer applies).
+    with tempfile.TemporaryDirectory() as nonfleet_dir:
+        with open(os.path.join(nonfleet_dir, "package.json"), "w") as f:
+            f.write('{"name":"my-private-app","version":"1.0.0"}')
+        cmd = f"cd {nonfleet_dir} && npm publish my-private-app"
+        tests.append(("T32: non-fleet publish (package.json#name) → skip (not fleet)", not is_fleet_publish(cmd)))
+
+    # ── v1.4.0 defect A+B regression tests ──────────────────────────────────
+
+    def _fleet_fixture(tmpdir: str, name: str = "@vantageos/pkg") -> None:
+        with open(os.path.join(tmpdir, "package.json"), "w") as f:
+            f.write(json.dumps({"name": name, "version": "1.0.0"}))
+
+    # T43-A: detection is ACTION-based, not text-based — six ordinary forms,
+    # none of which type the publish patterns the old regex ladder enumerated.
+    with tempfile.TemporaryDirectory() as d:
+        _fleet_fixture(d)
+        forms = [
+            f"cd {d} && npm publish",
+            f"cd {d} && npm publish --access public",
+            f"cd {d} && npm --workspace=@vantageos/pkg publish",
+            f"cd {d} && pnpm -F pkg publish",
+            f"cd {d} && jsr publish",
+            f"cd {d} && deno publish",
+        ]
+        for i, cmd in enumerate(forms, 1):
+            tests.append((f"T43-A.{i}: action-based detection — {cmd!r} → fleet BLOCK", is_fleet_publish(cmd)))
+
+    # T44-B: `cd <abspath> && npm publish` (&&-joined) resolves the publish dir
+    # correctly (was falling back to os.getcwd() before defect B fix).
+    with tempfile.TemporaryDirectory() as d:
+        _fleet_fixture(d)
+        cmd = f"cd {d} && npm publish"
+        rpd = resolve_publish_dir(cmd, {})
+        tests.append(("T44-B: &&-joined cd form resolves publish dir correctly", rpd == d))
+
+    # T45-REFUSE: publish action detected, package.json unreadable → REFUSED
+    # LOUD (True/block), never a silent passthrough.
+    with tempfile.TemporaryDirectory() as d:
+        cmd = f"cd {d} && npm publish"
+        is_fleet, diag = classify_publish(cmd, {})
+        tests.append(("T45-REFUSE: unreadable package.json → REFUSED LOUD (block)", is_fleet and "REFUSED-UNREADABLE" in diag))
+
+    # T46-NAME: fleet-ness decided by package.json#name, not by command text —
+    # a fleet name typed in the command but a NON-fleet package.json → passes.
+    with tempfile.TemporaryDirectory() as d:
+        _fleet_fixture(d, name="my-private-app")
+        cmd = f"cd {d} && npm publish @vantageos/pkg"
+        tests.append(("T46-NAME: fleet name typed but non-fleet package.json → PASS (name wins)", not is_fleet_publish(cmd)))
 
     # ── Print results ─────────────────────────────────────────────────────────
     passed = 0
@@ -1492,8 +1560,12 @@ def main() -> None:
     if not command:
         sys.exit(0)
 
+    # v1.4.0: publish-verb detection (action-based) + fleet-ness (package.json
+    # read in the resolved dir) decided together — see classify_publish().
+    is_fleet, publish_diag = classify_publish(command, data)
+
     # Not a fleet publish — passthrough
-    if not is_fleet_publish(command):
+    if not is_fleet:
         sys.exit(0)
 
     # v1.3.2 (defect 4): resolve the directory where `npm publish` actually runs,
@@ -1505,6 +1577,11 @@ def main() -> None:
     if has_laurent_override(command):
         write_audit(command, "laurent-direct-publish", "", True, "laurent-direct-publish override")
         sys.exit(0)
+
+    if publish_diag.startswith("REFUSED-UNREADABLE"):
+        print(block_message(publish_diag), file=sys.stderr)
+        write_audit(command, "", "", False, publish_diag)
+        sys.exit(2)
 
     # Extract PR-number token (v1.3.0 — identifies the PR carrying the verdict)
     pr_number, pr_src = extract_eta_pr_number(command)
