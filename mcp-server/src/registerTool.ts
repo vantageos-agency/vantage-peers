@@ -29,7 +29,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import type { z } from "zod";
 import {
 	checkFromAllowed,
 	checkNamespaceRead,
@@ -147,33 +147,6 @@ function enforceScope(
 }
 
 /**
- * Wraps a tool's raw zod shape in a STRICT object schema.
- *
- * Root cause fixed here (mission k17at41v7e6re4ht9wbf3cvdah8cepjc): the
- * MCP SDK parses `request.params.arguments` against `z.object(shape)` in its
- * default (non-strict) mode BEFORE our handler ever runs
- * (@modelcontextprotocol/sdk server/mcp.js `validateToolInput` ->
- * `safeParseAsync`). Zod's default object mode silently STRIPS any key not
- * declared in the shape — an unrecognized parameter from a stale/frozen
- * client tool-list (or a typo) vanishes with zero signal, and the call still
- * returns success. That is the "written / could not write / unknown field"
- * collapse this fix closes: `.strict()` makes zod reject the parse instead,
- * and the SDK surfaces that as a loud `McpError(InvalidParams, ...)` — before
- * our handler, before Convex — naming every unrecognized key by name (zod's
- * `unrecognized_keys` issue lists them verbatim).
- *
- * This does NOT affect legitimate optional params: a declared-but-omitted
- * field (e.g. `endOfDayIndex` missing from a stale client) still parses fine
- * under `.strict()` — strict mode only rejects keys ABSENT from the shape,
- * never keys present-but-undefined.
- */
-export function buildStrictInputSchema(
-	shape: z.ZodRawShape,
-): z.ZodObject<z.ZodRawShape> {
-	return z.object(shape).strict();
-}
-
-/**
  * Register a tool through the mandatory-scope wrapper.
  *
  * Positional drop-in for `server.tool(name, description, schema, annotations?,
@@ -205,16 +178,12 @@ export function defineTool(
 		return handler(args, extra);
 	};
 
-	// STRICT wrap: reject any arg key not in `schema` instead of silently
-	// stripping it (see buildStrictInputSchema doc comment above).
-	const strictSchema = buildStrictInputSchema(schema);
-
 	// The SDK overload accepts (name, description, schema, annotations?, handler).
 	// biome-ignore lint/suspicious/noExplicitAny: SDK overload set is wider than our spec type.
 	const tool = server.tool.bind(server) as any;
 	if (annotations) {
-		tool(name, description, strictSchema, annotations, guardedHandler);
+		tool(name, description, schema, annotations, guardedHandler);
 	} else {
-		tool(name, description, strictSchema, guardedHandler);
+		tool(name, description, schema, guardedHandler);
 	}
 }

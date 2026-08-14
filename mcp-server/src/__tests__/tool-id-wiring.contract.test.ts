@@ -32,13 +32,6 @@ type ZodShape = Record<string, ZodType>;
 
 const registry = new Map<string, ZodShape>();
 
-// Raw arg AS HANDED to `server.tool(...)` — NOT unwrapped. The strictness
-// wiring test below reads this: `defineTool` must hand a `z.object(shape).strict()`
-// ZodObject, so a disconnected wiring (raw shape record) is caught here.
-// Only real shape args are recorded (handler-only 3-arg registrations are skipped),
-// so there is no "not a ZodObject → skip" escape hatch that could hide the mutant.
-const rawRegistry = new Map<string, unknown>();
-
 const fakeServer = {
 	tool: (name: string, _description?: unknown, shape?: unknown, ..._rest: unknown[]) => {
 		const isShapeObject =
@@ -47,27 +40,7 @@ const fakeServer = {
 			// Handler functions (3-arg `tool(name, desc, handler)` form) are not
 			// arg-shape objects — guard against recording a function as a shape.
 			typeof shape !== "function";
-		if (!isShapeObject) {
-			registry.set(name, {});
-			return;
-		}
-		// Record the raw arg (ZodObject when wired, raw record if disconnected)
-		// BEFORE the `.shape` unwrap below — this is what the strictness test reads.
-		rawRegistry.set(name, shape);
-		// mission k17at41v7e6re4ht9wbf3cvdah8cepjc GREEN fix
-		// (registerTool.ts `buildStrictInputSchema`): `defineTool` now hands
-		// `server.tool` a full `z.object(rawShape).strict()` ZodObject instance
-		// instead of the bare raw-shape record, so unknown args are rejected
-		// loud instead of silently stripped. Unwrap `.shape` to keep this
-		// contract test reading the SAME per-field validators it always did.
-		const maybeZodObject = shape as { shape?: unknown };
-		const unwrapped =
-			maybeZodObject.shape !== undefined &&
-			typeof maybeZodObject.shape === "object" &&
-			maybeZodObject.shape !== null
-				? (maybeZodObject.shape as ZodShape)
-				: (shape as ZodShape);
-		registry.set(name, unwrapped);
+		registry.set(name, isShapeObject ? (shape as ZodShape) : {});
 	},
 } as unknown as Parameters<typeof registerTools>[0];
 
@@ -225,47 +198,5 @@ describe("mutant: get_task.taskId must reject a truncated id", () => {
 			`get_task.taskId accepted the truncated id "${TRUNCATED_ID}" — this is the exact #1063 regression ` +
 				`(taskId wired as bare z.string() instead of taskIdSchema).`,
 		).toBe(false);
-	});
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Wiring contract — defineTool must hand `server.tool(...)` a STRICT schema
-// (mission k17at41v7e6re4ht9wbf3cvdah8cepjc). The set-summary-unknown-param test
-// proves `buildStrictInputSchema` is strict; it does NOT prove `defineTool`
-// actually WIRES it. Eta's review mutant (`strictSchema = schema`, the raw shape
-// record) left the whole suite green — the amputated-call defect reproduced in the
-// PR that closes it. This asserts the ARG REALLY HANDED to server.tool refuses an
-// unknown key, for EVERY tool at once — so no per-tool disconnect can hide.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("wiring: defineTool hands server.tool a STRICT schema (unknown args refused, never silently stripped)", () => {
-	it("every registered tool's REAL registered schema rejects an unknown key with an unrecognized_keys issue", () => {
-		const offenders: string[] = [];
-		for (const [name, raw] of rawRegistry) {
-			const schema = raw as {
-				safeParse?: (v: unknown) => {
-					success: boolean;
-					error?: { issues: Array<{ code: string }> };
-				};
-			};
-			if (typeof schema.safeParse !== "function") {
-				// A recorded shape arg that is not a parseable ZodObject means the
-				// strict wrap was disconnected (raw shape record handed through).
-				offenders.push(`${name} (not a ZodObject — strict wrap disconnected)`);
-				continue;
-			}
-			const res = schema.safeParse({ __unknown_wiring_probe__: 1 });
-			const strict =
-				!res.success &&
-				(res.error?.issues ?? []).some((i) => i.code === "unrecognized_keys");
-			if (!strict) {
-				offenders.push(`${name} (accepts unknown keys — not strict)`);
-			}
-		}
-		expect(
-			offenders,
-			`these tools were registered with a non-strict schema — an unknown/amputated ` +
-				`param would be silently stripped and the call still succeed: ${offenders.join(", ")}`,
-		).toEqual([]);
 	});
 });
