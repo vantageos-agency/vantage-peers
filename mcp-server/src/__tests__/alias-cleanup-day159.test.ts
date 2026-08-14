@@ -43,6 +43,9 @@ function registeredToolNames(): Set<string> {
 		tool: (...call: unknown[]) => {
 			if (typeof call[0] === "string") names.add(call[0]);
 		},
+		registerTool: (...call: unknown[]) => {
+			if (typeof call[0] === "string") names.add(call[0]);
+		},
 	} as unknown as McpServer;
 	const convex = {} as unknown as ConvexHttpClient;
 	registerTools(server, convex);

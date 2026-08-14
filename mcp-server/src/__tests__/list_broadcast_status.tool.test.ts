@@ -43,6 +43,12 @@ function buildFakeServer(): {
 			handlers.set(name, handler);
 			return {};
 		},
+		registerTool(...args: unknown[]): unknown {
+			const name = args[0] as string;
+			const handler = args[args.length - 1] as ToolHandler;
+			handlers.set(name, handler);
+			return {};
+		},
 	} as unknown as McpServer;
 	return { server: fakeServer, handlers };
 }

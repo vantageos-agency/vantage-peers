@@ -51,6 +51,15 @@ function buildFakeServer(): {
 			handlers.set(name, handler);
 			return {};
 		},
+		registerTool(...args: unknown[]): unknown {
+			// `server.registerTool(name, config, handler)` — the config-object
+			// entry point defineTool() uses since the Day-159 boot fix (see
+			// registerTool.ts). The handler is still the LAST argument.
+			const name = args[0] as string;
+			const handler = args[args.length - 1] as ToolHandler;
+			handlers.set(name, handler);
+			return {};
+		},
 	} as unknown as McpServer;
 
 	return { server: fakeServer, handlers };

@@ -43,11 +43,22 @@ function makeStubServer(): {
 		annotations: unknown,
 		handler: ToolHandler,
 	) => void;
+	registerTool: (
+		name: string,
+		config: { description?: string; annotations?: unknown },
+		handler: ToolHandler,
+	) => void;
 	handlers: Map<string, ToolHandler>;
 } {
 	const handlers = new Map<string, ToolHandler>();
 	return {
 		tool(name, _description, _schema, _annotations, handler) {
+			handlers.set(name, handler);
+		},
+		// `server.registerTool(name, config, handler)` — the config-object entry
+		// point defineTool() uses since the Day-159 boot fix (see
+		// registerTool.ts).
+		registerTool(name, _config, handler) {
 			handlers.set(name, handler);
 		},
 		handlers,

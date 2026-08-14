@@ -48,6 +48,15 @@ function buildCapturingServer(): {
 			tools.set(name, { name, description });
 			return {};
 		},
+		registerTool(...args: unknown[]): unknown {
+			// `server.registerTool(name, config, handler)` — the config-object
+			// entry point defineTool() uses since the Day-159 boot fix (see
+			// registerTool.ts).
+			const name = args[0] as string;
+			const config = args[1] as { description?: string };
+			tools.set(name, { name, description: config.description ?? "" });
+			return {};
+		},
 	} as unknown as McpServer;
 
 	return { server: fakeServer, tools };

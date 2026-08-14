@@ -30,6 +30,9 @@ function stubServer(): {
 		tool: (...call: unknown[]) => {
 			captured = call[call.length - 1] as (a: unknown, e: unknown) => unknown;
 		},
+		registerTool: (...call: unknown[]) => {
+			captured = call[call.length - 1] as (a: unknown, e: unknown) => unknown;
+		},
 	} as unknown as McpServer;
 	return {
 		server,

@@ -146,6 +146,25 @@ type CapturedTool = {
 
 function captureRegisteredTools(oauthCtx?: OAuthContext): Map<string, CapturedTool> {
 	const tools = new Map<string, CapturedTool>();
+	// Unwraps a strict ZodObject's `.shape` back to a raw field-validator
+	// record, so this test keeps reading the same per-field validators it
+	// always did regardless of whether the registration entry point handed
+	// it a raw shape (legacy `.tool()`) or an already-built schema instance
+	// (`.registerTool()`, used by defineTool() since the Day-159 boot fix —
+	// see registerTool.ts `defineTool` doc comment).
+	function unwrapShape(schema: unknown): Record<string, unknown> {
+		const maybeZodObject = schema as { shape?: unknown };
+		if (
+			maybeZodObject &&
+			typeof maybeZodObject === "object" &&
+			maybeZodObject.shape !== undefined &&
+			typeof maybeZodObject.shape === "object" &&
+			maybeZodObject.shape !== null
+		) {
+			return maybeZodObject.shape as Record<string, unknown>;
+		}
+		return schema as Record<string, unknown>;
+	}
 	const mockServer = {
 		tool: (
 			name: string,
@@ -154,7 +173,30 @@ function captureRegisteredTools(oauthCtx?: OAuthContext): Map<string, CapturedTo
 			annotations: Record<string, unknown>,
 			handler: (args: any) => any,
 		) => {
-			tools.set(name, { name, description, schema, annotations, handler });
+			tools.set(name, {
+				name,
+				description,
+				schema: unwrapShape(schema),
+				annotations,
+				handler,
+			});
+		},
+		registerTool: (
+			name: string,
+			config: {
+				description?: string;
+				inputSchema?: Record<string, unknown>;
+				annotations?: Record<string, unknown>;
+			},
+			handler: (args: any) => any,
+		) => {
+			tools.set(name, {
+				name,
+				description: config.description ?? "",
+				schema: unwrapShape(config.inputSchema),
+				annotations: config.annotations ?? {},
+				handler,
+			});
 		},
 	} as any;
 	const mockConvex = {
