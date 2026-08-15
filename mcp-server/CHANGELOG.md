@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] — bind JWT audience at the Clerk verification site
+
+### Security
+
+- **Bind the `audience` claim where the Clerk session JWT is verified (MCP server standard Critical Rule 14, element 5).** `tryVerifyClerkJwt` (`src/auth.ts`) verified the token with `issuer` bound but not `audience`, so a token minted for one audience/client was accepted on another — cross-tenant / cross-resource replay (the single exploitable finding of the mcp-doctor conformance audit, `projects/vantage-peers/audits/mcp-server-conformance-audit.md`). Fix binds `audience: CLERK_JWT_AUDIENCE` (env, default `"convex"`) at the single `jwtVerify` site — the value mirrors `convex/auth.config.ts` `applicationID: "convex"` and the `CLERK_JWT_TEMPLATE` default, and the verified token is forwarded verbatim to Convex which already requires `aud === "convex"`, so no correctly-minted production token is rejected. Minimal by design: only the one verification site; the auth-layer/DCR/PRM flow and the three other (non-exploitable) audit findings are untouched. TDD strict — RED both poles (wrong-audience refused / correct-audience accepted / no-`aud` refused) reproduced firsthand, GREEN 3/3; full suite 1074 passed / 0 failed, `tsc --noEmit` exit 0.
+
 ## [2.18.0] — 2026-08-11
 
 ### Changed
