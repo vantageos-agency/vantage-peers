@@ -433,13 +433,62 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		const createdBy = args.createdBy;
 		const updatedSince = args.updatedSince;
 		const priorityFilter = args.priority;
+		const before = args.createdBefore;
 
-		// updatedSince/createdBy are applied in-memory below — widen the raw
-		// per-branch fetch so the filter runs over a superset of the final
-		// page instead of narrowing an already-limit-bounded page (see the
-		// comment above `TASK_LIST_SCAN_CAP`).
-		const needsWideScan = createdBy !== undefined || updatedSince !== undefined;
+		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — `createdBefore` was
+		// OMITTED here. On a cursor-only call fetchCap collapsed to `limit`,
+		// so the DB fetched only the `limit` NEWEST rows, then the cursor
+		// filter below dropped every one of them (they are all >= the
+		// cursor anchor by construction) → an empty page while older rows
+		// that should have been page 2 were never fetched. Empty read as
+		// end-of-list; callers silently truncated. `createdBefore` is now
+		// included so pagination widens the same as createdBy/updatedSince,
+		// and is loud (SCAN_CAP_EXCEEDED) rather than silent when it can't
+		// see far enough. See per-branch index-push below for the unbounded
+		// fix on the common single-status paths.
+		//
+		// Eta REVISE on PR #1194 @147d260 — a second, independent defect on
+		// this same line: `needsWideScan` also has to widen whenever a
+		// multi-status (or no-status) filter will be applied POST-fetch on a
+		// branch that queries through a compound index ending in `status`
+		// (by_assignee, by_project, by_instance, by_assignee_project,
+		// by_instance_project…). With only the equality prefix (e.g.
+		// assignedTo) pinned, Convex orders the remaining rows by the
+		// index's NEXT field first — `status` — then `_creationTime`, NOT by
+		// `_creationTime` alone. A narrow `.take(limit)` on that ordering
+		// grabs `limit` rows skewed toward one status bucket, never the
+		// `limit` most-recent of the STATUS-FILTERED UNION — reproduced by
+		// Eta firsthand: 12 alternating todo/in_progress tasks, cursor walk
+		// status=["todo","in_progress"] limit=5 saw 7/12 (page 1 was all
+		// "todo"; the 5 true union-newest — mixed todo/in_progress — were
+		// never fetched). This is independent of cursor presence — the same
+		// wrong 5 rows come back on a plain first call, no cursor involved.
+		// Multi-status/no-status branches now always widen; single-status
+		// branches are untouched (Eta confirmed `canPushCursorIntoIndex`
+		// correct as-is).
+		const needsWideScan =
+			createdBy !== undefined ||
+			updatedSince !== undefined ||
+			before !== undefined ||
+			statuses === undefined ||
+			statuses.length > 1;
 		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
+
+		// Preferred fix (Pi): push the cursor bound into the index RANGE
+		// instead of filtering in-memory. Every Convex index implicitly ends
+		// with `_creationTime`, so once all explicit index fields are pinned
+		// by equality (single-status branches), `.lt("_creationTime", before)`
+		// is a valid additional range clause — unbounded, no SCAN_CAP
+		// dependency. Only usable when `updatedSince` is absent (that filter
+		// already occupies the one allowed range slot on the assignedTo
+		// branch) and exactly one status is pinned (multi-status / no-status
+		// branches don't fully consume the index's equality prefix, so the
+		// next index field isn't `_creationTime`).
+		const canPushCursorIntoIndex =
+			before !== undefined &&
+			updatedSince === undefined &&
+			statuses !== undefined &&
+			statuses.length === 1;
 
 		// Helper: apply multi-status in-memory filter on a pre-fetched slice
 		type TaskRow = Doc<"tasks">;
@@ -476,14 +525,17 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
-					.withIndex("by_instance_project", (q) =>
-						q
+					.withIndex("by_instance_project", (q) => {
+						const base = q
 							.eq("assignedToInstance", assignedToInstance)
 							.eq("project", project)
-							.eq("status", statuses[0]),
-					)
+							.eq("status", statuses[0]);
+						return canPushCursorIntoIndex
+							? base.lt("_creationTime", before as number)
+							: base;
+					})
 					.order("desc")
-					.take(fetchCap);
+					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -500,13 +552,16 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
-					.withIndex("by_instance", (q) =>
-						q
+					.withIndex("by_instance", (q) => {
+						const base = q
 							.eq("assignedToInstance", assignedToInstance)
-							.eq("status", statuses[0]),
-					)
+							.eq("status", statuses[0]);
+						return canPushCursorIntoIndex
+							? base.lt("_creationTime", before as number)
+							: base;
+					})
 					.order("desc")
-					.take(fetchCap);
+					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -524,14 +579,17 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
-					.withIndex("by_assignee_project", (q) =>
-						q
+					.withIndex("by_assignee_project", (q) => {
+						const base = q
 							.eq("assignedTo", assignedTo)
 							.eq("project", project)
-							.eq("status", statuses[0]),
-					)
+							.eq("status", statuses[0]);
+						return canPushCursorIntoIndex
+							? base.lt("_creationTime", before as number)
+							: base;
+					})
 					.order("desc")
-					.take(fetchCap);
+					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -578,11 +636,14 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			} else if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
-					.withIndex("by_assignee", (q) =>
-						q.eq("assignedTo", assignedTo).eq("status", statuses[0]),
-					)
+					.withIndex("by_assignee", (q) => {
+						const base = q.eq("assignedTo", assignedTo).eq("status", statuses[0]);
+						return canPushCursorIntoIndex
+							? base.lt("_creationTime", before as number)
+							: base;
+					})
 					.order("desc")
-					.take(fetchCap);
+					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -597,11 +658,14 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
-					.withIndex("by_project", (q) =>
-						q.eq("project", project).eq("status", statuses[0]),
-					)
+					.withIndex("by_project", (q) => {
+						const base = q.eq("project", project).eq("status", statuses[0]);
+						return canPushCursorIntoIndex
+							? base.lt("_creationTime", before as number)
+							: base;
+					})
 					.order("desc")
-					.take(fetchCap);
+					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
@@ -611,7 +675,13 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				allRows = applyStatusFilter(base);
 			}
 		}
-		// Filter by status only
+		// Filter by status only. Not eligible for the index-push above: `by_status`
+		// is ["status", "createdAt"], so after pinning `status` by equality the
+		// next index field is `createdAt`, not `_creationTime` — Convex only
+		// allows a range clause on the field immediately following the pinned
+		// equality prefix, so `_creationTime` can't be reached here. Falls back
+		// to the widened-scan + loud SCAN_CAP_EXCEEDED path (still correct,
+		// just bounded).
 		else if (statuses !== undefined) {
 			if (statuses.length === 1) {
 				allRows = await ctx.db
@@ -646,7 +716,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				? " or shrink the updatedSince window"
 				: "";
 			throw new ConvexError(
-				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${windowAdvice}.`,
+				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${windowAdvice}.`,
 			);
 		}
 
@@ -658,15 +728,35 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
 		}
-		// Re-bound to the requested page size now that the filter has run over
-		// the widened superset (no-op when a wide scan wasn't needed, since
-		// `allRows` was already <= limit in that case).
-		filtered = filtered.slice(0, limit);
-		// S3.3 B8 — cursor paging: drop rows newer-or-equal to cursor anchor.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
+		// Day 163 fix — the cursor (createdBefore) filter MUST run BEFORE the
+		// re-bound to `limit`, never after. This is idempotent/no-op on the
+		// branches above that already pushed the bound into the index (every
+		// row is already < before), and is the actual correctness fix on the
+		// branches that fell back to the widened scan: applying it after
+		// slicing to `limit` was silently discarding the very rows the
+		// cursor was supposed to select, independent of the fetchCap defect.
+		if (before !== undefined) {
 			filtered = filtered.filter((r) => r._creationTime < before);
 		}
+		// Eta REVISE on PR #1194 @147d260 — widening the fetch (above) was
+		// necessary but NOT sufficient. A branch that queries a compound
+		// index with only a LEADING field pinned (e.g. by_assignee with
+		// `assignedTo` pinned but `status` NOT pinned, for a multi-status or
+		// no-status request) returns rows ordered by the index's remaining
+		// fields — `status` first, THEN `_creationTime` — not by
+		// `_creationTime` alone. Filtering that array down to matching
+		// statuses preserves that scrambled order: a plain `.slice(0,
+		// limit)` after such a fetch grabs `limit` rows skewed toward
+		// whichever status sorts first, never the true `limit` most-recent
+		// of the filtered UNION. Re-sorting by `_creationTime` desc here is
+		// a no-op (stable) on branches that were already creation-time
+		// ordered (single-status index-push, plain table scans) and is the
+		// actual fix on the scrambled branches. Sort BEFORE the re-bound so
+		// `limit` always yields the N genuinely most-recent survivors.
+		filtered = [...filtered].sort((a, b) => b._creationTime - a._creationTime);
+		// Re-bound to the requested page size now that every filter AND the
+		// creation-time re-sort have run over the full candidate set.
+		filtered = filtered.slice(0, limit);
 		// PR-E — cron-spam filter: exclude auto-generated tasks when requested.
 		// Two signals (OR logic):
 		//   1. createdBy starts with "cron-" (dash required — "cronus"/"cron" pass through)
@@ -1515,9 +1605,36 @@ export const listByMission = query({
 			);
 		}
 
-		// Same widened-scan fix as `list` above — see TASK_LIST_SCAN_CAP comment.
-		const needsWideScan = createdBy !== undefined || updatedSince !== undefined;
+		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — same defect and same
+		// fix as `runTasksList` above: `createdBefore` was omitted from
+		// `needsWideScan`, so a cursor-only call fetched only `limit` rows and
+		// then filtered them all out. Included here too.
+		const before = args.createdBefore;
+		// Eta REVISE on PR #1194 @147d260 — same multi-status/no-status
+		// widen-gap as `runTasksList` above: `by_mission` is
+		// ["missionId","status"], so with only `missionId` pinned the
+		// remaining rows are ordered by `status` first, then
+		// `_creationTime` — not pure creation-time order. A narrow
+		// `.take(limit)` on a multi-status (or no-status) request grabs
+		// `limit` rows skewed to one status bucket, not the union's
+		// most-recent. Always widen for those; single-status is unaffected
+		// (untouched, per Eta's confirmation on the assignee/index-push path).
+		const needsWideScan =
+			createdBy !== undefined ||
+			updatedSince !== undefined ||
+			before !== undefined ||
+			statuses === undefined ||
+			statuses.length > 1;
 		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
+		// Preferred fix — push the cursor bound into the `by_mission` index
+		// range (["missionId","status"], `_creationTime` implicit last field)
+		// when a single status is pinned and updatedSince doesn't already
+		// occupy the range slot. Unbounded, no SCAN_CAP dependency.
+		const canPushCursorIntoIndex =
+			before !== undefined &&
+			updatedSince === undefined &&
+			statuses !== undefined &&
+			statuses.length === 1;
 
 		type TaskRow = Doc<"tasks">;
 		const applyStatusFilter = (rows: TaskRow[]) => {
@@ -1532,11 +1649,14 @@ export const listByMission = query({
 		if (statuses !== undefined && statuses.length === 1) {
 			allRows = await ctx.db
 				.query("tasks")
-				.withIndex("by_mission", (q) =>
-					q.eq("missionId", missionId).eq("status", statuses[0]),
-				)
+				.withIndex("by_mission", (q) => {
+					const base = q.eq("missionId", missionId).eq("status", statuses[0]);
+					return canPushCursorIntoIndex
+						? base.lt("_creationTime", before as number)
+						: base;
+				})
 				.order("desc")
-				.take(fetchCap);
+				.take(canPushCursorIntoIndex ? limit : fetchCap);
 		} else {
 			const base = await ctx.db
 				.query("tasks")
@@ -1554,7 +1674,7 @@ export const listByMission = query({
 		// Left out of the message on purpose.
 		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
 			throw new ConvexError(
-				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
+				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
 			);
 		}
 
@@ -1566,14 +1686,22 @@ export const listByMission = query({
 		if (updatedSince !== undefined) {
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
 		}
-		// Re-bound to the requested page size now that the filter has run over
-		// the widened superset (no-op when a wide scan wasn't needed).
-		filtered = filtered.slice(0, limit);
-		// S3.3 B8 follow-up batch 2 — drop rows newer-or-equal to anchor.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
+		// Day 163 fix — cursor filter MUST run BEFORE the re-bound to `limit`
+		// (same ordering bug as `runTasksList`). No-op on the index-pushed
+		// branch above; the actual fix on the wide-scan fallback branch.
+		if (before !== undefined) {
 			filtered = filtered.filter((r) => r._creationTime < before);
 		}
+		// Eta REVISE on PR #1194 @147d260 — same re-sort fix as
+		// `runTasksList`: the multi-status/no-status branch above fetches
+		// through `by_mission` with only `missionId` pinned, so the returned
+		// array is ordered by `status` first, then `_creationTime` — not
+		// creation-time alone. No-op on the single-status index-push branch.
+		filtered = [...filtered].sort((a, b) => b._creationTime - a._creationTime);
+		// Re-bound to the requested page size now that every filter AND the
+		// creation-time re-sort — including the cursor — has run over the
+		// full candidate set.
+		filtered = filtered.slice(0, limit);
 
 		if (lite) return filtered.map(projectTaskLite);
 		return filtered;
@@ -1955,11 +2083,40 @@ function renderTemplate(
 /** Hard cap to prevent blast radius beyond a realistic cron-spam batch. */
 const BULK_COMPLETE_HARD_CAP = 500;
 
+/**
+ * Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — bulkComplete's live path
+ * used to REFUSE outright once matched > cap ("Narrow your filter and
+ * retry"), even when both filter fields were already at their narrowest
+ * (autoGeneratedOnly + assignedTo both set). That instruction had no
+ * followable next step. Fixed two ways:
+ *   1. A third filter dimension — `status` — lets a caller narrow the scan
+ *      to a single open status instead of all four.
+ *   2. The live path now DRAINS in cap-sized batches instead of throwing:
+ *      it closes up to BULK_COMPLETE_HARD_CAP matching tasks and reports
+ *      `remaining: true` when more exist. Because the scan is over
+ *      non-done statuses, closing this batch removes it from the NEXT
+ *      call's candidate set automatically — repeated calls with the same
+ *      filter terminate the whole pile without any external purge script.
+ *   The count is exact when the scan didn't hit the cap, and explicitly
+ *   labelled (`cappedAt` + `remaining: true`) when it did — never a bare
+ *   scan-stop sentinel presented as a total.
+ */
 export const bulkComplete = mutation({
 	args: {
 		filter: v.object({
 			autoGeneratedOnly: v.optional(v.boolean()),
 			assignedTo: v.optional(v.string()),
+			// Day 163 — narrows the scan to a single open status instead of the
+			// full todo/in_progress/review/blocked sweep. Counts as a reductive
+			// predicate on its own (it directly bounds what the index scan sees).
+			status: v.optional(
+				v.union(
+					v.literal("todo"),
+					v.literal("in_progress"),
+					v.literal("review"),
+					v.literal("blocked"),
+				),
+			),
 		}),
 		dryRun: v.optional(v.boolean()),
 		completionNoteTemplate: v.optional(v.string()),
@@ -1971,6 +2128,11 @@ export const bulkComplete = mutation({
 		bulkRunId: v.string(),
 		executedAt: v.optional(v.number()),
 		cappedAt: v.optional(v.number()),
+		// Day 163 — true when the scan stopped at the cap and more matching
+		// (non-done) rows may exist beyond it. On the live path this also
+		// means: call again with the same filter to drain the remainder,
+		// because this batch is now "done" and drops out of the next scan.
+		remaining: v.optional(v.boolean()),
 	}),
 	handler: async (ctx, args) => {
 		// Default dryRun to true (safety).
@@ -1987,17 +2149,21 @@ export const bulkComplete = mutation({
 		const hasAutoGeneratedOnly = args.filter.autoGeneratedOnly === true;
 		const hasAssignedTo =
 			args.filter.assignedTo !== undefined && args.filter.assignedTo !== "";
-		if (!hasAutoGeneratedOnly && !hasAssignedTo) {
+		const hasStatus = args.filter.status !== undefined;
+		if (!hasAutoGeneratedOnly && !hasAssignedTo && !hasStatus) {
 			throw new ConvexError(
-				"BULK_FILTER_TOO_BROAD: at least one reductive predicate required (autoGeneratedOnly or assignedTo).",
+				"BULK_FILTER_TOO_BROAD: at least one reductive predicate required (autoGeneratedOnly, assignedTo, or status).",
 			);
 		}
 
 		// Iterate non-done tasks via index with early-stop at cap+1.
 		// The +1 allows dry-run to accurately report "more than cap" without
-		// scanning the entire table.
+		// scanning the entire table. `status` narrows the outer loop itself
+		// when supplied, instead of always sweeping all four open statuses.
 		const matched: Doc<"tasks">[] = [];
-		const statuses = ["todo", "in_progress", "review", "blocked"] as const;
+		const statuses = hasStatus
+			? ([args.filter.status as NonNullable<typeof args.filter.status>] as const)
+			: (["todo", "in_progress", "review", "blocked"] as const);
 
 		outer: for (const status of statuses) {
 			const cursor = ctx.db
@@ -2016,8 +2182,11 @@ export const bulkComplete = mutation({
 					include = cronMatch && assignedMatch;
 				} else if (hasAutoGeneratedOnly) {
 					include = cronMatch;
-				} else {
+				} else if (hasAssignedTo) {
 					include = assignedMatch;
+				} else {
+					// status-only filter: every row in this status matches.
+					include = true;
 				}
 
 				if (include) {
@@ -2030,15 +2199,11 @@ export const bulkComplete = mutation({
 			}
 		}
 
-		// Must-fix #1: enforce hard cap on live runs.
-		if (!dryRun && matched.length > BULK_COMPLETE_HARD_CAP) {
-			throw new ConvexError(
-				`BULK_HARD_CAP_EXCEEDED: matched=${matched.length}, cap=${BULK_COMPLETE_HARD_CAP}. Narrow your filter and retry.`,
-			);
-		}
-
 		const exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
 		// Truncate to cap (the +1 overflow sentinel is not included in results).
+		// Day 163 — the live path no longer throws BULK_HARD_CAP_EXCEEDED here;
+		// it drains this batch and reports `remaining: true` instead (see the
+		// doc comment above the mutation for why repeated calls terminate).
 		const cappedResults = matched.slice(0, BULK_COMPLETE_HARD_CAP);
 
 		// RBAC check: when callerOrchestrator is provided and is not "system",
@@ -2071,7 +2236,10 @@ export const bulkComplete = mutation({
 				count,
 				sampleIds,
 				bulkRunId,
-				...(exceeded ? { cappedAt: BULK_COMPLETE_HARD_CAP } : {}),
+				executedAt: undefined as number | undefined,
+				...(exceeded
+					? { cappedAt: BULK_COMPLETE_HARD_CAP, remaining: true }
+					: {}),
 			};
 		}
 
@@ -2104,7 +2272,15 @@ export const bulkComplete = mutation({
 			});
 		}
 
-		return { count, sampleIds, bulkRunId, executedAt };
+		return {
+			count,
+			sampleIds,
+			bulkRunId,
+			executedAt,
+			...(exceeded
+				? { cappedAt: BULK_COMPLETE_HARD_CAP, remaining: true }
+				: {}),
+		};
 	},
 });
 
