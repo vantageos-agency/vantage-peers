@@ -198,6 +198,94 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		expect(error).toBeInstanceOf(ConvexError);
 		expect((error as ConvexError<string>).message).toMatch(/SCAN_CAP_EXCEEDED/);
 	});
+
+	// ── Eta REVISE, PR #1194 @147d260 — the multi-status defect the previous
+	// fix left open. Eta's own probe, adopted verbatim: 12 tasks for one
+	// assignee, alternating status todo/in_progress, cursor walk with
+	// status:["todo","in_progress"] limit=5. Confirmed RED on BOTH heads
+	// (main: 5/12, pre-multi-status-fix head: 7/12) before this fix landed —
+	// it discriminates and cannot pass by accident.
+	test("Eta probe: cursor walk over status:['todo','in_progress'] limit=5 sees every one of 12 alternating-status tasks exactly once", async () => {
+		const t = createT();
+		const assignedTo = "eta-probe-assignee";
+
+		// probe-0 (oldest) .. probe-11 (newest), alternating status.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		await t.run(async (ctx: any) => {
+			for (let i = 0; i < 12; i++) {
+				const now = Date.now() + i;
+				await ctx.db.insert("tasks", {
+					title: `probe-${i}`,
+					assignedTo,
+					priority: "medium",
+					status: i % 2 === 0 ? "todo" : "in_progress",
+					createdBy: assignedTo,
+					createdAt: now,
+					updatedAt: now,
+				});
+			}
+		});
+
+		const seenTitles: string[] = [];
+		let createdBefore: number | undefined;
+		let pages = 0;
+		const maxPages = 10;
+		let firstPageTitles: string[] = [];
+
+		while (pages < maxPages) {
+			pages++;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const page: any[] = await t
+				.withIdentity({ subject: "test-service-account-user-id" })
+				.query(api.tasks.list, {
+					assignedTo,
+					status: ["todo", "in_progress"],
+					limit: 5,
+					fields: "lite",
+					createdBefore,
+				});
+
+			if (page.length === 0) break;
+			if (pages === 1) firstPageTitles = page.map((r) => r.title as string);
+
+			for (const row of page) {
+				expect(seenTitles.includes(row.title)).toBe(false);
+				seenTitles.push(row.title);
+			}
+
+			const last = page[page.length - 1];
+			createdBefore = last._creationTime;
+			if (page.length < 5) break;
+		}
+
+		// The defect: 7/12 (or 5/12 on main) — the fix must see all 12.
+		expect(seenTitles.length).toBe(12);
+		for (let i = 0; i < 12; i++) {
+			expect(seenTitles).toContain(`probe-${i}`);
+		}
+		expect(pages).toBeLessThan(maxPages);
+
+		// The property Eta named explicitly: page 1 must carry the N
+		// MOST-RECENT of the UNION of matching statuses (probe-11..probe-7,
+		// mixed todo/in_progress), never the N most-recent of a single
+		// status bucket (e.g. all-todo: probe-10,8,6,4,2 — the exact
+		// defective page 1 Eta measured on both heads before this fix).
+		expect(firstPageTitles).toEqual([
+			"probe-11",
+			"probe-10",
+			"probe-9",
+			"probe-8",
+			"probe-7",
+		]);
+		// Explicitly refute the defective (single-status-skewed) page 1.
+		expect(firstPageTitles).not.toEqual([
+			"probe-10",
+			"probe-8",
+			"probe-6",
+			"probe-4",
+			"probe-2",
+		]);
+	});
 });
 
 describe("tasks.listByMission — cursor pagination (Day 163)", () => {

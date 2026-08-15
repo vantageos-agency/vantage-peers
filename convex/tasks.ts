@@ -446,8 +446,32 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// and is loud (SCAN_CAP_EXCEEDED) rather than silent when it can't
 		// see far enough. See per-branch index-push below for the unbounded
 		// fix on the common single-status paths.
+		//
+		// Eta REVISE on PR #1194 @147d260 — a second, independent defect on
+		// this same line: `needsWideScan` also has to widen whenever a
+		// multi-status (or no-status) filter will be applied POST-fetch on a
+		// branch that queries through a compound index ending in `status`
+		// (by_assignee, by_project, by_instance, by_assignee_project,
+		// by_instance_project…). With only the equality prefix (e.g.
+		// assignedTo) pinned, Convex orders the remaining rows by the
+		// index's NEXT field first — `status` — then `_creationTime`, NOT by
+		// `_creationTime` alone. A narrow `.take(limit)` on that ordering
+		// grabs `limit` rows skewed toward one status bucket, never the
+		// `limit` most-recent of the STATUS-FILTERED UNION — reproduced by
+		// Eta firsthand: 12 alternating todo/in_progress tasks, cursor walk
+		// status=["todo","in_progress"] limit=5 saw 7/12 (page 1 was all
+		// "todo"; the 5 true union-newest — mixed todo/in_progress — were
+		// never fetched). This is independent of cursor presence — the same
+		// wrong 5 rows come back on a plain first call, no cursor involved.
+		// Multi-status/no-status branches now always widen; single-status
+		// branches are untouched (Eta confirmed `canPushCursorIntoIndex`
+		// correct as-is).
 		const needsWideScan =
-			createdBy !== undefined || updatedSince !== undefined || before !== undefined;
+			createdBy !== undefined ||
+			updatedSince !== undefined ||
+			before !== undefined ||
+			statuses === undefined ||
+			statuses.length > 1;
 		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
 
 		// Preferred fix (Pi): push the cursor bound into the index RANGE
@@ -714,8 +738,24 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		if (before !== undefined) {
 			filtered = filtered.filter((r) => r._creationTime < before);
 		}
-		// Re-bound to the requested page size now that both the wide-scan
-		// filters AND the cursor filter have run over the full candidate set.
+		// Eta REVISE on PR #1194 @147d260 — widening the fetch (above) was
+		// necessary but NOT sufficient. A branch that queries a compound
+		// index with only a LEADING field pinned (e.g. by_assignee with
+		// `assignedTo` pinned but `status` NOT pinned, for a multi-status or
+		// no-status request) returns rows ordered by the index's remaining
+		// fields — `status` first, THEN `_creationTime` — not by
+		// `_creationTime` alone. Filtering that array down to matching
+		// statuses preserves that scrambled order: a plain `.slice(0,
+		// limit)` after such a fetch grabs `limit` rows skewed toward
+		// whichever status sorts first, never the true `limit` most-recent
+		// of the filtered UNION. Re-sorting by `_creationTime` desc here is
+		// a no-op (stable) on branches that were already creation-time
+		// ordered (single-status index-push, plain table scans) and is the
+		// actual fix on the scrambled branches. Sort BEFORE the re-bound so
+		// `limit` always yields the N genuinely most-recent survivors.
+		filtered = [...filtered].sort((a, b) => b._creationTime - a._creationTime);
+		// Re-bound to the requested page size now that every filter AND the
+		// creation-time re-sort have run over the full candidate set.
 		filtered = filtered.slice(0, limit);
 		// PR-E — cron-spam filter: exclude auto-generated tasks when requested.
 		// Two signals (OR logic):
@@ -1570,8 +1610,21 @@ export const listByMission = query({
 		// `needsWideScan`, so a cursor-only call fetched only `limit` rows and
 		// then filtered them all out. Included here too.
 		const before = args.createdBefore;
+		// Eta REVISE on PR #1194 @147d260 — same multi-status/no-status
+		// widen-gap as `runTasksList` above: `by_mission` is
+		// ["missionId","status"], so with only `missionId` pinned the
+		// remaining rows are ordered by `status` first, then
+		// `_creationTime` — not pure creation-time order. A narrow
+		// `.take(limit)` on a multi-status (or no-status) request grabs
+		// `limit` rows skewed to one status bucket, not the union's
+		// most-recent. Always widen for those; single-status is unaffected
+		// (untouched, per Eta's confirmation on the assignee/index-push path).
 		const needsWideScan =
-			createdBy !== undefined || updatedSince !== undefined || before !== undefined;
+			createdBy !== undefined ||
+			updatedSince !== undefined ||
+			before !== undefined ||
+			statuses === undefined ||
+			statuses.length > 1;
 		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
 		// Preferred fix — push the cursor bound into the `by_mission` index
 		// range (["missionId","status"], `_creationTime` implicit last field)
@@ -1639,8 +1692,15 @@ export const listByMission = query({
 		if (before !== undefined) {
 			filtered = filtered.filter((r) => r._creationTime < before);
 		}
-		// Re-bound to the requested page size now that every filter — including
-		// the cursor — has run over the full candidate set.
+		// Eta REVISE on PR #1194 @147d260 — same re-sort fix as
+		// `runTasksList`: the multi-status/no-status branch above fetches
+		// through `by_mission` with only `missionId` pinned, so the returned
+		// array is ordered by `status` first, then `_creationTime` — not
+		// creation-time alone. No-op on the single-status index-push branch.
+		filtered = [...filtered].sort((a, b) => b._creationTime - a._creationTime);
+		// Re-bound to the requested page size now that every filter AND the
+		// creation-time re-sort — including the cursor — has run over the
+		// full candidate set.
 		filtered = filtered.slice(0, limit);
 
 		if (lite) return filtered.map(projectTaskLite);
