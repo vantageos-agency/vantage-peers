@@ -23,9 +23,9 @@
  */
 
 import {
+	type OAuthCtx as PackageOAuthCtx,
 	isMasterScope as packageIsMasterScope,
 	validateMasterBearer,
-	type OAuthCtx as PackageOAuthCtx,
 } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
@@ -307,6 +307,16 @@ const CLERK_DOMAIN =
 	process.env.CLERK_DOMAIN ?? "https://sharp-sponge-67.clerk.accounts.dev";
 const CLERK_JWKS_URL = `${CLERK_DOMAIN}/.well-known/jwks.json`;
 
+// Expected `aud` claim for Clerk session JWTs accepted at this call site.
+// Default "convex" mirrors convex/auth.config.ts (`applicationID: "convex"`)
+// and src/serviceAccountAuth.ts's CLERK_JWT_TEMPLATE default ("convex") — the
+// verified token here is forwarded verbatim to Convex as `clerkJwt` below,
+// and Convex's own auth.config already requires aud === "convex", so binding
+// the same value here (Critical Rule 14 element 5: aud + iss binding) closes
+// the cross-tenant/cross-resource replay gap without rejecting any token a
+// correctly-configured Clerk "convex" JWT template mints.
+const CLERK_JWT_AUDIENCE = process.env.CLERK_JWT_AUDIENCE ?? "convex";
+
 // Lazy singleton — createRemoteJWKSet caches JWKS in-process (10-min TTL).
 let _clerkJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 function clerkJwks(): ReturnType<typeof createRemoteJWKSet> {
@@ -328,6 +338,7 @@ async function tryVerifyClerkJwt(token: string): Promise<ClerkPayload | null> {
 	try {
 		const { payload } = await jwtVerify(token, clerkJwks(), {
 			issuer: CLERK_DOMAIN,
+			audience: CLERK_JWT_AUDIENCE,
 		});
 		// Org-session JWTs carry org_id; personal-session JWTs do not.
 		const orgId = payload.org_id as string | undefined;
