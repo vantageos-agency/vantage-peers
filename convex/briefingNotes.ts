@@ -1,10 +1,63 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
-import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import { withOrgScope, requireScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// participant-visibility helpers (Day 165 fix — task
+// k175ga65p654z200ydj7s8qv5s8cnxfc)
+//
+// A note is readable by a non-master caller when the caller is the creator
+// OR the caller's identity is a member of `briefingNoteParticipants` for that
+// noteId. Membership is resolved via the `by_participant_note` index — an
+// index-range predicate inside the query, never a table scan and never a
+// post-query handler filter (R-11). `callerIdentities` is the set of names
+// the caller's token may act as (fromAllowList / userId), threaded in from
+// the MCP handler. `callerIdentities === undefined` preserves the legacy
+// unscoped/back-compat read (internal server-to-server callers).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function syncParticipantIndex(
+	ctx: MutationCtx,
+	noteId: Id<"briefingNotes">,
+	participants: string[],
+): Promise<void> {
+	const existing = await ctx.db
+		.query("briefingNoteParticipants")
+		.withIndex("by_note", (q) => q.eq("noteId", noteId))
+		.collect();
+	for (const row of existing) {
+		await ctx.db.delete(row._id);
+	}
+	const unique = Array.from(new Set(participants));
+	for (const participant of unique) {
+		await ctx.db.insert("briefingNoteParticipants", { noteId, participant });
+	}
+}
+
+async function callerCanRead(
+	ctx: QueryCtx,
+	note: Doc<"briefingNotes">,
+	master: boolean | undefined,
+	callerIdentities: string[] | undefined,
+): Promise<boolean> {
+	if (master === true) return true;
+	if (callerIdentities === undefined) return true; // legacy unscoped call
+	if (callerIdentities.includes(note.createdBy)) return true;
+	for (const identity of callerIdentities) {
+		const row = await ctx.db
+			.query("briefingNoteParticipants")
+			.withIndex("by_participant_note", (q) =>
+				q.eq("participant", identity).eq("noteId", note._id),
+			)
+			.first();
+		if (row !== null) return true;
+	}
+	return false;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // create — insert a new briefing note
@@ -22,10 +75,12 @@ export const create = mutation({
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
-		return await ctx.db.insert("briefingNotes", {
+		const noteId = await ctx.db.insert("briefingNotes", {
 			...args,
 			createdAt: Date.now(),
 		});
+		await syncParticipantIndex(ctx, noteId, args.participants);
+		return noteId;
 	},
 });
 
@@ -40,7 +95,13 @@ export const get = query({
 	// measured). Narrowing inside the handler via requireId() throws a
 	// ConvexError whose payload survives redaction. Same contract as PR #1072
 	// (tasks.getById).
-	args: { noteId: v.string() },
+	args: {
+		noteId: v.string(),
+		// Day 165 — caller identity threaded from the MCP handler. Omitted =
+		// legacy unscoped call (back-compat). `master=true` bypasses the check.
+		master: v.optional(v.boolean()),
+		callerIdentities: v.optional(v.array(v.string())),
+	},
 	returns: v.union(
 		v.object({
 			_id: v.id("briefingNotes"),
@@ -68,7 +129,15 @@ export const get = query({
 			"noteId",
 			"Use the full 32-char noteId returned by list_briefing_notes or create_briefing_note.",
 		);
-		return await ctx.db.get(noteId);
+		const note = await ctx.db.get(noteId);
+		if (note === null) return null;
+		const visible = await callerCanRead(
+			ctx,
+			note,
+			args.master,
+			args.callerIdentities,
+		);
+		return visible ? note : null;
 	},
 });
 
@@ -123,6 +192,9 @@ export const list = query({
 		updatedSince: v.optional(v.number()),
 		// S3.3 B8 — cursor paging anchor (forward pagination, newest-first).
 		createdBefore: v.optional(v.number()),
+		// Day 165 — same caller-identity threading as `get`.
+		master: v.optional(v.boolean()),
+		callerIdentities: v.optional(v.array(v.string())),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"briefingNotes"> optionality
 	handler: async (ctx, args) => {
@@ -136,7 +208,10 @@ export const list = query({
 				`[briefingNotes.list] auto-clamp: limit=15 applied (fields=full, no explicit limit).`,
 			);
 		}
-		const needsWideScan = args.updatedSince !== undefined;
+		const needsVisibilityFilter =
+			args.master !== true && args.callerIdentities !== undefined;
+		const needsWideScan =
+			args.updatedSince !== undefined || needsVisibilityFilter;
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"briefingNotes">[];
@@ -170,6 +245,20 @@ export const list = query({
 			rows = rows.filter(
 				(r) => (r.updatedAt ?? r._creationTime) >= since,
 			);
+		}
+		// Day 165 — participant visibility, resolved via the by_participant_note
+		// index inside callerCanRead (never a scan of `participants`/a
+		// post-query handler filter). Runs over the (possibly widened) fetch,
+		// same order as the updatedSince filter above.
+		if (needsVisibilityFilter) {
+			const identities = args.callerIdentities as string[];
+			const checked = await Promise.all(
+				rows.map(async (r) => ({
+					row: r,
+					visible: await callerCanRead(ctx, r, args.master, identities),
+				})),
+			);
+			rows = checked.filter((c) => c.visible).map((c) => c.row);
 		}
 		// Re-bound to the requested page size now that the filter has run over
 		// the widened superset (no-op when a wide scan wasn't needed).
@@ -216,6 +305,7 @@ export const deleteBriefingNote = mutation({
 		}
 
 		await ctx.db.delete(args.noteId);
+		await syncParticipantIndex(ctx, args.noteId, []);
 		return { deleted: true };
 	},
 });
@@ -260,6 +350,9 @@ export const update = mutation({
 			}
 		}
 		await ctx.db.patch(noteId, patch);
+		if (fields.participants !== undefined) {
+			await syncParticipantIndex(ctx, noteId, fields.participants);
+		}
 		return null;
 	},
 });
@@ -279,6 +372,11 @@ export const searchBriefingNotesByKeyword = query({
 		createdBy: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		// Day 165 — same caller-identity threading as `get`/`list`. Participant
+		// membership grants read WITHIN the tenant; it never overrides the
+		// orgId tenant-isolation filter below.
+		master: v.optional(v.boolean()),
+		callerIdentities: v.optional(v.array(v.string())),
 	},
 	handler: async (ctx, args) => {
 		const scope = await withOrgScope(ctx);
@@ -305,9 +403,32 @@ export const searchBriefingNotesByKeyword = query({
 		// filterByOrgScope() does not fit. Enforce orgId match inline for
 		// non-master scopes — the index .eq("orgId", scope.orgSlug) above
 		// is the primary isolation; this is the belt-and-suspenders pass.
-		const filtered = scope.isMaster
+		const tenantFiltered = scope.isMaster
 			? results
 			: results.filter((r) => r.orgId === scope.orgSlug);
+
+		// Day 165 — participant visibility, applied WITHIN the tenant set
+		// established above (never overrides tenant isolation). Resolved via
+		// the by_participant_note index inside callerCanRead.
+		const needsVisibilityFilter =
+			args.master !== true && args.callerIdentities !== undefined;
+		const filtered = needsVisibilityFilter
+			? (
+					await Promise.all(
+						tenantFiltered.map(async (r) => ({
+							row: r,
+							visible: await callerCanRead(
+								ctx,
+								r,
+								args.master,
+								args.callerIdentities,
+							),
+						})),
+					)
+				)
+					.filter((c) => c.visible)
+					.map((c) => c.row)
+			: tenantFiltered;
 
 		if (!lite) return filtered;
 		return filtered.map((b) => ({
@@ -316,6 +437,10 @@ export const searchBriefingNotesByKeyword = query({
 			topic: b.topic,
 			createdBy: b.createdBy,
 			createdAt: b.createdAt,
+			// Day 165 — kept in lite results so the MCP-layer's independent
+			// createdBy/participants defense-in-depth check has the data it
+			// needs even in lite mode.
+			participants: b.participants,
 		}));
 	},
 });
