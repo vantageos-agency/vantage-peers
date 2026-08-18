@@ -1,8 +1,12 @@
 # Changelog
 
-## [Unreleased] — bind JWT audience at the Clerk verification site
+## [Unreleased] — grant-aware mission/mandate visibility + bind JWT audience
 
 ### Security
+
+- **Consult per-row grants on missions and mandates (task `k174y9ra7pp8zed3bcczk6xaed8cpynp`, `@vantageos/cloud-identity` 0.5.0).** The shared scope filter was structurally blind to every per-row grant: a scoped identity named on a mission (`pilot`/`agents`) or a mandate (`fulfilledBy`) could not read the row it was named on — the multi-org separation failing at exactly what it is sold for. Upgraded the dependency `^0.3.0` → `^0.5.0` (the old caret stopped at the 0.3 minor and never admitted 0.4.0) and passed `grantFields` at the read sites: `get_mission` → `["pilot","agents"]`; `list_mandates`/`get_mandate` → `["requestedBy","fulfilledBy"]`, replacing the two-sided `createdBy`-remap workaround (the local-variant pattern the shared filter now subsumes). Fail-closed unchanged: a table declaring no grant fields behaves byte-identically to before. TDD strict — RED at pre-0.5.0 (5/10 grant assertions fail), GREEN 10/10 under scoped non-creator identity; mcp-server scope-aware suites 91/91, build clean + boot-check 4/4.
+
+
 
 - **Bind the `audience` claim where the Clerk session JWT is verified (MCP server standard Critical Rule 14, element 5).** `tryVerifyClerkJwt` (`src/auth.ts`) verified the token with `issuer` bound but not `audience`, so a token minted for one audience/client was accepted on another — cross-tenant / cross-resource replay (the single exploitable finding of the mcp-doctor conformance audit, `projects/vantage-peers/audits/mcp-server-conformance-audit.md`). Fix binds `audience: CLERK_JWT_AUDIENCE` (env, default `"convex"`) at the single `jwtVerify` site — the value mirrors `convex/auth.config.ts` `applicationID: "convex"` and the `CLERK_JWT_TEMPLATE` default, and the verified token is forwarded verbatim to Convex which already requires `aud === "convex"`, so no correctly-minted production token is rejected. Minimal by design: only the one verification site; the auth-layer/DCR/PRM flow and the three other (non-exploitable) audit findings are untouched. TDD strict — RED both poles (wrong-audience refused / correct-audience accepted / no-`aud` refused) reproduced firsthand, GREEN 3/3; full suite 1074 passed / 0 failed, `tsc --noEmit` exit 0.
 
