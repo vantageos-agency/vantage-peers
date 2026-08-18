@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { syncParticipantIndex } from "./briefingNotes";
 
@@ -260,27 +261,90 @@ export const migrateDiaryOrchestrator = internalMutation({
 // running this migration N times leaves the junction table row count
 // unchanged after the first run (verified below and in the paired test).
 //
-// Run: npx convex run migrations:backfillBriefingNoteParticipants
+// PRODUCTION INCIDENT (task k17byc17kzyyra886h6v08ky3n8cqfqm, Pi, P0):
+// the original one-shot `.collect()` form THREW on prod — "Too many bytes
+// read in a single function execution (limit: 16777216 bytes)". A
+// briefingNotes row carries kilobytes of `content` (schema: v.string(),
+// full briefing text), and Convex reads cannot project fields — even a
+// `.paginate()` page loads full documents. `.collect()` over the whole
+// table exceeds the 16 MiB read-byte budget once the corpus + per-row
+// content size grows past it; the loop below only ever needs `_id` and
+// `participants`, but `content` is read anyway and is what exhausts the
+// budget.
+//
+// FIX: bounded pages + self-scheduling. Each transaction processes at most
+// BATCH rows via `.paginate()`, then reschedules itself with the
+// continuation cursor via ctx.scheduler.runAfter(0, ...) until isDone. No
+// single execution's read-byte footprint depends on corpus size anymore —
+// only on BATCH.
+//
+// BATCH = 16, justified against the 16 MiB (16,777,216 byte) per-execution
+// read budget:
+//   - Convex documents are capped at ~1 MiB (1,048,576 bytes) per document
+//     (Convex platform limit), so a single briefingNotes row's absolute
+//     worst case is ~1 MiB.
+//   - BATCH(16) x worst-case-row(1 MiB) = 16 MiB, which is the size of the
+//     ENTIRE read budget with the assumption every row hits the document
+//     size cap. Real briefingNotes.content rows are "kilobytes", not
+//     megabytes (per the Pi finding), so in practice a page of 16 rows
+//     reads a small fraction of a MiB — leaving comfortable headroom for
+//     the query's own index-read overhead and the paginate() cursor
+//     bookkeeping, while still being small enough that even a genuinely
+//     pathological page (several rows near the 1 MiB cap) cannot approach
+//     the limit.
+//   - Kept intentionally conservative (not e.g. 1000) precisely because
+//     Convex cannot skip loading `content` — the field that caused the
+//     original incident — so the only lever available is page size.
+//
+// Run (kicks off the drain; it self-schedules until the corpus is fully
+// processed):
+//   npx convex run migrations:backfillBriefingNoteParticipants
 // ─────────────────────────────────────────────────────────────────────────────
 
+const BACKFILL_BATCH_SIZE = 16;
+
 export const backfillBriefingNoteParticipants = internalMutation({
-	args: {},
+	args: {
+		cursor: v.optional(v.union(v.string(), v.null())),
+	},
 	returns: v.object({
 		notesProcessed: v.number(),
 		participantRowsWritten: v.number(),
+		isDone: v.boolean(),
 	}),
-	handler: async (ctx) => {
-		const notes = await ctx.db.query("briefingNotes").collect();
-		let participantRowsWritten = 0;
+	handler: async (ctx, args) => {
+		const page = await ctx.db
+			.query("briefingNotes")
+			.paginate({
+				cursor: args.cursor ?? null,
+				numItems: BACKFILL_BATCH_SIZE,
+			});
 
-		for (const note of notes) {
+		let participantRowsWritten = 0;
+		for (const note of page.page) {
 			await syncParticipantIndex(ctx, note._id, note.participants);
 			participantRowsWritten += new Set(note.participants).size;
 		}
 
+		if (!page.isDone) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.migrations.backfillBriefingNoteParticipants,
+				{ cursor: page.continueCursor },
+			);
+		}
+
 		console.log(
-			`Backfilled briefingNoteParticipants: ${notes.length} notes processed, ${participantRowsWritten} participant rows written`
+			`Backfilled briefingNoteParticipants page: ${page.page.length} notes processed, ${participantRowsWritten} participant rows written, isDone=${page.isDone}`
 		);
-		return { notesProcessed: notes.length, participantRowsWritten };
+		// NOTE (per Pi): this return value is a per-page count, not a
+		// corpus-wide total — the drain spans multiple scheduled
+		// executions. The proof of completion is an independent read of
+		// the briefingNoteParticipants table, never this return value.
+		return {
+			notesProcessed: page.page.length,
+			participantRowsWritten,
+			isDone: page.isDone,
+		};
 	},
 });
