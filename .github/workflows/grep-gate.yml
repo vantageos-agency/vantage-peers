@@ -7,13 +7,19 @@ name: Brand Grep Gate
 # cure; the other half is branch protection (task k17cnkxkm8xaz6d5tq1nxtxjtx8agq84),
 # which makes the absence BLOCK instead of merely being invisible.
 #
-# `pull_request` is deliberately gone: with `branches: ["**"]` every same-repo PR is
-# already covered by its push, and keeping both fired two identical runs per commit.
-# Fork PRs are consequently unchecked — they are not part of the fleet flow, where
-# every merge is Pi-gated.
+# `pull_request` (target `main`) is present but FORK-ONLY BY CONSTRUCTION. Every
+# required-context job carries the guard `if: github.event_name != 'pull_request' ||
+# github.event.pull_request.head.repo.fork == true`. Consequence table:
+#   - same-repo push  -> push run only (pull_request job skipped)
+#   - same-repo PR     -> already covered by its push; pull_request job skipped
+#   - FORK PR          -> no push exists, so the pull_request job runs and reports
+# So fork PRs ARE checked again (a blocked fork PR sits in the merge queue — they are
+# part of the fleet flow, still Pi-gated at merge) with ZERO duplicate runs.
 on:
   push:
     branches: ["**"]
+  pull_request:
+    branches: [main]
 
 concurrency:
   group: grep-gate-${{ github.ref }}
@@ -21,6 +27,7 @@ concurrency:
 
 jobs:
   no-legacy-brand-refs:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == true
     name: "No legacy brand refs in src/ or docs/"
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +67,7 @@ jobs:
           echo "PASS: mcp-server/server.ts is clean"
 
   no-buffer-in-v8-convex:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == true
     name: "No Buffer global in non-use-node convex/*.ts (Day-101 root-fix k1706c5jf)"
     runs-on: ubuntu-latest
     steps:

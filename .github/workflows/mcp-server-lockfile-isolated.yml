@@ -18,10 +18,12 @@ name: MCP Server Lockfile Isolated
 # mismatch already happened once on 2026-06-04 and was hand-repaired without
 # a guard closing the class. This job is that guard.
 #
-# `pull_request` is deliberately gone: with `branches: ["**"]` every
-# same-repo PR is already covered by its push, and keeping both fired two
-# identical runs per commit. Fork PRs are consequently unchecked — they are
-# not part of the fleet flow, where every merge is Pi-gated.
+# `pull_request` is omitted here because this guard is NOT one of the required
+# status checks: a same-repo push already covers it, and a fork PR (which
+# produces no push into this repo) does not need it to merge, since it gates no
+# required context. The REQUIRED checks now DO run on fork PRs — each of those
+# workflows carries a `pull_request` trigger with a fork-only job guard (see
+# task k1702xbh01aamqv11b3rjf2vp98cpjb4). Fork PRs ARE part of the fleet flow.
 on:
   push:
     branches: ["**"]

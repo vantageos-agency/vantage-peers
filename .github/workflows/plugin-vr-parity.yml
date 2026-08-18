@@ -7,13 +7,36 @@ name: Plugin <-> VantageRegistry parity gate
 # cure; the other half is branch protection (task k17cnkxkm8xaz6d5tq1nxtxjtx8agq84),
 # which makes the absence BLOCK instead of merely being invisible.
 #
-# `pull_request` is deliberately gone: with `branches: ["**"]` every same-repo PR is
-# already covered by its push, and keeping both fired two identical runs per commit.
-# Fork PRs are consequently unchecked — they are not part of the fleet flow, where
-# every merge is Pi-gated.
+# `pull_request` (target `main`) is present but FORK-ONLY BY CONSTRUCTION. Every
+# required-context job carries the guard `if: github.event_name != 'pull_request' ||
+# github.event.pull_request.head.repo.fork == true`. Consequence table:
+#   - same-repo push  -> push run only (pull_request job skipped)
+#   - same-repo PR     -> already covered by its push; pull_request job skipped
+#   - FORK PR          -> no push exists, so the pull_request job runs and reports
+# So fork PRs ARE checked again (a blocked fork PR sits in the merge queue — they are
+# part of the fleet flow, still Pi-gated at merge) with ZERO duplicate runs.
+#
+# DEGRADE-ON-FORK (task k1702xbh01aamqv11b3rjf2vp98cpjb4). GitHub withholds
+# repository secrets from fork PRs by construction, so the halves of this job
+# split by what a secret they cannot see:
+#   - OFFLINE half (test_source_prose_identity_guard.py) — self-provides a
+#     fictive vocabulary in-test, needs no secret and no network. It runs FOR
+#     REAL on a fork: a fork that breaks the guard MECHANISM fails here, red.
+#   - SECRET half (test_leak_guard.py resolves the real client vocabulary;
+#     source_prose_identity_guard.py scans the real perimeter files; VR parity
+#     needs the registry token) — cannot run on a fork. Rather than ERROR red
+#     forever (a fork PR would then be unmergeable and INDISTINGUISHABLE from a
+#     real leak), it emits a written, visible "REFUSING TO JUDGE" line naming
+#     exactly what did not run, and exits 0. That is NOT a silent green: the
+#     merge gate is a maintainer same-repo re-run citation (Pi refuses merge
+#     without it; where the fork diff touches no plugin source, that fact is the
+#     citation). A skip is honest only when WRITTEN DOWN and gated — mirroring
+#     the leak guard's own CHECKED ∪ SKIPPED-with-a-reason = 100% inventory rule.
 on:
   push:
     branches: ["**"]
+  pull_request:
+    branches: [main]
 
 concurrency:
   group: plugin-vr-parity-${{ github.ref }}
@@ -21,6 +44,7 @@ concurrency:
 
 jobs:
   plugin-vr-parity:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == true
     name: pytest tests/plugin/ (packaged plugin sources vs VR canonical)
     runs-on: ubuntu-latest
     steps:
@@ -45,44 +69,50 @@ jobs:
       - name: Install pytest
         run: pip install pytest
 
-      # SECRECY > PARITY. The leak guard runs FIRST and needs no network: a
-      # packaged file carrying client/person identifiers is a live disclosure
-      # in a PUBLIC package, and must fail the build even if VR is down.
-      - name: Leak guard (no client/person identifiers in the public package)
-        env:
-          # Salted-hash vocabulary only -- the plaintext host config never
-          # leaves the operator's machine. See scripts/emit_client_hashes.py
-          # and scripts/client_identity_config.py (resolve_vocabulary_or_fail)
-          # for the full rationale: WE DO NOT TRANSPORT THE SECRET TO PROVE
-          # WE DETECT IT.
-          VANTAGE_CLIENT_HASHES: ${{ secrets.VANTAGE_CLIENT_HASHES }}
-        run: pytest tests/plugin/test_leak_guard.py -v
+      # OFFLINE HALF — real on every runner, forks included. The source-prose
+      # mechanism suite builds its fictive vocabulary in-test (monkeypatch +
+      # tmp_path) and asserts BOTH poles (a fictive identity IS caught in a
+      # comment/description; benign text is NOT), needing no secret and no
+      # network. A fork PR that breaks the guard MECHANISM fails here, for real.
+      - name: "Offline mechanism suite (fictive vocabulary — real on forks)"
+        run: pytest tests/plugin/test_source_prose_identity_guard.py -v
 
-      # Source-surface guard (PR #1119/#1120): a client identity in a Convex
-      # `description:` field or a schema/migration comment is neither a
-      # packaged artifact nor a branch name, and is invisible to the two
-      # steps above. Runs on the same secret, same job, same SECRECY > PARITY
-      # ordering -- before the network-dependent VR parity step.
-      # REQUIRED HARD GATE (PR #1120): the pre-existing client-identity
-      # PROSE that blocked flipping this on (convex/oauth.ts,
-      # convex/migrations/patch_marie_iris_rh_scope.ts) is redacted. This
-      # step now runs the mechanism pytest suite (offline, fictive
-      # vocabulary) AND the real guard against this repo's own perimeter
-      # files, and FAILS THE JOB on any finding -- neither a disabled gate
-      # nor an advisory one. Its scope is deliberately narrower than "all
-      # client identity in this repo": see the DECLARED SCOPE comment block
-      # in `scripts/source_prose_identity_guard.py` for the two classes
-      # (repo file paths / invocation strings; the authorization identifier
-      # arrays) it excludes on purpose, and the task ids tracking each to
-      # closure.
-      - name: Source-prose identity guard (auth-profile perimeter)
+      # SECRET HALF — the three checks that resolve the REAL client vocabulary
+      # (VANTAGE_CLIENT_HASHES) or reach VantageRegistry (VANTAGE_REGISTRY_TOKEN),
+      # both withheld from fork PRs by GitHub. On a same-repo push/PR the secrets
+      # are present and all three run under SECRECY > PARITY ordering (leak guard
+      # first, no network; then the real-perimeter source-prose scan; then the
+      # network VR parity gate). On a fork the secret is absent: rather than let
+      # test_leak_guard.py ERROR red forever (its skipif does NOT fire when
+      # NEITHER plaintext NOR hashes resolve, so the fixture raises), the step
+      # DEFERS with a written, visible REFUSING TO JUDGE line naming exactly what
+      # did not run — never a silent green. Merge is gated on a maintainer
+      # same-repo re-run citation (see the DEGRADE-ON-FORK header block).
+      - name: "Secret-gated real-perimeter checks (leak guard + source-prose + VR parity)"
         env:
+          # Salted-hash vocabulary only -- the plaintext host config never leaves
+          # the operator's machine (scripts/client_identity_config.py
+          # resolve_vocabulary_or_fail). WE DO NOT TRANSPORT THE SECRET TO PROVE
+          # WE DETECT IT. Scope of the real-perimeter scan: see the DECLARED SCOPE
+          # block in scripts/source_prose_identity_guard.py.
           VANTAGE_CLIENT_HASHES: ${{ secrets.VANTAGE_CLIENT_HASHES }}
-        run: |
-          pytest tests/plugin/test_source_prose_identity_guard.py -v
-          python3 scripts/source_prose_identity_guard.py
-
-      - name: VR parity gate (with secrecy-suspension)
-        env:
           VANTAGE_REGISTRY_TOKEN: ${{ secrets.VANTAGE_REGISTRY_TOKEN }}
-        run: pytest tests/plugin/test_vr_parity.py -v
+        run: |
+          set -euo pipefail
+          if [ -z "${VANTAGE_CLIENT_HASHES:-}" ]; then
+            echo "::warning title=Secret-gated half DEFERRED (fork PR — secrets withheld by GitHub)::REFUSING TO JUDGE — not a pass. A maintainer same-repo re-run before merge is the gate."
+            echo "REFUSING TO JUDGE: VANTAGE_CLIENT_HASHES is unavailable to this fork PR, so the following ran on NO runner and are DEFERRED:"
+            echo "  - tests/plugin/test_leak_guard.py        (needs the resolved client vocabulary to synthesize real leak material)"
+            echo "  - scripts/source_prose_identity_guard.py (scans the REAL auth-profile perimeter files; needs the vocabulary)"
+            echo "  - tests/plugin/test_vr_parity.py         (needs VANTAGE_REGISTRY_TOKEN to reach VantageRegistry)"
+            echo ""
+            echo "The OFFLINE mechanism half above DID run for real on this fork."
+            echo "Merge gate (task k1702xbh01aamqv11b3rjf2vp98cpjb4): Pi refuses merge until a maintainer cites a same-repo run"
+            echo "of this job (secrets present) on this fork head. Where the fork diff touches NO plugin source, that fact is the citation."
+            exit 0
+          fi
+          # SECRECY > PARITY: a packaged/perimeter file carrying client identifiers
+          # is a live disclosure in a PUBLIC package and must fail even if VR is down.
+          pytest tests/plugin/test_leak_guard.py -v
+          python3 scripts/source_prose_identity_guard.py
+          pytest tests/plugin/test_vr_parity.py -v
