@@ -4193,11 +4193,16 @@ export function registerTools(
 						fields: "full",
 					},
 				);
+				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task/list_tasks:
+				// `assignedTo` is a per-row grant (convex/tasks.ts L88-89 ORs
+				// createdBy===caller || assignedTo===caller), so a non-creator
+				// assignee must still see their own task in search results.
 				const filteredFull = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results)
 						? (results as Array<Record<string, unknown>>)
 						: [],
+					["assignedTo"],
 				);
 				const projected = wantsFull
 					? filteredFull
@@ -4815,9 +4820,12 @@ export function registerTools(
 					createdBefore,
 				});
 
+				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task: `assignedTo`
+				// is a per-row grant (convex/tasks.ts L88-89 ORs createdBy||assignedTo).
 				const filteredTasks = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(tasks) ? tasks : [],
+					["assignedTo"],
 				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
@@ -5098,12 +5106,18 @@ export function registerTools(
 		async ({ missionId }) => {
 			try {
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
+				// cloud-identity 0.5.0 — missions carry no createdBy/namespace; a
+				// caller named as `pilot` or inside `agents` is a per-row grant
+				// the filter now consults directly via grantFields, instead of the
+				// caller being structurally invisible to createdBy/namespace-only
+				// matching (k174y9ra7pp8zed3bcczk6xaed8cpynp).
 				const mission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
 				});
 				const filteredMission = scopeFilterGet(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					mission as any,
+					["pilot", "agents"],
 				);
 
 				return {
@@ -7139,33 +7153,18 @@ export function registerTools(
 					fields: fields ?? "lite",
 					createdBefore,
 				});
-				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — mandates rows carry
-				// `requestedBy` AND `fulfilledBy` (schema.ts creatorValidator),
-				// NOT `createdBy` and NOT `namespace` — scopeFilterList
-				// discriminates on `createdBy`/`namespace` only, so passing rows
-				// through unmapped found no field to match against and refused
-				// EVERY non-master caller, requester and fulfiller included
-				// (refus-total — same defect class as list_broadcast_status
-				// pre-fix, tools.ts:~3502). A mandate has TWO legitimate client
-				// owners (either party to the agreement), so this remaps onto
-				// `createdBy` twice — once per side — and unions the surviving
-				// rows by `_id`, preserving the original newest-first order.
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 / k174y9ra7pp8zed3bcczk6xaed8cpynp —
+				// mandates rows carry `requestedBy` AND `fulfilledBy` (schema.ts
+				// creatorValidator), NOT `createdBy`/`namespace`. cloud-identity
+				// 0.5.0's `grantFields` declares both as per-row grants directly —
+				// no createdBy-remap + union-by-_id workaround needed: either
+				// party to the mandate is a named grantee, consulted in one pass.
 				const mandateRows = Array.isArray(mandates) ? mandates : [];
-				const visibleIds = new Set<string>();
-				for (const field of ["requestedBy", "fulfilledBy"] as const) {
-					const mapped = (
-						mandateRows as Array<Record<string, unknown>>
-					).map((m) => ({ ...m, createdBy: m[field] as string | undefined }));
-					for (const row of scopeFilterList(
-						oauthCtx ?? LEGACY_WILDCARD_CTX,
-						mapped,
-					)) {
-						visibleIds.add(String((row as unknown as { _id: unknown })._id));
-					}
-				}
-				const filteredMandates = (
-					mandateRows as Array<Record<string, unknown> & { _id: unknown }>
-				).filter((m) => visibleIds.has(String(m._id)));
+				const filteredMandates = scopeFilterList(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					mandateRows as Array<Record<string, unknown>>,
+					["requestedBy", "fulfilledBy"],
+				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
@@ -9571,7 +9570,15 @@ export function registerTools(
 		async ({ taskId }) => {
 			try {
 				const row = await convex.query("tasks:getById" as any, { taskId });
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				// k174y9ra7pp8zed3bcczk6xaed8cpynp — tasks carry `assignedTo` as a
+				// per-row grant distinct from `createdBy` (convex/tasks.ts L88-89
+				// ORs createdBy===caller || assignedTo===caller for task-scoped
+				// mutations); mirror that OR here so a non-creator assignee can see
+				// their own task via cloud-identity 0.5.0's grantFields, instead of
+				// falling through createdBy/namespace-only matching to "not found".
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row, [
+					"assignedTo",
+				]);
 				if (filtered === null) {
 					return mcpError(`Task not found: ${taskId}`);
 				}
@@ -9646,29 +9653,26 @@ export function registerTools(
 		},
 		async ({ mandateId }) => {
 			try {
-				// k177617dqg6z5c099p1rdp5rqn8b2rp0 -- same two-sided remap as
-				// list_mandates above: mandates rows carry `requestedBy` AND
-				// `fulfilledBy`, not `createdBy`/`namespace`; unmapped this
-				// refused BOTH parties to the mandate.
+				// k177617dqg6z5c099p1rdp5rqn8b2rp0 / k174y9ra7pp8zed3bcczk6xaed8cpynp —
+				// same carrier as list_mandates above: mandates rows carry
+				// `requestedBy` AND `fulfilledBy`, not `createdBy`/`namespace`.
+				// cloud-identity 0.5.0's `grantFields` consults both directly —
+				// no createdBy-remap workaround needed.
 				const row = (await convex.query("mandates:get" as any, {
 					mandateId,
 				})) as
 					| (Record<string, unknown> & {
+							createdBy?: string;
+							namespace?: string;
 							requestedBy?: string;
 							fulfilledBy?: string;
 					  })
 					| null;
-				const visible =
-					row !== null &&
-					(scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, {
-						...row,
-						createdBy: row.requestedBy,
-					}) !== null ||
-						scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, {
-							...row,
-							createdBy: row.fulfilledBy,
-						}) !== null);
-				const filtered = visible ? row : null;
+				const filtered = scopeFilterGet(
+					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					row,
+					["requestedBy", "fulfilledBy"],
+				);
 				if (filtered === null) {
 					return mcpError(`Mandate not found: ${mandateId}`);
 				}
