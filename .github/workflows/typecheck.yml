@@ -3,21 +3,22 @@ name: Typecheck
 # A workflow that does not run and a workflow that passes look identical on the
 # checks page: neither shows a red cross. Day 131 measured that: `push` was pinned
 # to `main`, so on a branch with no open PR only the grep gate ever fired, and an
-# ABSENCE of verdict was read as a verdict. Triggering on every branch is half the
-# cure; the other half is branch protection (task k17cnkxkm8xaz6d5tq1nxtxjtx8agq84),
-# which makes the absence BLOCK instead of merely being invisible.
+# ABSENCE of verdict was read as a verdict. Branch protection (task
+# k17cnkxkm8xaz6d5tq1nxtxjtx8agq84) makes the absence BLOCK instead of being invisible.
 #
-# `pull_request` (target `main`) is present but FORK-ONLY BY CONSTRUCTION. Every
-# required-context job carries the guard `if: github.event_name != 'pull_request' ||
-# github.event.pull_request.head.repo.fork == true`. Consequence table:
-#   - same-repo push  -> push run only (pull_request job skipped)
-#   - same-repo PR     -> already covered by its push; pull_request job skipped
-#   - FORK PR          -> no push exists, so the pull_request job runs and reports
-# So fork PRs ARE checked again (a blocked fork PR sits in the merge queue — they are
-# part of the fleet flow, still Pi-gated at merge) with ZERO duplicate runs.
+# ONE TRIGGER PER CONTEXT (task k1702xbh01aamqv11b3rjf2vp98cpjb4). `pull_request`
+# (target `main`) is the ONLY trigger for a PR -- same-repo and fork alike -- so every
+# PR produces EXACTLY ONE run of this required context, one that actually executes.
+# `push` (target `main`) covers the post-merge commit on main. There is deliberately
+# NO per-job fork `if:` guard: a job-level skip reports to branch protection as a
+# PASSING context that measured nothing (three-state verdict, etage 2, on the path
+# every merge takes) and it lands LAST -- the exact race that a fork-only guard plus
+# push:["**"] created, where each required context had a second reporter. Removing the
+# second trigger removes the second reporter. Fork PRs are checked by their own
+# pull_request run and remain Pi-gated at merge.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -27,7 +28,6 @@ concurrency:
 
 jobs:
   typecheck:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == true
     name: tsc --noEmit
     runs-on: ubuntu-latest
     steps:
