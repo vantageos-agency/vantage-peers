@@ -162,6 +162,7 @@ const memoryRowValidator = v.object({
 	type: memoryTypeValidator,
 	content: v.string(),
 	createdBy: creatorValidator,
+	instanceId: v.optional(v.string()),
 	relations: v.array(
 		v.object({
 			targetId: v.id("memories"),

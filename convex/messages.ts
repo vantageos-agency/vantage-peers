@@ -826,6 +826,7 @@ export const listByChannel = query({
 			_creationTime: v.number(),
 			from: creatorValidator,
 			fromInstanceId: v.optional(v.string()),
+			tenantId: v.optional(v.string()),
 			channel: v.string(),
 			content: v.string(),
 			sessionDay: v.optional(v.number()),
