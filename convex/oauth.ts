@@ -344,6 +344,103 @@ export const seedDefaultProfiles = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// upsertScopeProfile — admin only, generic, idempotent, keyed UPSERT
+//
+// Replaces the risky `convex import --append` provisioning path for
+// oauth_scope_profiles: `--append` can silently REPLACE the whole table if
+// misused, wiping every sibling profile in one shot. A keyed upsert (lookup
+// by `by_profileId`, patch-or-insert) cannot wipe siblings — it only ever
+// touches the single targeted row.
+//
+// Contract:
+//   - Master-gated: requireMasterAuth runs FIRST, before any DB access.
+//   - Present  → ctx.db.patch(existing._id, { ...profile, updatedAt: now }),
+//     preserving createdAt + _creationTime. Returns "updated".
+//   - Absent   → ctx.db.insert(..., { ...profile, createdAt: now, updatedAt: now }).
+//     Returns "inserted".
+//   - Writes one oauth_audit_log row per call (eventType="scope_profile_upsert")
+//     capturing before/after state, mirroring seedDefaultProfiles' discipline.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const upsertScopeProfile = mutation({
+	args: { callerToken: v.string(), profile: scopeProfileShape },
+	returns: v.union(v.literal("inserted"), v.literal("updated")),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+
+		const { profile } = args;
+		const now = Date.now();
+		const actorTokenHash = await sha256Hex(args.callerToken);
+
+		const existing = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", profile.profileId))
+			.unique();
+
+		const emptyState = {
+			profileId: "",
+			fromAllowList: [] as string[],
+			namespaceReadPrefixes: [] as string[],
+			namespaceWritePrefixes: [] as string[],
+		};
+		const newState = {
+			profileId: profile.profileId,
+			fromAllowList: profile.fromAllowList,
+			namespaceReadPrefixes: profile.namespaceReadPrefixes,
+			namespaceWritePrefixes: profile.namespaceWritePrefixes,
+		};
+
+		if (!existing) {
+			await ctx.db.insert("oauth_scope_profiles", {
+				...profile,
+				createdAt: now,
+				updatedAt: now,
+			});
+
+			await ctx.db.insert("oauth_audit_log", {
+				eventType: "scope_profile_upsert",
+				actorTokenHash,
+				targetProfileId: profile.profileId,
+				previousState: emptyState,
+				newState,
+				reason: `upsertScopeProfile insert — profile "${profile.profileId}" did not exist`,
+				cascadeRevokedCount: 0,
+				clientsRetargeted: 0,
+				createdAt: now,
+			});
+
+			return "inserted" as const;
+		}
+
+		const previousState = {
+			profileId: existing.profileId,
+			fromAllowList: existing.fromAllowList,
+			namespaceReadPrefixes: existing.namespaceReadPrefixes,
+			namespaceWritePrefixes: existing.namespaceWritePrefixes,
+		};
+
+		await ctx.db.patch(existing._id, {
+			...profile,
+			updatedAt: now,
+		});
+
+		await ctx.db.insert("oauth_audit_log", {
+			eventType: "scope_profile_upsert",
+			actorTokenHash,
+			targetProfileId: profile.profileId,
+			previousState,
+			newState,
+			reason: `upsertScopeProfile update — profile "${profile.profileId}" patched`,
+			cascadeRevokedCount: 0,
+			clientsRetargeted: 0,
+			createdAt: now,
+		});
+
+		return "updated" as const;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getScopeProfile — internal use by token-issuance path
 // ─────────────────────────────────────────────────────────────────────────────
 
