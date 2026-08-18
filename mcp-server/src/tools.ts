@@ -4193,11 +4193,16 @@ export function registerTools(
 						fields: "full",
 					},
 				);
+				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task/list_tasks:
+				// `assignedTo` is a per-row grant (convex/tasks.ts L88-89 ORs
+				// createdBy===caller || assignedTo===caller), so a non-creator
+				// assignee must still see their own task in search results.
 				const filteredFull = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(results)
 						? (results as Array<Record<string, unknown>>)
 						: [],
+					["assignedTo"],
 				);
 				const projected = wantsFull
 					? filteredFull
@@ -4815,9 +4820,12 @@ export function registerTools(
 					createdBefore,
 				});
 
+				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task: `assignedTo`
+				// is a per-row grant (convex/tasks.ts L88-89 ORs createdBy||assignedTo).
 				const filteredTasks = scopeFilterList(
 					oauthCtx ?? LEGACY_WILDCARD_CTX,
 					Array.isArray(tasks) ? tasks : [],
+					["assignedTo"],
 				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
@@ -9562,7 +9570,15 @@ export function registerTools(
 		async ({ taskId }) => {
 			try {
 				const row = await convex.query("tasks:getById" as any, { taskId });
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				// k174y9ra7pp8zed3bcczk6xaed8cpynp — tasks carry `assignedTo` as a
+				// per-row grant distinct from `createdBy` (convex/tasks.ts L88-89
+				// ORs createdBy===caller || assignedTo===caller for task-scoped
+				// mutations); mirror that OR here so a non-creator assignee can see
+				// their own task via cloud-identity 0.5.0's grantFields, instead of
+				// falling through createdBy/namespace-only matching to "not found".
+				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row, [
+					"assignedTo",
+				]);
 				if (filtered === null) {
 					return mcpError(`Task not found: ${taskId}`);
 				}
