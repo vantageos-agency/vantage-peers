@@ -20,7 +20,7 @@ import { requireId } from "./lib/ids";
 // unscoped/back-compat read (internal server-to-server callers).
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function syncParticipantIndex(
+export async function syncParticipantIndex(
 	ctx: MutationCtx,
 	noteId: Id<"briefingNotes">,
 	participants: string[],
