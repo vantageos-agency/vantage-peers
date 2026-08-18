@@ -160,6 +160,9 @@ const taskFullValidator = v.object({
 	// Day 157 — terminal cancelled status (see schema.ts).
 	cancelledBy: v.optional(creatorValidator),
 	cancelReason: v.optional(v.string()),
+	// Day 159 — block_task commitment fields (see schema.ts:293,298).
+	blockedOnTaskId: v.optional(v.id("tasks")),
+	blockedOnNobodyReason: v.optional(v.string()),
 });
 
 type TaskLite = {
@@ -269,6 +272,9 @@ export const get = query({
 			// Day 157 — terminal cancelled status (see schema.ts).
 			cancelledBy: v.optional(creatorValidator),
 			cancelReason: v.optional(v.string()),
+			// Day 159 — block_task commitment fields (see schema.ts:293,298).
+			blockedOnTaskId: v.optional(v.id("tasks")),
+			blockedOnNobodyReason: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -319,6 +325,9 @@ export const getById = query({
 			// Day 157 — terminal cancelled status (see schema.ts).
 			cancelledBy: v.optional(creatorValidator),
 			cancelReason: v.optional(v.string()),
+			// Day 159 — block_task commitment fields (see schema.ts:293,298).
+			blockedOnTaskId: v.optional(v.id("tasks")),
+			blockedOnNobodyReason: v.optional(v.string()),
 		}),
 		v.null(),
 	),
