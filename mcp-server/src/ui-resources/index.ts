@@ -140,6 +140,16 @@ function renderMarkdownFallback(uri: string, primitive: Primitive): string {
 	].join("\n");
 }
 
+// Caller identity, threaded from server-http.ts's oauthCtx the same way
+// tools.ts computes it (master + fromAllowList). Optional: readUiResource is
+// also called from tests/tools with no identity, which preserves the
+// pre-existing `callerIdentities === undefined` legacy-open Convex branch —
+// scope-aware callers (server-http.ts) MUST pass this.
+export type UiResourceCallerIdentity = {
+	master: boolean;
+	callerIdentities: string[] | undefined;
+};
+
 // Resource read — dispatched by primitive name. Returns canonical
 // resources/read contents array: [HTML profile=mcp-app, markdown fallback].
 export async function readUiResource(
@@ -148,6 +158,7 @@ export async function readUiResource(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	identity?: UiResourceCallerIdentity,
 ): Promise<UiResourceReadResult> {
 	const parsed = parseUiUri(uri);
 	if (!parsed) {
@@ -174,7 +185,7 @@ export async function readUiResource(
 			html = await renderMissionTimeline(parsed.query, fetchConvex);
 			break;
 		case "briefing-note":
-			html = await renderBriefingNote(parsed.query, fetchConvex);
+			html = await renderBriefingNote(parsed.query, fetchConvex, identity);
 			break;
 		case "memory-quote":
 			html = await renderMemoryQuote(parsed.query, fetchConvex);

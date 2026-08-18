@@ -1660,6 +1660,42 @@ function loadCoreToolNames(): string[] {
 	return core;
 }
 
+/**
+ * Day 165 fix (task k175ga65p654z200ydj7s8qv5s8cnxfc) — briefingNotes
+ * defense-in-depth participant check.
+ *
+ * The authoritative fix lives in the Convex query itself
+ * (convex/briefingNotes.ts get/list/searchBriefingNotesByKeyword): visibility
+ * is resolved server-side via the `by_participant_note` index when
+ * `master`/`callerIdentities` are threaded in from this handler.
+ *
+ * scopeFilterGet/scopeFilterList (the generic package-level post-query
+ * filter used across many resources) only ever discriminate on
+ * `createdBy`/`namespace` — they have no notion of `participants`, and they
+ * are the ONLY tenant-isolation enforcement some of these tools have when
+ * routed through the MCP server's fixed service-account Convex identity
+ * (Day 141 fix note: `ctx.auth` resolves the MCP service account, not the
+ * real caller, so Convex's own org-scope check does not apply here — the
+ * real caller identity only exists as `oauthCtx` at this layer).
+ *
+ * This helper does NOT trust that Convex already authorized the row (that
+ * would defeat the defense-in-depth these tools rely on) — it independently
+ * re-checks `row.participants` (data already present on the row) against the
+ * real caller's `fromAllowList`, exactly mirroring what the Convex-side
+ * index lookup does, without a remap/blind-trust shortcut.
+ */
+function passesBriefingNoteParticipantScope(
+	oauthCtx: OAuthContext | undefined,
+	row: { createdBy?: string; participants?: string[] } | null | undefined,
+): boolean {
+	if (row == null) return false;
+	if (oauthCtx === undefined || isMasterScope(oauthCtx)) return true;
+	if (Array.isArray(row.participants)) {
+		return row.participants.some((p) => oauthCtx.fromAllowList.includes(p));
+	}
+	return false;
+}
+
 export function registerTools(
 	server: McpServer,
 	convex: ConvexHttpClient,
@@ -5668,15 +5704,33 @@ export function registerTools(
 		},
 		async ({ noteId }) => {
 			try {
+				// Day 165 fix (task k175ga65p654z200ydj7s8qv5s8cnxfc): thread the
+				// caller's identity into the Convex query itself, so a note
+				// shared via `participants` (not just `createdBy`) is visible —
+				// membership is resolved server-side via the by_participant_note
+				// index, not this handler.
+				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
 				const note = await convex.query("briefingNotes:get" as any, {
 					noteId,
+					master,
+					callerIdentities,
 				});
+				// scopeFilterGet only discriminates on createdBy/namespace — it
+				// has no notion of `participants`. OR it with an independent
+				// participants re-check (passesBriefingNoteParticipantScope) so a
+				// note the caller is a participant on (but did not create) is
+				// still visible, without trusting Convex's decision blindly —
+				// this stays real defense-in-depth, same posture as before.
 				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, note);
-				if (filtered === null) {
+				const visible =
+					filtered !== null ||
+					passesBriefingNoteParticipantScope(oauthCtx, note as any);
+				if (!visible) {
 					return mcpError(`Briefing note not found: ${noteId}`);
 				}
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [{ type: "text", text: JSON.stringify(note, null, 2) }],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5747,18 +5801,36 @@ export function registerTools(
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only notes whose createdBy ∈ fromAllowList OR whose namespace
-				// matches one of namespaceReadPrefixes (exact or '/' boundary).
+				// matches one of namespaceReadPrefixes (exact or '/' boundary) —
+				// PLUS (Day 165, task k175ga65p654z200ydj7s8qv5s8cnxfc) notes they
+				// are a `participants` member of, resolved server-side by the
+				// Convex query via the by_participant_note index.
+				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					updatedSince,
 					createdBefore,
+					master,
+					callerIdentities,
 				});
 
-				const filteredNotes = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(notes) ? notes : [],
+				// scopeFilterList only discriminates on createdBy/namespace — it
+				// has no notion of `participants`. OR it with an independent
+				// participants re-check per row (passesBriefingNoteParticipantScope)
+				// so notes the caller participates on but did not create stay
+				// visible, without trusting Convex's decision blindly — real
+				// defense-in-depth, same posture as before this fix.
+				const rawNotes = Array.isArray(notes) ? notes : [];
+				const scopeFiltered = new Set(
+					scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawNotes as any[]),
+				);
+				const filteredNotes = rawNotes.filter(
+					(n) =>
+						scopeFiltered.has(n) ||
+						passesBriefingNoteParticipantScope(oauthCtx, n as any),
 				);
 
 				// S3.3 B8 — emit nextCursor when page is full (more likely follows).
@@ -5856,6 +5928,11 @@ export function registerTools(
 		},
 		async ({ query, topic, createdBy, limit, fields }) => {
 			try {
+				// Day 165 (task k175ga65p654z200ydj7s8qv5s8cnxfc): thread caller
+				// identity into the query so `participants` membership is honored
+				// the same way as get_briefing_note/list_briefing_notes.
+				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
 				const results = await convex.query(
 					"briefingNotes:searchBriefingNotesByKeyword" as any,
 					{
@@ -5864,6 +5941,8 @@ export function registerTools(
 						createdBy,
 						limit: limit ?? 20,
 						fields: fields ?? "lite",
+						master,
+						callerIdentities,
 					},
 				);
 				// Day 141 fix (k17fyh3bqyh8ne1zd48sdee5958b2kk4): this query was
@@ -5877,9 +5956,22 @@ export function registerTools(
 				// get_briefing_note (line ~5209) for this exact resource —
 				// briefingNotes rows carry `createdBy`, which scopeFilterList
 				// matches against oauthCtx.fromAllowList.
-				const filteredResults = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
-					Array.isArray(results) ? (results as any[]) : [],
+				//
+				// Day 165: the Convex query now also authorizes `participants`
+				// members within the tenant. scopeFilterList has no notion of
+				// `participants`, so OR it with an independent per-row re-check
+				// (passesBriefingNoteParticipantScope, using `participants` — kept
+				// on lite results too, see convex/briefingNotes.ts) instead of
+				// trusting Convex's decision blindly — real defense-in-depth,
+				// same posture Day 141 relied on for tenant isolation here.
+				const rawResults = Array.isArray(results) ? (results as any[]) : [];
+				const scopeFiltered = new Set(
+					scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawResults),
+				);
+				const filteredResults = rawResults.filter(
+					(r) =>
+						scopeFiltered.has(r) ||
+						passesBriefingNoteParticipantScope(oauthCtx, r),
 				);
 				return {
 					content: [

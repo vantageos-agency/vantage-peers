@@ -42,6 +42,7 @@ import { cors } from "hono/cors";
 import {
 	bearerAuthMiddleware,
 	internalClient,
+	isMasterScope,
 	masterOnlyMiddleware,
 	sha256Base64Url,
 	sha256Hex,
@@ -1550,7 +1551,17 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(functionName as any, args as any);
 			};
-			return await readUiResource(uri.toString(), fetchConvex);
+			// Day-165-parity — thread the caller identity into the ui-resource
+			// primitives the same way tools.ts does (mirrors the
+			// master/callerIdentities computation at tools.ts:5712/5808/5934), so
+			// briefingNotes:get/list resolve visibility inside Convex instead of
+			// falling into the `callerIdentities === undefined` legacy-open branch.
+			const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+			const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+			return await readUiResource(uri.toString(), fetchConvex, {
+				master,
+				callerIdentities,
+			});
 		},
 	);
 

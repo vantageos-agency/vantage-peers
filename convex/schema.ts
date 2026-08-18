@@ -390,6 +390,20 @@ export default defineSchema({
 			filterFields: ["topic", "createdBy", "orgId"],
 		}),
 
+	// ── briefingNoteParticipants ──────────────────────────────────────────────
+	// Day 165 fix (task k175ga65p654z200ydj7s8qv5s8cnxfc): junction table so
+	// "is `identity` a participant on `noteId`" is an INDEX-RANGE predicate
+	// inside the get/list/search queries, never a post-query handler filter
+	// (R-11) and never an in-memory scan of `briefingNotes.participants`
+	// (Convex indexes can't range-query inside an array field's elements).
+	// One row per (noteId, participant) pair; kept in sync by create/update.
+	briefingNoteParticipants: defineTable({
+		noteId: v.id("briefingNotes"),
+		participant: v.string(),
+	})
+		.index("by_participant_note", ["participant", "noteId"])
+		.index("by_note", ["noteId"]),
+
 	// ── components ──────────────────────────────────────────────────────────
 	// Registry of agents, skills, hooks, plugins — backup + inventory.
 	// Content stores the full file so nothing is lost if filesystem is destroyed.

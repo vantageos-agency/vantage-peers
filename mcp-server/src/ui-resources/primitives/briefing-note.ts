@@ -82,6 +82,11 @@ export async function renderBriefingNote(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	// Day-165-parity — caller identity threaded from server-http.ts's oauthCtx
+	// (mirrors tools.ts's master/callerIdentities computation). Omitted only
+	// by callers that intentionally want the legacy unscoped read (internal
+	// tooling/tests) — production traffic from server-http.ts always passes it.
+	identity?: { master: boolean; callerIdentities: string[] | undefined },
 ): Promise<string> {
 	const noteId = query.get("noteId") ?? undefined;
 	const topic = query.get("topic") ?? undefined;
@@ -106,13 +111,23 @@ export async function renderBriefingNote(
 
 	try {
 		if (noteId) {
-			const result = (await fetchConvex("briefingNotes:get", {
-				noteId,
-			})) as BriefingNoteRow | null;
+			const getArgs: Record<string, unknown> = { noteId };
+			if (identity !== undefined) {
+				getArgs.master = identity.master;
+				getArgs.callerIdentities = identity.callerIdentities;
+			}
+			const result = (await fetchConvex(
+				"briefingNotes:get",
+				getArgs,
+			)) as BriefingNoteRow | null;
 			notes = result ? [result] : [];
 		} else {
 			const args: Record<string, unknown> = { limit };
 			if (topic) args.topic = topic;
+			if (identity !== undefined) {
+				args.master = identity.master;
+				args.callerIdentities = identity.callerIdentities;
+			}
 			const result = (await fetchConvex(
 				"briefingNotes:list",
 				args,
