@@ -1,8 +1,15 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+
+// The per-execution read-byte budget the batched migration must stay under
+// (Convex's documented per-function-execution read limit).
+const CONVEX_READ_BYTE_BUDGET = 16 * 1024 * 1024; // 16,777,216 bytes
+
+// Must match BACKFILL_BATCH_SIZE in convex/migrations.ts.
+const BACKFILL_BATCH_SIZE = 16;
 
 // Exclude RAG/search/backfill modules — same exclusion pattern as
 // briefingNotesParticipantVisibility.test.ts. Safe: the "backfill" exclusion
@@ -43,6 +50,13 @@ async function seedNoteWithoutSync(
 }
 
 describe("migrations:backfillBriefingNoteParticipants", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	test("RED then GREEN: scoped participant denied pre-migration, reads post-migration", async () => {
 		const t = createTestConvex();
 		const noteId = await seedNoteWithoutSync(t, ["laurent", "pi"]);
@@ -145,5 +159,141 @@ describe("migrations:backfillBriefingNoteParticipants", () => {
 
 		expect(countAfterSecondRun).toBe(countAfterFirstRun);
 		expect(second.participantRowsWritten).toBe(first.participantRowsWritten);
+	});
+
+	test("threshold-reaching: corpus whose collect() would exceed the 16 MiB read budget drains fully via bounded pages", async () => {
+		const t = createTestConvex();
+
+		// Each note's content is padded to ~64 KB. 64 KB was chosen (not a
+		// realistic prod note size — Pi's finding is real notes are only
+		// "kilobytes") specifically so a SMALL note count can still exceed
+		// the 16 MiB budget under .collect(), keeping the test fast while
+		// still proving the threshold claim with real numbers.
+		const CONTENT_BYTES_PER_NOTE = 64 * 1024; // 65,536 bytes
+		const contentPadding = "x".repeat(CONTENT_BYTES_PER_NOTE);
+
+		// 300 notes x 64 KB = 18,432,000 bytes > 16,777,216 byte budget.
+		const NOTE_COUNT = 300;
+		const totalContentBytes = NOTE_COUNT * CONTENT_BYTES_PER_NOTE;
+		expect(totalContentBytes).toBeGreaterThan(CONVEX_READ_BYTE_BUDGET);
+		expect(totalContentBytes).toBe(19_660_800); // 300 * 65,536
+
+		const noteIds: Array<Awaited<ReturnType<typeof seedNoteWithoutSync>>> =
+			[];
+		for (let i = 0; i < NOTE_COUNT; i++) {
+			noteIds.push(
+				await t.run(async (ctx) => {
+					return await ctx.db.insert("briefingNotes", {
+						title: `pre-existing note ${i}`,
+						topic: "pre-existing-topic",
+						participants: ["laurent", `participant-${i}`],
+						content: contentPadding,
+						createdBy: "sigma",
+						createdAt: Date.now(),
+					});
+				}),
+			);
+		}
+
+		// Sanity: zero junction rows before the drain (matches the
+		// production defect — sync never ran for pre-existing rows).
+		const rowsBefore = await t.run(async (ctx) => {
+			return (await ctx.db.query("briefingNoteParticipants").collect())
+				.length;
+		});
+		expect(rowsBefore).toBe(0);
+
+		// Kick off the drain. The first execution processes exactly one
+		// bounded page (BACKFILL_BATCH_SIZE rows) and self-schedules the
+		// rest — no execution ever touches more than BACKFILL_BATCH_SIZE
+		// rows, so no single execution's read footprint scales with the
+		// 300-note / ~18.75 MiB corpus above.
+		const first = await t.mutation(
+			internal.migrations.backfillBriefingNoteParticipants,
+			{},
+		);
+		expect(first.notesProcessed).toBe(BACKFILL_BATCH_SIZE);
+		expect(first.isDone).toBe(false);
+
+		// Drive every self-scheduled continuation to completion.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		// GREEN: the full corpus drained — 2 participants per note x 300
+		// notes = 600 junction rows, despite no execution ever reading more
+		// than BACKFILL_BATCH_SIZE (16) rows / ~1 MiB in one transaction —
+		// far below the 16,777,216 byte budget.
+		const rowsAfter = await t.run(async (ctx) => {
+			return (await ctx.db.query("briefingNoteParticipants").collect())
+				.length;
+		});
+		expect(rowsAfter).toBe(NOTE_COUNT * 2);
+
+		// Spot-check: the last note (which only a fully-drained corpus
+		// reaches) is indexed.
+		const lastNoteRows = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("briefingNoteParticipants")
+				.withIndex("by_note", (q) =>
+					q.eq("noteId", noteIds[NOTE_COUNT - 1]),
+				)
+				.collect();
+		});
+		expect(lastNoteRows).toHaveLength(2);
+	});
+
+	test("idempotent across a resumed multi-page drain: re-running the full scheduled drain twice leaves the junction row count unchanged", async () => {
+		const t = createTestConvex();
+
+		// 40 notes spans 3 pages at BACKFILL_BATCH_SIZE=16 (16 + 16 + 8),
+		// exercising the self-scheduling continuation path (not just a
+		// single-page corpus).
+		const NOTE_COUNT = 40;
+		for (let i = 0; i < NOTE_COUNT; i++) {
+			await seedNoteWithoutSync(t, ["laurent", `participant-${i}`]);
+		}
+
+		// First full drain (kick off + let it self-schedule to completion).
+		await t.mutation(internal.migrations.backfillBriefingNoteParticipants, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		const countAfterFirstDrain = await t.run(async (ctx) => {
+			return (await ctx.db.query("briefingNoteParticipants").collect())
+				.length;
+		});
+		expect(countAfterFirstDrain).toBe(NOTE_COUNT * 2);
+
+		// Second full drain, from scratch — proves idempotence across a
+		// complete resume/re-run of the multi-page scheduled chain, not
+		// just a single-page mutation call.
+		await t.mutation(internal.migrations.backfillBriefingNoteParticipants, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		const countAfterSecondDrain = await t.run(async (ctx) => {
+			return (await ctx.db.query("briefingNoteParticipants").collect())
+				.length;
+		});
+		expect(countAfterSecondDrain).toBe(countAfterFirstDrain);
+
+		// Resume-mid-corpus pole: simulate a drain that starts partway
+		// through by passing an explicit cursor from a fresh page read, and
+		// confirm re-processing already-synced notes doesn't duplicate rows
+		// (syncParticipantIndex's delete-then-reinsert makes each page
+		// idempotent regardless of where in the corpus it starts).
+		const midCursor = await t.run(async (ctx) => {
+			const firstPage = await ctx.db
+				.query("briefingNotes")
+				.paginate({ cursor: null, numItems: 20 });
+			return firstPage.continueCursor;
+		});
+		await t.mutation(internal.migrations.backfillBriefingNoteParticipants, {
+			cursor: midCursor,
+		});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		const countAfterResume = await t.run(async (ctx) => {
+			return (await ctx.db.query("briefingNoteParticipants").collect())
+				.length;
+		});
+		expect(countAfterResume).toBe(countAfterFirstDrain);
 	});
 });
