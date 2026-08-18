@@ -1,4 +1,6 @@
+import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import { syncParticipantIndex } from "./briefingNotes";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration: backfill startedAt + completedAt on tasks
@@ -235,5 +237,50 @@ export const migrateDiaryOrchestrator = internalMutation({
 			`Diary migration: ${migrated} migrated to sigma, ${skipped} kept as pi`
 		);
 		return { migrated, skipped };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Migration: backfill briefingNoteParticipants for pre-existing briefingNotes
+// rows (task k178gg7wp3cre87mgw60trtpfh8cqfn3, Pi, urgent BLOCKER).
+//
+// PRODUCTION FINDING: the junction table is written only by the create/update
+// mutations (Day 165 fix, k175ga65p654z200ydj7s8qv5s8cnxfc). Any note that
+// existed BEFORE that fix deployed has zero rows in briefingNoteParticipants,
+// so a scoped participant reading it is indistinguishable from a scoped
+// caller reading a note they never participated in — both return null.
+//
+// This migration walks every briefingNotes row and re-runs
+// syncParticipantIndex(ctx, note._id, note.participants) — the SAME function
+// create/update call, so there is no second writer and no parallel
+// convention to drift from the live code path.
+//
+// Idempotent: syncParticipantIndex deletes all existing rows for the note
+// (by_note index) before re-inserting the deduped participant set, so
+// running this migration N times leaves the junction table row count
+// unchanged after the first run (verified below and in the paired test).
+//
+// Run: npx convex run migrations:backfillBriefingNoteParticipants
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const backfillBriefingNoteParticipants = internalMutation({
+	args: {},
+	returns: v.object({
+		notesProcessed: v.number(),
+		participantRowsWritten: v.number(),
+	}),
+	handler: async (ctx) => {
+		const notes = await ctx.db.query("briefingNotes").collect();
+		let participantRowsWritten = 0;
+
+		for (const note of notes) {
+			await syncParticipantIndex(ctx, note._id, note.participants);
+			participantRowsWritten += new Set(note.participants).size;
+		}
+
+		console.log(
+			`Backfilled briefingNoteParticipants: ${notes.length} notes processed, ${participantRowsWritten} participant rows written`
+		);
+		return { notesProcessed: notes.length, participantRowsWritten };
 	},
 });
