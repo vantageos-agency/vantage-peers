@@ -296,6 +296,30 @@ export default defineSchema({
 		// obstacle: operator decision, third-party outage). Forbids ANONYMOUS
 		// blocking without forbidding blocking itself.
 		blockedOnNobodyReason: v.optional(v.string()),
+		// T1 (PRD-evevantage-v1 §7.1, FR-10/FR-12) — a structured discriminator
+		// of WHAT the block is waiting on. NOT a caller-written presentation
+		// state ("awaiting_human" / "awaiting_authorisation") — that field was
+		// rejected as the exact defect being removed (a status a caller types
+		// beside a free-text reason). blockedCause is orthogonal input data:
+		// blockedOnTaskId alone cannot tell a plain dependency ("peer_task")
+		// from a review/merge gate ("authorisation"), and blockedOnNobodyReason
+		// is free text no parser can safely classify as human vs authorisation
+		// vs other. The exposed waiting-on label is DERIVED from this field by
+		// deriveBlockedWaitingOn (convex/tasks.ts) — a pure function of
+		// {status, blockedCause}, never written directly by a caller. Optional
+		// and defaulted to "other" in blockTask when omitted, so existing MCP
+		// callers (which redeploy independently of Convex — see
+		// .claude/rules/railway-mcp-redeploy.md) do not break on this Convex
+		// deploy; pre-existing "blocked" rows carry neither this nor the two
+		// fields above (see convex/tasks.ts:listUnlinkedBlocked).
+		blockedCause: v.optional(
+			v.union(
+				v.literal("peer_task"),
+				v.literal("human"),
+				v.literal("authorisation"),
+				v.literal("other"),
+			),
+		),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])

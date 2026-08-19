@@ -1187,11 +1187,33 @@ export const checkoutTaskOutputSchema = z.union([
 export const deleteTaskOutputSchema = z.record(z.string(), z.unknown());
 
 // block_task
+// T1 — blockedCause is the structured discriminator of WHAT is being
+// waited on (peer_task/human/authorisation/other); it is orthogonal to
+// blockedOnTaskId, never a caller-written "state". Optional here too so
+// this schema stays compatible while the Convex backend still accepts
+// omission (see convex/tasks.ts:blockTask).
+export const blockedCauseSchema = z
+	.union([
+		z.literal("peer_task"),
+		z.literal("human"),
+		z.literal("authorisation"),
+		z.literal("other"),
+	])
+	.optional();
+
 export const blockTaskOutputSchema = z.object({
 	taskId: z.string(),
 	status: z.literal("blocked"),
 	reason: z.string().optional(),
 	blockedOnTaskId: z.string().optional(),
+	blockedCause: z
+		.union([
+			z.literal("peer_task"),
+			z.literal("human"),
+			z.literal("authorisation"),
+			z.literal("other"),
+		])
+		.optional(),
 });
 
 // add_task_dependency
@@ -4612,7 +4634,10 @@ export function registerTools(
 			"A block is a commitment, not just a journal entry: cite blockedOnTaskId (a live task owned by " +
 			"someone else) so the responder is charged to unblock you, OR mark the reason with " +
 			"'# blocked-on-nobody: <reason>' when nobody in the fleet owns the obstacle. " +
-			"EXAMPLE: block_task taskId='k178d3ns...' blockedOnTaskId='k17bbbbb...' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
+			"Pass blockedCause to say WHAT you are waiting on ('human' — an operator decision/answer; " +
+			"'authorisation' — a merge/publish/approval gate; 'peer_task' — a plain upstream dependency; " +
+			"'other' if none apply) so waiting-on state is derivable, never a free-text guess. " +
+			"EXAMPLE: block_task taskId='k178d3ns...' blockedOnTaskId='k17bbbbb...' blockedCause='authorisation' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to block"),
 			reason: z.string().optional().describe("Why the task is blocked"),
@@ -4626,6 +4651,11 @@ export function registerTools(
 					"The live task (assigned to someone else) this task waits on. Required unless " +
 						"reason contains an explicit '# blocked-on-nobody: <reason>' marker.",
 				),
+			blockedCause: blockedCauseSchema.describe(
+				"WHAT is being waited on — 'peer_task' | 'human' | 'authorisation' | 'other'. " +
+					"Optional; omission defaults to 'other' server-side. This is the structured signal " +
+					"the waiting-on state is derived from — never pass a state string directly.",
+			),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
@@ -4636,7 +4666,7 @@ export function registerTools(
 			destructiveHint: true,
 			title: "Block task",
 		},
-		async ({ taskId, reason, blockedBy, blockedOnTaskId, callerOrchestrator }) => {
+		async ({ taskId, reason, blockedBy, blockedOnTaskId, blockedCause, callerOrchestrator }) => {
 			try {
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
@@ -4648,6 +4678,7 @@ export function registerTools(
 				};
 				if (reason) blockArgs.reason = reason;
 				if (blockedOnTaskId) blockArgs.blockedOnTaskId = blockedOnTaskId as any;
+				if (blockedCause) blockArgs.blockedCause = blockedCause;
 				if (callerOrchestrator) blockArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
@@ -4665,7 +4696,13 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ taskId, status: "blocked", reason, blockedOnTaskId },
+								{
+									taskId,
+									status: "blocked",
+									reason,
+									blockedOnTaskId,
+									blockedCause: blockedCause ?? "other",
+								},
 								null,
 								2,
 							),

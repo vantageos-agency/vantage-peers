@@ -163,6 +163,15 @@ const taskFullValidator = v.object({
 	// Day 159 — block_task commitment fields (see schema.ts:293,298).
 	blockedOnTaskId: v.optional(v.id("tasks")),
 	blockedOnNobodyReason: v.optional(v.string()),
+	// T1 — see convex/schema.ts:blockedCause for the full rationale.
+	blockedCause: v.optional(
+		v.union(
+			v.literal("peer_task"),
+			v.literal("human"),
+			v.literal("authorisation"),
+			v.literal("other"),
+		),
+	),
 });
 
 type TaskLite = {
@@ -275,6 +284,15 @@ export const get = query({
 			// Day 159 — block_task commitment fields (see schema.ts:293,298).
 			blockedOnTaskId: v.optional(v.id("tasks")),
 			blockedOnNobodyReason: v.optional(v.string()),
+			// T1 — see convex/schema.ts:blockedCause for the full rationale.
+			blockedCause: v.optional(
+				v.union(
+					v.literal("peer_task"),
+					v.literal("human"),
+					v.literal("authorisation"),
+					v.literal("other"),
+				),
+			),
 		}),
 		v.null(),
 	),
@@ -328,6 +346,15 @@ export const getById = query({
 			// Day 159 — block_task commitment fields (see schema.ts:293,298).
 			blockedOnTaskId: v.optional(v.id("tasks")),
 			blockedOnNobodyReason: v.optional(v.string()),
+			// T1 — see convex/schema.ts:blockedCause for the full rationale.
+			blockedCause: v.optional(
+				v.union(
+					v.literal("peer_task"),
+					v.literal("human"),
+					v.literal("authorisation"),
+					v.literal("other"),
+				),
+			),
 		}),
 		v.null(),
 	),
@@ -1111,12 +1138,41 @@ async function unblockWaitersOn(
 
 const BLOCKED_ON_NOBODY_MARKER = /#\s*blocked-on-nobody:\s*(.+)/is;
 
+// T1 — the structured cause discriminator (see convex/schema.ts:blockedCause
+// for the full rationale). Kept as its own union so `deriveBlockedWaitingOn`
+// below has a single, exported type to derive from.
+const blockedCauseValidator = v.union(
+	v.literal("peer_task"),
+	v.literal("human"),
+	v.literal("authorisation"),
+	v.literal("other"),
+);
+export type BlockedCause = "peer_task" | "human" | "authorisation" | "other";
+
+// deriveBlockedWaitingOn — PURE function, {status, blockedCause} -> the
+// waiting-on state. This is the derivation itself: no caller ever writes
+// "human" or "authorisation" as a status; they write `blockedCause` (what
+// is being waited on) via blockTask, and this function is the only place
+// that turns that into a presentation label. A task not in "blocked"
+// carries no waiting-on state regardless of a stale blockedCause value.
+export function deriveBlockedWaitingOn(task: {
+	status: string;
+	blockedCause?: BlockedCause;
+}): BlockedCause | null {
+	if (task.status !== "blocked") return null;
+	return task.blockedCause ?? "other";
+}
+
 export const blockTask = mutation({
 	args: {
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		reason: v.optional(v.string()),
 		blockedOnTaskId: v.optional(v.id("tasks")),
+		// T1 — optional (not required): old MCP callers redeploy independently
+		// of Convex (.claude/rules/railway-mcp-redeploy.md) and do not yet send
+		// this arg. Omission defaults to "other" below, never rejected.
+		blockedCause: v.optional(blockedCauseValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1133,6 +1189,7 @@ export const blockTask = mutation({
 			updatedAt: Date.now(),
 			blockedOnTaskId: undefined,
 			blockedOnNobodyReason: undefined,
+			blockedCause: args.blockedCause ?? "other",
 		};
 
 		if (args.blockedOnTaskId !== undefined) {
