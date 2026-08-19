@@ -47,6 +47,12 @@ export const cascadeCloseMission = internalMutation({
 			for (const task of batch) {
 				await ctx.db.patch(task._id, {
 					status: "done" as const,
+					// T1 — hardcoded, consistent with the other four
+					// automated-success-close sites in convex/tasks.ts. This
+					// cron closes tasks whose GH issue was closed externally,
+					// which is a success signal (the work is considered
+					// resolved), never a caller-picked outcome.
+					completionOutcome: "succeeded" as const,
 					completedAt: now,
 					updatedAt: now,
 					completionNote: `issue-closed-externally: GH issue ${args.issueRef} was closed outside VP. Auto-closed by issueClosedSweep cron.`,

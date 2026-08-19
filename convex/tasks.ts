@@ -32,6 +32,8 @@ const statusValidator = v.union(
 	v.literal("blocked"),
 	v.literal("done"),
 	v.literal("cancelled"),
+	// T1 — see convex/schema.ts:status for the full rationale.
+	v.literal("failed"),
 );
 
 // Valid task status values for runtime validation
@@ -42,8 +44,25 @@ const TASK_STATUSES = [
 	"blocked",
 	"done",
 	"cancelled",
+	"failed",
 ] as const;
 type TaskStatus = (typeof TASK_STATUSES)[number];
+
+// T1 — the structured outcome discriminator (see convex/schema.ts:
+// completionOutcome for the full rationale). Never accepted as a public
+// mutation arg on `complete` or `failTask` — each hardcodes its own value,
+// so there is no validator for a caller-supplied outcome to satisfy.
+export type CompletionOutcome = "succeeded" | "failed";
+
+// deriveTerminalStatus — PURE function, completionOutcome -> status. The
+// only place a terminal status string is produced from an outcome. Neither
+// `complete` nor `failTask` writes `status` as an independent literal;
+// both call this against a hardcoded outcome.
+export function deriveTerminalStatus(
+	outcome: CompletionOutcome,
+): "done" | "failed" {
+	return outcome === "succeeded" ? "done" : "failed";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status alias expansion helpers
@@ -172,6 +191,10 @@ const taskFullValidator = v.object({
 			v.literal("other"),
 		),
 	),
+	// T1 — see convex/schema.ts:completionOutcome for the full rationale.
+	completionOutcome: v.optional(
+		v.union(v.literal("succeeded"), v.literal("failed")),
+	),
 });
 
 type TaskLite = {
@@ -293,6 +316,9 @@ export const get = query({
 					v.literal("other"),
 				),
 			),
+			completionOutcome: v.optional(
+				v.union(v.literal("succeeded"), v.literal("failed")),
+			),
 		}),
 		v.null(),
 	),
@@ -354,6 +380,9 @@ export const getById = query({
 					v.literal("authorisation"),
 					v.literal("other"),
 				),
+			),
+			completionOutcome: v.optional(
+				v.union(v.literal("succeeded"), v.literal("failed")),
 			),
 		}),
 		v.null(),
@@ -994,6 +1023,20 @@ export const update = mutation({
 			);
 		}
 
+		// T1 — the same ungated-door defect, terminal side. `update` accepts
+		// `status: statusValidator` (which now includes "failed") with no
+		// verification — a second door to exactly the "closer picks between
+		// finished and failed" defect `failTask` exists to close (Pi: "a
+		// closer who can pick between finished and failed will pick finished
+		// — that is what an enum with two plausible values does to anyone in
+		// a hurry"). Refuse here and redirect to fail_task, the same shape as
+		// BLOCK_VIA_UPDATE_REFUSED above.
+		if (patch.status === "failed") {
+			throw new ConvexError(
+				`FAILED_VIA_UPDATE_REFUSED: setting status="failed" through update_task is refused — recording a failure requires fail_task with a failureNote describing how the work ended. Use fail_task, or complete_task if the work in fact succeeded — ${JSON.stringify({ taskId })}`,
+			);
+		}
+
 		// Day 157 — cancelled is a terminal status, settable only by the task's
 		// CREATOR (stricter than assertTaskCallerAuthorized above, which also
 		// allows the assignee), and requires a non-empty reason. Mirrors the
@@ -1057,6 +1100,11 @@ export const update = mutation({
 			if (actualMinutes !== undefined && patch.actualMinutes === undefined) {
 				patch.actualMinutes = actualMinutes;
 			}
+			// T1 — hardcoded, not read from args: `update` has no
+			// `completionOutcome` arg, so there is nothing for a caller to
+			// pick here either. Keeps every "done" row consistent with
+			// `complete`, which does the same.
+			patch.completionOutcome = "succeeded";
 		}
 
 		await ctx.db.patch(taskId, patch);
@@ -1303,8 +1351,14 @@ export const complete = mutation({
 			now,
 		);
 
+		// T1 — hardcoded "succeeded", never read from args: `complete` has no
+		// outcome arg for a caller to set. status is DERIVED from that
+		// hardcoded outcome via deriveTerminalStatus, not written as an
+		// independent literal.
+		const outcome: CompletionOutcome = "succeeded";
 		const patch: Record<string, any> = {
-			status: "done",
+			status: deriveTerminalStatus(outcome),
+			completionOutcome: outcome,
 			completedAt: now,
 			updatedAt: now,
 		};
@@ -1483,6 +1537,85 @@ export const complete = mutation({
 				}
 			}
 		}
+
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// failTask — T1 (PRD-evevantage-v1 §7.1) — the FAILED terminal, distinct
+// from "done" (succeeded) and "cancelled" (retired before/without
+// attempting the work). Mirrors `blockTask`: a dedicated, purpose-named
+// verb rather than a raw status/outcome value a caller can pick between
+// two plausible options. `update` refuses status="failed"
+// (FAILED_VIA_UPDATE_REFUSED) the same way it refuses status="blocked" —
+// this is the only door. `completionOutcome` is hardcoded "failed" here,
+// never read from args; `status` is DERIVED from it via
+// deriveTerminalStatus. failureNote carries the same evidence discipline
+// as `complete`'s completionNote (non-empty, describes how the work
+// ended) and is stored in the shared `completionNote` field — reuse, not
+// a parallel note field.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const failTask = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+		failureNote: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+
+		if (!args.failureNote || args.failureNote.trim() === "") {
+			throw new ConvexError(
+				`FAILURE_NOTE_REQUIRED: failureNote is required for task ${args.taskId}. Describe how the work ended in failure — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
+		// A closed task cannot be re-terminated — same rule complete/cancel
+		// already carry (CANNOT_CANCEL_DONE); a task already "done" or
+		// "cancelled" is not eligible to be re-recorded as "failed" after
+		// the fact (that reclassification-after-close question is the
+		// extended migration decision, answered in README/CHANGELOG, not a
+		// live mutation path).
+		if (
+			task.status === "done" ||
+			task.status === "cancelled" ||
+			task.status === "failed"
+		) {
+			throw new ConvexError(
+				`CANNOT_FAIL_CLOSED_TASK: task ${args.taskId} is already "${task.status}" — a closed task cannot be re-terminated as failed — ${JSON.stringify({ taskId: args.taskId, status: task.status })}`,
+			);
+		}
+
+		const now = Date.now();
+
+		// T1 — hardcoded "failed", never read from args: `failTask` has no
+		// outcome arg for a caller to set. status is DERIVED from that
+		// hardcoded outcome via deriveTerminalStatus, not written as an
+		// independent literal.
+		const outcome: CompletionOutcome = "failed";
+		const patch: Record<string, any> = {
+			status: deriveTerminalStatus(outcome),
+			completionOutcome: outcome,
+			completionNote: args.failureNote,
+			completedAt: now,
+			updatedAt: now,
+		};
+
+		await ctx.db.patch(args.taskId, patch);
+
+		// A failed blocker also releases its waiters — a task stuck waiting
+		// on a blocker that will never reach "done" must not stay blocked
+		// forever. Same reciprocal sweep `complete` triggers on success.
+		await unblockWaitersOn(ctx, args.taskId, now);
 
 		return null;
 	},
@@ -1975,6 +2108,7 @@ export const createDeployTaskWithDedup = internalMutation({
 		for (const stale of toSupersede) {
 			await ctx.db.patch(stale._id, {
 				status: "done" as const,
+				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: `[SUPERSEDED-BY-k${newId}] ${stale.title}\nfriction_observed: superseded-by-newer-deploy-task`,
@@ -2088,6 +2222,7 @@ export const resolveStaleDeployTasks = internalMutation({
 				const now = Date.now();
 				await ctx.db.patch(t._id, {
 					status: "done" as const,
+					completionOutcome: "succeeded" as const,
 					completedAt: now,
 					updatedAt: now,
 					completionNote: `Auto-resolved by Day 98 Mechanism (c2) — repo ${parsed.repo} deployed at ${sha} on ${at} (after task createdAt ${new Date(t.createdAt).toISOString()}). PR #${parsed.prNumber} shipped via bundled deploy chain.\nfriction_observed: per-PR Deploy task accumulated before Mechanism (a) was live — cron sweep closes residue.`,
@@ -2331,6 +2466,7 @@ export const bulkComplete = mutation({
 			const { actualMinutes } = gateResults[i];
 			await ctx.db.patch(task._id, {
 				status: "done" as const,
+				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: note,
@@ -2837,6 +2973,7 @@ export const closeReviewTasksForPr = internalMutation({
 		for (const t of matches) {
 			await ctx.db.patch(t._id, {
 				status: "done" as const,
+				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: args.completionNote,

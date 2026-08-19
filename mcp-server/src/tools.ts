@@ -609,6 +609,10 @@ const taskStatusValues = [
 	"blocked",
 	"done",
 	"cancelled",
+	// T1 (PRD-evevantage-v1 §7.1) — the FAILED terminal, distinct from
+	// "done"/"cancelled". Excluded from updateTaskStatusSchema below the
+	// same way "blocked" is — see the comment there.
+	"failed",
 ] as const;
 const taskStatusAliases = ["open", "active", "all"] as const;
 export const taskStatusSchema = z
@@ -621,18 +625,28 @@ export const taskStatusSchema = z
 // the anti-anonymous-block gate (a cited blockedOnTaskId or an explicit
 // "# blocked-on-nobody: <reason>" marker). Keep the schema in sync so a
 // client is refused loud at the tool-input layer, not just server-side.
-const taskStatusValuesExcludingBlocked = taskStatusValues.filter(
-	(s) => s !== "blocked",
-) as Exclude<(typeof taskStatusValues)[number], "blocked">[];
+//
+// T1 — the same reasoning applies to "failed" (server refuses it via
+// FAILED_VIA_UPDATE_REFUSED, redirecting to fail_task, which carries the
+// mandatory failureNote). Both exclusions keep the client-facing schema in
+// sync with the two server-side ungated-door gates.
+type SettableTaskStatus = Exclude<
+	(typeof taskStatusValues)[number],
+	"blocked" | "failed"
+>;
+const taskStatusValuesExcludingBlockedAndFailed = taskStatusValues.filter(
+	(s) => s !== "blocked" && s !== "failed",
+) as SettableTaskStatus[];
 export const updateTaskStatusSchema = z
 	.enum(
-		taskStatusValuesExcludingBlocked as [
-			Exclude<(typeof taskStatusValues)[number], "blocked">,
-			...Exclude<(typeof taskStatusValues)[number], "blocked">[],
+		taskStatusValuesExcludingBlockedAndFailed as [
+			SettableTaskStatus,
+			...SettableTaskStatus[],
 		],
 	)
 	.describe(
-		'New status. NOT "blocked" — use block_task to block (it names who is charged to unblock you).',
+		'New status. NOT "blocked" (use block_task) and NOT "failed" (use fail_task) — ' +
+			"each carries its own mandatory-evidence gate the generic update verb cannot enforce.",
 	);
 
 const missionStatusValues = [
@@ -658,7 +672,7 @@ export const taskStatusFilterSchema = z
 		z.array(z.enum(taskStatusValues)).min(1),
 	])
 	.describe(
-		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"), ' +
+		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"|"cancelled"|"failed"), ' +
 			'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
 			"or array of direct statuses (no aliases inside array).",
 	);
@@ -1141,12 +1155,20 @@ export const listBroadcastStatusOutputSchema = z.object({
 });
 
 // create_task
+// Status-completeness fix (operator, same T1 delivery) — this was the ONLY
+// strict status enum in this file (get_task/list_tasks use loose
+// z.record) and it omitted "cancelled" (a first-class Convex status with
+// its own cancelReason field, not a note) and now "failed" (T1). Hardcoding
+// a literal list here is exactly how it silently drifted from the Convex
+// union once already — reuse `taskStatusValues` (declared above, itself
+// the canonical mirror of convex/schema.ts's tasks.status union) instead
+// of a second hand-typed list, so the two cannot diverge again.
 export const createTaskOutputSchema = z.object({
 	taskId: z.string(),
 	title: z.string(),
 	assignedTo: z.string(),
 	priority: z.enum(["urgent", "high", "medium", "low"]),
-	status: z.enum(["todo", "in_progress", "review", "blocked", "done"]),
+	status: z.enum(taskStatusValues),
 });
 
 // list_tasks
@@ -1169,6 +1191,12 @@ export const updateTaskOutputSchema = z.object({
 export const completeTaskOutputSchema = z.object({
 	taskId: z.string(),
 	status: z.literal("done"),
+});
+
+// fail_task — T1 (PRD-evevantage-v1 §7.1) third terminal state.
+export const failTaskOutputSchema = z.object({
+	taskId: z.string(),
+	status: z.literal("failed"),
 });
 
 // start_task
@@ -4466,6 +4494,65 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify({ taskId, status: "done" }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── fail_task ────────────────────────────────────────────────────────────────
+	// T1 (PRD-evevantage-v1 §7.1) — the FAILED terminal, distinct from "done"
+	// (succeeded) and "cancelled" (retired before/without attempting the
+	// work). This is the ONLY way to record a failure: update_task refuses
+	// status="failed" server-side. Never pass an "outcome" — the verb itself
+	// is the choice, so there is nothing for a closer to default.
+
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
+		"fail_task",
+		"Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote " +
+			"describing how the work ended. WHEN: use when the work was genuinely attempted and did not succeed " +
+			"— never call complete_task to close out failed work, and never call update_task with status=\"failed\" " +
+			"(refused server-side; this tool is the only door). A task already done/cancelled cannot be re-terminated as failed. " +
+			"EXAMPLE: fail_task taskId='k178d3ns...' failureNote='Migration errored on row 4102, rolled back cleanly' callerOrchestrator='beta'.",
+		{
+			taskId: taskIdSchema.describe("Convex document ID of the task to fail"),
+			failureNote: z
+				.string()
+				.describe("How the work ended in failure — mandatory, non-empty"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Fail task",
+		},
+		async ({ taskId, failureNote, callerOrchestrator }) => {
+			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
+				await convex.mutation("tasks:failTask" as any, {
+					taskId: taskId as any,
+					failureNote,
+					callerOrchestrator,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ taskId, status: "failed" }, null, 2),
 						},
 					],
 				};

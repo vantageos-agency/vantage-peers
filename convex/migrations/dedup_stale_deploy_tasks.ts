@@ -88,6 +88,11 @@ export const dedupStaleDeployTasks = internalMutation({
 			for (const stale of members.slice(1)) {
 				await ctx.db.patch(stale.id, {
 					status: "done" as const,
+					// T1 — hardcoded, consistent with every other automated
+					// superseded/auto-resolve close site. Being superseded by a
+					// newer duplicate is a success signal (the work this task
+					// represented is covered), never a caller-picked outcome.
+					completionOutcome: "succeeded" as const,
 					completedAt: now,
 					updatedAt: now,
 					completionNote: `[SUPERSEDED-BY-k${newest.id}] ${stale.title}\nfriction_observed: superseded-by-newer-deploy-task`,

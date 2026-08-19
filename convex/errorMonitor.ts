@@ -378,6 +378,10 @@ export const resolveStaleIrpMission = internalMutation({
 		for (const task of allOpenTasks) {
 			await ctx.db.patch(task._id, {
 				status: "done",
+				// T1 — hardcoded; this auto-resolver only fires on a confirmed
+				// resolution signal (matches the other automated-success-close
+				// sites), never a caller-picked outcome.
+				completionOutcome: "succeeded",
 				completionNote: AUTO_RESOLVE_NOTE,
 				completedAt: now,
 				updatedAt: now,

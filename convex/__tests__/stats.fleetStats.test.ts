@@ -171,12 +171,17 @@ describe("stats.fleetStats — real fleet totals (no SCAN_CAP floors)", () => {
 		});
 
 		expect(result.tasks.total).toBe(4);
+		// T1 status-completeness fix — byStatus now mirrors the full tasks.status
+		// union (adds "cancelled" and "failed", both previously undercounted /
+		// omitted from tasksTotal).
 		expect(result.tasks.byStatus).toEqual({
 			todo: 3,
 			in_progress: 0,
 			review: 0,
 			blocked: 0,
 			done: 1,
+			cancelled: 0,
+			failed: 0,
 		});
 
 		expect(result.missionTemplates.total).toBe(1);

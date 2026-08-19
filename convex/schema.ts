@@ -254,6 +254,12 @@ export default defineSchema({
 			v.literal("blocked"),
 			v.literal("done"),
 			v.literal("cancelled"),
+			// T1 third state (PRD-evevantage-v1 §7.1) — a task whose work ended
+			// in FAILURE, distinct from "done" (succeeded) and "cancelled"
+			// (retired before/without attempting the work, creator-only,
+			// mandatory cancelReason). See tasks.completionOutcome below and
+			// deriveTerminalStatus (convex/tasks.ts) for the derivation.
+			v.literal("failed"),
 		),
 		completionNote: v.optional(v.string()), // what was actually done — written on complete/review
 		assignedToInstance: v.optional(v.string()), // instance-level assignment: "pi-vps", "tau-chromebook"
@@ -319,6 +325,25 @@ export default defineSchema({
 				v.literal("authorisation"),
 				v.literal("other"),
 			),
+		),
+		// T1 terminal-side mirror of blockedCause. Pure derivation from EXISTING
+		// signals was tried and found impossible: `complete`'s only ending
+		// signal is free-text `completionNote` (the terminal analogue of
+		// `blockedOnNobodyReason`) — no parser can safely classify prose as
+		// "the work succeeded" vs "the work failed". This structured field is
+		// the sanctioned fallback, but — unlike blockedCause — it is NEVER a
+		// raw arg a caller can set on a public mutation: `complete` hardcodes
+		// "succeeded", the new `failTask` mutation hardcodes "failed". There
+		// is no field for a closer to pick between two plausible values
+		// beside a free-text note (Pi's exact warning) — the choice is which
+		// NAMED VERB to call, same discipline as blockTask vs update's
+		// BLOCK_VIA_UPDATE_REFUSED gate. `status` is DERIVED from this field
+		// via deriveTerminalStatus (convex/tasks.ts), never written directly
+		// by a caller-supplied status string for either terminal value —
+		// `update` refuses status="failed" (FAILED_VIA_UPDATE_REFUSED) the
+		// same way it refuses status="blocked".
+		completionOutcome: v.optional(
+			v.union(v.literal("succeeded"), v.literal("failed")),
 		),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
