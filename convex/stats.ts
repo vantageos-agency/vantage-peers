@@ -224,12 +224,20 @@ const MISSION_STATUSES = [
 	"complete",
 ] as const;
 
+// T1 status-completeness fix (same class as the mcp-server createTaskOutputSchema
+// gap) — this list was missing "cancelled" (a first-class terminal status,
+// undercounting `tasksTotal` for every cancelled task fleet-wide) before this
+// change; T1 adds "failed" and this fix adds "cancelled" in the same pass so
+// the byStatus breakdown + total are a complete mirror of every terminal
+// status in convex/schema.ts's tasks.status union, not just "done".
 const TASK_STATUSES = [
 	"todo",
 	"in_progress",
 	"review",
 	"blocked",
 	"done",
+	"cancelled",
+	"failed",
 ] as const;
 
 /**
@@ -318,6 +326,8 @@ export const fleetStats = query({
 				review: v.number(),
 				blocked: v.number(),
 				done: v.number(),
+				cancelled: v.number(),
+				failed: v.number(),
 			}),
 		}),
 		missionTemplates: v.object({ total: v.number() }),
@@ -360,6 +370,8 @@ export const fleetStats = query({
 			review: 0,
 			blocked: 0,
 			done: 0,
+			cancelled: 0,
+			failed: 0,
 		};
 		for (const status of TASK_STATUSES) {
 			tasksByStatus[status] = await countByStatusStreamed(ctx, "tasks", status);

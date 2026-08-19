@@ -609,6 +609,10 @@ const taskStatusValues = [
 	"blocked",
 	"done",
 	"cancelled",
+	// T1 (PRD-evevantage-v1 §7.1) — the FAILED terminal, distinct from
+	// "done"/"cancelled". Excluded from updateTaskStatusSchema below the
+	// same way "blocked" is — see the comment there.
+	"failed",
 ] as const;
 const taskStatusAliases = ["open", "active", "all"] as const;
 export const taskStatusSchema = z
@@ -621,18 +625,28 @@ export const taskStatusSchema = z
 // the anti-anonymous-block gate (a cited blockedOnTaskId or an explicit
 // "# blocked-on-nobody: <reason>" marker). Keep the schema in sync so a
 // client is refused loud at the tool-input layer, not just server-side.
-const taskStatusValuesExcludingBlocked = taskStatusValues.filter(
-	(s) => s !== "blocked",
-) as Exclude<(typeof taskStatusValues)[number], "blocked">[];
+//
+// T1 — the same reasoning applies to "failed" (server refuses it via
+// FAILED_VIA_UPDATE_REFUSED, redirecting to fail_task, which carries the
+// mandatory failureNote). Both exclusions keep the client-facing schema in
+// sync with the two server-side ungated-door gates.
+type SettableTaskStatus = Exclude<
+	(typeof taskStatusValues)[number],
+	"blocked" | "failed"
+>;
+const taskStatusValuesExcludingBlockedAndFailed = taskStatusValues.filter(
+	(s) => s !== "blocked" && s !== "failed",
+) as SettableTaskStatus[];
 export const updateTaskStatusSchema = z
 	.enum(
-		taskStatusValuesExcludingBlocked as [
-			Exclude<(typeof taskStatusValues)[number], "blocked">,
-			...Exclude<(typeof taskStatusValues)[number], "blocked">[],
+		taskStatusValuesExcludingBlockedAndFailed as [
+			SettableTaskStatus,
+			...SettableTaskStatus[],
 		],
 	)
 	.describe(
-		'New status. NOT "blocked" — use block_task to block (it names who is charged to unblock you).',
+		'New status. NOT "blocked" (use block_task) and NOT "failed" (use fail_task) — ' +
+			"each carries its own mandatory-evidence gate the generic update verb cannot enforce.",
 	);
 
 const missionStatusValues = [
@@ -658,7 +672,7 @@ export const taskStatusFilterSchema = z
 		z.array(z.enum(taskStatusValues)).min(1),
 	])
 	.describe(
-		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"), ' +
+		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"|"cancelled"|"failed"), ' +
 			'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
 			"or array of direct statuses (no aliases inside array).",
 	);
@@ -1141,12 +1155,20 @@ export const listBroadcastStatusOutputSchema = z.object({
 });
 
 // create_task
+// Status-completeness fix (operator, same T1 delivery) — this was the ONLY
+// strict status enum in this file (get_task/list_tasks use loose
+// z.record) and it omitted "cancelled" (a first-class Convex status with
+// its own cancelReason field, not a note) and now "failed" (T1). Hardcoding
+// a literal list here is exactly how it silently drifted from the Convex
+// union once already — reuse `taskStatusValues` (declared above, itself
+// the canonical mirror of convex/schema.ts's tasks.status union) instead
+// of a second hand-typed list, so the two cannot diverge again.
 export const createTaskOutputSchema = z.object({
 	taskId: z.string(),
 	title: z.string(),
 	assignedTo: z.string(),
 	priority: z.enum(["urgent", "high", "medium", "low"]),
-	status: z.enum(["todo", "in_progress", "review", "blocked", "done"]),
+	status: z.enum(taskStatusValues),
 });
 
 // list_tasks
@@ -1171,6 +1193,12 @@ export const completeTaskOutputSchema = z.object({
 	status: z.literal("done"),
 });
 
+// fail_task — T1 (PRD-evevantage-v1 §7.1) third terminal state.
+export const failTaskOutputSchema = z.object({
+	taskId: z.string(),
+	status: z.literal("failed"),
+});
+
 // start_task
 export const startTaskOutputSchema = z.object({
 	taskId: z.string(),
@@ -1187,11 +1215,33 @@ export const checkoutTaskOutputSchema = z.union([
 export const deleteTaskOutputSchema = z.record(z.string(), z.unknown());
 
 // block_task
+// T1 — blockedCause is the structured discriminator of WHAT is being
+// waited on (peer_task/human/authorisation/other); it is orthogonal to
+// blockedOnTaskId, never a caller-written "state". Optional here too so
+// this schema stays compatible while the Convex backend still accepts
+// omission (see convex/tasks.ts:blockTask).
+export const blockedCauseSchema = z
+	.union([
+		z.literal("peer_task"),
+		z.literal("human"),
+		z.literal("authorisation"),
+		z.literal("other"),
+	])
+	.optional();
+
 export const blockTaskOutputSchema = z.object({
 	taskId: z.string(),
 	status: z.literal("blocked"),
 	reason: z.string().optional(),
 	blockedOnTaskId: z.string().optional(),
+	blockedCause: z
+		.union([
+			z.literal("peer_task"),
+			z.literal("human"),
+			z.literal("authorisation"),
+			z.literal("other"),
+		])
+		.optional(),
 });
 
 // add_task_dependency
@@ -4453,6 +4503,65 @@ export function registerTools(
 		},
 	);
 
+	// ── fail_task ────────────────────────────────────────────────────────────────
+	// T1 (PRD-evevantage-v1 §7.1) — the FAILED terminal, distinct from "done"
+	// (succeeded) and "cancelled" (retired before/without attempting the
+	// work). This is the ONLY way to record a failure: update_task refuses
+	// status="failed" server-side. Never pass an "outcome" — the verb itself
+	// is the choice, so there is nothing for a closer to default.
+
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
+		"fail_task",
+		"Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote " +
+			"describing how the work ended. WHEN: use when the work was genuinely attempted and did not succeed " +
+			"— never call complete_task to close out failed work, and never call update_task with status=\"failed\" " +
+			"(refused server-side; this tool is the only door). A task already done/cancelled cannot be re-terminated as failed. " +
+			"EXAMPLE: fail_task taskId='k178d3ns...' failureNote='Migration errored on row 4102, rolled back cleanly' callerOrchestrator='beta'.",
+		{
+			taskId: taskIdSchema.describe("Convex document ID of the task to fail"),
+			failureNote: z
+				.string()
+				.describe("How the work ended in failure — mandatory, non-empty"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Fail task",
+		},
+		async ({ taskId, failureNote, callerOrchestrator }) => {
+			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
+				await convex.mutation("tasks:failTask" as any, {
+					taskId: taskId as any,
+					failureNote,
+					callerOrchestrator,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ taskId, status: "failed" }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── start_task ──────────────────────────────────────────────────────────────
 
 	defineTool(
@@ -4612,7 +4721,10 @@ export function registerTools(
 			"A block is a commitment, not just a journal entry: cite blockedOnTaskId (a live task owned by " +
 			"someone else) so the responder is charged to unblock you, OR mark the reason with " +
 			"'# blocked-on-nobody: <reason>' when nobody in the fleet owns the obstacle. " +
-			"EXAMPLE: block_task taskId='k178d3ns...' blockedOnTaskId='k17bbbbb...' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
+			"Pass blockedCause to say WHAT you are waiting on ('human' — an operator decision/answer; " +
+			"'authorisation' — a merge/publish/approval gate; 'peer_task' — a plain upstream dependency; " +
+			"'other' if none apply) so waiting-on state is derivable, never a free-text guess. " +
+			"EXAMPLE: block_task taskId='k178d3ns...' blockedOnTaskId='k17bbbbb...' blockedCause='authorisation' reason='Waiting for B2 PR#667 merge' callerOrchestrator='beta'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to block"),
 			reason: z.string().optional().describe("Why the task is blocked"),
@@ -4626,6 +4738,11 @@ export function registerTools(
 					"The live task (assigned to someone else) this task waits on. Required unless " +
 						"reason contains an explicit '# blocked-on-nobody: <reason>' marker.",
 				),
+			blockedCause: blockedCauseSchema.describe(
+				"WHAT is being waited on — 'peer_task' | 'human' | 'authorisation' | 'other'. " +
+					"Optional; omission defaults to 'other' server-side. This is the structured signal " +
+					"the waiting-on state is derived from — never pass a state string directly.",
+			),
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
@@ -4636,7 +4753,7 @@ export function registerTools(
 			destructiveHint: true,
 			title: "Block task",
 		},
-		async ({ taskId, reason, blockedBy, blockedOnTaskId, callerOrchestrator }) => {
+		async ({ taskId, reason, blockedBy, blockedOnTaskId, blockedCause, callerOrchestrator }) => {
 			try {
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
@@ -4648,6 +4765,7 @@ export function registerTools(
 				};
 				if (reason) blockArgs.reason = reason;
 				if (blockedOnTaskId) blockArgs.blockedOnTaskId = blockedOnTaskId as any;
+				if (blockedCause) blockArgs.blockedCause = blockedCause;
 				if (callerOrchestrator) blockArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
@@ -4665,7 +4783,13 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ taskId, status: "blocked", reason, blockedOnTaskId },
+								{
+									taskId,
+									status: "blocked",
+									reason,
+									blockedOnTaskId,
+									blockedCause: blockedCause ?? "other",
+								},
 								null,
 								2,
 							),

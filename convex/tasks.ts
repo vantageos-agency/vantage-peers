@@ -32,6 +32,8 @@ const statusValidator = v.union(
 	v.literal("blocked"),
 	v.literal("done"),
 	v.literal("cancelled"),
+	// T1 — see convex/schema.ts:status for the full rationale.
+	v.literal("failed"),
 );
 
 // Valid task status values for runtime validation
@@ -42,8 +44,25 @@ const TASK_STATUSES = [
 	"blocked",
 	"done",
 	"cancelled",
+	"failed",
 ] as const;
 type TaskStatus = (typeof TASK_STATUSES)[number];
+
+// T1 — the structured outcome discriminator (see convex/schema.ts:
+// completionOutcome for the full rationale). Never accepted as a public
+// mutation arg on `complete` or `failTask` — each hardcodes its own value,
+// so there is no validator for a caller-supplied outcome to satisfy.
+export type CompletionOutcome = "succeeded" | "failed";
+
+// deriveTerminalStatus — PURE function, completionOutcome -> status. The
+// only place a terminal status string is produced from an outcome. Neither
+// `complete` nor `failTask` writes `status` as an independent literal;
+// both call this against a hardcoded outcome.
+export function deriveTerminalStatus(
+	outcome: CompletionOutcome,
+): "done" | "failed" {
+	return outcome === "succeeded" ? "done" : "failed";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status alias expansion helpers
@@ -163,6 +182,19 @@ const taskFullValidator = v.object({
 	// Day 159 — block_task commitment fields (see schema.ts:293,298).
 	blockedOnTaskId: v.optional(v.id("tasks")),
 	blockedOnNobodyReason: v.optional(v.string()),
+	// T1 — see convex/schema.ts:blockedCause for the full rationale.
+	blockedCause: v.optional(
+		v.union(
+			v.literal("peer_task"),
+			v.literal("human"),
+			v.literal("authorisation"),
+			v.literal("other"),
+		),
+	),
+	// T1 — see convex/schema.ts:completionOutcome for the full rationale.
+	completionOutcome: v.optional(
+		v.union(v.literal("succeeded"), v.literal("failed")),
+	),
 });
 
 type TaskLite = {
@@ -275,6 +307,18 @@ export const get = query({
 			// Day 159 — block_task commitment fields (see schema.ts:293,298).
 			blockedOnTaskId: v.optional(v.id("tasks")),
 			blockedOnNobodyReason: v.optional(v.string()),
+			// T1 — see convex/schema.ts:blockedCause for the full rationale.
+			blockedCause: v.optional(
+				v.union(
+					v.literal("peer_task"),
+					v.literal("human"),
+					v.literal("authorisation"),
+					v.literal("other"),
+				),
+			),
+			completionOutcome: v.optional(
+				v.union(v.literal("succeeded"), v.literal("failed")),
+			),
 		}),
 		v.null(),
 	),
@@ -328,6 +372,18 @@ export const getById = query({
 			// Day 159 — block_task commitment fields (see schema.ts:293,298).
 			blockedOnTaskId: v.optional(v.id("tasks")),
 			blockedOnNobodyReason: v.optional(v.string()),
+			// T1 — see convex/schema.ts:blockedCause for the full rationale.
+			blockedCause: v.optional(
+				v.union(
+					v.literal("peer_task"),
+					v.literal("human"),
+					v.literal("authorisation"),
+					v.literal("other"),
+				),
+			),
+			completionOutcome: v.optional(
+				v.union(v.literal("succeeded"), v.literal("failed")),
+			),
 		}),
 		v.null(),
 	),
@@ -967,6 +1023,20 @@ export const update = mutation({
 			);
 		}
 
+		// T1 — the same ungated-door defect, terminal side. `update` accepts
+		// `status: statusValidator` (which now includes "failed") with no
+		// verification — a second door to exactly the "closer picks between
+		// finished and failed" defect `failTask` exists to close (Pi: "a
+		// closer who can pick between finished and failed will pick finished
+		// — that is what an enum with two plausible values does to anyone in
+		// a hurry"). Refuse here and redirect to fail_task, the same shape as
+		// BLOCK_VIA_UPDATE_REFUSED above.
+		if (patch.status === "failed") {
+			throw new ConvexError(
+				`FAILED_VIA_UPDATE_REFUSED: setting status="failed" through update_task is refused — recording a failure requires fail_task with a failureNote describing how the work ended. Use fail_task, or complete_task if the work in fact succeeded — ${JSON.stringify({ taskId })}`,
+			);
+		}
+
 		// Day 157 — cancelled is a terminal status, settable only by the task's
 		// CREATOR (stricter than assertTaskCallerAuthorized above, which also
 		// allows the assignee), and requires a non-empty reason. Mirrors the
@@ -1030,6 +1100,11 @@ export const update = mutation({
 			if (actualMinutes !== undefined && patch.actualMinutes === undefined) {
 				patch.actualMinutes = actualMinutes;
 			}
+			// T1 — hardcoded, not read from args: `update` has no
+			// `completionOutcome` arg, so there is nothing for a caller to
+			// pick here either. Keeps every "done" row consistent with
+			// `complete`, which does the same.
+			patch.completionOutcome = "succeeded";
 		}
 
 		await ctx.db.patch(taskId, patch);
@@ -1044,39 +1119,73 @@ export const update = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // unblockWaitersOn — reciprocal half of the block_task commitment (Day 159).
-// When `doneTaskId` transitions to "done", every task that named it via
-// blockedOnTaskId is swept back to "todo" and its assignee is notified
-// through the existing messages/messageReceipts path (same shape sendMessage
-// writes for a single-recipient channel — see convex/messages.ts:184-196).
-// Called from both `complete` and `update` (the two paths that can close a
-// task to "done" — see the Day 130 closure-gate comment on `update` below).
+// When `closedTaskId` reaches a TERMINAL state, every task that named it via
+// blockedOnTaskId is notified. `outcome` distinguishes the two terminals
+// that can trigger this (T1, Eta REVISE on PR #1208 @ def85c45):
+//
+//   "succeeded" — the ORIGINAL behaviour, unchanged: the waiter is swept
+//   back to "todo" (the precondition it was waiting on now holds, so an
+//   autonomous pick is safe) and blockedOnTaskId is cleared (the pointer
+//   to a resolved prerequisite has no further use). Message says "is now
+//   done" — true for this path only.
+//
+//   "failed" — the blocker did NOT resolve. Three things Eta's review
+//   named as wrong in the first cut are the three things this branch
+//   refuses to do: (1) it does NOT reset status to "todo" — no autonomous
+//   pick may treat the failed prerequisite as though it held; (2) it does
+//   NOT erase blockedOnTaskId — the pointer to the failed prerequisite is
+//   the only way to find it, and is needed in the SAME transaction that
+//   creates the reason to look for it; (3) the notification NAMES the
+//   failure, never "is now done". The waiter stays "blocked", now
+//   pointing at a task everyone can see is "failed" — visible, not
+//   silently made ready, and left for a human/orchestrator to re-route.
+//
+// Called from `complete`/`update` (outcome "succeeded") and `failTask`
+// (outcome "failed") — the three terminal-closing paths (Day 130
+// closure-gate comment on `update` below covers the first two).
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function unblockWaitersOn(
 	ctx: MutationCtx,
-	doneTaskId: import("./_generated/dataModel").Id<"tasks">,
+	closedTaskId: import("./_generated/dataModel").Id<"tasks">,
 	now: number,
+	outcome: CompletionOutcome = "succeeded",
 ): Promise<void> {
-	const doneTask = await ctx.db.get(doneTaskId);
+	const closedTask = await ctx.db.get(closedTaskId);
 	const waiters = await ctx.db
 		.query("tasks")
-		.withIndex("by_blockedOnTaskId", (q) => q.eq("blockedOnTaskId", doneTaskId))
+		.withIndex("by_blockedOnTaskId", (q) => q.eq("blockedOnTaskId", closedTaskId))
 		.collect();
 
 	for (const waiter of waiters) {
 		if (waiter.status !== "blocked") continue;
 
-		await ctx.db.patch(waiter._id, {
-			status: "todo",
-			blockedOnTaskId: undefined,
-			updatedAt: now,
-		});
+		let content: string;
 
-		const content =
-			`UNBLOCKED: task ${waiter._id} ("${waiter.title}") is unblocked — ` +
-			`${doneTaskId} ("${doneTask?.title ?? "unknown"}") is now done. Status reset to todo — ${JSON.stringify(
-				{ taskId: waiter._id, unblockedBy: doneTaskId },
-			)}`;
+		if (outcome === "succeeded") {
+			await ctx.db.patch(waiter._id, {
+				status: "todo",
+				blockedOnTaskId: undefined,
+				updatedAt: now,
+			});
+
+			content =
+				`UNBLOCKED: task ${waiter._id} ("${waiter.title}") is unblocked — ` +
+				`${closedTaskId} ("${closedTask?.title ?? "unknown"}") is now done. Status reset to todo — ${JSON.stringify(
+					{ taskId: waiter._id, unblockedBy: closedTaskId },
+				)}`;
+		} else {
+			// "failed" — deliberately no db.patch of waiter.status/blockedOnTaskId:
+			// the waiter stays "blocked", still pointing at closedTaskId, so
+			// nothing treats the failed prerequisite as resolved.
+			content =
+				`BLOCKER_FAILED: task ${waiter._id} ("${waiter.title}") is still blocked — ` +
+				`${closedTaskId} ("${closedTask?.title ?? "unknown"}") FAILED, not done. ` +
+				`The prerequisite did not resolve; this task needs re-routing (a new blockedOnTaskId, ` +
+				`a "# blocked-on-nobody:" reason, or manual unblocking) — it will NOT auto-unblock — ${JSON.stringify(
+					{ taskId: waiter._id, failedBlocker: closedTaskId },
+				)}`;
+		}
 
 		const messageId = await ctx.db.insert("messages", {
 			from: "system",
@@ -1111,12 +1220,41 @@ async function unblockWaitersOn(
 
 const BLOCKED_ON_NOBODY_MARKER = /#\s*blocked-on-nobody:\s*(.+)/is;
 
+// T1 — the structured cause discriminator (see convex/schema.ts:blockedCause
+// for the full rationale). Kept as its own union so `deriveBlockedWaitingOn`
+// below has a single, exported type to derive from.
+const blockedCauseValidator = v.union(
+	v.literal("peer_task"),
+	v.literal("human"),
+	v.literal("authorisation"),
+	v.literal("other"),
+);
+export type BlockedCause = "peer_task" | "human" | "authorisation" | "other";
+
+// deriveBlockedWaitingOn — PURE function, {status, blockedCause} -> the
+// waiting-on state. This is the derivation itself: no caller ever writes
+// "human" or "authorisation" as a status; they write `blockedCause` (what
+// is being waited on) via blockTask, and this function is the only place
+// that turns that into a presentation label. A task not in "blocked"
+// carries no waiting-on state regardless of a stale blockedCause value.
+export function deriveBlockedWaitingOn(task: {
+	status: string;
+	blockedCause?: BlockedCause;
+}): BlockedCause | null {
+	if (task.status !== "blocked") return null;
+	return task.blockedCause ?? "other";
+}
+
 export const blockTask = mutation({
 	args: {
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		reason: v.optional(v.string()),
 		blockedOnTaskId: v.optional(v.id("tasks")),
+		// T1 — optional (not required): old MCP callers redeploy independently
+		// of Convex (.claude/rules/railway-mcp-redeploy.md) and do not yet send
+		// this arg. Omission defaults to "other" below, never rejected.
+		blockedCause: v.optional(blockedCauseValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1128,11 +1266,25 @@ export const blockTask = mutation({
 		}
 		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
 
+		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
+		// check: blockedCause="peer_task" literally means "waiting on a peer
+		// task", so it is meaningless without one cited. NOT the reverse
+		// (blockedOnTaskId set does NOT require blockedCause="peer_task" — a
+		// cited task can legitimately be an authorisation gate, e.g. a review
+		// awaiting merge; that asymmetry is intentional, already covered by
+		// the "blockedOnTaskId form also accepts a structured cause" test).
+		if (args.blockedCause === "peer_task" && args.blockedOnTaskId === undefined) {
+			throw new ConvexError(
+				`BLOCKED_CAUSE_PEER_TASK_REQUIRES_LINK: blockedCause="peer_task" names a peer task as the cause, but no blockedOnTaskId was cited — either cite the peer task via blockedOnTaskId, or pick "human"/"authorisation"/"other" for an obstacle nobody owns — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
 		const patch: Record<string, unknown> = {
 			status: "blocked",
 			updatedAt: Date.now(),
 			blockedOnTaskId: undefined,
 			blockedOnNobodyReason: undefined,
+			blockedCause: args.blockedCause ?? "other",
 		};
 
 		if (args.blockedOnTaskId !== undefined) {
@@ -1246,8 +1398,14 @@ export const complete = mutation({
 			now,
 		);
 
+		// T1 — hardcoded "succeeded", never read from args: `complete` has no
+		// outcome arg for a caller to set. status is DERIVED from that
+		// hardcoded outcome via deriveTerminalStatus, not written as an
+		// independent literal.
+		const outcome: CompletionOutcome = "succeeded";
 		const patch: Record<string, any> = {
-			status: "done",
+			status: deriveTerminalStatus(outcome),
+			completionOutcome: outcome,
 			completedAt: now,
 			updatedAt: now,
 		};
@@ -1426,6 +1584,88 @@ export const complete = mutation({
 				}
 			}
 		}
+
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// failTask — T1 (PRD-evevantage-v1 §7.1) — the FAILED terminal, distinct
+// from "done" (succeeded) and "cancelled" (retired before/without
+// attempting the work). Mirrors `blockTask`: a dedicated, purpose-named
+// verb rather than a raw status/outcome value a caller can pick between
+// two plausible options. `update` refuses status="failed"
+// (FAILED_VIA_UPDATE_REFUSED) the same way it refuses status="blocked" —
+// this is the only door. `completionOutcome` is hardcoded "failed" here,
+// never read from args; `status` is DERIVED from it via
+// deriveTerminalStatus. failureNote carries the same evidence discipline
+// as `complete`'s completionNote (non-empty, describes how the work
+// ended) and is stored in the shared `completionNote` field — reuse, not
+// a parallel note field.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const failTask = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+		failureNote: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+
+		if (!args.failureNote || args.failureNote.trim() === "") {
+			throw new ConvexError(
+				`FAILURE_NOTE_REQUIRED: failureNote is required for task ${args.taskId}. Describe how the work ended in failure — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
+		// A closed task cannot be re-terminated — same rule complete/cancel
+		// already carry (CANNOT_CANCEL_DONE); a task already "done" or
+		// "cancelled" is not eligible to be re-recorded as "failed" after
+		// the fact (that reclassification-after-close question is the
+		// extended migration decision, answered in README/CHANGELOG, not a
+		// live mutation path).
+		if (
+			task.status === "done" ||
+			task.status === "cancelled" ||
+			task.status === "failed"
+		) {
+			throw new ConvexError(
+				`CANNOT_FAIL_CLOSED_TASK: task ${args.taskId} is already "${task.status}" — a closed task cannot be re-terminated as failed — ${JSON.stringify({ taskId: args.taskId, status: task.status })}`,
+			);
+		}
+
+		const now = Date.now();
+
+		// T1 — hardcoded "failed", never read from args: `failTask` has no
+		// outcome arg for a caller to set. status is DERIVED from that
+		// hardcoded outcome via deriveTerminalStatus, not written as an
+		// independent literal.
+		const outcome: CompletionOutcome = "failed";
+		const patch: Record<string, any> = {
+			status: deriveTerminalStatus(outcome),
+			completionOutcome: outcome,
+			completionNote: args.failureNote,
+			completedAt: now,
+			updatedAt: now,
+		};
+
+		await ctx.db.patch(args.taskId, patch);
+
+		// Eta REVISE on PR #1208 @ def85c45 — a failed blocker does NOT
+		// silently ready its waiters (they stay "blocked", blockedOnTaskId
+		// intact) and the notification NAMES the failure — see
+		// unblockWaitersOn's outcome="failed" branch above for the full
+		// reasoning. This is not the success-path sweep; it is the visible,
+		// non-auto-unblocking notification a failed prerequisite requires.
+		await unblockWaitersOn(ctx, args.taskId, now, outcome);
 
 		return null;
 	},
@@ -1918,6 +2158,7 @@ export const createDeployTaskWithDedup = internalMutation({
 		for (const stale of toSupersede) {
 			await ctx.db.patch(stale._id, {
 				status: "done" as const,
+				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: `[SUPERSEDED-BY-k${newId}] ${stale.title}\nfriction_observed: superseded-by-newer-deploy-task`,
@@ -2031,6 +2272,7 @@ export const resolveStaleDeployTasks = internalMutation({
 				const now = Date.now();
 				await ctx.db.patch(t._id, {
 					status: "done" as const,
+					completionOutcome: "succeeded" as const,
 					completedAt: now,
 					updatedAt: now,
 					completionNote: `Auto-resolved by Day 98 Mechanism (c2) — repo ${parsed.repo} deployed at ${sha} on ${at} (after task createdAt ${new Date(t.createdAt).toISOString()}). PR #${parsed.prNumber} shipped via bundled deploy chain.\nfriction_observed: per-PR Deploy task accumulated before Mechanism (a) was live — cron sweep closes residue.`,
@@ -2274,6 +2516,7 @@ export const bulkComplete = mutation({
 			const { actualMinutes } = gateResults[i];
 			await ctx.db.patch(task._id, {
 				status: "done" as const,
+				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: note,
@@ -2780,6 +3023,7 @@ export const closeReviewTasksForPr = internalMutation({
 		for (const t of matches) {
 			await ctx.db.patch(t._id, {
 				status: "done" as const,
+				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: args.completionNote,
