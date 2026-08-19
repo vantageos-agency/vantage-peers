@@ -105,3 +105,58 @@ def test_timing_language_is_a_real_assertion():
     )
     assert "before the command runs" not in old_symptom_only.lower()
     assert "before the command runs" in err.lower()
+
+
+# ---- FOREIGN MATERIAL (Eta REVISE #1210) ------------------------------------
+# The fifth-line poles the delivered probe LACKED — proven on omega's real #323
+# body (not the matcher author's own vocabulary), sub-fields blanked one at a
+# time, the exact material Pi/Eta/omega reproduced the hole on. These fixtures
+# are vendored under fixtures/ so the probe is reproducible off this station.
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def run_body_file(path: str):
+    return run(f'gh pr create -R o/r --title t --body-file {path}  # via-open-pr')
+
+
+def test_refuse_foreign_323_all_fields_blank():
+    """Omega's real #323 body with ALL FOUR SELF-GATE sub-fields blanked. Before
+    the `[ \\t]` fix this walked through at exit 0: `\\s` crossed the newline, so
+    each blank field's `(.*)` captured its successor's line and none read empty.
+    MUST refuse, naming every field."""
+    code, err = run_body_file(os.path.join(FIXTURES, "selfgate-323-blank-all.md"))
+    assert code == 2, f"all-blank foreign body must refuse:\n{err}"
+    low = err.lower()
+    for field in ("refs", "counts", "standard", "scope"):
+        assert field in low, f"refusal must name the empty field '{field}':\n{err}"
+
+
+def test_refuse_foreign_323_scope_blank():
+    """The same real #323 body with only `- scope:` blanked (the last field, whose
+    borrowed successor was the signature line). MUST refuse, naming scope."""
+    code, err = run_body_file(os.path.join(FIXTURES, "selfgate-323-blank-scope.md"))
+    assert code == 2, f"scope-blank foreign body must refuse:\n{err}"
+    assert "scope" in err.lower(), f"refusal must name scope:\n{err}"
+
+
+def test_pass_foreign_323_full_body():
+    """The SAME real #323 body, unblanked — MUST still pass. Proves the `[ \\t]`
+    fix refuses the blanks without over-refusing a genuinely filled foreign body."""
+    code, err = run_body_file(os.path.join(FIXTURES, "selfgate-323-full.md"))
+    assert code == 0, f"a real filled foreign body must pass:\n{err}"
+
+
+def test_refuse_undecodable_body_file():
+    """A non-UTF-8 --body-file. UnicodeDecodeError is a ValueError, not an
+    OSError, so before the fix it escaped extract_body to the top-level
+    `except Exception: allowing` and passed at exit 0 — a bypass with no override
+    marker, against the guard's own fail-loud contract. MUST refuse."""
+    with tempfile.NamedTemporaryFile("wb", suffix=".md", delete=False) as fh:
+        fh.write(b"\xff\xfe\x00\x01 not valid utf-8 \x80\x81\x82 SELF-GATE:")
+        path = fh.name
+    try:
+        code, err = run_body_file(path)
+        assert code == 2, f"an undecodable body file must refuse, not allow:\n{err}"
+    finally:
+        os.unlink(path)
