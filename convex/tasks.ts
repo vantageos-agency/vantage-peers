@@ -14,7 +14,7 @@ import {
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
-import { enforceClosureGate } from "./lib/taskClosureGate";
+import { enforceClosureGate, enforceIncidentClosureGate } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -1687,6 +1687,11 @@ export const complete = mutation({
 			args.completionNote,
 			now,
 		);
+
+		// Day 158/159 — incident-closure both-poles gate (extends the same
+		// closure validator above, not a second mechanism). No-op for tasks
+		// not tagged "incident". See convex/lib/taskClosureGate.ts.
+		enforceIncidentClosureGate(task, args.completionNote, args.taskId);
 
 		// T1 — hardcoded "succeeded", never read from args: `complete` has no
 		// outcome arg for a caller to set. status is DERIVED from that
