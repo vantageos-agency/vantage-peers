@@ -155,4 +155,21 @@ describe("blocked waiting-on state — derived from blockedCause, not caller-wri
 		const row = viaListPaginated.page.find((r) => r._id === taskId);
 		expect(row?.blockedCause).toBe("human");
 	});
+
+	// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
+	// check: blockedCause="peer_task" without a cited blockedOnTaskId is
+	// meaningless and now refused, closing the asymmetry Eta flagged.
+	test("blockedCause='peer_task' without blockedOnTaskId is refused (BLOCKED_CAUSE_PEER_TASK_REQUIRES_LINK)", async () => {
+		const t = createT();
+		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		await expect(
+			t.mutation(api.tasks.blockTask, {
+				taskId,
+				callerOrchestrator: "sigma",
+				blockedCause: "peer_task",
+				reason: "# blocked-on-nobody: nobody owns this, but I said peer_task anyway",
+			}),
+		).rejects.toThrow(/BLOCKED_CAUSE_PEER_TASK_REQUIRES_LINK/);
+	});
 });

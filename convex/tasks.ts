@@ -1119,39 +1119,73 @@ export const update = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // unblockWaitersOn — reciprocal half of the block_task commitment (Day 159).
-// When `doneTaskId` transitions to "done", every task that named it via
-// blockedOnTaskId is swept back to "todo" and its assignee is notified
-// through the existing messages/messageReceipts path (same shape sendMessage
-// writes for a single-recipient channel — see convex/messages.ts:184-196).
-// Called from both `complete` and `update` (the two paths that can close a
-// task to "done" — see the Day 130 closure-gate comment on `update` below).
+// When `closedTaskId` reaches a TERMINAL state, every task that named it via
+// blockedOnTaskId is notified. `outcome` distinguishes the two terminals
+// that can trigger this (T1, Eta REVISE on PR #1208 @ def85c45):
+//
+//   "succeeded" — the ORIGINAL behaviour, unchanged: the waiter is swept
+//   back to "todo" (the precondition it was waiting on now holds, so an
+//   autonomous pick is safe) and blockedOnTaskId is cleared (the pointer
+//   to a resolved prerequisite has no further use). Message says "is now
+//   done" — true for this path only.
+//
+//   "failed" — the blocker did NOT resolve. Three things Eta's review
+//   named as wrong in the first cut are the three things this branch
+//   refuses to do: (1) it does NOT reset status to "todo" — no autonomous
+//   pick may treat the failed prerequisite as though it held; (2) it does
+//   NOT erase blockedOnTaskId — the pointer to the failed prerequisite is
+//   the only way to find it, and is needed in the SAME transaction that
+//   creates the reason to look for it; (3) the notification NAMES the
+//   failure, never "is now done". The waiter stays "blocked", now
+//   pointing at a task everyone can see is "failed" — visible, not
+//   silently made ready, and left for a human/orchestrator to re-route.
+//
+// Called from `complete`/`update` (outcome "succeeded") and `failTask`
+// (outcome "failed") — the three terminal-closing paths (Day 130
+// closure-gate comment on `update` below covers the first two).
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function unblockWaitersOn(
 	ctx: MutationCtx,
-	doneTaskId: import("./_generated/dataModel").Id<"tasks">,
+	closedTaskId: import("./_generated/dataModel").Id<"tasks">,
 	now: number,
+	outcome: CompletionOutcome = "succeeded",
 ): Promise<void> {
-	const doneTask = await ctx.db.get(doneTaskId);
+	const closedTask = await ctx.db.get(closedTaskId);
 	const waiters = await ctx.db
 		.query("tasks")
-		.withIndex("by_blockedOnTaskId", (q) => q.eq("blockedOnTaskId", doneTaskId))
+		.withIndex("by_blockedOnTaskId", (q) => q.eq("blockedOnTaskId", closedTaskId))
 		.collect();
 
 	for (const waiter of waiters) {
 		if (waiter.status !== "blocked") continue;
 
-		await ctx.db.patch(waiter._id, {
-			status: "todo",
-			blockedOnTaskId: undefined,
-			updatedAt: now,
-		});
+		let content: string;
 
-		const content =
-			`UNBLOCKED: task ${waiter._id} ("${waiter.title}") is unblocked — ` +
-			`${doneTaskId} ("${doneTask?.title ?? "unknown"}") is now done. Status reset to todo — ${JSON.stringify(
-				{ taskId: waiter._id, unblockedBy: doneTaskId },
-			)}`;
+		if (outcome === "succeeded") {
+			await ctx.db.patch(waiter._id, {
+				status: "todo",
+				blockedOnTaskId: undefined,
+				updatedAt: now,
+			});
+
+			content =
+				`UNBLOCKED: task ${waiter._id} ("${waiter.title}") is unblocked — ` +
+				`${closedTaskId} ("${closedTask?.title ?? "unknown"}") is now done. Status reset to todo — ${JSON.stringify(
+					{ taskId: waiter._id, unblockedBy: closedTaskId },
+				)}`;
+		} else {
+			// "failed" — deliberately no db.patch of waiter.status/blockedOnTaskId:
+			// the waiter stays "blocked", still pointing at closedTaskId, so
+			// nothing treats the failed prerequisite as resolved.
+			content =
+				`BLOCKER_FAILED: task ${waiter._id} ("${waiter.title}") is still blocked — ` +
+				`${closedTaskId} ("${closedTask?.title ?? "unknown"}") FAILED, not done. ` +
+				`The prerequisite did not resolve; this task needs re-routing (a new blockedOnTaskId, ` +
+				`a "# blocked-on-nobody:" reason, or manual unblocking) — it will NOT auto-unblock — ${JSON.stringify(
+					{ taskId: waiter._id, failedBlocker: closedTaskId },
+				)}`;
+		}
 
 		const messageId = await ctx.db.insert("messages", {
 			from: "system",
@@ -1231,6 +1265,19 @@ export const blockTask = mutation({
 			);
 		}
 		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+
+		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
+		// check: blockedCause="peer_task" literally means "waiting on a peer
+		// task", so it is meaningless without one cited. NOT the reverse
+		// (blockedOnTaskId set does NOT require blockedCause="peer_task" — a
+		// cited task can legitimately be an authorisation gate, e.g. a review
+		// awaiting merge; that asymmetry is intentional, already covered by
+		// the "blockedOnTaskId form also accepts a structured cause" test).
+		if (args.blockedCause === "peer_task" && args.blockedOnTaskId === undefined) {
+			throw new ConvexError(
+				`BLOCKED_CAUSE_PEER_TASK_REQUIRES_LINK: blockedCause="peer_task" names a peer task as the cause, but no blockedOnTaskId was cited — either cite the peer task via blockedOnTaskId, or pick "human"/"authorisation"/"other" for an obstacle nobody owns — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
 
 		const patch: Record<string, unknown> = {
 			status: "blocked",
@@ -1612,10 +1659,13 @@ export const failTask = mutation({
 
 		await ctx.db.patch(args.taskId, patch);
 
-		// A failed blocker also releases its waiters — a task stuck waiting
-		// on a blocker that will never reach "done" must not stay blocked
-		// forever. Same reciprocal sweep `complete` triggers on success.
-		await unblockWaitersOn(ctx, args.taskId, now);
+		// Eta REVISE on PR #1208 @ def85c45 — a failed blocker does NOT
+		// silently ready its waiters (they stay "blocked", blockedOnTaskId
+		// intact) and the notification NAMES the failure — see
+		// unblockWaitersOn's outcome="failed" branch above for the full
+		// reasoning. This is not the success-path sweep; it is the visible,
+		// non-auto-unblocking notification a failed prerequisite requires.
+		await unblockWaitersOn(ctx, args.taskId, now, outcome);
 
 		return null;
 	},

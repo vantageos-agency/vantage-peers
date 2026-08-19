@@ -163,7 +163,15 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 		).rejects.toThrow(/FAILURE_NOTE_REQUIRED/);
 	});
 
-	test("failTask releases waiters blocked on the now-failed task (reciprocal sweep)", async () => {
+	// Eta REVISE on PR #1208 @ def85c45 — this test previously asserted the
+	// WRONG behaviour (waiter swept to "todo", blockedOnTaskId erased on a
+	// FAILED blocker), locking in three defects: a falsehood to the
+	// waiter's owner ("is now done" when it failed), erasure of the only
+	// pointer to the failed prerequisite in the same transaction that
+	// creates the reason to look for it, and an autonomous pick made on a
+	// precondition the DB knows does not hold. Corrected below — a failed
+	// blocker does NOT ready its waiters; it notifies without erasing.
+	test("failTask does NOT silently ready waiters — a waiter blocked on a now-failed task stays blocked, with blockedOnTaskId intact", async () => {
 		const t = createT();
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const waiterId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
@@ -183,8 +191,85 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 		});
 
 		const waiter = await t.query(api.tasks.get, { taskId: waiterId });
+		// Criterion 1: not silently made ready — no autonomous pick can treat
+		// the failed prerequisite as though it held.
+		expect(waiter?.status).toBe("blocked");
+		expect(waiter?.status).not.toBe("todo");
+		// Criterion 3: blockedOnTaskId SURVIVES — it is the only pointer to
+		// the failed prerequisite, and is needed in the same transaction
+		// that creates the reason to look for it.
+		expect(waiter?.blockedOnTaskId).toBe(blockerId);
+	});
+
+	test("failTask's waiter notification NAMES the failure — never 'is now done'", async () => {
+		const t = createT();
+		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
+		const waiterId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		await t.mutation(api.tasks.blockTask, {
+			taskId: waiterId,
+			callerOrchestrator: "sigma",
+			blockedOnTaskId: blockerId,
+			blockedCause: "peer_task",
+			reason: "Waiting on eta's task",
+		});
+
+		await t.mutation(api.tasks.failTask, {
+			taskId: blockerId,
+			callerOrchestrator: "eta",
+			failureNote: "Could not complete — dependency permanently unavailable.",
+		});
+
+		const messages = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("messages")
+				.filter((q) => q.eq(q.field("channel"), "sigma"))
+				.collect();
+		});
+		const notification = messages.find((m) => m.content.includes(String(waiterId)));
+		expect(notification).toBeDefined();
+		const notificationContent = notification?.content ?? "";
+		// Criterion 2: names the failure — never the "is now done" wording
+		// (which is true only on the success path).
+		expect(notificationContent).toMatch(/FAILED/);
+		expect(notificationContent).not.toContain("is now done");
+	});
+
+	// Positive control (criterion 5) — the ORIGINAL success-path wording and
+	// behaviour must be unchanged: complete() still sweeps a waiter to
+	// "todo", clears blockedOnTaskId, and says "is now done".
+	test("complete() (success) still sweeps waiters to todo, clears blockedOnTaskId, and says 'is now done' — unchanged positive control", async () => {
+		const t = createT();
+		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
+		const waiterId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
+
+		await t.mutation(api.tasks.blockTask, {
+			taskId: waiterId,
+			callerOrchestrator: "sigma",
+			blockedOnTaskId: blockerId,
+			blockedCause: "peer_task",
+			reason: "Waiting on eta's task",
+		});
+
+		await t.mutation(api.tasks.complete, {
+			taskId: blockerId,
+			callerOrchestrator: "eta",
+			completionNote: "Shipped and verified.",
+		});
+
+		const waiter = await t.query(api.tasks.get, { taskId: waiterId });
 		expect(waiter?.status).toBe("todo");
 		expect(waiter?.blockedOnTaskId).toBeUndefined();
+
+		const messages = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("messages")
+				.filter((q) => q.eq(q.field("channel"), "sigma"))
+				.collect();
+		});
+		const notification = messages.find((m) => m.content.includes(String(waiterId)));
+		expect(notification).toBeDefined();
+		expect(notification?.content ?? "").toContain("is now done");
 	});
 
 	test("read paths (get, getById, listPaginated) carry completionOutcome without throwing", async () => {
