@@ -8,7 +8,7 @@
         "@clerk/backend": "^3.11.4",
         "@mcp-ui/server": "^6.1.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
-        "@vantageos/cloud-identity": "^0.3.0",
+        "@vantageos/cloud-identity": "^0.5.0",
         "@vantageos/mosaic": "^0.1.2",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
@@ -209,7 +209,7 @@
 
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
 
-    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.3.0", "", { "dependencies": { "zod": "^4.4.3" } }, "sha512-4Jdk3OS66+b0OBMplxkMwMGu2wDL0AqIi2Bw3ZzuzFJPeQ2LL7uGohCSK6tAbzKJ8CNwVhEWtTFhophlAai4ew=="],
+    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.5.0", "", { "dependencies": { "zod": "^4.4.3" } }, "sha512-jvPmXRKk5nQFaarOMhkFUZcf1UQscWbPeProISaPCE7PE3CVPAmFk0QrGG5xmThH43xSyy6f1KjO0L19hgf7qw=="],
 
     "@vantageos/mosaic": ["@vantageos/mosaic@0.1.2", "", { "dependencies": { "@lit-labs/react": "1.0.6", "@mcp-ui/server": "6.1.0", "@tanstack/react-virtual": "3.13.6", "dompurify": "3.2.4", "marked": "15.0.7", "zod": "3.25.28" }, "peerDependencies": { "@mcp-ui/client": "7.1.1", "react": "^19.1.0", "react-dom": "^19.1.0", "react-i18next": "15.5.2", "rxjs": "^7.8.0" }, "optionalPeers": ["@mcp-ui/client", "react-i18next", "rxjs"] }, "sha512-ZQScmdoQynePQpWIhsfjIPI0dCzqY4EDQzXKVWLiZGPbkO50c5KAPYb0KKf0UUsGqo8Uq0N++hUtFouAgMIXjA=="],
 
