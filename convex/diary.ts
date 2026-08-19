@@ -241,6 +241,7 @@ export const listByDateRange = query({
 			content: v.string(),
 			highlights: v.optional(v.array(v.string())),
 			blockers: v.optional(v.array(v.string())),
+			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
 		}),
 	),

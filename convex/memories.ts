@@ -125,6 +125,7 @@ export const getMemory = query({
       type: memoryTypeValidator,
       content: v.string(),
       createdBy: creatorValidator,
+      instanceId: v.optional(v.string()),
       relations: v.array(
         v.object({
           targetId: v.id("memories"),
@@ -175,6 +176,7 @@ const memoryDocValidator = v.object({
   type: memoryTypeValidator,
   content: v.string(),
   createdBy: creatorValidator,
+  instanceId: v.optional(v.string()),
   relations: v.array(
     v.object({
       targetId: v.id("memories"),
