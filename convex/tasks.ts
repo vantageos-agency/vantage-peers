@@ -273,6 +273,11 @@ const taskFullValidator = v.object({
 	completionOutcome: v.optional(
 		v.union(v.literal("succeeded"), v.literal("failed")),
 	),
+	// Task k1798y530ytkgsd7259nj2heb58cszv4 — see convex/schema.ts:
+	// reviewArtifactRef for the full rationale. Written only by
+	// attachReviewArtifact, never by `update`.
+	reviewArtifactRef: v.optional(v.string()),
+	reviewArtifactAttachedBy: v.optional(creatorValidator),
 });
 
 type TaskLite = {
@@ -443,6 +448,10 @@ export const get = query({
 			completionOutcome: v.optional(
 				v.union(v.literal("succeeded"), v.literal("failed")),
 			),
+			// Task k1798y530ytkgsd7259nj2heb58cszv4 — see convex/schema.ts:
+			// reviewArtifactRef for the full rationale.
+			reviewArtifactRef: v.optional(v.string()),
+			reviewArtifactAttachedBy: v.optional(creatorValidator),
 		}),
 		v.null(),
 	),
@@ -508,6 +517,10 @@ export const getById = query({
 			completionOutcome: v.optional(
 				v.union(v.literal("succeeded"), v.literal("failed")),
 			),
+			// Task k1798y530ytkgsd7259nj2heb58cszv4 — see convex/schema.ts:
+			// reviewArtifactRef for the full rationale.
+			reviewArtifactRef: v.optional(v.string()),
+			reviewArtifactAttachedBy: v.optional(creatorValidator),
 		}),
 		v.null(),
 	),
@@ -1238,6 +1251,76 @@ export const update = mutation({
 			await unblockWaitersOn(ctx, taskId, patch.completedAt ?? Date.now());
 		}
 
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// attachReviewArtifact — task k1798y530ytkgsd7259nj2heb58cszv4. ONE narrow
+// server-side permission, deliberately carved OUT of `update`'s ownership
+// gate rather than added to it: the AUTHOR of an artifact (e.g. a PR) may
+// attach that artifact's REFERENCE to an existing review task it neither
+// created nor owns — without gaining any other write on the task.
+//
+// `update` is unchanged: every other field (assignee, status, criteria,
+// cancel) still routes through assertTaskCallerAuthorized, so the same
+// non-owner caller attempting a reassign/rewrite/close via `update` is
+// refused exactly as before this mutation existed. This mutation touches
+// ONLY reviewArtifactRef and reviewArtifactAttachedBy — no other field is
+// writable through it.
+//
+// Two refusals, both consulted INSIDE the mutation (never a post-hoc filter):
+//   - callerOrchestrator omitted → RBAC_DENIED, same shape as
+//     assertTaskCallerAuthorized (omission refuses, never bypasses).
+//   - a ref already attached by a DIFFERENT orchestrator →
+//     REVIEW_ARTIFACT_ALREADY_ATTACHED (first-writer wins; a caller who is
+//     not the original attacher attaches nothing over it). The SAME
+//     orchestrator re-attaching (e.g. an updated PR URL) is allowed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const attachReviewArtifact = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+		artifactRef: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (args.callerOrchestrator === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required to attach a review artifact — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		if (args.artifactRef.trim() === "") {
+			throw new ConvexError(
+				`ARTIFACT_REF_REQUIRED: artifactRef must be a non-empty reference (e.g. a PR URL) — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
+		// Deliberately NOT assertTaskCallerAuthorized — this is the narrow
+		// permission the mutation exists to grant: ANY orchestrator may attach
+		// a review artifact reference, even when neither creator nor assignee.
+		if (
+			task.reviewArtifactRef !== undefined &&
+			task.reviewArtifactAttachedBy !== undefined &&
+			task.reviewArtifactAttachedBy !== args.callerOrchestrator
+		) {
+			throw new ConvexError(
+				`REVIEW_ARTIFACT_ALREADY_ATTACHED: task ${args.taskId} already carries a review artifact attached by ${task.reviewArtifactAttachedBy} — ${args.callerOrchestrator} may not overwrite it. Ask ${task.reviewArtifactAttachedBy} to update it, or attach on a different task — ${JSON.stringify({ taskId: args.taskId, attachedBy: task.reviewArtifactAttachedBy, caller: args.callerOrchestrator })}`,
+			);
+		}
+
+		await ctx.db.patch(args.taskId, {
+			reviewArtifactRef: args.artifactRef,
+			reviewArtifactAttachedBy: args.callerOrchestrator,
+			updatedAt: Date.now(),
+		});
 		return null;
 	},
 });
