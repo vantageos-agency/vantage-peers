@@ -96,7 +96,12 @@ def extract_body(command: str):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 return fh.read(), "--body-file:" + path, None
-        except OSError as exc:
+        # UnicodeDecodeError is a ValueError, NOT an OSError — without catching
+        # it here a non-UTF-8 body file escapes to the top-level `except
+        # Exception: allowing` and passes at exit 0, a bypass with no override
+        # marker against this guard's own fail-loud contract (Eta REVISE #1210).
+        # A body we cannot decode is an unreadable body: refuse, do not allow.
+        except (OSError, UnicodeDecodeError) as exc:
             return None, "--body-file:" + path, str(exc)
 
     return None, None, "no --body or --body-file flag found"
@@ -112,8 +117,14 @@ def missing_subfields(body: str):
     tail = m.group(1)
     missing = []
     for field in REQUIRED_SUBFIELDS:
+        # `[ \t]` NOT `\s`: `\s` crosses a line boundary, so a blank `- counts:`
+        # would let `\s*` eat the newline and `(.*)` capture the NEXT field's
+        # line — every field borrows its successor and none is ever empty
+        # (Eta REVISE #1210, all-four-blank self-gate walked through at exit 0).
+        # Restricting the inter-token whitespace to spaces/tabs keeps the
+        # capture on the field's own line, so a blank field reads as empty.
         field_re = re.compile(
-            r"-\s*" + re.escape(field) + r"\s*:\s*(.*)", re.IGNORECASE
+            r"-[ \t]*" + re.escape(field) + r"[ \t]*:[ \t]*(.*)", re.IGNORECASE
         )
         fm = field_re.search(tail)
         if not fm or not fm.group(1).strip():
@@ -173,9 +184,20 @@ def block_message_unreadable(source, error) -> str:
         "\n"
         f"Could not read: {what} ({error}).\n"
         "\n"
+        "WHY (the timing, not the flag): this guard reads the --body-file\n"
+        "at inspection time, BEFORE the command runs. A file created on the\n"
+        "SAME command line -- a heredoc, or a `> file` redirect chained with\n"
+        "&& before `gh pr create` -- does not exist yet when the guard looks.\n"
+        "So the --body-file flag is not wrong; the file is simply absent at\n"
+        "check time. (The guard cannot parse a here-document to find it, and\n"
+        "must not try -- that would trade a correct guard for a fragile one.)\n"
+        "\n"
+        "FIX: write the description to a file in a SEPARATE step first, then\n"
+        "open the PR pointing at it:\n"
+        "    1) Write the filled SELF-GATE body to <path>  (its own action)\n"
+        "    2) gh pr create ... --body-file <path>         (the next action)\n"
         "A review is never requested without a readable, filled SELF-GATE\n"
-        "block. Run the `self-gate` skill first, then pass the resulting\n"
-        "body via --body or a readable --body-file.\n"
+        "block; an inline --body carrying the filled block passes equally.\n"
         "\n"
         "Override (rare): append # allow-self-gate-skip: <reason>\n"
         "(reason >= 6 chars) to the command line, reserved for a genuinely\n"

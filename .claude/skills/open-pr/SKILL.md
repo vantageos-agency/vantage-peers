@@ -67,14 +67,38 @@ byte for byte.
 
 ### Act 1 — open the PR with the marker
 
-Push is assumed done. Run:
+Push is assumed done.
+
+**Write the body to a file FIRST, in its own separate step, then open the PR
+pointing at it.** These two are separate actions on purpose and must never be
+collapsed onto one command line: the `enforce-self-gate-before-review` guard
+reads the `--body-file` at inspection time, BEFORE the command runs, so a file
+written on the same line (a heredoc, or `> file && gh pr create`) does not exist
+yet when the guard looks — it refuses, and the flag was never the problem. A long
+SELF-GATE body with backticks and newlines is also fragile inline, so the file is
+the better path regardless of the guard.
+
+Step 1 — write the filled SELF-GATE body to a file (its own action; use the Write
+tool or a heredoc that is NOT chained to the create):
+
+```bash
+# a dedicated step — nothing else on this line
+cat > /tmp/pr-body-<slug>.md <<'EOF'
+<the filled PR body, ending with the SELF-GATE block and the signature>
+EOF
+```
+
+Step 2 — open the PR pointing at that file (the next, separate action):
 
 ```bash
 gh pr create -R <repo> --base <base_branch> --head <head_branch> \
-  --title "<title>" --body "<body>"  # via-open-pr
+  --title "<title>" --body-file /tmp/pr-body-<slug>.md  # via-open-pr
 ```
 
-The `# via-open-pr` marker is appended to the command. Immediately read back the
+A short body with no backticks or newlines may instead be passed inline with
+`--body "<body>"  # via-open-pr` — that carries the filled block equally and the
+guard reads it directly. The `# via-open-pr` marker is appended either way.
+Immediately read back the
 authoritative facts — never trust the create output alone:
 
 ```bash
