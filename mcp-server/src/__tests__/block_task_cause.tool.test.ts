@@ -76,7 +76,7 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 	let tools: Map<string, CapturedTool>;
 
 	beforeAll(() => {
-		t = convexTest(schema as never, modules as never);
+		t = convexTest(schema as never, modules as never).withIdentity({ subject: "test-service-account-user-id" });
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 

@@ -33,7 +33,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createT = () => convexTest(schema, modules);
+function createT(): ReturnType<typeof convexTest> {
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	}) as unknown as ReturnType<typeof convexTest>;
+}
 
 // Literal copy of the hint passed by `tasks:getById` to `requireId`. Deliberately
 // NOT imported from the source: an imported constant follows the mutant, and the

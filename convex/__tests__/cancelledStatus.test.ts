@@ -37,7 +37,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createT = () => convexTest(schema, modules);
+function createT(): ReturnType<typeof convexTest> {
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	}) as unknown as ReturnType<typeof convexTest>;
+}
 
 function getConvexErrorMessage(error: unknown): string {
 	expect(error).toBeInstanceOf(ConvexError);
@@ -149,7 +153,7 @@ describe("tasks.update — cancelled status", () => {
 			cancelReason: "no longer relevant",
 		});
 
-		const tAuth = t.withIdentity({ subject: "test-service-account-user-id" });
+		const tAuth = t;
 		const openList = await tAuth.query(api.tasks.list, {
 			status: "open",
 			assignedTo: "eta",
@@ -266,7 +270,7 @@ describe("missions.update — cancelled status", () => {
 			cancelReason: "not needed",
 		});
 
-		const tAuth = t.withIdentity({ subject: "test-service-account-user-id" });
+		const tAuth = t;
 		const openList = await tAuth.query(api.missions.list, {
 			status: "open",
 			pilot: "sigma",

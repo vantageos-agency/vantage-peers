@@ -37,7 +37,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createT = () => convexTest(schema, modules);
+function createT(): ReturnType<typeof convexTest> {
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	}) as unknown as ReturnType<typeof convexTest>;
+}
 
 function getConvexErrorMessage(error: unknown): string {
 	expect(error).toBeInstanceOf(ConvexError);

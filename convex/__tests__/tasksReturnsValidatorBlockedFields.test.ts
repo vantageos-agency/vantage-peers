@@ -33,7 +33,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createT = () => convexTest(schema, modules);
+function createT(): ReturnType<typeof convexTest> {
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	}) as unknown as ReturnType<typeof convexTest>;
+}
 
 async function makeTask(
 	t: ReturnType<typeof createT>,
@@ -68,8 +72,7 @@ describe("tasks read-path returns validators — blocked-task fields (class fix)
 		expect(viaGetById?.blockedOnTaskId).toBe(blockerId);
 
 		const viaListPaginated = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.listPaginated, {
+		.query(api.tasks.listPaginated, {
 				paginationOpts: { numItems: 50, cursor: null },
 				assignedTo: "sigma",
 			});
@@ -94,8 +97,7 @@ describe("tasks read-path returns validators — blocked-task fields (class fix)
 		expect(viaGetById?.blockedOnNobodyReason).toContain("waiting on third-party outage");
 
 		const viaListPaginated = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.listPaginated, {
+		.query(api.tasks.listPaginated, {
 				paginationOpts: { numItems: 50, cursor: null },
 				assignedTo: "sigma",
 			});

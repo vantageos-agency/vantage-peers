@@ -45,7 +45,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createT = () => convexTest(schema, modules);
+function createT(): ReturnType<typeof convexTest> {
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	}) as unknown as ReturnType<typeof convexTest>;
+}
 
 async function makeTask(
 	t: ReturnType<typeof createT>,
@@ -288,8 +292,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 		expect(viaGetById?.completionOutcome).toBe("failed");
 
 		const viaListPaginated = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.listPaginated, {
+		.query(api.tasks.listPaginated, {
 				paginationOpts: { numItems: 50, cursor: null },
 				assignedTo: "sigma",
 			});

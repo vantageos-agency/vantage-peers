@@ -50,7 +50,7 @@ async function seedBillableConfig(t: any) {
 
 describe("task closure gate — tasks.complete (Day 130)", () => {
 	test("(a) billable project + startedAt null → REJECTED with actionable error", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -72,7 +72,7 @@ describe("task closure gate — tasks.complete (Day 130)", () => {
 	});
 
 	test("(b) billable project + startedAt present → PASSES, actualMinutes computed", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -102,7 +102,7 @@ describe("task closure gate — tasks.complete (Day 130)", () => {
 	});
 
 	test("(c) override marker lets closure through without startedAt", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -126,7 +126,7 @@ describe("task closure gate — tasks.complete (Day 130)", () => {
 	});
 
 	test("(d) non-billable project + startedAt null → PASSES (no false positive)", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -149,7 +149,7 @@ describe("task closure gate — tasks.complete (Day 130)", () => {
 	});
 
 	test("fail-closed: taskClosureConfig not seeded at all → loud rejection naming the gap", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		// Deliberately NOT seeding taskClosureConfig.
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -173,7 +173,7 @@ describe("task closure gate — tasks.complete (Day 130)", () => {
 
 describe("task closure gate — tasks.bulkComplete (Day 130, second closure path)", () => {
 	test("(e) billable task with startedAt null → REJECTED via bulkComplete", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		await t.mutation(api.tasks.create, {
@@ -202,7 +202,7 @@ describe("task closure gate — tasks.bulkComplete (Day 130, second closure path
 // call — the closure path most reachable by a human.
 describe("task closure gate — tasks.update (Day 130, third closure path)", () => {
 	test("(i) billable task with startedAt null → REJECTED via update({status:'done'})", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -225,7 +225,7 @@ describe("task closure gate — tasks.update (Day 130, third closure path)", () 
 	});
 
 	test("(j) billable task with startedAt present → PASSES via update, actualMinutes derived", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -252,7 +252,7 @@ describe("task closure gate — tasks.update (Day 130, third closure path)", () 
 	});
 
 	test("(k) non-billable task with startedAt null → PASSES via update (no false positive)", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -291,7 +291,7 @@ describe("task closure gate — tasks.update (Day 130, third closure path)", () 
 // only this internal path can write.
 describe("task closure gate — automation-created tasks exempt (Day 130 follow-up)", () => {
 	test("(AUTO-1) webhook-created billable task with no startedAt → PASSES via complete, no override needed", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(internal.tasks.createOrUpdateReviewTask, {
@@ -315,7 +315,7 @@ describe("task closure gate — automation-created tasks exempt (Day 130 follow-
 	});
 
 	test("(AUTO-2) webhook-created billable task with no startedAt → PASSES via update({status:'done'})", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(internal.tasks.createOrUpdateReviewTask, {
@@ -340,7 +340,7 @@ describe("task closure gate — automation-created tasks exempt (Day 130 follow-
 	});
 
 	test("(AUTO-3, non-regression) human-created billable task with no startedAt → STILL REJECTED", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -415,7 +415,7 @@ describe("task closure gate — FORGE createdBy:'system' (Day 130 follow-up #2)"
 	}
 
 	test("(FORGE-1) task with createdBy:'system' but no origin, closes via complete → must be REJECTED", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 		const taskId = await seedForgedTask(t, "sigma");
 
@@ -429,7 +429,7 @@ describe("task closure gate — FORGE createdBy:'system' (Day 130 follow-up #2)"
 	});
 
 	test("(FORGE-2) task with createdBy:'system' but no origin, closes via update({status:'done'}) → must be REJECTED", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 		const taskId = await seedForgedTask(t, "sigma");
 
@@ -444,7 +444,7 @@ describe("task closure gate — FORGE createdBy:'system' (Day 130 follow-up #2)"
 	});
 
 	test("(FORGE-3) task with createdBy:'system' but no origin, closes via bulkComplete → must be REJECTED", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 		await seedForgedTask(t, "sigma-forge-3");
 
@@ -478,7 +478,7 @@ describe("task closure gate — FORGE createdBy:'system' (Day 130 follow-up #2)"
 
 describe("backfill migration — the cursor must walk past a zero-update page", () => {
 	test("(WALK-1) a zero-update middle page does NOT end the walk; isDone does", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await seedBillableConfig(t);
 
 		// One page's worth of NON-matching system rows (they will always be

@@ -82,14 +82,14 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 	test("tasks.list REFUSES an anonymous caller with no Clerk identity", async () => {
 		const t = createTestConvex();
 		// Seed two tasks assigned to different orchestrators
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -103,14 +103,14 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 
 	test("tasks.listForWebhook (internal) still returns all tasks for the HMAC-verified GitHub webhook path", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -130,14 +130,14 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 describe("withOrgScope — no org, recognized service account → master scope", () => {
 	test("tasks.list returns all tasks when authenticated as the recognized service account (no org)", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -164,14 +164,14 @@ describe("withOrgScope — no org, recognized service account → master scope",
 describe("withOrgScope — no org, ARBITRARY identity (not service account) → refused", () => {
 	test("tasks.list REFUSES an arbitrary no-org identity (not master, no data)", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -202,14 +202,14 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 			allowedOrchestrators: ["victor"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "victor task",
 			assignedTo: "victor",
 			status: "todo",
 			priority: "medium",
 			createdBy: "victor",
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
@@ -262,14 +262,14 @@ describe("withOrgScope — active org mapping", () => {
 		});
 
 		// Seed tasks
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "victor task",
 			assignedTo: "victor",
 			status: "todo",
 			priority: "medium",
 			createdBy: "victor",
 		});
-		await t.mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",

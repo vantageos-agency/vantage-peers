@@ -93,6 +93,84 @@ export function deriveTerminalStatus(
 // now REFUSES (RBAC_DENIED), it never bypasses. "system" and matching
 // creator/assignee still pass unconditionally (regression-proofed by tests).
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// requireAuthenticatedCaller — SECURITY REMEDIATION (task
+// k1712yrxjr570m6ks81rnhjh5n8cryf0, ruled by Pi). Closes the open door: none
+// of the nine public task mutations consulted ctx.auth before this — any
+// caller holding the deployment URL could invoke create/update/blockTask/
+// complete/failTask/start/checkout/deleteTask/bulkComplete by simply
+// asserting a `callerOrchestrator` string, with zero identity verification.
+//
+// CORE-A (closes the door): every public task mutation now requires a
+// verified Convex/Clerk identity. `ctx.auth.getUserIdentity() === null` is
+// refused unconditionally — no exception path.
+//
+// STEP 3 finding (for Pi): the verified identity yields `.subject` (Clerk
+// user id) and an org claim (organizationId/organizationSlug — see
+// convex/lib/auth.ts withOrgScope). It does NOT yield a single orchestrator
+// name (sigma/eta/...): the MCP server's non-browser path authenticates as
+// ONE SHARED service-account identity for every orchestrator (see
+// CLERK_SERVICE_ACCOUNT_USER_ID carve-out in withOrgScope), and a client org
+// maps to a LIST of allowedOrchestrators, not a single name. An orchestrator
+// name is therefore NOT individually derivable from the JWT alone today.
+// Comparing `callerOrchestrator` against a single "derived actor" name would
+// be vacuous, so this function instead checks MEMBERSHIP of the asserted
+// name in the scope's `allowedOrchestrators` list (or a master/service-
+// account bypass) — that IS what's derivable. Closing the sigma-vs-eta gap
+// requires a per-orchestrator claim upstream (a Clerk JWT template / custom
+// claim); flagged to Pi as a FINDING, not fabricated here.
+//
+// STEP 4 semantics (Pi's exact three-way rule, applied against what's
+// actually derivable):
+//   Agreeing:      callerOrchestrator is in scope.allowedOrchestrators (or
+//                  scope.isMaster) -> pass.
+//   Contradicting: callerOrchestrator is supplied and is NOT in the derived
+//                  scope's allowed set -> explicit refusal naming BOTH the
+//                  asserted name and the derived scope (allowedOrchestrators
+//                  + orgSlug).
+//   Absent:        no callerOrchestrator supplied -> the derived scope
+//                  stands alone (membership check skipped; CORE-A above
+//                  still required an identity to exist at all).
+// ─────────────────────────────────────────────────────────────────────────────
+async function requireAuthenticatedCaller(
+	ctx: MutationCtx,
+	callerOrchestrator: string | undefined,
+): Promise<OrgScope> {
+	const identity = await ctx.auth.getUserIdentity();
+	if (identity === null) {
+		throw new ConvexError(
+			`AUTH_REQUIRED: no verified identity on this call — an unauthenticated caller cannot mutate tasks — ${JSON.stringify({ callerOrchestrator: callerOrchestrator ?? null })}`,
+		);
+	}
+
+	// withOrgScope re-derives the same identity into an OrgScope (org lookup,
+	// service-account carve-out, fail-closed default). Explicitly opt OUT of
+	// allowNoIdentityMaster here — CORE-A already proved an identity exists,
+	// but this call site must never silently upgrade a no-identity call to
+	// master; that fail-open path is reserved for pre-audited internal call
+	// sites (see convex/lib/auth.ts doc comment), not this public surface.
+	const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+
+	// LIMIT of this reconciliation (containment scope only — removed by T2
+	// k172bccwcqajfetcrmm5wtasps8cs7tc when single-actor equality lands): it
+	// refuses a callerOrchestrator that falls OUTSIDE the org's allowed list,
+	// but it does NOT distinguish one orchestrator from another INSIDE that
+	// list. On the MCP path the shared service account resolves
+	// allowedOrchestrators ["*"] + isMaster, so every in-org name passes this
+	// check. Membership ≠ single-actor identity; the equality gate is T2's job.
+	if (
+		callerOrchestrator !== undefined &&
+		!scope.isMaster &&
+		!scope.allowedOrchestrators.includes(callerOrchestrator)
+	) {
+		throw new ConvexError(
+			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
+		);
+	}
+
+	return scope;
+}
+
 function assertTaskCallerAuthorized(
 	task: { createdBy: string; assignedTo?: string },
 	callerOrchestrator: string | undefined,
@@ -225,45 +303,91 @@ function projectTaskLite(doc: Record<string, unknown>): TaskLite {
 // create — insert a new task
 // ─────────────────────────────────────────────────────────────────────────────
 
+const createTaskArgsValidator = {
+	title: v.string(),
+	description: v.optional(v.string()),
+	project: v.optional(v.string()),
+	tags: v.optional(v.array(v.string())),
+	assignedTo: assigneeValidator,
+	assignedToInstance: v.optional(v.string()),
+	priority: priorityValidator,
+	status: statusValidator,
+	dependsOn: v.optional(v.array(v.id("tasks"))),
+	missionId: v.optional(v.id("missions")),
+	estimatedMinutes: v.optional(v.number()),
+	dueDate: v.optional(v.number()),
+	createdBy: creatorValidator,
+};
+
+interface CreateTaskArgs {
+	title: string;
+	description?: string;
+	project?: string;
+	tags?: string[];
+	assignedTo: string;
+	assignedToInstance?: string;
+	priority: "urgent" | "high" | "medium" | "low";
+	status: TaskStatus;
+	dependsOn?: Array<import("./_generated/dataModel").Id<"tasks">>;
+	missionId?: import("./_generated/dataModel").Id<"missions">;
+	estimatedMinutes?: number;
+	dueDate?: number;
+	createdBy: string;
+}
+
+// Shared insert body for `create` (public, identity-gated) and
+// `createForWebhook` (internal, HMAC-gated — see below). Splitting the
+// caller keeps the public surface requiring a verified identity without
+// breaking the GitHub webhook's structurally unreachable-by-clients path.
+async function insertTask(
+	ctx: MutationCtx,
+	args: CreateTaskArgs,
+): Promise<import("./_generated/dataModel").Id<"tasks">> {
+	// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
+	// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
+	// it reads `origin`, which this public mutation never accepts as an
+	// arg and never writes — only the internal webhook path
+	// (createOrUpdateReviewTask) can write it. `createdBy: "system"` is
+	// intentionally still accepted here because it is used elsewhere in
+	// this codebase as a plain non-billing convention (RBAC-bypass
+	// semantics on update/complete/bulkComplete/start/deleteTask, and as
+	// a generic creator string in stats/bridge-automation flows) — see
+	// convex/__tests__/tasksMutationConvexErrors.test.ts and
+	// convex/stats.test.ts. An earlier attempt to reject it outright
+	// here regressed 44 pre-existing tests; that reservation attempt
+	// was scoped back out. The billing-bypass vulnerability itself is
+	// fully closed by the `origin`-based gate, independent of this
+	// value.
+	const now = Date.now();
+	return await ctx.db.insert("tasks", {
+		...args,
+		createdAt: now,
+		updatedAt: now,
+	});
+}
+
 export const create = mutation({
-	args: {
-		title: v.string(),
-		description: v.optional(v.string()),
-		project: v.optional(v.string()),
-		tags: v.optional(v.array(v.string())),
-		assignedTo: assigneeValidator,
-		assignedToInstance: v.optional(v.string()),
-		priority: priorityValidator,
-		status: statusValidator,
-		dependsOn: v.optional(v.array(v.id("tasks"))),
-		missionId: v.optional(v.id("missions")),
-		estimatedMinutes: v.optional(v.number()),
-		dueDate: v.optional(v.number()),
-		createdBy: creatorValidator,
-	},
+	args: createTaskArgsValidator,
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
-		// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
-		// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
-		// it reads `origin`, which this public mutation never accepts as an
-		// arg and never writes — only the internal webhook path
-		// (createOrUpdateReviewTask) can write it. `createdBy: "system"` is
-		// intentionally still accepted here because it is used elsewhere in
-		// this codebase as a plain non-billing convention (RBAC-bypass
-		// semantics on update/complete/bulkComplete/start/deleteTask, and as
-		// a generic creator string in stats/bridge-automation flows) — see
-		// convex/__tests__/tasksMutationConvexErrors.test.ts and
-		// convex/stats.test.ts. An earlier attempt to reject it outright
-		// here regressed 44 pre-existing tests; that reservation attempt
-		// was scoped back out. The billing-bypass vulnerability itself is
-		// fully closed by the `origin`-based gate, independent of this
-		// value.
-		const now = Date.now();
-		return await ctx.db.insert("tasks", {
-			...args,
-			createdAt: now,
-			updatedAt: now,
-		});
+		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
+		// is the PUBLIC client-facing path; it now requires a verified
+		// identity. See requireAuthenticatedCaller for the full rationale.
+		await requireAuthenticatedCaller(ctx, args.createdBy);
+		return await insertTask(ctx, args);
+	},
+});
+
+// Internal-only mirror of `create`, used exclusively by convex/http.ts's
+// GitHub webhook handler (HMAC-signature-verified, not Clerk-identity
+// gated — same split as `list`/`listForWebhook` above). `internal.*`
+// functions are never exposed to `api.*` clients — no MCP tool, dashboard
+// route, or direct Convex client call can reach this.
+export const createForWebhook = internalMutation({
+	args: createTaskArgsValidator,
+	returns: v.id("tasks"),
+	handler: async (ctx, args) => {
+		return await insertTask(ctx, args);
 	},
 });
 
@@ -996,6 +1120,7 @@ export const update = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const { taskId, callerOrchestrator, cancelReason, ...fields } = args;
+		await requireAuthenticatedCaller(ctx, callerOrchestrator);
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1258,6 +1383,7 @@ export const blockTask = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1371,6 +1497,7 @@ export const complete = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1612,6 +1739,7 @@ export const failTask = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1682,6 +1810,7 @@ export const start = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1759,6 +1888,7 @@ export const checkout = mutation({
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
@@ -1790,6 +1920,7 @@ export const deleteTask = mutation({
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
 			throw new ConvexError(
@@ -2386,6 +2517,11 @@ export const bulkComplete = mutation({
 		remaining: v.optional(v.boolean()),
 	}),
 	handler: async (ctx, args) => {
+		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — required
+		// on the dry-run preview path too, not only the live write path: a
+		// dry-run still discloses task titles/ids/counts to whoever calls it.
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+
 		// Default dryRun to true (safety).
 		const dryRun = args.dryRun !== false;
 

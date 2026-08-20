@@ -79,7 +79,7 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 	// ── T1: get — task WITH orgId ────────────────────────────────────────────
 	test("T1: tasks.get returns full doc for task WITH orgId (no validator 500)", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithOrgId(ctx);
@@ -87,7 +87,8 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 		// This call triggered a 500 before the fix because orgId was in the doc
 		// but absent from the returns validator.
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task with orgId");
@@ -97,13 +98,14 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 	// ── T2: get — task WITHOUT orgId (backward compat) ──────────────────────
 	test("T2: tasks.get returns full doc for task WITHOUT orgId (backward compat)", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithoutOrgId(ctx);
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task without orgId");
@@ -113,13 +115,14 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 	// ── T3: getById — task WITH orgId ────────────────────────────────────────
 	test("T3: tasks.getById returns full doc for task WITH orgId (no validator 500)", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithOrgId(ctx);
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.getById, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.getById, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task with orgId");
@@ -128,13 +131,14 @@ describe("tasks.get / getById — orgId returns-validator regression", () => {
 
 	// ── T4: getById — task WITHOUT orgId (backward compat) ──────────────────
 	test("T4: tasks.getById returns full doc for task WITHOUT orgId (backward compat)", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithoutOrgId(ctx);
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.getById, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.getById, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Task without orgId");
@@ -146,7 +150,7 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 
 	// ── T5: complete — task WITH orgId ────────────────────────────────────────
 	test("T5: tasks.complete on task WITH orgId → completes + get returns full doc", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithOrgId(ctx);
@@ -160,14 +164,15 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 		});
 
 		// get should return the completed doc (with orgId still present)
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("done");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T6: complete — task WITHOUT orgId ────────────────────────────────────
 	test("T6: tasks.complete on task WITHOUT orgId → completes + get returns full doc", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithoutOrgId(ctx);
@@ -179,14 +184,15 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 			completionNote: "Done — PR #888 merged SHA deadbeef123456 evidence token",
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("done");
 		expect((result as any).orgId).toBeUndefined();
 	});
 
 	// ── T7: update — task WITH orgId ─────────────────────────────────────────
 	test("T7: tasks.update on task WITH orgId → updates + get returns full doc", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithOrgId(ctx);
@@ -198,14 +204,15 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 			status: "in_progress",
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("in_progress");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T8: update — task WITHOUT orgId ──────────────────────────────────────
 	test("T8: tasks.update on task WITHOUT orgId → updates + get returns full doc", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 		await t.run(async (ctx) => {
 			taskId = await seedTaskWithoutOrgId(ctx);
@@ -217,7 +224,8 @@ describe("tasks.complete + tasks.update — smoke test with orgId task shapes", 
 			status: "in_progress",
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 		expect(result?.status).toBe("in_progress");
 		expect((result as any).orgId).toBeUndefined();
 	});
@@ -227,13 +235,14 @@ describe("tasks.list — regression guard (summary projection unchanged)", () =>
 
 	// ── T9: list_tasks regression ─────────────────────────────────────────────
 	test("T9: list_tasks fields=lite still returns summary projection for tasks with/without orgId", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		await t.run(async (ctx) => {
 			await seedTaskWithOrgId(ctx);
 			await seedTaskWithoutOrgId(ctx);
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, { fields: "lite", limit: 10 });
+		const result = await t
+		.query(api.tasks.list, { fields: "lite", limit: 10 });
 
 		expect(Array.isArray(result)).toBe(true);
 		const items = result as Array<Record<string, unknown>>;
@@ -273,7 +282,7 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 
 	// ── T10: full optional fields — get ──────────────────────────────────────
 	test("T10: tasks.get returns complete doc when ALL optional fields are set", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 
 		await t.run(async (ctx) => {
@@ -330,7 +339,8 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 		});
 
 		// tasks.get must return the full doc without returns-validator 500
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.get, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Full optional fields task");
@@ -353,7 +363,7 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 
 	// ── T11: full optional fields — getById ──────────────────────────────────
 	test("T11: tasks.getById returns complete doc when ALL optional fields are set", async () => {
-		const t = convexTest(schema, modules);
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 		let taskId: string | undefined;
 
 		await t.run(async (ctx) => {
@@ -381,7 +391,8 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 		});
 
 		// tasks.getById must return the full doc including all optional fields
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.getById, { taskId: taskId as any });
+		const result = await t
+		.query(api.tasks.getById, { taskId: taskId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Full optional fields via getById");
