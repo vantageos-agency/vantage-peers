@@ -242,6 +242,75 @@ export function checkFromAllowed(
 }
 
 /**
+ * Answers the DELEGATION question — is `assignedTo` a member of the CALLER'S
+ * own organisation? — as distinct from `checkFromAllowed`, which answers a
+ * different question (may this client SPEAK AS `from`). Conflating the two
+ * meant every non-master client could only delegate to the one identity in
+ * its own `fromAllowList`, making cross-station dispatch impossible for any
+ * non-master client (Day-... delegation-same-org-predicate incident).
+ *
+ * Rules:
+ *   - master scope (isMasterScope) → allowed (null), no roster read needed.
+ *   - non-master AND `ctx.clerkJwt` present (the Clerk-team org-scoped path,
+ *     auth.ts case 2.5, ~line 507) → `getOrgRoster` is called and resolves
+ *     via Convex `withOrgScope`/`client_org_mapping`, forwarding THIS
+ *     caller's own verified Clerk JWT (`selectConvexClientForRequest`,
+ *     authenticatedConvexClient.ts). This is a genuine per-caller org lookup.
+ *     Allowed iff `assignedTo` is in that roster, OR the roster itself is
+ *     `["*"]` — a CALLER org whose `client_org_mapping.allowedOrchestrators`
+ *     is itself the wildcard (a genuinely open org, same semantics as
+ *     `isMaster = allowedOrchestrators.includes("*")` elsewhere in Convex,
+ *     convex/lib/auth.ts).
+ *   - non-master AND `ctx.clerkJwt` ABSENT (OAuth-scoped access tokens,
+ *     DCR client-generic, legacy mcpTenants legacy-tenant-generic — every
+ *     path OTHER than 2.5) → REFUSE LOUDLY, `getOrgRoster` is NEVER called.
+ *     ETA-M15: these paths route Convex calls through the MCP server's own
+ *     SERVICE-ACCOUNT client (selectConvexClientForRequest falls back to
+ *     `createServiceAccountConvexClient` whenever `clerkJwt` is absent).
+ *     `withOrgScope` resolves THAT identity via the
+ *     `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out to
+ *     `allowedOrchestrators = ["*"]` — the SERVICE ACCOUNT's roster, not the
+ *     caller's. Treating that "*" as "an open org" (a prior, reverted fix)
+ *     inverted a deny-everything bug into an allow-everything-cross-org leak
+ *     for the entire non-Clerk-JWT class of caller (client-generic + legacy-
+ *     tenant-generic are both deny-by-default profiles). The caller's own
+ *     organisation genuinely cannot be resolved without a verified identity
+ *     to resolve it FROM — refusing loudly, naming the reason, is correct
+ *     here; there is no tolerant fallback that isn't a silent skew window
+ *     (a guard that opens when its instrument is missing hides the failure).
+ *
+ * Async because it performs a data read (only on the clerkJwt-present
+ * branch). `ctx` undefined (direct predicate call, e.g. unit tests without a
+ * bearerAuthMiddleware pass) allows through, matching the other check*
+ * predicates' no-context convention.
+ */
+export async function checkDelegationAllowed(
+	ctx: OAuthContext | undefined,
+	assignedTo: string,
+	getOrgRoster: () => Promise<string[]>,
+): Promise<string | null> {
+	if (!ctx) return null;
+	if (isMasterScope(ctx)) return null;
+	if (!ctx.clerkJwt) {
+		return (
+			`Forbidden: cannot authorize delegation to assignedTo='${assignedTo}' ` +
+			`(scope_profile=${ctx.scopeProfile}) — this caller has no verified ` +
+			"Clerk session attached, so its own organisation cannot be resolved " +
+			"from data. Refusing rather than granting an unresolved roster " +
+			"(ETA-M15: the service-account's wildcard roster is not the caller's)."
+		);
+	}
+	const roster = await getOrgRoster();
+	if (roster.includes("*")) return null; // the CALLER's own org is itself open
+	if (roster.includes(assignedTo)) return null;
+	const allowed =
+		roster.length === 0
+			? "(none — this client's organisation has no roster on record)"
+			: roster.join(", ");
+	return `Forbidden: assignedTo='${assignedTo}' is not a member of the caller's organisation (scope_profile=${ctx.scopeProfile}). Org roster: ${allowed}.`;
+}
+
+/**
  * Checks namespace against prefix list. A prefix of "*" means any namespace.
  * Otherwise the target namespace must start with one of the prefixes.
  */
