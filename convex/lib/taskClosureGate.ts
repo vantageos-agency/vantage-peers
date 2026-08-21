@@ -369,3 +369,61 @@ export async function computeStaleInProgress(
 	}
 	return entries;
 }
+
+// Bound for live in_progress scans surfaced on checkNewMessagesEnvelope.
+// Mirrors PENDING_ON_YOU_SCAN_CAP — never an unbounded .collect() on the
+// fleet-wide by_status index. Assignee-scoped scans use the same cap.
+const STUCK_IN_PROGRESS_SCAN_CAP = 200;
+
+function toStuckEntry(
+	task: Doc<"tasks">,
+	now: number,
+): StaleInProgressEntry {
+	const reference = task.startedAt ?? task._creationTime;
+	return { taskId: task._id, title: task.title, age: now - reference };
+}
+
+/**
+ * Live in_progress tasks assigned to `recipient`, any age.
+ *
+ * Distinct from computeStaleInProgress: no 24h threshold. A task stuck for
+ * minutes (T4) must surface here; waiting for staleInProgress is too late.
+ */
+export async function computeStuckInProgress(
+	ctx: QueryCtx | MutationCtx,
+	recipient: string,
+	now: number,
+): Promise<StaleInProgressEntry[]> {
+	const inProgressTasks = await ctx.db
+		.query("tasks")
+		.withIndex("by_assignee", (q) =>
+			q.eq("assignedTo", recipient).eq("status", "in_progress"),
+		)
+		.take(STUCK_IN_PROGRESS_SCAN_CAP);
+
+	return inProgressTasks.map((task) => toStuckEntry(task, now));
+}
+
+/**
+ * in_progress tasks the caller owns as createdBy that are assigned to
+ * someone else — work stuck on a peer, visible to the unblock authority.
+ */
+export async function computePeersStuckOnYou(
+	ctx: QueryCtx | MutationCtx,
+	caller: string,
+	now: number,
+): Promise<StaleInProgressEntry[]> {
+	const inProgressTasks = await ctx.db
+		.query("tasks")
+		.withIndex("by_status", (q) => q.eq("status", "in_progress"))
+		.order("desc")
+		.take(STUCK_IN_PROGRESS_SCAN_CAP);
+
+	const entries: StaleInProgressEntry[] = [];
+	for (const task of inProgressTasks) {
+		if (task.createdBy !== caller) continue;
+		if (task.assignedTo === caller) continue;
+		entries.push(toStuckEntry(task, now));
+	}
+	return entries;
+}

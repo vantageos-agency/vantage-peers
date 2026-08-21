@@ -8,8 +8,9 @@
  * k17c4ejer172fgj9t1h027hswn8bvv4w, categorical decision): "les messages
  * ce sont des messages, pas de liste de tâches dans un retour check
  * message." — the pendingOnYou/slaBreached fields are REMOVED from the
- * envelope. `check_messages` now returns messages + pagination +
- * staleInProgress only.
+ * envelope. `check_messages` returns messages + pagination +
+ * staleInProgress + stuckInProgress + peersStuckOnYou. Do not revive
+ * pendingOnYou*.
  *
  * `computePendingOnYou`/`getSlaBreachedTopN`/`isDormant` in
  * `convex/lib/taskClosureGate.ts` are left intact (unwired, not deleted) —
@@ -63,7 +64,7 @@ async function seedBlockedTaskWithAge(
 }
 
 describe("checkNewMessagesEnvelope — no pendingOnYou/slaBreached fields (Laurent k17c4ejer172fgj9t1h027hswn8bvv4w)", () => {
-	test("envelope keys are exactly messages/truncated/nextSince/staleInProgress — no task-list fields", async () => {
+	test("envelope keys include stuck siblings and still exclude pendingOnYou*", async () => {
 		const t = convexTest(schema, modules);
 		await seedBlockedTaskWithAge(
 			t,
@@ -81,7 +82,14 @@ describe("checkNewMessagesEnvelope — no pendingOnYou/slaBreached fields (Laure
 		expect(result).not.toHaveProperty("slaBreachedTotal");
 		expect(result).not.toHaveProperty("slaBreachedTop");
 		expect(Object.keys(result).sort()).toEqual(
-			["messages", "nextSince", "staleInProgress", "truncated"].sort(),
+			[
+				"messages",
+				"nextSince",
+				"peersStuckOnYou",
+				"staleInProgress",
+				"stuckInProgress",
+				"truncated",
+			].sort(),
 		);
 	});
 });
