@@ -345,6 +345,17 @@ export default defineSchema({
 		completionOutcome: v.optional(
 			v.union(v.literal("succeeded"), v.literal("failed")),
 		),
+		// Task k1798y530ytkgsd7259nj2heb58cszv4 — a narrow, non-owner write:
+		// the AUTHOR of an artifact (e.g. a PR) attaches that artifact's
+		// reference to a review task it neither created nor owns, without
+		// gaining any other write on the task. Both fields are written ONLY
+		// by attachReviewArtifact (convex/tasks.ts), never by `update` (which
+		// still routes every other field through assertTaskCallerAuthorized
+		// unchanged). reviewArtifactAttachedBy is the first-writer identity —
+		// attachReviewArtifact refuses a different orchestrator overwriting
+		// an already-attached ref (REVIEW_ARTIFACT_ALREADY_ATTACHED).
+		reviewArtifactRef: v.optional(v.string()),
+		reviewArtifactAttachedBy: v.optional(creatorValidator),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])

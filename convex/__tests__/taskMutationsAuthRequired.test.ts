@@ -3,15 +3,17 @@
  * convex/__tests__/taskMutationsAuthRequired.test.ts
  *
  * SECURITY REMEDIATION — task k1712yrxjr570m6ks81rnhjh5n8cryf0, ruled by
- * coordinator Pi. The nine public Convex task mutations (create, update,
- * blockTask, complete, failTask, start, checkout, deleteTask, bulkComplete)
- * were callable by ANYONE holding the deployment URL, with zero identity
- * verification — `assertTaskCallerAuthorized` trusted a caller-supplied
- * `callerOrchestrator` string with no ctx.auth check at all.
+ * coordinator Pi. The ten public Convex task mutations (create, update,
+ * blockTask, complete, failTask, start, checkout, deleteTask, bulkComplete,
+ * attachReviewArtifact) were callable by ANYONE holding the deployment URL,
+ * with zero identity verification — `assertTaskCallerAuthorized` trusted a
+ * caller-supplied `callerOrchestrator` string with no ctx.auth check at all.
+ * (attachReviewArtifact was the tenth public mutation, closed in
+ * k17675gzd2bwtnvgp0qzmtx35h8csg23 / PR #1211.)
  *
  * This file proves both halves of the fix:
  *
- *   AUTH_REQUIRED        — every one of the nine mutations REFUSES a call
+ *   AUTH_REQUIRED        — every one of the ten mutations REFUSES a call
  *                           with no verified identity (ctx.auth.getUserIdentity()
  *                           === null), for both poles: the door is closed
  *                           unconditionally, and a call WITH identity still
@@ -84,7 +86,7 @@ async function seedTask(
 // AUTH_REQUIRED — both poles, all nine mutations
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("AUTH_REQUIRED — unauthenticated callers are refused, all nine public task mutations", () => {
+describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public task mutations", () => {
 	test("create: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
 
@@ -289,6 +291,31 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all nine public
 				dryRun: true,
 			});
 		expect(preview.count).toBeGreaterThanOrEqual(1);
+	});
+
+	test("attachReviewArtifact: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
+		const t = createT();
+		const taskId = await seedTask(t, { assignedTo: "eta", createdBy: "pi" });
+
+		await expect(
+			t.mutation(api.tasks.attachReviewArtifact, {
+				taskId,
+				callerOrchestrator: "sigma",
+				artifactRef: "https://github.com/org/repo/pull/1234",
+			}),
+		).rejects.toThrow(/AUTH_REQUIRED/);
+
+		await t
+			.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT })
+			.mutation(api.tasks.attachReviewArtifact, {
+				taskId,
+				callerOrchestrator: "sigma",
+				artifactRef: "https://github.com/org/repo/pull/1234",
+			});
+		const after = await t
+			.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT })
+			.query(api.tasks.get, { taskId });
+		expect(after?.reviewArtifactRef).toBe("https://github.com/org/repo/pull/1234");
 	});
 });
 
