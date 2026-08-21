@@ -335,6 +335,47 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 		expect(row?.clientId).toBe("railway-mcp");
 	});
 
+	test("SA identity + garbage token mints on createAccessToken but admin sites refuse (ETA-M33)", async () => {
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_test");
+		const t = createTestConvex();
+		const sa = t.withIdentity({
+			subject: "user_service_account_test",
+			tokenIdentifier: "user_service_account_test",
+		});
+		const garbage = "garbage-not-the-master-secret";
+		const tokenHash = "d4e5".repeat(16);
+
+		await sa.mutation(api.oauth.createAccessToken, {
+			callerToken: garbage,
+			tokenHash,
+			clientId: "forged-mint",
+			userId: "forged",
+			scopes: ["vantage:read", "vantage:write"],
+			scopeProfile: "master",
+			fromAllowList: ["*"],
+			namespaceReadPrefixes: ["*"],
+			namespaceWritePrefixes: ["*"],
+			expiresAt: Date.now() + 3600_000,
+		});
+		const minted = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		expect(minted).not.toBeNull();
+		expect(minted?.scopeProfile).toBe("master");
+		expect(minted?.fromAllowList).toEqual(["*"]);
+
+		await expect(
+			sa.mutation(api.oauth.provisionOrganization, {
+				callerToken: garbage,
+				clerkOrgSlug: "forged-org",
+				displayName: "Forged",
+				orchestrators: [{ name: "sigma" }],
+			}),
+		).rejects.toThrow(/Unauthorized/);
+
+		await expect(
+			sa.query(api.oauth.listClients, { callerToken: garbage }),
+		).rejects.toThrow(/Unauthorized/);
+	});
+
 	test("non-SA identity + stale callerToken is still Unauthorized", async () => {
 		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_test");
 		const t = createTestConvex();

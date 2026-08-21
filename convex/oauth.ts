@@ -14,7 +14,7 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -44,20 +44,7 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 	return diff === 0;
 }
 
-async function requireMasterAuth(
-	ctx: QueryCtx | MutationCtx,
-	callerToken: string,
-): Promise<void> {
-	const saId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
-	if (saId) {
-		const identity = await ctx.auth.getUserIdentity();
-		if (
-			identity &&
-			(identity.subject === saId || identity.tokenIdentifier === saId)
-		) {
-			return;
-		}
-	}
+async function requireMasterAuth(callerToken: string): Promise<void> {
 	const masterToken = process.env.BEARER_SECRET_MASTER;
 	if (!masterToken) {
 		throw new Error("BEARER_SECRET_MASTER env var is not configured");
@@ -66,6 +53,15 @@ async function requireMasterAuth(
 	if (!valid) {
 		throw new Error("Unauthorized: invalid master token");
 	}
+}
+
+/** Clerk service-account identity only — used by createAccessToken mint path. */
+async function isClerkServiceAccount(ctx: MutationCtx): Promise<boolean> {
+	const saId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
+	if (!saId) return false;
+	const identity = await ctx.auth.getUserIdentity();
+	if (!identity) return false;
+	return identity.subject === saId || identity.tokenIdentifier === saId;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +103,7 @@ export const seedDefaultProfiles = mutation({
 		skipped: v.array(v.string()),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		// SCOPE NOTICE (PR #1120): `profileId` / `fromAllowList` /
 		// `namespaceReadPrefixes` / `namespaceWritePrefixes` below carry the
@@ -380,7 +376,7 @@ export const upsertScopeProfile = mutation({
 	args: { callerToken: v.string(), profile: scopeProfileShape },
 	returns: v.union(v.literal("inserted"), v.literal("updated")),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		const { profile } = args;
 		const now = Date.now();
@@ -506,7 +502,7 @@ export const createClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		// Profile must exist
 		const profile = await ctx.db
@@ -571,7 +567,7 @@ export const provisionOrganization = mutation({
 		),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		const slug = args.clerkOrgSlug.trim();
 		if (!slug) {
@@ -857,7 +853,7 @@ export const listClients = query({
 	args: { callerToken: v.string() },
 	returns: v.array(clientPublicShape),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 		const rows = await ctx.db.query("oauth_clients").order("desc").collect();
 		return rows.map((r) => ({
 			_id: r._id,
@@ -879,7 +875,7 @@ export const deleteClient = mutation({
 		revokedRefresh: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 		const client = await ctx.db
 			.query("oauth_clients")
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
@@ -963,7 +959,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		if (args.reason.length < 20) {
 			throw new Error(
@@ -1099,7 +1095,7 @@ export const revokeAccessTokensOnly = mutation({
 		refreshTokensPreserved: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		if (args.reason.length < 20) {
 			throw new Error(
@@ -1165,7 +1161,7 @@ export const createAuthorizationCode = mutation({
 	},
 	returns: v.id("oauth_authorization_codes"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 		return await ctx.db.insert("oauth_authorization_codes", {
 			code: args.code,
 			clientId: args.clientId,
@@ -1234,7 +1230,9 @@ export const createAccessToken = mutation({
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		if (!(await isClerkServiceAccount(ctx))) {
+			await requireMasterAuth(args.callerToken);
+		}
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -1310,7 +1308,7 @@ export const createRefreshToken = mutation({
 	},
 	returns: v.id("oauth_refresh_tokens"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 		return await ctx.db.insert("oauth_refresh_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -1398,7 +1396,7 @@ export const patchScopeProfileEmergency = mutation({
 	}),
 	handler: async (ctx, args) => {
 		// ── Master token guard (constant-time) ────────────────────────────────
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		// ── Reason length guard ───────────────────────────────────────────────
 		if (args.reason.length < 40) {
@@ -1579,7 +1577,7 @@ export const seedTestTenantTrio = mutation({
 		skipped: v.array(v.string()),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		const trioReadPrefixes = [
 			"orchestrator/Alpha",
@@ -1720,7 +1718,7 @@ export const createTestTenantTrioClients = mutation({
 		}),
 	),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 
 		const clientDefs = [
 			{
@@ -1817,7 +1815,7 @@ export const listScopeProfiles = query({
 	args: { callerToken: v.string() },
 	returns: v.array(scopeProfileShape),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(ctx, args.callerToken);
+		await requireMasterAuth(args.callerToken);
 		const rows = await ctx.db
 			.query("oauth_scope_profiles")
 			.order("asc")
