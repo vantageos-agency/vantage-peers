@@ -1286,6 +1286,9 @@ export const attachReviewArtifact = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// CORE-A: the tenth public door — closes k17675gzd2bwtnvgp0qzmtx35h8csg23
+		// / PR #1211, matching the gate #1213 applied to the other nine.
+		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to attach a review artifact — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
