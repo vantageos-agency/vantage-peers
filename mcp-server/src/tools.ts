@@ -3192,8 +3192,11 @@ export function registerTools(
 						limit,
 					},
 				);
-				const { messages, truncated, nextSince } = result as {
-					messages: Array<{
+				// Day-156 reader-first: extra envelope fields are ignored;
+				// missing keys MUST default so old Convex prod cannot throw
+				// `.length` on undefined. Do not revive pendingOnYou.
+				const envelope = (result ?? {}) as {
+					messages?: Array<{
 						receiptId: string;
 						from: string;
 						fromInstanceId?: string;
@@ -3201,16 +3204,51 @@ export function registerTools(
 						content: string;
 						createdAt: number;
 					}>;
-					truncated: boolean;
-					nextSince: number | null;
+					truncated?: boolean;
+					nextSince?: number | null;
+					staleInProgress?: Array<{
+						taskId: string;
+						title: string;
+						age: number;
+					}>;
+					stuckInProgress?: Array<{
+						taskId: string;
+						title: string;
+						age: number;
+					}>;
+					peersStuckOnYou?: Array<{
+						taskId: string;
+						title: string;
+						age: number;
+					}>;
 				};
+				const messages = envelope.messages ?? [];
+				const truncated = envelope.truncated ?? false;
+				const nextSince = envelope.nextSince ?? null;
+				const stuckInProgress = envelope.stuckInProgress ?? [];
+				const peersStuckOnYou = envelope.peersStuckOnYou ?? [];
+
+				const stuckBlocks: string[] = [];
+				if (stuckInProgress.length > 0) {
+					stuckBlocks.push(
+						`stuckInProgress:\n${JSON.stringify(stuckInProgress, null, 2)}`,
+					);
+				}
+				if (peersStuckOnYou.length > 0) {
+					stuckBlocks.push(
+						`peersStuckOnYou:\n${JSON.stringify(peersStuckOnYou, null, 2)}`,
+					);
+				}
+				const stuckText = stuckBlocks.join("\n\n");
 
 				if (messages.length === 0) {
 					return {
 						content: [
 							{
 								type: "text",
-								text: "No new messages.",
+								// Empty unread + non-empty stuck must still surface
+								// the stuck block — never "No new messages." / Vide.
+								text: stuckText.length > 0 ? stuckText : "No new messages.",
 							},
 						],
 					};
@@ -3226,9 +3264,13 @@ export function registerTools(
 				}));
 
 				const body = JSON.stringify(payload, null, 2);
-				const text = truncated
-					? `${body}\n— truncated. Resume with check_messages since=${nextSince}`
-					: body;
+				const truncatedNote = truncated
+					? `\n— truncated. Resume with check_messages since=${nextSince}`
+					: "";
+				const text =
+					stuckText.length > 0
+						? `${body}${truncatedNote}\n\n${stuckText}`
+						: `${body}${truncatedNote}`;
 
 				return {
 					content: [
