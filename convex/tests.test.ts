@@ -31,7 +31,13 @@ afterEach(() => {
 
 // Factory: creates a fresh isolated convex-test instance per test.
 function createTestConvex() {
-	return convexTest(schema, modules);
+	// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — task
+	// mutations now require a verified identity; seed with the master
+	// service-account identity so pre-existing (non-auth-focused) test
+	// scenarios in this file are unaffected.
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	});
 }
 
 // Messages suite factory: real recipients are now derived from the
@@ -71,7 +77,8 @@ describe("Memories", () => {
 
 		expect(memoryId).toBeDefined();
 
-		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
+		const memory = await t
+		.query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		expect(memory!.content).toBe("VantagePeers uses Convex as its backend");
 		expect(memory!.type).toBe("project");
@@ -107,7 +114,8 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const alphaResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
+		const alphaResult = await t
+		.query(api.memories.listMemories, {
 			namespace: "project/alpha",
 		});
 
@@ -144,7 +152,8 @@ describe("Memories", () => {
 			relations: [],
 		});
 
-		const projectResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
+		const projectResult = await t
+		.query(api.memories.listMemories, {
 			namespace: "global",
 			type: "project",
 		});
@@ -166,12 +175,14 @@ describe("Memories", () => {
 
 		await t.mutation(api.memories.softDeleteMemory, { memoryId });
 
-		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
+		const memory = await t
+		.query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		expect(memory!.isLatest).toBe(false);
 
 		// Should not appear in default (isLatest=true) listing
-		const listedResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
+		const listedResult = await t
+		.query(api.memories.listMemories, {
 			namespace: "global",
 		});
 		expect(listedResult.value.find((m) => m._id === memoryId)).toBeUndefined();
@@ -198,21 +209,24 @@ describe("Memories", () => {
 		});
 
 		// Original should now have isLatest=false
-		const original = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
+		const original = await t
+		.query(api.memories.getMemory, {
 			memoryId: originalId,
 		});
 		expect(original).not.toBeNull();
 		expect(original!.isLatest).toBe(false);
 
 		// Updated should have isLatest=true
-		const updated = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
+		const updated = await t
+		.query(api.memories.getMemory, {
 			memoryId: updatedId,
 		});
 		expect(updated).not.toBeNull();
 		expect(updated!.isLatest).toBe(true);
 
 		// Default listing should only show the updated version
-		const listedResult = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.listMemories, {
+		const listedResult = await t
+		.query(api.memories.listMemories, {
 			namespace: "global",
 		});
 		expect(listedResult.value).toHaveLength(1);
@@ -231,7 +245,8 @@ describe("Memories", () => {
 			// relations intentionally omitted
 		});
 
-		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
+		const memory = await t
+		.query(api.memories.getMemory, { memoryId });
 		expect(memory).not.toBeNull();
 		if (memory === null) throw new Error("memory must not be null");
 		expect(Array.isArray(memory.relations)).toBe(true);
@@ -261,7 +276,8 @@ describe("Episodes", () => {
 		expect(episodeId).toBeDefined();
 
 		// Retrieve via getMemory to verify structure
-		const memory = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
+		const memory = await t
+		.query(api.memories.getMemory, {
 			memoryId: episodeId,
 		});
 		expect(memory).not.toBeNull();
@@ -319,7 +335,8 @@ describe("Episodes", () => {
 			severity: "critical",
 		});
 
-		const alphaEpisodes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.episodes.listEpisodes, {
+		const alphaEpisodes = await t
+		.query(api.episodes.listEpisodes, {
 			namespace: "project/alpha",
 		});
 
@@ -366,7 +383,8 @@ describe("Episodes", () => {
 			severity: "critical",
 		});
 
-		const criticals = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.episodes.getCriticalInsights, {});
+		const criticals = await t
+		.query(api.episodes.getCriticalInsights, {});
 
 		expect(criticals).toHaveLength(2);
 		expect(criticals.every((c) => c.insight !== undefined)).toBe(true);
@@ -407,7 +425,8 @@ describe("Profiles", () => {
 		);
 		expect(profileId).toBeDefined();
 
-		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
+		const profile = await t
+		.query(api.profiles.getProfile, {
 			orchestratorId: "pi",
 		});
 		expect(profile).not.toBeNull();
@@ -432,7 +451,8 @@ describe("Profiles", () => {
 			},
 		});
 
-		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
+		const profile = await t
+		.query(api.profiles.getProfile, {
 			instanceId: "pi-vps",
 		});
 		expect(profile).not.toBeNull();
@@ -440,7 +460,8 @@ describe("Profiles", () => {
 		expect(profile!.dynamic.sessionCount).toBe(2);
 
 		// Should not create a duplicate — list should have exactly 1
-		const allProfiles = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.listProfiles, {
+		const allProfiles = await t
+		.query(api.profiles.listProfiles, {
 			orchestratorId: "pi",
 		});
 		expect(allProfiles).toHaveLength(1);
@@ -451,7 +472,8 @@ describe("Profiles", () => {
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
-		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
+		const profile = await t
+		.query(api.profiles.getProfile, {
 			orchestratorId: "pi",
 		});
 		expect(profile).not.toBeNull();
@@ -478,7 +500,8 @@ describe("Profiles", () => {
 			},
 		});
 
-		const allProfiles = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.listProfiles, {});
+		const allProfiles = await t
+		.query(api.profiles.listProfiles, {});
 		expect(allProfiles).toHaveLength(2);
 	});
 
@@ -496,7 +519,8 @@ describe("Profiles", () => {
 			sessionCountDelta: 1,
 		});
 
-		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
+		const profile = await t
+		.query(api.profiles.getProfile, {
 			instanceId: "pi-vps",
 		});
 		expect(profile).not.toBeNull();
@@ -519,7 +543,8 @@ describe("Profiles", () => {
 		});
 		const after = Date.now();
 
-		const profile = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.profiles.getProfile, {
+		const profile = await t
+		.query(api.profiles.getProfile, {
 			instanceId: "pi-vps",
 		});
 		expect(profile).not.toBeNull();
@@ -851,7 +876,8 @@ describe("Tasks", () => {
 		const taskId = await t.mutation(api.tasks.create, sampleTask);
 		expect(taskId).toBeDefined();
 
-		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
+		const task = await t
+		.query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.title).toBe("Write unit tests");
 		expect(task!.status).toBe("todo");
@@ -875,8 +901,7 @@ describe("Tasks", () => {
 
 		// tasks.list is gated by withOrgScope — pass master identity (no org)
 		const piTasks = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { assignedTo: "pi" });
+		.query(api.tasks.list, { assignedTo: "pi" });
 		expect(piTasks).toHaveLength(2);
 		expect(piTasks.every((t: { assignedTo: string }) => t.assignedTo === "pi")).toBe(true);
 	});
@@ -893,7 +918,8 @@ describe("Tasks", () => {
 			priority: "urgent",
 		});
 
-		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
+		const task = await t
+		.query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.title).toBe("Write unit tests (updated)");
 		expect(task!.priority).toBe("urgent");
@@ -909,7 +935,8 @@ describe("Tasks", () => {
 			callerOrchestrator: "pi" as const,
 		});
 
-		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
+		const task = await t
+		.query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.status).toBe("in_progress");
 		expect(task!.startedAt).toBeDefined();
@@ -943,7 +970,8 @@ describe("Tasks", () => {
 			completionNote: "All 30 tests pass, coverage at 95%",
 		});
 
-		const task = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.get, { taskId });
+		const task = await t
+		.query(api.tasks.get, { taskId });
 		expect(task).not.toBeNull();
 		expect(task!.status).toBe("done");
 		expect(task!.completedAt).toBeDefined();
@@ -974,7 +1002,8 @@ describe("Missions", () => {
 		const missionId = await t.mutation(api.missions.create, sampleMission);
 		expect(missionId).toBeDefined();
 
-		const mission = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId });
+		const mission = await t
+		.query(api.missions.get, { missionId });
 		expect(mission).not.toBeNull();
 		expect(mission!.name).toBe("Launch VantagePeers v1");
 		expect(mission!.status).toBe("plan");
@@ -1001,8 +1030,7 @@ describe("Missions", () => {
 
 		// missions.list is gated by withOrgScope — pass master identity (no org)
 		const vmMissions = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.missions.list, { project: "vantage-peers" });
+		.query(api.missions.list, { project: "vantage-peers" });
 		expect(vmMissions).toHaveLength(2);
 		expect(vmMissions.every((m) => m.project === "vantage-peers")).toBe(true);
 	});
@@ -1019,7 +1047,8 @@ describe("Missions", () => {
 			progress: 50,
 		});
 
-		const mission = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId });
+		const mission = await t
+		.query(api.missions.get, { missionId });
 		expect(mission).not.toBeNull();
 		expect(mission!.name).toBe("Launch VantagePeers v1.1");
 		expect(mission!.priority).toBe("urgent");
@@ -1036,7 +1065,8 @@ describe("Missions", () => {
 			status: "execute",
 		});
 
-		const mission = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.missions.get, { missionId });
+		const mission = await t
+		.query(api.missions.get, { missionId });
 		expect(mission).not.toBeNull();
 		expect(mission!.status).toBe("execute");
 	});
@@ -1060,7 +1090,8 @@ describe("Diary", () => {
 
 		expect(diaryId).toBeDefined();
 
-		const entry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
+		const entry = await t
+		.query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "pi",
 		});
@@ -1088,7 +1119,8 @@ describe("Diary", () => {
 		// Should return the same ID (upsert)
 		expect(secondId).toBe(firstId);
 
-		const entry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
+		const entry = await t
+		.query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "pi",
 		});
@@ -1112,7 +1144,8 @@ describe("Diary", () => {
 			content: "Tau's diary for March 25",
 		});
 
-		const piEntry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
+		const piEntry = await t
+		.query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "pi",
 		});
@@ -1120,7 +1153,8 @@ describe("Diary", () => {
 		expect(piEntry!.content).toBe("Pi's diary for March 25");
 		expect(piEntry!.orchestrator).toBe("pi");
 
-		const tauEntry = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.get, {
+		const tauEntry = await t
+		.query(api.diary.get, {
 			date: "2026-03-25",
 			orchestrator: "tau",
 		});
@@ -1150,11 +1184,13 @@ describe("Diary", () => {
 		});
 
 		// List all
-		const all = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.list, {});
+		const all = await t
+		.query(api.diary.list, {});
 		expect(all).toHaveLength(3);
 
 		// List by orchestrator
-		const piEntries = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.diary.list, { orchestrator: "pi" });
+		const piEntries = await t
+		.query(api.diary.list, { orchestrator: "pi" });
 		expect(piEntries).toHaveLength(2);
 		expect(piEntries.every((e) => e.orchestrator === "pi")).toBe(true);
 	});
@@ -1183,7 +1219,8 @@ describe("Briefing Notes", () => {
 
 		expect(noteId).toBeDefined();
 
-		const note = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.get, { noteId });
+		const note = await t
+		.query(api.briefingNotes.get, { noteId });
 		expect(note).not.toBeNull();
 		expect(note!.title).toBe("Architecture Review: Memory Layer");
 		expect(note!.topic).toBe("architecture");
@@ -1218,19 +1255,22 @@ describe("Briefing Notes", () => {
 			createdBy: "pi",
 		});
 
-		const archNotes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
+		const archNotes = await t
+		.query(api.briefingNotes.list, {
 			topic: "architecture",
 		});
 		expect(archNotes).toHaveLength(2);
 		expect(archNotes.every((n) => n.topic === "architecture")).toBe(true);
 
-		const planningNotes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
+		const planningNotes = await t
+		.query(api.briefingNotes.list, {
 			topic: "planning",
 		});
 		expect(planningNotes).toHaveLength(1);
 
 		// List all
-		const allNotes = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {});
+		const allNotes = await t
+		.query(api.briefingNotes.list, {});
 		expect(allNotes).toHaveLength(3);
 	});
 });
@@ -1271,7 +1311,8 @@ describe("MCP Tenants", () => {
 		expect(tenantId).toBeDefined();
 
 		// getTenantByTokenHash returns the tenant but enabled=false
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, {
+		const result = await t
+		.query(api.mcpTenants.getTenantByTokenHash, {
 			tokenHash,
 		});
 		expect(result).not.toBeNull();
@@ -1298,7 +1339,8 @@ describe("MCP Tenants", () => {
 			tenantId,
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, {
+		const result = await t
+		.query(api.mcpTenants.getTenantByTokenHash, {
 			tokenHash,
 		});
 		expect(result).not.toBeNull();
@@ -1324,7 +1366,8 @@ describe("MCP Tenants", () => {
 		});
 
 		// Verify enabled first
-		const enabled = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const enabled = await t
+		.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(enabled!.enabled).toBe(true);
 
 		// Now disable
@@ -1333,7 +1376,8 @@ describe("MCP Tenants", () => {
 			tenantId,
 		});
 
-		const disabled = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const disabled = await t
+		.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(disabled).not.toBeNull();
 		expect(disabled!.enabled).toBe(false);
 	});
@@ -1355,7 +1399,8 @@ describe("MCP Tenants", () => {
 			tenantId,
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const result = await t
+		.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(result).toBeNull();
 	});
 
@@ -1375,7 +1420,8 @@ describe("MCP Tenants", () => {
 		await t.mutation(api.mcpTenants.revokeTenant, { callerToken: MASTER_TOKEN, tenantId });
 		await t.mutation(api.mcpTenants.revokeTenant, { callerToken: MASTER_TOKEN, tenantId });
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
+		const result = await t
+		.query(api.mcpTenants.getTenantByTokenHash, { tokenHash });
 		expect(result).toBeNull();
 	});
 
@@ -1383,7 +1429,8 @@ describe("MCP Tenants", () => {
 		const t = createTestConvex();
 
 		const unknownHash = await sha256hex("does-not-exist-token");
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.getTenantByTokenHash, {
+		const result = await t
+		.query(api.mcpTenants.getTenantByTokenHash, {
 			tokenHash: unknownHash,
 		});
 		expect(result).toBeNull();
@@ -1423,7 +1470,8 @@ describe("MCP Tenants", () => {
 			convexUrl: "https://tenant-b.convex.cloud",
 		});
 
-		const tenants = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.mcpTenants.listTenants, {
+		const tenants = await t
+		.query(api.mcpTenants.listTenants, {
 			callerToken: MASTER_TOKEN,
 		});
 		expect(tenants).toHaveLength(2);
@@ -1483,8 +1531,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const liteRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { assignedTo: "pi", fields: "lite" });
+		.query(api.tasks.list, { assignedTo: "pi", fields: "lite" });
 
 		expect(liteRows).toHaveLength(5);
 
@@ -1516,8 +1563,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		// Snapshot: lite payload must be < 50% of full payload by byte size
 		const fullRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
+		.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
 
 		const liteBytes = JSON.stringify(liteRows).length;
 		const fullBytes = JSON.stringify(fullRows).length;
@@ -1533,12 +1579,10 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		await t.mutation(api.tasks.create, { ...baseTask, title: "Full compat task" });
 
 		const noFieldsRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { assignedTo: "pi" });
+		.query(api.tasks.list, { assignedTo: "pi" });
 
 		const fullFieldsRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
+		.query(api.tasks.list, { assignedTo: "pi", fields: "full" });
 
 		// Both must include the full shape fields
 		for (const row of noFieldsRows) {
@@ -1572,8 +1616,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const rows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: ["todo", "in_progress"] });
+		.query(api.tasks.list, { status: ["todo", "in_progress"] });
 
 		expect(rows).toHaveLength(2);
 		expect(rows.some((r: { status: string }) => r.status === "done")).toBe(false);
@@ -1595,12 +1638,10 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const arrayRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: ["todo"] });
+		.query(api.tasks.list, { status: ["todo"] });
 
 		const stringRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: "todo" });
+		.query(api.tasks.list, { status: "todo" });
 
 		expect(arrayRows).toHaveLength(1);
 		expect(stringRows).toHaveLength(1);
@@ -1628,12 +1669,10 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const activeRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: "active" });
+		.query(api.tasks.list, { status: "active" });
 
 		const explicitRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: ["todo", "in_progress"] });
+		.query(api.tasks.list, { status: ["todo", "in_progress"] });
 
 		expect(activeRows).toHaveLength(2);
 		// alias must produce identical result to explicit array
@@ -1656,8 +1695,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const openRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: "open" });
+		.query(api.tasks.list, { status: "open" });
 
 		expect(openRows).toHaveLength(4);
 		expect(openRows.some((r: { status: string }) => r.status === "done")).toBe(false);
@@ -1669,8 +1707,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		await expect(
 			t
-				.withIdentity({ subject: "test-service-account-user-id" })
-				.query(api.tasks.list, { status: ["open", "active"] }),
+		.query(api.tasks.list, { status: ["open", "active"] }),
 		).rejects.toThrow(/alias "open" is not allowed inside an array/);
 	});
 
@@ -1688,12 +1725,10 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const allRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, { status: "all" });
+		.query(api.tasks.list, { status: "all" });
 
 		const unfilteredRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.tasks.list, {});
+		.query(api.tasks.list, {});
 
 		expect(allRows).toHaveLength(5);
 		expect(allRows.map((r: { _id: string }) => r._id).sort()).toEqual(
@@ -1705,8 +1740,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		const t = createTestConvex();
 		await expect(
 			t
-				.withIdentity({ subject: "test-service-account-user-id" })
-				.query(api.tasks.list, { status: ["all"] }),
+		.query(api.tasks.list, { status: ["all"] }),
 		).rejects.toThrow(/alias "all" is not allowed inside an array/);
 	});
 
@@ -1716,8 +1750,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 		await expect(
 			t
-				.withIdentity({ subject: "test-service-account-user-id" })
-				.query(api.tasks.list, { status: "bogus" }),
+		.query(api.tasks.list, { status: "bogus" }),
 		).rejects.toThrow(/invalid status: "bogus"/);
 	});
 
@@ -1751,8 +1784,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const openRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.missions.list, { status: "open" });
+		.query(api.missions.list, { status: "open" });
 
 		expect(openRows).toHaveLength(2);
 		expect(openRows.some((m: { status: string }) => m.status === "complete")).toBe(false);
@@ -1792,8 +1824,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const activeRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.missions.list, { status: "active" });
+		.query(api.missions.list, { status: "active" });
 
 		expect(activeRows).toHaveLength(2);
 		expect(activeRows.every((m: { status: string }) => ["plan", "execute"].includes(m.status))).toBe(true);
@@ -1822,8 +1853,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		}
 
 		const allRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.missions.list, { status: "all" });
+		.query(api.missions.list, { status: "all" });
 
 		expect(allRows).toHaveLength(5);
 	});
@@ -1832,8 +1862,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		const t = createTestConvex();
 		await expect(
 			t
-				.withIdentity({ subject: "test-service-account-user-id" })
-				.query(api.missions.list, { status: ["all"] }),
+		.query(api.missions.list, { status: ["all"] }),
 		).rejects.toThrow(/alias "all" is not allowed inside an array/);
 	});
 
@@ -1854,8 +1883,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		});
 
 		const liteRows = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
-			.query(api.missions.list, { fields: "lite" });
+		.query(api.missions.list, { fields: "lite" });
 
 		expect(liteRows).toHaveLength(1);
 		const row = liteRows[0];
@@ -1893,7 +1921,8 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 			createdBy: "tau",
 		});
 
-		const liteRows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, { fields: "lite" });
+		const liteRows = await t
+		.query(api.briefingNotes.list, { fields: "lite" });
 
 		expect(liteRows).toHaveLength(2);
 
@@ -1943,7 +1972,8 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 			missionId,
 		});
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listByMission, {
+		const rows = await t
+		.query(api.tasks.listByMission, {
 			missionId,
 			status: "active",
 			fields: "lite",
@@ -2003,7 +2033,8 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			title: "sigma-2",
 		});
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
+		const rows = await t
+		.query(api.tasks.list, {
 			createdBy: "sigma",
 			fields: "lite",
 			limit: 100,
@@ -2036,7 +2067,8 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			assignedTo: "sigma",
 		});
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
+		const rows = await t
+		.query(api.tasks.list, {
 			createdBy: "pi",
 			assignedTo: "sigma",
 			limit: 100,
@@ -2062,7 +2094,8 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			title: "new-task",
 		});
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
+		const rows = await t
+		.query(api.tasks.list, {
 			updatedSince: cutoff,
 			limit: 100,
 		});
@@ -2083,7 +2116,8 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			});
 		}
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, { assignedTo: "sigma" });
+		const rows = await t
+		.query(api.tasks.list, { assignedTo: "sigma" });
 		expect(rows.length).toBeLessThanOrEqual(30);
 	});
 
@@ -2097,7 +2131,8 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			});
 		}
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
+		const rows = await t
+		.query(api.tasks.list, {
 			assignedTo: "sigma",
 			fields: "lite",
 		});
@@ -2115,7 +2150,8 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 			});
 		}
 
-		const rows = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
+		const rows = await t
+		.query(api.tasks.list, {
 			assignedTo: "sigma",
 			limit: 50,
 		});

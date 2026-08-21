@@ -195,7 +195,7 @@ http.route({
 				return true;
 			});
 			if (coveringTask) {
-				await ctx.runMutation(api.tasks.create, {
+				await ctx.runMutation(internal.tasks.createForWebhook, {
 					title: `[Bridge #${issue.number as number}] covered by task ${coveringTask._id}`,
 					description: `New GitHub issue #${issue.number as number} "${issue.title as string}" detected by webhook. Existing open task ${coveringTask._id} ("${coveringTask.title}") already references this issue in its scope — no T0..T(N-1) cascade spawned (Day 98 multi-issue collapse).\n\nWhen the covering task closes, manually verify this issue is resolved + close on GitHub. The auto-resolver (Mechanism c) will cascade-close this Bridge once the covering task is done AND the GH issue is closed.\n\nIssue: ${issue.html_url as string}\nIssue author: @${(issue.user as Record<string, unknown>).login as string}\nRepo: ${repoFullName}`,
 					assignedTo: orchestratorAssignee,
@@ -235,7 +235,7 @@ http.route({
 					const isLastStep = i === template.steps.length - 1;
 					const assignee: AssigneeLiteral = isLastStep ? "eta" : orchestratorAssignee;
 
-					await ctx.runMutation(api.tasks.create, {
+					await ctx.runMutation(internal.tasks.createForWebhook, {
 						title: `[#${issue.number as number}] T${i} — ${step.title}`,
 						description: `${step.description}\n\nIssue: ${issue.html_url as string}\nIssue author: @${(issue.user as Record<string, unknown>).login as string}\nRepo: ${repoFullName}`,
 						assignedTo: assignee,
@@ -379,7 +379,7 @@ http.route({
 
 			// Create mention task if @elpiarthera mentioned
 			if (commentBody.includes("@elpiarthera")) {
-				await ctx.runMutation(api.tasks.create, {
+				await ctx.runMutation(internal.tasks.createForWebhook, {
 					title: `[GitHub #${issue.number as number}] Mentioned: ${issue.title as string}`,
 					description: `Comment by ${(comment.user as Record<string, unknown>).login as string}: ${commentBody}\n\nURL: ${comment.html_url as string}`,
 					assignedTo: orchestratorAssignee,
@@ -402,7 +402,7 @@ http.route({
 			// producing ~56 stale tasks across 4 PRs (Day 99 friction harvest).
 			if (issue.state !== "closed") {
 				const commentIssueNumber = issue.number as number;
-				await ctx.runMutation(api.tasks.create, {
+				await ctx.runMutation(internal.tasks.createForWebhook, {
 					title: `[Bridge #${commentIssueNumber}] comment on issue "${(issue.title as string).slice(0, 60)}"`,
 					description: `New comment on GitHub issue #${commentIssueNumber} by ${(comment.user as Record<string, unknown>).login as string}.\n\nComment: ${commentBody.slice(0, 500)}${commentBody.length > 500 ? "..." : ""}\n\nIssue: ${issue.html_url as string}\nComment: ${comment.html_url as string}\nRepo: ${repoFullName}\n\n[Day 98 F4] Bridge task only — check if issue #${commentIssueNumber} is already covered by an existing IRP mission. If yes, close this task. If no, escalate to ${orchestrator}.`,
 					assignedTo: orchestratorAssignee,
@@ -423,7 +423,7 @@ http.route({
 			const issue = payload.issue as Record<string, unknown>;
 			const assignee = payload.assignee as Record<string, unknown> | undefined;
 			if (assignee?.login === "elpiarthera") {
-				await ctx.runMutation(api.tasks.create, {
+				await ctx.runMutation(internal.tasks.createForWebhook, {
 					title: `[GitHub #${issue.number as number}] Assigned: ${issue.title as string}`,
 					description: `Assigned to elpiarthera\n\nURL: ${issue.html_url as string}`,
 					assignedTo: orchestratorAssignee,

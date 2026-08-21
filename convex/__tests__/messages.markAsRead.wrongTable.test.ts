@@ -83,7 +83,7 @@ describe("decodePayload — both runtime shapes of ConvexError.data", () => {
 
 describe("markAsRead — wrong-table ID (issue #1064)", () => {
 	test("rejects a messages-table ID at position [1] with an actionable ConvexError payload", async () => {
-		const t = createT();
+		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "tau",
@@ -144,7 +144,7 @@ describe("markAsRead — wrong-table ID (issue #1064)", () => {
 	});
 
 	test("positive control: a real messageReceipts id passes and returns the expected count", async () => {
-		const t = createT();
+		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "pi",
@@ -171,7 +171,7 @@ describe("markAsRead — wrong-table ID (issue #1064)", () => {
 	});
 
 	test("negative control: an id from a THIRD table (tasks) at position [0] is rejected with receiptIds[0]", async () => {
-		const t = createT();
+		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
 
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Unrelated task — wrong-table probe",

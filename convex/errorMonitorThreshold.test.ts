@@ -39,7 +39,12 @@ afterEach(() => {
 });
 
 function createTestConvex() {
-	return convexTest(schema, modules);
+	// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — task
+	// mutations now require a verified identity; seed with the master
+	// service-account identity.
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

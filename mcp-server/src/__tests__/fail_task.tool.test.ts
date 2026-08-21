@@ -76,7 +76,7 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 	let tools: Map<string, CapturedTool>;
 
 	beforeAll(() => {
-		t = convexTest(schema as never, modules as never);
+		t = convexTest(schema as never, modules as never).withIdentity({ subject: "test-service-account-user-id" });
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 

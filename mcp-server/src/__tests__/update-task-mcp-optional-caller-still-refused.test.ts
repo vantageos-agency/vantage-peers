@@ -82,7 +82,7 @@ describe("update_task MCP tool — callerOrchestrator optional at the schema, st
 	let tools: Map<string, CapturedTool>;
 
 	beforeAll(() => {
-		t = convexTest(schema as never, modules as never);
+		t = convexTest(schema as never, modules as never).withIdentity({ subject: "test-service-account-user-id" });
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 

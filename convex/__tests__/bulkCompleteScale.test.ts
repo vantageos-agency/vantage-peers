@@ -31,7 +31,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createT = () => convexTest(schema, modules);
+function createT(): ReturnType<typeof convexTest> {
+	return convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	}) as unknown as ReturnType<typeof convexTest>;
+}
 
 async function seedCronSpam(
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,7 +145,8 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 		expect(result.count).toBe(10);
 
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const stillInProgress: any[] = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
+		const stillInProgress: any[] = await t
+		.query(api.tasks.list, {
 			assignedTo,
 			status: "in_progress",
 			limit: 50,
