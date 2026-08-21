@@ -64,6 +64,20 @@ export type OAuthContext = {
 	 * there for why that is fail-closed-safe.
 	 */
 	clerkJwt?: string;
+	/**
+	 * SHA-256 hex of the OAuth access token presented on this request —
+	 * set ONLY on auth path (2) after oauth:getAccessTokenByHash hits.
+	 * The roster query derives the organisation from the token ROW keyed
+	 * by this hash. It is a credential locator, not an organisation id.
+	 */
+	accessTokenHash?: string;
+	/**
+	 * Organisation slug snapshotted onto the access-token row at mint.
+	 * Presence selects the token-derived roster path; absence on a
+	 * non-Clerk caller is the #1215 refuse. Never passed as a Convex
+	 * query argument.
+	 */
+	clerkOrgSlug?: string;
 };
 
 declare module "hono" {
@@ -261,26 +275,19 @@ export function checkFromAllowed(
  *     is itself the wildcard (a genuinely open org, same semantics as
  *     `isMaster = allowedOrchestrators.includes("*")` elsewhere in Convex,
  *     convex/lib/auth.ts).
- *   - non-master AND `ctx.clerkJwt` ABSENT (OAuth-scoped access tokens,
- *     DCR client-generic, legacy mcpTenants legacy-tenant-generic — every
- *     path OTHER than 2.5) → REFUSE LOUDLY, `getOrgRoster` is NEVER called.
- *     ETA-M15: these paths route Convex calls through the MCP server's own
- *     SERVICE-ACCOUNT client (selectConvexClientForRequest falls back to
- *     `createServiceAccountConvexClient` whenever `clerkJwt` is absent).
- *     `withOrgScope` resolves THAT identity via the
- *     `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out to
- *     `allowedOrchestrators = ["*"]` — the SERVICE ACCOUNT's roster, not the
- *     caller's. Treating that "*" as "an open org" (a prior, reverted fix)
- *     inverted a deny-everything bug into an allow-everything-cross-org leak
- *     for the entire non-Clerk-JWT class of caller (client-generic + legacy-
- *     tenant-generic are both deny-by-default profiles). The caller's own
- *     organisation genuinely cannot be resolved without a verified identity
- *     to resolve it FROM — refusing loudly, naming the reason, is correct
- *     here; there is no tolerant fallback that isn't a silent skew window
- *     (a guard that opens when its instrument is missing hides the failure).
+ *   - non-master AND `ctx.clerkJwt` ABSENT AND the access token carries
+ *     `accessTokenHash` + `clerkOrgSlug` → `getOrgRoster` MUST resolve via
+ *     `orgRoster:getForAccessToken({ tokenHash })` (org derived inside
+ *     Convex from that token row). Never `getMyOrgRoster` (service-account
+ *     `["*"]` is ETA-M15).
+ *   - non-master AND `ctx.clerkJwt` ABSENT AND no token org claim
+ *     (DCR client-generic, legacy mcpTenants, unattached OAuth profiles)
+ *     → REFUSE LOUDLY, `getOrgRoster` is NEVER called. ETA-M15: these paths
+ *     route Convex through the MCP service-account; treating its `["*"]`
+ *     as the caller org is the leak.
  *
- * Async because it performs a data read (only on the clerkJwt-present
- * branch). `ctx` undefined (direct predicate call, e.g. unit tests without a
+ * Async because it performs a data read (clerkJwt path or token-hash path).
+ * `ctx` undefined (direct predicate call, e.g. unit tests without a
  * bearerAuthMiddleware pass) allows through, matching the other check*
  * predicates' no-context convention.
  */
@@ -292,13 +299,15 @@ export async function checkDelegationAllowed(
 	if (!ctx) return null;
 	if (isMasterScope(ctx)) return null;
 	if (!ctx.clerkJwt) {
-		return (
-			`Forbidden: cannot authorize delegation to assignedTo='${assignedTo}' ` +
-			`(scope_profile=${ctx.scopeProfile}) — this caller has no verified ` +
-			"Clerk session attached, so its own organisation cannot be resolved " +
-			"from data. Refusing rather than granting an unresolved roster " +
-			"(ETA-M15: the service-account's wildcard roster is not the caller's)."
-		);
+		if (!ctx.accessTokenHash || !ctx.clerkOrgSlug) {
+			return (
+				`Forbidden: cannot authorize delegation to assignedTo='${assignedTo}' ` +
+				`(scope_profile=${ctx.scopeProfile}) — this caller has no verified ` +
+				"Clerk session attached, so its own organisation cannot be resolved " +
+				"from data. Refusing rather than granting an unresolved roster " +
+				"(ETA-M15: the service-account's wildcard roster is not the caller's)."
+			);
+		}
 	}
 	const roster = await getOrgRoster();
 	if (roster.includes("*")) return null; // the CALLER's own org is itself open
@@ -547,6 +556,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			c.set("oauthContext", {
 				...oauth,
 				isMaster: false,
+				accessTokenHash: tokenHash,
 			});
 			await next();
 			return;

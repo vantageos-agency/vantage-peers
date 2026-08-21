@@ -65,6 +65,7 @@ const scopeProfileShape = v.object({
 	fromAllowList: v.array(v.string()),
 	namespaceReadPrefixes: v.array(v.string()),
 	namespaceWritePrefixes: v.array(v.string()),
+	clerkOrgSlug: v.optional(v.string()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -459,6 +460,9 @@ export const getScopeProfile = query({
 			fromAllowList: row.fromAllowList,
 			namespaceReadPrefixes: row.namespaceReadPrefixes,
 			namespaceWritePrefixes: row.namespaceWritePrefixes,
+			...(row.clerkOrgSlug !== undefined
+				? { clerkOrgSlug: row.clerkOrgSlug }
+				: {}),
 		};
 	},
 });
@@ -794,6 +798,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 				fromAllowList: newProfile.fromAllowList,
 				namespaceReadPrefixes: newProfile.namespaceReadPrefixes,
 				namespaceWritePrefixes: newProfile.namespaceWritePrefixes,
+				clerkOrgSlug: newProfile.clerkOrgSlug,
 			});
 			refreshed++;
 		}
@@ -1013,6 +1018,7 @@ export const createAccessToken = mutation({
 		namespaceWritePrefixes: v.array(v.string()),
 		expiresAt: v.number(),
 		refreshTokenHash: v.optional(v.string()),
+		clerkOrgSlug: v.optional(v.string()),
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
@@ -1029,6 +1035,9 @@ export const createAccessToken = mutation({
 			expiresAt: args.expiresAt,
 			refreshTokenHash: args.refreshTokenHash,
 			createdAt: Date.now(),
+			...(args.clerkOrgSlug !== undefined
+				? { clerkOrgSlug: args.clerkOrgSlug }
+				: {}),
 		});
 	},
 });
@@ -1043,6 +1052,7 @@ const oauthContextShape = v.object({
 	namespaceReadPrefixes: v.array(v.string()),
 	namespaceWritePrefixes: v.array(v.string()),
 	expiresAt: v.number(),
+	clerkOrgSlug: v.optional(v.string()),
 });
 
 export const getAccessTokenByHash = query({
@@ -1065,6 +1075,9 @@ export const getAccessTokenByHash = query({
 			namespaceReadPrefixes: row.namespaceReadPrefixes,
 			namespaceWritePrefixes: row.namespaceWritePrefixes,
 			expiresAt: row.expiresAt,
+			...(row.clerkOrgSlug !== undefined
+				? { clerkOrgSlug: row.clerkOrgSlug }
+				: {}),
 		};
 	},
 });

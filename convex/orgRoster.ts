@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import { withOrgScope } from "./lib/auth";
 
@@ -24,5 +24,55 @@ export const getMyOrgRoster = query({
 	handler: async (ctx) => {
 		const scope = await withOrgScope(ctx);
 		return scope.allowedOrchestrators;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getForAccessToken — roster for a provisioned OAuth access token.
+//
+// Constraint, not a trust (Pi REVISE e936a5eb): NO organisation argument.
+// The organisation is derived INSIDE this query from the oauth_access_tokens
+// row keyed by THIS request's token hash. A caller cannot name another org.
+//
+// Does NOT consult withOrgScope for the roster. The MCP OAuth path
+// authenticates to Convex as the service account; withOrgScope on that
+// identity is ["*"] (ETA-M15). Using it here would re-open the leak.
+// ─────────────────────────────────────────────────────────────────────────────
+export const getForAccessToken = query({
+	args: { tokenHash: v.string() },
+	returns: v.array(v.string()),
+	handler: async (ctx, args) => {
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) {
+			throw new ConvexError(
+				"AUTH_REQUIRED: no verified identity — cannot resolve an org roster from an unauthenticated call",
+			);
+		}
+
+		const token = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+			.unique();
+		if (!token || token.revokedAt !== undefined || token.expiresAt < Date.now()) {
+			throw new ConvexError(
+				"RBAC_DENIED: access token not found, revoked, or expired",
+			);
+		}
+
+		const slug = token.clerkOrgSlug;
+		if (!slug) {
+			return [];
+		}
+
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+			.first();
+		if (!mapping || !mapping.isActive) {
+			throw new ConvexError(
+				`RBAC_DENIED: Org "${slug}" not in client_org_mapping or inactive`,
+			);
+		}
+		return mapping.allowedOrchestrators;
 	},
 });
