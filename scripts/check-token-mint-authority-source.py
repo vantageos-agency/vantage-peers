@@ -128,6 +128,28 @@ def read_lines(rel_path: str, start: int, end: int) -> str:
 	return "\n".join(lines[max(0, start - 1) : end])
 
 
+def refuse_if_unreadable(rel_path: str, path_id: int) -> bool:
+	"""Prints a REFUSING TO JUDGE line and returns True if `rel_path` is
+	missing, empty, or blank — the subject of an ANALYSED path this check
+	classifies live. Every ANALYSED path's subject file MUST go through this
+	guard before classification: an emptied/deleted subject must exit 2, not
+	silently classify an empty string as UNKNOWN/PASS (Eta ETA-M37/M38)."""
+	subject_path = REPO_ROOT / rel_path
+	if not subject_path.exists() or subject_path.stat().st_size == 0:
+		print(
+			f"REFUSING TO JUDGE: unreadable subject {rel_path} "
+			f"(missing or empty) — cannot classify path ({path_id})"
+		)
+		return True
+	if not subject_path.read_text(encoding="utf-8").strip():
+		print(
+			f"REFUSING TO JUDGE: unreadable subject {rel_path} "
+			f"(blank content) — cannot classify path ({path_id})"
+		)
+		return True
+	return False
+
+
 def run_inventory() -> int:
 	paths = [
 		{
@@ -191,20 +213,9 @@ def run_inventory() -> int:
 			print(f"  ({p['id']}) {p['name']}: SKIPPED — {p['reason']}")
 			continue
 		if p["id"] == 4:
-			subject_path = REPO_ROOT.joinpath(p["file"])
-			if not subject_path.exists() or subject_path.stat().st_size == 0:
-				print(
-					f"REFUSING TO JUDGE: unreadable subject {p['file']} "
-					"(missing or empty) — cannot classify path (4)"
-				)
+			if refuse_if_unreadable(p["file"], p["id"]):
 				return 2
-			text = subject_path.read_text(encoding="utf-8")
-			if not text.strip():
-				print(
-					f"REFUSING TO JUDGE: unreadable subject {p['file']} "
-					"(blank content) — cannot classify path (4)"
-				)
-				return 2
+			text = (REPO_ROOT / p["file"]).read_text(encoding="utf-8")
 			# Locate the Clerk-JWT branch specifically (case 2.5) rather than the
 			# whole file, so an unrelated match elsewhere in the file can't flip
 			# this classification.
@@ -215,7 +226,7 @@ def run_inventory() -> int:
 					f"{p['file']} — cannot classify path (4)"
 				)
 				return 2
-			branch_text = text[idx:idx + 4000] if idx != -1 else text
+			branch_text = text[idx : idx + 4000]
 			has_join = p["marker_post"] in branch_text
 			result = "PASS" if has_join else "BLOCK"
 			print(f"  ({p['id']}) {p['name']}: ANALYSED — live classification: {result}")
@@ -223,9 +234,23 @@ def run_inventory() -> int:
 				ok = False
 				print(f"      BLOCKING: {p['note']}")
 		else:
+			# Paths (1)/(2) — server-http.ts is an ANALYSED subject (it is
+			# recorded and classified for visibility even though this task's
+			# scope does not remediate it — RULE #21 verification != activation).
+			# An emptied/deleted server-http.ts must refuse to judge (exit 2),
+			# never silently classify "" as UNKNOWN and continue to
+			# OVERALL PASS (Eta's B2 finding).
+			if refuse_if_unreadable(p["file"], p["id"]):
+				return 2
 			start, end = p["lines"]
 			snippet = read_lines(p["file"], start, end)
-			result = classify(snippet) if snippet else "UNKNOWN"
+			if not snippet.strip():
+				print(
+					f"REFUSING TO JUDGE: lines {start}-{end} of {p['file']} "
+					f"are empty/out of range — cannot classify path ({p['id']})"
+				)
+				return 2
+			result = classify(snippet)
 			print(
 				f"  ({p['id']}) {p['name']}: ANALYSED — live classification: {result} "
 				f"({p['note']})"
