@@ -16,7 +16,7 @@ Check unread VantagePeers messages and, in autonomous mode, auto-pick the next u
 
 ## SILENCE CONTRACT (read this first)
 
-A cron firing that finds NOTHING NEW produces **ZERO text output. Not one word.** No "court", no "ok", no "standby", no summary, no echo of any style instruction. Text costs quota at every cron firing, around the clock, across the whole fleet. The ONLY legal outputs of this skill are: (a) displayed messages when messages exist, (b) a standby block when the blocked/queue STATE CHANGED since the previous firing, (c) task execution output. Everything else is silence.
+A cron firing that finds NOTHING NEW produces **ZERO text output. Not one word.** Exception: `stuckInProgress` / `peersStuckOnYou` non-empty is NEW — send `[BLOCKER]` to `channel=pi`. Never Vide. No "court", no "ok", no "standby", no summary, no echo of any style instruction. Text costs quota at every cron firing, around the clock, across the whole fleet. The ONLY legal outputs of this skill are: (a) displayed messages when messages exist, (b) a standby block when the blocked/queue STATE CHANGED since the previous firing, (c) task execution output. Everything else is silence.
 
 Failure mode this closes: orchestrators emitting a literal one-word reply ("court") on every cron firing, some in endless self-chaining loops — pure quota burn observed fleet-wide.
 
@@ -31,8 +31,9 @@ Failure mode this closes: orchestrators emitting a literal one-word reply ("cour
 
 1. Detect role + instanceId from CLAUDE.md / hostname.
 2. `mcp__vantage-peers__check_messages` with recipient + recipientInstanceId.
-3. If no messages → Step 3 (autonomous) or say "No new messages" (human).
-4. If messages exist:
+3. If the envelope has `stuckInProgress` or `peersStuckOnYou` with length > 0: this is NOT empty. Display the stuck lists. Autonomous mode MUST `send_message` `channel=pi` with `[BLOCKER] task <full 32-char taskId>` citing the stuck ids this firing. **Vide banned** when stuck is present — an empty unread list is not an empty result. Grok 5m loop: same rule; never print Vide / EMPTY / "No new messages" while stuckInProgress is non-empty.
+4. If no messages AND no stuck lists → Step 3 (autonomous) or say "No new messages" (human).
+5. If messages exist:
    - Display each as `[from] (fromInstanceId): content`.
    - `mcp__vantage-peers__mark_as_read` all receiptIds.
    - Respond via `send_message` to any that ask a question or request action.

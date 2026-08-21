@@ -209,13 +209,81 @@ export async function getStaleInProgressThresholdMs(
 }
 
 /**
- * Bound on the blocked-task scan in computePendingOnYou — mirrors the
- * assignee-scoped index scan of computeStaleInProgress. There is no
- * `by_createdBy` index on `tasks`, so this scans the `by_status` index
- * (status, createdAt) newest-first and caps at PENDING_ON_YOU_SCAN_CAP rows
- * rather than collecting every blocked task fleet-wide.
+ * Matching rows returned in CappedList.entries. The walk keeps going past
+ * this cap so `total` is the match count (or a lower bound if truncated).
  */
-const PENDING_ON_YOU_SCAN_CAP = 200;
+export const MATCH_ENTRY_CAP = 200;
+
+/**
+ * Max documents visited on a by_status / by_assignee walk. Hitting this
+ * before the index is exhausted sets truncated=true; total is then a
+ * lower bound. There is no by_createdBy index (RULE #24).
+ */
+export const STATUS_SCAN_BUDGET = 4000;
+
+export type CappedList<T> = {
+	entries: T[];
+	total: number;
+	truncated: boolean;
+};
+
+/**
+ * Convex runtime: only one page-cursor per function execution
+ * (convex/stats.ts fleetStats — live refuse: a second page-cursor,
+ * even from a nested ctx.runQuery, throws "This query or mutation
+ * function ran multiple page-cursor queries"). checkNewMessagesEnvelope
+ * Promise.alls computeStuckInProgress + computePeersStuckOnYou, so this
+ * walk MUST use `for await` async iteration, which has no such
+ * restriction. Filter inside the stream — never take(CAP) then filter
+ * (ETA-M28).
+ */
+async function walkIndexedTasks(
+	stream: AsyncIterable<Doc<"tasks">>,
+	visit: (task: Doc<"tasks">) => void,
+): Promise<{ truncated: boolean }> {
+	let scanned = 0;
+	let truncated = false;
+	for await (const task of stream) {
+		scanned += 1;
+		if (scanned > STATUS_SCAN_BUDGET) {
+			truncated = true;
+			break;
+		}
+		visit(task);
+	}
+	return { truncated };
+}
+
+/**
+ * Newest-first by_status walk. Filter inside the stream — never
+ * take(CAP) then filter, which drops older createdBy matches behind
+ * newer non-matches (ETA-M28).
+ */
+async function scanByStatusMatching<T>(
+	ctx: QueryCtx | MutationCtx,
+	status: "in_progress" | "blocked",
+	matches: (task: Doc<"tasks">) => boolean,
+	toEntry: (task: Doc<"tasks">) => T,
+): Promise<CappedList<T>> {
+	const entries: T[] = [];
+	let total = 0;
+
+	const { truncated } = await walkIndexedTasks(
+		ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", status))
+			.order("desc"),
+		(task) => {
+			if (!matches(task)) return;
+			total += 1;
+			if (entries.length < MATCH_ENTRY_CAP) {
+				entries.push(toEntry(task));
+			}
+		},
+	);
+
+	return { entries, total, truncated };
+}
 
 /**
  * Day 154 (k17fj34st7jp61tx1va2x46qq98btfxc, doctrine derive-never-type) —
@@ -294,40 +362,36 @@ export async function getPendingOnYouCycleMs(
  * field. If that signal is needed, it should be added as its own bounded
  * scan, not folded into this one silently.
  *
- * Bound: scans the `by_status` (status, createdAt) index, newest-first,
- * capped at PENDING_ON_YOU_SCAN_CAP rows — never an unbounded `.collect()`.
+ * Bound: walks `by_status` (status, createdAt) newest-first via `for
+ * await` (not a page-cursor — one cursor per function; see
+ * walkIndexedTasks), filters createdBy inside the walk, caps returned
+ * entries at MATCH_ENTRY_CAP, and counts `total` until the index is
+ * exhausted or STATUS_SCAN_BUDGET documents have been read.
  */
 export async function computePendingOnYou(
 	ctx: QueryCtx | MutationCtx,
 	caller: string,
 	now: number,
-): Promise<PendingOnYouEntry[]> {
+): Promise<CappedList<PendingOnYouEntry>> {
 	const cycleMs = await getPendingOnYouCycleMs(ctx);
 
-	const blockedTasks = await ctx.db
-		.query("tasks")
-		.withIndex("by_status", (q) => q.eq("status", "blocked"))
-		.order("desc")
-		.take(PENDING_ON_YOU_SCAN_CAP);
-
-	const entries: PendingOnYouEntry[] = [];
-	for (const task of blockedTasks) {
-		if (task.createdBy !== caller) continue;
-		// Day 154 — dormant/parked tasks are structurally excluded from BOTH
-		// pendingOnYou and slaBreached (never surfaced as an entry at all).
-		if (isDormant(task)) continue;
-		const age = now - task.updatedAt;
-		const cyclesWaiting = Math.floor(age / cycleMs);
-		entries.push({
-			taskId: task._id,
-			title: task.title,
-			assignee: task.assignedTo,
-			age,
-			cyclesWaiting,
-			slaBreached: cyclesWaiting >= SLA_BREACH_CYCLES,
-		});
-	}
-	return entries;
+	return scanByStatusMatching(
+		ctx,
+		"blocked",
+		(task) => task.createdBy === caller && !isDormant(task),
+		(task) => {
+			const age = now - task.updatedAt;
+			const cyclesWaiting = Math.floor(age / cycleMs);
+			return {
+				taskId: task._id,
+				title: task.title,
+				assignee: task.assignedTo,
+				age,
+				cyclesWaiting,
+				slaBreached: cyclesWaiting >= SLA_BREACH_CYCLES,
+			};
+		},
+	);
 }
 
 export type StaleInProgressEntry = {
@@ -368,4 +432,66 @@ export async function computeStaleInProgress(
 		}
 	}
 	return entries;
+}
+
+function toStuckEntry(
+	task: Doc<"tasks">,
+	now: number,
+): StaleInProgressEntry {
+	const reference = task.startedAt ?? task._creationTime;
+	return { taskId: task._id, title: task.title, age: now - reference };
+}
+
+/**
+ * Live in_progress tasks assigned to `recipient`, any age.
+ *
+ * Distinct from computeStaleInProgress: no 24h threshold. A task stuck for
+ * minutes (T4) must surface here; waiting for staleInProgress is too late.
+ *
+ * Assignee-scoped (`by_assignee`). truncated iff this scan stopped early.
+ */
+export async function computeStuckInProgress(
+	ctx: QueryCtx | MutationCtx,
+	recipient: string,
+	now: number,
+): Promise<CappedList<StaleInProgressEntry>> {
+	const entries: StaleInProgressEntry[] = [];
+	let total = 0;
+
+	const { truncated } = await walkIndexedTasks(
+		ctx.db
+			.query("tasks")
+			.withIndex("by_assignee", (q) =>
+				q.eq("assignedTo", recipient).eq("status", "in_progress"),
+			)
+			.order("desc"),
+		(task) => {
+			total += 1;
+			if (entries.length < MATCH_ENTRY_CAP) {
+				entries.push(toStuckEntry(task, now));
+			}
+		},
+	);
+
+	return { entries, total, truncated };
+}
+
+/**
+ * in_progress tasks the caller owns as createdBy that are assigned to
+ * someone else — work stuck on a peer, visible to the unblock authority.
+ *
+ * Same by_status walk as computePendingOnYou (scanByStatusMatching) so the
+ * take-then-filter class cannot fork.
+ */
+export async function computePeersStuckOnYou(
+	ctx: QueryCtx | MutationCtx,
+	caller: string,
+	now: number,
+): Promise<CappedList<StaleInProgressEntry>> {
+	return scanByStatusMatching(
+		ctx,
+		"in_progress",
+		(task) => task.createdBy === caller && task.assignedTo !== caller,
+		(task) => toStuckEntry(task, now),
+	);
 }

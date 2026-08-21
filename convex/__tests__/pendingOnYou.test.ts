@@ -8,8 +8,9 @@
  * k17c4ejer172fgj9t1h027hswn8bvv4w, categorical decision): "les messages
  * ce sont des messages, pas de liste de tâches dans un retour check
  * message." — the pendingOnYou/slaBreached fields are REMOVED from the
- * envelope. `check_messages` now returns messages + pagination +
- * staleInProgress only.
+ * envelope. `check_messages` returns messages + pagination +
+ * staleInProgress + stuckInProgress + peersStuckOnYou. Do not revive
+ * pendingOnYou*.
  *
  * `computePendingOnYou`/`getSlaBreachedTopN`/`isDormant` in
  * `convex/lib/taskClosureGate.ts` are left intact (unwired, not deleted) —
@@ -63,7 +64,7 @@ async function seedBlockedTaskWithAge(
 }
 
 describe("checkNewMessagesEnvelope — no pendingOnYou/slaBreached fields (Laurent k17c4ejer172fgj9t1h027hswn8bvv4w)", () => {
-	test("envelope keys are exactly messages/truncated/nextSince/staleInProgress — no task-list fields", async () => {
+	test("envelope keys include stuck siblings and still exclude pendingOnYou*", async () => {
 		const t = convexTest(schema, modules);
 		await seedBlockedTaskWithAge(
 			t,
@@ -81,7 +82,14 @@ describe("checkNewMessagesEnvelope — no pendingOnYou/slaBreached fields (Laure
 		expect(result).not.toHaveProperty("slaBreachedTotal");
 		expect(result).not.toHaveProperty("slaBreachedTop");
 		expect(Object.keys(result).sort()).toEqual(
-			["messages", "nextSince", "staleInProgress", "truncated"].sort(),
+			[
+				"messages",
+				"nextSince",
+				"peersStuckOnYou",
+				"staleInProgress",
+				"stuckInProgress",
+				"truncated",
+			].sort(),
 		);
 	});
 });
@@ -99,12 +107,14 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 			0,
 		);
 
-		const entries = await t.run(async (ctx: any) =>
+		const result = await t.run(async (ctx: any) =>
 			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		expect(entries.length).toBe(1);
-		expect(entries[0].slaBreached).toBe(false);
+		expect(result.entries.length).toBe(1);
+		expect(result.entries[0].slaBreached).toBe(false);
+		expect(result.total).toBe(1);
+		expect(result.truncated).toBe(false);
 	});
 
 	test("NEG: blocked task created by someone else → NOT listed for the caller", async () => {
@@ -117,11 +127,12 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 			0,
 		);
 
-		const entries = await t.run(async (ctx: any) =>
+		const result = await t.run(async (ctx: any) =>
 			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		expect(entries.length).toBe(0);
+		expect(result.entries.length).toBe(0);
+		expect(result.total).toBe(0);
 	});
 
 	test("POS: age >= 3 cycles → slaBreached true", async () => {
@@ -134,13 +145,14 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 			3 * CYCLE_MS + 60_000,
 		);
 
-		const entries = await t.run(async (ctx: any) =>
+		const result = await t.run(async (ctx: any) =>
 			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		expect(entries.length).toBe(1);
-		expect(entries[0].slaBreached).toBe(true);
-		expect(entries[0].cyclesWaiting).toBeGreaterThanOrEqual(3);
+		expect(result.entries.length).toBe(1);
+		expect(result.entries[0].slaBreached).toBe(true);
+		expect(result.entries[0].cyclesWaiting).toBeGreaterThanOrEqual(3);
+		expect(result.total).toBe(1);
 	});
 
 	test("NEG: age < 3 cycles → slaBreached false", async () => {
@@ -153,12 +165,13 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 			1 * CYCLE_MS,
 		);
 
-		const entries = await t.run(async (ctx: any) =>
+		const result = await t.run(async (ctx: any) =>
 			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		expect(entries.length).toBe(1);
-		expect(entries[0].slaBreached).toBe(false);
+		expect(result.entries.length).toBe(1);
+		expect(result.entries[0].slaBreached).toBe(false);
+		expect(result.total).toBe(1);
 	});
 
 	test("NEG-excluded: tags=[dormant] → excluded despite SLA-breach age", async () => {
@@ -172,11 +185,12 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 			["dormant"],
 		);
 
-		const entries = await t.run(async (ctx: any) =>
+		const result = await t.run(async (ctx: any) =>
 			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		expect(entries.length).toBe(0);
+		expect(result.entries.length).toBe(0);
+		expect(result.total).toBe(0);
 	});
 
 	test("POS-included (regression guard): non-dormant tags → present with slaBreached true", async () => {
@@ -190,11 +204,48 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 			["security"],
 		);
 
-		const entries = await t.run(async (ctx: any) =>
+		const result = await t.run(async (ctx: any) =>
 			computePendingOnYou(ctx, "victor", Date.now()),
 		);
 
-		expect(entries.length).toBe(1);
-		expect(entries[0].slaBreached).toBe(true);
+		expect(result.entries.length).toBe(1);
+		expect(result.entries[0].slaBreached).toBe(true);
+		expect(result.total).toBe(1);
+	});
+
+	test("class: 1 victor-created blocked + 250 newer omega blocked → entries contains the victor row", async () => {
+		const t = convexTest(schema, modules);
+		const victorId = await seedBlockedTaskWithAge(
+			t,
+			"eta",
+			"victor",
+			"ETA-M28 pending victor",
+			10 * 60 * 1000,
+		);
+
+		await t.run(async (ctx: any) => {
+			const now = Date.now();
+			for (let i = 0; i < 250; i++) {
+				const createdAt = now - i;
+				await ctx.db.insert("tasks", {
+					title: `ETA-M28 pending noise ${i}`,
+					assignedTo: "omega",
+					priority: "high" as const,
+					status: "blocked" as const,
+					createdBy: "omega",
+					createdAt,
+					updatedAt: createdAt,
+				});
+			}
+		});
+
+		const result = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, "victor", Date.now()),
+		);
+
+		expect(result.entries.length).toBe(1);
+		expect(result.entries[0].taskId).toBe(victorId);
+		expect(result.total).toBe(1);
+		expect(result.truncated).toBe(false);
 	});
 });

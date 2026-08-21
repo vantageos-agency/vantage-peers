@@ -2,6 +2,10 @@
 
 ## [Unreleased] — grant-aware mission/mandate visibility + bind JWT audience
 
+### Fixed
+
+- **`check_messages` now renders `stuckInProgress` / `peersStuckOnYou` from the envelope (Day-156 reader-first; Eta REVISE PR #1218 dual-shape).** Missing / null / undefined keys default via `asCappedStuckList` so old Convex prod cannot throw `.length`. Accepts a raw `{taskId,title,age}[]` (already-deployed MCP) **or** `{entries,total,truncated}`. Empty unread + a stuck SIGNAL (`entries.length > 0` OR `truncated === true`) surfaces the block, never `"No new messages."` / Vide — a truncated empty list is a signal, not rest. `messages` / `staleInProgress` are unchanged; `pendingOnYou` is not revived.
+
 ### Added
 
 - **`fail_task` tool — the third task terminal state (`failed`), distinct from `done`/`cancelled` (mission `k576mw0smxeqsg9wp7957njfsn8crey4`, commit `8c70e18`).** New tool, mandatory `failureNote`, output schema `{taskId, status: "failed"}`. `update_task`'s `updateTaskStatusSchema` now excludes both `"blocked"` and `"failed"` (client refused at the tool-input layer, mirroring the server-side `FAILED_VIA_UPDATE_REFUSED` gate). `taskStatusValues`/`taskStatusFilterSchema` gained `"failed"`. `createTaskOutputSchema.status` now reuses the canonical `taskStatusValues` array (was hand-typed and missing `"cancelled"`/`"failed"`). A blocker task reaching `failed` does NOT auto-release its waiters — see `convex`-side CHANGELOG for the reciprocal-unblock fix.

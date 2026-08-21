@@ -5,7 +5,11 @@ import { mutation, query } from "./_generated/server";
 import { requireScope, withOrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import { computeStaleInProgress } from "./lib/taskClosureGate";
+import {
+	computePeersStuckOnYou,
+	computeStaleInProgress,
+	computeStuckInProgress,
+} from "./lib/taskClosureGate";
 
 const staleInProgressValidator = v.array(
 	v.object({
@@ -14,6 +18,12 @@ const staleInProgressValidator = v.array(
 		age: v.number(),
 	}),
 );
+
+const cappedStaleInProgressValidator = v.object({
+	entries: staleInProgressValidator,
+	total: v.number(),
+	truncated: v.boolean(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessage — send a message to one, many, or all orchestrators
@@ -372,6 +382,8 @@ export const checkNewMessagesEnvelope = query({
 		truncated: v.boolean(),
 		nextSince: v.union(v.number(), v.null()),
 		staleInProgress: staleInProgressValidator,
+		stuckInProgress: cappedStaleInProgressValidator,
+		peersStuckOnYou: cappedStaleInProgressValidator,
 	}),
 	handler: async (ctx, args) => {
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
@@ -500,17 +512,20 @@ export const checkNewMessagesEnvelope = query({
 		// exclusively checkNewMessagesEnvelope (tools.ts:2776); the legacy
 		// checkNewMessages array contract stays frozen (see its own comment).
 		const now = Date.now();
-		const staleInProgress = await computeStaleInProgress(
-			ctx,
-			args.recipient,
-			now,
-		);
+		const [staleInProgress, stuckInProgress, peersStuckOnYou] =
+			await Promise.all([
+				computeStaleInProgress(ctx, args.recipient, now),
+				computeStuckInProgress(ctx, args.recipient, now),
+				computePeersStuckOnYou(ctx, args.recipient, now),
+			]);
 
 		return {
 			messages,
 			truncated,
 			nextSince,
 			staleInProgress,
+			stuckInProgress,
+			peersStuckOnYou,
 		};
 	},
 });

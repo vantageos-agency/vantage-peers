@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`peersStuckOnYou` no longer returns empty while a peer is stuck (Eta REVISE PR #1218, ETA-M28, task `k177d8sgm14f27ej8y0ad5tqch8cxn2f`).** `computePeersStuckOnYou` took the 200 newest fleet-wide `in_progress` rows then filtered `createdBy` — the oldest waits dropped first. Eta's fixture (1 pi-created in_progress assigned to sigma + 250 newer omega-created rows) measured `length = 0` and the MCP reader printed `"No new messages."` — the sentence this envelope exists to stop. Fix: `for await` over `by_status` (not `.paginate()`, one cursor per Convex function; `checkNewMessagesEnvelope` runs two scans), filter inside the walk, return `{entries, total, truncated}` so an empty list is distinguishable from a truncated one. Same class closed on unwired `computePendingOnYou`. `stuckInProgress` is the same capped object (assignee-scoped). `staleInProgress` stays a plain array. `pendingOnYou*` stays off the envelope. TDD: RED `entries.length` 0 vs 1 on take-then-filter; GREEN after the walk; source NEG forbids `.paginate(`. MCP reader accepts missing / array / capped-object (Day-156). RULE #30: `check-messages` upserted to VR `1.0.22` hash `0816f7a3`.
+
 ### Security
 - **Rollback runbook if org-provision prod misbehaves (T-ROLLBACK `k17cj6ctwvwjcvyd98rje43nnn8cx582`).** `docs/cloud/runbook-org-provision-rollback.md` — MCP revert first (so it stops calling `getForAccessToken`), then Convex prod to `58ce92c`, then prove `POST /admin/organizations` is 404 and #1215 text is back. Named commands, not state words.
 
