@@ -242,8 +242,11 @@ export function filterByOrgScope<
  * `requireMasterAuth` (master stays a valid caller, byte-unchanged).
  *
  * THE PROPERTY (both poles):
- *   ALLOW — a verified Clerk identity whose own org (organizationId /
- *   organizationSlug claim, same fallback `withOrgScope` uses above) equals
+ *   ALLOW — a verified Clerk identity whose own org SLUG (`organizationSlug`
+ *   claim — `targetOrgSlug` and `client_org_mapping.clerkOrgSlug` are both
+ *   slugs, so the compare is slug-to-slug ONLY; `organizationId` is a
+ *   distinct claim that MAY carry a raw Clerk org id instead of the slug
+ *   depending on JWT template configuration, and is never used here) equals
  *   `targetOrgSlug`, AND whose org-role claim normalizes to "admin"
  *   (Clerk's default session-token claim is `org_role`, shaped
  *   "org:admin" / "org:member" — see mcp-server/src/auth.ts's
@@ -280,11 +283,20 @@ export async function requireOrgAdmin(
 		);
 	}
 
+	// CORRECTNESS (task k17awjxrj7ggwvw277cswh314d8cx7nr D2 follow-up, item 4):
+	// `targetOrgSlug` (args.clerkOrgSlug) and `client_org_mapping.clerkOrgSlug`
+	// (the `by_clerk_slug` index `lookupOrgMapping` queries) are BOTH a SLUG,
+	// never a Clerk org id. `identity.organizationId` is a distinct claim —
+	// Clerk's JWT template MAY populate it with a raw org id (`org_xxx`)
+	// rather than the slug, depending on template configuration. Comparing
+	// THAT against a slug would never hold, and this function would fail
+	// closed silently for a legitimate org-admin whenever the two diverge.
+	// The compare below is therefore slug-to-slug ONLY: `organizationSlug` is
+	// the sole source of `callerOrgSlug` (never `organizationId`), matching
+	// the slug key `lookupOrgMapping`/`by_clerk_slug` is keyed on.
 	const rec = identity as Record<string, unknown>;
 	const callerOrgSlug =
-		(rec.organizationId as string | undefined) ??
-		(rec.organizationSlug as string | undefined) ??
-		null;
+		(rec.organizationSlug as string | undefined) ?? null;
 
 	if (!callerOrgSlug) {
 		throw new ConvexError(

@@ -58,15 +58,22 @@ async function seedOrgMapping(
 	});
 }
 
+// CORRECTNESS (item 4, D2 follow-up): requireOrgAdmin compares
+// `identity.organizationSlug` — a SLUG — against `targetOrgSlug`, which is
+// also a slug (client_org_mapping.clerkOrgSlug, the `by_clerk_slug` index
+// key). `organizationId` is deliberately NOT set below to prove the compare
+// does not depend on it (see the dedicated slug-vs-org-id test further
+// down, which sets a MISMATCHED organizationId alongside the correct
+// organizationSlug to prove the compare ignores organizationId entirely).
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
-	organizationId: org,
+	organizationSlug: org,
 	orgRole: "org:admin",
 });
 
 const orgMemberIdentity = (org: string) => ({
 	subject: `member-of-${org}`,
-	organizationId: org,
+	organizationSlug: org,
 	orgRole: "org:member",
 });
 
@@ -204,6 +211,60 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 				process.env.BEARER_SECRET_MASTER = previous;
 			}
 		}
+	});
+
+	test("CORRECTNESS (item 4): compare is slug-based — a MISMATCHED organizationId alongside the CORRECT organizationSlug still ALLOWS", async () => {
+		// requireOrgAdmin (convex/lib/auth.ts) must compare
+		// identity.organizationSlug (a SLUG) against targetOrgSlug (also a
+		// SLUG — client_org_mapping.clerkOrgSlug, the by_clerk_slug index
+		// key), never identity.organizationId. This identity carries an
+		// organizationId that looks like a raw Clerk org id ("org_2abcXYZ",
+		// NOT the slug "org-x") alongside the CORRECT organizationSlug
+		// ("org-x") — if the compare ever read organizationId instead of (or
+		// before) organizationSlug, this would fail closed
+		// (RBAC_DENIED) even though the caller genuinely IS org-x's admin.
+		const t = createT();
+		await seedOrgMapping(t, "org-x", ["slug-correctness-seat"]);
+
+		const tAdminX = t.withIdentity({
+			subject: "admin-of-org-x-with-distinct-org-id",
+			organizationId: "org_2abcXYZmismatchedClerkOrgId",
+			organizationSlug: "org-x",
+			orgRole: "org:admin",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const result = await tAdminX.mutation(api.oauth.provisionOrganization, {
+			clerkOrgSlug: "org-x",
+			displayName: "Org X",
+			orchestrators: [{ name: "slug-correctness-seat" }],
+		});
+
+		expect(result.clerkOrgSlug).toBe("org-x");
+		const mapping = await t.run(async (ctx) => ctx.db.get(result.mappingId));
+		expect(mapping?.clerkOrgSlug).toBe("org-x");
+	});
+
+	test("CORRECTNESS (item 4): organizationId alone (no organizationSlug) is NOT accepted as the compare value", async () => {
+		// The inverse of the test above: an identity that carries ONLY
+		// organizationId (no organizationSlug at all) must be refused —
+		// proving the fallback to organizationId that used to exist has been
+		// removed, not merely reordered.
+		const t = createT();
+		await seedOrgMapping(t, "org-x");
+
+		const tAdminOrgIdOnly = t.withIdentity({
+			subject: "admin-with-org-id-only",
+			organizationId: "org-x",
+			orgRole: "org:admin",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		await expect(
+			tAdminOrgIdOnly.mutation(api.oauth.provisionOrganization, {
+				clerkOrgSlug: "org-x",
+				displayName: "Org X",
+				orchestrators: [{ name: "org-id-only-seat" }],
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("master path with wrong token still refused — byte-unchanged requireMasterAuth", async () => {

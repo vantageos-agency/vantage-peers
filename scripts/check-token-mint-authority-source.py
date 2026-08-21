@@ -191,11 +191,30 @@ def run_inventory() -> int:
 			print(f"  ({p['id']}) {p['name']}: SKIPPED — {p['reason']}")
 			continue
 		if p["id"] == 4:
-			text = REPO_ROOT.joinpath(p["file"]).read_text(encoding="utf-8")
+			subject_path = REPO_ROOT.joinpath(p["file"])
+			if not subject_path.exists() or subject_path.stat().st_size == 0:
+				print(
+					f"REFUSING TO JUDGE: unreadable subject {p['file']} "
+					"(missing or empty) — cannot classify path (4)"
+				)
+				return 2
+			text = subject_path.read_text(encoding="utf-8")
+			if not text.strip():
+				print(
+					f"REFUSING TO JUDGE: unreadable subject {p['file']} "
+					"(blank content) — cannot classify path (4)"
+				)
+				return 2
 			# Locate the Clerk-JWT branch specifically (case 2.5) rather than the
 			# whole file, so an unrelated match elsewhere in the file can't flip
 			# this classification.
 			idx = text.find("── (2.5)")
+			if idx == -1:
+				print(
+					f"REFUSING TO JUDGE: marker '── (2.5)' not found in "
+					f"{p['file']} — cannot classify path (4)"
+				)
+				return 2
 			branch_text = text[idx:idx + 4000] if idx != -1 else text
 			has_join = p["marker_post"] in branch_text
 			result = "PASS" if has_join else "BLOCK"

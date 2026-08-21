@@ -169,21 +169,121 @@ def run_self_test() -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+AUTH_CALL_PATTERN = re.compile(r"requireMasterAuth\(|requireOrgAdmin\(")
+
+
+def extract_authorization_gate(text: str) -> str:
+	"""Extracts ONLY the AUTHORIZATION GATE of `provisionOrganization`'s
+	handler: every top-level statement of the handler body, in order, up to
+	and including the FIRST top-level statement that invokes an auth
+	primitive (`requireMasterAuth(` / `requireOrgAdmin(`).
+
+	This is a brace-depth walk, not a fixed-size character window: a fixed
+	window can — and did (Eta ETA-M37/M38) — accidentally swallow later,
+	UNRELATED code (e.g. the mutation's own idempotent-replay lookup
+	`.withIndex("by_clerk_slug", ...)`), which incidentally matches the
+	principal-derived token set and produces a false PASS before the real
+	auth gate is even reached. Slicing to the gate itself means any token
+	found here is, by construction, part of the actual authorization
+	decision — not incidental later code.
+
+	Returns "" if the handler's opening brace cannot be located.
+	"""
+	handler_idx = text.find("handler:")
+	if handler_idx == -1:
+		return ""
+	brace_idx = text.find("{", handler_idx)
+	if brace_idx == -1:
+		return ""
+	signature = text[handler_idx : brace_idx + 1]
+	body_start = brace_idx + 1
+
+	depth = 1
+	stmt_start = body_start
+	i = body_start
+	n = len(text)
+	found_auth = False
+	gate_end = None
+	while i < n and depth > 0:
+		ch = text[i]
+		if ch == "{":
+			depth += 1
+		elif ch == "}":
+			depth -= 1
+			if depth == 0:
+				# end of handler body without ever finding the auth call
+				gate_end = i
+				break
+			if depth == 1:
+				# An `if (...) { ... }` block's closing brace is NOT the end
+				# of the top-level statement when an `else` (or `else if`)
+				# follows — the auth call may live in the else branch, as it
+				# does in the real post-D2 gate shape. Only treat this as a
+				# statement boundary if no `else` follows.
+				j = i + 1
+				while j < n and text[j] in " \t\r\n":
+					j += 1
+				if text[j : j + 4] == "else":
+					i += 1
+					continue
+				stmt = text[stmt_start : i + 1]
+				if AUTH_CALL_PATTERN.search(stmt):
+					found_auth = True
+					gate_end = i + 1
+					break
+				stmt_start = i + 1
+		elif ch == ";" and depth == 1:
+			stmt = text[stmt_start : i + 1]
+			if AUTH_CALL_PATTERN.search(stmt):
+				found_auth = True
+				gate_end = i + 1
+				break
+			stmt_start = i + 1
+		i += 1
+
+	if gate_end is None:
+		gate_end = n
+	return signature + text[body_start:gate_end]
+
+
 def extract_provision_organization_handler(text: str) -> str:
-	"""Extracts the provisionOrganization export block (args + handler open)
-	from a live convex/oauth.ts source string, bounded to a generous window so
-	the branching gate at the top of the handler is fully captured without
-	pulling in unrelated later mutations."""
+	"""Extracts the `provisionOrganization` export's ARGS block (needed for
+	the `callerToken: v.string()` vs `v.optional(v.string())` REQUIRED/
+	optional-string classification) concatenated with ONLY the AUTHORIZATION
+	GATE of the handler body — see `extract_authorization_gate` for why the
+	handler portion is a brace-depth walk to the first auth-call statement,
+	not a fixed-size character window. The args block never contains a
+	principal-derived token (it is a typed argument declaration), so
+	concatenating it cannot reintroduce the incidental-match failure mode
+	this fix closes."""
 	idx = text.find("export const provisionOrganization")
 	if idx == -1:
 		return ""
-	return text[idx : idx + 2500]
+	handler_idx = text.find("handler:", idx)
+	if handler_idx == -1:
+		return ""
+	args_block = text[idx:handler_idx]
+	gate = extract_authorization_gate(text[idx:])
+	return args_block + gate
 
 
 def run_inventory() -> int:
 	oauth_ts = REPO_ROOT / "convex" / "oauth.ts"
-	live_text = oauth_ts.read_text(encoding="utf-8") if oauth_ts.exists() else ""
+	if not oauth_ts.exists() or oauth_ts.stat().st_size == 0:
+		print(f"REFUSING TO JUDGE: unreadable subject convex/oauth.ts (missing or empty)")
+		return 2
+	live_text = oauth_ts.read_text(encoding="utf-8")
+	if not live_text.strip():
+		print(f"REFUSING TO JUDGE: unreadable subject convex/oauth.ts (blank content)")
+		return 2
 	provision_block = extract_provision_organization_handler(live_text)
+	if not provision_block.strip():
+		print(
+			"REFUSING TO JUDGE: unreadable subject "
+			"provisionOrganization (export not found / handler not located "
+			"in convex/oauth.ts) — cannot classify path (1)"
+		)
+		return 2
 
 	paths = [
 		{
