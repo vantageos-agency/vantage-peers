@@ -527,6 +527,205 @@ export const createClient = mutation({
 	},
 });
 
+function randomOpaqueHex(bytes = 32): string {
+	const buf = new Uint8Array(bytes);
+	crypto.getRandomValues(buf);
+	return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const RESERVED_ORCH_NAMES = new Set(["master", "*", ""]);
+
+export const provisionOrganization = mutation({
+	args: {
+		callerToken: v.string(),
+		clerkOrgSlug: v.string(),
+		displayName: v.string(),
+		orchestrators: v.array(v.object({ name: v.string() })),
+		scopes: v.optional(v.array(v.string())),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		mappingId: v.id("client_org_mapping"),
+		replay: v.boolean(),
+		orchestrators: v.array(
+			v.object({
+				name: v.string(),
+				profileId: v.string(),
+				clientId: v.string(),
+				clientSecret: v.union(v.string(), v.null()),
+				accessToken: v.union(v.string(), v.null()),
+			}),
+		),
+	}),
+	handler: async (ctx, args) => {
+		await requireMasterAuth(args.callerToken);
+
+		const slug = args.clerkOrgSlug.trim();
+		if (!slug) {
+			throw new Error("clerkOrgSlug is required");
+		}
+		if (args.displayName.trim().length === 0) {
+			throw new Error("displayName is required");
+		}
+		if (args.orchestrators.length === 0) {
+			throw new Error("orchestrators must be non-empty");
+		}
+
+		const names = args.orchestrators.map((o) => o.name.trim());
+		const seen = new Set<string>();
+		for (const name of names) {
+			if (RESERVED_ORCH_NAMES.has(name) || name.toLowerCase() === "master") {
+				throw new Error(`reserved orchestrator name: ${name}`);
+			}
+			if (seen.has(name)) {
+				throw new Error(`duplicate orchestrator name: ${name}`);
+			}
+			seen.add(name);
+		}
+
+		const existing = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+			.first();
+
+		if (existing && !existing.isActive) {
+			throw new Error(`Org "${slug}" exists and is inactive`);
+		}
+
+		if (existing) {
+			const existingSet = [...existing.allowedOrchestrators].sort().join("\0");
+			const incomingSet = [...names].sort().join("\0");
+			if (existingSet !== incomingSet) {
+				throw new Error(
+					`clerkOrgSlug "${slug}" already mapped with a different name set`,
+				);
+			}
+			const seats = [];
+			for (const name of names) {
+				const profileId = `${name}-${slug}`;
+				const profile = await ctx.db
+					.query("oauth_scope_profiles")
+					.withIndex("by_profileId", (q) => q.eq("profileId", profileId))
+					.unique();
+				const client = profile
+					? await ctx.db
+							.query("oauth_clients")
+							.withIndex("by_scopeProfile", (q) =>
+								q.eq("scopeProfile", profileId),
+							)
+							.first()
+					: null;
+				seats.push({
+					name,
+					profileId,
+					clientId: client?.clientId ?? "",
+					clientSecret: null,
+					accessToken: null,
+				});
+			}
+			return {
+				clerkOrgSlug: slug,
+				mappingId: existing._id,
+				replay: true,
+				orchestrators: seats,
+			};
+		}
+
+		const now = Date.now();
+		const scopes = args.scopes ?? ["view-own-tasks"];
+		const mappingId = await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: slug,
+			displayName: args.displayName.trim(),
+			allowedOrchestrators: names,
+			scopes,
+			isActive: true,
+			createdAt: now,
+		});
+
+		const actorTokenHash = await sha256Hex(args.callerToken);
+		const seats = [];
+		for (const name of names) {
+			const profileId = `${name}-${slug}`;
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId,
+				description: `Seat ${name} in org ${slug}`,
+				fromAllowList: [name],
+				namespaceReadPrefixes: [`orchestrator/${name}`, `project/${slug}`],
+				namespaceWritePrefixes: [`orchestrator/${name}`, `project/${slug}`],
+				createdAt: now,
+				updatedAt: now,
+				clerkOrgSlug: slug,
+			});
+
+			const clientId = randomOpaqueHex(16);
+			const clientSecret = randomOpaqueHex(32);
+			const clientSecretHash = await sha256Hex(clientSecret);
+			await ctx.db.insert("oauth_clients", {
+				clientId,
+				clientSecretHash,
+				name: profileId,
+				redirectUris: ["https://localhost/dev-null"],
+				scopeProfile: profileId,
+				createdAt: now,
+				tokenEndpointAuthMethod: "client_secret_basic",
+			});
+
+			const accessToken = randomOpaqueHex(32);
+			const tokenHash = await sha256Hex(accessToken);
+			await ctx.db.insert("oauth_access_tokens", {
+				tokenHash,
+				clientId,
+				userId: name,
+				scopes: ["mcp:full"],
+				scopeProfile: profileId,
+				fromAllowList: [name],
+				namespaceReadPrefixes: [`orchestrator/${name}`, `project/${slug}`],
+				namespaceWritePrefixes: [`orchestrator/${name}`, `project/${slug}`],
+				expiresAt: now + 7 * 24 * 3600 * 1000,
+				createdAt: now,
+				clerkOrgSlug: slug,
+			});
+
+			seats.push({
+				name,
+				profileId,
+				clientId,
+				clientSecret,
+				accessToken,
+			});
+		}
+
+		await ctx.db.insert("oauth_audit_log", {
+			eventType: "organization_provision",
+			actorTokenHash,
+			targetProfileId: slug,
+			previousState: {
+				profileId: "",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+			},
+			newState: {
+				profileId: slug,
+				fromAllowList: names,
+				namespaceReadPrefixes: names.map((n) => `orchestrator/${n}`),
+				namespaceWritePrefixes: names.map((n) => `orchestrator/${n}`),
+			},
+			reason: `provisionOrganization insert — org "${slug}" seats ${names.join(",")}`,
+			cascadeRevokedCount: 0,
+			clientsRetargeted: 0,
+			createdAt: now,
+		});
+
+		return {
+			clerkOrgSlug: slug,
+			mappingId,
+			replay: false,
+			orchestrators: seats,
+		};
+	},
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SECURITY: scope profiles that must NEVER be granted via public DCR self-reg.
 // Master scope is admin-only; it requires explicit Pi authorization via the

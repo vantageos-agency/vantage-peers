@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **`oauth:provisionOrganization` + `POST /admin/organizations` (T4 `k17eywf5pk6snpbc6ncb3anw7n8cx2hm`).** One master-gated mutation creates a `client_org_mapping` row and per-orchestrator scope profile + confidential client + access token with `clerkOrgSlug` snapshotted. Replay of the identical name set returns public ids, not secrets. DCR `registerPublicClient` still has no org argument. CI invariant: `mcp-server/test/org-provision-ci-invariant.test.ts` in job `vitest-convex` goes red if the token-hash delegation branch is deleted.
+
 ### Fixed
 - **`peersStuckOnYou` no longer returns empty while a peer is stuck (Eta REVISE PR #1218, ETA-M28, task `k177d8sgm14f27ej8y0ad5tqch8cxn2f`).** `computePeersStuckOnYou` took the 200 newest fleet-wide `in_progress` rows then filtered `createdBy` — the oldest waits dropped first. Eta's fixture (1 pi-created in_progress assigned to sigma + 250 newer omega-created rows) measured `length = 0` and the MCP reader printed `"No new messages."` — the sentence this envelope exists to stop. Fix: `for await` over `by_status` (not `.paginate()`, one cursor per Convex function; `checkNewMessagesEnvelope` runs two scans), filter inside the walk, return `{entries, total, truncated}` so an empty list is distinguishable from a truncated one. Same class closed on unwired `computePendingOnYou`. `stuckInProgress` is the same capped object (assignee-scoped). `staleInProgress` stays a plain array. `pendingOnYou*` stays off the envelope. TDD: RED `entries.length` 0 vs 1 on take-then-filter; GREEN after the walk; source NEG forbids `.paginate(`. MCP reader accepts missing / array / capped-object (Day-156). RULE #30: `check-messages` upserted to VR `1.0.22` hash `0816f7a3`.
 
