@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **`check_messages` now renders `stuckInProgress` / `peersStuckOnYou` from the envelope (Day-156 reader-first).** Missing keys default to `[]` so old Convex prod cannot throw `.length`. Empty unread + a non-empty stuck list surfaces the stuck block, never `"No new messages."` / Vide. `messages` / `staleInProgress` are unchanged; `pendingOnYou` is not revived.
+- **`check_messages` now renders `stuckInProgress` / `peersStuckOnYou` from the envelope (Day-156 reader-first; Eta REVISE PR #1218 dual-shape).** Missing / null / undefined keys default via `asCappedStuckList` so old Convex prod cannot throw `.length`. Accepts a raw `{taskId,title,age}[]` (already-deployed MCP) **or** `{entries,total,truncated}`. Empty unread + a stuck SIGNAL (`entries.length > 0` OR `truncated === true`) surfaces the block, never `"No new messages."` / Vide — a truncated empty list is a signal, not rest. `messages` / `staleInProgress` are unchanged; `pendingOnYou` is not revived.
 
 ### Added
 

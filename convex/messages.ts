@@ -19,6 +19,12 @@ const staleInProgressValidator = v.array(
 	}),
 );
 
+const cappedStaleInProgressValidator = v.object({
+	entries: staleInProgressValidator,
+	total: v.number(),
+	truncated: v.boolean(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessage — send a message to one, many, or all orchestrators
 // channel: "broadcast" | "tau" | "pi,phi" (comma-separated for multi)
@@ -376,8 +382,8 @@ export const checkNewMessagesEnvelope = query({
 		truncated: v.boolean(),
 		nextSince: v.union(v.number(), v.null()),
 		staleInProgress: staleInProgressValidator,
-		stuckInProgress: staleInProgressValidator,
-		peersStuckOnYou: staleInProgressValidator,
+		stuckInProgress: cappedStaleInProgressValidator,
+		peersStuckOnYou: cappedStaleInProgressValidator,
 	}),
 	handler: async (ctx, args) => {
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);

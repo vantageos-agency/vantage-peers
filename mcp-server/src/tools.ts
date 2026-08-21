@@ -1096,6 +1096,36 @@ export const checkMessagesOutputSchema = z.union([
 	z.string(),
 ]);
 
+/**
+ * Day-156 reader-first: `stuckInProgress` / `peersStuckOnYou` may be missing
+ * (old Convex), a raw `{taskId,title,age}[]` (already-deployed MCP), or the
+ * new capped object `{entries,total,truncated}`. Never throw on `.length`.
+ */
+export function asCappedStuckList(value: unknown): {
+	entries: Array<{ taskId: string; title: string; age: number }>;
+	total: number;
+	truncated: boolean;
+} {
+	if (value == null) return { entries: [], total: 0, truncated: false };
+	if (Array.isArray(value)) {
+		return {
+			entries: value as Array<{ taskId: string; title: string; age: number }>,
+			total: value.length,
+			truncated: false,
+		};
+	}
+	if (typeof value === "object") {
+		const o = value as Record<string, unknown>;
+		const entries = Array.isArray(o.entries)
+			? (o.entries as Array<{ taskId: string; title: string; age: number }>)
+			: [];
+		const total = typeof o.total === "number" ? o.total : entries.length;
+		const truncated = o.truncated === true;
+		return { entries, total, truncated };
+	}
+	return { entries: [], total: 0, truncated: false };
+}
+
 // mark_as_read
 export const markAsReadOutputSchema = z.object({ markedAsRead: z.number() });
 
@@ -3211,30 +3241,30 @@ export function registerTools(
 						title: string;
 						age: number;
 					}>;
-					stuckInProgress?: Array<{
-						taskId: string;
-						title: string;
-						age: number;
-					}>;
-					peersStuckOnYou?: Array<{
-						taskId: string;
-						title: string;
-						age: number;
-					}>;
+					stuckInProgress?: unknown;
+					peersStuckOnYou?: unknown;
 				};
 				const messages = envelope.messages ?? [];
 				const truncated = envelope.truncated ?? false;
 				const nextSince = envelope.nextSince ?? null;
-				const stuckInProgress = envelope.stuckInProgress ?? [];
-				const peersStuckOnYou = envelope.peersStuckOnYou ?? [];
+				const stuckInProgress = asCappedStuckList(envelope.stuckInProgress);
+				const peersStuckOnYou = asCappedStuckList(envelope.peersStuckOnYou);
 
 				const stuckBlocks: string[] = [];
-				if (stuckInProgress.length > 0) {
+				// Stuck SIGNAL = entries present OR truncated (a cap with an
+				// empty page is still a signal — never Vide).
+				if (
+					stuckInProgress.entries.length > 0 ||
+					stuckInProgress.truncated
+				) {
 					stuckBlocks.push(
 						`stuckInProgress:\n${JSON.stringify(stuckInProgress, null, 2)}`,
 					);
 				}
-				if (peersStuckOnYou.length > 0) {
+				if (
+					peersStuckOnYou.entries.length > 0 ||
+					peersStuckOnYou.truncated
+				) {
 					stuckBlocks.push(
 						`peersStuckOnYou:\n${JSON.stringify(peersStuckOnYou, null, 2)}`,
 					);
