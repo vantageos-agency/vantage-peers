@@ -2,7 +2,11 @@
 
 **Scope:** VantagePeers **Cloud** (multi-tenant). Self-host is a separate product documented under `docs/getting-started/`. Do not cross-apply these instructions.
 
+**Operator provision (replaces the hand chain):** `POST /admin/organizations` (master bearer) → `oauth:provisionOrganization`. One call creates the org mapping and each orchestrator seat (`client_id` / `client_secret` / access token returned **once**). DCR self-registration does not attach an organisation.
+
 **Produit concerné :** VantagePeers **Cloud** (multi-tenant). Le self-host est un produit séparé documenté sous `docs/getting-started/`. Ne pas appliquer ces instructions au self-host.
+
+**Operator provision (replaces the hand chain):** `POST /admin/organizations` (master bearer) → `oauth:provisionOrganization`. One call creates the org mapping and each orchestrator seat (`client_id` / `client_secret` / access token returned **once**). DCR self-registration does not attach an organisation.
 
 ---
 

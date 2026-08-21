@@ -1028,6 +1028,68 @@ admin.post("/oauth/clients", async (c) => {
 	);
 });
 
+// POST /admin/organizations — one-shot org + orchestrator seats
+admin.post("/organizations", async (c) => {
+	const masterToken = process.env.BEARER_SECRET_MASTER;
+	if (!masterToken) {
+		return c.json({ error: "server_misconfigured" }, 500);
+	}
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "invalid_request" }, 400);
+	}
+	const clerkOrgSlug =
+		typeof body.clerkOrgSlug === "string" ? body.clerkOrgSlug : null;
+	const displayName =
+		typeof body.displayName === "string" ? body.displayName : null;
+	const orchestratorsRaw = Array.isArray(body.orchestrators)
+		? body.orchestrators
+		: null;
+	if (!clerkOrgSlug || !displayName || !orchestratorsRaw) {
+		return c.json(
+			{
+				error: "invalid_request",
+				error_description:
+					"clerkOrgSlug, displayName, and orchestrators are required",
+			},
+			400,
+		);
+	}
+	const orchestrators = orchestratorsRaw
+		.map((row) => {
+			if (row && typeof row === "object" && "name" in row) {
+				const name = (row as { name: unknown }).name;
+				return typeof name === "string" ? { name } : null;
+			}
+			return null;
+		})
+		.filter((row): row is { name: string } => row !== null);
+	const scopes = Array.isArray(body.scopes)
+		? (body.scopes as unknown[]).filter((s): s is string => typeof s === "string")
+		: undefined;
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:provisionOrganization" as any,
+			{
+				callerToken: masterToken,
+				clerkOrgSlug,
+				displayName,
+				orchestrators,
+				scopes,
+			},
+		);
+		return c.json(result, result.replay ? 200 : 201);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error("[admin] provisionOrganization failed:", message);
+		const status = message.includes("Unauthorized") ? 401 : 400;
+		return c.json({ error: "provision_failed", detail: message }, status);
+	}
+});
+
 // GET /admin/oauth/clients  — list (no secrets)
 admin.get("/oauth/clients", async (c) => {
 	const masterToken = process.env.BEARER_SECRET_MASTER;
