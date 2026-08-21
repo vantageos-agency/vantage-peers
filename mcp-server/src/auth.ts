@@ -251,30 +251,38 @@ export function checkFromAllowed(
  *
  * Rules:
  *   - master scope (isMasterScope) → allowed (null), no roster read needed.
- *   - otherwise → allowed iff `assignedTo` is in the caller's ORG ROSTER,
- *     read from DATA via `getOrgRoster` (never a list hard-coded in code —
- *     see the operator ruling: the boundary is the organisation, and
- *     membership must be looked up, not guessed from `fromAllowList`, which
- *     is itself a hard-coded catalog in convex/oauth.ts, not the org source
- *     of truth). `getOrgRoster` is expected to resolve the caller's own
- *     `client_org_mapping.allowedOrchestrators` (via Convex `withOrgScope`)
- *     for the org the caller's verified identity belongs to.
- *   - `roster.includes("*")` → allowed (null), same as everywhere else in
- *     Convex (`isMaster = allowedOrchestrators.includes("*")`, see
- *     convex/lib/auth.ts). This branch is REQUIRED, not cosmetic: every
- *     clerkJwt-absent non-master caller (OAuth-scoped tokens, DCR, legacy
- *     mcpTenants — see selectConvexClientForRequest in
- *     authenticatedConvexClient.ts) runs `getMyOrgRoster` on the MCP
- *     server's own service-account Convex client, which withOrgScope
- *     resolves via the CLERK_SERVICE_ACCOUNT_USER_ID carve-out to
- *     `allowedOrchestrators = ["*"]` — a wildcard roster, not a concrete
- *     one. A literal `roster.includes(assignedTo)` would deny "*"-resolved
- *     callers ALL delegation (an uninverted withholding bug), so the
- *     wildcard must be checked before the membership check.
+ *   - non-master AND `ctx.clerkJwt` present (the Clerk-team org-scoped path,
+ *     auth.ts case 2.5, ~line 507) → `getOrgRoster` is called and resolves
+ *     via Convex `withOrgScope`/`client_org_mapping`, forwarding THIS
+ *     caller's own verified Clerk JWT (`selectConvexClientForRequest`,
+ *     authenticatedConvexClient.ts). This is a genuine per-caller org lookup.
+ *     Allowed iff `assignedTo` is in that roster, OR the roster itself is
+ *     `["*"]` — a CALLER org whose `client_org_mapping.allowedOrchestrators`
+ *     is itself the wildcard (a genuinely open org, same semantics as
+ *     `isMaster = allowedOrchestrators.includes("*")` elsewhere in Convex,
+ *     convex/lib/auth.ts).
+ *   - non-master AND `ctx.clerkJwt` ABSENT (OAuth-scoped access tokens,
+ *     DCR client-generic, legacy mcpTenants legacy-tenant-generic — every
+ *     path OTHER than 2.5) → REFUSE LOUDLY, `getOrgRoster` is NEVER called.
+ *     ETA-M15: these paths route Convex calls through the MCP server's own
+ *     SERVICE-ACCOUNT client (selectConvexClientForRequest falls back to
+ *     `createServiceAccountConvexClient` whenever `clerkJwt` is absent).
+ *     `withOrgScope` resolves THAT identity via the
+ *     `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out to
+ *     `allowedOrchestrators = ["*"]` — the SERVICE ACCOUNT's roster, not the
+ *     caller's. Treating that "*" as "an open org" (a prior, reverted fix)
+ *     inverted a deny-everything bug into an allow-everything-cross-org leak
+ *     for the entire non-Clerk-JWT class of caller (client-generic + legacy-
+ *     tenant-generic are both deny-by-default profiles). The caller's own
+ *     organisation genuinely cannot be resolved without a verified identity
+ *     to resolve it FROM — refusing loudly, naming the reason, is correct
+ *     here; there is no tolerant fallback that isn't a silent skew window
+ *     (a guard that opens when its instrument is missing hides the failure).
  *
- * Async because it performs a data read. `ctx` undefined (direct predicate
- * call, e.g. unit tests without a bearerAuthMiddleware pass) allows through,
- * matching the other check* predicates' no-context convention.
+ * Async because it performs a data read (only on the clerkJwt-present
+ * branch). `ctx` undefined (direct predicate call, e.g. unit tests without a
+ * bearerAuthMiddleware pass) allows through, matching the other check*
+ * predicates' no-context convention.
  */
 export async function checkDelegationAllowed(
 	ctx: OAuthContext | undefined,
@@ -283,8 +291,17 @@ export async function checkDelegationAllowed(
 ): Promise<string | null> {
 	if (!ctx) return null;
 	if (isMasterScope(ctx)) return null;
+	if (!ctx.clerkJwt) {
+		return (
+			`Forbidden: cannot authorize delegation to assignedTo='${assignedTo}' ` +
+			`(scope_profile=${ctx.scopeProfile}) — this caller has no verified ` +
+			"Clerk session attached, so its own organisation cannot be resolved " +
+			"from data. Refusing rather than granting an unresolved roster " +
+			"(ETA-M15: the service-account's wildcard roster is not the caller's)."
+		);
+	}
 	const roster = await getOrgRoster();
-	if (roster.includes("*")) return null;
+	if (roster.includes("*")) return null; // the CALLER's own org is itself open
 	if (roster.includes(assignedTo)) return null;
 	const allowed =
 		roster.length === 0

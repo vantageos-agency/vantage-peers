@@ -1,28 +1,43 @@
 /**
- * Delegation-same-org-predicate — RED-then-GREEN.
+ * Delegation-same-org-predicate — RED-then-GREEN, twice over.
  *
  * Operator ruling (2026-08-21, final): any member of an organisation may
  * delegate work to any member of the SAME organisation. The boundary is the
  * organisation, nothing narrower, and membership is READ FROM DATA — never a
  * list hard-coded in code.
  *
- * THE DEFECT (pre-fix): `guardFrom(assignedTo)` — the predicate that answers
- * "may this client SPEAK AS `assignedTo`" (is assignedTo in the caller's
- * fromAllowList) — was wrongly applied to the ASSIGNEE at create_task,
- * update_task, create_recurring_task, update_recurring_task. A non-master
- * client whose fromAllowList holds ONE name could therefore only ever assign
- * to itself — cross-station dispatch was impossible.
+ * ROUND 1 DEFECT (pre-fix): `guardFrom(assignedTo)` — the predicate that
+ * answers "may this client SPEAK AS `assignedTo`" (is assignedTo in the
+ * caller's fromAllowList) — was wrongly applied to the ASSIGNEE at
+ * create_task, update_task, create_recurring_task, update_recurring_task. A
+ * non-master client whose fromAllowList holds ONE name could therefore only
+ * ever assign to itself — cross-station dispatch was impossible.
  *
- * THE FIX: `checkDelegationAllowed` (src/auth.ts) answers the DELEGATION
+ * ROUND 1 FIX: `checkDelegationAllowed` (src/auth.ts) answers the DELEGATION
  * question instead — is `assignedTo` a member of the CALLER's own
  * organisation, read from data (client_org_mapping via
  * convex/orgRoster.ts:getMyOrgRoster) — never guardFrom's fromAllowList.
  *
- * Litmus: if `checkDelegationAllowed` were deleted (i.e. create_task fell
- * back to guardFrom(assignedTo)), the ALLOW test below would FAIL, because
- * "sigma-peer" is not in the caller's fromAllowList (["prometheus"]). This
- * proves the allow-direction test genuinely exercises the new predicate — a
- * system that refuses everyone would not pass it.
+ * ETA-M15 (round 2 — this file): the round-1 fix added an unconditional
+ * `roster.includes("*") → allow` branch. `["*"]` is NOT necessarily the
+ * caller's org roster — `selectConvexClientForRequest`
+ * (authenticatedConvexClient.ts) forwards the caller's OWN Clerk JWT to
+ * Convex ONLY on the Clerk-team org-scoped path (auth.ts case 2.5, sets
+ * `oauthCtx.clerkJwt`). Every OTHER non-master path (OAuth-scoped access
+ * tokens, DCR `client-generic`, legacy mcpTenants `legacy-tenant-generic`)
+ * leaves `clerkJwt` unset, so `getMyOrgRoster` runs on the MCP server's own
+ * SERVICE-ACCOUNT Convex client — `withOrgScope`'s
+ * `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out resolves THAT identity to
+ * `allowedOrchestrators = ["*"]`. That is the SERVICE ACCOUNT's roster, not
+ * the caller's — treating it as "an open org" turned "refuse everything"
+ * into "allow everything, cross-org included" for `client-generic` and
+ * `legacy-tenant-generic`, both of which are supposed to be deny-by-default.
+ *
+ * ROUND 2 FIX: `checkDelegationAllowed` now refuses LOUDLY (named reason,
+ * `getOrgRoster` never called) whenever `ctx.clerkJwt` is absent on a
+ * non-master caller. Only the clerkJwt-present (clerk-team) path resolves a
+ * roster at all, and only THAT roster's own `"*"` means a genuinely open
+ * caller org.
  */
 
 import { describe, expect, it } from "vitest";
@@ -43,13 +58,90 @@ function getText(result: ToolResult): string {
 	return result.content?.[0]?.text ?? "";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OAuthContext builders — mirror the ACTUAL shapes auth.ts's
+// bearerAuthMiddleware constructs for each of the four paths (grepped from
+// mcp-server/src/auth.ts):
+//   (1) master bearer            — isMaster:true,  clerkJwt absent
+//   (2.5) Clerk-team org-scoped  — isMaster:false, clerkJwt SET (line ~521)
+//   (3) DCR client-generic       — isMaster:false, clerkJwt absent, fromAllowList:[]
+//   (4) legacy mcpTenants        — isMaster:false, clerkJwt absent, fromAllowList:[]
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildMasterCtx(): OAuthContext {
+	return {
+		clientId: "master",
+		userId: "master",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "master",
+		fromAllowList: ["*"],
+		namespaceReadPrefixes: ["*"],
+		namespaceWritePrefixes: ["*"],
+		expiresAt: Date.now() + 3600_000,
+		isMaster: true,
+	};
+}
+
 /**
- * Non-master, org-scoped OAuthContext. `fromAllowList` holds exactly ONE
- * name ("prometheus") — the identity-claim allowlist. It deliberately does
- * NOT contain "sigma-peer", so an ALLOW on assignedTo="sigma-peer" can only
- * come from the delegation/org-roster path, never from guardFrom.
+ * Clerk-team org-scoped ctx (auth.ts case 2.5). `clerkJwt` present — this is
+ * the ONLY non-master path whose `getMyOrgRoster` call resolves a genuine
+ * per-caller org via the caller's own forwarded Clerk JWT.
  */
-function buildPrometheusCtx(
+function buildClerkTeamCtx(
+	overrides: Partial<OAuthContext> = {},
+): OAuthContext {
+	return {
+		clientId: "dcr-clerk-org_prometheus",
+		userId: "user_prometheus_clerk_sub",
+		scopes: ["mcp:full"],
+		scopeProfile: "team-member",
+		fromAllowList: [],
+		namespaceReadPrefixes: ["team/org_prometheus"],
+		namespaceWritePrefixes: ["team/org_prometheus"],
+		expiresAt: Date.now() + 3600_000,
+		isMaster: false,
+		clerkJwt: "mock.clerk.jwt",
+		...overrides,
+	};
+}
+
+/** DCR self-registered client — client-generic, deny-by-default, no clerkJwt. */
+function buildDcrClientGenericCtx(): OAuthContext {
+	return {
+		clientId: "dcr:some-client-id",
+		userId: "dcr:some-client-id",
+		scopes: ["mcp:full"],
+		scopeProfile: "client-generic",
+		fromAllowList: [],
+		namespaceReadPrefixes: [],
+		namespaceWritePrefixes: [],
+		expiresAt: Date.now() + 3600_000,
+		isMaster: false,
+	};
+}
+
+/** Legacy mcpTenants bearer — legacy-tenant-generic, deny-by-default, no clerkJwt. */
+function buildLegacyTenantGenericCtx(): OAuthContext {
+	return {
+		clientId: "legacy:some-tenant",
+		userId: "legacy:some-tenant",
+		scopes: [],
+		scopeProfile: "legacy-tenant-generic",
+		fromAllowList: [],
+		namespaceReadPrefixes: [],
+		namespaceWritePrefixes: [],
+		expiresAt: Date.now() + 3600_000,
+		isMaster: false,
+	};
+}
+
+/**
+ * OAuth-scoped access token ctx (auth.ts case 2) — the shape Pi/prometheus-
+ * style peer stations actually use. `fromAllowList` holds ONE name; no
+ * clerkJwt. Included so createdBy identity-claim tests have a realistic
+ * fromAllowList to check against.
+ */
+function buildPrometheusOauthScopedCtx(
 	overrides: Partial<OAuthContext> = {},
 ): OAuthContext {
 	return {
@@ -66,12 +158,12 @@ function buildPrometheusCtx(
 	};
 }
 
-// The caller's org roster, as would be resolved from client_org_mapping via
-// convex/orgRoster.ts:getMyOrgRoster. "prometheus" and "sigma-peer" share an
-// org; "outsider" does not appear in it at all.
+// The CALLER's own org roster, as would be resolved from client_org_mapping
+// via convex/orgRoster.ts:getMyOrgRoster when a real Clerk JWT is forwarded.
 const PROMETHEUS_ORG_ROSTER = ["prometheus", "sigma-peer"];
 
 let createdTaskRow: Record<string, unknown> | null = null;
+let orgRosterQueryCalled = false;
 
 function buildMockConvex(
 	roster: string[] = PROMETHEUS_ORG_ROSTER,
@@ -79,6 +171,7 @@ function buildMockConvex(
 	return {
 		query: async (name: unknown, args: unknown) => {
 			if (name === "orgRoster:getMyOrgRoster") {
+				orgRosterQueryCalled = true;
 				return roster;
 			}
 			if (name === "tasks:getById") {
@@ -97,6 +190,12 @@ function buildMockConvex(
 				const taskId = "mock-created-task-id";
 				createdTaskRow = { taskId, ...(args as Record<string, unknown>) };
 				return taskId;
+			}
+			if (name === "tasks:update") {
+				return { taskId: "mock-updated-task-id" };
+			}
+			if (name === "recurringTasks:update") {
+				return { taskId: "mock-updated-recurring-id" };
 			}
 			return { taskId: "mock-id" };
 		},
@@ -145,73 +244,9 @@ async function callTool(
 }
 
 describe("delegation-same-org-predicate — create_task assignee", () => {
-	it("ALLOW: caller may delegate to a DIFFERENT identity in the SAME org roster, and the write lands (read-back proves it)", async () => {
+	it("master → allow (bypass, no roster query)", async () => {
 		createdTaskRow = null;
-		const result = await callTool(
-			"create_task",
-			{
-				title: "Cross-station dispatch",
-				createdBy: "prometheus", // in fromAllowList — identity claim OK
-				assignedTo: "sigma-peer", // NOT in fromAllowList, IS in org roster
-			},
-			buildPrometheusCtx(),
-		);
-
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
-
-		// Read back the created row to prove the write actually landed.
-		expect(createdTaskRow).not.toBeNull();
-		expect(createdTaskRow?.assignedTo).toBe("sigma-peer");
-	});
-
-	it("REFUSE: caller CANNOT assign to an identity OUTSIDE its org roster", async () => {
-		createdTaskRow = null;
-		const result = await callTool(
-			"create_task",
-			{
-				title: "Should be refused",
-				createdBy: "prometheus",
-				assignedTo: "outsider", // not in fromAllowList, not in org roster
-			},
-			buildPrometheusCtx(),
-		);
-
-		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(createdTaskRow).toBeNull();
-	});
-
-	it("createdBy (identity claim) still refuses a foreign identity — untouched by this fix", async () => {
-		createdTaskRow = null;
-		const result = await callTool(
-			"create_task",
-			{
-				title: "Foreign createdBy",
-				createdBy: "not-prometheus", // NOT in fromAllowList
-				assignedTo: "sigma-peer", // would be allowed by org roster, irrelevant here
-			},
-			buildPrometheusCtx(),
-		);
-
-		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(createdTaskRow).toBeNull();
-	});
-
-	it("master scope bypasses the delegation check entirely (no roster query needed)", async () => {
-		createdTaskRow = null;
-		const masterCtx: OAuthContext = {
-			clientId: "master",
-			userId: "master",
-			scopes: ["vantage:read", "vantage:write"],
-			scopeProfile: "master",
-			fromAllowList: ["*"],
-			namespaceReadPrefixes: ["*"],
-			namespaceWritePrefixes: ["*"],
-			expiresAt: Date.now() + 3600_000,
-			isMaster: true,
-		};
+		orgRosterQueryCalled = false;
 		const result = await callTool(
 			"create_task",
 			{
@@ -219,41 +254,142 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 				createdBy: "anyone",
 				assignedTo: "anyone-else-entirely",
 			},
-			masterCtx,
+			buildMasterCtx(),
 		);
 		expect(result.isError).toBeFalsy();
 		expect(createdTaskRow?.assignedTo).toBe("anyone-else-entirely");
+		expect(orgRosterQueryCalled).toBe(false);
 	});
 
-	it('WILDCARD ROSTER: non-master caller whose getOrgRoster resolves ["*"] (the clerkJwt-absent service-account-resolved case — see selectConvexClientForRequest) CAN assign to any identity, not just a name literally equal to "*"', async () => {
+	it("clerk-team (clerkJwt present), same-org roster → ALLOW, read the created row back", async () => {
 		createdTaskRow = null;
+		orgRosterQueryCalled = false;
 		const result = await callTool(
 			"create_task",
 			{
-				title: "Service-account-resolved dispatch",
-				createdBy: "prometheus", // still an identity CLAIM — must stay in fromAllowList
-				assignedTo: "any-other-orchestrator-at-all", // NOT a literal "*", NOT in fromAllowList
+				title: "Cross-station dispatch, same org",
+				createdBy: "prometheus", // identity claim — no fromAllowList on this ctx, so createdBy check is a no-op (empty list = legacy fallback allowed by guardFrom's ctx? see next test)
+				assignedTo: "sigma-peer", // IS in the caller's own (clerk-resolved) org roster
 			},
-			buildPrometheusCtx(),
-			["*"], // roster resolved via CLERK_SERVICE_ACCOUNT_USER_ID carve-out
+			buildClerkTeamCtx({ fromAllowList: ["prometheus"] }),
+			PROMETHEUS_ORG_ROSTER,
+		);
+
+		expect(result.isError).toBeFalsy();
+		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(orgRosterQueryCalled).toBe(true);
+
+		// Read back the created row to prove the write actually landed.
+		expect(createdTaskRow).not.toBeNull();
+		expect(createdTaskRow?.assignedTo).toBe("sigma-peer");
+	});
+
+	it("clerk-team, cross-org (assignedTo not in caller roster) → REFUSE", async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "Should be refused — cross org",
+				createdBy: "prometheus",
+				assignedTo: "outsider", // not in the caller's own org roster
+			},
+			buildClerkTeamCtx({ fromAllowList: ["prometheus"] }),
+			PROMETHEUS_ORG_ROSTER,
+		);
+
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/Forbidden/i);
+		expect(createdTaskRow).toBeNull();
+		expect(orgRosterQueryCalled).toBe(true);
+	});
+
+	it('clerk-team, caller org roster ["*"] → ALLOW (genuinely open caller org)', async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "Open caller org dispatch",
+				createdBy: "prometheus",
+				assignedTo: "any-other-orchestrator-at-all",
+			},
+			buildClerkTeamCtx({ fromAllowList: ["prometheus"] }),
+			["*"], // THIS caller's own client_org_mapping row is itself wildcard
 		);
 
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 		expect(createdTaskRow?.assignedTo).toBe("any-other-orchestrator-at-all");
+		expect(orgRosterQueryCalled).toBe(true);
 	});
 
-	it("WILDCARD ROSTER does not bypass the identity-claim check on createdBy — only the delegation check", async () => {
+	// Uses update_recurring_task, which registers with `{ kind: "filtered" }`
+	// (no wrapper-level pre-check — enforcement is entirely in-handler via
+	// guardDelegation on assignedTo only, no callerOrchestrator/createdBy arg
+	// exists on this tool at all). create_task/update_task both apply a
+	// mandatory-or-wrapper-level guardFrom on a creator/caller arg first,
+	// which would short-circuit before guardDelegation ever runs for
+	// client-generic/legacy-tenant-generic (fromAllowList:[] always denies),
+	// masking the exact leak this test exists to catch.
+	it("ETA-M15: DCR client-generic (clerkJwt absent, isMaster false) → REFUSE LOUDLY, never allow — this is the exact leak", async () => {
+		orgRosterQueryCalled = false;
+		const result = await callTool(
+			"update_recurring_task",
+			{
+				recurringTaskId: "mock-recurring-task-id",
+				assignedTo: "any-other-orchestrator-at-all",
+			},
+			buildDcrClientGenericCtx(),
+			// The realistic shape: IF getMyOrgRoster were consulted for this
+			// clerkJwt-absent caller, withOrgScope's service-account carve-out
+			// would resolve it to ["*"] — the exact value that must NOT be
+			// treated as "an open caller org" here.
+			["*"],
+		);
+
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/Forbidden/i);
+		// Named refusal — not a generic "not a member" roster message, this is
+		// the "cannot resolve caller's own org" branch.
+		expect(getText(result)).toMatch(
+			/cannot be resolved|no verified Clerk session/i,
+		);
+		// The service-account roster must NEVER be consulted for this path —
+		// consulting it and finding "*" is exactly ETA-M15.
+		expect(orgRosterQueryCalled).toBe(false);
+	});
+
+	it("legacy-tenant-generic (clerkJwt absent, isMaster false) → REFUSE LOUDLY", async () => {
+		orgRosterQueryCalled = false;
+		const result = await callTool(
+			"update_recurring_task",
+			{
+				recurringTaskId: "mock-recurring-task-id",
+				assignedTo: "any-other-orchestrator-at-all",
+			},
+			buildLegacyTenantGenericCtx(),
+			["*"],
+		);
+
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/Forbidden/i);
+		expect(getText(result)).toMatch(
+			/cannot be resolved|no verified Clerk session/i,
+		);
+		expect(orgRosterQueryCalled).toBe(false);
+	});
+
+	it("createdBy (identity claim) still refuses a foreign identity — unchanged by this fix", async () => {
 		createdTaskRow = null;
 		const result = await callTool(
 			"create_task",
 			{
-				title: "Wildcard roster, foreign createdBy",
+				title: "Foreign createdBy",
 				createdBy: "not-prometheus", // NOT in fromAllowList
-				assignedTo: "any-other-orchestrator-at-all",
+				assignedTo: "sigma-peer",
 			},
-			buildPrometheusCtx(),
-			["*"],
+			buildPrometheusOauthScopedCtx(),
 		);
 
 		expect(result.isError).toBe(true);
