@@ -113,18 +113,19 @@ describe("orgRoster:getForAccessToken — no organisation argument", () => {
 		expect(roster).not.toContain("*");
 	});
 
-	test("token without clerkOrgSlug → empty roster (MCP keeps #1215)", async () => {
+	test("token without clerkOrgSlug → named RBAC_DENIED, not an empty roster", async () => {
 		const t = createTestConvex();
 		await seedTokenAndOrg(t, {
 			tokenHash: "hash-unattached",
 			allowedOrchestrators: ["should-not-matter"],
 		});
-		const roster = await t
-			.withIdentity({ subject: SERVICE_ACCOUNT })
-			.query(api.orgRoster.getForAccessToken, {
-				tokenHash: "hash-unattached",
-			});
-		expect(roster).toEqual([]);
+		await expect(
+			t
+				.withIdentity({ subject: SERVICE_ACCOUNT })
+				.query(api.orgRoster.getForAccessToken, {
+					tokenHash: "hash-unattached",
+				}),
+		).rejects.toThrow(/no organisation claim/);
 	});
 
 	test("unknown tokenHash → RBAC_DENIED", async () => {

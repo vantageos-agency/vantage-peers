@@ -310,7 +310,11 @@ export async function checkDelegationAllowed(
 		}
 	}
 	const roster = await getOrgRoster();
-	if (roster.includes("*")) return null; // the CALLER's own org is itself open
+	// Wildcard allow is Clerk-JWT only (caller's own withOrgScope row).
+	// On the token-hash path, getForAccessToken returns the mapping verbatim;
+	// treating ["*"] as "every orchestrator" is the green pole §3 forbids
+	// until a dedicated red on material that REACHES this line (Eta ETA-M18).
+	if (ctx.clerkJwt && roster.includes("*")) return null;
 	if (roster.includes(assignedTo)) return null;
 	const allowed =
 		roster.length === 0

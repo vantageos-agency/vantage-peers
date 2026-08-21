@@ -61,7 +61,9 @@ export const getForAccessToken = query({
 
 		const slug = token.clerkOrgSlug;
 		if (!slug) {
-			return [];
+			throw new ConvexError(
+				"RBAC_DENIED: access token carries no organisation claim",
+			);
 		}
 
 		const mapping = await ctx.db

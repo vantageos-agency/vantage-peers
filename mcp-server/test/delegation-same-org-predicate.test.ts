@@ -457,6 +457,29 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 		expect(tokenRosterQueryCalled).toBe(true);
 	});
 
+	it("OAuth token-hash path: mapping roster ['*'] must NOT allow a foreign assignee (Eta ETA-M18)", async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		tokenRosterQueryCalled = false;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "must not treat token mapping * as every org",
+				createdBy: "orch-a",
+				assignedTo: "someone-in-another-org",
+			},
+			buildOrchAOauthCtx(),
+			["*"],
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(
+			/not a member of the caller's organisation/i,
+		);
+		expect(createdTaskRow).toBeNull();
+		expect(orgRosterQueryCalled).toBe(false);
+		expect(tokenRosterQueryCalled).toBe(true);
+	});
+
 	it("ETA-M15 wildcard: DCR + mocked service-account roster ['*'] still REFUSE, getMyOrgRoster never called, getForAccessToken never called", async () => {
 		orgRosterQueryCalled = false;
 		tokenRosterQueryCalled = false;
