@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Security
+- **`docs/cloud/security-multi-tenant.md` §4.1 no longer teaches the bug (T-STD `k174273z0tb2jdvgkj9k7tm8ph8cxn06`).** `fromAllowList` is speak-as + list/read identity filter. Create/update `assignedTo` is the org roster derived from the token. A doctor grepping the standard for “assignedTo is fromAllowList” as a purpose sentence now misses.
+
 - **Provisioned OAuth clients can belong to an organisation without a Clerk JWT (mission `vp-cloud-org-provision-v1` T1 `k1735t6jy0gpkd3gr13xznp3f18cx1c4`, spec pin `e936a5eb`).** `oauth_scope_profiles` / `oauth_access_tokens` gain optional `clerkOrgSlug` (snapshotted at mint). New public query `orgRoster:getForAccessToken({ tokenHash })` takes **no organisation argument** — the org is derived inside from that token row, never `withOrgScope` (service-account `["*"]` is ETA-M15). MCP `checkDelegationAllowed` uses it when `accessTokenHash` + `clerkOrgSlug` are on the OAuth context; DCR/legacy/unattached tokens still hit the #1215 refuse and never call `getMyOrgRoster`. Verified: RED then GREEN in `mcp-server/test/delegation-same-org-predicate.test.ts` (ALLOW orch-a→orch-b was `isError true` / membership pole still quoted #1215 → both green); `convex/__tests__/orgRoster.getForAccessToken.test.ts` (service-account identity returns the token's mapping, not `["*"]`; source asserts args are only `tokenHash`).
 
 ### Security
