@@ -365,3 +365,74 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 		expect(row).toBeNull();
 	});
 });
+
+describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
+	test("live client-generic token has empty fromAllowList; patch to prometheus fills it", async () => {
+		const t = createTestConvex();
+		const master = "test-master-token-deadbeef";
+		await t.mutation(api.oauth.seedDefaultProfiles, { callerToken: master });
+
+		await t.mutation(api.oauth.upsertScopeProfile, {
+			callerToken: master,
+			profile: {
+				profileId: "prometheus",
+				description:
+					"Prometheus orchestrator — send as prometheus only (TDD seed).",
+				fromAllowList: ["prometheus"],
+				namespaceReadPrefixes: ["orchestrator/prometheus", "global"],
+				namespaceWritePrefixes: ["orchestrator/prometheus", "global"],
+			},
+		});
+
+		const clientId = "prometheus-tdd-client";
+		await t.mutation(api.oauth.createClient, {
+			callerToken: master,
+			clientId,
+			clientSecretHash: "a".repeat(64),
+			name: "prometheus-tdd",
+			redirectUris: [],
+			scopeProfile: "client-generic",
+		});
+
+		const tokenHash = "abcd".repeat(16);
+		await t.mutation(api.oauth.createAccessToken, {
+			callerToken: master,
+			tokenHash,
+			clientId,
+			userId: "prometheus",
+			scopes: ["vantage:read"],
+			scopeProfile: "client-generic",
+			fromAllowList: [],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+			expiresAt: Date.now() + 3600_000,
+		});
+
+		const before = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		expect(before).not.toBeNull();
+		expect(before?.fromAllowList.length).toBe(0);
+
+		await t.mutation(api.oauth.patchClientScopeAndRefreshTokens, {
+			callerToken: master,
+			clientId,
+			newScopeProfile: "prometheus",
+			reason: "TDD: retarget live client-generic token onto prometheus profile",
+		});
+
+		const patched = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		expect(patched?.fromAllowList).toContain("prometheus");
+		expect(patched?.scopeProfile).toBe("prometheus");
+	});
+
+	test("garbage callerToken is Unauthorized", async () => {
+		const t = createTestConvex();
+		await expect(
+			t.mutation(api.oauth.patchClientScopeAndRefreshTokens, {
+				callerToken: "garbage-not-master",
+				clientId: "any-client",
+				newScopeProfile: "prometheus",
+				reason: "TDD negative path: garbage callerToken must be rejected",
+			}),
+		).rejects.toThrow(/Unauthorized/);
+	});
+});
