@@ -21,6 +21,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
+	checkDelegationAllowed,
 	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
@@ -1809,6 +1810,21 @@ export function registerTools(
 	// ── scope guards (no-op when oauthCtx is undefined — legacy bearer path) ────
 	const guardFrom = (from: string) => {
 		const err = checkFromAllowed(oauthCtx, from);
+		return err ? mcpError(err) : null;
+	};
+	// Delegation guard — distinct question from guardFrom (identity CLAIM).
+	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
+	// member of the CALLER's own organisation? Membership is read from DATA
+	// (convex/orgRoster.ts getMyOrgRoster → client_org_mapping), never a list
+	// hard-coded here. Master scope short-circuits inside
+	// checkDelegationAllowed without querying Convex.
+	const guardDelegation = async (assignedTo: string) => {
+		const err = await checkDelegationAllowed(oauthCtx, assignedTo, () =>
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			convex.query("orgRoster:getMyOrgRoster" as any, {}) as Promise<
+				string[]
+			>,
+		);
 		return err ? mcpError(err) : null;
 	};
 	const guardRead = (namespace: string | undefined) => {
@@ -3945,7 +3961,7 @@ export function registerTools(
 			try {
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
-				const assigneeDenied = guardFrom(assignedTo);
+				const assigneeDenied = await guardDelegation(assignedTo);
 				if (assigneeDenied) return assigneeDenied;
 
 				// C2: normalize orchestrator-id fields at write time (B2 §6+§7).
@@ -4411,7 +4427,7 @@ export function registerTools(
 					if (fromDenied) return fromDenied;
 				}
 				if (assignedTo) {
-					const assigneeDenied = guardFrom(assignedTo);
+					const assigneeDenied = await guardDelegation(assignedTo);
 					if (assigneeDenied) return assigneeDenied;
 				}
 
@@ -6591,7 +6607,7 @@ export function registerTools(
 			try {
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
-				const assigneeDenied = guardFrom(assignedTo);
+				const assigneeDenied = await guardDelegation(assignedTo);
 				if (assigneeDenied) return assigneeDenied;
 
 				const tagsArray = tags
@@ -6884,7 +6900,7 @@ export function registerTools(
 		async ({ recurringTaskId, ...fields }) => {
 			try {
 				if (fields.assignedTo) {
-					const assigneeDenied = guardFrom(fields.assignedTo);
+					const assigneeDenied = await guardDelegation(fields.assignedTo);
 					if (assigneeDenied) return assigneeDenied;
 				}
 

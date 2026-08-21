@@ -242,6 +242,58 @@ export function checkFromAllowed(
 }
 
 /**
+ * Answers the DELEGATION question — is `assignedTo` a member of the CALLER'S
+ * own organisation? — as distinct from `checkFromAllowed`, which answers a
+ * different question (may this client SPEAK AS `from`). Conflating the two
+ * meant every non-master client could only delegate to the one identity in
+ * its own `fromAllowList`, making cross-station dispatch impossible for any
+ * non-master client (Day-... delegation-same-org-predicate incident).
+ *
+ * Rules:
+ *   - master scope (isMasterScope) → allowed (null), no roster read needed.
+ *   - otherwise → allowed iff `assignedTo` is in the caller's ORG ROSTER,
+ *     read from DATA via `getOrgRoster` (never a list hard-coded in code —
+ *     see the operator ruling: the boundary is the organisation, and
+ *     membership must be looked up, not guessed from `fromAllowList`, which
+ *     is itself a hard-coded catalog in convex/oauth.ts, not the org source
+ *     of truth). `getOrgRoster` is expected to resolve the caller's own
+ *     `client_org_mapping.allowedOrchestrators` (via Convex `withOrgScope`)
+ *     for the org the caller's verified identity belongs to.
+ *   - `roster.includes("*")` → allowed (null), same as everywhere else in
+ *     Convex (`isMaster = allowedOrchestrators.includes("*")`, see
+ *     convex/lib/auth.ts). This branch is REQUIRED, not cosmetic: every
+ *     clerkJwt-absent non-master caller (OAuth-scoped tokens, DCR, legacy
+ *     mcpTenants — see selectConvexClientForRequest in
+ *     authenticatedConvexClient.ts) runs `getMyOrgRoster` on the MCP
+ *     server's own service-account Convex client, which withOrgScope
+ *     resolves via the CLERK_SERVICE_ACCOUNT_USER_ID carve-out to
+ *     `allowedOrchestrators = ["*"]` — a wildcard roster, not a concrete
+ *     one. A literal `roster.includes(assignedTo)` would deny "*"-resolved
+ *     callers ALL delegation (an uninverted withholding bug), so the
+ *     wildcard must be checked before the membership check.
+ *
+ * Async because it performs a data read. `ctx` undefined (direct predicate
+ * call, e.g. unit tests without a bearerAuthMiddleware pass) allows through,
+ * matching the other check* predicates' no-context convention.
+ */
+export async function checkDelegationAllowed(
+	ctx: OAuthContext | undefined,
+	assignedTo: string,
+	getOrgRoster: () => Promise<string[]>,
+): Promise<string | null> {
+	if (!ctx) return null;
+	if (isMasterScope(ctx)) return null;
+	const roster = await getOrgRoster();
+	if (roster.includes("*")) return null;
+	if (roster.includes(assignedTo)) return null;
+	const allowed =
+		roster.length === 0
+			? "(none — this client's organisation has no roster on record)"
+			: roster.join(", ");
+	return `Forbidden: assignedTo='${assignedTo}' is not a member of the caller's organisation (scope_profile=${ctx.scopeProfile}). Org roster: ${allowed}.`;
+}
+
+/**
  * Checks namespace against prefix list. A prefix of "*" means any namespace.
  * Otherwise the target namespace must start with one of the prefixes.
  */
