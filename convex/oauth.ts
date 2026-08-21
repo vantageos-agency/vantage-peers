@@ -15,6 +15,7 @@
 
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { requireOrgAdmin } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -535,9 +536,17 @@ function randomOpaqueHex(bytes = 32): string {
 
 const RESERVED_ORCH_NAMES = new Set(["master", "*", ""]);
 
+// D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr): ADDITIVE org-admin authorization
+// path. `callerToken` is now OPTIONAL — when present (non-empty), the
+// pre-existing master path runs UNCHANGED (`requireMasterAuth`, byte-
+// identical helper). When absent/empty, an authenticated Clerk org-admin of
+// the TARGET org (args.clerkOrgSlug) may call this mutation instead — see
+// `requireOrgAdmin` in convex/lib/auth.ts for the full both-pole contract.
+// The mutation body below (idempotent replay / reserved-name refusal /
+// all-or-nothing insert) is UNTOUCHED past the authorization check.
 export const provisionOrganization = mutation({
 	args: {
-		callerToken: v.string(),
+		callerToken: v.optional(v.string()),
 		clerkOrgSlug: v.string(),
 		displayName: v.string(),
 		orchestrators: v.array(v.object({ name: v.string() })),
@@ -558,12 +567,23 @@ export const provisionOrganization = mutation({
 		),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
 		const slug = args.clerkOrgSlug.trim();
 		if (!slug) {
 			throw new Error("clerkOrgSlug is required");
 		}
+
+		// AUTHORIZATION — master (unchanged) OR org-admin of THIS org
+		// (additive, D2). Non-empty `callerToken` selects the exact same
+		// master path as before; empty/absent selects the org-admin path,
+		// scoped to `slug` (never widened by a caller-supplied value —
+		// `requireOrgAdmin` derives the caller's own org from their verified
+		// identity and asserts it equals `slug`).
+		if (args.callerToken && args.callerToken.length > 0) {
+			await requireMasterAuth(args.callerToken);
+		} else {
+			await requireOrgAdmin(ctx, slug);
+		}
+
 		if (args.displayName.trim().length === 0) {
 			throw new Error("displayName is required");
 		}
@@ -642,7 +662,14 @@ export const provisionOrganization = mutation({
 			createdAt: now,
 		});
 
-		const actorTokenHash = await sha256Hex(args.callerToken);
+		// Audit actor: hash the master token when present (unchanged), else
+		// hash the caller's verified Clerk subject (org-admin path) so the
+		// audit trail still names an actor rather than an empty string.
+		const actorIdentitySource =
+			args.callerToken && args.callerToken.length > 0
+				? args.callerToken
+				: ((await ctx.auth.getUserIdentity())?.subject ?? "org-admin:unknown");
+		const actorTokenHash = await sha256Hex(actorIdentitySource);
 		const seats = [];
 		for (const name of names) {
 			const profileId = `${name}-${slug}`;

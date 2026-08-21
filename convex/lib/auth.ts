@@ -234,6 +234,102 @@ export function filterByOrgScope<
 }
 
 /**
+ * requireOrgAdmin — D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr).
+ *
+ * Authorizes an authenticated Clerk org-ADMIN to act on their OWN org,
+ * without a global secret. Used by `convex/oauth.ts`'s `provisionOrganization`
+ * as an ADDITIVE authority path alongside the pre-existing
+ * `requireMasterAuth` (master stays a valid caller, byte-unchanged).
+ *
+ * THE PROPERTY (both poles):
+ *   ALLOW — a verified Clerk identity whose own org (organizationId /
+ *   organizationSlug claim, same fallback `withOrgScope` uses above) equals
+ *   `targetOrgSlug`, AND whose org-role claim normalizes to "admin"
+ *   (Clerk's default session-token claim is `org_role`, shaped
+ *   "org:admin" / "org:member" — see mcp-server/src/auth.ts's
+ *   `tryVerifyClerkJwt` for the same claim read at the HTTP boundary),
+ *   AND whose org is an ACTIVE row in `client_org_mapping` (reusing
+ *   `lookupOrgMapping` — the SAME join `withOrgScope` uses, not duplicated).
+ *
+ *   DENY — no identity; identity with no org attached; identity whose org
+ *   does NOT equal targetOrgSlug (an admin of X may never provision into Y);
+ *   identity whose role does not normalize to "admin" (a non-admin member of
+ *   their own org is refused); or targetOrgSlug not an active mapping row
+ *   (an org-admin cannot bootstrap a brand-new org from nothing — that stays
+ *   master-only).
+ *
+ * The target org is ALWAYS derived from the caller's OWN verified identity,
+ * never trusted from a caller-supplied argument — `targetOrgSlug` here is
+ * the value the CALLING mutation already validated belongs to this request
+ * (e.g. `args.clerkOrgSlug`), and this function's job is solely to prove the
+ * identity's own org equals it, not to source the org from the identity
+ * alone (which would let anyone claim any org unless the request-side value
+ * is bound too).
+ *
+ * Throws ConvexError("RBAC_DENIED: ...") on every deny branch. Returns void
+ * (no return value) on success — callers proceed after the await.
+ */
+export async function requireOrgAdmin(
+	ctx: QueryCtx | MutationCtx,
+	targetOrgSlug: string,
+): Promise<void> {
+	const identity = await ctx.auth.getUserIdentity();
+	if (!identity) {
+		throw new ConvexError(
+			"RBAC_DENIED: no authenticated identity presented for org-admin provisioning",
+		);
+	}
+
+	const rec = identity as Record<string, unknown>;
+	const callerOrgSlug =
+		(rec.organizationId as string | undefined) ??
+		(rec.organizationSlug as string | undefined) ??
+		null;
+
+	if (!callerOrgSlug) {
+		throw new ConvexError(
+			"RBAC_DENIED: authenticated identity has no organisation attached",
+		);
+	}
+
+	if (callerOrgSlug !== targetOrgSlug) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller's organisation "${callerOrgSlug}" does not match target org "${targetOrgSlug}" — an org-admin may only act on their OWN org — ${JSON.stringify({ callerOrgSlug, targetOrgSlug })}`,
+		);
+	}
+
+	// Clerk's default active-organization session claim is `org_role`,
+	// shaped "org:admin" / "org:member" (unless custom roles are configured).
+	// Read defensively across the spellings Convex's OIDC identity mapping
+	// may surface, mirroring the organizationId/organizationSlug fallback
+	// above — no new claim shape is invented here.
+	const roleRaw =
+		(rec.orgRole as string | undefined) ??
+		(rec.org_role as string | undefined) ??
+		(rec.organizationRole as string | undefined) ??
+		null;
+	const normalizedRole = roleRaw
+		? roleRaw.replace(/^org:/i, "").toLowerCase()
+		: null;
+
+	if (normalizedRole !== "admin") {
+		throw new ConvexError(
+			`RBAC_DENIED: caller is not an org-admin of "${targetOrgSlug}" (role=${roleRaw ?? "none"}) — ${JSON.stringify({ targetOrgSlug, role: roleRaw ?? null })}`,
+		);
+	}
+
+	// An org-admin cannot bootstrap a brand-new org from nothing — the
+	// target org must already be an ACTIVE provisioned mapping. Reuses the
+	// SAME join withOrgScope uses; not duplicated.
+	const mapping = await lookupOrgMapping(ctx, targetOrgSlug);
+	if (!mapping || !mapping.isActive) {
+		throw new ConvexError(
+			`RBAC_DENIED: org "${targetOrgSlug}" is not an active provisioned organisation — ${JSON.stringify({ targetOrgSlug })}`,
+		);
+	}
+}
+
+/**
  * Asserts that `scope` has `requiredScope` in its scopes array.
  * Master scope always passes (isMaster bypasses all scope checks).
  * Throws "Forbidden: missing scope '...'" if the check fails.
