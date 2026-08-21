@@ -100,18 +100,24 @@ The scope-aware filter framework is the single chokepoint that translates an aut
 | Concept | Type | Purpose | Never used as |
 |---|---|---|---|
 | `scope_profile.name` | `string` (opaque identifier) | Uniquely identifies a scope-profile record in the catalog. Human-readable slug (`helios-<client-org>`, `alpha-test-trio`). | Orchestrator ID, namespace prefix, identity filter value |
-| `scope_profile.fromAllowList[]` | `string[]` | Exhaustive list of orchestrator IDs authorized to appear as `assignedTo`, `createdBy`, `from`, `recipient`, `pilot` under this scope. | Namespace filter, profile name comparison |
+| `scope_profile.fromAllowList[]` | `string[]` | Speak-as identities: `createdBy`, `from`, `callerOrchestrator`, and `recipient` when the caller claims to be that identity. Also the **list/read** filter for `list_tasks assignedTo=` / `createdBy=` (who this client may *query*). | Namespace filter, profile name comparison, **create/update `assignedTo` (delegation)** |
+| Org roster (`client_org_mapping.allowedOrchestrators`, derived from the access token's `clerkOrgSlug` or a Clerk JWT — never from an org argument) | `string[]` (data) | Delegation: `assignedTo` on `create_task` / `update_task` / `create_recurring_task` / `update_recurring_task`. Membership is read from that mapping row. | Speak-as; the MCP service-account `["*"]` roster |
 | `scope_profile.namespaceReadPrefixes[]` | `string[]` | Prefix list for namespace-scoped **READ** operations (`list_memories`, `recall`, `get_memory`). | Identity filter, write gate |
 | `scope_profile.namespaceWritePrefixes[]` | `string[]` | Prefix list for namespace-scoped **WRITE** operations (`store_memory`). | Identity filter, read gate |
+
+`fromAllowList` is **not** the exhaustive list of IDs authorized as create/update `assignedTo`. Applying `checkFromAllowed` / `guardFrom` to the assignee was the 2026-08-21 defect (a station could only assign to itself). Operator ruling: any member of an organisation may delegate to any member of the same organisation.
 
 **FR — Trois champs dans un document `scope_profile` ont des rôles entièrement distincts. Les confondre provoque des régressions de sécurité.**
 
 | Concept | Type | Rôle | Ne jamais utiliser comme |
 |---|---|---|---|
 | `scope_profile.name` | `string` (identifiant opaque) | Identifie de manière unique un enregistrement scope-profile dans le catalogue. Slug lisible (`helios-<client-org>`, `alpha-test-trio`). | ID d'orchestrateur, préfixe de namespace, valeur de filtre d'identité |
-| `scope_profile.fromAllowList[]` | `string[]` | Liste exhaustive des IDs d'orchestrateurs autorisés à apparaître comme `assignedTo`, `createdBy`, `from`, `recipient`, `pilot` sous ce scope. | Filtre de namespace, comparaison de nom de profil |
+| `scope_profile.fromAllowList[]` | `string[]` | Identités speak-as : `createdBy`, `from`, `callerOrchestrator`, et `recipient` quand l'appelant prétend être cette identité. Aussi le filtre **lecture** de `list_tasks assignedTo=` / `createdBy=` (qui ce client peut *interroger*). | Filtre de namespace, comparaison de nom de profil, **`assignedTo` à la création/mise à jour (délégation)** |
+| Roster d'org (`client_org_mapping.allowedOrchestrators`, dérivé du `clerkOrgSlug` du jeton ou d'un JWT Clerk — jamais d'un argument d'organisation) | `string[]` (données) | Délégation : `assignedTo` sur `create_task` / `update_task` / `create_recurring_task` / `update_recurring_task`. L'appartenance se lit sur cette row. | Speak-as ; le roster `["*"]` du service-account MCP |
 | `scope_profile.namespaceReadPrefixes[]` | `string[]` | Liste de préfixes pour les opérations de **LECTURE** par namespace (`list_memories`, `recall`, `get_memory`). | Filtre d'identité, verrou d'écriture |
 | `scope_profile.namespaceWritePrefixes[]` | `string[]` | Liste de préfixes pour les opérations d'**ÉCRITURE** par namespace (`store_memory`). | Filtre d'identité, verrou de lecture |
+
+`fromAllowList` n'est **pas** la liste exhaustive des IDs autorisés comme `assignedTo` à l'écriture. Appliquer `checkFromAllowed` / `guardFrom` à l'assigné était le défaut du 2026-08-21 (une station ne pouvait assigner qu'à elle-même). Ruling : tout membre d'une organisation peut déléguer à tout membre de la même organisation.
 
 ---
 

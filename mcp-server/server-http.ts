@@ -133,6 +133,7 @@ type ScopeProfile = {
 	fromAllowList: string[];
 	namespaceReadPrefixes: string[];
 	namespaceWritePrefixes: string[];
+	clerkOrgSlug?: string;
 };
 
 /**
@@ -772,6 +773,7 @@ app.post("/token", async (c) => {
 				namespaceWritePrefixes: profile.namespaceWritePrefixes,
 				expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
 				refreshTokenHash,
+				clerkOrgSlug: profile.clerkOrgSlug,
 			},
 		);
 		await internalClient().mutation(
@@ -900,6 +902,7 @@ app.post("/token", async (c) => {
 				namespaceWritePrefixes: profile.namespaceWritePrefixes,
 				expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
 				refreshTokenHash,
+				clerkOrgSlug: profile.clerkOrgSlug,
 			},
 		);
 		return c.json({
@@ -1315,6 +1318,7 @@ admin.post("/oauth/access-tokens", async (c) => {
 				namespaceReadPrefixes,
 				namespaceWritePrefixes,
 				expiresAt,
+				clerkOrgSlug: profile.clerkOrgSlug,
 			},
 		);
 	} catch (err: unknown) {

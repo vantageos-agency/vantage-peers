@@ -865,6 +865,9 @@ export default defineSchema({
 		refreshTokenHash: v.optional(v.string()),
 		createdAt: v.number(),
 		revokedAt: v.optional(v.number()),
+		// Org claim snapshotted at mint (same class as fromAllowList).
+		// Missing → provisioned client cannot belong to an organisation (#1215 refuse).
+		clerkOrgSlug: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"]),
@@ -898,7 +901,10 @@ export default defineSchema({
 		namespaceWritePrefixes: v.array(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number(),
-	}).index("by_profileId", ["profileId"]),
+		clerkOrgSlug: v.optional(v.string()),
+	})
+		.index("by_profileId", ["profileId"])
+		.index("by_clerkOrgSlug", ["clerkOrgSlug"]),
 
 	// ── mcpTenants ────────────────────────────────────────────────────────────
 	// Registry of VIP tenants for HTTP MCP transport.

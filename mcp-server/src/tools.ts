@@ -1815,16 +1815,28 @@ export function registerTools(
 	// Delegation guard — distinct question from guardFrom (identity CLAIM).
 	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
 	// member of the CALLER's own organisation? Membership is read from DATA
-	// (convex/orgRoster.ts getMyOrgRoster → client_org_mapping), never a list
-	// hard-coded here. Master scope short-circuits inside
-	// checkDelegationAllowed without querying Convex.
+	// (convex/orgRoster.ts getMyOrgRoster for Clerk JWT, getForAccessToken
+	// for a provisioned OAuth token — org derived from the token row, never
+	// an org argument), never a list hard-coded here. Master scope
+	// short-circuits inside checkDelegationAllowed without querying Convex.
 	const guardDelegation = async (assignedTo: string) => {
-		const err = await checkDelegationAllowed(oauthCtx, assignedTo, () =>
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			convex.query("orgRoster:getMyOrgRoster" as any, {}) as Promise<
-				string[]
-			>,
-		);
+		const err = await checkDelegationAllowed(oauthCtx, assignedTo, async () => {
+			if (oauthCtx?.clerkJwt) {
+				return convex.query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"orgRoster:getMyOrgRoster" as any,
+					{},
+				) as Promise<string[]>;
+			}
+			if (oauthCtx?.accessTokenHash) {
+				return convex.query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"orgRoster:getForAccessToken" as any,
+					{ tokenHash: oauthCtx.accessTokenHash },
+				) as Promise<string[]>;
+			}
+			return [];
+		});
 		return err ? mcpError(err) : null;
 	};
 	const guardRead = (namespace: string | undefined) => {

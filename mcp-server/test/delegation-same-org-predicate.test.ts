@@ -164,6 +164,28 @@ const PROMETHEUS_ORG_ROSTER = ["prometheus", "sigma-peer"];
 
 let createdTaskRow: Record<string, unknown> | null = null;
 let orgRosterQueryCalled = false;
+let tokenRosterQueryCalled = false;
+let tokenRosterArgs: unknown = undefined;
+
+/** OAuth seat that belongs to an org — clerkJwt ABSENT, accessTokenHash SET. */
+function buildOrchAOauthCtx(
+	overrides: Partial<OAuthContext> = {},
+): OAuthContext {
+	return {
+		clientId: "client-orch-a",
+		userId: "orch-a",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "orch-a-plan-org-alpha",
+		fromAllowList: ["orch-a"],
+		namespaceReadPrefixes: ["orchestrator/orch-a"],
+		namespaceWritePrefixes: ["orchestrator/orch-a"],
+		expiresAt: Date.now() + 3600_000,
+		isMaster: false,
+		accessTokenHash: "hash-of-orch-a-token",
+		clerkOrgSlug: "plan-org-alpha",
+		...overrides,
+	};
+}
 
 function buildMockConvex(
 	roster: string[] = PROMETHEUS_ORG_ROSTER,
@@ -172,6 +194,11 @@ function buildMockConvex(
 		query: async (name: unknown, args: unknown) => {
 			if (name === "orgRoster:getMyOrgRoster") {
 				orgRosterQueryCalled = true;
+				return roster;
+			}
+			if (name === "orgRoster:getForAccessToken") {
+				tokenRosterQueryCalled = true;
+				tokenRosterArgs = args;
 				return roster;
 			}
 			if (name === "tasks:getById") {
@@ -378,6 +405,99 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 			/cannot be resolved|no verified Clerk session/i,
 		);
 		expect(orgRosterQueryCalled).toBe(false);
+	});
+
+	it("OAuth orch-a (no clerkJwt, token hash set), same-org assignedTo=orch-b → ALLOW, row read back — RED until resolver", async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		tokenRosterQueryCalled = false;
+		tokenRosterArgs = undefined;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "plan-acceptance-delegate",
+				createdBy: "orch-a",
+				assignedTo: "orch-b",
+			},
+			buildOrchAOauthCtx(),
+			["orch-a", "orch-b"],
+		);
+
+		expect(result.isError).toBeFalsy();
+		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(createdTaskRow).not.toBeNull();
+		expect(createdTaskRow?.assignedTo).toBe("orch-b");
+		expect(orgRosterQueryCalled).toBe(false);
+		expect(tokenRosterQueryCalled).toBe(true);
+		expect(tokenRosterArgs).toEqual({ tokenHash: "hash-of-orch-a-token" });
+		expect(tokenRosterArgs).not.toHaveProperty("clerkOrgSlug");
+		expect(tokenRosterArgs).not.toHaveProperty("orgId");
+	});
+
+	it("OAuth orch-a, assignedTo=outsider → REFUSE membership, not speak-as, not #1215 floor", async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		tokenRosterQueryCalled = false;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "cross-org should fail",
+				createdBy: "orch-a",
+				assignedTo: "outsider",
+			},
+			buildOrchAOauthCtx(),
+			["orch-a", "orch-b"],
+		);
+
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/not a member of the caller's organisation/i);
+		expect(getText(result)).not.toMatch(/from='outsider' is not in this client's allowlist/i);
+		expect(createdTaskRow).toBeNull();
+		expect(orgRosterQueryCalled).toBe(false);
+		expect(tokenRosterQueryCalled).toBe(true);
+	});
+
+	it("OAuth token-hash path: mapping roster ['*'] must NOT allow a foreign assignee (Eta ETA-M18)", async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		tokenRosterQueryCalled = false;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "must not treat token mapping * as every org",
+				createdBy: "orch-a",
+				assignedTo: "someone-in-another-org",
+			},
+			buildOrchAOauthCtx(),
+			["*"],
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(
+			/not a member of the caller's organisation/i,
+		);
+		expect(createdTaskRow).toBeNull();
+		expect(orgRosterQueryCalled).toBe(false);
+		expect(tokenRosterQueryCalled).toBe(true);
+	});
+
+	it("ETA-M15 wildcard: DCR + mocked service-account roster ['*'] still REFUSE, getMyOrgRoster never called, getForAccessToken never called", async () => {
+		orgRosterQueryCalled = false;
+		tokenRosterQueryCalled = false;
+		const result = await callTool(
+			"update_recurring_task",
+			{
+				recurringTaskId: "mock-recurring-task-id",
+				assignedTo: "any-other-orchestrator-at-all",
+			},
+			buildDcrClientGenericCtx(),
+			["*"],
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(
+			/cannot be resolved|no verified Clerk session/i,
+		);
+		expect(orgRosterQueryCalled).toBe(false);
+		expect(tokenRosterQueryCalled).toBe(false);
 	});
 
 	it("createdBy (identity claim) still refuses a foreign identity — unchanged by this fix", async () => {
