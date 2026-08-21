@@ -163,10 +163,7 @@ export async function withOrgScope(
 	}
 
 	// Look up org mapping
-	const mapping = await ctx.db
-		.query("client_org_mapping")
-		.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
-		.first();
+	const mapping = await lookupOrgMapping(ctx, orgSlug);
 
 	if (!mapping || !mapping.isActive) {
 		throw new ConvexError(
@@ -180,6 +177,41 @@ export async function withOrgScope(
 		allowedOrchestrators: mapping.allowedOrchestrators,
 		scopes: mapping.scopes,
 		isMaster: mapping.allowedOrchestrators.includes("*"),
+	};
+}
+
+/**
+ * Shared org-mapping lookup — the SINGLE join point onto `client_org_mapping`
+ * by `clerkOrgSlug` (the Clerk org id/slug, whichever Clerk's JWT template
+ * populates onto the identity). Both `withOrgScope` above (Convex-side
+ * `ctx.auth.getUserIdentity()` callers) and the public
+ * `clientOrgMapping:getByClerkSlug` query (mcp-server/src/auth.ts's Path B —
+ * the Clerk-JWT-as-bearer branch, which verifies the JWT itself against
+ * Clerk's JWKS and therefore has no `ctx.auth` identity for Convex to
+ * resolve) call this ONE function so the join logic is never duplicated
+ * (task k17bf7bsfrm255x4pr5r96q5g58cw691 deliverable 1).
+ *
+ * Returns `null` when no row exists for `orgSlug`. Callers MUST fail closed
+ * on both `null` AND `isActive === false` — this helper does not throw so
+ * that read-only query callers can choose their own refusal shape.
+ */
+export async function lookupOrgMapping(
+	ctx: QueryCtx | MutationCtx,
+	orgSlug: string,
+): Promise<{
+	allowedOrchestrators: string[];
+	scopes: string[];
+	isActive: boolean;
+} | null> {
+	const mapping = await ctx.db
+		.query("client_org_mapping")
+		.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+		.first();
+	if (!mapping) return null;
+	return {
+		allowedOrchestrators: mapping.allowedOrchestrators,
+		scopes: mapping.scopes,
+		isActive: mapping.isActive,
 	};
 }
 

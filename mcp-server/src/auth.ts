@@ -94,6 +94,13 @@ type TenantLookupResult = {
 	enabled: boolean;
 } | null;
 
+// Shape returned by clientOrgMapping:getByClerkSlug
+type OrgMappingLookupResult = {
+	allowedOrchestrators: string[];
+	scopes: string[];
+	isActive: boolean;
+} | null;
+
 // Shape returned by oauth:getAccessTokenByHash
 type OAuthLookupResult = {
 	clientId: string;
@@ -566,10 +573,21 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return;
 		}
 
-		// ── (2.5) Clerk JWT — team/<orgId> scoped access ────────────────────────
-		// Verify against Clerk JWKS. On success, extract org_id and set
-		// scopeProfile="team-member" with namespace prefixes locked to team/<orgId>.
-		// Falls through silently if the token is not a valid Clerk JWT.
+		// ── (2.5) Clerk JWT — org-authority-from-mapping scoped access ──────────
+		// Verify against Clerk JWKS. On success, the verified (sub, org_id) pair
+		// is resolved against `client_org_mapping` (the SAME by_clerk_slug join
+		// convex/lib/auth.ts's `withOrgScope` uses, exposed here via the public
+		// `clientOrgMapping:getByClerkSlug` query — see convex/clientOrgMapping.ts)
+		// so a registered/anonymous client can never widen what the mapping
+		// grants. Falls through silently if the token is not a valid Clerk JWT.
+		//
+		// task k17bf7bsfrm255x4pr5r96q5g58cw691 — PATH B REWIRE: this branch used
+		// to hardcode scopeProfile="team-member", fromAllowList=[] regardless of
+		// which org the verified JWT carried ("two authorities, one wins
+		// silently" — the mapping was consulted nowhere on this path). The fix
+		// below makes `client_org_mapping` the ONLY source of authority: no
+		// mapping row, or an inactive one, REFUSES outright rather than falling
+		// back to a populated default.
 		const clerkResult = await tryVerifyClerkJwt(token);
 		if (clerkResult !== null) {
 			const internalUrl = process.env.CONVEX_URL_INTERNAL;
@@ -583,6 +601,57 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				);
 			}
 			const orgId = clerkResult.org_id;
+
+			// Resolve authority FROM THE MAPPING — the verified org_id claim is
+			// the only input; the mapping row is the only source of grants.
+			// A lookup failure (query missing pre-migration, network error, etc.)
+			// is treated as a DENY, never as "fall through to a default grant" —
+			// fail-closed matches the (2) OAuth-lookup try/catch convention above
+			// EXCEPT that a lookup failure here refuses instead of falling
+			// through, because falling through on this path would mean
+			// re-verifying the same JWT against layer (3)/(4), which cannot
+			// happen (those layers do not accept Clerk JWTs) — a swallowed
+			// error here must not silently grant.
+			let mapping: OrgMappingLookupResult = null;
+			try {
+				mapping = (await internalClient().query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"clientOrgMapping:getByClerkSlug" as any,
+					{ orgSlug: orgId },
+				)) as OrgMappingLookupResult;
+			} catch (err: unknown) {
+				const message = err instanceof Error ? err.message : String(err);
+				console.error(
+					"[auth] client_org_mapping lookup failed for Clerk JWT path:",
+					message,
+				);
+				mapping = null;
+			}
+
+			// BOUNDING GUARD (POLE DENY): no mapping row, or an inactive one, →
+			// REFUSE. Never synthesize a populated default from a
+			// client-registration profile — this is exactly the defect class
+			// this task closes.
+			if (!mapping || !mapping.isActive) {
+				c.header("WWW-Authenticate", wwwAuthHeader);
+				return c.json(
+					{
+						error: `RBAC_DENIED: org "${orgId}" not in client_org_mapping or inactive`,
+					},
+					403,
+				);
+			}
+
+			// POLE ALLOW: the mapping grants authority — fromAllowList/scopes are
+			// derived FROM THAT MAPPING, never from a hardcoded literal. Two
+			// different clientIds resolving to the same (sub, org_id) reach this
+			// exact branch and read the exact same mapping row, so they receive
+			// identical authority (fromAllowList/scopes/isMaster) by construction
+			// — there is no separate "registered client" ceiling to intersect
+			// against on this path (no client-registration row is consulted at
+			// all here), so the resolved authority IS the mapping, exactly,
+			// never wider.
+			const isMaster = mapping.allowedOrchestrators.includes("*");
 			c.set("tenant", {
 				tenantName: `clerk:${orgId}`,
 				convexUrl: internalUrl,
@@ -590,18 +659,19 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			c.set("oauthContext", {
 				clientId: `dcr-clerk-${orgId}`,
 				userId: clerkResult.sub,
-				scopes: ["mcp:full"],
-				scopeProfile: "team-member",
-				fromAllowList: [],
+				scopes: mapping.scopes,
+				scopeProfile: isMaster ? "master" : "team-member",
+				fromAllowList: mapping.allowedOrchestrators,
 				namespaceReadPrefixes: [`team/${orgId}`],
 				namespaceWritePrefixes: [`team/${orgId}`],
 				expiresAt: clerkResult.exp * 1000,
-				isMaster: false,
+				isMaster,
 				// Forward the caller's own verified Clerk JWT to Convex — see
 				// OAuthContext.clerkJwt doc comment. This is the P0 fix: without
 				// this, server-http.ts had no way to attach any identity to the
 				// per-request Convex client for this path.
 				clerkJwt: token,
+				clerkOrgSlug: orgId,
 			});
 			await next();
 			return;
