@@ -308,6 +308,57 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 		).rejects.toThrow(/Unauthorized/);
 	});
 
+	test("SA identity mints despite stale callerToken (Grok Railway path)", async () => {
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_test");
+		const t = createTestConvex();
+		const tokenHash = "a1b2".repeat(16);
+		await t
+			.withIdentity({
+				subject: "user_service_account_test",
+				tokenIdentifier: "user_service_account_test",
+			})
+			.mutation(api.oauth.createAccessToken, {
+				callerToken: "railway-stale-secret",
+				tokenHash,
+				clientId: "railway-mcp",
+				userId: "grok",
+				scopes: ["vantage:read"],
+				scopeProfile: "client-generic",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				expiresAt: Date.now() + 3600_000,
+			});
+		const row = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		expect(row).not.toBeNull();
+		expect(row?.userId).toBe("grok");
+		expect(row?.clientId).toBe("railway-mcp");
+	});
+
+	test("non-SA identity + stale callerToken is still Unauthorized", async () => {
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "user_service_account_test");
+		const t = createTestConvex();
+		await expect(
+			t
+				.withIdentity({
+					subject: "user_some_other_clerk_user",
+					tokenIdentifier: "user_some_other_clerk_user",
+				})
+				.mutation(api.oauth.createAccessToken, {
+					callerToken: "railway-stale-secret",
+					tokenHash: "b2c3".repeat(16),
+					clientId: "forged",
+					userId: "forged",
+					scopes: ["vantage:read"],
+					scopeProfile: "master",
+					fromAllowList: ["*"],
+					namespaceReadPrefixes: ["*"],
+					namespaceWritePrefixes: ["*"],
+					expiresAt: Date.now() + 3600_000,
+				}),
+		).rejects.toThrow(/Unauthorized/);
+	});
+
 	test("rejects createRefreshToken without a valid callerToken (Blocker 1)", async () => {
 		const t = createTestConvex();
 		await expect(
