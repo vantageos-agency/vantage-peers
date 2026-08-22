@@ -99,10 +99,19 @@ export async function withOrgScope(
 		};
 	}
 
-	// Clerk attaches the org slug to either organizationId or organizationSlug
-	// depending on the JWT template configuration. Check both.
+	// `client_org_mapping.clerkOrgSlug` (the `by_clerk_slug` index this join
+	// resolves against — see lookupOrgMapping below) is keyed on a SLUG.
+	// `identity.organizationId` is a DISTINCT Clerk claim — a raw Clerk org id
+	// (`org_xxx`), never a slug, depending on JWT template configuration.
+	// Joining on it would either silently miss (mapping=null → a seated human
+	// gets RBAC_DENIED even though their org IS provisioned) or, worse, join
+	// against an unrelated row if an org id ever collided with another org's
+	// slug string. `organizationSlug` is therefore the SOLE source of
+	// `orgSlug` — matching requireOrgAdmin's identical slug-to-slug-only
+	// fix (convex/lib/auth.ts requireOrgAdmin, task
+	// k17awjxrj7ggwvw277cswh314d8cx7nr D2 follow-up item 4). `organizationId`
+	// is never read here.
 	const orgSlug =
-		((identity as Record<string, unknown>).organizationId as string | undefined) ??
 		((identity as Record<string, unknown>).organizationSlug as string | undefined) ??
 		null;
 

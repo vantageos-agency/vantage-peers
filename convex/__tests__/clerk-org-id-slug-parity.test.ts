@@ -5,18 +5,26 @@
 // PR #915 follow-up — 2 consistency tests for Clerk org_id ↔ clerkOrgSlug
 // key parity + no-org → master guard.
 //
+// UPDATED (Eta REVISE on PR #1224, blocker 3): `withOrgScope` no longer reads
+// `identity.organizationId` at all. `client_org_mapping.clerkOrgSlug` (the
+// `by_clerk_slug` index) is keyed on a SLUG; `organizationId` is a DISTINCT
+// Clerk claim — a raw org id (`org_xxx`), never a slug. The old `??` fallback
+// (`organizationId ?? organizationSlug`) meant a token carrying ONLY
+// `organizationId` (no `organizationSlug`) got joined on the wrong key,
+// mapping=null, and a seated human was silently DENIED (RBAC_DENIED) even
+// though their org WAS provisioned. The fix (matching requireOrgAdmin's
+// identical slug-to-slug-only fix, task k17awjxrj7ggwvw277cswh314d8cx7nr D2
+// item 4): `organizationSlug` is the SOLE source of `orgSlug`.
+//
 // Context:
 //   - auth.ts (MCP layer) stores namespaceReadPrefixes / namespaceWritePrefixes
 //     as ["team/<org_id>"] at OAuth token issuance time, where <org_id> is the
-//     Clerk org identifier used in the JWT (typically identity.organizationId,
-//     e.g. "org_test_consistency_xxx").
-//   - convex/lib/auth.ts `withOrgScope` reads identity.organizationId ??
-//     identity.organizationSlug to derive the orgSlug, then looks it up in
-//     client_org_mapping.clerkOrgSlug.
-//   - The risk: if the token was issued with org_id="org_abc" (Clerk numeric ID)
-//     but client_org_mapping stores clerkOrgSlug="human-slug" (human slug),
-//     the two paths produce DIFFERENT tenant keys → legit access blocked (FAIL-CLOSED
-//     over-denial — not a leak, but a correctness break).
+//     Clerk org identifier used in the JWT.
+//   - convex/lib/auth.ts `withOrgScope` reads identity.organizationSlug ONLY
+//     to derive the orgSlug, then looks it up in client_org_mapping.clerkOrgSlug.
+//   - TEST 1's first case below now documents the REFUSE pole: a token
+//     carrying only `organizationId` (no `organizationSlug`) must be REFUSED,
+//     never silently mis-joined on the org id string.
 //
 // TEST 1 — claim-key parity:
 //   Asserts that `identity.organizationId` resolves through `withOrgScope`
@@ -84,13 +92,14 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 	const TEST_ORG_ID = "org_test_consistency_xxx";
 	const NAMESPACE_PREFIX = `team/${TEST_ORG_ID}`;
 
-	test("orgSlug resolved by withOrgScope matches the namespace prefix derived by auth.ts MCP layer", async () => {
+	test("POLE REFUSE: token carrying only organizationId (no organizationSlug) is REFUSED, never mis-joined", async () => {
 		const t = createT();
 
 		// Seed client_org_mapping with clerkOrgSlug = the Clerk org_id literal.
-		// This is the canonical pattern: the Clerk org_id (organizationId claim)
-		// is stored directly in clerkOrgSlug so that identity.organizationId
-		// resolves to the same key used in the MCP namespace prefix.
+		// Even though a row happens to exist under this literal string, the fix
+		// (Eta blocker 3, PR #1224) means withOrgScope no longer reads
+		// organizationId AT ALL — it must REFUSE here rather than accidentally
+		// joining on it, because organizationId is not the join's contract.
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: TEST_ORG_ID,
@@ -102,10 +111,9 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 			});
 		});
 
-		// Simulate Convex-direct path: withOrgScope with identity.organizationId = TEST_ORG_ID.
-		let resolvedOrgSlug: string | null = null;
 		await t.run(async (ctx) => {
-			// Patch ctx.auth to simulate a Clerk identity with the org_id
+			// Patch ctx.auth to simulate a Clerk identity carrying ONLY
+			// organizationId — no organizationSlug claim at all.
 			const mockCtx = {
 				...ctx,
 				auth: {
@@ -116,45 +124,26 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 						name: "Test User",
 						email: "test@example.com",
 						organizationId: TEST_ORG_ID,
+						// organizationSlug intentionally absent
 					}),
 				},
 			};
-			const scope = await withOrgScope(
-				mockCtx as unknown as Parameters<typeof withOrgScope>[0],
-			);
-			resolvedOrgSlug = scope.orgSlug;
 
-			// The resolved org slug MUST equal the TEST_ORG_ID.
-			// If this fails → SECURITY FINDING: clerkOrgSlug in DB uses a different
-			// identifier format than what Clerk JWT exposes as organizationId.
-			expect(scope.orgSlug).toBe(TEST_ORG_ID);
-			expect(scope.isMaster).toBe(false);
+			// A seated human whose JWT template only populates organizationId
+			// must be REFUSED (RBAC_DENIED via the no-org branch), never
+			// silently mis-joined against a row keyed by the org id string.
+			await expect(
+				withOrgScope(mockCtx as unknown as Parameters<typeof withOrgScope>[0]),
+			).rejects.toThrow(ConvexError);
 		});
 
-		// Both paths must use the SAME identifier:
-		// MCP: "team/org_test_consistency_xxx" → prefix "team/org_test_consistency_xxx"
-		// Convex: orgSlug = "org_test_consistency_xxx" → same key
-		expect(resolvedOrgSlug).toBe(TEST_ORG_ID);
-
-		// The MCP namespace prefix check MUST pass for the tenant's own namespace.
-		// This is what auth.ts checkNamespacePrefix does at request time.
-		const prefixForToken = [NAMESPACE_PREFIX]; // token was issued with this prefix
-		const namespaceBeingAccessed = `team/${resolvedOrgSlug}/memories`;
-
-		expect(checkNamespacePrefix(prefixForToken, namespaceBeingAccessed)).toBe(
-			true,
-		);
-
-		// Cross-check: MCP prefix for THIS tenant must NOT match a DIFFERENT tenant's namespace.
+		// The MCP namespace prefix shape is unaffected by this Convex-direct
+		// guard — still exercised here for parity documentation.
+		const prefixForToken = [NAMESPACE_PREFIX];
 		const foreignTenantNamespace = "team/org_other_tenant_yyy/memories";
 		expect(checkNamespacePrefix(prefixForToken, foreignTenantNamespace)).toBe(
 			false,
 		);
-
-		// Final parity assertion: the org_id extracted from withOrgScope resolvedOrgSlug
-		// produces the SAME namespace prefix string as the MCP token's namespaceReadPrefixes.
-		const convexDerivedPrefix = `team/${resolvedOrgSlug}`;
-		expect(convexDerivedPrefix).toBe(NAMESPACE_PREFIX);
 	});
 
 	test("organizationSlug fallback: parity holds when JWT exposes organizationSlug instead of organizationId", async () => {
@@ -204,12 +193,12 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 		).toBe(true);
 	});
 
-	test("MISMATCH DETECTION: org_id stored as slug !== org_id in JWT causes RBAC_DENIED", async () => {
-		// This test documents the MISMATCHED case that causes over-denial.
-		// If clerkOrgSlug = "human-slug" but JWT exposes organizationId = "org_xxxx",
-		// withOrgScope will throw RBAC_DENIED (org "org_xxxx" not found in mapping).
-		// This is fail-closed (correct security, breaks legit access) — the fix is
-		// to register the mapping with clerkOrgSlug = the organizationId value.
+	test("MISMATCH DETECTION: org_id-only identity (no organizationSlug) causes RBAC_DENIED", async () => {
+		// This test documents the no-organizationSlug case that fails closed.
+		// Since organizationId is no longer read at all (Eta blocker 3 fix),
+		// an identity carrying ONLY organizationId hits the no-org REFUSE
+		// branch — RBAC_DENIED — regardless of what clerkOrgSlug happens to be
+		// stored in the mapping table. This is fail-closed by construction.
 		const t = createT();
 
 		// DB stores human slug but JWT exposes the numeric org_id

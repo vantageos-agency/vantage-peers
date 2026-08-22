@@ -150,6 +150,70 @@ def refuse_if_unreadable(rel_path: str, path_id: int) -> bool:
 	return False
 
 
+# ETA-M42 — matches a `scopes:` or `fromAllowList:` key's assigned VALUE up to
+# the next comma/newline at the same nesting depth (good enough for the
+# single-line object-literal style this codebase uses for oauthContext).
+SCOPES_ASSIGNMENT_PATTERN = re.compile(r"\bscopes:\s*([^,\n]+)")
+FROM_ALLOW_LIST_ASSIGNMENT_PATTERN = re.compile(r"\bfromAllowList:\s*([^,\n]+)")
+NONEMPTY_LITERAL_ARRAY_PATTERN = re.compile(r"^\[\s*[^\]\s][^\]]*\]$")
+MAPPING_DERIVED_VALUE_PATTERN = re.compile(r"^mapping\.")
+
+
+def classify_path4_branch(branch_text: str, join_marker: str) -> str:
+	"""Classifies Path B (bearerAuthMiddleware case 2.5) on the GRANTING
+	PREDICATE, not on a token's mere presence in a text window (ETA-M42).
+
+	THE PROPERTY: scopes/fromAllowList must be ASSIGNED FROM the
+	client_org_mapping result (e.g. `mapping.scopes`,
+	`mapping.allowedOrchestrators`), never from a hardcoded non-empty literal
+	array (e.g. `["mcp:full"]`, `["*"]`). A branch that restores a hardcoded
+	non-empty literal for EITHER key MUST classify BLOCK regardless of
+	whether the join call (`join_marker`) is ALSO present in the branch —
+	Eta's exact break was: restore the literals while leaving the join call
+	in place, so a substring-presence check still saw the join string and
+	PASSed even though the authority had gone back to being hardcoded.
+
+	Returns "PASS", "BLOCK", or "UNKNOWN" (join call entirely absent AND no
+	scopes/fromAllowList assignment could be located at all — a shape this
+	classifier doesn't recognize, distinct from a proven-hardcoded BLOCK).
+	"""
+	has_join = join_marker in branch_text
+
+	scopes_match = SCOPES_ASSIGNMENT_PATTERN.search(branch_text)
+	from_match = FROM_ALLOW_LIST_ASSIGNMENT_PATTERN.search(branch_text)
+
+	if not scopes_match or not from_match:
+		# Neither key assignment could be located at all — cannot assert the
+		# granting predicate either way.
+		return "PASS" if has_join else "UNKNOWN"
+
+	scopes_val = scopes_match.group(1).strip()
+	from_val = from_match.group(1).strip()
+
+	def is_hardcoded_nonempty_literal(value: str) -> bool:
+		return bool(NONEMPTY_LITERAL_ARRAY_PATTERN.match(value))
+
+	if is_hardcoded_nonempty_literal(scopes_val) or is_hardcoded_nonempty_literal(
+		from_val
+	):
+		# The granting predicate assigns a hardcoded non-empty literal to
+		# scopes or fromAllowList — BLOCK regardless of whether the join call
+		# is also textually present in the branch (the exact Eta break).
+		return "BLOCK"
+
+	if MAPPING_DERIVED_VALUE_PATTERN.match(
+		scopes_val
+	) and MAPPING_DERIVED_VALUE_PATTERN.match(from_val):
+		# Both keys are demonstrably assigned FROM the mapping result.
+		return "PASS"
+
+	# Neither a proven hardcoded literal nor a proven mapping-derived
+	# assignment (e.g. an intermediate variable) — conservative: fall back to
+	# join-string presence only as a last resort, never let an ambiguous
+	# assignment shape silently pass.
+	return "PASS" if has_join else "BLOCK"
+
+
 def run_inventory() -> int:
 	paths = [
 		{
@@ -226,11 +290,21 @@ def run_inventory() -> int:
 					f"{p['file']} — cannot classify path (4)"
 				)
 				return 2
-			branch_text = text[idx : idx + 4000]
-			has_join = p["marker_post"] in branch_text
-			result = "PASS" if has_join else "BLOCK"
+			# ETA-M42 fix: bound the region to the ACTUAL Path B branch using
+			# clear anchors (this marker to the next numbered branch marker),
+			# never a fixed-size character window. A fixed window
+			# (text[idx:idx+4000]) can — and did (Eta's break) — contain BOTH
+			# the honest join call AND a restored hardcoded literal
+			# (`scopes: ["mcp:full"]`, `fromAllowList: ["*"]`) in the SAME
+			# branch, because a mere substring match ("is the join string
+			# present") says nothing about whether the mint args are actually
+			# ASSIGNED FROM the mapping result. The fix below inspects the
+			# GRANTING ASSIGNMENTS themselves.
+			end_idx = text.find("── (3)", idx)
+			branch_text = text[idx:end_idx] if end_idx != -1 else text[idx:]
+			result = classify_path4_branch(branch_text, p["marker_post"])
 			print(f"  ({p['id']}) {p['name']}: ANALYSED — live classification: {result}")
-			if result == "BLOCK":
+			if result != "PASS":
 				ok = False
 				print(f"      BLOCKING: {p['note']}")
 		else:

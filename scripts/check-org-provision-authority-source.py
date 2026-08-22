@@ -111,42 +111,51 @@ export const provisionOrganization = mutation({
 });
 """
 
-# BLOCK: callerToken is a REQUIRED (non-optional) string AND requireMasterAuth
-# is the only statement invoked unconditionally with no requireOrgAdmin (or
-# equivalent principal-derived call) anywhere in the same handler body.
-REQUIRED_CALLER_TOKEN_PATTERN = re.compile(r"callerToken:\s*v\.string\(\)")
-UNCONDITIONAL_MASTER_AUTH_PATTERN = re.compile(
-	r"handler:\s*async\s*\([^)]*\)\s*=>\s*\{\s*await\s+requireMasterAuth\("
-)
-PRINCIPAL_DERIVED_PATTERN = re.compile(
-	r"requireOrgAdmin\(|withOrgScope\(|clientOrgMapping:getByClerkSlug|by_clerk_slug"
-)
+MASTER_AUTH_CALL_PATTERN = re.compile(r"requireMasterAuth\(")
+# ETA-M41 fix: this pattern MUST assert on the GRANTING PREDICATE itself —
+# the actual `requireOrgAdmin(` call that GATES the mutation — never on a
+# token (`by_clerk_slug`, `clientOrgMapping:getByClerkSlug`, `withOrgScope(`)
+# merely being PRESENT somewhere in the extracted region. Eta's break: move
+# the mutation's own by_clerk_slug idempotent-REPLAY lookup ABOVE the gate
+# (before the first auth-call statement), keep requireMasterAuth as the SOLE
+# authority, and remove requireOrgAdmin entirely. extract_authorization_gate
+# stops at the FIRST statement invoking requireMasterAuth(/requireOrgAdmin(,
+# so the replay lookup statement (incidentally containing "by_clerk_slug")
+# is included in the gate text ahead of that stop point. The old, wider
+# pattern matched "by_clerk_slug" there and misclassified PASS even though
+# no requireOrgAdmin call — the actual granting predicate — was present.
+# Narrowing to `requireOrgAdmin\(` alone means only the real predicate call
+# counts; a replay lookup (or any other incidental by_clerk_slug reference)
+# occurring anywhere in the gate can never be mistaken for the gate itself.
+PRINCIPAL_DERIVED_PATTERN = re.compile(r"requireOrgAdmin\(")
 
 
 def classify(text: str) -> str:
-	"""Returns "BLOCK", "PASS", or "UNKNOWN" for a source snippet."""
-	has_principal_path = bool(PRINCIPAL_DERIVED_PATTERN.search(text))
-	required_token = bool(REQUIRED_CALLER_TOKEN_PATTERN.search(text))
-	unconditional_master = bool(UNCONDITIONAL_MASTER_AUTH_PATTERN.search(text))
+	"""Returns "BLOCK", "PASS", or "UNKNOWN" for a source snippet.
 
-	if has_principal_path:
-		# A principal-derived path exists in the gate at all — master is no
-		# longer the SOLE key, regardless of whether callerToken is still
-		# required syntactically (it must be optional for the branch to be
-		# reachable without a token, but we classify on the PRESENCE of the
-		# alternative branch, which is the actual property under test).
+	ETA-M41 fix: classifies purely on the GRANTING PREDICATE — which auth
+	CALL actually gates the mutation — never on a fixed-position regex (e.g.
+	"requireMasterAuth must be textually the FIRST statement") that a mere
+	reordering of unrelated statements (like moving the replay lookup above
+	the gate) can silently defeat. `text` here is ALREADY bounded by
+	`extract_authorization_gate` to end at the first top-level statement that
+	invokes an auth primitive — so any `requireOrgAdmin(` found within it IS,
+	by construction, part of the actual authorization decision, not
+	incidental later/earlier code.
+	"""
+	has_org_admin_call = bool(PRINCIPAL_DERIVED_PATTERN.search(text))
+	has_master_call = bool(MASTER_AUTH_CALL_PATTERN.search(text))
+
+	if has_org_admin_call:
+		# The alternative, principal-derived gate call is present — master is
+		# no longer the SOLE key, regardless of what other statements
+		# (replay lookups, etc.) precede it in the gate.
 		return "PASS"
 
-	if required_token and unconditional_master:
-		# callerToken is a required string AND requireMasterAuth runs
-		# unconditionally as literally the first statement, with no
-		# alternative branch anywhere — global secret is the SOLE gate.
-		return "BLOCK"
-
-	if unconditional_master:
-		# requireMasterAuth still runs unconditionally somewhere but no
-		# required-string marker matched (e.g. re-ordered code) — conservative
-		# BLOCK, since no principal-derived alternative was found.
+	if has_master_call:
+		# requireMasterAuth is the auth call that ends the bounded gate, and
+		# no requireOrgAdmin call exists anywhere in it — global secret is
+		# the SOLE gate.
 		return "BLOCK"
 
 	return "UNKNOWN"
@@ -321,11 +330,20 @@ def run_inventory() -> int:
 			),
 		},
 		{
+			# C1 fix (Eta REVISE PR #1224): this path previously carried
+			# status "ANALYSED" but the run loop's special-cased id==4 branch
+			# only ever printed "ANALYSED — SKIPPED-BLOCKING-SCOPE" and never
+			# emitted a BLOCK/PASS classification — an ANALYSED path that
+			# never classifies is exactly the coverage-inventory hole this
+			# doctor exists to prevent. This path genuinely has nothing to
+			# classify: the HTTP route stays master-only by design (see
+			# reason below), so it is relabelled SKIPPED with the same
+			# written reason and now flows through the ordinary SKIPPED
+			# branch below — no special-cased id==4 branch remains.
 			"id": 4,
 			"name": "server-http.ts POST /admin/organizations — HTTP entry to provisionOrganization",
-			"status": "ANALYSED",
-			"file": "mcp-server/server-http.ts",
-			"note": (
+			"status": "SKIPPED",
+			"reason": (
 				"Currently mounted under the `admin` Hono router "
 				"(`admin.use(\"*\", masterOnlyMiddleware())`), so the HTTP "
 				"entry point itself remains master-only pending a follow-up "
@@ -357,15 +375,23 @@ def run_inventory() -> int:
 		if p["status"] == "SKIPPED":
 			print(f"  ({p['id']}) {p['name']}: SKIPPED — {p['reason']}")
 			continue
-		if p["id"] == 4:
-			print(
-				f"  ({p['id']}) {p['name']}: ANALYSED — SKIPPED-BLOCKING-SCOPE — "
-				f"{p['note']}"
-			)
-			continue
 		text = p.get("text", "")
 		result = classify(text) if text else "UNKNOWN"
 		print(f"  ({p['id']}) {p['name']}: ANALYSED — live classification: {result}")
+		if result == "UNKNOWN":
+			# ETA-M38 fix: UNKNOWN means the classifier COULD NOT JUDGE the
+			# subject (neither BLOCK-shaped nor PASS-shaped patterns matched)
+			# — this is a distinct outcome from "a pole failed (real
+			# defect)" (exit 1). Conflating the two by exiting 1 here treats
+			# "I could not tell" the same as "I found a defect", which is
+			# wrong: exit 2 (REFUSING TO JUDGE) is reserved for exactly this
+			# case, naming the subject that could not be classified.
+			print(
+				f"REFUSING TO JUDGE: path ({p['id']}) {p['name']} classified "
+				f"UNKNOWN — neither BLOCK-shaped nor PASS-shaped pattern "
+				f"matched; cannot judge this subject"
+			)
+			return 2
 		if result != "PASS":
 			ok = False
 			print(f"      BLOCKING: {p['note']}")
