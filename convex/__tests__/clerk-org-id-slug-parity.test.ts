@@ -5,26 +5,30 @@
 // PR #915 follow-up — 2 consistency tests for Clerk org_id ↔ clerkOrgSlug
 // key parity + no-org → master guard.
 //
-// UPDATED (Eta REVISE on PR #1224, blocker 3): `withOrgScope` no longer reads
-// `identity.organizationId` at all. `client_org_mapping.clerkOrgSlug` (the
-// `by_clerk_slug` index) is keyed on a SLUG; `organizationId` is a DISTINCT
-// Clerk claim — a raw org id (`org_xxx`), never a slug. The old `??` fallback
-// (`organizationId ?? organizationSlug`) meant a token carrying ONLY
-// `organizationId` (no `organizationSlug`) got joined on the wrong key,
-// mapping=null, and a seated human was silently DENIED (RBAC_DENIED) even
-// though their org WAS provisioned. The fix (matching requireOrgAdmin's
-// identical slug-to-slug-only fix, task k17awjxrj7ggwvw277cswh314d8cx7nr D2
-// item 4): `organizationSlug` is the SOLE source of `orgSlug`.
+// UPDATED (Eta REVISE on PR #1224 blocker 3, reconciled with Pi decision (b),
+// task k17b70hdb0c5h4y9nsaffc8qb98cz9h5): `withOrgScope` reads the org key
+// slug-FIRST with an `organizationId` FALLBACK — `organizationSlug ??
+// organizationId`. On this deployment's Clerk "convex" JWT template the org
+// slug is delivered in the `organizationId` claim (a claim NAME mapped to
+// `{{org.slug}}`), which is why the cross-tenant isolation suites
+// (messages-with-org-scope, multiTenantIsolation) construct callers with the
+// slug in `organizationId` and Pi's TESTS pole requires such an identity to
+// RESOLVE and keep its authority. Eta's blocker-3 concern was PRECEDENCE, not
+// presence: the old `organizationId ?? organizationSlug` read the id FIRST, so
+// a real `organizationSlug` could be shadowed by a raw `org_xxx` and silently
+// miss. Slug-first fixes the precedence while keeping `organizationId`
+// resolvable. A value that matches no mapping row still fails closed
+// (RBAC_DENIED), never a cross-tenant grant.
 //
 // Context:
 //   - auth.ts (MCP layer) stores namespaceReadPrefixes / namespaceWritePrefixes
 //     as ["team/<org_id>"] at OAuth token issuance time, where <org_id> is the
 //     Clerk org identifier used in the JWT.
-//   - convex/lib/auth.ts `withOrgScope` reads identity.organizationSlug ONLY
-//     to derive the orgSlug, then looks it up in client_org_mapping.clerkOrgSlug.
-//   - TEST 1's first case below now documents the REFUSE pole: a token
-//     carrying only `organizationId` (no `organizationSlug`) must be REFUSED,
-//     never silently mis-joined on the org id string.
+//   - convex/lib/auth.ts `withOrgScope` derives orgSlug = organizationSlug ??
+//     organizationId, then looks it up in client_org_mapping.clerkOrgSlug.
+//   - TEST 1's first case below documents the RESOLVE pole: a token carrying
+//     only `organizationId` (the org key) resolves the mapping and keeps its
+//     authority (Pi decision (b) TESTS pole).
 //
 // TEST 1 — claim-key parity:
 //   Asserts that `identity.organizationId` resolves through `withOrgScope`
@@ -92,14 +96,14 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 	const TEST_ORG_ID = "org_test_consistency_xxx";
 	const NAMESPACE_PREFIX = `team/${TEST_ORG_ID}`;
 
-	test("POLE REFUSE: token carrying only organizationId (no organizationSlug) is REFUSED, never mis-joined", async () => {
+	test("POLE RESOLVE: token carrying only organizationId (the org key) resolves the mapping and keeps its authority", async () => {
 		const t = createT();
 
-		// Seed client_org_mapping with clerkOrgSlug = the Clerk org_id literal.
-		// Even though a row happens to exist under this literal string, the fix
-		// (Eta blocker 3, PR #1224) means withOrgScope no longer reads
-		// organizationId AT ALL — it must REFUSE here rather than accidentally
-		// joining on it, because organizationId is not the join's contract.
+		// Seed client_org_mapping with clerkOrgSlug = the org key the JWT carries.
+		// On this deployment's template the org slug arrives in the
+		// `organizationId` claim; withOrgScope reads slug-first with an
+		// organizationId FALLBACK, so this identity MUST resolve and keep the
+		// mapping's roster (Pi decision (b) TESTS pole, PR #1224).
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: TEST_ORG_ID,
@@ -129,12 +133,15 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 				},
 			};
 
-			// A seated human whose JWT template only populates organizationId
-			// must be REFUSED (RBAC_DENIED via the no-org branch), never
-			// silently mis-joined against a row keyed by the org id string.
-			await expect(
-				withOrgScope(mockCtx as unknown as Parameters<typeof withOrgScope>[0]),
-			).rejects.toThrow(ConvexError);
+			// Resolves via the organizationId fallback: orgSlug is the org key,
+			// the roster comes from the mapping, and membership never mints the
+			// master bypass (isMaster false — decision (b)).
+			const scope = await withOrgScope(
+				mockCtx as unknown as Parameters<typeof withOrgScope>[0],
+			);
+			expect(scope.orgSlug).toBe(TEST_ORG_ID);
+			expect(scope.isMaster).toBe(false);
+			expect(scope.allowedOrchestrators).toEqual(["sigma"]);
 		});
 
 		// The MCP namespace prefix shape is unaffected by this Convex-direct
@@ -193,12 +200,13 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 		).toBe(true);
 	});
 
-	test("MISMATCH DETECTION: org_id-only identity (no organizationSlug) causes RBAC_DENIED", async () => {
-		// This test documents the no-organizationSlug case that fails closed.
-		// Since organizationId is no longer read at all (Eta blocker 3 fix),
-		// an identity carrying ONLY organizationId hits the no-org REFUSE
-		// branch — RBAC_DENIED — regardless of what clerkOrgSlug happens to be
-		// stored in the mapping table. This is fail-closed by construction.
+	test("MISMATCH DETECTION: organizationId value that matches no mapping row causes RBAC_DENIED", async () => {
+		// Fail-closed on a genuine miss: the identity's org key
+		// ("org_different_from_slug", read via the organizationId fallback) does
+		// not match any client_org_mapping.clerkOrgSlug row ("human-readable-slug"),
+		// so withOrgScope throws RBAC_DENIED rather than granting anything. This
+		// is the safe half of slug-first-id-fallback — resolvable when the value
+		// matches a row, refused when it does not.
 		const t = createT();
 
 		// DB stores human slug but JWT exposes the numeric org_id

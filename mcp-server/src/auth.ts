@@ -646,12 +646,19 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			// derived FROM THAT MAPPING, never from a hardcoded literal. Two
 			// different clientIds resolving to the same (sub, org_id) reach this
 			// exact branch and read the exact same mapping row, so they receive
-			// identical authority (fromAllowList/scopes/isMaster) by construction
-			// — there is no separate "registered client" ceiling to intersect
-			// against on this path (no client-registration row is consulted at
-			// all here), so the resolved authority IS the mapping, exactly,
-			// never wider.
-			const isMaster = mapping.allowedOrchestrators.includes("*");
+			// identical authority (fromAllowList/scopes) by construction — there
+			// is no separate "registered client" ceiling to intersect against on
+			// this path (no client-registration row is consulted at all here),
+			// so the resolved roster IS the mapping, exactly, never wider.
+			//
+			// Pi ruling (PR #1224, decision b): Path B (Clerk-JWT-as-bearer)
+			// NEVER mints master. A `["*"]` mapping row KEEPS its stated roster
+			// (fromAllowList/scopes below) but never derives the cross-tenant
+			// isMaster bypass from org membership — an org-admin inviting a
+			// member must never turn that invite into a master-minting
+			// primitive. Master is reachable ONLY via the master secret
+			// (requireMasterAuth) or the by-id service-account carve-out, never
+			// via a Clerk identity resolved through client_org_mapping.
 			c.set("tenant", {
 				tenantName: `clerk:${orgId}`,
 				convexUrl: internalUrl,
@@ -660,12 +667,12 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				clientId: `dcr-clerk-${orgId}`,
 				userId: clerkResult.sub,
 				scopes: mapping.scopes,
-				scopeProfile: isMaster ? "master" : "team-member",
+				scopeProfile: "team-member",
 				fromAllowList: mapping.allowedOrchestrators,
 				namespaceReadPrefixes: [`team/${orgId}`],
 				namespaceWritePrefixes: [`team/${orgId}`],
 				expiresAt: clerkResult.exp * 1000,
-				isMaster,
+				isMaster: false,
 				// Forward the caller's own verified Clerk JWT to Convex — see
 				// OAuthContext.clerkJwt doc comment. This is the P0 fix: without
 				// this, server-http.ts had no way to attach any identity to the

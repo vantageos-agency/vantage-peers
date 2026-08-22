@@ -216,7 +216,15 @@ describe("Path B org authority — client_org_mapping is the ONLY source of gran
 		expect(resultA.oauthCtx?.clientId).toBe(resultB.oauthCtx?.clientId);
 	});
 
-	it("POLE ALLOW — a mapping whose allowedOrchestrators is [\"*\"] resolves scopeProfile='master', isMaster=true", async () => {
+	// T1 — Pi ruling (PR #1224, decision b): Path B NEVER mints master. A
+	// `["*"]` mapping row KEEPS its stated roster (fromAllowList/scopes) but
+	// never derives the cross-tenant isMaster bypass from org membership — an
+	// org-admin inviting a member must never turn that invite into a
+	// master-minting primitive over EVERY tenant. This test MUST FAIL at the
+	// pre-FIX-1 head (:654 minted `scopeProfile: isMaster ? "master" :
+	// "team-member"` / `isMaster: mapping.allowedOrchestrators.includes("*")`)
+	// and PASS after.
+	it("POLE ALLOW (decision b) — a mapping whose allowedOrchestrators is [\"*\"] KEEPS its roster but NEVER mints master: scopeProfile='team-member', isMaster=false", async () => {
 		_setInternalClientForTest(
 			makeFakeConvex({
 				org_wildcard: {
@@ -233,8 +241,11 @@ describe("Path B org authority — client_org_mapping is the ONLY source of gran
 		const { status, oauthCtx } = await callEcho(app, token);
 
 		expect(status).toBe(200);
-		expect(oauthCtx?.isMaster).toBe(true);
-		expect(oauthCtx?.scopeProfile).toBe("master");
+		expect(oauthCtx?.isMaster).toBe(false);
+		expect(oauthCtx?.scopeProfile).toBe("team-member");
+		// The stated roster is preserved — only the master profile is declined.
+		expect(oauthCtx?.fromAllowList).toEqual(["*"]);
+		expect(oauthCtx?.scopes).toEqual(["cross-tenant-read"]);
 	});
 
 	it("POLE DENY — NO mapping row for the org → REFUSE (403), never a populated default", async () => {

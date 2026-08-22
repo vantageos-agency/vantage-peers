@@ -101,18 +101,22 @@ export async function withOrgScope(
 
 	// `client_org_mapping.clerkOrgSlug` (the `by_clerk_slug` index this join
 	// resolves against — see lookupOrgMapping below) is keyed on a SLUG.
-	// `identity.organizationId` is a DISTINCT Clerk claim — a raw Clerk org id
-	// (`org_xxx`), never a slug, depending on JWT template configuration.
-	// Joining on it would either silently miss (mapping=null → a seated human
-	// gets RBAC_DENIED even though their org IS provisioned) or, worse, join
-	// against an unrelated row if an org id ever collided with another org's
-	// slug string. `organizationSlug` is therefore the SOLE source of
-	// `orgSlug` — matching requireOrgAdmin's identical slug-to-slug-only
-	// fix (convex/lib/auth.ts requireOrgAdmin, task
-	// k17awjxrj7ggwvw277cswh314d8cx7nr D2 follow-up item 4). `organizationId`
-	// is never read here.
+	// Clerk's "convex" JWT template on this deployment delivers the org slug in
+	// the `organizationId` claim (a claim NAME that maps to `{{org.slug}}`), not
+	// always in `organizationSlug` — the cross-tenant isolation suites
+	// (messages-with-org-scope, multiTenantIsolation) construct callers with the
+	// slug in `organizationId`, and Pi's decision-(b) TESTS pole requires an
+	// identity carrying `organizationId` to resolve the mapping and keep its
+	// authority (PR #1224, task k17b70hdb0c5h4y9nsaffc8qb98cz9h5).
+	// Eta's blocker-3 concern was PRECEDENCE, not presence: when BOTH claims are
+	// present, a real slug in `organizationSlug` must win over a raw `org_xxx`
+	// that could sit in `organizationId`. So read slug-FIRST with an
+	// `organizationId` FALLBACK — never `organizationId`-first (the id would
+	// then shadow a real slug and silently miss the mapping). A miss on this
+	// path is fail-closed (RBAC_DENIED), never a cross-tenant grant.
 	const orgSlug =
 		((identity as Record<string, unknown>).organizationSlug as string | undefined) ??
+		((identity as Record<string, unknown>).organizationId as string | undefined) ??
 		null;
 
 	// Recognized service-account carve-out: the MCP server authenticates to
@@ -185,7 +189,14 @@ export async function withOrgScope(
 		orgSlug,
 		allowedOrchestrators: mapping.allowedOrchestrators,
 		scopes: mapping.scopes,
-		isMaster: mapping.allowedOrchestrators.includes("*"),
+		// Pi ruling (PR #1224, decision b): a Clerk identity resolved through
+		// client_org_mapping NEVER mints the cross-tenant isMaster bypass from
+		// org membership — a `["*"]` mapping row keeps its stated roster
+		// (allowedOrchestrators/scopes above) but master is reachable ONLY via
+		// the master secret or the by-id service-account carve-out
+		// (allowNoIdentityMaster / serviceAccountUserId branches above), never
+		// via membership of a wildcard org.
+		isMaster: false,
 	};
 }
 

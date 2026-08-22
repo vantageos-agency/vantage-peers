@@ -158,6 +158,16 @@ FROM_ALLOW_LIST_ASSIGNMENT_PATTERN = re.compile(r"\bfromAllowList:\s*([^,\n]+)")
 NONEMPTY_LITERAL_ARRAY_PATTERN = re.compile(r"^\[\s*[^\]\s][^\]]*\]$")
 MAPPING_DERIVED_VALUE_PATTERN = re.compile(r"^mapping\.")
 
+# Pi ruling (PR #1224, decision b): Path B must NEVER mint master from org
+# membership. scopeProfile MUST be the literal "team-member" and isMaster
+# MUST be the literal `false` on this branch — no ternary, no
+# `.includes("*")`-derived value, no variable that could resolve to "master"
+# or `true`.
+SCOPE_PROFILE_ASSIGNMENT_PATTERN = re.compile(r"\bscopeProfile:\s*([^,\n]+)")
+IS_MASTER_ASSIGNMENT_PATTERN = re.compile(r"\bisMaster:\s*([^,\n]+)")
+SCOPE_PROFILE_TEAM_MEMBER_LITERAL = '"team-member"'
+IS_MASTER_FALSE_LITERAL = "false"
+
 
 def classify_path4_branch(branch_text: str, join_marker: str) -> str:
 	"""Classifies Path B (bearerAuthMiddleware case 2.5) on the GRANTING
@@ -178,6 +188,25 @@ def classify_path4_branch(branch_text: str, join_marker: str) -> str:
 	classifier doesn't recognize, distinct from a proven-hardcoded BLOCK).
 	"""
 	has_join = join_marker in branch_text
+
+	# Pi ruling (PR #1224, decision b) gate: scopeProfile/isMaster must be the
+	# literal "team-member"/false on this branch — checked FIRST and
+	# unconditionally, so a master-minting reintroduction (ternary,
+	# `.includes("*")`-derived isMaster, `scopeProfile: "master"`) is caught
+	# even if scopes/fromAllowList are still correctly mapping-derived.
+	scope_profile_match = SCOPE_PROFILE_ASSIGNMENT_PATTERN.search(branch_text)
+	is_master_match = IS_MASTER_ASSIGNMENT_PATTERN.search(branch_text)
+	if scope_profile_match and scope_profile_match.group(1).strip() != (
+		SCOPE_PROFILE_TEAM_MEMBER_LITERAL
+	):
+		# scopeProfile is not the literal "team-member" (e.g. a ternary that can
+		# resolve to "master") — this branch can mint master from membership.
+		return "BLOCK"
+	if is_master_match and is_master_match.group(1).strip() != IS_MASTER_FALSE_LITERAL:
+		# isMaster is not the literal `false` (e.g. derived from
+		# `mapping.allowedOrchestrators.includes("*")` or a variable) — this
+		# branch can mint the cross-tenant bypass from org membership.
+		return "BLOCK"
 
 	scopes_match = SCOPES_ASSIGNMENT_PATTERN.search(branch_text)
 	from_match = FROM_ALLOW_LIST_ASSIGNMENT_PATTERN.search(branch_text)
