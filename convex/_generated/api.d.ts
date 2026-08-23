@@ -9,6 +9,7 @@
  */
 
 import type * as _helpers_normalizeOrchestratorId from "../_helpers/normalizeOrchestratorId.js";
+import type * as agentRelations from "../agentRelations.js";
 import type * as agents from "../agents.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
@@ -92,6 +93,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "_helpers/normalizeOrchestratorId": typeof _helpers_normalizeOrchestratorId;
+  agentRelations: typeof agentRelations;
   agents: typeof agents;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;

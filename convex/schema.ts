@@ -1331,4 +1331,25 @@ export default defineSchema({
 	})
 		.index("by_org", ["orgSlug"])
 		.index("by_org_name", ["orgSlug", "name"]),
+
+	// ── agent_relations ──────────────────────────────────────────────────────
+	// [P-T3] the parent-child edge — the graph P-T2's `agents` entity table
+	// deliberately did not model. le-cap.md @ e3c1ffd6 §6 VP.2 (edge half): the
+	// layer does not know that one agent is another's child, nor that a child
+	// can be shared by two parents. This table IS that graph.
+	//
+	// MANY-TO-MANY: a child shared by two parents is TWO ROWS in this table,
+	// never a parent field on the child (which would cap a child at one
+	// parent). `parentName`/`childName` are the `agents.name` values within
+	// the same `orgSlug` — this table does not itself validate that the named
+	// agent rows exist (callers/mutations do), it only records the edge.
+	agent_relations: defineTable({
+		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this edge belongs to
+		parentName: v.string(), // agents.name of the parent in this org
+		childName: v.string(), // agents.name of the child in this org
+		createdAt: v.number(),
+	})
+		.index("by_org", ["orgSlug"])
+		.index("by_parent", ["orgSlug", "parentName"])
+		.index("by_child", ["orgSlug", "childName"]),
 });
