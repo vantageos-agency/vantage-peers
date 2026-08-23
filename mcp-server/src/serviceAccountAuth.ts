@@ -102,6 +102,39 @@ function decodeJwtExp(jwt: string): number | null {
 	}
 }
 
+/**
+ * Shared ticket→session exchange (Clerk Frontend API, `strategy=ticket`).
+ * Extracted so both the fixed service-account mint flow (buildDefaultDeps)
+ * and the scoped-arbitrary-user mint flow (buildDefaultScopedDeps) share the
+ * exact same, already-reviewed exchange logic rather than duplicating it.
+ */
+async function defaultExchangeTicketForSession(
+	ticket: string,
+	domain: string,
+): Promise<string> {
+	const res = await fetch(`${domain}/v1/client/sign_ins`, {
+		method: "POST",
+		headers: { "Content-Type": "application/x-www-form-urlencoded" },
+		body: new URLSearchParams({ strategy: "ticket", ticket }).toString(),
+	});
+	if (!res.ok) {
+		const body = await res.text().catch(() => "");
+		throw new Error(
+			`Clerk sign-in ticket exchange failed: HTTP ${res.status} ${body}`,
+		);
+	}
+	const body = (await res.json()) as {
+		response?: { created_session_id?: string };
+	};
+	const sessionId = body.response?.created_session_id;
+	if (!sessionId) {
+		throw new Error(
+			"Clerk sign-in ticket exchange succeeded but returned no created_session_id",
+		);
+	}
+	return sessionId;
+}
+
 function buildDefaultDeps(secretKey: string): ServiceAccountDeps {
 	const clerkClient = createClerkClient({ secretKey });
 	return {
@@ -112,29 +145,7 @@ function buildDefaultDeps(secretKey: string): ServiceAccountDeps {
 			});
 			return signInToken.token;
 		},
-		async exchangeTicketForSession(ticket, domain) {
-			const res = await fetch(`${domain}/v1/client/sign_ins`, {
-				method: "POST",
-				headers: { "Content-Type": "application/x-www-form-urlencoded" },
-				body: new URLSearchParams({ strategy: "ticket", ticket }).toString(),
-			});
-			if (!res.ok) {
-				const body = await res.text().catch(() => "");
-				throw new Error(
-					`Clerk sign-in ticket exchange failed: HTTP ${res.status} ${body}`,
-				);
-			}
-			const body = (await res.json()) as {
-				response?: { created_session_id?: string };
-			};
-			const sessionId = body.response?.created_session_id;
-			if (!sessionId) {
-				throw new Error(
-					"Clerk sign-in ticket exchange succeeded but returned no created_session_id",
-				);
-			}
-			return sessionId;
-		},
+		exchangeTicketForSession: defaultExchangeTicketForSession,
 		async getSessionToken(sessionId, template) {
 			const token = await clerkClient.sessions.getToken(sessionId, template);
 			if (!token?.jwt) return null;
@@ -142,6 +153,105 @@ function buildDefaultDeps(secretKey: string): ServiceAccountDeps {
 			return { jwt: token.jwt, exp };
 		},
 	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getScopedUserToken — mints a Clerk-NATIVE session JWT for an ARBITRARY
+// Clerk userId (distinct from the fixed CLERK_SERVICE_ACCOUNT_USER_ID above).
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Extends — does NOT replace — the fixed service-account mint flow above.
+// Unlike getServiceAccountToken (which mints a TEMPLATE-scoped token,
+// "convex", for one fixed service-account user and grants master scope via
+// convex/lib/auth.ts's CLERK_SERVICE_ACCOUNT_USER_ID allowlist), this mints
+// the session's NATIVE token (no JWT template — `clerkClient.sessions.getToken`
+// called WITHOUT a template argument). Clerk's native session token carries
+// the full standard claim set (`org_id`, `org_role`, `org_slug`, `aud`)
+// verbatim, whereas a custom template only carries whatever claims that
+// template's mapping explicitly re-exposes. This is required to mint a
+// scoped, non-master org:admin identity for tasks like P-T1's allow-pole
+// proof (provisionOrganization requires a real org-admin identity, not the
+// service account).
+
+export interface ScopedUserTokenDeps {
+	createSignInTicket(userId: string, orgId?: string): Promise<string>;
+	exchangeTicketForSession(ticket: string, domain: string): Promise<string>;
+	getNativeSessionToken(sessionId: string): Promise<MintedToken | null>;
+}
+
+function buildDefaultScopedDeps(secretKey: string): ScopedUserTokenDeps {
+	const clerkClient = createClerkClient({ secretKey });
+	return {
+		async createSignInTicket(userId) {
+			// Clerk's Backend API sign-in-token primitive does not itself select
+			// an "active organization" — for a dev Clerk instance where the
+			// target user belongs to exactly one org (this task's scope), the
+			// resulting native session token already carries that org's
+			// org_id/org_role/org_slug via the user's existing membership.
+			// `orgId` is accepted on the public function signature for callers
+			// that need to document/assert which org they expect, but is not
+			// threaded into this Backend API call (Clerk has no such parameter
+			// on signInTokens.createSignInToken).
+			const signInToken = await clerkClient.signInTokens.createSignInToken({
+				userId,
+				expiresInSeconds: 30,
+			});
+			return signInToken.token;
+		},
+		exchangeTicketForSession: defaultExchangeTicketForSession,
+		async getNativeSessionToken(sessionId) {
+			// Deliberately no template argument — this is the NATIVE session
+			// token path, not the "convex"-template path used by
+			// getServiceAccountToken above.
+			const token = await clerkClient.sessions.getToken(sessionId);
+			if (!token?.jwt) return null;
+			const exp = decodeJwtExp(token.jwt) ?? Date.now() + 45_000;
+			return { jwt: token.jwt, exp };
+		},
+	};
+}
+
+let overrideScopedDeps: ScopedUserTokenDeps | null = null;
+
+/** Test-only hook: inject a mock dependency surface for getScopedUserToken. */
+export function _setScopedUserTokenDepsForTest(
+	deps: ScopedUserTokenDeps | null,
+): void {
+	overrideScopedDeps = deps;
+}
+
+/**
+ * Mints a fresh Clerk-NATIVE session JWT for `userId` (any Clerk user, not
+ * just the fixed service account). Returns null when CLERK_SECRET_KEY is not
+ * configured — same "no credential configured" contract as
+ * getServiceAccountToken. Always mints fresh (no caching): this path is used
+ * for scoped, task-specific identities, not a long-lived hot-path credential.
+ *
+ * `orgId` is accepted for callers that want to assert/document which org
+ * membership the minted token is expected to carry (see the doc comment on
+ * ScopedUserTokenDeps.createSignInTicket for why it is not threaded into the
+ * Clerk Backend API call itself).
+ */
+export async function getScopedUserToken(
+	userId: string,
+	orgId?: string,
+): Promise<string | null> {
+	const secretKey = process.env.CLERK_SECRET_KEY;
+	if (!secretKey) return null;
+	const domain =
+		process.env.CLERK_DOMAIN ?? "https://sharp-sponge-67.clerk.accounts.dev";
+
+	const deps = overrideScopedDeps ?? buildDefaultScopedDeps(secretKey);
+
+	const ticket = await deps.createSignInTicket(userId, orgId);
+	const sessionId = await deps.exchangeTicketForSession(ticket, domain);
+	const token = await deps.getNativeSessionToken(sessionId);
+	if (!token) {
+		throw new Error(
+			"Clerk scoped-user session created but sessions.getToken() returned no native JWT.",
+		);
+	}
+	return token.jwt;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

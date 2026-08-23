@@ -314,9 +314,21 @@ export async function requireOrgAdmin(
 	// The compare below is therefore slug-to-slug ONLY: `organizationSlug` is
 	// the sole source of `callerOrgSlug` (never `organizationId`), matching
 	// the slug key `lookupOrgMapping`/`by_clerk_slug` is keyed on.
+	// P-T1 fix: a genuine Clerk-NATIVE session token (no custom JWT template
+	// — the mint path that carries org_id/org_role/org_slug together, see
+	// mcp-server/src/serviceAccountAuth.ts's getScopedUserToken) delivers the
+	// org slug as snake_case `org_slug`, not `organizationSlug`. This mirrors
+	// the ROLE read below (which already falls back to `org_role`) and
+	// withOrgScope's slug-first resolution above. `organizationId`/`org_id`
+	// are deliberately NOT part of this fallback chain — PR #1224 item 4
+	// established that requireOrgAdmin's slug compare must be slug-to-slug
+	// ONLY, never an org id (see provisionOrganizationOrgAdmin.test.ts's
+	// "organizationId alone ... is NOT accepted" pole, unchanged by this fix).
 	const rec = identity as Record<string, unknown>;
 	const callerOrgSlug =
-		(rec.organizationSlug as string | undefined) ?? null;
+		(rec.organizationSlug as string | undefined) ??
+		(rec.org_slug as string | undefined) ??
+		null;
 
 	if (!callerOrgSlug) {
 		throw new ConvexError(
