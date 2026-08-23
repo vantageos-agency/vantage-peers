@@ -1306,4 +1306,29 @@ export default defineSchema({
 	})
 		.index("by_org_job", ["orgId", "jobId"])
 		.index("by_org_job_seq", ["orgId", "jobId", "seq"]),
+
+	// ── agents ───────────────────────────────────────────────────────────────
+	// [P-T2] the agent as an ENTITY carrying its organisation (a CREATE, not an
+	// extension of an existing shape). `mcp__vantage-peers__list_peers` rows
+	// carry id/instanceId/name/role/workspace/currentTask/lastSeen/sessionCount
+	// and NO organisation field — org membership rides on the calling token,
+	// not on the agent row itself. This table is that missing organisation
+	// carrier. The parent-child edge (P-T3) attaches ON TOP of this table —
+	// it is deliberately NOT modeled here (docs-subagents.md: "A declared
+	// subagent inherits nothing from the root's authored slots", which is why
+	// the relation lives in a separate layer, not inside this entity).
+	agents: defineTable({
+		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org that owns this agent
+		name: v.string(), // agent's declared name, unique within its org (see by_org_name)
+		description: v.optional(v.string()),
+		// `address` is the write-back target used AFTER an agent deploys — the
+		// emitter's source for a parent's remote-agent declaration (P-T3). Not
+		// known at registerAgent time; populated later via a dedicated update.
+		address: v.optional(v.string()),
+		outboundAuthRef: v.optional(v.string()), // opaque reference to an outbound-auth credential; never the raw credential itself
+		isActive: v.boolean(),
+		createdAt: v.number(),
+	})
+		.index("by_org", ["orgSlug"])
+		.index("by_org_name", ["orgSlug", "name"]),
 });

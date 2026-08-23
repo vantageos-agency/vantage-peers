@@ -9,8 +9,10 @@
  */
 
 import type * as _helpers_normalizeOrchestratorId from "../_helpers/normalizeOrchestratorId.js";
+import type * as agents from "../agents.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
+import type * as clientOrgMapping from "../clientOrgMapping.js";
 import type * as components_ from "../components.js";
 import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
@@ -90,8 +92,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "_helpers/normalizeOrchestratorId": typeof _helpers_normalizeOrchestratorId;
+  agents: typeof agents;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
+  clientOrgMapping: typeof clientOrgMapping;
   components: typeof components_;
   credentials: typeof credentials;
   crons: typeof crons;
