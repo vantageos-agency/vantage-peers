@@ -42,6 +42,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -253,5 +254,343 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 			createdBy: "b",
 		});
 		expect(taskId).toBeTruthy();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [P-T5] gap closure — the create/update wiring above left seven other
+// requireAuthenticatedCaller-gated mutations in convex/tasks.ts (plus
+// attachReviewArtifact, which also writes a caller-asserted actor name to
+// `reviewArtifactAttachedBy`) accepting a caller-asserted name with zero
+// credential verification: complete, failTask, start, checkout, deleteTask,
+// bulkComplete, blockTask, attachReviewArtifact. A partial lock is not a
+// lock — this closes the gap with the identical both-pole property, under
+// TWO distinct per-agent credentials (agent-B-cred, agent-C-cred), neither
+// master nor creator.
+//
+// Each `describe` below seeds a task owned by "b" (created + started via
+// legitimate b-cred calls where a precondition requires it), then exercises
+// the mutation under test:
+//   ALLOW — b-cred asserts name "b" -> accepted.
+//   DENY  — b-cred asserts name "c" -> AGENT_IDENTITY_MISMATCH (refused at
+//           the identity layer, before task-ownership/RBAC is even
+//           consulted).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function seedOwnedTask(
+	t: ReturnType<typeof createT>,
+	bCred: string,
+	opts?: { status?: "todo" },
+): Promise<Id<"tasks">> {
+	const taskId = await asServiceAccount(t).mutation(api.tasks.create, {
+		title: opts?.status === "todo" ? "b's unclaimed task" : "b's task",
+		assignedTo: "b",
+		priority: "medium",
+		status: "todo",
+		createdBy: "b",
+		agentCredentialSecret: bCred,
+	});
+	return taskId;
+}
+
+describe("[P-T5] gap closure — tasks.start", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred);
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.start, {
+				taskId,
+				callerOrchestrator: "b",
+				agentCredentialSecret: bCred,
+			}),
+		).resolves.toBeNull();
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred);
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.start, {
+				taskId,
+				callerOrchestrator: "c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.checkout", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred, { status: "todo" });
+
+		const result = await asServiceAccount(t).mutation(api.tasks.checkout, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+		expect(result.claimed).toBe(true);
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred, { status: "todo" });
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.checkout, {
+				taskId,
+				callerOrchestrator: "c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.complete", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred);
+		await asServiceAccount(t).mutation(api.tasks.start, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "b",
+				completionNote:
+					"Completed via TDD proof for P-T5 gap closure, ratio 8/8 — see agentIdentityLock.test.ts",
+				agentCredentialSecret: bCred,
+			}),
+		).resolves.toBeNull();
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred);
+		await asServiceAccount(t).mutation(api.tasks.start, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "c",
+				completionNote: "forged completion as c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.failTask", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred);
+		await asServiceAccount(t).mutation(api.tasks.start, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.failTask, {
+				taskId,
+				callerOrchestrator: "b",
+				failureNote: "failed via TDD proof for P-T5 gap closure",
+				agentCredentialSecret: bCred,
+			}),
+		).resolves.toBeNull();
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred);
+		await asServiceAccount(t).mutation(api.tasks.start, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.failTask, {
+				taskId,
+				callerOrchestrator: "c",
+				failureNote: "forged failure as c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.blockTask", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred);
+		await asServiceAccount(t).mutation(api.tasks.start, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.blockTask, {
+				taskId,
+				callerOrchestrator: "b",
+				reason: "# blocked-on-nobody: waiting on third-party outage",
+				agentCredentialSecret: bCred,
+			}),
+		).resolves.toBeNull();
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred);
+		await asServiceAccount(t).mutation(api.tasks.start, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.blockTask, {
+				taskId,
+				callerOrchestrator: "c",
+				reason: "# blocked-on-nobody: forged block as c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.deleteTask", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred);
+
+		const result = await asServiceAccount(t).mutation(api.tasks.deleteTask, {
+			taskId,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+		expect(result.deleted).toBe(true);
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred);
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.deleteTask, {
+				taskId,
+				callerOrchestrator: "c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.bulkComplete", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted (dry run)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await seedOwnedTask(t, bCred);
+
+		const result = await asServiceAccount(t).mutation(api.tasks.bulkComplete, {
+			filter: { assignedTo: "b" },
+			dryRun: true,
+			callerOrchestrator: "b",
+			agentCredentialSecret: bCred,
+		});
+		expect(result.count).toBeGreaterThanOrEqual(1);
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		await seedOwnedTask(t, bCred);
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.bulkComplete, {
+				filter: { assignedTo: "b" },
+				dryRun: true,
+				callerOrchestrator: "c",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+});
+
+describe("[P-T5] gap closure — tasks.attachReviewArtifact", () => {
+	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		const taskId = await seedOwnedTask(t, bCred);
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.attachReviewArtifact, {
+				taskId,
+				callerOrchestrator: "b",
+				artifactRef: "https://github.com/vantageos-agency/vantage-peers/pull/9999",
+				agentCredentialSecret: bCred,
+			}),
+		).resolves.toBeNull();
+	});
+
+	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const bCred = await mintAgent(t, "org-o", "b");
+		await mintAgent(t, "org-o", "c");
+		const taskId = await seedOwnedTask(t, bCred);
+
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.attachReviewArtifact, {
+				taskId,
+				callerOrchestrator: "c",
+				artifactRef: "https://github.com/vantageos-agency/vantage-peers/pull/8888",
+				agentCredentialSecret: bCred,
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
 	});
 });

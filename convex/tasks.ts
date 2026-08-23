@@ -1322,12 +1322,21 @@ export const attachReviewArtifact = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		artifactRef: v.string(),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor, also written verbatim to
+		// `reviewArtifactAttachedBy`) must equal the resolved agent identity;
+		// no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// CORE-A: the tenth public door — closes k17675gzd2bwtnvgp0qzmtx35h8csg23
 		// / PR #1211, matching the gate #1213 applied to the other nine.
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to attach a review artifact — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
@@ -1505,10 +1514,18 @@ export const blockTask = mutation({
 		// of Convex (.claude/rules/railway-mcp-redeploy.md) and do not yet send
 		// this arg. Omission defaults to "other" below, never rejected.
 		blockedCause: v.optional(blockedCauseValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1619,10 +1636,18 @@ export const complete = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		completionNote: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1861,10 +1886,18 @@ export const failTask = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		failureNote: v.string(),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1932,10 +1965,18 @@ export const start = mutation({
 	args: {
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -2010,10 +2051,18 @@ export const checkout = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: creatorValidator,
 		callerInstance: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
@@ -2042,10 +2091,18 @@ export const deleteTask = mutation({
 	args: {
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
 			throw new ConvexError(
@@ -2628,6 +2685,10 @@ export const bulkComplete = mutation({
 		dryRun: v.optional(v.boolean()),
 		completionNoteTemplate: v.optional(v.string()),
 		callerOrchestrator: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.object({
 		count: v.number(),
@@ -2645,7 +2706,11 @@ export const bulkComplete = mutation({
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — required
 		// on the dry-run preview path too, not only the live write path: a
 		// dry-run still discloses task titles/ids/counts to whoever calls it.
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 
 		// Default dryRun to true (safety).
 		const dryRun = args.dryRun !== false;
