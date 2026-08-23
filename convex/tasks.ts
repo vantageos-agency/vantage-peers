@@ -6,7 +6,12 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
-import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import {
+	withOrgScope,
+	filterByOrgScope,
+	requireScope,
+	requireAgentCredentialMatch,
+} from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { enforceClosureGate } from "./lib/taskClosureGate";
@@ -135,7 +140,18 @@ export function deriveTerminalStatus(
 async function requireAuthenticatedCaller(
 	ctx: MutationCtx,
 	callerOrchestrator: string | undefined,
+	agentCredentialSecret?: string,
 ): Promise<OrgScope> {
+	// [P-T5] THE LOCK — when a per-agent credential is presented, the
+	// asserted `callerOrchestrator` MUST equal the agent identity the
+	// credential resolves to (see requireAgentCredentialMatch). No-op when
+	// the secret is omitted — pre-P-T5 callers are byte-unchanged.
+	await requireAgentCredentialMatch(
+		ctx,
+		agentCredentialSecret,
+		callerOrchestrator,
+	);
+
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity === null) {
 		throw new ConvexError(
@@ -324,6 +340,16 @@ const createTaskArgsValidator = {
 	createdBy: creatorValidator,
 };
 
+// [P-T5] THE LOCK — optional per-agent credential secret, public `create`
+// only (never `createForWebhook`, which is HMAC-gated and has no orchestrator
+// identity to lock at all). See requireAgentCredentialMatch: presenting it
+// requires `createdBy` to equal the resolved agent identity, no-op if
+// omitted.
+const createTaskArgsValidatorWithCredential = {
+	...createTaskArgsValidator,
+	agentCredentialSecret: v.optional(v.string()),
+};
+
 interface CreateTaskArgs {
 	title: string;
 	description?: string;
@@ -372,14 +398,19 @@ async function insertTask(
 }
 
 export const create = mutation({
-	args: createTaskArgsValidator,
+	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
+		const { agentCredentialSecret, ...taskArgs } = args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
-		await requireAuthenticatedCaller(ctx, args.createdBy);
-		return await insertTask(ctx, args);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.createdBy,
+			agentCredentialSecret,
+		);
+		return await insertTask(ctx, taskArgs);
 	},
 });
 
@@ -1129,11 +1160,19 @@ export const update = mutation({
 		assignedToInstance: v.optional(v.string()),
 		// Mandatory reason when status is being set to "cancelled" (Day 157).
 		cancelReason: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { taskId, callerOrchestrator, cancelReason, ...fields } = args;
-		await requireAuthenticatedCaller(ctx, callerOrchestrator);
+		const { taskId, callerOrchestrator, cancelReason, agentCredentialSecret, ...fields } = args;
+		await requireAuthenticatedCaller(
+			ctx,
+			callerOrchestrator,
+			agentCredentialSecret,
+		);
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(

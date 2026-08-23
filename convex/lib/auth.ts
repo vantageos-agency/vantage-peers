@@ -1,6 +1,7 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
 import { ConvexError } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
+import { resolveAgentCredentialCore } from "./agentIdentity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrgScope — resolved auth + multi-tenant scope context
@@ -369,6 +370,57 @@ export async function requireOrgAdmin(
 	if (!mapping || !mapping.isActive) {
 		throw new ConvexError(
 			`RBAC_DENIED: org "${targetOrgSlug}" is not an active provisioned organisation — ${JSON.stringify({ targetOrgSlug })}`,
+		);
+	}
+}
+
+/**
+ * requireAgentCredentialMatch — [P-T5] THE LOCK. Cap analysis/le-cap/le-cap.md
+ * @ e3c1ffd6 §6 VP.4 (second half): the ACTING AGENT is derived from the
+ * per-agent CREDENTIAL presented on the call (P-T4's
+ * `resolveAgentCredentialCore` — the SAME hashing+lookup `agentCredentials.ts`
+ * exposes publicly as `resolveAgentCredential`, reused here rather than
+ * duplicated), never from the caller-declared name alone.
+ *
+ * NO COMPATIBILITY WINDOW (the cap's explicit ruling): a presented credential
+ * that resolves to NO agent — including an org-only/shared token (the
+ * existing OAuth/Clerk bearer that authenticates the ORGANISATION, not a
+ * single agent) — is REFUSED at this agent-named surface. There is no
+ * exemption path and no fallback flag; an org-only token simply does not
+ * satisfy this check, ever.
+ *
+ * THE TWO POLES this enforces, both directions:
+ *   - HOLDER under its OWN name (resolved.agentName === assertedName) →
+ *     passes; the call proceeds unchanged.
+ *   - HOLDER under ANOTHER agent's name, OR a credential that resolves to
+ *     nothing at all (unknown secret / org-only token / rotated-out secret)
+ *     → REFUSED with `AGENT_IDENTITY_MISMATCH`.
+ *
+ * Deliberately a NO-OP when `agentCredentialSecret` is omitted entirely —
+ * this keeps every pre-P-T5 call site (which never presents this argument)
+ * byte-identical; the lock only engages for callers that opt into presenting
+ * a per-agent credential. `assertedName === undefined` is also a no-op:
+ * there is no declared name to compare the resolved identity against.
+ */
+export async function requireAgentCredentialMatch(
+	ctx: QueryCtx | MutationCtx,
+	agentCredentialSecret: string | undefined,
+	assertedName: string | undefined,
+): Promise<void> {
+	if (agentCredentialSecret === undefined) return;
+	if (assertedName === undefined) return;
+
+	const resolved = await resolveAgentCredentialCore(ctx, agentCredentialSecret);
+
+	if (!resolved) {
+		throw new ConvexError(
+			`AGENT_IDENTITY_MISMATCH: presented agent credential does not resolve to any active per-agent identity — an org-only/shared token is not accepted at this agent-named surface, no compatibility window — ${JSON.stringify({ assertedName })}`,
+		);
+	}
+
+	if (resolved.agentName !== assertedName) {
+		throw new ConvexError(
+			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agentName}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agentName, assertedName })}`,
 		);
 	}
 }

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { requireScope, withOrgScope } from "./lib/auth";
+import { requireAgentCredentialMatch, requireScope, withOrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 import {
@@ -43,9 +43,22 @@ export const sendMessage = mutation({
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
 		tenantId: v.optional(v.string()),
+		// [P-T5] THE LOCK — optional per-agent credential secret (see
+		// convex/agentCredentials.ts). When presented, `args.from` MUST equal
+		// the agent name the credential resolves to (see
+		// requireAgentCredentialMatch) — a call asserting a DIFFERENT `from`
+		// than the resolved identity is refused with AGENT_IDENTITY_MISMATCH.
+		// Omitted entirely, this is a no-op — pre-P-T5 callers are unchanged.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
+		await requireAgentCredentialMatch(
+			ctx,
+			args.agentCredentialSecret,
+			args.from,
+		);
+
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
 			fromInstanceId: args.fromInstanceId,

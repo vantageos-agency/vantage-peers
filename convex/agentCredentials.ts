@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireOrgAdmin } from "./lib/auth";
+import { resolveAgentCredentialCore, sha256Hex } from "./lib/agentIdentity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T4] agentCredentials — the per-agent CREDENTIAL, on top of P-T2's
@@ -42,19 +43,6 @@ const resolvedIdentityValidator = v.object({
 	orgSlug: v.string(),
 	agentName: v.string(),
 });
-
-/**
- * sha256Hex — reused hashing pattern (see file header). Local copy rather
- * than a cross-file import, matching convex/oauth.ts's own documented
- * convention ("local, mirrors credentials.ts — avoids cross-file import").
- */
-async function sha256Hex(input: string): Promise<string> {
-	const encoded = new TextEncoder().encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-	return Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-}
 
 /**
  * mintAgentCredential — mints a fresh, high-entropy secret for ONE agent in
@@ -156,17 +144,6 @@ export const resolveAgentCredential = query({
 	args: { presentedSecret: v.string() },
 	returns: v.union(resolvedIdentityValidator, v.null()),
 	handler: async (ctx, args) => {
-		const presentedHash = await sha256Hex(args.presentedSecret);
-
-		const row = await ctx.db
-			.query("agent_credentials")
-			.withIndex("by_secret_hash", (q) => q.eq("secretHash", presentedHash))
-			.unique();
-
-		if (!row || !row.isActive) {
-			return null;
-		}
-
-		return { orgSlug: row.orgSlug, agentName: row.agentName };
+		return await resolveAgentCredentialCore(ctx, args.presentedSecret);
 	},
 });
