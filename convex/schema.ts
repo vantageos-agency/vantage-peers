@@ -1352,4 +1352,33 @@ export default defineSchema({
 		.index("by_org", ["orgSlug"])
 		.index("by_parent", ["orgSlug", "parentName"])
 		.index("by_child", ["orgSlug", "childName"]),
+
+	// ── agent_credentials ────────────────────────────────────────────────────
+	// [P-T4] the per-agent CREDENTIAL — today the token identifies the
+	// ORGANISATION and the agent writes its own name into the call, so agents
+	// of one client share a token and nothing compares the declared name to
+	// the token presented (le-cap.md @ e3c1ffd6 §6 VP.4, first half). This
+	// table is that missing lock's key: each agent (a P-T2 `agents` row) gets
+	// its OWN minted secret, stored HASHED (never plaintext at rest) — the
+	// same sha256-hex hashing pattern already used for oauth/bearer tokens in
+	// this codebase (convex/credentials.ts's `sha256Hex`, convex/oauth.ts's
+	// local mirror of the same helper).
+	//
+	// Rotation: a second `mintAgentCredential` call for the same (orgSlug,
+	// agentName) sets every PRIOR row's `isActive` to false before inserting
+	// the new active row — the old plaintext stops resolving, never deleted
+	// (audit trail of past mints is preserved).
+	//
+	// `secretHash` is the resolution key (`by_secret_hash`): P-T5's lock
+	// resolves a PRESENTED credential to (orgSlug, agentName) via this index,
+	// never by trusting a caller-declared name.
+	agent_credentials: defineTable({
+		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this credential's agent belongs to
+		agentName: v.string(), // agents.name within orgSlug — the credential's OWN identity, never caller-declared
+		secretHash: v.string(), // sha256 hex of the minted secret — raw secret NEVER stored
+		isActive: v.boolean(), // false once rotated out by a later mint
+		createdAt: v.number(),
+	})
+		.index("by_org_agent", ["orgSlug", "agentName"])
+		.index("by_secret_hash", ["secretHash"]),
 });
