@@ -34,15 +34,18 @@ function ctxWithIdentity(identity: Record<string, unknown> | null) {
 const noIdentityCtx = ctxWithIdentity(null);
 
 describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () => {
-	test("accepts team/<orgId> when caller org matches the tail", async () => {
-		const ctx = ctxWithIdentity({ organizationId: "abc-123" });
+	test("accepts team/<orgSlug> when caller org slug matches the tail", async () => {
+		// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda): the tail is
+		// slug-shaped, so the identity used here must carry a slug
+		// (`organizationSlug`), not an id (`organizationId` — see below).
+		const ctx = ctxWithIdentity({ organizationSlug: "abc-123" });
 		await expect(
 			assertCanExportNamespace(ctx, "team/abc-123"),
 		).resolves.toBeUndefined();
 	});
 
-	test("denies team/<orgId> when caller org does not match the tail (cross-tenant)", async () => {
-		const ctx = ctxWithIdentity({ organizationId: "other-org" });
+	test("denies team/<orgSlug> when caller org slug does not match the tail (cross-tenant)", async () => {
+		const ctx = ctxWithIdentity({ organizationSlug: "other-org" });
 		await expect(
 			assertCanExportNamespace(ctx, "team/abc-123"),
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
@@ -135,5 +138,48 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "team/some-tenant"),
 		).rejects.toThrow(/AUTH_NO_IDENTITY: anonymous caller/);
+	});
+
+	// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda, decision mirrors
+	// #1224 item 4): `orgSlug` must resolve slug-first, id EXCLUDED. An
+	// `org_id` (org_xxxxx) is not a slug and must never be compared, as if it
+	// were one, to a slug-shaped export namespace suffix.
+	describe("precedence — id excluded from orgSlug resolution", () => {
+		test("ALLOW pole: an identity carrying a real slug (organizationSlug) matching the namespace tail exports its own namespace", async () => {
+			const ctx = ctxWithIdentity({ organizationSlug: "acme" });
+			await expect(
+				assertCanExportNamespace(ctx, "team/acme"),
+			).resolves.toBeUndefined();
+		});
+
+		test("ALLOW pole: an identity carrying only org_slug (snake_case) matching the namespace tail exports its own namespace", async () => {
+			const ctx = ctxWithIdentity({ org_slug: "acme" });
+			await expect(
+				assertCanExportNamespace(ctx, "team/acme"),
+			).resolves.toBeUndefined();
+		});
+
+		// DENY / precedence pole. On the OLD id-first code, an identity
+		// carrying ONLY `org_id` (no slug claim at all) resolved `orgSlug` to
+		// that raw id string, which — if the export namespace's slug-shaped
+		// suffix happened to equal that same id string — mis-compared equal
+		// and the export was WRONGLY ALLOWED. This is exactly the class ruled
+		// out for requireOrgAdmin/withOrgScope in #1224 item 4. Litmus: if the
+		// precedence fix were reverted, this test would go back to resolving
+		// (fail to throw AUTH_NO_ORG) — it is bound to the id-exclusion, not
+		// to any casing behaviour.
+		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+			const ctx = ctxWithIdentity({ org_id: "org_xxxxx" });
+			await expect(
+				assertCanExportNamespace(ctx, "team/org_xxxxx"),
+			).rejects.toThrow(/AUTH_NO_ORG/);
+		});
+
+		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+			const ctx = ctxWithIdentity({ organizationId: "org_xxxxx" });
+			await expect(
+				assertCanExportNamespace(ctx, "team/org_xxxxx"),
+			).rejects.toThrow(/AUTH_NO_ORG/);
+		});
 	});
 });

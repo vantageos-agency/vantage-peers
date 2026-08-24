@@ -126,10 +126,15 @@ async function assertCanExportNamespaceV8(
 			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
 		);
 	}
+	// Slug-first, id excluded: `orgSlug` is compared below to a slug-shaped
+	// export namespace suffix, and an org_id (org_xxxxx) is not a slug -- it
+	// must never stand in for one. Mirrors #1224 item 4
+	// (requireOrgAdmin/withOrgScope: slug-first, id excluded). A token
+	// carrying only an org_id (no slug) resolves orgSlug === null here and
+	// falls into the AUTH_NO_ORG fail-closed branch below, rather than
+	// mis-comparing the id to a slug suffix.
 	const orgSlug =
-		(identity.organizationId as string | undefined) ??
 		(identity.organizationSlug as string | undefined) ??
-		(identity.org_id as string | undefined) ??
 		(identity.org_slug as string | undefined) ??
 		null;
 	if (orgSlug === null) {
