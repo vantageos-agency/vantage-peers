@@ -18,7 +18,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -170,7 +170,10 @@ describe("GREEN — search_tasks_by_keyword scoped correctly (four independent p
 
 		const handler = handlers.get("search_tasks_by_keyword");
 		const result = await handler?.({ query: "task" });
-		const parsed = parseResult(result) as Array<{ _id?: string; title?: string }>;
+		const parsed = parseResult(result) as Array<{
+			_id?: string;
+			title?: string;
+		}>;
 
 		expect(parsed.some((t) => t._id === TASK_B_OTHER_FULL._id)).toBe(false);
 		const raw = JSON.stringify(parsed);
@@ -180,7 +183,7 @@ describe("GREEN — search_tasks_by_keyword scoped correctly (four independent p
 	it("(iv) MASTER pole alone — legacy/master callers see all rows unfiltered", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined); // legacy/master path
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX); // legacy/master path
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
 			TASK_A_OWN_FULL,

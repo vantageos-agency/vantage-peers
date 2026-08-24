@@ -96,7 +96,7 @@ type CapturedTool = {
 
 function captureTools(
 	queryReturns: Record<string, unknown>,
-	oauthCtx?: OAuthContext,
+	oauthCtx: OAuthContext = masterCtx(),
 	mutationReturns: Record<string, unknown> = {},
 	actionReturns: Record<string, unknown> = {},
 ): {
@@ -198,7 +198,7 @@ describe("GISS — get_issue scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("GISS-T3 legacy bearer → row returned", async () => {
+	it("GISS-T3 master/local trust → row returned", async () => {
 		const { tools } = captureTools({
 			"issues:getByRepoNumber": betaIssue,
 		});
@@ -269,7 +269,7 @@ describe("IST — issue_stats scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("IST-T3 legacy bearer → stats returned", async () => {
+	it("IST-T3 master/local trust → stats returned", async () => {
 		const { tools } = captureTools({
 			"issues:getStats": STATS_FIXTURE,
 		});
@@ -351,7 +351,7 @@ describe("SFP — search_fix_patterns scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("SFP-T3 legacy bearer → all 3 visible", async () => {
+	it("SFP-T3 master/local trust → all 3 visible", async () => {
 		const { tools } = captureTools(
 			{},
 			undefined,
@@ -419,7 +419,7 @@ describe("LFP — list_fix_patterns scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LFP-T3 legacy bearer → all 3 visible", async () => {
+	it("LFP-T3 master/local trust → all 3 visible", async () => {
 		const { tools } = captureTools({
 			"fixPatterns:listAll": FIX_PATTERN_FIXTURE,
 		});
@@ -490,7 +490,7 @@ describe("GMT — get_mission_template scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("GMT-T3 legacy bearer → template returned", async () => {
+	it("GMT-T3 master/local trust → template returned", async () => {
 		const { tools } = captureTools({
 			"missionTemplates:getByName": betaTemplate,
 		});
@@ -562,8 +562,7 @@ describe("ITM — instantiate_template_into_mission scope-aware (write, pre-muta
 		expect(res.content[0].text).toContain("t1");
 		expect(
 			mutationCalls.some(
-				(c) =>
-					c.path === "missionTemplates:instantiateTemplateIntoMission",
+				(c) => c.path === "missionTemplates:instantiateTemplateIntoMission",
 			),
 		).toBe(true);
 	});
@@ -584,13 +583,12 @@ describe("ITM — instantiate_template_into_mission scope-aware (write, pre-muta
 		expect(isForbiddenResponse(res)).toBe(false);
 		expect(
 			mutationCalls.some(
-				(c) =>
-					c.path === "missionTemplates:instantiateTemplateIntoMission",
+				(c) => c.path === "missionTemplates:instantiateTemplateIntoMission",
 			),
 		).toBe(true);
 	});
 
-	it("ITM-T3 legacy bearer → mutation runs", async () => {
+	it("ITM-T3 master/local trust → mutation runs", async () => {
 		const { tools, mutationCalls } = captureTools(
 			{ "missions:get": alphaMission },
 			undefined,
@@ -606,8 +604,7 @@ describe("ITM — instantiate_template_into_mission scope-aware (write, pre-muta
 		expect(res.isError).not.toBe(true);
 		expect(
 			mutationCalls.some(
-				(c) =>
-					c.path === "missionTemplates:instantiateTemplateIntoMission",
+				(c) => c.path === "missionTemplates:instantiateTemplateIntoMission",
 			),
 		).toBe(true);
 	});
@@ -628,8 +625,7 @@ describe("ITM — instantiate_template_into_mission scope-aware (write, pre-muta
 		// Mutation MUST NOT have run (pre-mutation guard).
 		expect(
 			mutationCalls.some(
-				(c) =>
-					c.path === "missionTemplates:instantiateTemplateIntoMission",
+				(c) => c.path === "missionTemplates:instantiateTemplateIntoMission",
 			),
 		).toBe(false);
 		// And the response is an error envelope (not a leaked success).
@@ -653,8 +649,7 @@ describe("ITM — instantiate_template_into_mission scope-aware (write, pre-muta
 		expect(res.content[0].text).toContain("t1");
 		expect(
 			mutationCalls.some(
-				(c) =>
-					c.path === "missionTemplates:instantiateTemplateIntoMission",
+				(c) => c.path === "missionTemplates:instantiateTemplateIntoMission",
 			),
 		).toBe(true);
 	});
@@ -714,7 +709,7 @@ describe("LE — list_errors scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("LE-T3 legacy bearer → all 3 visible", async () => {
+	it("LE-T3 master/local trust → all 3 visible", async () => {
 		const { tools } = captureTools({
 			"errorMonitor:listErrors": ERRORS_FIXTURE,
 		});
@@ -786,7 +781,7 @@ describe("GE — get_error scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("GE-T3 legacy bearer → row returned", async () => {
+	it("GE-T3 master/local trust → row returned", async () => {
 		const { tools } = captureTools({
 			"errorMonitor:getError": betaError,
 		});

@@ -124,10 +124,10 @@ describe("C0.3 — delete_bu master-only gate", () => {
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("delete_bu", args, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -156,10 +156,10 @@ describe("C0.3 — add_repo_mapping master-only gate", () => {
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("add_repo_mapping", args, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -171,21 +171,29 @@ describe("C0.3 — remove_repo_mapping master-only gate", () => {
 	const args = { repo: "vantageos-agency/test" };
 
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("remove_repo_mapping", args, buildScopedCtx());
+		const result = await callTool(
+			"remove_repo_mapping",
+			args,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
-		const result = await callTool("remove_repo_mapping", args, buildMasterCtx());
+		const result = await callTool(
+			"remove_repo_mapping",
+			args,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("remove_repo_mapping", args, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });

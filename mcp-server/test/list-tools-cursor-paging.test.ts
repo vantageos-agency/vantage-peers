@@ -18,18 +18,19 @@
  * VP task k1794r6q329q1s36pz4zzjnpvd87zfbn, mission k57c7s478gw1a3e5gmhdeptg5n87z78n.
  */
 
-import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
+import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../src/auth.js";
 import {
-	DEFAULT_LIMIT,
-	MAX_LIMIT,
-	ENVELOPE_TARGET_BYTES,
-	clampLimit,
-	encodeCursor,
-	decodeCursor,
-	enforceEnvelopeCap,
 	buildPageResult,
+	clampLimit,
+	DEFAULT_LIMIT,
+	decodeCursor,
+	ENVELOPE_TARGET_BYTES,
+	encodeCursor,
+	enforceEnvelopeCap,
+	MAX_LIMIT,
 } from "../src/paging.js";
 import { registerTools } from "../src/tools.js";
 
@@ -211,7 +212,7 @@ describe("list_tasks — cursor paging wiring", () => {
 	it("accepts cursor arg and forwards createdBefore filter via decoded cursor", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		expect(handler, "list_tasks handler must be registered").toBeDefined();
@@ -230,7 +231,7 @@ describe("list_tasks — cursor paging wiring", () => {
 	it("clamps caller limit=10_000 to MAX_LIMIT=200 before forwarding", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		// Zod schema also enforces max(200) — we exercise via direct pass to
@@ -247,7 +248,7 @@ describe("list_tasks — cursor paging wiring", () => {
 		const { server, handlers } = buildFakeServer();
 		// Return exactly DEFAULT_LIMIT rows → full page → nextCursor must be set.
 		const convex = buildMockConvex(buildRows(DEFAULT_LIMIT));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		const result = await handler?.({});
@@ -260,7 +261,7 @@ describe("list_tasks — cursor paging wiring", () => {
 	it("returns no nextCursor (null or absent) when rows < limit (end-of-data)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3)); // < DEFAULT_LIMIT
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		const result = await handler?.({ limit: 50 });
@@ -274,10 +275,12 @@ describe("list_tasks — cursor paging wiring", () => {
 	it("rejects invalid cursor with a typed error (no crash)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
-		const result = await handler?.({ cursor: "garbage-cursor-not-base64-json" });
+		const result = await handler?.({
+			cursor: "garbage-cursor-not-base64-json",
+		});
 		const text = extractText(result);
 		expect(text).toMatch(/invalid cursor/i);
 	});
@@ -285,7 +288,7 @@ describe("list_tasks — cursor paging wiring", () => {
 	it("backward compat — caller without limit or cursor still works", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		const result = await handler?.({});
@@ -306,7 +309,7 @@ describe("list_memories — cursor paging wiring", () => {
 			continueCursor: "backend-cursor-xyz",
 			isDone: false,
 		});
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_memories");
 		const cursor = encodeCursor({ backendCursor: "backend-cursor-prev" });
@@ -327,7 +330,7 @@ describe("list_memories — cursor paging wiring", () => {
 	it("backward compat — caller without cursor uses bounded default path", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_memories");
 		await handler?.({ namespace: "global" });
@@ -344,7 +347,7 @@ describe("list_briefing_notes — cursor paging wiring", () => {
 	it("accepts cursor and decodes createdBefore for forward pagination", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_briefing_notes");
 		const cursor = encodeCursor({ createdBefore: 1_779_500_000_000 });
@@ -359,7 +362,7 @@ describe("list_briefing_notes — cursor paging wiring", () => {
 	it("backward compat — caller without cursor works (no createdBefore set)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_briefing_notes");
 		await handler?.({});

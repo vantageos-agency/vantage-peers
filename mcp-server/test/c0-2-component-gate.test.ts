@@ -46,7 +46,11 @@ function captureTools(oauthCtx?: OAuthContext): Map<string, CapturedTool> {
 
 	const mockConvex = {
 		query: async () => null,
-		mutation: async () => ({ componentId: "mock-id", updated: true, removed: true }),
+		mutation: async () => ({
+			componentId: "mock-id",
+			updated: true,
+			removed: true,
+		}),
 		action: async () => null,
 	} as Parameters<typeof registerTools>[1];
 
@@ -114,22 +118,34 @@ const updateComponentArgs = {
 
 describe("C0.2 — update_component master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("update_component", updateComponentArgs, buildScopedCtx());
+		const result = await callTool(
+			"update_component",
+			updateComponentArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through (no Forbidden)", async () => {
-		const result = await callTool("update_component", updateComponentArgs, buildMasterCtx());
+		const result = await callTool(
+			"update_component",
+			updateComponentArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("update_component", updateComponentArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"update_component",
+			updateComponentArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -141,21 +157,33 @@ const deleteComponentArgs = { componentId: "mock-component-id" };
 
 describe("C0.2 — delete_component master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("delete_component", deleteComponentArgs, buildScopedCtx());
+		const result = await callTool(
+			"delete_component",
+			deleteComponentArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through (no Forbidden)", async () => {
-		const result = await callTool("delete_component", deleteComponentArgs, buildMasterCtx());
+		const result = await callTool(
+			"delete_component",
+			deleteComponentArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("delete_component", deleteComponentArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"delete_component",
+			deleteComponentArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });

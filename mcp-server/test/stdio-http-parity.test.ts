@@ -17,8 +17,8 @@
  * search_episodes_by_keyword/_by_semantic.
  */
 
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SERVER_TS = resolve(__dirname, "../server.ts");
@@ -37,7 +37,10 @@ describe("stdio ↔ HTTP transport parity (single registry)", () => {
 	it("server.ts imports registerTools from src/tools.js", () => {
 		const src = read(SERVER_TS);
 		expect(src).toMatch(/from\s+["']\.\/src\/tools\.js["']/);
-		expect(src).toMatch(/registerTools\s*\(\s*server\s*,\s*convex\s*\)/);
+		// stdio passes an explicit LOCAL_STDIO_TRUST_CTX as the 3rd arg (absence
+		// no longer means max authority — see src/auth.ts). Still the single
+		// shared registry, now with a named local-trust identity.
+		expect(src).toMatch(/registerTools\s*\(\s*server\s*,\s*convex\s*,/);
 	});
 
 	it("server-http.ts imports registerTools from src/tools.js", () => {

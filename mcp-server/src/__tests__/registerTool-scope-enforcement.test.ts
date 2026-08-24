@@ -72,7 +72,8 @@ const teamCtx: OAuthContext = {
 	isMaster: false,
 };
 
-// The MCP server's own service account (legacy bearer path has no oauthCtx).
+// A request that reached defineTool with NO identity context. This must never
+// be read as authority — absence refuses (one-identity-layer.md clause 3).
 const serviceAccountCtx = undefined;
 
 describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", () => {
@@ -151,7 +152,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 		expect(res.isError).toBeUndefined();
 	});
 
-	it("master: PASSES the service-account (legacy bearer, no oauthCtx)", async () => {
+	it("master: REFUSES when there is no oauthCtx — absence is never master", async () => {
 		const { server, invoke } = stubServer();
 		defineTool(
 			server,
@@ -163,7 +164,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			okHandler,
 		);
 		const res = await invoke({});
-		expect(res.isError).toBeUndefined();
+		expect(res.isError).toBe(true);
 	});
 
 	it("public: PASSES any authenticated caller (explicitly declared, not defaulted)", async () => {

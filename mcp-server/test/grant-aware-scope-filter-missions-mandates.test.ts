@@ -50,7 +50,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { OAuthContext } from "../src/auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ type CapturedTool = {
 
 function captureTools(
 	queryReturns: Record<string, unknown>,
-	oauthCtx?: OAuthContext,
+	oauthCtx: OAuthContext = LOCAL_STDIO_TRUST_CTX,
 ): Map<string, CapturedTool> {
 	const tools = new Map<string, CapturedTool>();
 	const mockServer = {
@@ -347,7 +347,7 @@ describe("TASK — get_task/list_tasks_by_mission/search_tasks_by_keyword drive 
 // wiring above (regression guard).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("FAIL-CLOSED — master/legacy bearer paths unchanged by grant wiring", () => {
+describe("FAIL-CLOSED — master/master/local trust paths unchanged by grant wiring", () => {
 	it("master scope still sees a mission it is not named on", async () => {
 		const mission = {
 			_id: "mis_other",
@@ -374,7 +374,7 @@ describe("FAIL-CLOSED — master/legacy bearer paths unchanged by grant wiring",
 		expect(res.content[0].text).toContain("grant-master-sees-everything");
 	});
 
-	it("legacy bearer (no oauthCtx) still sees a task it is not named on", async () => {
+	it("master/local trust (explicit identity) still sees a task it is not named on", async () => {
 		const task = {
 			_id: "task_legacy",
 			createdBy: "bob",
@@ -382,9 +382,7 @@ describe("FAIL-CLOSED — master/legacy bearer paths unchanged by grant wiring",
 			title: "grant-legacy-bearer-sees-everything",
 		};
 		const tools = captureTools({ "tasks:getById": task });
-		const res = await tools
-			.get("get_task")!
-			.handler({ taskId: "task_legacy" });
+		const res = await tools.get("get_task")!.handler({ taskId: "task_legacy" });
 		expect(res.isError).not.toBe(true);
 		expect(res.content[0].text).toContain(
 			"grant-legacy-bearer-sees-everything",

@@ -18,11 +18,12 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
-import { convexTest } from "convex-test";
 import { anyApi } from "convex/server";
+import { convexTest } from "convex-test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { registerTools } from "../tools.js";
 import schema from "../../../convex/schema.js";
+import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
+import { registerTools } from "../tools.js";
 
 const modules = Object.fromEntries(
 	Object.entries(
@@ -48,7 +49,10 @@ function makeFakeConvexClient(
 	} as unknown as ConvexHttpClient;
 }
 
-type CapturedTool = { name: string; handler: (args: unknown) => Promise<unknown> };
+type CapturedTool = {
+	name: string;
+	handler: (args: unknown) => Promise<unknown>;
+};
 
 function captureTools(convex: ConvexHttpClient): Map<string, CapturedTool> {
 	const captured = new Map<string, CapturedTool>();
@@ -68,7 +72,7 @@ function captureTools(convex: ConvexHttpClient): Map<string, CapturedTool> {
 			captured.set(name, { name, handler });
 		},
 	};
-	registerTools(fakeServer as never, convex, undefined);
+	registerTools(fakeServer as never, convex, LOCAL_STDIO_TRUST_CTX);
 	return captured;
 }
 
@@ -82,7 +86,9 @@ describe("update_task MCP tool — callerOrchestrator optional at the schema, st
 	let tools: Map<string, CapturedTool>;
 
 	beforeAll(() => {
-		t = convexTest(schema as never, modules as never).withIdentity({ subject: "test-service-account-user-id" });
+		t = convexTest(schema as never, modules as never).withIdentity({
+			subject: "test-service-account-user-id",
+		});
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 

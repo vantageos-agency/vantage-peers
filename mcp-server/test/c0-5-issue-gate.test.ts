@@ -115,22 +115,30 @@ describe("C0.5 — update_issue_status master-only gate", () => {
 	};
 
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("update_issue_status", args, buildScopedCtx());
+		const result = await callTool(
+			"update_issue_status",
+			args,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
-		const result = await callTool("update_issue_status", args, buildMasterCtx());
+		const result = await callTool(
+			"update_issue_status",
+			args,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("update_issue_status", args, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -157,10 +165,10 @@ describe("C0.5 — validate_fix master-only gate", () => {
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("validate_fix", args, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -175,21 +183,29 @@ describe("C0.5 — link_issue_to_pattern master-only gate", () => {
 	};
 
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("link_issue_to_pattern", args, buildScopedCtx());
+		const result = await callTool(
+			"link_issue_to_pattern",
+			args,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
-		const result = await callTool("link_issue_to_pattern", args, buildMasterCtx());
+		const result = await callTool(
+			"link_issue_to_pattern",
+			args,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("link_issue_to_pattern", args, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });

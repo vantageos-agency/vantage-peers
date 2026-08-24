@@ -22,7 +22,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -203,7 +203,7 @@ describe("GREEN — list_repo_mappings scoped correctly (four independent poles)
 	it("(iv) MASTER pole alone — legacy/master callers see all mappings unfiltered", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
 			items: [MAPPING_ALPHA_OWN, MAPPING_BETA_OTHER],
@@ -277,7 +277,7 @@ describe("get_repo_mapping — same remap, single-row get counterpart", () => {
 	it("MASTER sees any mapping", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
 			MAPPING_BETA_OTHER,
