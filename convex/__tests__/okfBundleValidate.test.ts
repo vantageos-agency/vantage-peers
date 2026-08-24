@@ -25,7 +25,7 @@ import {
 	BUNDLE_HARD_CAP_BYTES,
 	BUNDLE_SOFT_CAP_BYTES,
 } from "../okfBundle";
-import { packTarball } from "../okfBundleNode";
+import { assertCanValidate, packTarball } from "../okfBundleNode";
 import type { ValidationError } from "../okfValidator";
 import {
 	type BriefingNoteDoc,
@@ -304,6 +304,37 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	// helper level (any identity with no recognised claim throws) — covered by
 	// integration smoke against PROD Clerk JWTs where forged tokens carry
 	// neither subject nor org claims.
+
+	// IDENTITY-CLAIM CASING CLASS (task k173jzg0nxa45a1meycpb5m5898d1c2t):
+	// a Clerk-native identity with no custom JWT template carries the org
+	// slug/id as snake_case (`org_slug`/`org_id`), not camelCase
+	// (`organizationSlug`/`organizationId`). Pre-fix, `assertCanValidate`'s
+	// `hasClaim` presence check only recognised the camelCase spellings, so
+	// an identity carrying ONLY snake_case org claims (no tokenIdentifier,
+	// no subject) was refused OKF_VALIDATE_UNAUTHENTICATED even though it is
+	// a genuine, recognised claim — a fail-closed refusal that looked
+	// correct but denied a legitimate Clerk-native caller. Driven directly
+	// against the exported helper (same pattern as
+	// `assertCanExportNamespace` in okfBundleExportGeneralize.test.ts)
+	// because convex-test's `withIdentity({})` auto-populates a `subject`
+	// claim, which would mask this defect if driven through the action.
+	test("assertCanValidate accepts a snake_case-only identity (org_slug, no organizationSlug/organizationId/subject/tokenIdentifier)", async () => {
+		const ctx = {
+			auth: {
+				getUserIdentity: async () => ({ org_slug: "acme" }),
+			},
+		};
+		await expect(assertCanValidate(ctx)).resolves.toBeUndefined();
+	});
+
+	test("assertCanValidate accepts a snake_case-only identity (org_id, no other claim)", async () => {
+		const ctx = {
+			auth: {
+				getUserIdentity: async () => ({ org_id: "acme" }),
+			},
+		};
+		await expect(assertCanValidate(ctx)).resolves.toBeUndefined();
+	});
 
 	test("bundleUrl with http:// scheme is rejected (SSRF defence — scheme allowlist)", async () => {
 		const t = createTestConvex();

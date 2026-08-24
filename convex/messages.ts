@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { requireScope, withOrgScope } from "./lib/auth";
+import { requireAgentCredentialMatch, requireScope, withOrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 import {
@@ -43,9 +43,29 @@ export const sendMessage = mutation({
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
 		tenantId: v.optional(v.string()),
+		// [P-T5] THE LOCK — optional per-agent credential secret (see
+		// convex/agentCredentials.ts). When presented, `args.from` MUST equal
+		// the agent name the credential resolves to (see
+		// requireAgentCredentialMatch) — a call asserting a DIFFERENT `from`
+		// than the resolved identity is refused with AGENT_IDENTITY_MISMATCH.
+		// Omitted entirely, this is a no-op — pre-P-T5 callers are unchanged.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
+		// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] Resolve scope BEFORE the
+		// credential lock so the lock can bind the presented credential's org
+		// against the SAME `orgSlug` the rest of this handler already derives
+		// (reused below in the broadcast branch — never re-derived).
+		const scope = await withOrgScope(ctx);
+
+		await requireAgentCredentialMatch(
+			ctx,
+			args.agentCredentialSecret,
+			args.from,
+			scope.orgSlug,
+		);
+
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
 			fromInstanceId: args.fromInstanceId,
@@ -88,7 +108,8 @@ export const sendMessage = mutation({
 			// empty allowedOrchestrators, so it falls into the client branch
 			// below and yields zero recipients — the existing zero-recipient
 			// bounce fires (no fail-open path to the internal fleet).
-			const scope = await withOrgScope(ctx);
+			// `scope` reused from the top of this handler (resolved once, before
+			// the [P-T5] ORG BIND lock above) — never re-derived here.
 
 			// convex-reviewer CRITICAL (mission fix-broadcast-org-scoped-v1, T1
 			// REVISE): scope.isMaster is OVERLOADED — it is also true for a

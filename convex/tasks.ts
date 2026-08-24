@@ -6,7 +6,12 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
-import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import {
+	withOrgScope,
+	filterByOrgScope,
+	requireScope,
+	requireAgentCredentialMatch,
+} from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { enforceClosureGate } from "./lib/taskClosureGate";
@@ -135,6 +140,7 @@ export function deriveTerminalStatus(
 async function requireAuthenticatedCaller(
 	ctx: MutationCtx,
 	callerOrchestrator: string | undefined,
+	agentCredentialSecret?: string,
 ): Promise<OrgScope> {
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity === null) {
@@ -150,6 +156,22 @@ async function requireAuthenticatedCaller(
 	// master; that fail-open path is reserved for pre-audited internal call
 	// sites (see convex/lib/auth.ts doc comment), not this public surface.
 	const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+
+	// [P-T5] THE LOCK — when a per-agent credential is presented, the
+	// asserted `callerOrchestrator` MUST equal the agent identity the
+	// credential resolves to (see requireAgentCredentialMatch). No-op when
+	// the secret is omitted — pre-P-T5 callers are byte-unchanged.
+	// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] ORG BIND: `scope.orgSlug`
+	// (just derived above, never re-derived) is threaded through as the
+	// operation's target org — a same-named agent credential from a
+	// DIFFERENT organisation is refused (ORG_MISMATCH) even though the name
+	// matches.
+	await requireAgentCredentialMatch(
+		ctx,
+		agentCredentialSecret,
+		callerOrchestrator,
+		scope.orgSlug,
+	);
 
 	// LIMIT of this reconciliation (containment scope only — removed by T2
 	// k172bccwcqajfetcrmm5wtasps8cs7tc when single-actor equality lands): it
@@ -324,6 +346,16 @@ const createTaskArgsValidator = {
 	createdBy: creatorValidator,
 };
 
+// [P-T5] THE LOCK — optional per-agent credential secret, public `create`
+// only (never `createForWebhook`, which is HMAC-gated and has no orchestrator
+// identity to lock at all). See requireAgentCredentialMatch: presenting it
+// requires `createdBy` to equal the resolved agent identity, no-op if
+// omitted.
+const createTaskArgsValidatorWithCredential = {
+	...createTaskArgsValidator,
+	agentCredentialSecret: v.optional(v.string()),
+};
+
 interface CreateTaskArgs {
 	title: string;
 	description?: string;
@@ -372,14 +404,19 @@ async function insertTask(
 }
 
 export const create = mutation({
-	args: createTaskArgsValidator,
+	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
+		const { agentCredentialSecret, ...taskArgs } = args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
-		await requireAuthenticatedCaller(ctx, args.createdBy);
-		return await insertTask(ctx, args);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.createdBy,
+			agentCredentialSecret,
+		);
+		return await insertTask(ctx, taskArgs);
 	},
 });
 
@@ -1129,11 +1166,19 @@ export const update = mutation({
 		assignedToInstance: v.optional(v.string()),
 		// Mandatory reason when status is being set to "cancelled" (Day 157).
 		cancelReason: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const { taskId, callerOrchestrator, cancelReason, ...fields } = args;
-		await requireAuthenticatedCaller(ctx, callerOrchestrator);
+		const { taskId, callerOrchestrator, cancelReason, agentCredentialSecret, ...fields } = args;
+		await requireAuthenticatedCaller(
+			ctx,
+			callerOrchestrator,
+			agentCredentialSecret,
+		);
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1283,12 +1328,21 @@ export const attachReviewArtifact = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		artifactRef: v.string(),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor, also written verbatim to
+		// `reviewArtifactAttachedBy`) must equal the resolved agent identity;
+		// no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// CORE-A: the tenth public door — closes k17675gzd2bwtnvgp0qzmtx35h8csg23
 		// / PR #1211, matching the gate #1213 applied to the other nine.
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to attach a review artifact — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
@@ -1466,10 +1520,18 @@ export const blockTask = mutation({
 		// of Convex (.claude/rules/railway-mcp-redeploy.md) and do not yet send
 		// this arg. Omission defaults to "other" below, never rejected.
 		blockedCause: v.optional(blockedCauseValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1580,10 +1642,18 @@ export const complete = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		completionNote: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1822,10 +1892,18 @@ export const failTask = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
 		failureNote: v.string(),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1893,10 +1971,18 @@ export const start = mutation({
 	args: {
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
@@ -1971,10 +2057,18 @@ export const checkout = mutation({
 		taskId: v.id("tasks"),
 		callerOrchestrator: creatorValidator,
 		callerInstance: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
@@ -2003,10 +2097,18 @@ export const deleteTask = mutation({
 	args: {
 		taskId: v.id("tasks"),
 		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
 			throw new ConvexError(
@@ -2589,6 +2691,10 @@ export const bulkComplete = mutation({
 		dryRun: v.optional(v.boolean()),
 		completionNoteTemplate: v.optional(v.string()),
 		callerOrchestrator: v.optional(v.string()),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
 	},
 	returns: v.object({
 		count: v.number(),
@@ -2606,7 +2712,11 @@ export const bulkComplete = mutation({
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — required
 		// on the dry-run preview path too, not only the live write path: a
 		// dry-run still discloses task titles/ids/counts to whoever calls it.
-		await requireAuthenticatedCaller(ctx, args.callerOrchestrator);
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
 
 		// Default dryRun to true (safety).
 		const dryRun = args.dryRun !== false;

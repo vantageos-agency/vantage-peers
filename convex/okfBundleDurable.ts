@@ -129,6 +129,8 @@ async function assertCanExportNamespaceV8(
 	const orgSlug =
 		(identity.organizationId as string | undefined) ??
 		(identity.organizationSlug as string | undefined) ??
+		(identity.org_id as string | undefined) ??
+		(identity.org_slug as string | undefined) ??
 		null;
 	if (orgSlug === null) {
 		if (isMasterNamespace) return;

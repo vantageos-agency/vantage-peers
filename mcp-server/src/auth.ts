@@ -422,6 +422,28 @@ type ClerkPayload = { sub: string; org_id: string; exp: number };
  * Returns the relevant claims on success, or null if the token is not a Clerk
  * JWT (wrong issuer, bad signature, expired, missing org_id).
  * Never throws — failures are treated as "not a Clerk token, try next layer".
+ *
+ * CASING CLASSIFICATION (enumeration item, symmetric-casing sweep, PR #1230):
+ * `payload.org_id` here is read from the RAW `jwtVerify()` output — Clerk's
+ * OWN native JWT payload, verified directly against Clerk's JWKS in this
+ * function, BEFORE any Convex OIDC identity mapping exists. This is a
+ * DIFFERENT claim source than `convex/lib/auth.ts`'s `withOrgScope`, which
+ * reads `ctx.auth.getUserIdentity()` — a Convex-mapped OIDC identity object
+ * whose custom-claim casing depends on Convex's provider configuration
+ * (hence that code's `organizationSlug ?? org_slug` fallback chain).
+ *
+ * Clerk's own session-token specification fixes the organization-context
+ * claims as snake_case unconditionally: `org_id` / `org_slug` / `org_role`
+ * (https://clerk.com/docs/backend-requests/resources/session-tokens —
+ * "Claims for JWT templates" / default session-claims shape). A custom JWT
+ * template COULD rename the claim key entirely (a template author's own
+ * choice, e.g. to `orgId`), but that is a template-level identifier swap
+ * requiring its own explicit adoption, not a spontaneous camelCase variant
+ * of the SAME claim arriving at this raw, template-fixed layer. Verdict:
+ * DOCUMENTED-NOT-A-DEFECT — no camelCase fallback is added here; this is a
+ * different claim source than the OIDC-identity casing class this sweep
+ * otherwise closes (see `convex/lib/auth.ts` §withOrgScope for the class
+ * that DOES require the fallback).
  */
 async function tryVerifyClerkJwt(token: string): Promise<ClerkPayload | null> {
 	try {
@@ -429,7 +451,11 @@ async function tryVerifyClerkJwt(token: string): Promise<ClerkPayload | null> {
 			issuer: CLERK_DOMAIN,
 			audience: CLERK_JWT_AUDIENCE,
 		});
-		// Org-session JWTs carry org_id; personal-session JWTs do not.
+		// Org-session JWTs carry org_id; personal-session JWTs do not. See the
+		// CASING CLASSIFICATION doc comment above this function — no
+		// camelCase fallback: this raw Clerk-JWKS-verified payload is not the
+		// Convex OIDC identity mapping the sibling withOrgScope fallback
+		// exists for.
 		const orgId = payload.org_id as string | undefined;
 		if (!orgId) return null;
 		const sub = payload.sub;
@@ -600,6 +626,12 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 					500,
 				);
 			}
+			// `clerkResult.org_id` — same claim source and same
+			// DOCUMENTED-NOT-A-DEFECT disposition as the CASING CLASSIFICATION
+			// doc comment on `tryVerifyClerkJwt` above: this is the raw,
+			// template-fixed Clerk JWT claim (always snake_case org_id per
+			// Clerk's session-token spec), not the Convex OIDC identity object
+			// that requires the organizationId ?? org_id fallback elsewhere.
 			const orgId = clerkResult.org_id;
 
 			// Resolve authority FROM THE MAPPING — the verified org_id claim is

@@ -9,8 +9,12 @@
  */
 
 import type * as _helpers_normalizeOrchestratorId from "../_helpers/normalizeOrchestratorId.js";
+import type * as agentCredentials from "../agentCredentials.js";
+import type * as agentRelations from "../agentRelations.js";
+import type * as agents from "../agents.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
+import type * as clientOrgMapping from "../clientOrgMapping.js";
 import type * as components_ from "../components.js";
 import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
@@ -41,6 +45,7 @@ import type * as issues from "../issues.js";
 import type * as kb from "../kb.js";
 import type * as kbMutations from "../kbMutations.js";
 import type * as kbShared from "../kbShared.js";
+import type * as lib_agentIdentity from "../lib/agentIdentity.js";
 import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_ids from "../lib/ids.js";
@@ -90,8 +95,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "_helpers/normalizeOrchestratorId": typeof _helpers_normalizeOrchestratorId;
+  agentCredentials: typeof agentCredentials;
+  agentRelations: typeof agentRelations;
+  agents: typeof agents;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
+  clientOrgMapping: typeof clientOrgMapping;
   components: typeof components_;
   credentials: typeof credentials;
   crons: typeof crons;
@@ -122,6 +131,7 @@ declare const fullApi: ApiFromModules<{
   kb: typeof kb;
   kbMutations: typeof kbMutations;
   kbShared: typeof kbShared;
+  "lib/agentIdentity": typeof lib_agentIdentity;
   "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;
   "lib/ids": typeof lib_ids;

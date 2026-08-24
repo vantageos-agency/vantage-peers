@@ -1,6 +1,7 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
 import { ConvexError } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
+import { resolveAgentCredentialCore } from "./agentIdentity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrgScope — resolved auth + multi-tenant scope context
@@ -114,9 +115,19 @@ export async function withOrgScope(
 	// `organizationId` FALLBACK — never `organizationId`-first (the id would
 	// then shadow a real slug and silently miss the mapping). A miss on this
 	// path is fail-closed (RBAC_DENIED), never a cross-tenant grant.
+	// Casing-class fix (IDENTITY-CLAIM CASING CLASS): a genuine Clerk-NATIVE
+	// session token (no custom JWT template) delivers the org slug/id as
+	// snake_case `org_slug`/`org_id`, not camelCase `organizationSlug`/
+	// `organizationId`. This mirrors the fallback already applied to
+	// okfBundleNode.ts/okfBundleDurable.ts and requireOrgAdmin below — read
+	// slug spellings before id spellings (camelCase then snake_case for each),
+	// preserving the documented slug-first-id-fallback precedence.
+	const orgSlugRec = identity as Record<string, unknown>;
 	const orgSlug =
-		((identity as Record<string, unknown>).organizationSlug as string | undefined) ??
-		((identity as Record<string, unknown>).organizationId as string | undefined) ??
+		(orgSlugRec.organizationSlug as string | undefined) ??
+		(orgSlugRec.org_slug as string | undefined) ??
+		(orgSlugRec.organizationId as string | undefined) ??
+		(orgSlugRec.org_id as string | undefined) ??
 		null;
 
 	// Recognized service-account carve-out: the MCP server authenticates to
@@ -314,9 +325,21 @@ export async function requireOrgAdmin(
 	// The compare below is therefore slug-to-slug ONLY: `organizationSlug` is
 	// the sole source of `callerOrgSlug` (never `organizationId`), matching
 	// the slug key `lookupOrgMapping`/`by_clerk_slug` is keyed on.
+	// P-T1 fix: a genuine Clerk-NATIVE session token (no custom JWT template
+	// — the mint path that carries org_id/org_role/org_slug together, see
+	// mcp-server/src/serviceAccountAuth.ts's getScopedUserToken) delivers the
+	// org slug as snake_case `org_slug`, not `organizationSlug`. This mirrors
+	// the ROLE read below (which already falls back to `org_role`) and
+	// withOrgScope's slug-first resolution above. `organizationId`/`org_id`
+	// are deliberately NOT part of this fallback chain — PR #1224 item 4
+	// established that requireOrgAdmin's slug compare must be slug-to-slug
+	// ONLY, never an org id (see provisionOrganizationOrgAdmin.test.ts's
+	// "organizationId alone ... is NOT accepted" pole, unchanged by this fix).
 	const rec = identity as Record<string, unknown>;
 	const callerOrgSlug =
-		(rec.organizationSlug as string | undefined) ?? null;
+		(rec.organizationSlug as string | undefined) ??
+		(rec.org_slug as string | undefined) ??
+		null;
 
 	if (!callerOrgSlug) {
 		throw new ConvexError(
@@ -357,6 +380,117 @@ export async function requireOrgAdmin(
 	if (!mapping || !mapping.isActive) {
 		throw new ConvexError(
 			`RBAC_DENIED: org "${targetOrgSlug}" is not an active provisioned organisation — ${JSON.stringify({ targetOrgSlug })}`,
+		);
+	}
+}
+
+/**
+ * requireAgentCredentialMatch — [P-T5] THE LOCK. Cap analysis/le-cap/le-cap.md
+ * @ e3c1ffd6 §6 VP.4 (second half): the ACTING AGENT is derived from the
+ * per-agent CREDENTIAL presented on the call (P-T4's
+ * `resolveAgentCredentialCore` — the SAME hashing+lookup `agentCredentials.ts`
+ * exposes publicly as `resolveAgentCredential`, reused here rather than
+ * duplicated), never from the caller-declared name alone.
+ *
+ * NO COMPATIBILITY WINDOW (the cap's explicit ruling): a presented credential
+ * that resolves to NO agent — including an org-only/shared token (the
+ * existing OAuth/Clerk bearer that authenticates the ORGANISATION, not a
+ * single agent) — is REFUSED at this agent-named surface. There is no
+ * exemption path and no fallback flag; an org-only token simply does not
+ * satisfy this check, ever.
+ *
+ * THE TWO POLES this enforces, both directions:
+ *   - HOLDER under its OWN name (resolved.agentName === assertedName) →
+ *     passes; the call proceeds unchanged.
+ *   - HOLDER under ANOTHER agent's name, OR a credential that resolves to
+ *     nothing at all (unknown secret / org-only token / rotated-out secret)
+ *     → REFUSED with `AGENT_IDENTITY_MISMATCH`.
+ *
+ * `assertedName === undefined` is a no-op unconditionally: there is no
+ * declared name to compare the resolved identity against, and none to look
+ * up in `agents` either.
+ *
+ * [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] CONDITIONAL-SECRET — "CLOSE
+ * it for agents, TRACE it for the rest": omitting `agentCredentialSecret` is
+ * NOT an unconditional no-op. Whether it is a no-op depends on WHAT the
+ * caller declares: `assertedName` is looked up against the `agents` table
+ * (the `by_org_name` index, scoped to `targetOrgSlug` — the SAME org the
+ * surrounding scope already derived, reused, never re-derived) for the
+ * operation's target org.
+ *   - If that lookup RESOLVES (a registered agent row exists under that
+ *     name in that org), a credential is REQUIRED: omitting it is refused
+ *     with `AGENT_CREDENTIAL_REQUIRED` — a caller may not assert a known
+ *     agent identity with nothing to prove it.
+ *   - If that lookup does NOT resolve (a legacy orchestrator / non-agent
+ *     sender — no row for that name in that org), the pre-P-T5 no-op path
+ *     is unchanged, until the migration task
+ *     k17573xwj0g0kf1fsfntrn3h2d8d30y8 registers every sender as an agent.
+ *   - `targetOrgSlug === null` (the true internal/master caller, no org to
+ *     look up against) keeps the no-op path unconditionally — there is no
+ *     `agents` row to resolve against without an org to scope the lookup.
+ * When a secret IS presented, the existing name-match + org-bind checks
+ * below apply unchanged, regardless of whether the sender is a registered
+ * agent.
+ *
+ * [Pi ruling, task k1746tn3jy22k0jphbx48vzmvd8d0y50] ORG BIND: a same-named
+ * agent in a DIFFERENT organisation previously passed this check — org
+ * isolation rested only on the surrounding `withOrgScope`/`requireAuthenticatedCaller`
+ * scoping, an invariant that is unprovable across an open set of future
+ * write paths. `targetOrgSlug` is the org the CALL is acting in — the same
+ * `orgSlug` the surrounding scope (`withOrgScope`) already derived for this
+ * request; callers MUST reuse that value, never re-derive a second one.
+ * When `resolved.orgSlug !== targetOrgSlug`, the call is refused with
+ * `ORG_MISMATCH`, defence-in-depth ON TOP OF (never a replacement for) the
+ * surrounding org scoping. `targetOrgSlug === null` (the true internal/
+ * master caller — no org attached at all, see `withOrgScope`'s
+ * service-account/allowNoIdentityMaster carve-outs) is a no-op for this
+ * specific check: there is no target org for a fleet-wide caller to bind
+ * against, and the name-match check above still applies unchanged.
+ */
+export async function requireAgentCredentialMatch(
+	ctx: QueryCtx | MutationCtx,
+	agentCredentialSecret: string | undefined,
+	assertedName: string | undefined,
+	targetOrgSlug: string | null,
+): Promise<void> {
+	if (assertedName === undefined) return;
+
+	if (agentCredentialSecret === undefined) {
+		// CONDITIONAL-SECRET (Pi ruling k1746tn3jy22): a declared sender that
+		// RESOLVES to an existing `agents` row for the target org must present
+		// a credential; a sender that does not resolve keeps the legacy no-op.
+		if (targetOrgSlug === null) return;
+		const declaredAgent = await ctx.db
+			.query("agents")
+			.withIndex("by_org_name", (q) =>
+				q.eq("orgSlug", targetOrgSlug).eq("name", assertedName),
+			)
+			.unique();
+		if (declaredAgent) {
+			throw new ConvexError(
+				`AGENT_CREDENTIAL_REQUIRED: sender "${assertedName}" resolves to a registered agent in org "${targetOrgSlug}" — this surface requires a per-agent credential (agentCredentialSecret) once the sender is a known agent identity, no fallback — ${JSON.stringify({ assertedName, targetOrgSlug })}`,
+			);
+		}
+		return;
+	}
+
+	const resolved = await resolveAgentCredentialCore(ctx, agentCredentialSecret);
+
+	if (!resolved) {
+		throw new ConvexError(
+			`AGENT_IDENTITY_MISMATCH: presented agent credential does not resolve to any active per-agent identity — an org-only/shared token is not accepted at this agent-named surface, no compatibility window — ${JSON.stringify({ assertedName })}`,
+		);
+	}
+
+	if (resolved.agentName !== assertedName) {
+		throw new ConvexError(
+			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agentName}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agentName, assertedName })}`,
+		);
+	}
+
+	if (targetOrgSlug !== null && resolved.orgSlug !== targetOrgSlug) {
+		throw new ConvexError(
+			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agentName}" in org "${resolved.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agentName, resolvedOrgSlug: resolved.orgSlug, targetOrgSlug })}`,
 		);
 	}
 }

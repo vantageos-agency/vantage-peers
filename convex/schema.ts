@@ -1306,4 +1306,79 @@ export default defineSchema({
 	})
 		.index("by_org_job", ["orgId", "jobId"])
 		.index("by_org_job_seq", ["orgId", "jobId", "seq"]),
+
+	// ── agents ───────────────────────────────────────────────────────────────
+	// [P-T2] the agent as an ENTITY carrying its organisation (a CREATE, not an
+	// extension of an existing shape). `mcp__vantage-peers__list_peers` rows
+	// carry id/instanceId/name/role/workspace/currentTask/lastSeen/sessionCount
+	// and NO organisation field — org membership rides on the calling token,
+	// not on the agent row itself. This table is that missing organisation
+	// carrier. The parent-child edge (P-T3) attaches ON TOP of this table —
+	// it is deliberately NOT modeled here (docs-subagents.md: "A declared
+	// subagent inherits nothing from the root's authored slots", which is why
+	// the relation lives in a separate layer, not inside this entity).
+	agents: defineTable({
+		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org that owns this agent
+		name: v.string(), // agent's declared name, unique within its org (see by_org_name)
+		description: v.optional(v.string()),
+		// `address` is the write-back target used AFTER an agent deploys — the
+		// emitter's source for a parent's remote-agent declaration (P-T3). Not
+		// known at registerAgent time; populated later via a dedicated update.
+		address: v.optional(v.string()),
+		outboundAuthRef: v.optional(v.string()), // opaque reference to an outbound-auth credential; never the raw credential itself
+		isActive: v.boolean(),
+		createdAt: v.number(),
+	})
+		.index("by_org", ["orgSlug"])
+		.index("by_org_name", ["orgSlug", "name"]),
+
+	// ── agent_relations ──────────────────────────────────────────────────────
+	// [P-T3] the parent-child edge — the graph P-T2's `agents` entity table
+	// deliberately did not model. le-cap.md @ e3c1ffd6 §6 VP.2 (edge half): the
+	// layer does not know that one agent is another's child, nor that a child
+	// can be shared by two parents. This table IS that graph.
+	//
+	// MANY-TO-MANY: a child shared by two parents is TWO ROWS in this table,
+	// never a parent field on the child (which would cap a child at one
+	// parent). `parentName`/`childName` are the `agents.name` values within
+	// the same `orgSlug` — this table does not itself validate that the named
+	// agent rows exist (callers/mutations do), it only records the edge.
+	agent_relations: defineTable({
+		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this edge belongs to
+		parentName: v.string(), // agents.name of the parent in this org
+		childName: v.string(), // agents.name of the child in this org
+		createdAt: v.number(),
+	})
+		.index("by_org", ["orgSlug"])
+		.index("by_parent", ["orgSlug", "parentName"])
+		.index("by_child", ["orgSlug", "childName"]),
+
+	// ── agent_credentials ────────────────────────────────────────────────────
+	// [P-T4] the per-agent CREDENTIAL — today the token identifies the
+	// ORGANISATION and the agent writes its own name into the call, so agents
+	// of one client share a token and nothing compares the declared name to
+	// the token presented (le-cap.md @ e3c1ffd6 §6 VP.4, first half). This
+	// table is that missing lock's key: each agent (a P-T2 `agents` row) gets
+	// its OWN minted secret, stored HASHED (never plaintext at rest) — the
+	// same sha256-hex hashing pattern already used for oauth/bearer tokens in
+	// this codebase (convex/credentials.ts's `sha256Hex`, convex/oauth.ts's
+	// local mirror of the same helper).
+	//
+	// Rotation: a second `mintAgentCredential` call for the same (orgSlug,
+	// agentName) sets every PRIOR row's `isActive` to false before inserting
+	// the new active row — the old plaintext stops resolving, never deleted
+	// (audit trail of past mints is preserved).
+	//
+	// `secretHash` is the resolution key (`by_secret_hash`): P-T5's lock
+	// resolves a PRESENTED credential to (orgSlug, agentName) via this index,
+	// never by trusting a caller-declared name.
+	agent_credentials: defineTable({
+		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this credential's agent belongs to
+		agentName: v.string(), // agents.name within orgSlug — the credential's OWN identity, never caller-declared
+		secretHash: v.string(), // sha256 hex of the minted secret — raw secret NEVER stored
+		isActive: v.boolean(), // false once rotated out by a later mint
+		createdAt: v.number(),
+	})
+		.index("by_org_agent", ["orgSlug", "agentName"])
+		.index("by_secret_hash", ["secretHash"]),
 });

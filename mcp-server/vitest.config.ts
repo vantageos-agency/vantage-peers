@@ -12,7 +12,7 @@ export default defineConfig({
 	test: {
 		globals: false,
 		environment: "node",
-		include: ["test/**/*.test.ts"],
+		include: ["test/**/*.test.ts", "src/__tests__/**/*.test.ts"],
 		env: {
 			VP_TEST_MODE: "1",
 			BEARER_SECRET_MASTER: "test-master-token",

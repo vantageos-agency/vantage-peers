@@ -277,6 +277,8 @@ export async function assertCanExportNamespace(
 	const orgSlug =
 		(identity.organizationId as string | undefined) ??
 		(identity.organizationSlug as string | undefined) ??
+		(identity.org_id as string | undefined) ??
+		(identity.org_slug as string | undefined) ??
 		null;
 	if (orgSlug === null) {
 		// Identity attached but carries no org affiliation — same fail-closed
@@ -623,7 +625,7 @@ function assertBundleUrlSafe(rawUrl: string): URL {
  * Convex CLI / deploy-key path has no identity, so accept that case; reject
  * everything else that arrives without an identity attached.
  */
-async function assertCanValidate(ctx: {
+export async function assertCanValidate(ctx: {
 	auth: { getUserIdentity: () => Promise<unknown> };
 }): Promise<void> {
 	const identity = (await ctx.auth.getUserIdentity()) as Record<
@@ -640,7 +642,9 @@ async function assertCanValidate(ctx: {
 		typeof identity.tokenIdentifier === "string" ||
 		typeof identity.subject === "string" ||
 		typeof identity.organizationId === "string" ||
-		typeof identity.organizationSlug === "string";
+		typeof identity.organizationSlug === "string" ||
+		typeof identity.org_id === "string" ||
+		typeof identity.org_slug === "string";
 	if (!hasClaim) {
 		throw new Error(
 			"OKF_VALIDATE_UNAUTHENTICATED: identity present but carries no recognised claim.",

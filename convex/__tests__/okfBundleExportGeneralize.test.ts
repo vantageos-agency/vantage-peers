@@ -98,6 +98,22 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).rejects.toThrow(/OKF_NAMESPACE_INVALID/);
 	});
 
+	test("IDENTITY-CLAIM CASING CLASS (task k173jzg0nxa45a1meycpb5m5898d1c2t): snake_case-only identity (org_slug, no organizationId/organizationSlug) is read identically", async () => {
+		// A Clerk-native identity with no custom JWT template carries the org
+		// slug as `org_slug`, not `organizationSlug`. Pre-fix this read only
+		// camelCase, so a legitimate snake_case-only caller was refused
+		// AUTH_NAMESPACE_DENIED (or AUTH_NO_ORG for a non-matching namespace)
+		// even for their OWN namespace — a fail-closed refusal that looked
+		// correct but denied a genuine org member.
+		const ctx = ctxWithIdentity({ org_slug: "team-zen" });
+		await expect(
+			assertCanExportNamespace(ctx, "team/team-zen"),
+		).resolves.toBeUndefined();
+		await expect(
+			assertCanExportNamespace(ctx, "team/other"),
+		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+	});
+
 	test("identity without orgId/orgSlug is allowed ONLY on the master namespace (fail-closed)", async () => {
 		// Same fail-closed posture as the null-identity branch: an identity that
 		// carries no org affiliation (system:cron, deploy key with metadata, etc.)
