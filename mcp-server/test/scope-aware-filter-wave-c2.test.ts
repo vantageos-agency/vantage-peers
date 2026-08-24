@@ -100,7 +100,7 @@ type CapturedTool = {
 
 function captureTools(
 	queryReturns: Record<string, unknown>,
-	oauthCtx?: OAuthContext,
+	oauthCtx: OAuthContext = masterCtx(),
 ): Map<string, CapturedTool> {
 	const tools = new Map<string, CapturedTool>();
 	const mockServer = {
@@ -192,7 +192,7 @@ describe("SCMP — search_components scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("SCMP-T3 legacy bearer → all rows visible", async () => {
+	it("SCMP-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({
 			"components:search": SEARCH_COMPONENTS_FIXTURE,
 		});
@@ -274,7 +274,7 @@ describe("LRCT — list_recurring_tasks scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LRCT-T3 legacy bearer → all rows visible", async () => {
+	it("LRCT-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({ "recurringTasks:list": RECURRING_FIXTURE });
 		const res = await tools.get("list_recurring_tasks")!.handler({});
 		expect(res.isError).not.toBe(true);
@@ -348,7 +348,7 @@ describe("LMND — list_mandates scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LMND-T3 legacy bearer → all rows visible", async () => {
+	it("LMND-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({ "mandates:list": MANDATES_FIXTURE });
 		const res = await tools.get("list_mandates")!.handler({});
 		expect(res.isError).not.toBe(true);
@@ -396,25 +396,19 @@ const betaBu = {
 
 describe("GBU — get_bu scope-aware", () => {
 	it("GBU-T1 master scope → row returned", async () => {
-		const tools = captureTools(
-			{ "businessUnits:get": alphaBu },
-			masterCtx(),
-		);
+		const tools = captureTools({ "businessUnits:get": alphaBu }, masterCtx());
 		const res = await tools.get("get_bu")!.handler({ buId: "bu_a" });
 		expect(res.isError).not.toBe(true);
 		expect(res.content[0].text).toContain("Alpha BU");
 	});
 
 	it("GBU-T2 non-master in-scope → NOT Forbidden", async () => {
-		const tools = captureTools(
-			{ "businessUnits:get": alphaBu },
-			alphaCtx(),
-		);
+		const tools = captureTools({ "businessUnits:get": alphaBu }, alphaCtx());
 		const res = await tools.get("get_bu")!.handler({ buId: "bu_a" });
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("GBU-T3 legacy bearer → row returned", async () => {
+	it("GBU-T3 master/local trust → row returned", async () => {
 		const tools = captureTools({ "businessUnits:get": betaBu });
 		const res = await tools.get("get_bu")!.handler({ buId: "bu_b" });
 		expect(res.isError).not.toBe(true);
@@ -422,19 +416,13 @@ describe("GBU — get_bu scope-aware", () => {
 	});
 
 	it("GBU-M1 cross-tenant: alpha caller, beta BU → NOT Forbidden", async () => {
-		const tools = captureTools(
-			{ "businessUnits:get": betaBu },
-			alphaCtx(),
-		);
+		const tools = captureTools({ "businessUnits:get": betaBu }, alphaCtx());
 		const res = await tools.get("get_bu")!.handler({ buId: "bu_b" });
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
 	it("GBU-M2 alpha caller, alpha BU → content visible (no Forbidden)", async () => {
-		const tools = captureTools(
-			{ "businessUnits:get": alphaBu },
-			alphaCtx(),
-		);
+		const tools = captureTools({ "businessUnits:get": alphaBu }, alphaCtx());
 		const res = await tools.get("get_bu")!.handler({ buId: "bu_a" });
 		expect(isForbiddenResponse(res)).toBe(false);
 		expect(res.content[0].text).toContain("Alpha BU");
@@ -487,7 +475,7 @@ describe("LBUS — list_bus scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LBUS-T3 legacy bearer → all rows visible", async () => {
+	it("LBUS-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({ "businessUnits:list": BUS_FIXTURE });
 		const res = await tools.get("list_bus")!.handler({});
 		expect(res.isError).not.toBe(true);
@@ -561,7 +549,7 @@ describe("LRM — list_repo_mappings scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LRM-T3 legacy bearer → all rows visible", async () => {
+	it("LRM-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({
 			"githubRepoMapping:list": REPO_MAPPINGS_FIXTURE,
 		});
@@ -647,7 +635,7 @@ describe("LISS — list_issues scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(true);
 	});
 
-	it("LISS-T3 legacy bearer → all rows visible", async () => {
+	it("LISS-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({ "issues:listByProject": ISSUES_FIXTURE });
 		const res = await tools.get("list_issues")!.handler({});
 		expect(res.isError).not.toBe(true);

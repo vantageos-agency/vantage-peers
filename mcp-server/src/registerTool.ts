@@ -119,7 +119,15 @@ function enforceScope(
 			// declaration is mandatory; the runtime check lives with the rows.
 			return null;
 		case "master": {
-			if (!ctx.oauthCtx) return null; // legacy bearer path — see auth.ts note
+			// Absence REFUSES — a missing oauthCtx is never master. Production
+			// always carries a context (HTTP via bearerAuthMiddleware, stdio via
+			// LOCAL_STDIO_TRUST_CTX), so this fires only for a misconfigured
+			// caller, and it fails closed.
+			if (!ctx.oauthCtx)
+				return mcpError(
+					"Forbidden: this tool requires master scope, but the request " +
+						"carried no authorization context (absence is never master).",
+				);
 			if (isMasterScope(ctx.oauthCtx)) return null;
 			return mcpError(
 				`Forbidden: this tool requires master scope (current: ${ctx.oauthCtx.scopeProfile}).`,

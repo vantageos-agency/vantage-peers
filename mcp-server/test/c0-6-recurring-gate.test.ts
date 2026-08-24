@@ -46,7 +46,12 @@ function captureTools(oauthCtx?: OAuthContext): Map<string, CapturedTool> {
 
 	const mockConvex = {
 		query: async () => null,
-		mutation: async () => ({ taskId: "mock-id", paused: true, resumed: true, removed: true }),
+		mutation: async () => ({
+			taskId: "mock-id",
+			paused: true,
+			resumed: true,
+			removed: true,
+		}),
 		action: async () => null,
 	} as Parameters<typeof registerTools>[1];
 
@@ -111,22 +116,34 @@ const recurringArgs = { taskId: "mock-recurring-task-id" };
 
 describe("C0.6 — pause_recurring_task master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("pause_recurring_task", recurringArgs, buildScopedCtx());
+		const result = await callTool(
+			"pause_recurring_task",
+			recurringArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
-		const result = await callTool("pause_recurring_task", recurringArgs, buildMasterCtx());
+		const result = await callTool(
+			"pause_recurring_task",
+			recurringArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("pause_recurring_task", recurringArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"pause_recurring_task",
+			recurringArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -136,22 +153,34 @@ describe("C0.6 — pause_recurring_task master-only gate", () => {
 
 describe("C0.6 — resume_recurring_task master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("resume_recurring_task", recurringArgs, buildScopedCtx());
+		const result = await callTool(
+			"resume_recurring_task",
+			recurringArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
-		const result = await callTool("resume_recurring_task", recurringArgs, buildMasterCtx());
+		const result = await callTool(
+			"resume_recurring_task",
+			recurringArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("resume_recurring_task", recurringArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"resume_recurring_task",
+			recurringArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -161,21 +190,33 @@ describe("C0.6 — resume_recurring_task master-only gate", () => {
 
 describe("C0.6 — delete_recurring_task master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("delete_recurring_task", recurringArgs, buildScopedCtx());
+		const result = await callTool(
+			"delete_recurring_task",
+			recurringArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
-		const result = await callTool("delete_recurring_task", recurringArgs, buildMasterCtx());
+		const result = await callTool(
+			"delete_recurring_task",
+			recurringArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("delete_recurring_task", recurringArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"delete_recurring_task",
+			recurringArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });

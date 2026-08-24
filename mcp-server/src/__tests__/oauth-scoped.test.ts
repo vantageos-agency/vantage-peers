@@ -98,9 +98,10 @@ describe("checkFromAllowed", () => {
 		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
 	});
 
-	it("legacy bearer (no oauthContext) bypasses from enforcement", () => {
-		// mcpTenants path is unscoped by design — Pi/Tau/Phi still trusted.
-		expect(checkFromAllowed(undefined, "anything")).toBeNull();
+	it("no oauthContext REFUSES from enforcement — absence is never authority", () => {
+		// Every real path now carries a context (HTTP middleware; stdio
+		// LOCAL_STDIO_TRUST_CTX). A bare undefined fails closed.
+		expect(checkFromAllowed(undefined, "anything")).not.toBeNull();
 	});
 
 	// Day 88 capitalize — Marie onboarding friction (2026-06-01).
@@ -177,12 +178,12 @@ describe("checkNamespaceRead", () => {
 		expect(checkNamespaceRead(masterCtx, "anywhere/at/all")).toBeNull();
 	});
 
-	it("legacy bearer (no oauthContext) bypasses read enforcement", () => {
-		expect(checkNamespaceRead(undefined, "orchestrator/pi")).toBeNull();
+	it("no oauthContext REFUSES read enforcement — absence is never authority", () => {
+		expect(checkNamespaceRead(undefined, "orchestrator/pi")).not.toBeNull();
 	});
 
-	it("undefined namespace (list-all) is allowed when no context", () => {
-		expect(checkNamespaceRead(undefined, undefined)).toBeNull();
+	it("undefined namespace (list-all) is REFUSED when no context", () => {
+		expect(checkNamespaceRead(undefined, undefined)).not.toBeNull();
 	});
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -210,8 +211,8 @@ describe("checkNamespaceRead", () => {
 		expect(checkNamespaceRead(masterCtx, undefined)).toBeNull();
 	});
 
-	it("Day 88 P0: legacy bearer CAN still list-all (backward compat)", () => {
-		expect(checkNamespaceRead(undefined, undefined)).toBeNull();
+	it("Day 88 P0: no-context CANNOT list-all — absence refuses (fail-closed)", () => {
+		expect(checkNamespaceRead(undefined, undefined)).not.toBeNull();
 	});
 });
 
@@ -235,8 +236,8 @@ describe("checkNamespaceWrite", () => {
 		expect(checkNamespaceWrite(masterCtx, "orchestrator/pi")).toBeNull();
 	});
 
-	it("legacy bearer bypasses write enforcement", () => {
-		expect(checkNamespaceWrite(undefined, "orchestrator/pi")).toBeNull();
+	it("no oauthContext REFUSES write enforcement — absence is never authority", () => {
+		expect(checkNamespaceWrite(undefined, "orchestrator/pi")).not.toBeNull();
 	});
 });
 
@@ -607,7 +608,9 @@ describe("Legacy internal bearer (path 4 — mcpTenants) must be fail-closed", (
 		} as unknown as ConvexHttpClient;
 	}
 
-	async function resolveLegacyOauthContext(): Promise<OAuthContext | undefined> {
+	async function resolveLegacyOauthContext(): Promise<
+		OAuthContext | undefined
+	> {
 		_setInternalClientForTest(buildMockConvexForLegacyTenant());
 
 		const app = new Hono();

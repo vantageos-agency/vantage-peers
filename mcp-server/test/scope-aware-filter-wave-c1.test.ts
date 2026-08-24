@@ -97,7 +97,7 @@ type CapturedTool = {
 
 function captureTools(
 	queryReturns: Record<string, unknown>,
-	oauthCtx?: OAuthContext,
+	oauthCtx: OAuthContext = masterCtx(),
 ): Map<string, CapturedTool> {
 	const tools = new Map<string, CapturedTool>();
 	const mockServer = {
@@ -182,7 +182,7 @@ describe("PROF — get_profile scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("PROF-T3 legacy bearer (oauthCtx undefined) → row returned", async () => {
+	it("PROF-T3 master/local trust (explicit identity) → row returned", async () => {
 		const tools = captureTools({ "profiles:getProfile": betaProfile });
 		const res = await tools.get("get_profile")!.handler({
 			orchestratorId: "beta-1",
@@ -264,7 +264,7 @@ describe("BCAST — list_broadcast_status scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("BCAST-T3 legacy bearer → all receipts visible", async () => {
+	it("BCAST-T3 master/local trust → all receipts visible", async () => {
 		const tools = captureTools({
 			"messages:listBroadcastStatus": BROADCAST_ENVELOPE,
 		});
@@ -352,7 +352,7 @@ describe("LTBM — list_tasks_by_mission scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LTBM-T3 legacy bearer → all rows visible", async () => {
+	it("LTBM-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({ "tasks:listByMission": TASKS_FIXTURE });
 		const res = await tools.get("list_tasks_by_mission")!.handler({
 			missionId: "m1",
@@ -418,7 +418,7 @@ describe("GMIS — get_mission scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("GMIS-T3 legacy bearer → row returned", async () => {
+	it("GMIS-T3 master/local trust → row returned", async () => {
 		const tools = captureTools({ "missions:get": betaMission });
 		const res = await tools.get("get_mission")!.handler({ missionId: "mis_b" });
 		expect(res.isError).not.toBe(true);
@@ -481,7 +481,7 @@ describe("GDIA — get_diary scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("GDIA-T3 legacy bearer → row returned", async () => {
+	it("GDIA-T3 master/local trust → row returned", async () => {
 		const tools = captureTools({ "diary:get": betaDiary });
 		const res = await tools.get("get_diary")!.handler({
 			date: "2026-06-03",
@@ -560,7 +560,7 @@ describe("LCMP — list_components scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("LCMP-T3 legacy bearer → all rows visible", async () => {
+	it("LCMP-T3 master/local trust → all rows visible", async () => {
 		const tools = captureTools({ "components:list": COMPONENTS_FIXTURE });
 		const res = await tools.get("list_components")!.handler({});
 		expect(res.isError).not.toBe(true);
@@ -634,7 +634,7 @@ describe("GCMP — get_component scope-aware", () => {
 		expect(isForbiddenResponse(res)).toBe(false);
 	});
 
-	it("GCMP-T3 legacy bearer → row returned", async () => {
+	it("GCMP-T3 master/local trust → row returned", async () => {
 		const tools = captureTools({ "components:get": betaComponent });
 		const res = await tools.get("get_component")!.handler({
 			name: "beta-skill",
@@ -645,10 +645,7 @@ describe("GCMP — get_component scope-aware", () => {
 	});
 
 	it("GCMP-M1 cross-tenant: alpha caller, beta component → NOT Forbidden", async () => {
-		const tools = captureTools(
-			{ "components:get": betaComponent },
-			alphaCtx(),
-		);
+		const tools = captureTools({ "components:get": betaComponent }, alphaCtx());
 		const res = await tools.get("get_component")!.handler({
 			name: "beta-skill",
 			type: "skill",

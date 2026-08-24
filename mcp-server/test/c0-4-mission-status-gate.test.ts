@@ -121,21 +121,33 @@ const missionStatusArgs = {
 
 describe("C0.4 — update_mission_status master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("update_mission_status", missionStatusArgs, buildScopedCtx());
+		const result = await callTool(
+			"update_mission_status",
+			missionStatusArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through (no Forbidden)", async () => {
-		const result = await callTool("update_mission_status", missionStatusArgs, buildMasterCtx());
+		const result = await callTool(
+			"update_mission_status",
+			missionStatusArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("update_mission_status", missionStatusArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"update_mission_status",
+			missionStatusArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });

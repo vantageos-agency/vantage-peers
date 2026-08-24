@@ -24,7 +24,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,9 +200,7 @@ describe("GREEN — search_briefing_notes_by_keyword scoped correctly", () => {
 		const result = await handler?.({ query: NOTE_B_MARKER });
 		const parsed = parseResult(result) as Array<{ content?: string }>;
 
-		expect(parsed.some((n) => n.content?.includes(NOTE_B_MARKER))).toBe(
-			false,
-		);
+		expect(parsed.some((n) => n.content?.includes(NOTE_B_MARKER))).toBe(false);
 	});
 
 	// Split into two independent tests (not one compound assertion): the
@@ -256,7 +254,7 @@ describe("GREEN — search_briefing_notes_by_keyword scoped correctly", () => {
 	it("master scope sees both notes unfiltered (no regression on internal/admin callers)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined); // legacy/master path — oauthCtx undefined
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX); // legacy/master path — oauthCtx undefined
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
 			NOTE_A_FULL,

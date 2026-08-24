@@ -18,6 +18,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import { encodeCursor } from "../paging.js";
 import { registerTools } from "../tools.js";
 
@@ -119,7 +120,7 @@ describe("list_memories pagination + envelope", () => {
 	it("returns items.length == N when N memories seeded (no pagination)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const mems = makeMemories(15);
 		// Convex returns { value, continueCursor: null, isDone: true }
@@ -140,10 +141,9 @@ describe("list_memories pagination + envelope", () => {
 		const parsed = parseResult(result);
 		// PRE-FIX: memories?.page is undefined → rawList = [] → items.length === 0
 		// POST-FIX: memories.value is the array → items.length === 15
-		expect(
-			Array.isArray(parsed.items),
-			"result must have an items array",
-		).toBe(true);
+		expect(Array.isArray(parsed.items), "result must have an items array").toBe(
+			true,
+		);
 		expect(
 			(parsed.items as unknown[]).length,
 			"items.length must equal seeded count (15), not 0",
@@ -153,7 +153,7 @@ describe("list_memories pagination + envelope", () => {
 	it("returns first page items + nextCursor when N > limit", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const mems = makeMemories(5);
 		const backendToken = "convex-opaque-cursor-abc";
@@ -183,7 +183,7 @@ describe("list_memories pagination + envelope", () => {
 	it("paginates fully via nextCursor token chain (3 pages of 5 = 15 total)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const allMems = makeMemories(15);
 		const queryMock = convex.query as ReturnType<typeof vi.fn>;
@@ -234,7 +234,7 @@ describe("list_memories pagination + envelope", () => {
 	it("empty backend yields items=[] + no nextCursor", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
 			value: [],
@@ -262,7 +262,7 @@ describe("list_memories pagination + envelope", () => {
 	it("decoded cursor is forwarded to Convex as paginationOpts.cursor", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const queryMock = convex.query as ReturnType<typeof vi.fn>;
 		queryMock.mockResolvedValueOnce({
@@ -300,7 +300,7 @@ describe("list_episodes pagination + envelope", () => {
 	it("returns items.length == N when N episodes seeded (no pagination)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const eps = makeEpisodes(15);
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -320,10 +320,9 @@ describe("list_episodes pagination + envelope", () => {
 		const parsed = parseResult(result);
 		// PRE-FIX: memories?.page is undefined → rawList = [] → items.length === 0
 		// POST-FIX: memories.value is the array → items.length === 15
-		expect(
-			Array.isArray(parsed.items),
-			"result must have an items array",
-		).toBe(true);
+		expect(Array.isArray(parsed.items), "result must have an items array").toBe(
+			true,
+		);
 		expect(
 			(parsed.items as unknown[]).length,
 			"items.length must equal seeded count (15), not 0",
@@ -333,7 +332,7 @@ describe("list_episodes pagination + envelope", () => {
 	it("returns first page items + nextCursor when N > limit", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const eps = makeEpisodes(5);
 		const backendToken = "convex-episode-cursor-def";
@@ -363,7 +362,7 @@ describe("list_episodes pagination + envelope", () => {
 	it("paginates fully via nextCursor token chain (3 pages of 5 = 15 total)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const allEps = makeEpisodes(15);
 		const queryMock = convex.query as ReturnType<typeof vi.fn>;
@@ -411,7 +410,7 @@ describe("list_episodes pagination + envelope", () => {
 	it("empty backend yields items=[] + no nextCursor", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
 			value: [],
@@ -439,7 +438,7 @@ describe("list_episodes pagination + envelope", () => {
 	it("list_episodes forces type='episode' in Convex query args", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const queryMock = convex.query as ReturnType<typeof vi.fn>;
 		queryMock.mockResolvedValueOnce({
@@ -465,7 +464,7 @@ describe("list_episodes pagination + envelope", () => {
 	it("decoded cursor is forwarded to Convex as paginationOpts.cursor", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const queryMock = convex.query as ReturnType<typeof vi.fn>;
 		queryMock.mockResolvedValueOnce({
@@ -475,7 +474,9 @@ describe("list_episodes pagination + envelope", () => {
 		});
 
 		const handler = handlers.get("list_episodes")!;
-		const encodedCursor = encodeCursor({ backendCursor: "ep-backend-cursor-999" });
+		const encodedCursor = encodeCursor({
+			backendCursor: "ep-backend-cursor-999",
+		});
 
 		await handler({
 			namespace: "orchestrator/sigma",

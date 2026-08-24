@@ -220,7 +220,7 @@ describe("GREEN — list_errors / get_error master-only (four independent poles)
 		expect(parsed.some((e) => e._id === ERROR_ROW._id)).toBe(true);
 	});
 
-	it("legacy bearer (oauthCtx undefined) still sees all rows — pre-existing legacy-compat behavior", async () => {
+	it("no-context (oauthCtx undefined) is REFUSED — absence is never master", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
 		registerTools(server, convex, undefined);
@@ -231,9 +231,9 @@ describe("GREEN — list_errors / get_error master-only (four independent poles)
 
 		const handler = handlers.get("list_errors");
 		const result = await handler?.({});
-		const parsed = items(parseResult(result));
 
-		expect(parsed.some((e) => e._id === ERROR_ROW._id)).toBe(true);
+		// Master-only tool + absent identity → explicit Forbidden, no rows.
+		expect(isErrorResult(result)).toBe(true);
 	});
 });
 
@@ -243,9 +243,7 @@ describe("get_error — master-only, same class fix", () => {
 		const convex = buildMockConvex();
 		registerTools(server, convex, CALLER_ALPHA);
 
-		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-			ERROR_ROW,
-		);
+		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ERROR_ROW);
 
 		const handler = handlers.get("get_error");
 		expect(handler, "get_error must be registered").toBeDefined();
@@ -259,9 +257,7 @@ describe("get_error — master-only, same class fix", () => {
 		const convex = buildMockConvex();
 		registerTools(server, convex, MASTER_CALLER);
 
-		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-			ERROR_ROW,
-		);
+		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ERROR_ROW);
 
 		const handler = handlers.get("get_error");
 		const result = await handler?.({ errorId: ERROR_ROW._id });

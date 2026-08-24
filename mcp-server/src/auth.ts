@@ -87,6 +87,46 @@ declare module "hono" {
 	}
 }
 
+/**
+ * Local-machine-trust context for the stdio transport (server.ts).
+ *
+ * The stdio server runs on the OPERATOR'S OWN machine (Self-host / local Claude
+ * Code via `npx vantage-peers-mcp`) against a CONVEX_URL the operator already
+ * holds. There is no network-facing bearer to scope on this transport, so the
+ * caller is trusted with full local authority.
+ *
+ * The point of naming it: this authority is now PRESENT and greppable, not
+ * inferred from an ABSENT oauthContext. server.ts passes it EXPLICITLY (see
+ * `.claude/rules/one-identity-layer.md` clause 3 — "a right is presented, never
+ * inferred from an absence"). Every guard below now REFUSES on undefined; the
+ * stdio full-access path keeps working only because this named context is
+ * handed in, never because a missing argument is read as master.
+ */
+export const LOCAL_STDIO_TRUST_CTX: OAuthContext = {
+	clientId: "local-stdio",
+	userId: "local-stdio",
+	scopes: ["vantage:read", "vantage:write"],
+	scopeProfile: "local-machine-trust",
+	fromAllowList: ["*"],
+	namespaceReadPrefixes: ["*"],
+	namespaceWritePrefixes: ["*"],
+	expiresAt: Number.MAX_SAFE_INTEGER,
+	isMaster: true,
+};
+
+/**
+ * The single refusal returned by every scope predicate when it is handed NO
+ * identity context. Absence of a claim must never be broader than its
+ * presence: a missing oauthContext REFUSES here rather than falling through to
+ * a permissive `return null`. In production no path reaches these predicates
+ * without a context (bearerAuthMiddleware always sets one; stdio passes
+ * LOCAL_STDIO_TRUST_CTX), so this branch fires only for a misconfigured/future
+ * caller — and it fails closed.
+ */
+const NO_CONTEXT_REFUSAL =
+	"Forbidden: no authorization context on this request — a scope predicate " +
+	"was reached without an identity. Refusing (absence is never master).";
+
 // Shape returned by mcpTenants:getTenantByTokenHash
 type TenantLookupResult = {
 	tenantName: string;
@@ -221,12 +261,13 @@ function toPackageOAuthCtx(ctx: OAuthContext): PackageOAuthCtx {
  *
  * Delegates the actual master/wildcard decision to
  * `@vantageos/cloud-identity`'s `isMasterScope` (0.3.0+) via `toPackageOAuthCtx`
- * above — this repo no longer reimplements that check locally. `undefined` is
- * handled here (returns false) because several call sites in tools.ts pass an
- * optional `OAuthContext` (legacy bearer path has no oauthContext at all);
- * the package's own guard requires a non-null `OAuthCtx` and throws otherwise
- * (0.3.0's "never grant by absence" contract), so the undefined check must
- * happen before delegating, not be silently absorbed by the package call.
+ * above — this repo no longer reimplements that check locally. `undefined`
+ * returns FALSE here (absence is never master): callers pass an optional
+ * `OAuthContext`, and the package's own guard requires a non-null `OAuthCtx`
+ * and throws otherwise (0.3.0's "never grant by absence" contract), so the
+ * undefined check must happen before delegating, not be silently absorbed by
+ * the package call. Note the direction: undefined → NOT master (this fn) AND
+ * undefined → REFUSE (the check* predicates above); never undefined → grant.
  */
 export function isMasterScope(ctx: OAuthContext | undefined): boolean {
 	if (!ctx) return false;
@@ -237,18 +278,20 @@ export function isMasterScope(ctx: OAuthContext | undefined): boolean {
  * Checks that `from` is allowed by the current OAuth context.
  * Returns null when allowed, an error message string otherwise.
  *
- * `ctx` is only undefined in tests that call these predicates directly
- * without going through bearerAuthMiddleware — every real auth path
- * (master, OAuth, Clerk, DCR, legacy mcpTenants bearer) sets an oauthContext.
- * The legacy mcpTenants bearer path resolves to a deny-by-default
- * "legacy-tenant-generic" scope (empty allowlist/prefixes) — see auth.ts
- * path (4).
+ * A missing `ctx` REFUSES (returns the refusal string), it never passes.
+ * Every real auth path sets an oauthContext — the HTTP transport via
+ * bearerAuthMiddleware (master, OAuth, Clerk, DCR, and the legacy mcpTenants
+ * bearer path, which resolves to a deny-by-default "legacy-tenant-generic"
+ * scope), and the stdio transport via the explicit LOCAL_STDIO_TRUST_CTX
+ * server.ts hands to registerTools. So a `!ctx` here is a misconfiguration,
+ * and it fails closed rather than granting max authority (clause 3,
+ * `.claude/rules/one-identity-layer.md`).
  */
 export function checkFromAllowed(
 	ctx: OAuthContext | undefined,
 	from: string,
 ): string | null {
-	if (!ctx) return null; // no context (direct predicate call, e.g. unit tests)
+	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (isMasterScope(ctx)) return null;
 	if (ctx.fromAllowList.includes(from)) return null;
 	// Day 88 friction capitalize: surface the allowed values so the LLM caller
@@ -294,16 +337,16 @@ export function checkFromAllowed(
  *     as the caller org is the leak.
  *
  * Async because it performs a data read (clerkJwt path or token-hash path).
- * `ctx` undefined (direct predicate call, e.g. unit tests without a
- * bearerAuthMiddleware pass) allows through, matching the other check*
- * predicates' no-context convention.
+ * `ctx` undefined REFUSES (returns the refusal string), matching the other
+ * check* predicates' fail-closed no-context convention — an absent identity
+ * is never allowed to delegate.
  */
 export async function checkDelegationAllowed(
 	ctx: OAuthContext | undefined,
 	assignedTo: string,
 	getOrgRoster: () => Promise<string[]>,
 ): Promise<string | null> {
-	if (!ctx) return null;
+	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (isMasterScope(ctx)) return null;
 	if (!ctx.clerkJwt) {
 		if (!ctx.accessTokenHash || !ctx.clerkOrgSlug) {
@@ -350,7 +393,7 @@ export function checkNamespaceRead(
 	ctx: OAuthContext | undefined,
 	namespace: string | undefined,
 ): string | null {
-	if (!ctx) return null;
+	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (isMasterScope(ctx)) return null;
 	if (!namespace) {
 		// Day 88 P0 fix: a list-across (namespace undefined) call from a
@@ -377,7 +420,7 @@ export function checkNamespaceWrite(
 	ctx: OAuthContext | undefined,
 	namespace: string,
 ): string | null {
-	if (!ctx) return null;
+	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (isMasterScope(ctx)) return null;
 	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
 	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.`;
@@ -526,8 +569,15 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		}
 
 		// ── (1) Master-token shortcut — admin / backward-compat path ────────────
+		// Use the constant-time comparator from @vantageos/cloud-identity (the
+		// SAME one masterOnlyMiddleware uses below) instead of a plain
+		// `token === masterToken` string compare, which is timing-variant and
+		// leaks the secret one byte at a time. One secret, one comparator.
 		const masterToken = process.env.BEARER_SECRET_MASTER;
-		if (masterToken && token === masterToken) {
+		const masterCheck = masterToken
+			? await validateMasterBearer(authHeader, masterToken)
+			: ({ ok: false, error: "malformed" } as const);
+		if (masterCheck.ok) {
 			const internalUrl = process.env.CONVEX_URL_INTERNAL;
 			if (!internalUrl) {
 				console.error(

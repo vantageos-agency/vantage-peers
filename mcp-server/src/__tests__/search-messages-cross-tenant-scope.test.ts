@@ -22,7 +22,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -151,7 +151,10 @@ describe("RED — search_messages_by_keyword cross-tenant content leak", () => {
 		]);
 
 		const handler = handlers.get("search_messages_by_keyword");
-		expect(handler, "search_messages_by_keyword must be registered").toBeDefined();
+		expect(
+			handler,
+			"search_messages_by_keyword must be registered",
+		).toBeDefined();
 
 		const result = await handler?.({ query: MSG_B_MARKER });
 		const parsed = parseResult(result) as Array<{ content?: string }>;
@@ -208,7 +211,7 @@ describe("GREEN — search_messages_by_keyword scoped correctly (four independen
 	it("(iv) MASTER pole alone — legacy/master callers see all rows unfiltered", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined); // legacy/master path — oauthCtx undefined
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX); // legacy/master path — oauthCtx undefined
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
 			MSG_A_OWN,

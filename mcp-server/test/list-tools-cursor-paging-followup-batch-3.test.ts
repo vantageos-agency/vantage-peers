@@ -33,9 +33,10 @@
  * VP task k1794r6q329q1s36pz4zzjnpvd87zfbn, mission k57c7s478gw1a3e5gmhdeptg5n87z78n.
  */
 
-import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
+import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../src/auth.js";
 import { DEFAULT_LIMIT, encodeCursor } from "../src/paging.js";
 import { registerTools } from "../src/tools.js";
 
@@ -111,7 +112,7 @@ describe("list_peers — cursor paging wiring (S3.3 B8 follow-up batch 3 FINAL)"
 	it("accepts cursor arg and forwards createdBefore filter via decoded cursor", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildPeerRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_peers");
 		expect(handler, "list_peers handler must be registered").toBeDefined();
@@ -129,7 +130,7 @@ describe("list_peers — cursor paging wiring (S3.3 B8 follow-up batch 3 FINAL)"
 	it("does not set createdBefore when no cursor provided (backward compat)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildPeerRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_peers");
 		await handler?.({ ...baseArgs });
@@ -146,7 +147,7 @@ describe("list_peers — cursor paging wiring (S3.3 B8 follow-up batch 3 FINAL)"
 	it("returns nextCursor when page is full (≥ limit rows returned)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildPeerRows(DEFAULT_LIMIT));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_peers");
 		const result = await handler?.({ ...baseArgs, limit: DEFAULT_LIMIT });
@@ -157,7 +158,7 @@ describe("list_peers — cursor paging wiring (S3.3 B8 follow-up batch 3 FINAL)"
 	it("returns no nextCursor when rows < limit (end-of-data)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildPeerRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_peers");
 		const result = await handler?.({ ...baseArgs, limit: 50 });
@@ -170,7 +171,7 @@ describe("list_peers — cursor paging wiring (S3.3 B8 follow-up batch 3 FINAL)"
 	it("rejects invalid cursor with a typed error (no crash)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildPeerRows(3));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_peers");
 		const result = await handler?.({
@@ -184,7 +185,7 @@ describe("list_peers — cursor paging wiring (S3.3 B8 follow-up batch 3 FINAL)"
 	it(`forwards the convex function name ${convexFn}`, async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildPeerRows(2));
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_peers");
 		await handler?.({ ...baseArgs });
@@ -216,7 +217,7 @@ describe("list_broadcast_status — doctrine exception (single-object shape, not
 			createdAt: 1_780_000_000_000,
 			receipts: [],
 		});
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 		expect(handlers.get("list_broadcast_status")).toBeDefined();
 	});
 
@@ -233,7 +234,7 @@ describe("list_broadcast_status — doctrine exception (single-object shape, not
 			createdAt: 1_780_000_000_000,
 			receipts: [],
 		});
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_broadcast_status");
 		const result = await handler?.({ messageId: "m1" });
@@ -255,7 +256,7 @@ describe("search_components — doctrine exception (relevance-ranked, not chrono
 	it("is registered (handler exists)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex([]);
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 		expect(handlers.get("search_components")).toBeDefined();
 	});
 
@@ -264,7 +265,7 @@ describe("search_components — doctrine exception (relevance-ranked, not chrono
 		const convex = buildMockConvex([
 			{ _id: "c1", name: "alpha", team: "vantageos" },
 		]);
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("search_components");
 		const result = await handler?.({ query: "alpha" });
@@ -283,7 +284,7 @@ describe("search_fix_patterns — doctrine exception (semantic action, not chron
 			mutation: vi.fn().mockResolvedValue(null),
 			action: vi.fn().mockResolvedValue([]),
 		} as unknown as ConvexHttpClient;
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 		expect(handlers.get("search_fix_patterns")).toBeDefined();
 	});
 
@@ -292,11 +293,11 @@ describe("search_fix_patterns — doctrine exception (semantic action, not chron
 		const convex = {
 			query: vi.fn().mockResolvedValue([]),
 			mutation: vi.fn().mockResolvedValue(null),
-			action: vi.fn().mockResolvedValue([
-				{ _id: "p1", title: "race-condition fix" },
-			]),
+			action: vi
+				.fn()
+				.mockResolvedValue([{ _id: "p1", title: "race-condition fix" }]),
 		} as unknown as ConvexHttpClient;
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("search_fix_patterns");
 		const result = await handler?.({ query: "race condition" });

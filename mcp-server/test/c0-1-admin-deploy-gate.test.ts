@@ -119,22 +119,30 @@ const addDeployArgs = {
 
 describe("C0.1 — add_deployment master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("add_deployment", addDeployArgs, buildScopedCtx());
+		const result = await callTool(
+			"add_deployment",
+			addDeployArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through (no Forbidden)", async () => {
-		const result = await callTool("add_deployment", addDeployArgs, buildMasterCtx());
+		const result = await callTool(
+			"add_deployment",
+			addDeployArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
 		const result = await callTool("add_deployment", addDeployArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });
 
@@ -146,21 +154,33 @@ const removeDeployArgs = { name: "test-deploy" };
 
 describe("C0.1 — remove_deployment master-only gate", () => {
 	it("RED: non-master scoped bearer → Forbidden error", async () => {
-		const result = await callTool("remove_deployment", removeDeployArgs, buildScopedCtx());
+		const result = await callTool(
+			"remove_deployment",
+			removeDeployArgs,
+			buildScopedCtx(),
+		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
 		expect(getText(result)).toMatch(/master/i);
 	});
 
 	it("happy path: master bearer → passes through (no Forbidden)", async () => {
-		const result = await callTool("remove_deployment", removeDeployArgs, buildMasterCtx());
+		const result = await callTool(
+			"remove_deployment",
+			removeDeployArgs,
+			buildMasterCtx(),
+		);
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 	});
 
-	it("happy path: legacy bearer (no oauthCtx) → passes through", async () => {
-		const result = await callTool("remove_deployment", removeDeployArgs, undefined);
-		expect(result.isError).toBeFalsy();
-		expect(getText(result)).not.toMatch(/Forbidden/i);
+	it("no oauthCtx → REFUSED (absence is never master)", async () => {
+		const result = await callTool(
+			"remove_deployment",
+			removeDeployArgs,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/master/i);
 	});
 });

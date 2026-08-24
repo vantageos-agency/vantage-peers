@@ -20,7 +20,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -70,7 +70,9 @@ function isErrorResult(result: unknown): boolean {
 
 function rowsOf(parsed: unknown): Array<{ _id?: string; content?: string }> {
 	if (Array.isArray(parsed)) return parsed;
-	const withItems = parsed as { items?: Array<{ _id?: string; content?: string }> };
+	const withItems = parsed as {
+		items?: Array<{ _id?: string; content?: string }>;
+	};
 	return withItems.items ?? [];
 }
 
@@ -211,7 +213,7 @@ describe("GREEN — list_messages scoped correctly (four independent poles)", ()
 	it("(iv) MASTER pole alone — legacy/master callers see all rows unfiltered", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined); // legacy/master path — oauthCtx undefined
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX); // legacy/master path — oauthCtx undefined
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
 			MSG_A_OWN,

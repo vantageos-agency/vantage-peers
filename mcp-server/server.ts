@@ -21,8 +21,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ConvexHttpClient } from "convex/browser";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,10 +69,13 @@ const server = new McpServer({
 	version: "2.18.0",
 });
 
-// stdio transport has no OAuth identity → pass oauthCtx=undefined to opt into
-// the legacy bearer / system-scope code path inside registerTools (same path
-// server-http.ts uses for unauthenticated requests).
-registerTools(server, convex);
+// stdio runs on the operator's own machine against their own CONVEX_URL, so it
+// is trusted with full LOCAL authority. That authority is now PRESENTED as an
+// explicit, named context (LOCAL_STDIO_TRUST_CTX) rather than inferred from an
+// absent oauthCtx — the scope guards in registerTools refuse on undefined, so
+// the missing-argument path is no longer a max-authority backdoor
+// (.claude/rules/one-identity-layer.md clause 3).
+registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Start server on stdio transport

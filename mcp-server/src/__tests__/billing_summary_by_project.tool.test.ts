@@ -23,9 +23,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import {
-	BILLING_SUMMARY_BY_PROJECT_TOOL_NAME,
 	BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION,
+	BILLING_SUMMARY_BY_PROJECT_TOOL_NAME,
 	billingSummaryByProjectArgsSchema,
 	registerTools,
 } from "../tools.js";
@@ -76,9 +77,9 @@ describe("billing_summary_by_project — name/description/schema contract", () =
 	});
 
 	it("description is refacturation-base voice: mentions MACHINE-derived actualMinutes, startedAt→completedAt, truncated", () => {
-		expect(BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION.length).toBeGreaterThanOrEqual(
-			60,
-		);
+		expect(
+			BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION.length,
+		).toBeGreaterThanOrEqual(60);
 		expect(BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION).toContain(
 			"MACHINE-derived actualMinutes",
 		);
@@ -116,7 +117,7 @@ describe("billing_summary_by_project — registration + wiring", () => {
 	it("is registered by registerTools() and calls tasks:billingSummaryByProject", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get(BILLING_SUMMARY_BY_PROJECT_TOOL_NAME);
 		expect(handler).toBeDefined();
@@ -132,10 +133,10 @@ describe("billing_summary_by_project — registration + wiring", () => {
 
 		const result = await handler!({ from: 1000, to: 2000 });
 
-		expect(convex.query).toHaveBeenCalledWith(
-			"tasks:billingSummaryByProject",
-			{ startDate: 1000, endDate: 2000 },
-		);
+		expect(convex.query).toHaveBeenCalledWith("tasks:billingSummaryByProject", {
+			startDate: 1000,
+			endDate: 2000,
+		});
 
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.byProject).toHaveLength(2);
@@ -151,14 +152,15 @@ describe("billing_summary_by_project — registration + wiring", () => {
 	it("defaults from=0 / to=now when omitted", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 		const handler = handlers.get(BILLING_SUMMARY_BY_PROJECT_TOOL_NAME)!;
 
 		const before = Date.now();
 		await handler({});
 		const after = Date.now();
 
-		const callArgs = (convex.query as ReturnType<typeof vi.fn>).mock.calls[0][1] as {
+		const callArgs = (convex.query as ReturnType<typeof vi.fn>).mock
+			.calls[0][1] as {
 			startDate: number;
 			endDate: number;
 		};
@@ -170,7 +172,7 @@ describe("billing_summary_by_project — registration + wiring", () => {
 	it("project arg is forwarded to the Convex query args, never filtered client-side", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 		const handler = handlers.get(BILLING_SUMMARY_BY_PROJECT_TOOL_NAME)!;
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -180,7 +182,11 @@ describe("billing_summary_by_project — registration + wiring", () => {
 			truncated: true, // scan hit its cap — must survive verbatim
 		});
 
-		const result = await handler({ project: "vantage-immo", from: 1000, to: 2000 });
+		const result = await handler({
+			project: "vantage-immo",
+			from: 1000,
+			to: 2000,
+		});
 
 		expect(convex.query).toHaveBeenCalledWith("tasks:billingSummaryByProject", {
 			startDate: 1000,

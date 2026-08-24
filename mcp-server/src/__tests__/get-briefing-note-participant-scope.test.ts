@@ -26,7 +26,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../auth.js";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -136,7 +136,10 @@ describe("get_briefing_note — threads caller identity into the Convex query (D
 		const result = await handler?.({ noteId: NOTE_ID });
 
 		expect(isErrorResult(result)).toBe(false);
-		const parsed = parseResult(result) as { title?: string; createdBy?: string };
+		const parsed = parseResult(result) as {
+			title?: string;
+			createdBy?: string;
+		};
 		expect(parsed.title).toBe("handoff");
 		// The true creator is preserved on output (remap is undone).
 		expect(parsed.createdBy).toBe("sigma");
@@ -158,7 +161,7 @@ describe("get_briefing_note — threads caller identity into the Convex query (D
 	it("master sees the note unfiltered and threads master=true, callerIdentities=undefined", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, undefined); // legacy/master path
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX); // legacy/master path
 
 		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
 			SHARED_NOTE,
@@ -200,12 +203,13 @@ describe("list_briefing_notes — threads caller identity into the Convex query 
 				callerIdentities: ["prometheus"],
 			}),
 		);
-		const text = (
-			result as { content: Array<{ type: string; text: string }> }
-		).content[0].text;
-		const parsed = JSON.parse(text) as Array<{ createdBy?: string }> | {
-			items: Array<{ createdBy?: string }>;
-		};
+		const text = (result as { content: Array<{ type: string; text: string }> })
+			.content[0].text;
+		const parsed = JSON.parse(text) as
+			| Array<{ createdBy?: string }>
+			| {
+					items: Array<{ createdBy?: string }>;
+			  };
 		const items = Array.isArray(parsed) ? parsed : parsed.items;
 		expect(items.some((n) => n.createdBy === "sigma")).toBe(true);
 	});

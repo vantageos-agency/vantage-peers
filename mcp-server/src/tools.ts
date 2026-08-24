@@ -10,11 +10,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import {
-	LEGACY_WILDCARD_CTX,
-	scopeFilterGet,
-	scopeFilterList,
-} from "@vantageos/cloud-identity";
+import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -56,6 +52,32 @@ import { validateTaskPayload } from "./validate-task-payload.js";
 const UI_MARKERS_ENABLED =
 	process.env.VP_EMIT_UI_MARKERS === "1" ||
 	process.env.VP_EMIT_UI_MARKERS === "true";
+
+/**
+ * Absence-refuses sentinel for the package scope filters
+ * (scopeFilterGet/scopeFilterList). It replaces the removed
+ * `oauthCtx ?? DENIED_SCOPE_CTX` pattern, whose fallback resolved a MASTER
+ * wildcard from an ABSENT context — the exact defect class
+ * `.claude/rules/one-identity-layer.md` clause 3 forbids.
+ *
+ * A deny-everything context: empty allowlist, no read/write prefixes, not
+ * master. Passing it to the package filters makes every row fail the visibility
+ * predicate, so an absent oauthCtx REFUSES (empty result) instead of widening
+ * to see everything. Production never hits it (HTTP always sets a context;
+ * stdio passes LOCAL_STDIO_TRUST_CTX) — it is the structural floor that stops a
+ * future path from landing on absence-as-master.
+ */
+const DENIED_SCOPE_CTX: OAuthContext = {
+	clientId: "no-context-denied",
+	userId: "no-context-denied",
+	scopes: [],
+	scopeProfile: "denied-no-context",
+	fromAllowList: [],
+	namespaceReadPrefixes: [],
+	namespaceWritePrefixes: [],
+	expiresAt: 0,
+	isMaster: false,
+};
 
 /**
  * Append a stream marker to a text response when UI markers are enabled.
@@ -1770,7 +1792,11 @@ function passesBriefingNoteParticipantScope(
 	row: { createdBy?: string; participants?: string[] } | null | undefined,
 ): boolean {
 	if (row == null) return false;
-	if (oauthCtx === undefined || isMasterScope(oauthCtx)) return true;
+	// Absence REFUSES — a missing oauthCtx is NOT equivalent to master. Split
+	// from the old `undefined || isMasterScope` which treated no-context as a
+	// full pass (one-identity-layer.md clause 3).
+	if (oauthCtx === undefined) return false;
+	if (isMasterScope(oauthCtx)) return true;
 	if (Array.isArray(row.participants)) {
 		return row.participants.some((p) => oauthCtx.fromAllowList.includes(p));
 	}
@@ -1837,7 +1863,14 @@ export function registerTools(
 		return maskIfNotCore(name, registered);
 	};
 
-	// ── scope guards (no-op when oauthCtx is undefined — legacy bearer path) ────
+	// ── scope guards ────────────────────────────────────────────────────────
+	// These REFUSE when oauthCtx is undefined (absence is never authority).
+	// The old "no-op when undefined — legacy bearer path" behaviour was wrong on
+	// both counts: the legacy bearer path (auth.ts §4) DOES set an oauthContext
+	// ("legacy-tenant-generic", deny-by-default), and the only caller that
+	// legitimately reaches registerTools without one is the stdio transport,
+	// which now hands in the explicit LOCAL_STDIO_TRUST_CTX. So `undefined` here
+	// means "misconfigured / no identity" and each guard below fails closed.
 	const guardFrom = (from: string) => {
 		const err = checkFromAllowed(oauthCtx, from);
 		return err ? mcpError(err) : null;
@@ -1879,10 +1912,17 @@ export function registerTools(
 	};
 	// Some tools take no identity/namespace arg (e.g. soft_delete_memory only
 	// takes an ID). When the underlying mutation cannot enforce per-resource
-	// RBAC, we restrict the whole tool to master scope. Legacy bearer
-	// (oauthCtx=undefined) and master-scope both pass through.
+	// RBAC, we restrict the whole tool to master scope. Absence REFUSES: a
+	// missing oauthCtx is never master (the guard whose PURPOSE is to restrict
+	// to master must not pass when there is no identity). Production always
+	// carries a context — HTTP via bearerAuthMiddleware, stdio via
+	// LOCAL_STDIO_TRUST_CTX (isMaster) — so the local path still passes here
+	// through the master branch, not through absence.
 	const guardMasterOnly = (toolName: string) => {
-		if (!oauthCtx) return null;
+		if (!oauthCtx)
+			return mcpError(
+				`Forbidden: ${toolName} requires master scope, but the request carried no authorization context (absence is never master).`,
+			);
 		if (isMasterScope(oauthCtx)) return null;
 		return mcpError(
 			`Forbidden: ${toolName} requires master scope (current: ${oauthCtx.scopeProfile}).`,
@@ -2065,7 +2105,7 @@ export function registerTools(
 					memoryId,
 				});
 				const filtered = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					memory,
 				);
 				if (filtered === null) {
@@ -2394,7 +2434,7 @@ export function registerTools(
 					memoryId: episodeId,
 				});
 				const filtered = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					memory,
 				);
 				if (filtered === null) {
@@ -2505,7 +2545,7 @@ export function registerTools(
 					: [];
 
 				const filteredList = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					rawList,
 				);
 
@@ -2711,7 +2751,7 @@ export function registerTools(
 									.orchestratorId as string | undefined,
 							};
 				const scoped = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					profileWithCreatedBy as any,
 				);
 				const filteredProfile =
@@ -2916,7 +2956,7 @@ export function registerTools(
 				// see only rows whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
 				const filteredList = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					rawList,
 				);
 
@@ -3569,7 +3609,7 @@ export function registerTools(
 				// strip the synthetic field back out (the output projection below
 				// never reads `createdBy`, so no explicit strip is needed).
 				const filteredProfiles = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					(Array.isArray(profiles) ? profiles : []).map(
 						(p: Record<string, unknown>) => ({
 							...p,
@@ -3707,7 +3747,7 @@ export function registerTools(
 				// (tools.ts ~3399-3423): remap `from`->`createdBy` before
 				// scopeFilterList, then strip the synthetic field back out.
 				const filteredMessages = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					(Array.isArray(messages) ? messages : []).map(
 						(m: Record<string, unknown>) => ({
 							...m,
@@ -3839,7 +3879,7 @@ export function registerTools(
 				// ownership field onto `createdBy` BEFORE calling scopeFilterList,
 				// then strip the synthetic field back out of the response.
 				const filteredResults = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					(Array.isArray(results)
 						? (results as Array<Record<string, unknown>>)
 						: []
@@ -3944,7 +3984,7 @@ export function registerTools(
 				// name). Each receipt is matched against fromAllowList by mapping
 				// `recipient` onto the `createdBy` field scopeFilterList expects.
 				const filteredReceipts = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					envelope.receipts.map((r) => ({
 						...r,
 						createdBy: r.recipient as string | undefined,
@@ -4348,7 +4388,7 @@ export function registerTools(
 				// createdBy===caller || assignedTo===caller), so a non-creator
 				// assignee must still see their own task in search results.
 				const filteredFull = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(results)
 						? (results as Array<Record<string, unknown>>)
 						: [],
@@ -5047,7 +5087,7 @@ export function registerTools(
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task: `assignedTo`
 				// is a per-row grant (convex/tasks.ts L88-89 ORs createdBy||assignedTo).
 				const filteredTasks = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(tasks) ? tasks : [],
 					["assignedTo"],
 				);
@@ -5339,7 +5379,7 @@ export function registerTools(
 					missionId: missionId as any,
 				});
 				const filteredMission = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					mission as any,
 					["pilot", "agents"],
 				);
@@ -5605,7 +5645,7 @@ export function registerTools(
 					orchestrator,
 				});
 				const filteredEntry = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					entry as any,
 				);
 
@@ -5947,8 +5987,15 @@ export function registerTools(
 				// shared via `participants` (not just `createdBy`) is visible —
 				// membership is resolved server-side via the by_participant_note
 				// index, not this handler.
-				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
-				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+				// Absence is NOT master: an undefined oauthCtx must not resolve
+				// `master=true` (which would send callerIdentities=undefined and let
+				// Convex return the note unfiltered). isMasterScope(undefined) is
+				// false, and a no-context caller falls to an EMPTY callerIdentities
+				// list — the participant index then matches nothing (fail-closed).
+				const master = isMasterScope(oauthCtx);
+				const callerIdentities = master
+					? undefined
+					: (oauthCtx?.fromAllowList ?? []);
 				const note = await convex.query("briefingNotes:get" as any, {
 					noteId,
 					master,
@@ -5960,7 +6007,7 @@ export function registerTools(
 				// note the caller is a participant on (but did not create) is
 				// still visible, without trusting Convex's decision blindly —
 				// this stays real defense-in-depth, same posture as before.
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, note);
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, note);
 				const visible =
 					filtered !== null ||
 					passesBriefingNoteParticipantScope(oauthCtx, note as any);
@@ -6043,8 +6090,15 @@ export function registerTools(
 				// PLUS (Day 165, task k175ga65p654z200ydj7s8qv5s8cnxfc) notes they
 				// are a `participants` member of, resolved server-side by the
 				// Convex query via the by_participant_note index.
-				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
-				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+				// Absence is NOT master: an undefined oauthCtx must not resolve
+				// `master=true` (which would send callerIdentities=undefined and let
+				// Convex return the note unfiltered). isMasterScope(undefined) is
+				// false, and a no-context caller falls to an EMPTY callerIdentities
+				// list — the participant index then matches nothing (fail-closed).
+				const master = isMasterScope(oauthCtx);
+				const callerIdentities = master
+					? undefined
+					: (oauthCtx?.fromAllowList ?? []);
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
 					limit: effectiveLimit ?? 20,
@@ -6063,7 +6117,7 @@ export function registerTools(
 				// defense-in-depth, same posture as before this fix.
 				const rawNotes = Array.isArray(notes) ? notes : [];
 				const scopeFiltered = new Set(
-					scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawNotes as any[]),
+					scopeFilterList(oauthCtx ?? DENIED_SCOPE_CTX, rawNotes as any[]),
 				);
 				const filteredNotes = rawNotes.filter(
 					(n) =>
@@ -6169,8 +6223,15 @@ export function registerTools(
 				// Day 165 (task k175ga65p654z200ydj7s8qv5s8cnxfc): thread caller
 				// identity into the query so `participants` membership is honored
 				// the same way as get_briefing_note/list_briefing_notes.
-				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
-				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+				// Absence is NOT master: an undefined oauthCtx must not resolve
+				// `master=true` (which would send callerIdentities=undefined and let
+				// Convex return the note unfiltered). isMasterScope(undefined) is
+				// false, and a no-context caller falls to an EMPTY callerIdentities
+				// list — the participant index then matches nothing (fail-closed).
+				const master = isMasterScope(oauthCtx);
+				const callerIdentities = master
+					? undefined
+					: (oauthCtx?.fromAllowList ?? []);
 				const results = await convex.query(
 					"briefingNotes:searchBriefingNotesByKeyword" as any,
 					{
@@ -6204,7 +6265,7 @@ export function registerTools(
 				// same posture Day 141 relied on for tenant isolation here.
 				const rawResults = Array.isArray(results) ? (results as any[]) : [];
 				const scopeFiltered = new Set(
-					scopeFilterList(oauthCtx ?? LEGACY_WILDCARD_CTX, rawResults),
+					scopeFilterList(oauthCtx ?? DENIED_SCOPE_CTX, rawResults),
 				);
 				const filteredResults = rawResults.filter(
 					(r) =>
@@ -6382,7 +6443,7 @@ export function registerTools(
 						: null;
 
 				const filteredComponents = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					rawItems as any,
 				);
 
@@ -6454,7 +6515,7 @@ export function registerTools(
 					type,
 				});
 				const filteredComponent = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					component as any,
 				);
 
@@ -6632,7 +6693,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 				const filteredResults = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(results) ? results : [],
 				);
 				return {
@@ -6794,7 +6855,7 @@ export function registerTools(
 					createdBefore,
 				});
 				const filteredTasks = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(tasks) ? tasks : [],
 				);
 
@@ -7385,7 +7446,7 @@ export function registerTools(
 				// party to the mandate is a named grantee, consulted in one pass.
 				const mandateRows = Array.isArray(mandates) ? mandates : [];
 				const filteredMandates = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					mandateRows as Array<Record<string, unknown>>,
 					["requestedBy", "fulfilledBy"],
 				);
@@ -7666,7 +7727,7 @@ export function registerTools(
 					buId: buId as any,
 				})) as (Record<string, unknown> & { orchestratorId?: string }) | null;
 				const filteredBu = bu
-					? scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, {
+					? scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, {
 							...bu,
 							createdBy: bu.orchestratorId,
 						})
@@ -7781,7 +7842,7 @@ export function registerTools(
 				// ownership field onto `createdBy` BEFORE calling scopeFilterList,
 				// then strip the synthetic field back out of the response.
 				const filteredBus = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					(rawItems as Array<Record<string, unknown>>).map((bu) => ({
 						...bu,
 						createdBy: bu.orchestratorId as string | undefined,
@@ -8023,7 +8084,7 @@ export function registerTools(
 				// orchestrator->createdBy before scopeFilterList, then strip the
 				// synthetic field back out.
 				const filteredMappings = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					(rawItems as Record<string, unknown>[]).map((r) => ({
 						...r,
 						createdBy: r.orchestrator as string | undefined,
@@ -8235,7 +8296,7 @@ export function registerTools(
 				}
 
 				const filteredIssues = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(results) ? results : [],
 				);
 
@@ -8313,7 +8374,7 @@ export function registerTools(
 					issueNumber,
 				});
 				const filteredIssue = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					issue as any,
 				);
 
@@ -8528,7 +8589,7 @@ export function registerTools(
 					project,
 				});
 				const filteredStats = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					stats as any,
 				);
 
@@ -8792,7 +8853,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 				const filteredResults = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(results) ? results : [],
 				);
 
@@ -8899,7 +8960,7 @@ export function registerTools(
 						},
 					);
 					const filteredResults = scopeFilterList(
-						oauthCtx ?? LEGACY_WILDCARD_CTX,
+						oauthCtx ?? DENIED_SCOPE_CTX,
 						Array.isArray(results) ? results : [],
 					);
 					const payload = buildPayload(filteredResults);
@@ -8923,7 +8984,7 @@ export function registerTools(
 					createdBefore,
 				});
 				const filteredAll = scopeFilterList(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					Array.isArray(allResults) ? allResults : [],
 				);
 				const payload = buildPayload(filteredAll);
@@ -9023,7 +9084,7 @@ export function registerTools(
 					{ name },
 				);
 				const filteredTemplate = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					template as any,
 				);
 
@@ -9209,7 +9270,7 @@ export function registerTools(
 					missionId: missionId as any,
 				});
 				const filteredMission = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					targetMission as any,
 				);
 				if (filteredMission == null) {
@@ -9800,7 +9861,7 @@ export function registerTools(
 				// mutations); mirror that OR here so a non-creator assignee can see
 				// their own task via cloud-identity 0.5.0's grantFields, instead of
 				// falling through createdBy/namespace-only matching to "not found".
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row, [
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row, [
 					"assignedTo",
 				]);
 				if (filtered === null) {
@@ -9840,7 +9901,7 @@ export function registerTools(
 		async ({ patternId }) => {
 			try {
 				const row = await convex.query("fixPatterns:get" as any, { patternId });
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
 				}
@@ -9893,7 +9954,7 @@ export function registerTools(
 					  })
 					| null;
 				const filtered = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					row,
 					["requestedBy", "fulfilledBy"],
 				);
@@ -9956,7 +10017,7 @@ export function registerTools(
 									.orchestrator as string | undefined,
 							};
 				const scoped = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					rowWithCreatedBy as any,
 				);
 				const filtered =
@@ -10030,7 +10091,7 @@ export function registerTools(
 									| undefined,
 							};
 				const scoped = scopeFilterGet(
-					oauthCtx ?? LEGACY_WILDCARD_CTX,
+					oauthCtx ?? DENIED_SCOPE_CTX,
 					rowWithCreatedBy as any,
 				);
 				const filtered =
@@ -10085,7 +10146,7 @@ export function registerTools(
 				const row = await convex.query("recurringTasks:getById" as any, {
 					recurringTaskId,
 				});
-				const filtered = scopeFilterGet(oauthCtx ?? LEGACY_WILDCARD_CTX, row);
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Recurring task not found: ${recurringTaskId}`);
 				}

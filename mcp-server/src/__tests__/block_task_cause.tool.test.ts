@@ -12,11 +12,12 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
-import { convexTest } from "convex-test";
 import { anyApi } from "convex/server";
+import { convexTest } from "convex-test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { registerTools } from "../tools.js";
 import schema from "../../../convex/schema.js";
+import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
+import { registerTools } from "../tools.js";
 
 const modules = Object.fromEntries(
 	Object.entries(
@@ -42,7 +43,10 @@ function makeFakeConvexClient(
 	} as unknown as ConvexHttpClient;
 }
 
-type CapturedTool = { name: string; handler: (args: unknown) => Promise<unknown> };
+type CapturedTool = {
+	name: string;
+	handler: (args: unknown) => Promise<unknown>;
+};
 
 function captureTools(convex: ConvexHttpClient): Map<string, CapturedTool> {
 	const captured = new Map<string, CapturedTool>();
@@ -62,7 +66,7 @@ function captureTools(convex: ConvexHttpClient): Map<string, CapturedTool> {
 			captured.set(name, { name, handler });
 		},
 	};
-	registerTools(fakeServer as never, convex, undefined);
+	registerTools(fakeServer as never, convex, LOCAL_STDIO_TRUST_CTX);
 	return captured;
 }
 
@@ -76,7 +80,9 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 	let tools: Map<string, CapturedTool>;
 
 	beforeAll(() => {
-		t = convexTest(schema as never, modules as never).withIdentity({ subject: "test-service-account-user-id" });
+		t = convexTest(schema as never, modules as never).withIdentity({
+			subject: "test-service-account-user-id",
+		});
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 
@@ -118,8 +124,12 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 			JSON.parse(authBlockRes).blockedCause,
 		);
 
-		const humanRead = await callText(tools.get("get_task")!, { taskId: humanTaskId });
-		const authRead = await callText(tools.get("get_task")!, { taskId: authTaskId });
+		const humanRead = await callText(tools.get("get_task")!, {
+			taskId: humanTaskId,
+		});
+		const authRead = await callText(tools.get("get_task")!, {
+			taskId: authTaskId,
+		});
 		expect(JSON.parse(humanRead).blockedCause).toBe("human");
 		expect(JSON.parse(authRead).blockedCause).toBe("authorisation");
 	});
@@ -137,7 +147,8 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 		const blockRes = await callText(tools.get("block_task")!, {
 			taskId,
 			callerOrchestrator: "sigma",
-			reason: "# blocked-on-nobody: pre-existing caller shape, no blockedCause arg",
+			reason:
+				"# blocked-on-nobody: pre-existing caller shape, no blockedCause arg",
 		});
 		expect(JSON.parse(blockRes).blockedCause).toBe("other");
 

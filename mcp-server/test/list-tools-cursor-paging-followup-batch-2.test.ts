@@ -25,13 +25,11 @@
  * VP task k1794r6q329q1s36pz4zzjnpvd87zfbn, mission k57c7s478gw1a3e5gmhdeptg5n87z78n.
  */
 
-import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
-import {
-	DEFAULT_LIMIT,
-	encodeCursor,
-} from "../src/paging.js";
+import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../src/auth.js";
+import { DEFAULT_LIMIT, encodeCursor } from "../src/paging.js";
 import { registerTools } from "../src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,7 +134,7 @@ for (const spec of TOOLS) {
 		it("accepts cursor arg and forwards createdBefore filter via decoded cursor", async () => {
 			const { server, handlers } = buildFakeServer();
 			const convex = buildMockConvex(buildRows(3));
-			registerTools(server, convex);
+			registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 			const handler = handlers.get(spec.mcpName);
 			expect(
@@ -157,7 +155,7 @@ for (const spec of TOOLS) {
 		it("does not set createdBefore when no cursor provided (backward compat)", async () => {
 			const { server, handlers } = buildFakeServer();
 			const convex = buildMockConvex(buildRows(3));
-			registerTools(server, convex);
+			registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 			const handler = handlers.get(spec.mcpName);
 			await handler?.({ ...spec.baseArgs });
@@ -176,10 +174,13 @@ for (const spec of TOOLS) {
 			const { server, handlers } = buildFakeServer();
 			// Return exactly DEFAULT_LIMIT rows → full page → nextCursor must be set.
 			const convex = buildMockConvex(buildRows(DEFAULT_LIMIT));
-			registerTools(server, convex);
+			registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 			const handler = handlers.get(spec.mcpName);
-			const result = await handler?.({ ...spec.baseArgs, limit: DEFAULT_LIMIT });
+			const result = await handler?.({
+				...spec.baseArgs,
+				limit: DEFAULT_LIMIT,
+			});
 			const text = extractText(result);
 			expect(text).toMatch(/nextCursor/);
 		});
@@ -187,7 +188,7 @@ for (const spec of TOOLS) {
 		it("returns no nextCursor (null or absent) when rows < limit (end-of-data)", async () => {
 			const { server, handlers } = buildFakeServer();
 			const convex = buildMockConvex(buildRows(3));
-			registerTools(server, convex);
+			registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 			const handler = handlers.get(spec.mcpName);
 			const result = await handler?.({ ...spec.baseArgs, limit: 50 });
@@ -200,7 +201,7 @@ for (const spec of TOOLS) {
 		it("rejects invalid cursor with a typed error (no crash)", async () => {
 			const { server, handlers } = buildFakeServer();
 			const convex = buildMockConvex(buildRows(3));
-			registerTools(server, convex);
+			registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 			const handler = handlers.get(spec.mcpName);
 			const result = await handler?.({
@@ -214,7 +215,7 @@ for (const spec of TOOLS) {
 		it(`forwards the convex function name ${spec.convexFn}`, async () => {
 			const { server, handlers } = buildFakeServer();
 			const convex = buildMockConvex(buildRows(2));
-			registerTools(server, convex);
+			registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 			const handler = handlers.get(spec.mcpName);
 			await handler?.({ ...spec.baseArgs });
