@@ -214,10 +214,15 @@ describe("import_okf_bundle action — cross-tenant deny", () => {
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
+		// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda): `orgSlug`
+		// resolves slug-first, id excluded. This test's intent is a
+		// RESOLVED-org cross-tenant mismatch (org X resolves, then mismatches
+		// team/team-y) -> AUTH_NAMESPACE_DENIED, so the fixture needs a real
+		// slug claim, not a bare id.
 		const asOrgX = t.withIdentity({
 			subject: "user_test",
 			tokenIdentifier: "test|user_x",
-			organizationId: "team-x",
+			organizationSlug: "team-x",
 		});
 
 		await expect(
