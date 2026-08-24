@@ -44,11 +44,16 @@ async function resolveOrgId(ctx: QueryCtx | MutationCtx): Promise<string | null>
 	// No Clerk identity → master scope (MCP server / CLI / internal callers)
 	if (!identity) return null;
 
-	// Extract org_id from either organizationId or organizationSlug claim
+	// Extract org_id across both claim casings — a Clerk-NATIVE session token
+	// (no custom JWT template) delivers snake_case `org_id`/`org_slug`, not
+	// camelCase `organizationId`/`organizationSlug` (IDENTITY-CLAIM CASING
+	// CLASS — mirrors withOrgScope in convex/lib/auth.ts).
 	const raw = identity as Record<string, unknown>;
 	const orgId =
 		(raw.organizationId as string | undefined) ??
+		(raw.org_id as string | undefined) ??
 		(raw.organizationSlug as string | undefined) ??
+		(raw.org_slug as string | undefined) ??
 		null;
 
 	// Clerk caller without an org → also master (Laurent / internal dev)

@@ -115,9 +115,19 @@ export async function withOrgScope(
 	// `organizationId` FALLBACK — never `organizationId`-first (the id would
 	// then shadow a real slug and silently miss the mapping). A miss on this
 	// path is fail-closed (RBAC_DENIED), never a cross-tenant grant.
+	// Casing-class fix (IDENTITY-CLAIM CASING CLASS): a genuine Clerk-NATIVE
+	// session token (no custom JWT template) delivers the org slug/id as
+	// snake_case `org_slug`/`org_id`, not camelCase `organizationSlug`/
+	// `organizationId`. This mirrors the fallback already applied to
+	// okfBundleNode.ts/okfBundleDurable.ts and requireOrgAdmin below — read
+	// slug spellings before id spellings (camelCase then snake_case for each),
+	// preserving the documented slug-first-id-fallback precedence.
+	const orgSlugRec = identity as Record<string, unknown>;
 	const orgSlug =
-		((identity as Record<string, unknown>).organizationSlug as string | undefined) ??
-		((identity as Record<string, unknown>).organizationId as string | undefined) ??
+		(orgSlugRec.organizationSlug as string | undefined) ??
+		(orgSlugRec.org_slug as string | undefined) ??
+		(orgSlugRec.organizationId as string | undefined) ??
+		(orgSlugRec.org_id as string | undefined) ??
 		null;
 
 	// Recognized service-account carve-out: the MCP server authenticates to
