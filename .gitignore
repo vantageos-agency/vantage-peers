@@ -40,3 +40,11 @@ __pycache__/
 .claude/**/*.pyc
 .claude/**/.pytest_cache/
 .claude/scheduled_tasks.lock
+.themis-seats.local.json
+
+# credential backups — never committable
+.env*.bak*
+.env*bak*
+
+# local tooling scratch (grok agents/rules)
+.grok/
