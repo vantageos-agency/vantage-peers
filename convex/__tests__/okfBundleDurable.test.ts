@@ -387,4 +387,34 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 			}),
 		).rejects.toThrow(/OKF_DURABLE_INVALID_TOTAL_STEPS/);
 	});
+
+	// IDENTITY-CLAIM CASING CLASS (task k173jzg0nxa45a1meycpb5m5898d1c2t):
+	// a Clerk-native identity with NO custom JWT template carries the org
+	// slug as snake_case `org_slug`, not camelCase `organizationSlug`. Before
+	// this fix, a caller whose identity carries ONLY `org_slug` (no
+	// `organizationId`/`organizationSlug` at all) was refused their OWN
+	// namespace with AUTH_NO_ORG -- a fail-CLOSED refusal that looked correct
+	// but denied a legitimate, Clerk-native org member. GREEN proves the
+	// snake_case-only identity now resolves the same orgSlug and reaches
+	// past the auth gate (same downstream harness-limitation failure mode
+	// as the camelCase-identity test above), never AUTH_NO_ORG /
+	// AUTH_NAMESPACE_DENIED.
+	test("accepts a snake_case-only identity (org_slug, no organizationSlug/organizationId) for its own namespace", async () => {
+		const base = withAgentEngine(convexTest(schema, modules));
+		const t = base.withIdentity({ org_slug: "acme" });
+
+		await expect(
+			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+				namespace: "team/acme",
+				totalSteps: 3,
+			}),
+		).rejects.not.toThrow(/AUTH_NO_ORG|AUTH_NAMESPACE_DENIED|AUTH_NO_IDENTITY/);
+
+		await expect(
+			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+				namespace: "team/acme",
+				totalSteps: 3,
+			}),
+		).rejects.toThrow(/does not support async syscall|getFunctionMetadata/i);
+	});
 });
