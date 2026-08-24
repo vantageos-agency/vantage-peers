@@ -1,8 +1,33 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+
+// Anchor the clock to a fixed, stable, non-boundary UTC instant (midday —
+// nowhere near a midnight ISO-date rollover) instead of the wall-clock
+// `Date.now()`. Root cause (confirmed): `orchestratorStats`'s 24h-window
+// `throughputByDay` buckets by TODAY's ISO date derived from the REAL
+// `Date.now()` at query time; the test file's `NOW` constant used to be
+// captured the same way at module load. When the test suite happens to
+// start close enough to UTC midnight, `NOW - 1h` (seeded as "completed 1h
+// ago, within the 24h window") falls on the PREVIOUS calendar date while
+// the single today-bucket the 24h window produces is for the date AFTER
+// midnight — excluding the seeded completion and failing the assertion
+// (AssertionError: expected +0 to be 1). Freezing BOTH the seed-relative
+// `NOW` below AND the query handler's own `Date.now()` (via
+// `vi.useFakeTimers()`/`vi.setSystemTime`) to the SAME fixed midday instant
+// makes every relative offset in this file (1h/10h/25h/29d/48h/60d/etc.)
+// land on the calendar date the test's own reasoning assumes,
+// deterministically, regardless of the real wall-clock instant the suite
+// happens to execute at.
+beforeEach(() => {
+	vi.useFakeTimers();
+	vi.setSystemTime(new Date("2026-06-15T12:00:00.000Z"));
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 // Load all modules except those that require external services.
 const modules = Object.fromEntries(
@@ -40,7 +65,14 @@ interface SeedTask {
 	updatedAt?: number;
 }
 
-const NOW = Date.now();
+// `NOW` is set from the frozen system clock inside `beforeEach` above (never
+// the real `Date.now()` at module-load time) — every seeded offset below is
+// therefore relative to the SAME fixed instant `orchestratorStats`'s own
+// `Date.now()` calls resolve to during each test.
+let NOW: number;
+beforeEach(() => {
+	NOW = Date.now();
+});
 const H = 3_600_000; // 1 hour in ms
 const D = 86_400_000; // 1 day in ms
 

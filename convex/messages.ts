@@ -53,10 +53,17 @@ export const sendMessage = mutation({
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
+		// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] Resolve scope BEFORE the
+		// credential lock so the lock can bind the presented credential's org
+		// against the SAME `orgSlug` the rest of this handler already derives
+		// (reused below in the broadcast branch — never re-derived).
+		const scope = await withOrgScope(ctx);
+
 		await requireAgentCredentialMatch(
 			ctx,
 			args.agentCredentialSecret,
 			args.from,
+			scope.orgSlug,
 		);
 
 		const messageId = await ctx.db.insert("messages", {
@@ -101,7 +108,8 @@ export const sendMessage = mutation({
 			// empty allowedOrchestrators, so it falls into the client branch
 			// below and yields zero recipients — the existing zero-recipient
 			// bounce fires (no fail-open path to the internal fleet).
-			const scope = await withOrgScope(ctx);
+			// `scope` reused from the top of this handler (resolved once, before
+			// the [P-T5] ORG BIND lock above) — never re-derived here.
 
 			// convex-reviewer CRITICAL (mission fix-broadcast-org-scoped-v1, T1
 			// REVISE): scope.isMaster is OVERLOADED — it is also true for a

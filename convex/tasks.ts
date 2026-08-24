@@ -142,16 +142,6 @@ async function requireAuthenticatedCaller(
 	callerOrchestrator: string | undefined,
 	agentCredentialSecret?: string,
 ): Promise<OrgScope> {
-	// [P-T5] THE LOCK — when a per-agent credential is presented, the
-	// asserted `callerOrchestrator` MUST equal the agent identity the
-	// credential resolves to (see requireAgentCredentialMatch). No-op when
-	// the secret is omitted — pre-P-T5 callers are byte-unchanged.
-	await requireAgentCredentialMatch(
-		ctx,
-		agentCredentialSecret,
-		callerOrchestrator,
-	);
-
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity === null) {
 		throw new ConvexError(
@@ -166,6 +156,22 @@ async function requireAuthenticatedCaller(
 	// master; that fail-open path is reserved for pre-audited internal call
 	// sites (see convex/lib/auth.ts doc comment), not this public surface.
 	const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+
+	// [P-T5] THE LOCK — when a per-agent credential is presented, the
+	// asserted `callerOrchestrator` MUST equal the agent identity the
+	// credential resolves to (see requireAgentCredentialMatch). No-op when
+	// the secret is omitted — pre-P-T5 callers are byte-unchanged.
+	// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] ORG BIND: `scope.orgSlug`
+	// (just derived above, never re-derived) is threaded through as the
+	// operation's target org — a same-named agent credential from a
+	// DIFFERENT organisation is refused (ORG_MISMATCH) even though the name
+	// matches.
+	await requireAgentCredentialMatch(
+		ctx,
+		agentCredentialSecret,
+		callerOrchestrator,
+		scope.orgSlug,
+	);
 
 	// LIMIT of this reconciliation (containment scope only — removed by T2
 	// k172bccwcqajfetcrmm5wtasps8cs7tc when single-actor equality lands): it

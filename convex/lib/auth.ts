@@ -401,11 +401,27 @@ export async function requireOrgAdmin(
  * byte-identical; the lock only engages for callers that opt into presenting
  * a per-agent credential. `assertedName === undefined` is also a no-op:
  * there is no declared name to compare the resolved identity against.
+ *
+ * [Pi ruling, task k1746tn3jy22k0jphbx48vzmvd8d0y50] ORG BIND: a same-named
+ * agent in a DIFFERENT organisation previously passed this check — org
+ * isolation rested only on the surrounding `withOrgScope`/`requireAuthenticatedCaller`
+ * scoping, an invariant that is unprovable across an open set of future
+ * write paths. `targetOrgSlug` is the org the CALL is acting in — the same
+ * `orgSlug` the surrounding scope (`withOrgScope`) already derived for this
+ * request; callers MUST reuse that value, never re-derive a second one.
+ * When `resolved.orgSlug !== targetOrgSlug`, the call is refused with
+ * `ORG_MISMATCH`, defence-in-depth ON TOP OF (never a replacement for) the
+ * surrounding org scoping. `targetOrgSlug === null` (the true internal/
+ * master caller — no org attached at all, see `withOrgScope`'s
+ * service-account/allowNoIdentityMaster carve-outs) is a no-op for this
+ * specific check: there is no target org for a fleet-wide caller to bind
+ * against, and the name-match check above still applies unchanged.
  */
 export async function requireAgentCredentialMatch(
 	ctx: QueryCtx | MutationCtx,
 	agentCredentialSecret: string | undefined,
 	assertedName: string | undefined,
+	targetOrgSlug: string | null,
 ): Promise<void> {
 	if (agentCredentialSecret === undefined) return;
 	if (assertedName === undefined) return;
@@ -421,6 +437,12 @@ export async function requireAgentCredentialMatch(
 	if (resolved.agentName !== assertedName) {
 		throw new ConvexError(
 			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agentName}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agentName, assertedName })}`,
+		);
+	}
+
+	if (targetOrgSlug !== null && resolved.orgSlug !== targetOrgSlug) {
+		throw new ConvexError(
+			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agentName}" in org "${resolved.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agentName, resolvedOrgSlug: resolved.orgSlug, targetOrgSlug })}`,
 		);
 	}
 }

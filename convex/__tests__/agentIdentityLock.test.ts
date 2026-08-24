@@ -594,3 +594,107 @@ describe("[P-T5] gap closure — tasks.attachReviewArtifact", () => {
 		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// [Pi ruling, task k1746tn3jy22k0jphbx48vzmvd8d0y50] ORG BIND — the lock
+// resolves the presented credential to its ORGANISATION and refuses when
+// that organisation is not the one the operation targets. Prior to this
+// fix, `requireAgentCredentialMatch` enforced only the agent NAME: a
+// SAME-NAMED agent credential minted in a DIFFERENT organisation passed
+// the name check — org isolation rested solely on the surrounding
+// `withOrgScope` scoping. Both callers below are scoped to a NON-master,
+// NON-admin, non-creator identity (`user-org-o`/`user-org-p`, plain
+// `organizationId` claim) so the property under test is the CREDENTIAL's
+// own org binding, not an incidental master/admin bypass.
+//
+// DELETION PROBE (documented, run manually, not committed as a code
+// change): removing the `if (targetOrgSlug !== null && resolved.orgSlug
+// !== targetOrgSlug) throw ...` branch body from
+// `requireAgentCredentialMatch` (convex/lib/auth.ts) makes the
+// "DENY: foreign-org same-named credential" tests below go RED (a
+// foreign-org "b" credential is ACCEPTED into org-o) — proving the tests
+// measure the org-bind check, not something incidental. Restored
+// afterward; ratio recorded in the dispatching brief's RETURN section.
+// ─────────────────────────────────────────────────────────────────────────
+
+function asOrgCaller(t: ReturnType<typeof createT>, org: string, subject: string) {
+	return t.withIdentity({
+		subject,
+		organizationId: org,
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
+describe("[Pi ORG BIND] sendMessage (from) \u2014 same name, foreign org", () => {
+	test("DENY: agent-B-cred minted in FOREIGN org-p, asserted into org-o -> ORG_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		await seedOrgMapping(t, "org-p");
+		await seedProfile(t, "b");
+		await seedProfile(t, "recipient-role");
+		const foreignBCred = await mintAgent(t, "org-p", "b");
+
+		await expect(
+			asOrgCaller(t, "org-o", "user-org-o").mutation(api.messages.sendMessage, {
+				from: "b",
+				channel: "recipient-role",
+				content: "forged from a foreign org",
+				agentCredentialSecret: foreignBCred,
+			}),
+		).rejects.toThrow(/ORG_MISMATCH/);
+	});
+
+	test("ALLOW: legitimate same-org agent-B-cred (org-o) into org-o -> accepted (positive control)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		await seedProfile(t, "b");
+		await seedProfile(t, "recipient-role");
+		const legitBCred = await mintAgent(t, "org-o", "b");
+
+		const messageId = await asOrgCaller(t, "org-o", "user-org-o").mutation(
+			api.messages.sendMessage,
+			{
+				from: "b",
+				channel: "recipient-role",
+				content: "legitimate same-org send",
+				agentCredentialSecret: legitBCred,
+			},
+		);
+		expect(messageId).toBeTruthy();
+	});
+});
+
+describe("[Pi ORG BIND] tasks.create (createdBy) \u2014 same name, foreign org", () => {
+	test("DENY: agent-B-cred minted in FOREIGN org-p, asserted into org-o -> ORG_MISMATCH", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		await seedOrgMapping(t, "org-p");
+		const foreignBCred = await mintAgent(t, "org-p", "b");
+
+		await expect(
+			asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, {
+				title: "forged from a foreign org",
+				assignedTo: "b",
+				priority: "medium",
+				status: "todo",
+				createdBy: "b",
+				agentCredentialSecret: foreignBCred,
+			}),
+		).rejects.toThrow(/ORG_MISMATCH/);
+	});
+
+	test("ALLOW: legitimate same-org agent-B-cred (org-o) into org-o -> accepted (positive control)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		const legitBCred = await mintAgent(t, "org-o", "b");
+
+		const taskId = await asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, {
+			title: "legitimate same-org create",
+			assignedTo: "b",
+			priority: "medium",
+			status: "todo",
+			createdBy: "b",
+			agentCredentialSecret: legitBCred,
+		});
+		expect(taskId).toBeTruthy();
+	});
+});
