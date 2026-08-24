@@ -4,7 +4,7 @@ VantagePeers Cloud only. This is the shipped protocol layer, not a plan — ever
 
 ## Why this table exists
 
-Before this table, `mcp__vantage-peers__list_peers` rows carried `id`/`instanceId`/`name`/`role`/`workspace`/`currentTask`/`lastSeen`/`sessionCount` and no organisation field — org membership rode on the calling token, never on the agent itself. `convex/agents.ts` is the missing organisation carrier (comment, `convex/agents.ts:7-19`): a CREATE, not an extension of any existing shape. Governing cap: `analysis/le-cap/le-cap.md @ e3c1ffd6` §6 VP.2 (corrected).
+Before this table, `mcp__vantage-peers__list_peers` rows carried `id`/`instanceId`/`name`/`role`/`workspace`/`currentTask`/`lastSeen`/`sessionCount` and no organisation field — org membership rode on the calling token, never on the agent itself. `convex/agents.ts` is the missing organisation carrier (comment, `convex/agents.ts:7-19`): a CREATE, not an extension of any existing shape. Governing cap: `analysis/le-cap/le-cap.md @ e3c1ffd6` §6, the `### VP` subsection, item 2 (corrected) — "VP.2" here is our shorthand; the cap numbers the items without the "VP." prefix.
 
 ## The `agents` table — what an agent entity carries
 

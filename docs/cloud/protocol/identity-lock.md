@@ -46,7 +46,7 @@ There is no exemption path and no fallback flag for a shared org-only token at a
 
 ## The 11 lock-guarded surfaces
 
-Verified call-site count (`grep -n "requireAuthenticatedCaller(" convex/tasks.ts` → 10 sites; `requireAgentCredentialMatch(` in `convex/messages.ts` → 1 site):
+Verified call-site count (`grep -c "await requireAuthenticatedCaller(" convex/tasks.ts` → 10 call sites — the bare `grep -n "requireAuthenticatedCaller("` returns 11 because the helper's own definition at `:140` also matches, so the `await` form isolates the callers; `grep -c "requireAgentCredentialMatch(" convex/messages.ts` → 1 site):
 
 `convex/tasks.ts`'s `requireAuthenticatedCaller` helper (`convex/tasks.ts:140-183`) wraps `requireAgentCredentialMatch` and is called from 10 mutations:
 

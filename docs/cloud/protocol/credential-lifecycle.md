@@ -4,7 +4,7 @@ VantagePeers Cloud only. Derived from `convex/agentCredentials.ts` and `convex/s
 
 ## Why this table exists
 
-Before this table, the token identified the ORGANISATION and the agent wrote its own name into the call — agents of one client shared a token, and nothing compared the declared name to the token presented. A right written "this specialist only" was a label, not a lock. Each agent being its own deployment, it can carry its own key. `convex/agentCredentials.ts` mints that key; the identity-lock doc (`identity-lock.md`) covers the enforcement that turns it into a lock. Governing cap: `analysis/le-cap/le-cap.md @ e3c1ffd6` §6 VP.4 (first half).
+Before this table, the token identified the ORGANISATION and the agent wrote its own name into the call — agents of one client shared a token, and nothing compared the declared name to the token presented. A right written "this specialist only" was a label, not a lock. Each agent being its own deployment, it can carry its own key. `convex/agentCredentials.ts` mints that key; the identity-lock doc (`identity-lock.md`) covers the enforcement that turns it into a lock. Governing cap: `analysis/le-cap/le-cap.md @ e3c1ffd6` §6, the `### VP` subsection, item 4, first half ("VP.4" is our shorthand; the cap numbers the items without the "VP." prefix).
 
 ## Minting — `mintAgentCredential`, org-admin gated
 
