@@ -163,11 +163,15 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
 	});
 
-	test("NO REGRESSION: a call omitting agentCredentialSecret entirely behaves exactly as before P-T5", async () => {
+	test("NO REGRESSION: a NON-AGENT sender (declared name that does NOT resolve to an agents row) omitting agentCredentialSecret behaves exactly as before P-T5", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		// Deliberately no registerAgent/mintAgent for "b" — "b" is a legacy
+		// orchestrator name with no row in `agents`, so the CONDITIONAL-SECRET
+		// rule (Pi ruling k1746tn3jy22) keeps this the true, lasting no-op
+		// contract, not a temporary hole.
 
 		const messageId = await asServiceAccount(t).mutation(api.messages.sendMessage, {
 			from: "b",
@@ -175,6 +179,29 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 			content: "legacy call, no credential",
 		});
 		expect(messageId).toBeTruthy();
+	});
+
+	test("DENY (CONDITIONAL-SECRET): an AGENT sender (declared name resolves to an agents row) omitting agentCredentialSecret is refused AGENT_CREDENTIAL_REQUIRED", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		await seedProfile(t, "b");
+		await seedProfile(t, "recipient-role");
+		// "b" IS registered in `agents` for org-o — a credential is now
+		// required to assert that name, per Pi ruling k1746tn3jy22 ("CLOSE it
+		// for agents, TRACE it for the rest"). Called with an org-attached
+		// (non-master) identity — the master service-account carve-out
+		// resolves targetOrgSlug=null, which is a deliberate no-op for this
+		// check (see the CONDITIONAL-SECRET doc on requireAgentCredentialMatch)
+		// and would not exercise it.
+		await mintAgent(t, "org-o", "b");
+
+		await expect(
+			asOrgCaller(t, "org-o", "user-org-o").mutation(api.messages.sendMessage, {
+				from: "b",
+				channel: "recipient-role",
+				content: "registered agent omitting its credential",
+			}),
+		).rejects.toThrow(/AGENT_CREDENTIAL_REQUIRED/);
 	});
 });
 
@@ -242,9 +269,13 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
 	});
 
-	test("NO REGRESSION: tasks.create omitting agentCredentialSecret behaves exactly as before P-T5", async () => {
+	test("NO REGRESSION: tasks.create by a NON-AGENT sender (declared name that does NOT resolve to an agents row) omitting agentCredentialSecret behaves exactly as before P-T5", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-o");
+		// Deliberately no registerAgent/mintAgent for "b" here — "b" is a
+		// legacy orchestrator name with no row in `agents`, so the
+		// CONDITIONAL-SECRET rule (Pi ruling k1746tn3jy22) keeps this the
+		// true, lasting no-op contract, not a temporary hole.
 
 		const taskId = await asServiceAccount(t).mutation(api.tasks.create, {
 			title: "legacy call, no credential",
@@ -254,6 +285,27 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 			createdBy: "b",
 		});
 		expect(taskId).toBeTruthy();
+	});
+
+	test("DENY (CONDITIONAL-SECRET): tasks.create by an AGENT sender (declared name resolves to an agents row) omitting agentCredentialSecret is refused AGENT_CREDENTIAL_REQUIRED", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-o");
+		// "b" IS registered in `agents` for org-o — a credential is now
+		// required, per Pi ruling k1746tn3jy22. Called with an org-attached
+		// (non-master) identity — the master service-account carve-out
+		// resolves targetOrgSlug=null, a deliberate no-op that would not
+		// exercise this check.
+		await mintAgent(t, "org-o", "b");
+
+		await expect(
+			asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, {
+				title: "registered agent omitting its credential",
+				assignedTo: "b",
+				priority: "medium",
+				status: "todo",
+				createdBy: "b",
+			}),
+		).rejects.toThrow(/AGENT_CREDENTIAL_REQUIRED/);
 	});
 });
 

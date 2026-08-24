@@ -406,11 +406,31 @@ export async function requireOrgAdmin(
  *     nothing at all (unknown secret / org-only token / rotated-out secret)
  *     → REFUSED with `AGENT_IDENTITY_MISMATCH`.
  *
- * Deliberately a NO-OP when `agentCredentialSecret` is omitted entirely —
- * this keeps every pre-P-T5 call site (which never presents this argument)
- * byte-identical; the lock only engages for callers that opt into presenting
- * a per-agent credential. `assertedName === undefined` is also a no-op:
- * there is no declared name to compare the resolved identity against.
+ * `assertedName === undefined` is a no-op unconditionally: there is no
+ * declared name to compare the resolved identity against, and none to look
+ * up in `agents` either.
+ *
+ * [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] CONDITIONAL-SECRET — "CLOSE
+ * it for agents, TRACE it for the rest": omitting `agentCredentialSecret` is
+ * NOT an unconditional no-op. Whether it is a no-op depends on WHAT the
+ * caller declares: `assertedName` is looked up against the `agents` table
+ * (the `by_org_name` index, scoped to `targetOrgSlug` — the SAME org the
+ * surrounding scope already derived, reused, never re-derived) for the
+ * operation's target org.
+ *   - If that lookup RESOLVES (a registered agent row exists under that
+ *     name in that org), a credential is REQUIRED: omitting it is refused
+ *     with `AGENT_CREDENTIAL_REQUIRED` — a caller may not assert a known
+ *     agent identity with nothing to prove it.
+ *   - If that lookup does NOT resolve (a legacy orchestrator / non-agent
+ *     sender — no row for that name in that org), the pre-P-T5 no-op path
+ *     is unchanged, until the migration task
+ *     k17573xwj0g0kf1fsfntrn3h2d8d30y8 registers every sender as an agent.
+ *   - `targetOrgSlug === null` (the true internal/master caller, no org to
+ *     look up against) keeps the no-op path unconditionally — there is no
+ *     `agents` row to resolve against without an org to scope the lookup.
+ * When a secret IS presented, the existing name-match + org-bind checks
+ * below apply unchanged, regardless of whether the sender is a registered
+ * agent.
  *
  * [Pi ruling, task k1746tn3jy22k0jphbx48vzmvd8d0y50] ORG BIND: a same-named
  * agent in a DIFFERENT organisation previously passed this check — org
@@ -433,8 +453,26 @@ export async function requireAgentCredentialMatch(
 	assertedName: string | undefined,
 	targetOrgSlug: string | null,
 ): Promise<void> {
-	if (agentCredentialSecret === undefined) return;
 	if (assertedName === undefined) return;
+
+	if (agentCredentialSecret === undefined) {
+		// CONDITIONAL-SECRET (Pi ruling k1746tn3jy22): a declared sender that
+		// RESOLVES to an existing `agents` row for the target org must present
+		// a credential; a sender that does not resolve keeps the legacy no-op.
+		if (targetOrgSlug === null) return;
+		const declaredAgent = await ctx.db
+			.query("agents")
+			.withIndex("by_org_name", (q) =>
+				q.eq("orgSlug", targetOrgSlug).eq("name", assertedName),
+			)
+			.unique();
+		if (declaredAgent) {
+			throw new ConvexError(
+				`AGENT_CREDENTIAL_REQUIRED: sender "${assertedName}" resolves to a registered agent in org "${targetOrgSlug}" — this surface requires a per-agent credential (agentCredentialSecret) once the sender is a known agent identity, no fallback — ${JSON.stringify({ assertedName, targetOrgSlug })}`,
+			);
+		}
+		return;
+	}
 
 	const resolved = await resolveAgentCredentialCore(ctx, agentCredentialSecret);
 
