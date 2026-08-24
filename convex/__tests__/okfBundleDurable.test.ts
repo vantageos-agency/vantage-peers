@@ -109,6 +109,51 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 			}),
 		).rejects.toThrow(/does not support async syscall|getFunctionMetadata/i);
 	});
+
+	// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda, decision mirrors
+	// #1224 item 4): `orgSlug` must resolve slug-first, id EXCLUDED, in
+	// `assertCanExportNamespaceV8` exactly as in `okfBundleNode`'s
+	// `assertCanExportNamespace`. An `org_id` (org_xxxxx) is not a slug.
+	describe("precedence -- id excluded from orgSlug resolution (V8 path)", () => {
+		test("ALLOW pole: an identity carrying a real slug (org_slug) matching the namespace tail passes the auth gate", async () => {
+			const base = withAgentEngine(convexTest(schema, modules));
+			const t = base.withIdentity({ org_slug: "acme" });
+			await expect(
+				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+					namespace: "team/acme",
+					totalSteps: 3,
+				}),
+			).rejects.not.toThrow(/AUTH_NO_ORG|AUTH_NAMESPACE_DENIED|AUTH_NO_IDENTITY/);
+		});
+
+		// DENY / precedence pole. On the OLD id-first code, an identity
+		// carrying ONLY `org_id` (no slug claim at all) resolved `orgSlug` to
+		// that raw id string, which -- if the export namespace's slug-shaped
+		// suffix happened to equal that same id string -- mis-compared equal
+		// and the auth gate was WRONGLY PASSED. Litmus: reverting the
+		// precedence fix makes this test go back to NOT throwing AUTH_NO_ORG.
+		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+			const base = withAgentEngine(convexTest(schema, modules));
+			const t = base.withIdentity({ org_id: "org_xxxxx" });
+			await expect(
+				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+					namespace: "team/org_xxxxx",
+					totalSteps: 3,
+				}),
+			).rejects.toThrow(/AUTH_NO_ORG/);
+		});
+
+		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+			const base = withAgentEngine(convexTest(schema, modules));
+			const t = base.withIdentity({ organizationId: "org_xxxxx" });
+			await expect(
+				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+					namespace: "team/org_xxxxx",
+					totalSteps: 3,
+				}),
+			).rejects.toThrow(/AUTH_NO_ORG/);
+		});
+	});
 });
 
 describe("okfBundleDurable — step function plumbing (real fixed-contract entry point)", () => {
@@ -354,8 +399,13 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 	});
 
 	test("rejects cross-tenant caller before ever reaching the component call", async () => {
+		// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda): the tail is
+		// slug-shaped, so the identity used here carries a slug
+		// (`organizationSlug`), not an id — `organizationId` alone no longer
+		// resolves into `orgSlug` at all (see the DENY-pole precedence tests
+		// below).
 		const base = withAgentEngine(convexTest(schema, modules));
-		const t = base.withIdentity({ organizationId: "other-org" });
+		const t = base.withIdentity({ organizationSlug: "other-org" });
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 				namespace: "team/acme",
@@ -416,5 +466,50 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 				totalSteps: 3,
 			}),
 		).rejects.toThrow(/does not support async syscall|getFunctionMetadata/i);
+	});
+
+	// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda, decision mirrors
+	// #1224 item 4): `orgSlug` must resolve slug-first, id EXCLUDED, in
+	// `assertCanExportNamespaceV8` exactly as in `okfBundleNode`'s
+	// `assertCanExportNamespace`. An `org_id` (org_xxxxx) is not a slug.
+	describe("precedence -- id excluded from orgSlug resolution (V8 path)", () => {
+		test("ALLOW pole: an identity carrying a real slug (org_slug) matching the namespace tail passes the auth gate", async () => {
+			const base = withAgentEngine(convexTest(schema, modules));
+			const t = base.withIdentity({ org_slug: "acme" });
+			await expect(
+				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+					namespace: "team/acme",
+					totalSteps: 3,
+				}),
+			).rejects.not.toThrow(/AUTH_NO_ORG|AUTH_NAMESPACE_DENIED|AUTH_NO_IDENTITY/);
+		});
+
+		// DENY / precedence pole. On the OLD id-first code, an identity
+		// carrying ONLY `org_id` (no slug claim at all) resolved `orgSlug` to
+		// that raw id string, which -- if the export namespace's slug-shaped
+		// suffix happened to equal that same id string -- mis-compared equal
+		// and the auth gate was WRONGLY PASSED. Litmus: reverting the
+		// precedence fix makes this test go back to NOT throwing AUTH_NO_ORG.
+		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+			const base = withAgentEngine(convexTest(schema, modules));
+			const t = base.withIdentity({ org_id: "org_xxxxx" });
+			await expect(
+				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+					namespace: "team/org_xxxxx",
+					totalSteps: 3,
+				}),
+			).rejects.toThrow(/AUTH_NO_ORG/);
+		});
+
+		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+			const base = withAgentEngine(convexTest(schema, modules));
+			const t = base.withIdentity({ organizationId: "org_xxxxx" });
+			await expect(
+				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
+					namespace: "team/org_xxxxx",
+					totalSteps: 3,
+				}),
+			).rejects.toThrow(/AUTH_NO_ORG/);
+		});
 	});
 });
