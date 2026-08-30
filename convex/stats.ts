@@ -304,6 +304,132 @@ async function countReceiptsByReadStatusStreamed(
 	return { read, unread };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// openTaskCountsByOrchestrator — TRUE, non-page-capped, per-orchestrator open
+// task counts (VP task k17f9ssm4jbpc4jyfwembkdmnd8dfekn).
+//
+// Problem: the MCP `list_tasks` path pages at 200 rows, so it can never total
+// a station beyond that cap ("at least N"), which is how a client incident
+// sat urgent+open 40 days unseen at a station whose open queue exceeded 200.
+//
+// Approach: stream the `tasks` table ONCE via `for await` (same streaming
+// guarantee as `countAllStreamed`/`countByStatusStreamed` above — never
+// `.collect()`, cannot OOM regardless of table size) and bucket every row by
+// `assignedTo` in memory, counting only the four OPEN states
+// {todo, in_progress, blocked, review}. A second single pass over `profiles`
+// (also streamed) folds in every orchestrator that has a peer profile but zero
+// open tasks, so a station with an empty queue is returned as an explicit
+// 0-row rather than being silently absent from the array — the required
+// positive control (measurement-integrity: "missing" must never be
+// indistinguishable from "checked and found zero").
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OPEN_TASK_STATUSES = ["todo", "in_progress", "blocked", "review"] as const;
+
+type OpenBucket = {
+	todo: number;
+	inProgress: number;
+	blocked: number;
+	review: number;
+	totalOpen: number;
+	oldestOpenMs: number | null;
+};
+
+function emptyBucket(): OpenBucket {
+	return { todo: 0, inProgress: 0, blocked: 0, review: 0, totalOpen: 0, oldestOpenMs: null };
+}
+
+export const openTaskCountsByOrchestrator = query({
+	args: {},
+	returns: v.array(
+		v.object({
+			orchestrator: v.string(),
+			todo: v.number(),
+			inProgress: v.number(),
+			blocked: v.number(),
+			review: v.number(),
+			totalOpen: v.number(),
+			oldestOpenMs: v.union(v.number(), v.null()),
+		}),
+	),
+	handler: async (ctx) => {
+		// Fleet-operations surface — same gate as fleetStats.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			requireScope(scope, "view-stats-aggregated");
+		}
+
+		const byOrchestrator = new Map<string, OpenBucket>();
+
+		// Single streamed pass over the ENTIRE tasks table — never `.collect()`
+		// or `.take()`. Buckets each task by assignedTo x status. Non-open
+		// statuses (done/cancelled/failed) are read but not counted, which is
+		// still a single linear pass (no per-status re-query, no index needed).
+		for await (const task of ctx.db.query("tasks")) {
+			// Org-scope gate — SAME `filterByOrgScope` helper as
+			// `orchestratorStats` (stats.ts:103): a client-org identity only
+			// ever buckets tasks whose `assignedTo` is in its own
+			// `allowedOrchestrators` list (doctrine comment stats.ts:82 —
+			// "client orgs see their OWN orchestrators"). Master scope is a
+			// no-op passthrough inside `filterByOrgScope`. Applied per-row
+			// here (rather than pre-materializing an array) to preserve the
+			// single streamed pass with no `.collect()`.
+			if (filterByOrgScope([task], scope).length === 0) continue;
+
+			const status = task.status as (typeof OPEN_TASK_STATUSES)[number] | string;
+			const isOpen = (OPEN_TASK_STATUSES as readonly string[]).includes(status);
+			if (!isOpen) continue;
+
+			let bucket = byOrchestrator.get(task.assignedTo);
+			if (bucket === undefined) {
+				bucket = emptyBucket();
+				byOrchestrator.set(task.assignedTo, bucket);
+			}
+
+			if (status === "todo") bucket.todo++;
+			else if (status === "in_progress") bucket.inProgress++;
+			else if (status === "blocked") bucket.blocked++;
+			else if (status === "review") bucket.review++;
+			bucket.totalOpen++;
+
+			if (bucket.oldestOpenMs === null || task._creationTime < bucket.oldestOpenMs) {
+				bucket.oldestOpenMs = task._creationTime;
+			}
+		}
+
+		// Second streamed pass over profiles: fold in every orchestrator that
+		// has a peer profile but zero open tasks, so it appears as an explicit
+		// 0-row instead of being absent from the result.
+		for await (const profile of ctx.db.query("profiles")) {
+			// Same org-scope gate as the task pass above — a client-org
+			// identity must not have out-of-org orchestrators folded in as
+			// explicit 0-rows either (that would still be a cross-tenant
+			// name leak, just via the zero-fill path instead of the count).
+			if (
+				filterByOrgScope(
+					[{ assignedTo: profile.orchestratorId }],
+					scope,
+				).length === 0
+			) {
+				continue;
+			}
+			if (!byOrchestrator.has(profile.orchestratorId)) {
+				byOrchestrator.set(profile.orchestratorId, emptyBucket());
+			}
+		}
+
+		return Array.from(byOrchestrator.entries()).map(([orchestrator, bucket]) => ({
+			orchestrator,
+			todo: bucket.todo,
+			inProgress: bucket.inProgress,
+			blocked: bucket.blocked,
+			review: bucket.review,
+			totalOpen: bucket.totalOpen,
+			oldestOpenMs: bucket.oldestOpenMs,
+		}));
+	},
+});
+
 export const fleetStats = query({
 	args: {},
 	returns: v.object({
