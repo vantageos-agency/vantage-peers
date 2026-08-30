@@ -189,7 +189,16 @@ export default defineSchema({
 		.index("by_recipient_unread", ["recipient", "readAt"])
 		.index("by_instance_unread", ["recipientInstanceId", "readAt"])
 		.index("by_message", ["messageId"])
-		.index("by_tenant_recipient_unread", ["tenantId", "recipient", "readAt"]),
+		.index("by_tenant_recipient_unread", ["tenantId", "recipient", "readAt"])
+		// R-11 fix (task k171ev3awqn4n2r9hfhbv2n1jx8df4tt) — mirrors
+		// by_tenant_recipient_unread's shape for the instance-targeted branch of
+		// checkNewMessages/checkNewMessagesEnvelope, so tenantId can be pushed
+		// INTO the query as an index predicate instead of a post-query-only filter.
+		.index("by_tenant_instance_unread", [
+			"tenantId",
+			"recipientInstanceId",
+			"readAt",
+		]),
 
 	// ── missions ──────────────────────────────────────────────────────────────
 	missions: defineTable({

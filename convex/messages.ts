@@ -269,34 +269,73 @@ export const checkNewMessages = query({
 		if (args.recipientInstanceId !== undefined) {
 			// Instance-level: get messages targeted at this specific instance
 			// PLUS role-level messages (recipientInstanceId === undefined)
-			const instanceReceipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_instance_unread", (q) =>
-					q.eq("recipientInstanceId", args.recipientInstanceId!),
-				)
-				.filter((q) => {
-					const base = q.eq(q.field("readAt"), undefined);
-					return args.since !== undefined
-						? q.and(base, q.gt(q.field("_creationTime"), args.since))
-						: base;
-				})
-				.take(100);
+			//
+			// R-11 fix (task k171ev3awqn4n2r9hfhbv2n1jx8df4tt) — when tenantId is
+			// supplied, push it INTO the query via by_tenant_instance_unread /
+			// by_tenant_recipient_unread (index predicate) rather than relying on
+			// the post-query .filter below alone. The .filter is KEPT as
+			// belt-and-suspenders, mirroring the conform pattern at :735/:995.
+			const instanceReceipts =
+				args.tenantId !== undefined
+					? await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_tenant_instance_unread", (q) =>
+								q
+									.eq("tenantId", args.tenantId!)
+									.eq("recipientInstanceId", args.recipientInstanceId!)
+									.eq("readAt", undefined),
+							)
+							.filter((q) =>
+								args.since !== undefined
+									? q.gt(q.field("_creationTime"), args.since)
+									: true,
+							)
+							.take(100)
+					: await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_instance_unread", (q) =>
+								q.eq("recipientInstanceId", args.recipientInstanceId!),
+							)
+							.filter((q) => {
+								const base = q.eq(q.field("readAt"), undefined);
+								return args.since !== undefined
+									? q.and(base, q.gt(q.field("_creationTime"), args.since))
+									: base;
+							})
+							.take(100);
 
-			const roleReceipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", args.recipient),
-				)
-				.filter((q) => {
-					const base = q.and(
-						q.eq(q.field("readAt"), undefined),
-						q.eq(q.field("recipientInstanceId"), undefined),
-					);
-					return args.since !== undefined
-						? q.and(base, q.gt(q.field("_creationTime"), args.since))
-						: base;
-				})
-				.take(100);
+			const roleReceipts =
+				args.tenantId !== undefined
+					? await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_tenant_recipient_unread", (q) =>
+								q
+									.eq("tenantId", args.tenantId!)
+									.eq("recipient", args.recipient)
+									.eq("readAt", undefined),
+							)
+							.filter((q) => {
+								const base = q.eq(q.field("recipientInstanceId"), undefined);
+								return args.since !== undefined
+									? q.and(base, q.gt(q.field("_creationTime"), args.since))
+									: base;
+							})
+							.take(100)
+					: await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_recipient_unread", (q) =>
+								q.eq("recipient", args.recipient),
+							)
+							.filter((q) => {
+								const base = q.and(
+									q.eq(q.field("readAt"), undefined),
+									q.eq(q.field("recipientInstanceId"), undefined),
+								);
+								return args.since !== undefined
+									? q.and(base, q.gt(q.field("_creationTime"), args.since))
+									: base;
+							})
+							.take(100);
 
 			// Merge and deduplicate by receiptId
 			const seen = new Set<string>();
@@ -308,7 +347,7 @@ export const checkNewMessages = query({
 				}
 			}
 
-			// No tenant+instance index — JS filter is acceptable for instance-targeted messages (low volume)
+			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
 			if (args.tenantId !== undefined) {
 				receipts = receipts.filter((r) => r.tenantId === args.tenantId);
 			}
@@ -414,34 +453,72 @@ export const checkNewMessagesEnvelope = query({
 		let receipts: Doc<"messageReceipts">[];
 
 		if (args.recipientInstanceId !== undefined) {
-			const instanceReceipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_instance_unread", (q) =>
-					q.eq("recipientInstanceId", args.recipientInstanceId!),
-				)
-				.filter((q) => {
-					const base = q.eq(q.field("readAt"), undefined);
-					return args.since !== undefined
-						? q.and(base, q.gt(q.field("_creationTime"), args.since))
-						: base;
-				})
-				.take(takeBudget);
+			// R-11 fix (task k171ev3awqn4n2r9hfhbv2n1jx8df4tt) — when tenantId is
+			// supplied, push it INTO the query via by_tenant_instance_unread /
+			// by_tenant_recipient_unread (index predicate) rather than relying on
+			// the post-query .filter below alone. The .filter is KEPT as
+			// belt-and-suspenders, mirroring the conform pattern at :735/:995.
+			const instanceReceipts =
+				args.tenantId !== undefined
+					? await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_tenant_instance_unread", (q) =>
+								q
+									.eq("tenantId", args.tenantId!)
+									.eq("recipientInstanceId", args.recipientInstanceId!)
+									.eq("readAt", undefined),
+							)
+							.filter((q) =>
+								args.since !== undefined
+									? q.gt(q.field("_creationTime"), args.since)
+									: true,
+							)
+							.take(takeBudget)
+					: await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_instance_unread", (q) =>
+								q.eq("recipientInstanceId", args.recipientInstanceId!),
+							)
+							.filter((q) => {
+								const base = q.eq(q.field("readAt"), undefined);
+								return args.since !== undefined
+									? q.and(base, q.gt(q.field("_creationTime"), args.since))
+									: base;
+							})
+							.take(takeBudget);
 
-			const roleReceipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", args.recipient),
-				)
-				.filter((q) => {
-					const base = q.and(
-						q.eq(q.field("readAt"), undefined),
-						q.eq(q.field("recipientInstanceId"), undefined),
-					);
-					return args.since !== undefined
-						? q.and(base, q.gt(q.field("_creationTime"), args.since))
-						: base;
-				})
-				.take(takeBudget);
+			const roleReceipts =
+				args.tenantId !== undefined
+					? await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_tenant_recipient_unread", (q) =>
+								q
+									.eq("tenantId", args.tenantId!)
+									.eq("recipient", args.recipient)
+									.eq("readAt", undefined),
+							)
+							.filter((q) => {
+								const base = q.eq(q.field("recipientInstanceId"), undefined);
+								return args.since !== undefined
+									? q.and(base, q.gt(q.field("_creationTime"), args.since))
+									: base;
+							})
+							.take(takeBudget)
+					: await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_recipient_unread", (q) =>
+								q.eq("recipient", args.recipient),
+							)
+							.filter((q) => {
+								const base = q.and(
+									q.eq(q.field("readAt"), undefined),
+									q.eq(q.field("recipientInstanceId"), undefined),
+								);
+								return args.since !== undefined
+									? q.and(base, q.gt(q.field("_creationTime"), args.since))
+									: base;
+							})
+							.take(takeBudget);
 
 			const seen = new Set<string>();
 			receipts = [];
@@ -451,6 +528,7 @@ export const checkNewMessagesEnvelope = query({
 					receipts.push(r);
 				}
 			}
+			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
 			if (args.tenantId !== undefined) {
 				receipts = receipts.filter((r) => r.tenantId === args.tenantId);
 			}
