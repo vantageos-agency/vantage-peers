@@ -114,6 +114,11 @@
           },
           {
             "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-backend-doctor-before-deploy.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 /root/coding/vantage-memory/.claude/hooks/auto-inject-signature.py",
             "timeout": 5
           },
