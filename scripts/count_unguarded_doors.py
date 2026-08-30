@@ -37,10 +37,23 @@ own declaration:
   3. verify at least one such named mechanism identifier actually appears,
      call-shaped, in that door's OWN handler slice.
 
+  IMPORTANT — what `guarded` DOES and DOES NOT assert for a `filtered` door.
+  `guarded` means the door's OWN reason names a mechanism AND a call-shaped
+  occurrence of that mechanism is TEXTUALLY PRESENT in the handler slice. It
+  does NOT prove the mechanism's RESULT actually reaches (scopes) the returned
+  rows. Eta's M3 (#1242): a door whose real filter was deleted but that still
+  carried a dead `scopeFilterGet(oauthCtx, null)` call (its return value thrown
+  away, the unscoped rows returned instead) stayed GREEN — presence is textual,
+  not dataflow. The `--dataflow` mode (see below) tightens this toward "the
+  named mechanism's result is actually consumed", closing that blind spot; the
+  DEFAULT mode remains textual-presence and this caveat applies to it.
+
   - GUARDED   — kind is `master` / `read` / `write` / `from` (the envelope
                 enforces it before the handler runs), OR kind is `filtered`
                 AND its reason NAMES a mechanism AND that mechanism is present
-                (call-shaped) in the handler slice.
+                (call-shaped) in the handler slice (textual presence — see the
+                IMPORTANT caveat above; in `--dataflow` mode the mechanism's
+                result must also be consumed, not discarded).
   - UNGUARDED — kind is `filtered` AND EITHER (a) its reason names NO
                 mechanism (no call-shaped identifier — nobody wrote what
                 guards the rows), OR (b) its reason names a mechanism that is
@@ -440,17 +453,101 @@ def _mechanism_in_handler(mechanism: str, handler_text: str) -> bool:
     return bool(pat.search(handler_text))
 
 
+# Characters that, appearing immediately before a call, put it in an
+# EXPRESSION position whose value is kept (assignment, argument, element,
+# ternary, object value, arrow body, boolean/arith operand). A call preceded
+# by one of these has its result CONSUMED, not discarded.
+# NOTE: `{` is deliberately EXCLUDED. A call immediately preceded by `{` is a
+# block statement start (`{ scopeFilterList(...); }`), i.e. a DISCARDED result,
+# not an object-literal value — an object value is reached via its key `:` or a
+# leading `,`, both of which ARE in this set. Including `{` would misread the
+# M3 dead-call (a bare statement at a block start) as consumed.
+_RESULT_CONSUMING_PREVS = set("=(,[:?&|><+-*/%")
+# Keywords that, appearing immediately before a call, consume its value.
+_RESULT_CONSUMING_KEYWORDS = ("return", "yield")
+
+
+def _mechanism_result_consumed(mechanism: str, handler_text: str) -> bool:
+    """DATAFLOW probe (Eta #1242 M3). True iff AT LEAST ONE call-shaped
+    occurrence of `mechanism` in the handler slice has its RESULT CONSUMED —
+    assigned, returned, or used as a subexpression — rather than discarded as
+    a bare expression statement.
+
+    The M3 blind spot: a door whose real filter was deleted but that still
+    carried a dead `scopeFilterGet(oauthCtx, null);` (return value thrown away,
+    the unscoped rows returned instead) passed the textual-presence rule. Here,
+    a call whose result is discarded (statement-start, no assignment/return)
+    does NOT count as consuming the mechanism.
+
+    Conservative by design: it asks only whether the RESULT flows somewhere,
+    not whether that somewhere is the returned rows specifically — a full
+    taint trace is out of scope (see the TODO if this needs tightening). It
+    closes the specific dead-unused-result case M3 named without a rewrite."""
+    pat = re.compile(r"(?<![\w$])" + re.escape(mechanism) + r"\(")
+    for m in pat.finditer(handler_text):
+        idx = m.start()
+        # Walk back over whitespace, then over an optional `await`/`void`
+        # keyword (which does NOT itself consume the value), then whitespace.
+        j = idx - 1
+        while j >= 0 and handler_text[j] in " \t\n\r":
+            j -= 1
+        # Skip a leading `await`/`void` so `await scopeFilterGet(...)` as a
+        # bare statement is still judged on what precedes the `await`.
+        end = j + 1
+        k = j
+        while k >= 0 and (handler_text[k].isalnum() or handler_text[k] in "_$"):
+            k -= 1
+        word = handler_text[k + 1 : end]
+        if word in ("await", "void"):
+            j = k
+            while j >= 0 and handler_text[j] in " \t\n\r":
+                j -= 1
+        if j < 0:
+            # Start of the handler slice with no preceding token — a bare
+            # leading statement, result discarded.
+            continue
+        prev = handler_text[j]
+        if prev in _RESULT_CONSUMING_PREVS:
+            return True
+        # Preceding identifier/keyword (e.g. `return`/`yield`).
+        end2 = j + 1
+        k2 = j
+        while k2 >= 0 and (handler_text[k2].isalnum() or handler_text[k2] in "_$"):
+            k2 -= 1
+        prev_word = handler_text[k2 + 1 : end2]
+        if prev_word in _RESULT_CONSUMING_KEYWORDS:
+            return True
+        # Anything else (`;`, `{`, `}`, `)`, a bare identifier) → the call is a
+        # discarded expression statement for this occurrence; keep scanning
+        # for another occurrence that IS consumed.
+    return False
+
+
 def _classify_filtered(
-    reason: str, handler_text: str
+    reason: str, handler_text: str, dataflow: bool = False
 ) -> tuple[bool, tuple[str, ...]]:
     """Per-door DECLARED-AND-VERIFIED rule for a `filtered` door. Returns
     (verified, named_mechanisms). `verified` is True iff the reason names at
     least one mechanism AND at least one named mechanism is present,
     call-shaped, in the handler slice. A reason that names no mechanism, or
     names only mechanism(s) absent from the handler (the LYING declaration),
-    yields False."""
+    yields False.
+
+    When `dataflow` is True (--dataflow mode, Eta #1242 M3), textual presence
+    is not enough: at least one named mechanism must additionally have its
+    RESULT CONSUMED (see `_mechanism_result_consumed`), so a dead call whose
+    return value is discarded reads as UNGUARDED."""
     mechanisms = _reason_named_mechanisms(reason)
-    verified = any(_mechanism_in_handler(m, handler_text) for m in mechanisms)
+    if dataflow:
+        verified = any(
+            _mechanism_in_handler(m, handler_text)
+            and _mechanism_result_consumed(m, handler_text)
+            for m in mechanisms
+        )
+    else:
+        verified = any(
+            _mechanism_in_handler(m, handler_text) for m in mechanisms
+        )
     return verified, mechanisms
 
 
@@ -534,7 +631,7 @@ def _first_top_level_name_token(
     return None
 
 
-def scan_source(text: str) -> ScanResult:
+def scan_source(text: str, dataflow: bool = False) -> ScanResult:
     result = ScanResult()
     code_mask = _build_code_mask(text)
     const_table = _build_const_string_table(text)
@@ -599,7 +696,7 @@ def scan_source(text: str) -> ScanResult:
                 if kind == "filtered":
                     reason = _extract_reason(scope_arg)
                     verified, mechanisms = _classify_filtered(
-                        reason, handler_arg
+                        reason, handler_arg, dataflow
                     )
                 else:
                     verified, mechanisms = False, ()
@@ -661,6 +758,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Fail (exit 1) if the derived unguarded count exceeds this",
     )
+    parser.add_argument(
+        "--dataflow",
+        action="store_true",
+        help=(
+            "Tighten the `filtered` rule (Eta #1242 M3): a named mechanism "
+            "must also have its RESULT CONSUMED (not discarded) to count as "
+            "guarded, closing the dead-unused-result blind spot."
+        ),
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.path)
@@ -684,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
         print("total=0")
         return 2
 
-    result = scan_source(text)
+    result = scan_source(text, dataflow=args.dataflow)
     buckets = [classify_door(d) for d in result.doors]
     guarded = buckets.count("guarded")
     unguarded = buckets.count("unguarded")
@@ -705,6 +811,19 @@ def main(argv: list[str] | None = None) -> int:
     if unreadable > 0:
         return 2
     if args.baseline is not None and unguarded > args.baseline:
+        # Name WHICH doors are unguarded — Door.name is populated, so a
+        # baseline-exceeded failure must not leave the operator grepping the
+        # source by hand (Eta #1242 correction (a)). List them in file order.
+        offending = [
+            d.name
+            for d in result.doors
+            if classify_door(d) == "unguarded"
+        ]
+        print(
+            f"BASELINE EXCEEDED: {unguarded} unguarded door(s) > "
+            f"baseline {args.baseline}"
+        )
+        print(f"unguarded doors: {', '.join(offending)}")
         return 1
     return 0
 

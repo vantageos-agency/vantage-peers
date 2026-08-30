@@ -456,11 +456,9 @@ def test_injection_on_real_material_raises_unguarded_count_then_restores(tmp_pat
 
 _EXPECTED_UNGUARDED_FILTERED = {
     "check_messages",
-    "list_tasks",
     "bulk_complete_tasks",
     "list_missions",
     "list_diaries",
-    "update_recurring_task",
 }
 
 
@@ -474,7 +472,7 @@ def test_real_slice_unguarded_filtered_set_matches_reviewed_doors():
         if d.kind == "filtered" and classify_door(d) == "unguarded"
     }
     assert unguarded == _EXPECTED_UNGUARDED_FILTERED, (
-        f"unguarded filtered set drifted from the reviewed six -- got {unguarded}"
+        f"unguarded filtered set drifted from the reviewed four -- got {unguarded}"
     )
 
 
@@ -494,3 +492,82 @@ def test_real_slice_known_guarded_filtered_door_stays_guarded():
     assert door.filtered_reason_mechanisms, (
         "get_briefing_note reason must NAME its row-restricting mechanism"
     )
+
+
+# ── Dataflow tightening (Eta #1242 correction (c) — M3 dead-unused-result) ────
+#
+# M3 (Eta's #1242 verdict): a door whose real filter was deleted but that still
+# carried a dead `scopeFilterGet(oauthCtx, null);` — its return value discarded,
+# the unscoped rows returned instead — stayed GREEN under the textual-presence
+# rule. `--dataflow` mode requires the named mechanism's RESULT to be CONSUMED
+# (assigned/returned/used as a subexpression), so a discarded call reads as
+# unguarded.
+
+_M3_REASON = (
+    '{ kind: "filtered", reason: '
+    '"result set scoped in-handler via scopeFilterList(oauthCtx,...)" }'
+)
+
+
+def _m3_door(handler_body: str) -> str:
+    return _defineTool_fixture(_M3_REASON, "m3_widget", handler_body)
+
+
+def test_dataflow_dead_call_result_discarded_reads_unguarded():
+    """A door that calls the named mechanism but DISCARDS its result (bare
+    expression statement) is guarded under default (textual presence) yet
+    UNGUARDED under --dataflow."""
+    # Dead call: scopeFilterList runs but nobody keeps its return value.
+    handler = "\t\tscopeFilterList(oauthCtx, rows);\n"
+    text = _m3_door(handler)
+
+    default_doors = scan_source(text).doors
+    m3 = [d for d in default_doors if d.name == "m3_widget"]
+    assert len(m3) == 1
+    assert classify_door(m3[0]) == "guarded", (
+        "textual-presence default must still see the named call"
+    )
+
+    df_doors = scan_source(text, dataflow=True).doors
+    m3_df = [d for d in df_doors if d.name == "m3_widget"]
+    assert len(m3_df) == 1
+    assert classify_door(m3_df[0]) == "unguarded", (
+        "dataflow mode must flag a dead-unused-result call as unguarded"
+    )
+
+
+def test_dataflow_consumed_call_stays_guarded():
+    """A door whose named mechanism's result IS consumed (assigned to a const)
+    stays guarded under BOTH default and --dataflow (positive control)."""
+    handler = "\t\tconst scoped = scopeFilterList(oauthCtx, rows);\n"
+    text = _m3_door(handler)
+    for dataflow in (False, True):
+        doors = scan_source(text, dataflow=dataflow).doors
+        door = next(d for d in doors if d.name == "m3_widget")
+        assert classify_door(door) == "guarded", (
+            f"consumed call must stay guarded (dataflow={dataflow})"
+        )
+
+
+def test_dataflow_returned_call_stays_guarded():
+    """A named mechanism whose result is directly RETURNED is consumed."""
+    handler = "\t\treturn scopeFilterList(oauthCtx, rows);\n"
+    text = _m3_door(handler)
+    doors = scan_source(text, dataflow=True).doors
+    door = next(d for d in doors if d.name == "m3_widget")
+    assert classify_door(door) == "guarded"
+
+
+def test_dataflow_real_slice_still_four_unguarded():
+    """The two doors guarded by this task (list_tasks, update_recurring_task)
+    consume their scope-filter result, so --dataflow leaves the count at four —
+    no regression from the tightening."""
+    text = REAL_TOOLS_TS.read_text(encoding="utf-8")
+    result = scan_source(text, dataflow=True)
+    assert result.unreadable == []
+    unguarded = {
+        d.name
+        for d in result.doors
+        if d.kind == "filtered" and classify_door(d) == "unguarded"
+    }
+    assert unguarded == _EXPECTED_UNGUARDED_FILTERED
