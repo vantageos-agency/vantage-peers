@@ -2,6 +2,14 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
 
+// In-progress tasks and mandates are both small, bounded tables today; 500 rows
+// is a comfortable ceiling well above observed volume for either.
+const DASHBOARD_SCAN_CAP = 500;
+// Message receipts and the tasks/missions full scans below are also small
+// tables but can grow faster (one receipt per recipient per message), so a
+// wider ceiling is used for those bounded scans.
+const DASHBOARD_WIDE_SCAN_CAP = 1000;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // getDashboardSummary — high-level operational stats for VantagePeers dashboard
 // Returns: tasks in progress, active orchestrator profiles, unread message count,
@@ -62,19 +70,21 @@ export const getDashboardSummary = query({
 		const inProgressTasksAll = await ctx.db
 			.query("tasks")
 			.withIndex("by_status", (q) => q.eq("status", "in_progress"))
-			.take(500);
+			.take(DASHBOARD_SCAN_CAP);
 		const inProgressTasks = filterByOrgScope(inProgressTasksAll, scope);
 
 		// Open mandates — filter in memory (small table)
-		const allMandates = await ctx.db.query("mandates").take(500);
+		const allMandates = await ctx.db.query("mandates").take(DASHBOARD_SCAN_CAP);
 		const openMandates = allMandates.filter((m) => m.status !== "settled").length;
 
 		// All profiles (small table — one row per instance)
 		const profiles = await ctx.db.query("profiles").collect();
 
-		// Unread messages — full scan bounded at 1000 (receipts table is small)
+		// Unread messages — full scan bounded (receipts table is small)
 		// Index is composite [recipient, readAt] so we cannot filter by readAt alone.
-		const allReceipts = await ctx.db.query("messageReceipts").take(1000);
+		const allReceipts = await ctx.db
+			.query("messageReceipts")
+			.take(DASHBOARD_WIDE_SCAN_CAP);
 		const unreadMessages = allReceipts.filter((r) => r.readAt === undefined).length;
 
 		// Recent activity — fetch bounded slices of each entity
@@ -159,8 +169,10 @@ export const getProjectSummary = query({
 			requireScope(scope, "view-stats-aggregated");
 		}
 
-		const allTasks = await ctx.db.query("tasks").take(1000);
-		const allMissions = await ctx.db.query("missions").take(1000);
+		const allTasks = await ctx.db.query("tasks").take(DASHBOARD_WIDE_SCAN_CAP);
+		const allMissions = await ctx.db
+			.query("missions")
+			.take(DASHBOARD_WIDE_SCAN_CAP);
 		const tasks = filterByOrgScope(allTasks, scope);
 		const missions = filterByOrgScope(allMissions, scope);
 

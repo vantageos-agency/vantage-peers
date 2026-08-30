@@ -5,6 +5,11 @@ import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityV
 import { requireId } from "./lib/ids";
 import { withOrgScope, type OrgScope } from "./lib/auth";
 
+// expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
+// cron batch size, not an expected total-row count, so 500 is a safe ceiling
+// for a per-run cleanup pass.
+const TTL_EXPIRY_SCAN_CAP = 500;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope namespace enforcement (Day 108 fail-closed multi-tenant fix,
 // task k176d9q9h6b33e8y1qgwnnx2x18aa40s).
@@ -385,7 +390,7 @@ export const expireMemoriesByTtl = internalMutation({
     const candidates = await ctx.db
       .query("memories")
       .filter((q) => q.neq(q.field("ttl"), undefined))
-      .take(500);
+      .take(TTL_EXPIRY_SCAN_CAP);
 
     for (const memory of candidates) {
       if (memory.ttl !== undefined && memory.ttl < now && memory.isLatest) {
