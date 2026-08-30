@@ -42,6 +42,7 @@ export const getForAccessToken = query({
 	args: { tokenHash: v.string() },
 	returns: v.array(v.string()),
 	handler: async (ctx, args) => {
+		// isolation-contract: server-side only — invoked by the MCP transport via imperative client.query (mcp-server/src/auth.ts getOrgRoster + tools.ts:1897), never a reactive client useQuery. The fail-closed AUTH_REQUIRED/RBAC_DENIED throws are caught by the MCP auth layer's try/catch and returned as refusals, so no subscribing client ever receives an uncaught Server Error. R-50 declared divergence (a claim, verified here against the call sites).
 		const identity = await ctx.auth.getUserIdentity();
 		if (identity === null) {
 			throw new ConvexError(
