@@ -10,12 +10,17 @@
  * count while closing nothing).
  *
  * The one kind the wrapper CANNOT auto-apply is `filtered` (it needs
- * post-query rows) — a `filtered`-kind door is only actually guarded if its
- * handler calls `scopeFilterList(`/`scopeFilterGet(`. `public` is a
- * separate, deliberate bucket, never folded into "unguarded". This mirrors
- * scripts/count_unguarded_doors.py's classification exactly (same
- * ENVELOPE_GUARANTEED_KINDS / FILTERED_GUARD_MARKERS split) — see that
- * script's module docstring for the full rationale.
+ * post-query rows). A `filtered`-kind door is guarded by a PER-DOOR
+ * DECLARED-AND-VERIFIED rule, NOT by a central marker list: the door's own
+ * `reason` must NAME a mechanism (a call-shaped identifier `ident(`, e.g.
+ * `scopeFilterList(`/`scopeFilterGet(`/`listRowsScopedTo(`) AND that named
+ * mechanism must actually appear, call-shaped, in the door's own handler
+ * slice. A reason naming no mechanism => unguarded; a reason naming a
+ * mechanism absent from the handler (a LYING declaration) => unguarded.
+ * `public` is a separate, deliberate bucket, never folded into "unguarded".
+ * This mirrors scripts/count_unguarded_doors.py's classification exactly
+ * (same declared-and-verified rule) — see that script's module docstring for
+ * the full rationale.
  *
  * Static analysis, no hand-typed tool-name list: every tool name and its
  * scope kind are DERIVED from the source text.
@@ -78,6 +83,9 @@ interface DerivedDoor {
 	name: string;
 	nameIndex: number;
 	kind: ScopeKind | null;
+	// Byte offset of this door's own `kind: "..."` scope match — the start of
+	// the region (up to nameIndex) in which its `reason:` field lives.
+	scopeIndex: number;
 }
 
 /**
@@ -116,22 +124,33 @@ function deriveDoors(src: string): DerivedDoor[] {
 		const constIndex = constMatch ? (constMatch.index ?? Infinity) : Infinity;
 
 		if (literalMatch && literalIndex <= constIndex) {
-			return { name: literalMatch[1], nameIndex: literalIndex, kind };
+			return {
+				name: literalMatch[1],
+				nameIndex: literalIndex,
+				kind,
+				scopeIndex: index,
+			};
 		}
 
 		if (constMatch) {
 			const resolved = CONST_TABLE.get(constMatch[1]);
 			if (resolved !== undefined) {
-				return { name: resolved, nameIndex: constIndex, kind };
+				return {
+					name: resolved,
+					nameIndex: constIndex,
+					kind,
+					scopeIndex: index,
+				};
 			}
 			return {
 				name: `<unresolved:${constMatch[1]}>`,
 				nameIndex: -1,
 				kind: null,
+				scopeIndex: index,
 			};
 		}
 
-		return { name: "<unresolved>", nameIndex: -1, kind: null };
+		return { name: "<unresolved>", nameIndex: -1, kind: null, scopeIndex: index };
 	});
 }
 
@@ -162,8 +181,31 @@ function extractHandlerBody(toolName: string): string | null {
 	return SRC.slice(bodyStart, upperBound);
 }
 
-function bodyHasScopeFilterCall(body: string): boolean {
-	return /scopeFilterList\(/.test(body) || /scopeFilterGet\(/.test(body);
+// A door's `reason:` value, reconstructed from the scope-object region that
+// sits between its own `kind:` match and its own name line. The value may be
+// a single string literal or a `+`-concatenated run across lines.
+function extractReason(door: DerivedDoor): string {
+	if (door.scopeIndex < 0 || door.nameIndex < 0) return "";
+	const region = SRC.slice(door.scopeIndex, door.nameIndex);
+	const m = /reason\s*:\s*((?:\s*"(?:[^"\\]|\\.)*"\s*\+?)+)/.exec(region);
+	if (!m) return "";
+	const parts = m[1].match(/"((?:[^"\\]|\\.)*)"/g) ?? [];
+	return parts.map((p) => p.slice(1, -1)).join("");
+}
+
+// Mechanisms a reason NAMES: each call-shaped identifier (`ident(`, no
+// intervening whitespace — a call, not a prose word before a parenthetical).
+function reasonNamedMechanisms(reason: string): string[] {
+	const seen = new Set<string>();
+	for (const m of reason.matchAll(/([A-Za-z_$][\w$]*)\(/g)) {
+		seen.add(m[1]);
+	}
+	return [...seen];
+}
+
+function mechanismInHandler(mechanism: string, body: string): boolean {
+	const escaped = mechanism.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`(?<![\\w$])${escaped}\\(`).test(body);
 }
 
 type Bucket = "guarded" | "unguarded" | "public" | "unreadable";
@@ -172,10 +214,14 @@ function classify(door: DerivedDoor): Bucket {
 	if (door.kind === null) return "unreadable";
 	if (door.kind === "public") return "public";
 	if (ENVELOPE_GUARANTEED_KINDS.has(door.kind)) return "guarded";
-	// kind === "filtered"
+	// kind === "filtered": per-door declared-and-verified rule (no central
+	// marker list). The reason must NAME a mechanism AND that mechanism must
+	// be present, call-shaped, in this door's own handler slice.
 	const body = extractHandlerBody(door.name);
 	if (body === null) return "unreadable";
-	return bodyHasScopeFilterCall(body) ? "guarded" : "unguarded";
+	const mechanisms = reasonNamedMechanisms(extractReason(door));
+	const verified = mechanisms.some((mech) => mechanismInHandler(mech, body));
+	return verified ? "guarded" : "unguarded";
 }
 
 const DOORS = deriveDoors(SRC);

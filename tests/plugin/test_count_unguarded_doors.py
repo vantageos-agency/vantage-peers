@@ -2,7 +2,7 @@
 the fleet leak_guard.py three-state form (guarded / unguarded / unreadable),
 plus a real-material mutation proof per measurement-integrity: a genuine
 COPY of mcp-server/src/tools.ts has a brand-new `filtered`-kind door injected
-into it (no scopeFilterList/scopeFilterGet call in its handler), proving the
+into it (its reason names no present row-restricting mechanism), proving the
 classifier's unguarded count actually RISES on that injection and returns to
 baseline once the injection is reverted.
 
@@ -19,8 +19,12 @@ Classification recap (see count_unguarded_doors.py module docstring): a
 `defineTool` door's declared scope `kind` IS the guard for
 `master`/`read`/`write`/`from` (the wrapper enforces it before the handler
 ever runs); `public` is its own bucket, never folded into unguarded;
-`filtered` is guarded only if the handler itself calls `scopeFilterList(` or
-`scopeFilterGet(` -- the one kind the wrapper cannot auto-apply.
+`filtered` is guarded by a PER-DOOR DECLARED-AND-VERIFIED rule (no central
+marker list): the door's own `reason` must NAME a mechanism (a call-shaped
+identifier, `ident(`) AND that named mechanism must actually appear,
+call-shaped, in the door's own handler slice. A reason naming NO mechanism =>
+unguarded; a reason naming a mechanism ABSENT from the handler (a LYING
+declaration) => unguarded.
 """
 
 import subprocess
@@ -103,16 +107,45 @@ def test_must_pass_master_kind_is_guarded_by_declaration_alone(tmp_path):
     }
 
 
-def test_must_pass_filtered_kind_with_scope_filter_call_is_guarded(tmp_path):
-    """`filtered`-kind doors are guarded ONLY when the handler actually
-    calls scopeFilterList/scopeFilterGet -- the declaration alone is not
-    enough (the wrapper cannot auto-apply this kind)."""
+def test_must_pass_filtered_reason_names_mechanism_present_in_handler(tmp_path):
+    """`filtered`-kind door whose OWN reason NAMES a mechanism (a call-shaped
+    identifier, `scopeFilterGet(`) AND that named mechanism actually appears,
+    call-shaped, in the handler slice => GUARDED. This is the declared-and-
+    verified rule -- no central marker list is consulted; the reason names its
+    own guard and the handler must keep the promise."""
     fixture = tmp_path / "tools.ts"
     fixture.write_text(
         _defineTool_fixture(
-            '{ kind: "filtered", reason: "post-query row scope" }',
+            '{ kind: "filtered", reason: "rows scoped via scopeFilterGet(oauthCtx, raw)" }',
             "get_widget",
             "\t\tconst row = scopeFilterGet(oauthCtx, raw);\n",
+        ),
+        encoding="utf-8",
+    )
+    p = run([str(fixture)])
+    assert p.returncode == 0, f"stdout={p.stdout}\nstderr={p.stderr}"
+    counts = parse_counts(p.stdout)
+    assert counts == {
+        "guarded": 1,
+        "unguarded": 0,
+        "public": 0,
+        "unreadable": 0,
+        "total": 1,
+    }
+
+
+def test_must_pass_filtered_reason_names_a_novel_mechanism_present(tmp_path):
+    """The rule is derive-never-type: it is NOT limited to a blessed
+    scopeFilterList/scopeFilterGet pair. A reason naming ANY call-shaped
+    mechanism (here `listRowsScopedTo(`) that is actually present in the
+    handler => GUARDED. This is exactly what a central marker list could not
+    do (it would miss the new name)."""
+    fixture = tmp_path / "tools.ts"
+    fixture.write_text(
+        _defineTool_fixture(
+            '{ kind: "filtered", reason: "rows restricted by listRowsScopedTo(oauthCtx)" }',
+            "list_widgets_novel",
+            "\t\tconst rows = listRowsScopedTo(oauthCtx, raw);\n",
         ),
         encoding="utf-8",
     )
@@ -131,11 +164,12 @@ def test_must_pass_filtered_kind_with_scope_filter_call_is_guarded(tmp_path):
 # ── MUST_BLOCK ───────────────────────────────────────────────────────────────
 
 
-def test_must_block_filtered_kind_without_scope_filter_call_is_unguarded(tmp_path):
-    """The real bug this rewrite fixes: a `filtered`-kind door whose handler
-    never calls scopeFilterList/scopeFilterGet declares an intent it does
-    not keep -- that is the actual gap, regardless of any OTHER marker
-    (guardFrom, listTasksGate, oauthCtx.userId) present in the body."""
+def test_must_block_filtered_reason_names_no_mechanism_is_unguarded(tmp_path):
+    """A `filtered`-kind door whose reason names NO mechanism (no call-shaped
+    identifier -- nobody wrote what guards the returned rows) => UNGUARDED,
+    regardless of any gate call present in the body. The reason here reads
+    like prose ("claims in-handler scoping") and the handler runs an unrelated
+    gate; neither is a NAMED-and-verified row guard."""
     fixture = tmp_path / "tools.ts"
     fixture.write_text(
         _defineTool_fixture(
@@ -156,6 +190,48 @@ def test_must_block_filtered_kind_without_scope_filter_call_is_unguarded(tmp_pat
         "unreadable": 0,
         "total": 1,
     }
+
+
+def test_must_block_filtered_reason_names_mechanism_absent_from_handler(tmp_path):
+    """THE case no central marker list can catch — a LYING declaration that
+    ONLY the declared-and-verified rule flags. The handler DOES call a
+    blessed, real row-restricting function (`scopeFilterGet(`), so the retired
+    central-marker approach ("does the handler call scopeFilterList/
+    scopeFilterGet?") would bless this door as GUARDED. But the door's own
+    reason names a DIFFERENT mechanism (`rowGuardXYZ(`) that is ABSENT from
+    the handler — the declaration does not describe what actually runs. The
+    per-door rule reads THIS reason's named mechanism against THIS handler,
+    finds it absent, and returns UNGUARDED. A door may only be trusted by what
+    it truthfully DECLARES, not by any guard-shaped call happening to appear
+    in its body.
+
+    RED-before: against the retired marker-list script this asserted
+    guarded==0/unguarded==1 FAILS (that script counts the scopeFilterGet(
+    call and reports guarded==1). GREEN-after under the reason-verified rule.
+    """
+    fixture = tmp_path / "tools.ts"
+    fixture.write_text(
+        _defineTool_fixture(
+            '{ kind: "filtered", reason: "rows scoped by rowGuardXYZ(oauthCtx)" }',
+            "list_widgets_lying",
+            # Reason names rowGuardXYZ (ABSENT). Handler instead calls the
+            # blessed scopeFilterGet — enough to fool a central marker list,
+            # never enough to satisfy the door's own (false) declaration.
+            "\t\tconst rows = scopeFilterGet(oauthCtx, raw);\n"
+            "\t\treturn rows;\n",
+        ),
+        encoding="utf-8",
+    )
+    p = run([str(fixture)])
+    assert p.returncode == 0
+    counts = parse_counts(p.stdout)
+    assert counts == {
+        "guarded": 0,
+        "unguarded": 1,
+        "public": 0,
+        "unreadable": 0,
+        "total": 1,
+    }, f"LYING declaration must be UNGUARDED -- stdout={p.stdout}"
 
 
 def test_must_block_exit_1_when_unguarded_exceeds_baseline(tmp_path):
@@ -366,3 +442,55 @@ def test_injection_on_real_material_raises_unguarded_count_then_restores(tmp_pat
     assert real_after.returncode == 0
     counts_real_after = parse_counts(real_after.stdout)
     assert counts_real_after == counts_before
+
+
+# ── Real-slice pin (declared-and-verified rule against the tracked tools.ts) ──
+#
+# The named set of UNGUARDED `filtered` doors is itself derived from the real
+# file, never typed here as a count -- but the MEMBERSHIP is pinned: these are
+# the doors whose declared reason names no PRESENT row-restricting mechanism
+# (an input gate like listTasksGate, or prose naming no call-shaped mechanism
+# at all). If a future edit adds a genuine, reason-named-and-present row guard
+# to one of them, this test SHOULD be updated in the same commit -- that is the
+# point (the set is a reviewed fact, not a frozen magic number).
+
+_EXPECTED_UNGUARDED_FILTERED = {
+    "check_messages",
+    "list_tasks",
+    "bulk_complete_tasks",
+    "list_missions",
+    "list_diaries",
+    "update_recurring_task",
+}
+
+
+def test_real_slice_unguarded_filtered_set_matches_reviewed_doors():
+    text = REAL_TOOLS_TS.read_text(encoding="utf-8")
+    result = scan_source(text)
+    assert result.unreadable == []
+    unguarded = {
+        d.name
+        for d in result.doors
+        if d.kind == "filtered" and classify_door(d) == "unguarded"
+    }
+    assert unguarded == _EXPECTED_UNGUARDED_FILTERED, (
+        f"unguarded filtered set drifted from the reviewed six -- got {unguarded}"
+    )
+
+
+def test_real_slice_known_guarded_filtered_door_stays_guarded():
+    """get_briefing_note genuinely calls scopeFilterGet to restrict rows and
+    its reason names that mechanism -- it MUST classify guarded under the
+    declared-and-verified rule (positive control, mirrors the vitest
+    positive-control describe blocks in src/__tests__/*cross-tenant*)."""
+    text = REAL_TOOLS_TS.read_text(encoding="utf-8")
+    result = scan_source(text)
+    by_name = {d.name: d for d in result.doors}
+    assert "get_briefing_note" in by_name
+    door = by_name["get_briefing_note"]
+    assert door.kind == "filtered"
+    assert classify_door(door) == "guarded"
+    # The reason actually NAMED the mechanism (not blessed by a central list).
+    assert door.filtered_reason_mechanisms, (
+        "get_briefing_note reason must NAME its row-restricting mechanism"
+    )
