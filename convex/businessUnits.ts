@@ -137,6 +137,7 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("businessUnits:update", …) at mcp-server/src/tools.ts:7746 (imperative), never a subscribing pre-org client shell; the RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		const bu = await ctx.db.get(args.buId);
 		if (bu === null) {
 			throw new Error(`Business unit ${args.buId} not found`);

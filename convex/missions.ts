@@ -432,6 +432,7 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missions:update", …) at mcp-server/src/tools.ts:5509 (imperative), never a subscribing pre-org client shell; the RBAC/org-keyed throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		const { missionId, callerOrchestrator, cancelReason, ...fields } = args;
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) {

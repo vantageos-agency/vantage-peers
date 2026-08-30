@@ -1173,6 +1173,7 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:update", …) at mcp-server/src/tools.ts:4586,4950,5022 (imperative), never a subscribing pre-org client shell; the AUTH_REQUIRED/RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		const { taskId, callerOrchestrator, cancelReason, agentCredentialSecret, ...fields } = args;
 		await requireAuthenticatedCaller(
 			ctx,
@@ -1338,6 +1339,12 @@ export const attachReviewArtifact = mutation({
 	handler: async (ctx, args) => {
 		// CORE-A: the tenth public door — closes k17675gzd2bwtnvgp0qzmtx35h8csg23
 		// / PR #1211, matching the gate #1213 applied to the other nine.
+		// write-contract: no mcp-server/src/tools.ts wiring exists for
+		// "tasks:attachReviewArtifact" (grepped, none found) — its only current
+		// callers are convex-test's direct t.mutation(api.tasks.attachReviewArtifact, …)
+		// in convex/__tests__/. This repo has no subscribing pre-org client shell
+		// (no React render path); the RBAC_DENIED/AUTH_REQUIRED throw is reachable
+		// only via an imperative SDK/test call, never an ordinary render.
 		await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2104,6 +2111,7 @@ export const deleteTask = mutation({
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:deleteTask", …) at mcp-server/src/tools.ts:4861 (imperative), never a subscribing pre-org client shell; the AUTH_REQUIRED/RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2709,6 +2717,7 @@ export const bulkComplete = mutation({
 		remaining: v.optional(v.boolean()),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:bulkComplete", …) at mcp-server/src/tools.ts:4303 (imperative), never a subscribing pre-org client shell; the AUTH_REQUIRED/RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — required
 		// on the dry-run preview path too, not only the live write path: a
 		// dry-run still discloses task titles/ids/counts to whoever calls it.
