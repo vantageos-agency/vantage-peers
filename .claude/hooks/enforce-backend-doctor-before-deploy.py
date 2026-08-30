@@ -18,8 +18,12 @@ things, all MECHANICAL:
                  (`exit_code == 2`) -> REFUSE.
   3. STALE    -- the newest evidence pins an EARLIER commit than HEAD
                  (the stale-green defect) -> REFUSE.
+  4. INCOMPLETE -- evidence pins HEAD but a verdict field
+                 (`exit_code`/`mechanical_violations`) is ABSENT or NON-INTEGER,
+                 so it records NO verdict -> could-not-judge -> REFUSE. A missing
+                 field is NOT a defaulted 0 (the D5 hole).
 
-It PASSES when evidence pins HEAD and is mechanically clean.
+It PASSES only when evidence pins HEAD and is mechanically clean.
 
 WHAT IT MUST NOT DO
 -------------------
@@ -53,8 +57,12 @@ OVERRIDE (documented, Laurent-authorized rare case; DEFAULT is refuse):
 Read from the RAW command (it lives in a comment; the tokenizer strips comments
 before analysis, so reading it post-strip would blind the opt-out).
 
-FAIL-OPEN on any unexpected error -> exit 0. A fleet hook never breaks a
-session.
+FAIL-CLOSED for deploys: once the command is (or cannot be ruled out as) a
+Convex deploy, any unexpected error during evaluation REFUSES (exit 2) -- a gate
+that crashes must not let a deploy through. A command confidently NOT a deploy
+still fails-open (exit 0) so a fleet hook never breaks an unrelated session.
+A report that pins HEAD but OMITS/non-integer-types a verdict field
+(exit_code/mechanical_violations) is a could-not-judge -> REFUSE, never a pass.
 
 Exit 0 = allow, Exit 2 = block.
 """
@@ -178,17 +186,52 @@ def _load_reports(repo_root: str) -> list[dict]:
     return out
 
 
-def _is_mechanically_clean(report: dict) -> bool:
-    """Clean iff the doctor could judge (exit_code != 2) AND it found zero
-    MECHANICAL violations. Judgement/process rules never drive this."""
-    if int(report.get("exit_code", 0)) == 2:
-        return False
-    return int(report.get("mechanical_violations", 0)) == 0
+_MISSING = object()
+
+
+def _int_field(report: dict, key: str):
+    """Return the field as an int, or None if it is ABSENT or NON-INTEGER.
+    An omitted or non-integer verdict field is a could-not-judge, never a 0 --
+    the whole point of the D5 hole: a defaulted-to-0 verdict certified clean."""
+    raw = report.get(key, _MISSING)
+    if raw is _MISSING:
+        return None
+    # bool is an int subclass but is never a valid verdict value here.
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None
+    return raw
+
+
+def _clean_verdict(report: dict) -> tuple[bool, str | None]:
+    """(is_clean, incomplete_reason).
+
+    A report is CLEAN only when BOTH verdict fields are present integers AND the
+    doctor could judge (exit_code != 2) AND it found zero MECHANICAL violations.
+
+    An ABSENT or NON-INTEGER `exit_code`/`mechanical_violations` is a
+    could-not-judge -> NOT clean, returned as an incomplete_reason naming the
+    field. This closes the absence-read-as-good-news hole: a well-formed file
+    that pins HEAD but OMITS a verdict field records no verdict and must never
+    certify a clean deploy."""
+    missing = []
+    exit_code = _int_field(report, "exit_code")
+    if exit_code is None:
+        missing.append("exit_code")
+    mech = _int_field(report, "mechanical_violations")
+    if mech is None:
+        missing.append("mechanical_violations")
+    if missing:
+        return False, (
+            "field(s) " + ", ".join(missing) + " are ABSENT or NON-INTEGER"
+        )
+    if exit_code == 2:
+        return False, None  # could-not-judge, but a recorded one -> RED
+    return mech == 0, None
 
 
 def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
     """(verdict, message). verdict in {"pass", "absent", "stale", "red",
-    "refuse"}."""
+    "incomplete", "refuse"}. Only "pass" allows; every other verdict refuses."""
     ship = head_sha(cwd=cwd)
     if not ship:
         return "refuse", (
@@ -206,7 +249,15 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
 
     for r in reports:
         if _sha_matches(r["_sha"], ship):
-            if _is_mechanically_clean(r):
+            clean, incomplete = _clean_verdict(r)
+            if incomplete is not None:
+                return "incomplete", (
+                    f"backend-doctor evidence {os.path.basename(r['_path'])} pins "
+                    f"HEAD {ship[:12]} but records NO usable verdict: {incomplete}. "
+                    "A report that omits (or non-integer-types) a verdict field "
+                    "certifies nothing -- it is a could-not-judge, never a pass."
+                )
+            if clean:
                 return "pass", (
                     f"backend-doctor evidence {os.path.basename(r['_path'])} pins "
                     f"HEAD {ship[:12]} and is mechanically clean "
@@ -265,6 +316,14 @@ def _print_block(verdict: str, detail: str, ship_hint: str) -> None:
 # Core logic (extracted for testability).
 # ---------------------------------------------------------------------------
 
+def _raw_has_deploy_signal(command: str) -> bool:
+    """Cheap, exception-proof last-resort probe: does the raw text even mention
+    a Convex deploy? Used only when structured detection itself raised, so we
+    can decide fail-open (clearly not a deploy) vs fail-closed (might be one)."""
+    low = (command or "").lower()
+    return "convex" in low and "deploy" in low
+
+
 def run_hook(command: str, cwd: str | None = None, data: dict | None = None) -> int:
     if not command:
         return 0
@@ -272,21 +331,52 @@ def run_hook(command: str, cwd: str | None = None, data: dict | None = None) -> 
     # comments; reading post-strip would blind the opt-out).
     if OVERRIDE_RE.search(command):
         return 0
-    if not is_backend_deploy(command):
+
+    # Detect deploy FIRST, defensively. Once we know it's a deploy, any
+    # downstream error must FAIL CLOSED (exit 2) -- a gate that crashes must not
+    # let a deploy through. A command we can confidently rule out as a deploy
+    # stays fail-open.
+    try:
+        is_deploy = is_backend_deploy(command)
+    except Exception as e:
+        # Detection itself crashed: we cannot rule this out as a deploy. Refuse
+        # only if the raw text carries a deploy signal; otherwise allow.
+        if _raw_has_deploy_signal(command):
+            print(
+                "BLOCKED by enforce-backend-doctor-before-deploy: deploy "
+                "detection raised while a Convex deploy signal is present in the "
+                f"command -- failing CLOSED. Error: {e}",
+                file=sys.stderr,
+            )
+            return 2
         return 0
 
-    deploy_cwd = _resolve_deploy_cwd(command, data or {})
-    if cwd is not None:
-        deploy_cwd = cwd
-    repo_root = deploy_cwd or os.getcwd()
-
-    verdict, detail = evaluate(repo_root, deploy_cwd)
-    if verdict == "pass":
+    if not is_deploy:
         return 0
 
-    ship = head_sha(cwd=deploy_cwd) or "<sha>"
-    _print_block(verdict, detail, ship[:12])
-    return 2
+    # From here the command IS a backend deploy. Any error while evaluating the
+    # evidence -> REFUSE (exit 2), never fall through to allow.
+    try:
+        deploy_cwd = _resolve_deploy_cwd(command, data or {})
+        if cwd is not None:
+            deploy_cwd = cwd
+        repo_root = deploy_cwd or os.getcwd()
+
+        verdict, detail = evaluate(repo_root, deploy_cwd)
+        if verdict == "pass":
+            return 0
+
+        ship = head_sha(cwd=deploy_cwd) or "<sha>"
+        _print_block(verdict, detail, ship[:12])
+        return 2
+    except Exception as e:
+        print(
+            "BLOCKED by enforce-backend-doctor-before-deploy: the gate raised "
+            "while evaluating a Convex deploy -- failing CLOSED (a gate that "
+            f"crashes must refuse, not allow). Error: {e}",
+            file=sys.stderr,
+        )
+        return 2
 
 
 # ---------------------------------------------------------------------------
@@ -294,13 +384,29 @@ def run_hook(command: str, cwd: str | None = None, data: dict | None = None) -> 
 # ---------------------------------------------------------------------------
 
 if not globals().get("_TESTING"):
+    raw = ""
     try:
-        data = json.load(sys.stdin)
+        raw = sys.stdin.read()
+        data = json.loads(raw)
         if data.get("tool_name") != "Bash":
             sys.exit(0)
         command = data.get("tool_input", {}).get("command", "") or ""
         sys.exit(run_hook(command, data=data))
-    except Exception as e:  # FAIL-OPEN: a fleet hook never breaks a session.
+    except SystemExit:
+        raise
+    except Exception as e:
+        # Malformed stdin / unexpected error at the boundary. We could not
+        # reliably parse a command. Fail CLOSED only if the raw payload carries
+        # a Convex deploy signal (we cannot rule out a deploy); otherwise
+        # fail-open so a fleet hook never breaks an unrelated session.
+        if _raw_has_deploy_signal(raw):
+            print(
+                "BLOCKED by enforce-backend-doctor-before-deploy: could not "
+                "parse the hook payload but a Convex deploy signal is present -- "
+                f"failing CLOSED. Error: {e}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         print(f"[hook warning] enforce-backend-doctor-before-deploy: {e}",
               file=sys.stderr)
         sys.exit(0)

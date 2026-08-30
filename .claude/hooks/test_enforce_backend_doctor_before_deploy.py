@@ -130,6 +130,103 @@ def test_refuse_message_is_structured():
 
 
 # ---------------------------------------------------------------------------
+# D5 HOLE -- absence/invalid verdict field read as good news. RED-before.
+# ---------------------------------------------------------------------------
+
+def _write_partial_evidence(repo, sha, fields):
+    """Write an evidence file pinning `sha` with an arbitrary field set (used to
+    OMIT or mistype the verdict fields)."""
+    base = {
+        "sha": sha,
+        "cli_commit": "f2f0f687480fa87f99bb348a3accb490d564f254",
+        "convex_path": str(repo / "convex"),
+        "checked": 47,
+        "total": 47,
+    }
+    base.update(fields)
+    (repo / "qa" / f"backend-doctor-{sha}.json").write_text(json.dumps(base))
+
+
+def test_refuse_omits_mechanical_violations():
+    """THE HOLE: evidence pins HEAD but OMITS mechanical_violations -> a defaulted
+    0 wrongly certified clean pre-fix. Must REFUSE (exit 2) and name the field."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _init_repo(tmp)
+        _write_partial_evidence(repo, head, {"exit_code": 0})  # no mech field
+        assert _run(repo) == 2
+        _, msg = _mod.evaluate(str(repo), str(repo))
+        assert "mechanical_violations" in msg
+
+
+def test_refuse_omits_exit_code():
+    """Same hole, other field: OMITS exit_code -> REFUSE, names exit_code."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _init_repo(tmp)
+        _write_partial_evidence(repo, head, {"mechanical_violations": 0})
+        assert _run(repo) == 2
+        _, msg = _mod.evaluate(str(repo), str(repo))
+        assert "exit_code" in msg
+
+
+def test_refuse_non_integer_verdict_fields():
+    """Verdict fields present but NON-INTEGER (strings) -> could-not-judge -> REFUSE."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _init_repo(tmp)
+        _write_partial_evidence(
+            repo, head, {"exit_code": "0", "mechanical_violations": "0"})
+        assert _run(repo) == 2
+        _, msg = _mod.evaluate(str(repo), str(repo))
+        assert "mechanical_violations" in msg or "exit_code" in msg
+
+
+def test_refuse_bool_verdict_field_not_treated_as_int():
+    """A JSON bool is a Python int subclass; it must NOT satisfy the verdict."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _init_repo(tmp)
+        _write_partial_evidence(
+            repo, head, {"exit_code": 0, "mechanical_violations": False})
+        assert _run(repo) == 2
+
+
+# ---------------------------------------------------------------------------
+# FAIL-CLOSED on crash -- deploy-scoped, not universal.
+# ---------------------------------------------------------------------------
+
+def test_fail_closed_on_crash_during_deploy_evaluation(monkeypatch):
+    """An unexpected exception while evaluating a DEPLOY command -> REFUSE (2)."""
+    def boom(*a, **k):
+        raise RuntimeError("injected evaluation crash")
+    monkeypatch.setattr(_mod, "evaluate", boom)
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        assert _run(repo) == 2
+
+
+def test_fail_open_on_crash_for_non_deploy_command(monkeypatch):
+    """The SAME injected error path on a NON-deploy command still allows (0):
+    the fail-closed is deploy-scoped, not universal."""
+    def boom(*a, **k):
+        raise RuntimeError("injected evaluation crash")
+    monkeypatch.setattr(_mod, "evaluate", boom)
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        # Non-deploy: evaluate() is never reached, so the crash never fires.
+        assert _run(repo, "npx convex dev --once") == 0
+
+
+def test_fail_closed_when_detection_raises_with_deploy_signal(monkeypatch):
+    """If deploy DETECTION itself raises and a deploy signal is in the raw text,
+    fail CLOSED (2). If no deploy signal, fail open (0)."""
+    def boom(*a, **k):
+        raise RuntimeError("injected detection crash")
+    monkeypatch.setattr(_mod, "is_backend_deploy", boom)
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        assert _run(repo, "npx convex deploy --yes") == 2
+        assert _run(repo, "echo hello world") == 0
+
+
+# ---------------------------------------------------------------------------
 # PASS SIDE -- prove the gate lets clean+current work through.
 # ---------------------------------------------------------------------------
 
@@ -166,6 +263,14 @@ def test_non_deploy_command_ignored():
     with tempfile.TemporaryDirectory() as tmp:
         repo, _head = _init_repo(tmp)
         assert _run(repo, 'grep -rn "convex deploy" CLAUDE.md') == 0
+
+
+def test_chained_bypass_build_then_deploy_refuses():
+    """Eta's pole: `bun run build && npx convex deploy --yes` must be caught by
+    the shared tokenizer (chained deploy) -> REFUSE when no evidence exists."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        assert _run(repo, "bun run build && npx convex deploy --yes") == 2
 
 
 def test_convex_dev_ignored():
