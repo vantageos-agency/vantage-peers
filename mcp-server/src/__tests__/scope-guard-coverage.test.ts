@@ -21,43 +21,36 @@ import { describe, expect, it } from "vitest";
 
 const SRC = readFileSync(resolve(__dirname, "../tools.ts"), "utf-8");
 
-// Every read/list tool that crosses tenants if unscoped.
-// If you add a new bulk-list or cross-tenant read tool, ADD IT HERE and patch
-// the handler in tools.ts with a scope guard. The CI suite will fail until both.
-const READ_TOOLS_THAT_NEED_GUARD = [
-	// Bulk lists
-	"list_peers",
-	"list_messages",
-	"list_broadcast_status",
-	"list_tasks",
-	"list_tasks_by_mission",
-	"list_missions",
-	"list_diaries",
-	"list_briefing_notes",
-	"list_components",
-	"search_components",
-	"list_recurring_tasks",
-	"list_mandates",
-	"list_bus",
-	"list_repo_mappings",
-	"list_issues",
-	"issue_stats",
-	"search_fix_patterns",
-	"list_fix_patterns",
-	"list_errors",
-	// Single-row get_*
-	"get_memory",
-	"get_profile",
-	"get_mission",
-	"get_diary",
-	"get_component",
-	"get_bu",
-	"get_issue",
-	"get_error",
-	"get_mission_template",
-	// Inbox
-	"check_messages",
-];
+// Every read/list tool that crosses tenants if unscoped -- DERIVED from the
+// registered tool names, never hand-typed. A hand-typed list rots at every
+// new client: the next new read tool is always the one nobody remembered to
+// add, and the coverage test would print PASSED straight through the gap
+// (see scripts/count_unguarded_doors.py, same naming-convention derivation
+// exposed as `derive_read_tool_names` there).
+//
+// Anchor: each tool's own registration-name line, e.g. `\t\t"list_peers",`
+// -- the exact same anchor `extractHandlerBody` below uses, so this list is
+// registration-shape-agnostic (legacy `server.tool(...)` or the
+// mandatory-scope `defineTool(...)` wrapper form) by construction.
+//
+// A registered name is a "read that needs a guard" if it follows the
+// list_*/get_*/search_* naming convention (bulk list or single-row get by
+// construction), or is one of the two structural exceptions that predate
+// that convention but are still reads: `check_messages`, `issue_stats`.
+function deriveReadToolsThatNeedGuard(src: string): string[] {
+	const names = new Set<string>();
+	for (const m of src.matchAll(/^\t+"([a-zA-Z_][a-zA-Z0-9_]*)",$/gm)) {
+		const name = m[1];
+		if (/^(list_|get_|search_)/.test(name)) {
+			names.add(name);
+		} else if (name === "check_messages" || name === "issue_stats") {
+			names.add(name);
+		}
+	}
+	return [...names];
+}
+
+const READ_TOOLS_THAT_NEED_GUARD = deriveReadToolsThatNeedGuard(SRC);
 
 function extractHandlerBody(toolName: string): string | null {
 	// Anchor on the tool's NAME line (its own line, e.g. `\t\t"list_peers",`).
