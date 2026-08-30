@@ -116,7 +116,7 @@ export const autoResolveStaleIrp = internalAction({
 
 		const staleErrors = await ctx.runQuery(
 			internal.errorMonitor.listStaleAutoIrp,
-			{ quietWindowMs: AUTO_RESOLVE_QUIET_WINDOW_MS, limit: 50 },
+			{ quietWindowMs: AUTO_RESOLVE_QUIET_WINDOW_MS, limit: 50 }, // rate-limit exception: scheduled cron batch (cadence = crons.ts "auto-resolve stale irp" interval, 6h), not a caller-facing rate limiter; limit:50 is the real per-run cap.
 		);
 
 		if (staleErrors.length === 0) {

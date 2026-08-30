@@ -33,7 +33,7 @@ export const DEFAULT_RECURRENCE_THRESHOLD = 3;
  * has "stopped recurring". If `lastSeen` is older than NOW - this value,
  * the error is considered quiescent and its IRP mission can be auto-closed.
  */
-export const AUTO_RESOLVE_QUIET_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const AUTO_RESOLVE_QUIET_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours — rate-limit exception: this is a sliding-window quiescence detector (has this error stopped recurring?), not a per-caller throughput limiter; there is no numeric max-requests bound to declare here (R-23).
 
 /**
  * Day 107 — 24h cross-tick re-raise window for the auto-IRP generator.
