@@ -167,3 +167,80 @@ describe("stats.openTaskCountsByOrchestrator — TRUE non-page-capped per-orches
 		expect(kappa!.oldestOpenMs).toBe(earliest._creationTime);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-tenant leak fix (PR #1239 Eta REVISE).
+//
+// PROVES (bipolar, both poles):
+//
+// DENY pole — a client-org identity (client_org_mapping org-a,
+// allowedOrchestrators ["dummy-a"], scope "view-stats-aggregated") must see
+// ONLY its own orchestrator's open-task row. Before the fix, the handler
+// never called `filterByOrgScope` on the per-orchestrator buckets it
+// produces (unlike the sibling `orchestratorStats`, stats.ts:103), so an
+// org-a-scoped caller received BOTH "dummy-a" and "dummy-b" rows — a
+// cross-tenant leak of another org's orchestrator name and open-queue
+// counts. This test is RED against the pre-fix code and GREEN after.
+//
+// ALLOW pole — a master/no-scope identity (Pi running the fleet CSV) must
+// still see every orchestrator, unfiltered, exactly as before the fix.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function seedTwoOrchestratorTasks() {
+	const t = convexTest(schema, modules);
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "org-a",
+			allowedOrchestrators: ["dummy-a"],
+			scopes: ["view-stats-aggregated"],
+			displayName: "org-a",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+		await seedTask(ctx, {
+			title: "org-a open task",
+			assignedTo: "dummy-a",
+			status: "todo",
+			createdBy: "dummy-a",
+		});
+		await seedTask(ctx, {
+			title: "org-b open task",
+			assignedTo: "dummy-b",
+			status: "todo",
+			createdBy: "dummy-b",
+		});
+	});
+	return t;
+}
+
+describe("stats.openTaskCountsByOrchestrator cross-tenant isolation", () => {
+	test("DENY: org-a-scoped caller must see ONLY its own orchestrator, never dummy-b", async () => {
+		const t = await seedTwoOrchestratorTasks();
+
+		const tA = t.withIdentity({
+			subject: "user-org-a",
+			organizationId: "org-a",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const result = await tA.query(api.stats.openTaskCountsByOrchestrator, {});
+		const orchestrators = result.map((r) => r.orchestrator);
+
+		expect(orchestrators).toContain("dummy-a");
+		expect(orchestrators).not.toContain("dummy-b");
+	});
+
+	test("ALLOW: master/no-scope identity must see BOTH orchestrators", async () => {
+		const t = await seedTwoOrchestratorTasks();
+
+		const tMaster = t.withIdentity({ subject: "test-service-account-user-id" });
+
+		const result = await tMaster.query(
+			api.stats.openTaskCountsByOrchestrator,
+			{},
+		);
+		const orchestrators = result.map((r) => r.orchestrator);
+
+		expect(orchestrators).toContain("dummy-a");
+		expect(orchestrators).toContain("dummy-b");
+	});
+});

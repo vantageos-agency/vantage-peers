@@ -366,6 +366,16 @@ export const openTaskCountsByOrchestrator = query({
 		// statuses (done/cancelled/failed) are read but not counted, which is
 		// still a single linear pass (no per-status re-query, no index needed).
 		for await (const task of ctx.db.query("tasks")) {
+			// Org-scope gate — SAME `filterByOrgScope` helper as
+			// `orchestratorStats` (stats.ts:103): a client-org identity only
+			// ever buckets tasks whose `assignedTo` is in its own
+			// `allowedOrchestrators` list (doctrine comment stats.ts:82 —
+			// "client orgs see their OWN orchestrators"). Master scope is a
+			// no-op passthrough inside `filterByOrgScope`. Applied per-row
+			// here (rather than pre-materializing an array) to preserve the
+			// single streamed pass with no `.collect()`.
+			if (filterByOrgScope([task], scope).length === 0) continue;
+
 			const status = task.status as (typeof OPEN_TASK_STATUSES)[number] | string;
 			const isOpen = (OPEN_TASK_STATUSES as readonly string[]).includes(status);
 			if (!isOpen) continue;
@@ -391,6 +401,18 @@ export const openTaskCountsByOrchestrator = query({
 		// has a peer profile but zero open tasks, so it appears as an explicit
 		// 0-row instead of being absent from the result.
 		for await (const profile of ctx.db.query("profiles")) {
+			// Same org-scope gate as the task pass above — a client-org
+			// identity must not have out-of-org orchestrators folded in as
+			// explicit 0-rows either (that would still be a cross-tenant
+			// name leak, just via the zero-fill path instead of the count).
+			if (
+				filterByOrgScope(
+					[{ assignedTo: profile.orchestratorId }],
+					scope,
+				).length === 0
+			) {
+				continue;
+			}
 			if (!byOrchestrator.has(profile.orchestratorId)) {
 				byOrchestrator.set(profile.orchestratorId, emptyBucket());
 			}
