@@ -36,6 +36,12 @@
 import { internalMutation } from "../_generated/server";
 import { v } from "convex/values";
 
+// This is a one-shot migration scanning the whole tasks/missions/briefingNotes
+// tables. 5000 matches the doc comment above stating current table sizes are
+// under 2000 rows combined — this cap is a generous safety ceiling, not an
+// expected total, and stays within the single-transaction limit noted above.
+const ORG_ID_BACKFILL_SCAN_CAP = 5000;
+
 export const run = internalMutation({
 	args: {},
 	returns: v.object({
@@ -49,7 +55,7 @@ export const run = internalMutation({
 		let briefingNotesPatched = 0;
 
 		// ── tasks ──────────────────────────────────────────────────────────────
-		const tasks = await ctx.db.query("tasks").take(5000);
+		const tasks = await ctx.db.query("tasks").take(ORG_ID_BACKFILL_SCAN_CAP);
 		for (const task of tasks) {
 			if (task.orgId === undefined) {
 				// orgId absent → master scope row; leave as-is (undefined = master)
@@ -59,7 +65,9 @@ export const run = internalMutation({
 		}
 
 		// ── missions ───────────────────────────────────────────────────────────
-		const missions = await ctx.db.query("missions").take(5000);
+		const missions = await ctx.db
+			.query("missions")
+			.take(ORG_ID_BACKFILL_SCAN_CAP);
 		for (const mission of missions) {
 			if (mission.orgId === undefined) {
 				missionsPatched++;
@@ -67,7 +75,9 @@ export const run = internalMutation({
 		}
 
 		// ── briefingNotes ──────────────────────────────────────────────────────
-		const briefingNotes = await ctx.db.query("briefingNotes").take(5000);
+		const briefingNotes = await ctx.db
+			.query("briefingNotes")
+			.take(ORG_ID_BACKFILL_SCAN_CAP);
 		for (const note of briefingNotes) {
 			if (note.orgId === undefined) {
 				briefingNotesPatched++;

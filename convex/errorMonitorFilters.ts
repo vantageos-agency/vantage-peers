@@ -40,6 +40,11 @@ import {
 	query,
 } from "./_generated/server";
 
+// Admin-config table (filter rules), not tenant data — 500 active rows is a
+// generous bound for the idempotency dedup scan below; the authoritative
+// cleanup path (dedupeFilterRules) pages through the full table instead.
+const ACTIVE_FILTER_RULES_SCAN_CAP = 500;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types — pure, no Convex deps so this file can be imported by test code
 // ─────────────────────────────────────────────────────────────────────────────
@@ -473,16 +478,17 @@ export const addFilterRule = internalMutation({
 		// existing row's _id instead of inserting a duplicate. Table is small
 		// (admin config, not tenant data), so an in-memory scan over the active
 		// index is acceptable and avoids a new compound index for a rare path.
-		// Bounded via `.take(500)` rather than `.collect()` — the very bug this
-		// mutation fixes proves the table can grow unexpectedly (11 dup rows
-		// found in prod). A duplicate created beyond the first 500 active rows
-		// would not be caught here; that is an acceptable degradation for an
-		// admin table (dedupeFilterRules below is the authoritative cleanup
-		// path and pages through the full table).
+		// Bounded via `.take(ACTIVE_FILTER_RULES_SCAN_CAP)` rather than
+		// `.collect()` — the very bug this mutation fixes proves the table can
+		// grow unexpectedly (11 dup rows found in prod). A duplicate created
+		// beyond the first ACTIVE_FILTER_RULES_SCAN_CAP active rows would not be
+		// caught here; that is an acceptable degradation for an admin table
+		// (dedupeFilterRules below is the authoritative cleanup path and pages
+		// through the full table).
 		const activeRules = await ctx.db
 			.query("errorMonitorFilterRules")
 			.withIndex("by_active", (q) => q.eq("active", true))
-			.take(500);
+			.take(ACTIVE_FILTER_RULES_SCAN_CAP);
 		const existing = activeRules.find((r) => sameRuleTuple(r, args));
 		if (existing) {
 			return existing._id;

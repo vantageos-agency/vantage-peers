@@ -2,6 +2,10 @@ import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
 
+// missionTemplates is a small, curated table (one row per named template);
+// 1000 is a generous ceiling well above any realistic template count.
+const MISSION_TEMPLATES_SCAN_CAP = 1000;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validator for a single template step
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +73,9 @@ export const listNames = query({
 	args: {},
 	returns: v.array(v.string()),
 	handler: async (ctx) => {
-		const templates = await ctx.db.query("missionTemplates").take(1000);
+		const templates = await ctx.db
+			.query("missionTemplates")
+			.take(MISSION_TEMPLATES_SCAN_CAP);
 		return templates
 			.filter((t) => t.deletedAt === undefined)
 			.map((t) => t.name);

@@ -11,6 +11,11 @@ import {
 	computeStuckInProgress,
 } from "./lib/taskClosureGate";
 
+// getUnreadCount only needs the count, not the rows; the receipts table per
+// recipient is small, so this bound exists to guard against unbounded growth
+// rather than reflecting an expected volume.
+const UNREAD_RECEIPTS_SCAN_CAP = 500;
+
 const staleInProgressValidator = v.array(
 	v.object({
 		taskId: v.id("tasks"),
@@ -855,7 +860,7 @@ export const getUnreadCount = query({
 				q.eq("recipient", orchestratorId),
 			)
 			.filter((q) => q.eq(q.field("readAt"), undefined))
-			.take(500);
+			.take(UNREAD_RECEIPTS_SCAN_CAP);
 		return receipts.length;
 	},
 });

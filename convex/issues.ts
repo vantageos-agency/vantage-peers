@@ -4,6 +4,11 @@ import { api } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 
+// getStats aggregates counts across the whole issues table (or a project
+// slice of it); 1000 is a bounded scan ceiling for that small, fleet-wide
+// table, not an expected true total.
+const ISSUES_STATS_SCAN_CAP = 1000;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,9 +403,9 @@ export const getStats = query({
 			issues = await ctx.db
 				.query("issues")
 				.withIndex("by_project", (q) => q.eq("project", args.project!))
-				.take(1000);
+				.take(ISSUES_STATS_SCAN_CAP);
 		} else {
-			issues = await ctx.db.query("issues").take(1000);
+			issues = await ctx.db.query("issues").take(ISSUES_STATS_SCAN_CAP);
 		}
 
 		for (const issue of issues) {
