@@ -7090,6 +7090,21 @@ export function registerTools(
 		},
 		async ({ recurringTaskId, ...fields }) => {
 			try {
+				// IDENTITY-FIRST ordering (Eta REVISE, ETA-M15). The scope guard
+				// below (recurringTasks:getById then scopeFilterGet) must NEVER
+				// answer ahead of identity resolution: a caller with no verified
+				// identity must get the LOUD identity refusal ("cannot be resolved /
+				// no verified Clerk session"), not a SCOPE outcome ("not found or
+				// not in your scope") for a request that never had a resolvable
+				// principal. So we resolve identity and refuse loudly FIRST -- the
+				// same order list_tasks and the other filtered doors use -- THEN
+				// fetch the row and apply the cross-scope mutation guard. Denial is
+				// unchanged in both poles; only which refusal speaks first changes.
+				if (fields.assignedTo) {
+					const assigneeDenied = await guardDelegation(fields.assignedTo);
+					if (assigneeDenied) return assigneeDenied;
+				}
+
 				// k17fcxngeyrfpsh8xrp0fzz9xh8dfkq8 — cross-scope mutation guard.
 				// Before mutating, fetch the target recurring-task row and verify it
 				// is within the caller's scope. Recurring rows carry `createdBy` and
@@ -7114,11 +7129,6 @@ export function registerTools(
 					return mcpError(
 						`Forbidden: update_recurring_task cannot modify ${recurringTaskId} — the recurring task is outside your scope (cross-scope mutation refused).`,
 					);
-				}
-
-				if (fields.assignedTo) {
-					const assigneeDenied = await guardDelegation(fields.assignedTo);
-					if (assigneeDenied) return assigneeDenied;
 				}
 
 				const result = await convex.mutation("recurringTasks:update" as any, {
