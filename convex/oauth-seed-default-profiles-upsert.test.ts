@@ -123,18 +123,17 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 
 		// Verify the row now matches the catalog. Leak fix (task
 		// k173wamy80xmz2z9761d616ybh87zhf7): the catalog no longer carries
-		// orchestrator/victor or global for marie-iris-rh — bounded to her
-		// own org (orchestrator/marie + project/marie) only.
+		// `global` for marie-iris-rh, but orchestrator/victor (this client's
+		// own second orchestrator seat) is preserved alongside
+		// orchestrator/marie + project/marie.
 		const profile = await t.query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
 		});
 		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/marie");
 		expect(profile?.namespaceReadPrefixes).toContain("project/marie");
-		expect(profile?.namespaceReadPrefixes).not.toContain("orchestrator/victor");
+		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/victor");
 		expect(profile?.namespaceReadPrefixes).not.toContain("global");
-		expect(profile?.namespaceWritePrefixes).not.toContain(
-			"orchestrator/victor",
-		);
+		expect(profile?.namespaceWritePrefixes).toContain("orchestrator/victor");
 	});
 
 	test("T4: preserves rows NOT in catalog (no destructive sync)", async () => {
@@ -217,10 +216,11 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		expect(row).not.toBeNull();
 		expect(row?._creationTime).toBe(originalCreationTime);
 		// Catalog content propagated. Leak fix (task
-		// k173wamy80xmz2z9761d616ybh87zhf7): marie-iris-rh no longer carries
-		// orchestrator/victor or global — bounded to her own org.
+		// k173wamy80xmz2z9761d616ybh87zhf7): the only leak was the
+		// fleet-common `global` prefix — orchestrator/victor is this same
+		// client's own second orchestrator seat and stays granted.
 		expect(row?.namespaceReadPrefixes).toContain("orchestrator/marie");
-		expect(row?.namespaceReadPrefixes).not.toContain("orchestrator/victor");
+		expect(row?.namespaceReadPrefixes).toContain("orchestrator/victor");
 		expect(row?.namespaceReadPrefixes).not.toContain("global");
 		// updatedAt bumped to the patch wall-clock.
 		expect(row?.updatedAt).toBeGreaterThan(1000);
@@ -262,11 +262,12 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			"orchestrator/marie",
 		]);
 		// Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7): the catalog no
-		// longer propagates orchestrator/victor or global for marie-iris-rh.
+		// longer propagates `global` for marie-iris-rh, but orchestrator/victor
+		// (this client's own second orchestrator seat) is preserved.
 		expect(next.namespaceReadPrefixes as string[]).toContain(
 			"orchestrator/marie",
 		);
-		expect(next.namespaceReadPrefixes as string[]).not.toContain(
+		expect(next.namespaceReadPrefixes as string[]).toContain(
 			"orchestrator/victor",
 		);
 		expect(next.namespaceReadPrefixes as string[]).not.toContain("global");
