@@ -88,7 +88,14 @@ describe("oauth.getScopeProfile", () => {
 		});
 		expect(profile).not.toBeNull();
 		expect(profile?.fromAllowList).toEqual(["marie"]);
+		// Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7): the only leak was
+		// the fleet-common `global` prefix. orchestrator/victor is this same
+		// client's own second orchestrator seat and stays granted.
+		expect(profile?.namespaceReadPrefixes).not.toContain("global");
+		expect(profile?.namespaceWritePrefixes).not.toContain("global");
+		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/marie");
 		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/victor");
+		expect(profile?.namespaceWritePrefixes).toContain("orchestrator/victor");
 		expect(profile?.namespaceWritePrefixes).toContain("project/marie");
 	});
 

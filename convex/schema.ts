@@ -870,7 +870,8 @@ export default defineSchema({
 		clerkOrgSlug: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
-		.index("by_clientId", ["clientId"]),
+		.index("by_clientId", ["clientId"])
+		.index("by_scopeProfile", ["scopeProfile"]),
 
 	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
 	// Refresh tokens for renewing expired access tokens. Same hashing rules.
@@ -884,7 +885,8 @@ export default defineSchema({
 		revokedAt: v.optional(v.number()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
-		.index("by_clientId", ["clientId"]),
+		.index("by_clientId", ["clientId"])
+		.index("by_scopeProfile", ["scopeProfile"]),
 
 	// ── oauth_scope_profiles ─────────────────────────────────────────────────
 	// Reusable scope templates. An OAuth client references a profile by

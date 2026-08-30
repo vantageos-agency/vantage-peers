@@ -14,7 +14,7 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 import { requireOrgAdmin } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,19 +118,17 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "marie-iris-rh",
 				description:
-					"Marie (the onboarding client) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
+					"Marie (the onboarding client) — send_message as 'marie' only; read/write bounded to her own organisation's namespaces: orchestrator/marie + orchestrator/victor (her own second orchestrator seat) + project/marie. Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7, reworked per operator countermand): removed only the fleet-common `global` prefix — VantagePeers is sold multi-organisation and a client profile must never read/write the shared global namespace. `orchestrator/victor` is KEPT — it is this same client's own orchestrator seat, not another org's namespace, and removing it would have cut the client from their own orchestrator.",
 				fromAllowList: ["marie"],
 				namespaceReadPrefixes: [
 					"orchestrator/marie",
 					"orchestrator/victor",
 					"project/marie",
-					"global",
 				],
 				namespaceWritePrefixes: [
 					"orchestrator/marie",
 					"orchestrator/victor",
 					"project/marie",
-					"global",
 				],
 			},
 			// <redacted-client> trio (Clio + Hélios + Victor) — 3 dual-host
@@ -1843,5 +1841,70 @@ export const listScopeProfiles = query({
 			namespaceReadPrefixes: r.namespaceReadPrefixes,
 			namespaceWritePrefixes: r.namespaceWritePrefixes,
 		}));
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// countClientGlobalUsage — read-only measurement gate (Day-N rework of a
+// client scope profile's global-prefix leak fix, task k173wamy80xmz2z9761d616ybh87zhf7)
+//
+// Before patching prod, the orchestrator needs to know how much LIVE usage
+// actually depends on the `global` namespace for a given scope profile, so
+// the drop can be sized/communicated rather than sprung on the client blind.
+//
+// Scope: only `memories` is namespaced in this schema (see convex/schema.ts —
+// `messages` is keyed by `from`/`channel`/`tenantId`, not `namespace`; there
+// is no `documents` table). So this counts memories rows with
+// `namespace === "global"` whose `createdBy` is one of the target profile's
+// `fromAllowList` identities.
+//
+// Streamed via the `by_namespace` index + `for await` (no unbounded
+// `.collect()`), per Convex query guidelines. Read-only — no writes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const countClientGlobalUsage = internalQuery({
+	args: { scopeProfileId: v.string() },
+	returns: v.object({
+		scopeProfileId: v.string(),
+		fromAllowList: v.array(v.string()),
+		globalMemoriesByClient: v.number(),
+		globalMemoriesInspected: v.number(),
+		note: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.scopeProfileId))
+			.unique();
+		if (!profile) {
+			throw new Error(`scope_profile not found: ${args.scopeProfileId}`);
+		}
+
+		const fromAllowSet = new Set(profile.fromAllowList);
+
+		let globalMemoriesInspected = 0;
+		let globalMemoriesByClient = 0;
+
+		const memoriesQuery = ctx.db
+			.query("memories")
+			.withIndex("by_namespace", (q) =>
+				q.eq("namespace", "global").eq("isLatest", true),
+			);
+
+		for await (const memory of memoriesQuery) {
+			globalMemoriesInspected++;
+			if (fromAllowSet.has(memory.createdBy)) {
+				globalMemoriesByClient++;
+			}
+		}
+
+		return {
+			scopeProfileId: args.scopeProfileId,
+			fromAllowList: profile.fromAllowList,
+			globalMemoriesByClient,
+			globalMemoriesInspected,
+			note:
+				"Only `memories` is namespaced in this schema (verified against convex/schema.ts): `messages` has no `namespace` field and there is no `documents` table, so this count covers memories only.",
+		};
 	},
 });
