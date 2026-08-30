@@ -658,6 +658,7 @@ export const markAsRead = mutation({
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("messages:markAsRead", …) at mcp-server/src/tools.ts:3393 (imperative), never a subscribing pre-org client shell; the org/RBAC-keyed throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		const normalizedIds = args.receiptIds.map((raw, index) =>
 			requireId(
 				ctx,
