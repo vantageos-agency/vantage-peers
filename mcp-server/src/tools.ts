@@ -442,9 +442,7 @@ export const bulkCompleteTasksArgsSchema = z.object({
 		// (not itself `.strict()` — only the TOP-LEVEL args object is, via
 		// registerTool's buildStrictInputSchema) SILENTLY STRIPS an unknown
 		// `status` key before the Convex mutation ever sees it.
-		status: z
-			.enum(["todo", "in_progress", "review", "blocked"])
-			.optional(),
+		status: z.enum(["todo", "in_progress", "review", "blocked"]).optional(),
 	}),
 	dryRun: z.boolean().default(true),
 	completionNoteTemplate: z.string().optional(),
@@ -1758,7 +1756,9 @@ function loadCoreToolNames(): string[] {
 
 	const core = (parsed as { core?: unknown })?.core;
 	if (!Array.isArray(core) || !core.every((n) => typeof n === "string")) {
-		throw new Error(`tool-exposure: "core" must be an array of strings in ${path}`);
+		throw new Error(
+			`tool-exposure: "core" must be an array of strings in ${path}`,
+		);
 	}
 	return core;
 }
@@ -2081,7 +2081,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_memory",
 		"Fetch a single memory by its Convex document ID, including relations and episode metadata. " +
@@ -2104,10 +2105,7 @@ export function registerTools(
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId,
 				});
-				const filtered = scopeFilterGet(
-					oauthCtx ?? DENIED_SCOPE_CTX,
-					memory,
-				);
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, memory);
 				if (filtered === null) {
 					return mcpError(`Memory not found: ${memoryId}`);
 				}
@@ -2413,7 +2411,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_episode",
 		"Fetch a single episode by its memory document ID. Episodes are memories with type='episode' carrying context/goal/action/outcome/insight + severity. " +
@@ -2433,10 +2432,7 @@ export function registerTools(
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId: episodeId,
 				});
-				const filtered = scopeFilterGet(
-					oauthCtx ?? DENIED_SCOPE_CTX,
-					memory,
-				);
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, memory);
 				if (filtered === null) {
 					return mcpError(`Episode not found: ${episodeId}`);
 				}
@@ -2710,7 +2706,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_profile",
 		"Fetch an orchestrator profile with static identity and dynamic session state fields. " +
@@ -3293,18 +3290,12 @@ export function registerTools(
 				const stuckBlocks: string[] = [];
 				// Stuck SIGNAL = entries present OR truncated (a cap with an
 				// empty page is still a signal — never Vide).
-				if (
-					stuckInProgress.entries.length > 0 ||
-					stuckInProgress.truncated
-				) {
+				if (stuckInProgress.entries.length > 0 || stuckInProgress.truncated) {
 					stuckBlocks.push(
 						`stuckInProgress:\n${JSON.stringify(stuckInProgress, null, 2)}`,
 					);
 				}
-				if (
-					peersStuckOnYou.entries.length > 0 ||
-					peersStuckOnYou.truncated
-				) {
+				if (peersStuckOnYou.entries.length > 0 || peersStuckOnYou.truncated) {
 					stuckBlocks.push(
 						`peersStuckOnYou:\n${JSON.stringify(peersStuckOnYou, null, 2)}`,
 					);
@@ -3538,7 +3529,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_peers",
 		"List all orchestrator profiles with current status, summary, and session info, newest first. " +
@@ -3670,7 +3662,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_messages",
 		"List historical messages filtered by session day or sender, newest first; use check_messages for unread. " +
@@ -3810,7 +3803,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"search_messages_by_keyword",
 		"BM25 full-text keyword search over message content, ranked by relevance. " +
@@ -3924,7 +3918,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_broadcast_status",
 		"Show read/unread receipt status for a broadcast message by messageId. " +
@@ -4130,7 +4125,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "scoped in-handler via listTasksGate(oauthCtx, ...)",
+			reason:
+				"no in-handler row scoping yet — listTasksGate validates a caller-supplied assignedTo/createdBy against fromAllowList but does NOT restrict returned rows (returns all rows when no filter is passed); row scoping tracked in k17fcxngeyrfpsh8xrp0fzz9xh8dfkq8",
 		},
 		"list_tasks",
 		LIST_TASKS_TOOL_DESCRIPTION,
@@ -4301,7 +4297,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"search_tasks_by_keyword",
 		"BM25 full-text keyword search over task titles, ranked by relevance. " +
@@ -4657,7 +4654,7 @@ export function registerTools(
 		"fail_task",
 		"Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote " +
 			"describing how the work ended. WHEN: use when the work was genuinely attempted and did not succeed " +
-			"— never call complete_task to close out failed work, and never call update_task with status=\"failed\" " +
+			'— never call complete_task to close out failed work, and never call update_task with status="failed" ' +
 			"(refused server-side; this tool is the only door). A task already done/cancelled cannot be re-terminated as failed. " +
 			"EXAMPLE: fail_task taskId='k178d3ns...' failureNote='Migration errored on row 4102, rolled back cleanly' callerOrchestrator='beta'.",
 		{
@@ -4893,7 +4890,14 @@ export function registerTools(
 			destructiveHint: true,
 			title: "Block task",
 		},
-		async ({ taskId, reason, blockedBy, blockedOnTaskId, blockedCause, callerOrchestrator }) => {
+		async ({
+			taskId,
+			reason,
+			blockedBy,
+			blockedOnTaskId,
+			blockedCause,
+			callerOrchestrator,
+		}) => {
 			try {
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
@@ -4906,7 +4910,8 @@ export function registerTools(
 				if (reason) blockArgs.reason = reason;
 				if (blockedOnTaskId) blockArgs.blockedOnTaskId = blockedOnTaskId as any;
 				if (blockedCause) blockArgs.blockedCause = blockedCause;
-				if (callerOrchestrator) blockArgs.callerOrchestrator = callerOrchestrator;
+				if (callerOrchestrator)
+					blockArgs.callerOrchestrator = callerOrchestrator;
 
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
 
@@ -5010,7 +5015,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_tasks_by_mission",
 		"List all tasks linked to a mission, optionally filtered by status, newest first. " +
@@ -5352,7 +5358,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_mission",
 		"Fetch a single mission by Convex ID with full details: status, pilot, agents, progress, and dates. " +
@@ -5619,7 +5626,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_diary",
 		"Fetch a diary entry for a specific date and orchestrator, returning null if none exists. " +
@@ -5965,7 +5973,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_briefing_note",
 		"Fetch a single briefing note by ID with all fields: title, topic, participants, content, decisions, and links. " +
@@ -6030,7 +6039,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_briefing_notes",
 		LIST_BRIEFING_NOTES_TOOL_DESCRIPTION,
@@ -6188,7 +6198,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"search_briefing_notes_by_keyword",
 		SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION,
@@ -6365,7 +6376,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_components",
 		LIST_COMPONENTS_TOOL_DESCRIPTION,
@@ -6491,7 +6503,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_component",
 		"Fetch a single component by name and type, returning the full source content and metadata. " +
@@ -6646,7 +6659,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"search_components",
 		// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
@@ -6792,7 +6806,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_recurring_tasks",
 		"List recurring task templates filtered by assignee or active status, newest first. " +
@@ -7368,7 +7383,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_mandates",
 		"List mandates filtered by requestedBy, fulfilledBy, or status, newest first with cursor paging. " +
@@ -7702,7 +7718,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_bu",
 		"Fetch a single business unit by Convex document ID, returning null if not found. " +
@@ -7757,7 +7774,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_bus",
 		LIST_BUS_TOOL_DESCRIPTION,
@@ -7997,7 +8015,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_repo_mappings",
 		"List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support. " +
@@ -8807,7 +8826,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"search_fix_patterns",
 		// S3.3 B8 follow-up batch 3 FINAL — DOCTRINE EXCEPTION.
@@ -8878,7 +8898,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"list_fix_patterns",
 		"List fix patterns filtered by source project, newest first with cursor paging support. " +
@@ -9061,7 +9082,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_mission_template",
 		"Fetch a mission template by name with all steps, or null if not found. " +
@@ -9214,7 +9236,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"instantiate_template_into_mission",
 		"Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator. " +
@@ -9837,7 +9860,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_task",
 		"Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note. " +
@@ -9883,7 +9907,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_fix_pattern",
 		"Fetch a single fix pattern by its Convex document ID, including all linked fix attempts. " +
@@ -9921,7 +9946,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_mandate",
 		"Fetch a single spending mandate by its Convex document ID with limits, current spend, and approver chain. " +
@@ -9953,11 +9979,10 @@ export function registerTools(
 							fulfilledBy?: string;
 					  })
 					| null;
-				const filtered = scopeFilterGet(
-					oauthCtx ?? DENIED_SCOPE_CTX,
-					row,
-					["requestedBy", "fulfilledBy"],
-				);
+				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row, [
+					"requestedBy",
+					"fulfilledBy",
+				]);
 				if (filtered === null) {
 					return mcpError(`Mandate not found: ${mandateId}`);
 				}
@@ -9978,7 +10003,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_repo_mapping",
 		"Fetch a single GitHub repo→VP project mapping by repo slug (owner/name). " +
@@ -10013,8 +10039,9 @@ export function registerTools(
 						? null
 						: {
 								...(row as Record<string, unknown>),
-								createdBy: (row as Record<string, unknown>)
-									.orchestrator as string | undefined,
+								createdBy: (row as Record<string, unknown>).orchestrator as
+									| string
+									| undefined,
 							};
 				const scoped = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
@@ -10052,7 +10079,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_message",
 		"Fetch a single peer message by its Convex document ID with full body, channel, sender, sessionDay, and tenant scope. " +
@@ -10124,7 +10152,8 @@ export function registerTools(
 		authCtx,
 		{
 			kind: "filtered",
-			reason: "result set scoped in-handler via scopeFilterList/scopeFilterGet",
+			reason:
+				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_recurring_task",
 		"Fetch a single recurring task definition by its Convex document ID with cron schedule, prompt, assignee, and last-fire metadata. " +
