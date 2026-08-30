@@ -3,10 +3,7 @@ import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
-import {
-	buildDeployTaskPayload,
-	prTouchesDeployableConvex,
-} from "./githubDeployGate";
+import { prTouchesDeployableConvex } from "./githubDeployGate";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -595,48 +592,19 @@ http.route({
 					}
 				}
 
-				// Fail-open: when touchesConvex is null (unknown) we still create
-				// the task. Only skip when we know for sure no convex/ file was
-				// touched.
+				// Deploy decision belongs to the coordinator's merge authorization,
+				// not a separate notice — no task or message is filed here.
+				// touchesConvex is only used for the diagnostic log below; the
+				// deployable-path predicate itself is still load-bearing (see
+				// prTouchesDeployableConvex call above).
 				if (touchesConvex === false) {
 					console.log(
-						`[githubWebhook] PR #${pr.number as number} merged — skipping deploy task + notify (no convex/ changes)`,
+						`[githubWebhook] PR #${pr.number as number} merged — no convex/ changes`,
 					);
 				} else {
-					// Notify orchestrator
-					await ctx.runMutation(api.messages.sendMessage, {
-						from: "system",
-						channel: orchestrator,
-						content: `[GitHub] PR #${pr.number as number} MERGED on ${repoFullName}: ${pr.title as string}. Diff touche convex/ — deploy PROD a arbitrer, token [PROD-DEPLOY-AUTHORIZED] requis.`,
-					});
-
-					// Create deploy task (with Fix 1 pre-create dedup + Fix 3 supersede +
-					// Day 98 k173yr5n1 Mechanism (a) bundled-deploy dedup by timestamp).
-					const mergedAtIso = pr.merged_at as string | undefined;
-					const prMergedAt =
-						mergedAtIso && !Number.isNaN(Date.parse(mergedAtIso))
-							? Date.parse(mergedAtIso)
-							: undefined;
-					const deployTaskPayload = buildDeployTaskPayload({
-						prNumber: pr.number as number,
-						prTitle: pr.title as string,
-						mergedBy:
-							((pr.merged_by as Record<string, unknown>)?.login as
-								| string
-								| undefined) ?? "unknown",
-						htmlUrl: pr.html_url as string,
-						project,
-					});
-					await ctx.runMutation(internal.tasks.createDeployTaskWithDedup, {
-						title: deployTaskPayload.title,
-						description: deployTaskPayload.description,
-						assignedTo: deployTaskPayload.assignedTo,
-						project,
-						priority: deployTaskPayload.priority,
-						createdBy: "system",
-						tags: ["github", "deploy", "pr-merged"],
-						prMergedAt,
-					});
+					console.log(
+						`[githubWebhook] PR #${pr.number as number} merged on ${repoFullName} — diff touches convex/ (deploy decision is the coordinator's, no task filed)`,
+					);
 				}
 			}
 		}

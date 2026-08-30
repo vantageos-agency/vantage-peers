@@ -1,42 +1,47 @@
-// allow-missing-refs: convex/githubDeployGate.ts is the NEW module the GREEN
-// step will create. This RED-step test asserts the module does not exist yet
-// and specifies the required behavior of its two exported pure helpers.
+// convex/__tests__/githubDeployTaskGate.test.ts
 //
-// SECURITY CONTEXT (task k174khqgkhgps846dhypwfz8b58a4fe1, urgent):
-// The GitHub pull_request.closed+merged handler (convex/http.ts:493-609)
-// creates an urgent, autonomously-assigned deploy task on EVERY qualifying
-// merge whose description embeds a paste-ready `npx convex deploy --yes`.
-// That is the exact condition of the Day 103 incident (~50 PROD indexes
-// wiped). Root cause: the "Day 102" diff gate at http.ts:523-574 uses the
-// predicate /^convex\//.test(name) || /^apps\/[^/]+\/convex\//.test(name),
-// which matches TEST files under convex/tests/ too. PR #209 changed only
-// scripts/uc1/joeai-csv-interne.cjs, scripts/uc1/lib/joeai-csv-lib.cjs and
-// convex/tests/uc1/joeai_csv.test.ts — no Convex function was served, yet
-// hasConvex === true fired an urgent deploy task.
+// UPDATE (task k1739e72yrkx4twyj6gwr2x6818dfggk): the deploy-notice generator
+// `buildDeployTaskPayload()` (convex/githubDeployGate.ts) and its call site in
+// convex/http.ts have been REMOVED. It filed an urgent-looking, autonomously
+// assigned "laurent" task on EVERY merged PR whose diff touched a deployable
+// convex/ path — 176 dead rows since April, because PROD is token-gated on a
+// token only the coordinator (Pi) holds, so the row was never actionable.
+// The deploy decision belongs to the coordinator's merge authorization, not a
+// separate notice.
 //
-// This suite specifies two pure helpers from a NEW module
-// convex/githubDeployGate.ts (NOT created here — GREEN step will create it):
+// SECURITY CONTEXT (task k174khqgkhgps846dhypwfz8b58a4fe1, prior incident):
+// The pure predicate below (`prTouchesDeployableConvex`) SURVIVES this change
+// — it has a second consumer in convex/http.ts (the `hasConvex` diagnostic-log
+// branch, http.ts:569) independent of the removed task-filing call site. It
+// remains load-bearing: do not remove it. See the module header in
+// convex/githubDeployGate.ts for the Day 103 incident (~50 PROD indexes
+// wiped) this predicate was built to prevent.
+//
+// This suite specifies the ONE surviving pure helper:
 //
 //   export function prTouchesDeployableConvex(filenames: string[]): boolean
-//   export function buildDeployTaskPayload(args: {
-//     prNumber: number; prTitle: string; mergedBy: string; htmlUrl: string; project: string;
-//   }): { title: string; description: string; priority: "medium"; assignedTo: "laurent" }
 //
-// Required end-state:
-//   1. Emit ONLY if diff touches convex/ OUTSIDE convex/tests/ (also exclude
-//      convex/__tests__/ and convex/_generated/). Otherwise: no task.
-//   2. When emitted: priority "medium", assignee is a HUMAN ("laurent"), never
-//      an autonomous orchestrator.
-//   3. Description contains NO paste-ready deploy command — it states the gate:
-//      PROD is token-gated, a Pi [PROD-DEPLOY-AUTHORIZED] token is required
-//      (publish-protocol.md).
-//   4. Title: `[Deploy?] PR #N merged — diff touche convex/, deploy PROD a arbitrer`.
+// Required end-state (unchanged from before this task):
+//   Deployable   : `convex/...` or `apps/<pkg>/convex/...`
+//   NOT deployable: anything under convex/tests/, convex/__tests__/,
+//                   convex/_generated/ (and the same three under
+//                   apps/<pkg>/convex/). Everything else -> false.
+//
+// TWO-POLE EVIDENCE (buildDeployTaskPayload removal, task-filing behaviour):
+// see convex/__tests__/auto-deploy-gating.test.ts, describe block
+// "auto-deploy-on-merge gating (http.ts) — generator removed", test H:
+//   RED  (before this change, old code): the SAME merged-PR-touching-
+//         convex/schema.ts payload created exactly 1 "deploy"-tagged task
+//         (this was the previous passing assertion,
+//         `expect(countAfter).toBe(countBefore + 1)`, git-history in this
+//         file's prior revision).
+//   GREEN (after this change): the identical payload creates 0 tasks
+//         (`expect(taskCountAfter).toBe(taskCountBefore)` with
+//         taskCountBefore === 0 in a fresh convexTest instance) and sends
+//         0 system notify messages.
 
 import { describe, expect, test } from "vitest";
-import {
-	buildDeployTaskPayload,
-	prTouchesDeployableConvex,
-} from "../githubDeployGate";
+import { prTouchesDeployableConvex } from "../githubDeployGate";
 
 describe("prTouchesDeployableConvex", () => {
 	test("PR #209 regression payload: convex/tests/ only -> false (must NOT fire urgent deploy)", () => {
@@ -91,50 +96,5 @@ describe("prTouchesDeployableConvex", () => {
 				"convex/schema.ts",
 			]),
 		).toBe(true);
-	});
-});
-
-describe("buildDeployTaskPayload", () => {
-	const args = {
-		prNumber: 209,
-		prTitle: "fix(uc1): joeai csv lib + test",
-		mergedBy: "someone",
-		htmlUrl: "https://github.com/org/vantage-memory/pull/209",
-		project: "vantage-memory",
-	};
-
-	test("title matches [Deploy?] PR #209 merged pattern", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.title).toMatch(/^\[Deploy\?\] PR #209 merged/);
-	});
-
-	test("priority is medium (never urgent)", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.priority).toBe("medium");
-	});
-
-	test("assignedTo is the human laurent (never an autonomous orchestrator)", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.assignedTo).toBe("laurent");
-	});
-
-	test("description contains NO paste-ready `npx convex deploy` command", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.description).not.toMatch(/npx convex deploy/);
-	});
-
-	test("description contains NO `git checkout main` command", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.description).not.toMatch(/git checkout main/);
-	});
-
-	test("description mentions the PROD-DEPLOY-AUTHORIZED gate", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.description).toMatch(/PROD-DEPLOY-AUTHORIZED/);
-	});
-
-	test("description still carries the PR html_url", () => {
-		const p = buildDeployTaskPayload(args);
-		expect(p.description).toContain(args.htmlUrl);
 	});
 });
