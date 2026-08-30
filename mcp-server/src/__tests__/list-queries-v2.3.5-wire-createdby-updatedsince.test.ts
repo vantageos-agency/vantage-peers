@@ -103,7 +103,12 @@ describe("list_tasks MCP→convex.query boundary (v2.3.5)", () => {
 		expect(queryArgs.createdBy).toBe("pi");
 		expect(queryArgs.updatedSince).toBe(1779800000000);
 		expect(queryArgs.status).toBe("review");
-		expect(queryArgs.fields).toBe("lite");
+		// REASON: list_tasks must request FULL rows from tasks:list — even when the
+		// caller asks for fields="lite" — so the MCP-side scope filter (scopeFilterList)
+		// can read each row's real `createdBy` to enforce row-scope. The handler then
+		// reprojects the surviving rows down to the lite shape for the caller. Hence the
+		// wire value forwarded to Convex is "full", independent of the caller's request.
+		expect(queryArgs.fields).toBe("full");
 	});
 
 	it("passes limit=undefined when caller omits it (auto-clamp trigger path)", async () => {
