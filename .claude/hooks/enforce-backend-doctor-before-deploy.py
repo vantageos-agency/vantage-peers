@@ -14,8 +14,11 @@ things, all MECHANICAL:
   1. ABSENT   -- no backend-doctor evidence for the CURRENT git HEAD exists
                  ("never run against this version") -> REFUSE.
   2. RED      -- evidence for HEAD exists but carries mechanical violations
-                 (`mechanical_violations > 0`) or the doctor could-not-judge
-                 (`exit_code == 2`) -> REFUSE.
+                 (`mechanical_violations > 0`) -> REFUSE. A recorded
+                 could-not-judge (`exit_code == 2`) with zero mechanical
+                 violations is NOT red: abstention is a real backend's normal
+                 state (Eta ruling 2026-08-30) and the abstentions stay counted
+                 in the report; mechanical_violations is the sole refusal driver.
   3. STALE    -- the newest evidence pins an EARLIER commit than HEAD
                  (the stale-green defect) -> REFUSE.
   4. INCOMPLETE -- evidence pins HEAD but a verdict field
@@ -205,14 +208,29 @@ def _int_field(report: dict, key: str):
 def _clean_verdict(report: dict) -> tuple[bool, str | None]:
     """(is_clean, incomplete_reason).
 
-    A report is CLEAN only when BOTH verdict fields are present integers AND the
-    doctor could judge (exit_code != 2) AND it found zero MECHANICAL violations.
+    A report is CLEAN only when BOTH verdict fields are present integers AND it
+    found zero MECHANICAL violations. `exit_code` must still be a present integer
+    (the absence-read-as-good-news hole stays closed), but its VALUE — including
+    a recorded could-not-judge (`exit_code == 2`) — no longer forces RED.
 
-    An ABSENT or NON-INTEGER `exit_code`/`mechanical_violations` is a
+    Eta ruling (2026-08-30): the deployable question is "did the doctor find
+    nothing it can DECIDE?", not "did it find nothing?". A backend structurally
+    ABSTAINS by design — VP's R-15/R-32/R-39/R-42 are D5-delivery-gate rules and
+    every isolation-contract / write-contract marker is a reviewer-verified claim
+    the static pass cannot decide — so `exit_code == 2` is a healthy backend's
+    NORMAL state, and refusing on it makes the gate unsatisfiable for any real
+    tree. mechanical_violations is therefore the SOLE refusal driver: a non-zero
+    mechanical count still refuses regardless of exit code. This does NOT collapse
+    exit 2 into a silent green — the abstentions remain printed and counted in the
+    doctor report; only the deploy VERDICT changed, which is precisely the
+    distinction three-state-verdict.md preserves (a could-not-judge is surfaced,
+    never suppressed; it just does not, on its own, block a deploy that has zero
+    mechanical violations).
+
+    An ABSENT or NON-INTEGER `exit_code`/`mechanical_violations` is still a
     could-not-judge -> NOT clean, returned as an incomplete_reason naming the
-    field. This closes the absence-read-as-good-news hole: a well-formed file
-    that pins HEAD but OMITS a verdict field records no verdict and must never
-    certify a clean deploy."""
+    field. A well-formed file that pins HEAD but OMITS a verdict field records no
+    verdict and must never certify a clean deploy."""
     missing = []
     exit_code = _int_field(report, "exit_code")
     if exit_code is None:
@@ -224,8 +242,8 @@ def _clean_verdict(report: dict) -> tuple[bool, str | None]:
         return False, (
             "field(s) " + ", ".join(missing) + " are ABSENT or NON-INTEGER"
         )
-    if exit_code == 2:
-        return False, None  # could-not-judge, but a recorded one -> RED
+    # exit_code is a present integer here (absence handled above); its value does
+    # not force RED. mechanical_violations is the sole refusal driver.
     return mech == 0, None
 
 
