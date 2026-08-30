@@ -88,7 +88,13 @@ describe("oauth.getScopeProfile", () => {
 		});
 		expect(profile).not.toBeNull();
 		expect(profile?.fromAllowList).toEqual(["marie"]);
-		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/victor");
+		// Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7): marie-iris-rh is
+		// bounded to her own org only — no orchestrator/victor, no global.
+		expect(profile?.namespaceReadPrefixes).not.toContain("orchestrator/victor");
+		expect(profile?.namespaceReadPrefixes).not.toContain("global");
+		expect(profile?.namespaceWritePrefixes).not.toContain("orchestrator/victor");
+		expect(profile?.namespaceWritePrefixes).not.toContain("global");
+		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/marie");
 		expect(profile?.namespaceWritePrefixes).toContain("project/marie");
 	});
 

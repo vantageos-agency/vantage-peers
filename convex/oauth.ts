@@ -118,20 +118,10 @@ export const seedDefaultProfiles = mutation({
 			{
 				profileId: "marie-iris-rh",
 				description:
-					"Marie (the onboarding client) — send_message as 'marie' only; read/write in her own orchestrator namespace + project namespace + global. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention.",
+					"Marie (the onboarding client) — send_message as 'marie' only; read/write bounded to her own org: orchestrator/marie + project/marie. Day 88 fix: added orchestrator/marie which was missing — every orchestrator owns their orchestrator/<name> namespace by convention. Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7): removed `global` and `orchestrator/victor` — VantagePeers is sold multi-organisation and a client profile must never read/write another org's orchestrator namespace or the shared global namespace.",
 				fromAllowList: ["marie"],
-				namespaceReadPrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-					"global",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-					"global",
-				],
+				namespaceReadPrefixes: ["orchestrator/marie", "project/marie"],
+				namespaceWritePrefixes: ["orchestrator/marie", "project/marie"],
 			},
 			// <redacted-client> trio (Clio + Hélios + Victor) — 3 dual-host
 			// orchestrator personas sharing a project workspace; each profile
