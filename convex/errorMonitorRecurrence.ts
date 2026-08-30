@@ -60,7 +60,7 @@ export interface RecurrenceDecisionInput {
 	/** Effective recurrence threshold for this row (per-row override or default). */
 	effectiveThreshold: number;
 	/** The 24h (or configured) re-raise window, ms. */
-	reraiseWindowMs: number;
+	reraiseWindowMs: number; // rate-limit exception: pure decision-logic module (no I/O, no caller to throttle); this is a re-raise measurement window, not a rate-limit control.
 }
 
 export interface RecurrenceDecisionOutput {

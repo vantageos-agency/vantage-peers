@@ -294,8 +294,8 @@ app.get("/.well-known/oauth-authorization-server", (c) => {
 
 type RateBucket = { count: number; windowStart: number };
 const registerRateBuckets = new Map<string, RateBucket>();
-const REGISTER_RATE_LIMIT = 5;
-const REGISTER_RATE_WINDOW_MS = 60_000;
+const REGISTER_RATE_LIMIT = 5; // maxPerWindow: 5
+const REGISTER_RATE_WINDOW_MS = 60_000; // windowMs: 60_000
 
 function checkRegisterRateLimit(ip: string): boolean {
 	const now = Date.now();

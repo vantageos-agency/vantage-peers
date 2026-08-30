@@ -33,7 +33,7 @@ const MAX_STALE_HOURS = 720;
 
 type StatsWindow = "24h" | "7d" | "30d";
 
-function windowMs(window: StatsWindow): number {
+function windowMs(window: StatsWindow): number { // rate-limit exception: stats-aggregation display window (24h/7d/30d), not a rate limiter; the query is auth-gated (withOrgScope/requireScope) and read-bounded (TASK_CAP=5000).
 	switch (window) {
 		case "24h":
 			return 24 * 60 * 60 * 1_000;
