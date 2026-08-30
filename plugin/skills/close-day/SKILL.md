@@ -7,7 +7,7 @@ description: >
   "bonne nuit", "wrap up", "call it a day", "close session", "daily close",
   or mentions ending their work session -- even if they don't say "close-day" explicitly.
 metadata:
-  version: "2.3.0"
+  version: "2.4.0"
   user-invocable: true
 license: Proprietary
 ---
@@ -96,22 +96,54 @@ rises two evenings running is a steering failure, not an accident.
 ## Step 4 — Leave the disk clean
 
 A full disk makes an install die on ENOSPC, which surfaces as a false "build broken" and costs
-the whole fleet review cycles refuting a regression that never existed.
+the whole fleet review cycles refuting a regression that never existed. The probe is **whole
+filesystem**, never scoped to repository clones alone — node_modules and worktrees are one
+perimeter among several (`/home`, `/root`, `/tmp`, `/var`), and a probe that only ever looks at
+repository clones will report a clean disk while a different perimeter fills it. This was the
+recurring defect: a single-directory read presented as a machine-wide figure.
 
 1. `df -h /` **before** — record it.
-2. **node_modules first**, in terminal or abandoned worktrees and stale sandboxes. It is the
-   weight, it is reinstallable, and deleting it destroys zero work.
-3. **Audit each worktree before removing it**: `git -C <wt> worktree list` (never delete a live
-   one) and `git -C <wt> log @{u}..HEAD` (non-empty means unpushed commits — do not delete).
-4. **Never touch another orchestrator's live sandbox**, and never delete client data — flag it
-   to the human instead.
-5. `df -h /` **after** — record it. Still above 85%, escalate to pi: the pressure comes from
-   another perimeter.
+2. **Enumerate every top-level perimeter**, not only repository clones:
+   ```
+   du -sh /* 2>/dev/null | sort -rh | head
+   du -sh /home/elpi/.[!.]* 2>/dev/null | sort -rh | head
+   du -sh /tmp/* 2>/dev/null | sort -rh | head
+   ```
+   Read the output before touching anything. Name every directory examined, not just the ones
+   reclaimed.
+3. **node_modules and abandoned worktrees/sandboxes** are reclaimed first — reinstallable,
+   destroys zero work. **Audit each worktree before removing it**: `git -C <wt> worktree list`
+   (never delete a live one) and `git -C <wt> log @{u}..HEAD` (non-empty means unpushed commits
+   — do not delete).
+4. **Regenerable package-manager and tool caches** are the next highest-value reclaim on a
+   shared box: `~/.npm/_cacache`, `~/.bun/install/cache`, `~/.cache/puppeteer`,
+   `~/.cache/ms-playwright`, and similar re-downloadable caches under `~/.cache`. Name each
+   before/after.
+5. **Dead session scratch under `/tmp/claude-<uid>/<workspace>/<uuid>/`** — a session dir is
+   reclaimable only if its mtime is older than 48h AND its uuid is not in the live set (cross-
+   check `ps aux | grep -oE 'resume=[a-f0-9-]{36}'`) AND it is not this session's own scratch.
+   When uncertain, skip it.
+6. **Never touch another orchestrator's live sandbox**, never delete client data, and never
+   delete another user's home directory (`/home/<other-user>`), a backup/archive path, or
+   anything whose owner or liveness was not established — flag it to the human instead.
+7. **Print a SKIPPED (and why) list.** Every perimeter examined in Step 2 that was NOT
+   reclaimed gets one line: the path and the reason (another user's home, live session,
+   installed tooling not a cache, backup/archive, owner unconfirmed).
+8. **Positive control.** Run one reclaim/measurement command against a path that does not
+   exist (e.g. `du -sh /home/elpi/.nonexistent-xyz`) and confirm it FAILS LOUDLY, naming the
+   path it could not read (`No such file or directory`). A command that silently prints `0` or
+   nothing for a missing path is not trustworthy for the real perimeters — re-verify the probe
+   before relying on it.
+9. `df -h /` **after** — record it. Still above 85%, escalate to pi: the pressure comes from
+   another perimeter not yet identified, and it is named in the escalation.
 
 ```
 DISK:
 - df /: <X%> -> <Y%>
-- node_modules purged: <N> | worktrees reaped: <M> (unpushed=0 verified on each)
+- perimeters examined: /home/elpi/*, /root, /tmp/*, /var, /  (paste the du -sh output, or its top lines)
+- reclaimed: <path> <before> -> <after>, <path> <before> -> <after>, ...
+- skipped (and why): <path> (<reason>), <path> (<reason>), ...
+- positive control: <command run against a missing path> -> <loud failure text, never a silent zero>
 - escalated: yes/no
 ```
 
@@ -274,6 +306,13 @@ without having to ask you for them.
 
 ## Changelog
 
+- **v2.4.0** — The disk step enumerates the whole filesystem (`/home/elpi/.*`, `/tmp/*`,
+  `/root`, `/var`, `/*`) and reports a SKIPPED (and why) list, instead of scoping the probe to
+  node_modules and worktrees inside repository clones. A single-directory read reporting a
+  machine-wide figure was the recurring defect — a probe that only ever looked at repository
+  clones reported a clean disk while `/tmp/claude-<uid>` session scratch and package-manager
+  caches filled it. Adds a positive control: a reclaim command run against a path that does not
+  exist must fail loudly, naming the path, never print a silent zero.
 - **v2.3.0** — The index moves out of `summary` and into its own field, `endOfDayIndex`. Written
   into `summary`, it was destroyed every morning before anyone read it: `summary` is the live
   status and the first write of the day overwrites it, leaving no trace that an index had ever
