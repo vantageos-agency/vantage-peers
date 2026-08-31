@@ -161,7 +161,7 @@ async function findExistingIdByPaginating(
 	throw new Error(
 		"OKF_IMPORT_DEDUP_CEILING_EXCEEDED: findExistingIdByPaginating hit the " +
 			"4096-hop pagination ceiling without a definitive match/no-match " +
-			"result. Refusing to treat this as \"not found\" to avoid silently " +
+			'result. Refusing to treat this as "not found" to avoid silently ' +
 			"reinserting a duplicate row.",
 	);
 }
@@ -966,6 +966,15 @@ export const importOkfBundle = action({
 		};
 		const now = 1_700_000_000_000; // deterministic for tests; real callers pass through Convex scheduler
 
+		// atomicity-exception: independent-per-item-loop-writes — this `for (const entry
+		// of entries)` loop issues one ctx.runMutation per parsed entry
+		// (_insertImportedMemory / _insertImportedBriefing / _insertImportedTask), each an
+		// idempotent contentHash findOrCreate (R-18). The per-item writes are independently
+		// atomic: no invariant spans two of them — an entry's row is self-contained, a
+		// mid-loop failure leaves the already-imported entries intact and the remainder is
+		// re-importable (the contentHash dedup makes a replay a no-op). Collapsing the loop
+		// into one mutation would game R-29's regex without changing atomicity — there is no
+		// cross-entry transaction to preserve. (backend-doctor R-29 shape 2, Eta-ruled.)
 		for (const entry of entries) {
 			const parsed = parseEntry(entry);
 			if (parsed === null) continue;
