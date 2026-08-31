@@ -129,7 +129,7 @@ http.route({
 
 			// 4. Guard: no template or empty steps — notify and exit
 			if (template === null || template.steps.length === 0) {
-				await ctx.runMutation(api.messages.sendMessage, {
+				await ctx.runMutation(internal.messages.sendMessageInternal, {
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string} — template issue-resolution-v3 not found, no mission created. ${issue.html_url as string}`,
@@ -287,7 +287,7 @@ http.route({
 			}
 
 			// 9. Notify orchestrator after mission is fully built
-			await ctx.runMutation(api.messages.sendMessage, {
+			await ctx.runMutation(internal.messages.sendMessageInternal, {
 				from: "system",
 				channel: orchestrator,
 				content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string}. Mission created with ${template.steps.length} IRP tasks (T0-T${template.steps.length - 1}). Last task assigned to Eta for review. ${issue.html_url as string}`,
@@ -313,7 +313,7 @@ http.route({
 				(label?.name as string | undefined)?.toLowerCase().includes("urgent") ||
 				(label?.name as string | undefined)?.toLowerCase().includes("p0")
 			) {
-				await ctx.runMutation(api.messages.sendMessage, {
+				await ctx.runMutation(internal.messages.sendMessageInternal, {
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] Issue #${issue.number as number} labeled ${label?.name as string}: ${issue.title as string} — ${issue.html_url as string}`,
@@ -368,7 +368,7 @@ http.route({
 
 			// Notify orchestrator of every external comment
 			const commentBody = (comment.body as string) || "";
-			await ctx.runMutation(api.messages.sendMessage, {
+			await ctx.runMutation(internal.messages.sendMessageInternal, {
 				from: "system",
 				channel: orchestrator,
 				content: `[GitHub] New comment on #${issue.number as number} by ${(comment.user as Record<string, unknown>).login as string}: ${commentBody.slice(0, 200)}${commentBody.length > 200 ? "..." : ""} — ${comment.html_url as string}`,
@@ -430,7 +430,7 @@ http.route({
 					createdBy: "system",
 					tags: ["github", "assigned"],
 				});
-				await ctx.runMutation(api.messages.sendMessage, {
+				await ctx.runMutation(internal.messages.sendMessageInternal, {
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] Assigned to you: #${issue.number as number} ${issue.title as string} — ${issue.html_url as string}`,
@@ -467,7 +467,7 @@ http.route({
 			});
 
 			// Notify Eta
-			await ctx.runMutation(api.messages.sendMessage, {
+			await ctx.runMutation(internal.messages.sendMessageInternal, {
 				from: "system",
 				channel: "eta",
 				content: `[GitHub] ${actionLabel}: ${repoFullName} PR #${pr.number as number} by ${(pr.user as Record<string, unknown>)?.login as string ?? "unknown"}: ${pr.title as string} — ${pr.html_url as string}`,
@@ -489,7 +489,7 @@ http.route({
 			const reviewBody = (review.body as string || "").slice(0, 200);
 			const bodySnippet = reviewBody ? ` — "${reviewBody}${(review.body as string || "").length > 200 ? "..." : ""}"` : "";
 
-			await ctx.runMutation(api.messages.sendMessage, {
+			await ctx.runMutation(internal.messages.sendMessageInternal, {
 				from: "system",
 				channel: orchestrator,
 				content: `[GitHub] PR #${pr.number as number} review: ${reviewState} by ${reviewer}${bodySnippet}. ${pr.title as string} — ${pr.html_url as string}`,

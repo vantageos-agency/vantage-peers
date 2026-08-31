@@ -97,11 +97,19 @@ describe("checkNewMessages — frozen legacy contract (Day 130 regression guard)
 				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
 			}),
 		);
-		await t.mutation(api.messages.sendMessage, {
-			from: "pi",
-			channel: "tau",
-			content: "Frozen contract smoke",
-		});
+		// Setup send: this test exercises checkNewMessages' legacy return
+		// shape, not sendMessage's own auth — authenticate as the
+		// service-account master identity (tenant-scope-write-symmetry
+		// closed the silent no-identity path).
+		await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.mutation(api.messages.sendMessage, {
+				from: "pi",
+				channel: "tau",
+				content: "Frozen contract smoke",
+			});
 
 		const result = await t.query(api.messages.checkNewMessages, {
 			recipient: "tau",
