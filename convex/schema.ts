@@ -121,7 +121,7 @@ export default defineSchema({
 		.index("by_creator", ["createdBy", "isLatest"])
 		.index("by_namespace_type", ["namespace", "type", "isLatest"])
 		// R-18 import idempotency lookup — (namespace, contentHash) findOrCreate.
-		.index("by_namespace_contentHash", ["namespace", "contentHash"]),
+		.index("by_namespace_contentHash", ["namespace", "isLatest", "contentHash"]),
 
 	// ── profiles ────────────────────────────────────────────────────────────────
 	// One row per INSTANCE. orchestratorId = role (pi/tau/phi).

@@ -77,11 +77,60 @@ describe("R-18 import replay idempotence", () => {
 			ctx.db
 				.query("memories")
 				.withIndex("by_namespace_contentHash", (q) =>
-					q.eq("namespace", ns).eq("contentHash", contentHash),
+					q.eq("namespace", ns).eq("isLatest", true).eq("contentHash", contentHash),
 				)
 				.collect(),
 		);
 		expect(rows).toHaveLength(1);
+	});
+
+	// Eta REVISE #1253: the dedup is scoped to the LIVE row. A memory can be flipped
+	// isLatest:false WITHOUT deletion (soft_delete_memory, the TTL cron, the `updates`
+	// relation). Without isLatest in the index, a re-import matches that DEAD row,
+	// inserts nothing, and falsely reports success — the memory stays unrestored. This
+	// pole proves a re-import over a superseded row creates a NEW live row.
+	test("memory: re-import over a SUPERSEDED (isLatest:false) row inserts a fresh live row", async () => {
+		const t = createTestConvex();
+		const ns = "team/acme-corp";
+		const content = "Imported memory body — supersede-then-reimport.";
+		const contentHash = hash(content);
+
+		const dead = await t.mutation(internal.okfBundle._insertImportedMemory, {
+			namespace: ns,
+			type: "reference",
+			content,
+			createdBy: "sigma",
+			contentHash,
+			now: NOW,
+		});
+		// Simulate soft_delete / TTL / an `updates` supersede: flip to isLatest:false,
+		// row NOT deleted.
+		await t.run((ctx) => ctx.db.patch(dead, { isLatest: false }));
+
+		const revived = await t.mutation(internal.okfBundle._insertImportedMemory, {
+			namespace: ns,
+			type: "reference",
+			content,
+			createdBy: "sigma",
+			contentHash,
+			now: NOW,
+		});
+
+		// The re-import did NOT match the dead row — it inserted a new live row.
+		expect(revived).not.toBe(dead);
+		const live = await t.run((ctx) =>
+			ctx.db
+				.query("memories")
+				.withIndex("by_namespace_contentHash", (q) =>
+					q.eq("namespace", ns).eq("isLatest", true).eq("contentHash", contentHash),
+				)
+				.collect(),
+		);
+		expect(live).toHaveLength(1);
+		expect(live[0]._id).toBe(revived);
+		// The superseded row still exists, untouched.
+		const deadRow = await t.run((ctx) => ctx.db.get(dead));
+		expect(deadRow?.isLatest).toBe(false);
 	});
 
 	test("briefing: a replayed insert returns the same _id, writes one row", async () => {
@@ -220,6 +269,54 @@ describe("R-18 idempotency key is tenant-scoped — cross-tenant deny", () => {
 				.query("tasks")
 				.withIndex("by_orgId_contentHash", (q) =>
 					q.eq("orgId", "tenant-b").eq("contentHash", contentHash),
+				)
+				.collect(),
+		);
+		expect(aRows).toHaveLength(1);
+		expect(bRows).toHaveLength(1);
+		expect(aRows[0]._id).toBe(idA);
+		expect(bRows[0]._id).toBe(idB);
+	});
+
+	// Eta REVISE #1253: the memory path needs the same cross-tenant twin as task —
+	// the memory dedup keys on `namespace` (team/<orgId>), so identical content in two
+	// tenants must resolve to two distinct live rows, never a cross-tenant dedup match.
+	test("memory: same content, two tenants → two distinct rows, no cross-tenant match", async () => {
+		const t = createTestConvex();
+		const content = "Shared memory body.";
+		const contentHash = hash(content);
+
+		const idA = await t.mutation(internal.okfBundle._insertImportedMemory, {
+			namespace: "team/tenant-a",
+			type: "reference",
+			content,
+			createdBy: "sigma",
+			contentHash,
+			now: NOW,
+		});
+		const idB = await t.mutation(internal.okfBundle._insertImportedMemory, {
+			namespace: "team/tenant-b",
+			type: "reference",
+			content,
+			createdBy: "sigma",
+			contentHash,
+			now: NOW,
+		});
+
+		expect(idB).not.toBe(idA);
+		const aRows = await t.run((ctx) =>
+			ctx.db
+				.query("memories")
+				.withIndex("by_namespace_contentHash", (q) =>
+					q.eq("namespace", "team/tenant-a").eq("isLatest", true).eq("contentHash", contentHash),
+				)
+				.collect(),
+		);
+		const bRows = await t.run((ctx) =>
+			ctx.db
+				.query("memories")
+				.withIndex("by_namespace_contentHash", (q) =>
+					q.eq("namespace", "team/tenant-b").eq("isLatest", true).eq("contentHash", contentHash),
 				)
 				.collect(),
 		);

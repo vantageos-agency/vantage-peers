@@ -564,8 +564,16 @@ export const _insertImportedMemory = internalMutation({
 	handler: async (ctx, args) => {
 		const existing = await ctx.db
 			.query("memories")
+			// Scope the dedup to the LIVE row (isLatest:true). The by_namespace_contentHash
+			// index carries isLatest because soft_delete_memory, the TTL cron, and the
+			// `updates` relation all flip a memory to isLatest:false WITHOUT deleting it —
+			// without this column a re-import would match a DEAD row, insert nothing, and
+			// falsely report success, leaving the memory unrestored (Eta REVISE #1253).
 			.withIndex("by_namespace_contentHash", (q) =>
-				q.eq("namespace", args.namespace).eq("contentHash", args.contentHash),
+				q
+					.eq("namespace", args.namespace)
+					.eq("isLatest", true)
+					.eq("contentHash", args.contentHash),
 			)
 			.unique();
 		if (existing !== null) return existing._id;

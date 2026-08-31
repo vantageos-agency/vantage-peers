@@ -9,8 +9,11 @@
  * Schema mirror (RULE #24 — Day 108): the Convex import path now persists a
  * per-row `contentHash` (sha256 of each entity's dedup key) on the
  * `memories` / `briefingNotes` / `tasks` tables, indexed by
- * `by_namespace_contentHash` (memories) / `by_orgId_contentHash`
- * (briefings, tasks). That field is the R-18 idempotency backstop: each
+ * `by_namespace_contentHash` (memories — `[namespace, isLatest, contentHash]`,
+ * the dedup scoped to the LIVE row so a re-import over a superseded/soft-deleted
+ * memory inserts a fresh live row rather than matching the dead one, Eta REVISE
+ * #1253) / `by_orgId_contentHash` (briefings, tasks). That field is the R-18
+ * idempotency backstop: each
  * `_insertImported*` mutation is an atomic findOrCreate, so a retried delivery
  * between the caller's dedup scan and the insert can no longer duplicate a row
  * (the prior check-then-insert was a two-round-trip TOCTOU). The hash is
