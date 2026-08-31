@@ -3,6 +3,19 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
+// R-20 — this file only registers cron schedules; it performs no table scan
+// itself. Each target handler enforces its own per-run bound + outcome log:
+//   - recurringTasks.processDueTasks      -> RECURRING_TASKS_LIST_SCAN_CAP (recurringTasks.ts)
+//   - errorMonitorActions.pollAllDeployments -> DEPLOY_POLL_CAP (errorMonitorActions.ts)
+//   - errorMonitorAutoResolver.autoResolveStaleIrp -> limit:50 (errorMonitorAutoResolver.ts:119)
+//   - issueClosedSweep.sweepIssueClosed   -> SWEEP_MISSION_FANOUT_CAP (issueClosedSweep.ts)
+// This file's own bound is definitional (a fixed cron schedule, not a data
+// scan): CRON_JOB_CAP below is the exact count of jobs registered here, and
+// this module logs it once per cold start so a wiring drift (a job added
+// without updating the cap) is visible immediately.
+const CRON_JOB_CAP = 7;
+console.log(`[crons] registered ${CRON_JOB_CAP} cron job(s).`);
+
 // Process recurring tasks every 15 minutes
 crons.interval(
 	"process recurring tasks",

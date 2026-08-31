@@ -33,6 +33,13 @@ type SweepResult = {
 	errors: number;
 };
 
+// R-20 — per-run bound on the mission fan-out. listActiveMissionsForSweep
+// already bounds its own read to .take(200) (issueClosedSweepDb.ts), but the
+// fan-out loop below bounds independently so this file is self-describing
+// and a future change to the upstream cap can't silently unbound this
+// action's GitHub-API call volume.
+const SWEEP_MISSION_FANOUT_CAP = 200;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +105,7 @@ export const sweepIssueClosed = internalAction({
 	handler: async (ctx): Promise<SweepResult> => {
 		const githubToken = process.env.GITHUB_TOKEN;
 
-		const missions = (await ctx.runMutation(
+		const allMissions = (await ctx.runMutation(
 			internal.issueClosedSweepDb.listActiveMissionsForSweep,
 			{},
 		)) as Array<{
@@ -107,6 +114,7 @@ export const sweepIssueClosed = internalAction({
 			brief?: string;
 			status: string;
 		}>;
+		const missions = allMissions.slice(0, SWEEP_MISSION_FANOUT_CAP);
 
 		let scanned = 0;
 		let closed = 0;
