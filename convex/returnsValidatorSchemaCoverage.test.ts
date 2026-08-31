@@ -275,19 +275,19 @@ function extractDocMatchesFromFile(filePath: string): DocValidatorMatch[] {
 
 const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string }> = {
 	"episodes.listEpisodes": {
-		fields: ["type", "instanceId", "relations", "ttl", "updatedAt"],
+		fields: ["type", "instanceId", "relations", "ttl", "updatedAt", "contentHash"],
 		reason:
-			"Deliberately narrows the memories row to the episode-relevant subset (namespace/createdBy/content/isLatest/createdAt/episode) for a cross-orchestrator episode feed — type is implied by the presence of `episode`. Handler constructs the object explicitly.",
+			"Deliberately narrows the memories row to the episode-relevant subset (namespace/createdBy/content/isLatest/createdAt/episode) for a cross-orchestrator episode feed — type is implied by the presence of `episode`. Handler constructs the object explicitly. contentHash is the OKF-import idempotency hash (R-18) — an internal write-dedup key, never part of an episode feed.",
 	},
 	"episodes.getCriticalInsights": {
-		fields: ["type", "content", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt"],
+		fields: ["type", "content", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt", "contentHash"],
 		reason:
-			"Cross-namespace critical-insight digest deliberately flattens to namespace/createdBy/insight/context/createdAt — not the full memory row. Handler constructs the object explicitly.",
+			"Cross-namespace critical-insight digest deliberately flattens to namespace/createdBy/insight/context/createdAt — not the full memory row. Handler constructs the object explicitly. contentHash is the OKF-import idempotency hash (R-18) — an internal write-dedup key, never part of an insight digest.",
 	},
 	"profiles.getProfileWithMemories#memorySnippetValidator": {
-		fields: ["namespace", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt"],
+		fields: ["namespace", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt", "contentHash"],
 		reason:
-			"`memorySnippetValidator` is a named, deliberately narrow snippet shape (_id/type/content/createdBy/createdAt) for the profile+recent-memories combo query. Handler maps to this shape explicitly, never spreads the raw row.",
+			"`memorySnippetValidator` is a named, deliberately narrow snippet shape (_id/type/content/createdBy/createdAt) for the profile+recent-memories combo query. Handler maps to this shape explicitly, never spreads the raw row. contentHash is the OKF-import idempotency hash (R-18) — an internal write-dedup key, never part of a profile snippet.",
 	},
 	"businessUnits.list#liteValidator": {
 		fields: [
