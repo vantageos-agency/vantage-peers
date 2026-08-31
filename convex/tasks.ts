@@ -193,8 +193,25 @@ async function requireAuthenticatedCaller(
 	return scope;
 }
 
+// isReviewTask — the narrow predicate gating the reviewer-reclaim branch
+// below (task k17e1ar4s7pspb0rs74ms25hmd8dhv01). A task counts as a review
+// task when its title is tagged "[REVIEW]"/"[Review]" OR its tags array
+// includes "review" — never inferred from status alone (a plain task can
+// also carry status="review" transiently via other flows).
+function isReviewTask(task: { title: string; tags?: string[] }): boolean {
+	return (
+		/^\[review\]/i.test(task.title) || (task.tags?.includes("review") ?? false)
+	);
+}
+
 function assertTaskCallerAuthorized(
-	task: { createdBy: string; assignedTo?: string },
+	task: {
+		createdBy: string;
+		assignedTo?: string;
+		lastAssignedTo?: string;
+		title: string;
+		tags?: string[];
+	},
 	callerOrchestrator: string | undefined,
 	taskId: string,
 ): void {
@@ -203,10 +220,21 @@ function assertTaskCallerAuthorized(
 			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId })}`,
 		);
 	}
+	// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — narrowly scoped
+	// THIRD branch: the caller is neither creator nor current assignee, but
+	// IS the immediately PRIOR assignee of a REVIEW task (decided from the
+	// lastAssignedTo field, never from history). This closes the
+	// no-blocked-limbo doctrine's reclaim gap (a reviewer that reassigned a
+	// [REVIEW] task to its author could never take it back) WITHOUT widening
+	// authorization on non-review tasks — a prior assignee of a plain task
+	// remains refused, same as before this branch existed.
+	const isReviewerReclaim =
+		isReviewTask(task) && task.lastAssignedTo === callerOrchestrator;
 	const isAuthorized =
 		task.createdBy === callerOrchestrator ||
 		task.assignedTo === callerOrchestrator ||
-		callerOrchestrator === "system";
+		callerOrchestrator === "system" ||
+		isReviewerReclaim;
 	if (!isAuthorized) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, taskId })}`,
@@ -300,6 +328,7 @@ const taskFullValidator = v.object({
 	// attachReviewArtifact, never by `update`.
 	reviewArtifactRef: v.optional(v.string()),
 	reviewArtifactAttachedBy: v.optional(creatorValidator),
+	lastAssignedTo: v.optional(v.string()),
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
 });
@@ -491,6 +520,7 @@ export const get = query({
 			// reviewArtifactRef for the full rationale.
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
+			lastAssignedTo: v.optional(v.string()),
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
 		}),
@@ -562,6 +592,7 @@ export const getById = query({
 			// reviewArtifactRef for the full rationale.
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
+			lastAssignedTo: v.optional(v.string()),
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
 		}),
@@ -1200,6 +1231,16 @@ export const update = mutation({
 			if (value !== undefined) {
 				patch[key] = value;
 			}
+		}
+
+		// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — whenever
+		// assignedTo CHANGES, capture the OLD (pre-change) value into
+		// lastAssignedTo in the SAME patch. This is the field
+		// assertTaskCallerAuthorized's reclaim branch reads; it is written
+		// unconditionally on every reassignment (review task or not) so the
+		// gate can decide review-tasks-only scoping at read time.
+		if (patch.assignedTo !== undefined && patch.assignedTo !== task.assignedTo) {
+			patch.lastAssignedTo = task.assignedTo;
 		}
 
 		// Day 159 — the anonymous-block gate must live at the STATUS boundary,
