@@ -222,8 +222,8 @@ export const updateDynamic = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getProfileWithMemories — profile + recent typed memories in one query
+// returns-projection: memory snippet card for the profile view — full memory doc (namespace/instanceId/relations/isLatest/ttl/episode/updatedAt) fetched via memories.get when a snippet is opened
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const getProfileWithMemories = query({
   args: {
     orchestratorId: v.string(),

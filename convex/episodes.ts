@@ -80,8 +80,8 @@ export const storeEpisode = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listEpisodes — list episodes for a namespace, ordered newest first
+// returns-projection: episode list view — omits type/instanceId/relations/ttl/updatedAt, non-episode housekeeping fields
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const listEpisodes = query({
   args: {
     namespace: v.string(),
@@ -147,8 +147,8 @@ export const listEpisodes = query({
 // ─────────────────────────────────────────────────────────────────────────────
 // getCriticalInsights — returns all critical-severity episodes across namespaces
 // Used for cross-orchestrator learning: Pi/Tau/Phi share critical lessons.
+// returns-projection: cross-namespace digest — flattens insight/context out of episode, omits the rest of the memory document
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const getCriticalInsights = query({
   args: { limit: v.optional(v.number()) },
   returns: v.array(

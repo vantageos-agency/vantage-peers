@@ -212,6 +212,7 @@ export const get = query({
 // cap 200, fields=lite|full projection, cursor-based paging.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// returns-projection: list-view card summary, full BU fetched via businessUnits.get
 const liteValidator = v.object({
 	_id: v.id("businessUnits"),
 	_creationTime: v.number(),
@@ -255,6 +256,7 @@ function decodeCursor(cursor: string | undefined): CursorPayload | undefined {
 
 export const BUSINESS_UNITS_LIST_SCAN_CAP = 2000;
 
+// returns-projection: fields="lite" returns a list-view card summary (liteValidator), not the full BU document
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),

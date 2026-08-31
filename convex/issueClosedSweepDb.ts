@@ -76,8 +76,8 @@ export const cascadeCloseMission = internalMutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal mutation: list active missions for sweep
+// returns-projection: sweep-loop candidate check needs only name/brief/status to match a closed GitHub issue, not the full mission document
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const listActiveMissionsForSweep = internalMutation({
 	args: {},
 	returns: v.array(

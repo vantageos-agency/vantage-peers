@@ -165,8 +165,8 @@ export const linkIssue = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // get — fetch a single pattern with its attempts
+// returns-projection: attempts omit patternId — already implied by the parent pattern being fetched
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const get = query({
 	args: { patternId: v.string() },
 	returns: v.union(
@@ -348,11 +348,15 @@ export const listByStack = query({
 			symptom: v.string(),
 			rootCause: v.string(),
 			validatedFix: v.optional(v.string()),
+			files: v.optional(v.array(v.string())),
 			tags: v.array(v.string()),
 			stack: v.array(v.string()),
 			sourceProject: v.string(),
+			linkedIssueIds: v.optional(v.array(v.string())),
+			createdBy: creatorValidator,
 			severity: severityValidator,
 			createdAt: v.number(),
+			updatedAt: v.number(),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -367,11 +371,15 @@ export const listByStack = query({
 					symptom: pattern.symptom,
 					rootCause: pattern.rootCause,
 					validatedFix: pattern.validatedFix,
+					files: pattern.files,
 					tags: pattern.tags,
 					stack: pattern.stack,
 					sourceProject: pattern.sourceProject,
+					linkedIssueIds: pattern.linkedIssueIds,
+					createdBy: pattern.createdBy,
 					severity: pattern.severity,
 					createdAt: pattern.createdAt,
+					updatedAt: pattern.updatedAt,
 				});
 				if (results.length >= limit) break;
 			}

@@ -72,6 +72,7 @@ function decodeRepoCursor(cursor: string | undefined): RepoCursorPayload | undef
 
 export const GITHUB_REPO_MAPPING_LIST_SCAN_CAP = 2000;
 
+// returns-projection: fields="lite" returns a routing-view summary (repoMappingLiteObject), full mapping fetched via getByRepo
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
