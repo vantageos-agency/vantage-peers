@@ -514,6 +514,9 @@ http.route({
 				repoFullName,
 				prNumber: pr.number as number,
 				completionNote: closeNote,
+				mergeCommitSha: pr?.merged
+					? ((pr.merge_commit_sha as string | null | undefined) ?? undefined)
+					: undefined,
 			});
 
 			if (pr?.merged) {
