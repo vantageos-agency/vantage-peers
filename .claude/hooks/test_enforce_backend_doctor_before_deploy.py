@@ -85,11 +85,24 @@ def test_red_refuse_1_mechanically_red_report():
         assert _run(repo) == 2
 
 
-def test_red_refuse_1_could_not_judge_exit2():
-    """Doctor exit 2 (unloadable tree) is a mechanical could-not-judge."""
+def test_exit2_with_zero_mech_now_passes():
+    """Eta ruling 2026-08-30: a recorded could-not-judge (exit 2) with zero
+    MECHANICAL violations PASSES — abstention is a real backend's normal state
+    (D5-gate rules + reviewer-verified markers), and refusing on exit 2 makes the
+    gate unsatisfiable. mechanical_violations is the sole refusal driver; the
+    abstentions stay counted in the report, only the deploy verdict changed."""
     with tempfile.TemporaryDirectory() as tmp:
         repo, head = _init_repo(tmp)
         _write_evidence(repo, head, exit_code=2, mech=0)
+        assert _run(repo) == 0
+
+
+def test_exit2_with_nonzero_mech_still_refuses():
+    """A non-zero mechanical count refuses REGARDLESS of exit code — the sole
+    refusal driver is mechanical_violations, so exit 2 does not launder a real red."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _init_repo(tmp)
+        _write_evidence(repo, head, exit_code=2, mech=3)
         assert _run(repo) == 2
 
 
