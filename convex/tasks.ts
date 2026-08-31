@@ -3374,6 +3374,11 @@ export const createOrUpdateReviewTask = internalMutation({
 			const target = existing.reduce((a, b) =>
 				a.createdAt > b.createdAt ? a : b,
 			);
+			// NOTE (Eta REVISE #1254): title/tags are re-patched here but `isReviewTask`
+			// is DELIBERATELY NOT re-stamped — review-ness is fixed at create and must
+			// not change afterwards (that immutability is the whole point of the field).
+			// Do NOT "fix" this by recomputing isReviewTask on update: it would reopen the
+			// forgery from inside the automation.
 			await ctx.db.patch(target._id, {
 				title,
 				description: args.description,
@@ -3393,6 +3398,11 @@ export const createOrUpdateReviewTask = internalMutation({
 			status: "todo" as const,
 			createdBy: args.createdBy,
 			tags: args.tags,
+			// Stamp review-ness at CREATE from the automation-built title (Eta REVISE
+			// #1254): this internalMutation is the PR-sync path that makes EVERY review
+			// task in a reviewer's real queue — its "[Review] <repo> PR #<n>: …" title makes
+			// computeIsReviewTask true, so the reviewer-reclaim branch fires for them.
+			isReviewTask: computeIsReviewTask(title, args.tags),
 			createdAt: now,
 			updatedAt: now,
 			// Day 130 follow-up #2 — the inforgeable automation signal. This

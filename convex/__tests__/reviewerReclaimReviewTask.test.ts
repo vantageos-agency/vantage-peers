@@ -29,7 +29,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -236,5 +236,44 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 		expect(getConvexErrorMessage(thrown)).toContain("RBAC_DENIED");
 		const task = await t.query(api.tasks.get, { taskId });
 		expect(task?.assignedTo).toBe("omega");
+	});
+
+	// Eta REVISE #1254 (2nd) — the AUTOMATION path: EVERY review task in a reviewer's
+	// real queue is created by internal.tasks.createOrUpdateReviewTask (the PR-sync
+	// mutation that builds the "[Review] <repo> PR #<n>: …" title), NOT tasks.create.
+	// The first fix stamped isReviewTask only in insertTask, so real review tasks were
+	// created with isReviewTask=undefined and could NEVER be reclaimed. This proves the
+	// automation-created review task is stamped and reclaimable.
+	test("AUTOMATION path — a review task made by createOrUpdateReviewTask is isReviewTask=true and reclaimable", async () => {
+		const t = createT();
+		const taskId = await t.mutation(internal.tasks.createOrUpdateReviewTask, {
+			repoFullName: "acme/widget",
+			prNumber: 42,
+			prTitle: "Ship the thing",
+			assignedTo: "eta",
+			priority: "medium",
+			createdBy: "system",
+		});
+		// stamped at create from the automation-built title.
+		const created = await t.query(api.tasks.get, { taskId });
+		expect(created?.isReviewTask).toBe(true);
+		expect(created?.title).toMatch(/^\[Review\] acme\/widget PR #42:/);
+
+		// eta (REVISE) hands it to the author sigma — lastAssignedTo becomes eta.
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "eta",
+			assignedTo: "sigma",
+			status: "todo",
+		});
+		// eta reclaims — ALLOWED now that the automation path stamps the field.
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "eta",
+			assignedTo: "eta",
+			status: "review",
+		});
+		const reclaimed = await t.query(api.tasks.get, { taskId });
+		expect(reclaimed?.assignedTo).toBe("eta");
 	});
 });
