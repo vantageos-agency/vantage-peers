@@ -39,6 +39,15 @@ function hasFooter(text: string): boolean {
 	return FOOTER_RE.test(text) || NONE_NEEDED_RE.test(text);
 }
 
+// R-20 — per-run scan bound. scanWindow previously `.collect()`-ed the
+// entire `tasks`/`messages`/`memories` tables before filtering by
+// `windowDays` — wide-scan-cap pattern (see convex/tasks.ts
+// TASK_LIST_SCAN_CAP, convex/recurringTasks.ts
+// RECURRING_TASKS_LIST_SCAN_CAP): fetch is capped, not the table.
+const DIGEST_TASKS_SCAN_CAP = 2000;
+const DIGEST_MESSAGES_SCAN_CAP = 2000;
+const DIGEST_MEMORIES_SCAN_CAP = 2000;
+
 export const scanWindow = query({
 	args: {
 		windowDays: v.number(),
@@ -71,7 +80,8 @@ export const scanWindow = query({
 			.withIndex("by_status", (q) =>
 				q.eq("status", "done"),
 			)
-			.collect();
+			.order("desc")
+			.take(DIGEST_TASKS_SCAN_CAP);
 
 		for (const task of doneTasks) {
 			if (task._creationTime < cutoff) continue;
@@ -95,10 +105,13 @@ export const scanWindow = query({
 		}
 
 		// ── 2. Messages (send_message) ────────────────────────────────────────
+		// Newest-first by _creationTime (the default index) so the cap selects the
+		// most-recent rows, not the alphabetically-last senders — by_from carries no
+		// time column, so ordering by it and take()-ing biases the selection (Eta #1252).
 		const recentMessages = await ctx.db
 			.query("messages")
-			.withIndex("by_from")
-			.collect();
+			.order("desc")
+			.take(DIGEST_MESSAGES_SCAN_CAP);
 
 		for (const msg of recentMessages) {
 			if (msg._creationTime < cutoff) continue;
@@ -121,10 +134,12 @@ export const scanWindow = query({
 		}
 
 		// ── 3. Memories (store_memory) ────────────────────────────────────────
+		// Newest-first by _creationTime (default index) — by_creator has no time
+		// column, so ordering by it biases recency out of the selection (Eta #1252).
 		const recentMemories = await ctx.db
 			.query("memories")
-			.withIndex("by_creator")
-			.collect();
+			.order("desc")
+			.take(DIGEST_MEMORIES_SCAN_CAP);
 
 		for (const mem of recentMemories) {
 			if (mem._creationTime < cutoff) continue;
@@ -170,6 +185,10 @@ export const scanWindow = query({
 				snippet,
 				artifactId,
 			}),
+		);
+
+		console.log(
+			`[improvisationDigest] scanWindow(${args.windowDays}d): scanned tasks<=${DIGEST_TASKS_SCAN_CAP} messages<=${DIGEST_MESSAGES_SCAN_CAP} memories<=${DIGEST_MEMORIES_SCAN_CAP}, flagged ${flagged.length}.`,
 		);
 
 		return { countsByOrch, countsByCategory, samples };

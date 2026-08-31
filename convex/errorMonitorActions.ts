@@ -372,6 +372,12 @@ export const pollDeploymentLogs = internalAction({
 // pollAllDeployments — cron entry point: polls every active deployment
 // ─────────────────────────────────────────────────────────────────────────────
 
+// R-20 — per-run bound on the polled-deployment fan-out. listActiveDeployments
+// already bounds its own read to .take(50) (errorMonitor.ts), but the fan-out
+// loop below bounds independently so this file is self-describing and a future
+// change to the upstream cap can't silently unbound this action's runtime.
+const DEPLOY_POLL_CAP = 50;
+
 export const pollAllDeployments = internalAction({
 	args: {},
 	returns: v.null(),
@@ -396,7 +402,7 @@ export const pollAllDeployments = internalAction({
 			return null;
 		}
 
-		const deployments = (await ctx.runQuery(
+		const allDeployments = (await ctx.runQuery(
 			internal.errorMonitor.listActiveDeployments,
 			{},
 		)) as Array<{
@@ -409,6 +415,7 @@ export const pollAllDeployments = internalAction({
 			active: boolean;
 			lastCursor?: number;
 		}>;
+		const deployments = allDeployments.slice(0, DEPLOY_POLL_CAP);
 
 		for (const dep of deployments) {
 			await ctx.runAction(internal.errorMonitorActions.pollDeploymentLogs, {
@@ -420,6 +427,10 @@ export const pollAllDeployments = internalAction({
 				lastCursor: dep.lastCursor,
 			});
 		}
+
+		console.log(
+			`[pollAllDeployments] Polled ${deployments.length}/${allDeployments.length} active deployment(s) this run (cap=${DEPLOY_POLL_CAP}).`,
+		);
 
 		return null;
 	},
