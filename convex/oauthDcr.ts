@@ -499,6 +499,7 @@ export const refreshAccessToken = internalMutation({
 // init) and PR #419 (hardening). Kept as permanent admin tooling.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// returns-projection: window-inspection identification shape only — clientSecret (raw secret) must never be returned, redirectUris/createdAt/scope not needed to identify a purge candidate
 export const listClientsInWindow = internalQuery({
 	args: { startMs: v.number(), endMs: v.number() },
 	returns: v.array(

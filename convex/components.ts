@@ -128,6 +128,7 @@ function decodeComponentCursor(cursor: string | undefined): ComponentCursorPaylo
 
 export const COMPONENTS_LIST_SCAN_CAP = 2000;
 
+// returns-projection: fields="lite" returns a list-view card summary (componentLiteObject), full content fetched separately
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),

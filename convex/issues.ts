@@ -488,6 +488,7 @@ export const updatePrStatus = mutation({
 	},
 });
 
+// returns-projection: external-PR tracking dashboard summary row — full issue fetched via issues.get when a row is opened
 export const listExternalOpen = query({
 	args: {
 		prStatus: v.optional(v.union(

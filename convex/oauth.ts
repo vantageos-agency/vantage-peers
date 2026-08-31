@@ -865,6 +865,7 @@ export const getClientByClientId = query({
 	},
 });
 
+// returns-projection: security — clientSecretHash is never returned to any caller (secret hash, not for display); tokenEndpointAuthMethod is admin-console metadata omitted from this public listing shape
 export const listClients = query({
 	args: { callerToken: v.string() },
 	returns: v.array(clientPublicShape),

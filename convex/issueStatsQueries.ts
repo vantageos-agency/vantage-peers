@@ -89,8 +89,8 @@ export const listActiveRepos = internalQuery({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public query — read stats (for dashboard / sales page)
+// returns-projection: dashboard summary rows omit issueDetails, the bulky per-issue array; not needed for the daily trend view
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const getLatest = query({
 	args: {
 		repo: v.optional(v.string()),
