@@ -94,7 +94,11 @@ test("default args clamp + return shape", async () => {
 	await seed(t, { channel: "sigma-vps" });
 	await seed(t, { channel: "sigma-vps" });
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 	});
@@ -120,7 +124,11 @@ test("limit truncation triggers truncated flag and nextSince", async () => {
 		await seed(t, { channel: "sigma-vps", content: `msg ${i}` });
 	}
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 		limit: 2,
@@ -143,7 +151,11 @@ test("cursor round-trip is dup-free and skip-free", async () => {
 		await seed(t, { channel: "sigma-vps", content: `page msg ${i}` });
 	}
 
-	const page1 = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const page1 = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 		limit: 2,
@@ -153,7 +165,11 @@ test("cursor round-trip is dup-free and skip-free", async () => {
 	expect(page1.truncated).toBe(true);
 	expect(page1.nextSince).not.toBeNull();
 
-	const page2 = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const page2 = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 		limit: 2,
@@ -183,7 +199,11 @@ test("byte budget truncation stops at maxBytes", async () => {
 		await seed(t, { channel: "sigma-vps", content: bigContent });
 	}
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 		limit: 5,
@@ -206,7 +226,11 @@ test("at-least-one guarantee even if first row exceeds maxBytes", async () => {
 	await seed(t, { channel: "sigma-vps", content: hugeContent });
 	await seed(t, { channel: "sigma-vps", content: hugeContent });
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 		limit: 5,
@@ -233,7 +257,11 @@ test("instance + role merge dedup returns both without duplicates", async () => 
 	// Instance-level: channel = "sigma-vps" (has dash → recipient="sigma", recipientInstanceId="sigma-vps")
 	await seed(t, { channel: "sigma-vps", content: "instance message" });
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 		recipientInstanceId: "sigma-vps",
 	});
@@ -255,7 +283,11 @@ test("scope isolation: sigma query does not return kappa messages", async () => 
 	await seed(t, { channel: "kappa", content: "kappa msg 1" });
 	await seed(t, { channel: "kappa", content: "kappa msg 2" });
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
 		recipient: "sigma",
 	});
 

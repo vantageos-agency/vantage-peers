@@ -54,9 +54,13 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 				channel: "tau",
 				content: "Private to tau",
 			});
-		const receipts = await t.query(api.messages.checkNewMessages, {
-			recipient: "tau",
-		});
+		const receipts = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessages, {
+				recipient: "tau",
+			});
 		expect(receipts).toHaveLength(1);
 		const receiptId = receipts[0].receiptId;
 
@@ -76,9 +80,13 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 		expect(String(err.data)).toContain("RBAC_DENIED");
 
 		// The receipt must remain unread — the bypass never mutated state.
-		const stillUnread = await t.query(api.messages.checkNewMessages, {
-			recipient: "tau",
-		});
+		const stillUnread = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessages, {
+				recipient: "tau",
+			});
 		expect(stillUnread).toHaveLength(1);
 	});
 
@@ -106,9 +114,13 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 				channel: "tau",
 				content: "Owned by tau",
 			});
-		const receipts = await t.query(api.messages.checkNewMessages, {
-			recipient: "tau",
-		});
+		const receipts = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessages, {
+				recipient: "tau",
+			});
 		expect(receipts).toHaveLength(1);
 
 		const count = await t.mutation(api.messages.markAsRead, {
