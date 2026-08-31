@@ -90,9 +90,13 @@ describe("stuck-list obligation discriminates on age-past-threshold AND open-seg
 			],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		// The guard this work must not break: the list still contains it.
 		expect(result.stuckInProgress.entries).toHaveLength(1);
@@ -111,9 +115,13 @@ describe("stuck-list obligation discriminates on age-past-threshold AND open-seg
 			startedAtAgeMs: 5 * 1000,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.peersStuckOnYou.entries).toHaveLength(1);
 		expect(result.peersStuckOnYou.entries[0].taskId).toBe(taskId);
@@ -138,9 +146,13 @@ describe("stuck-list obligation discriminates on age-past-threshold AND open-seg
 			workSegments: [{ start: now - 30 * HOUR, end: now - 29 * HOUR }],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].taskId).toBe(taskId);
@@ -166,9 +178,13 @@ describe("stuck-list obligation discriminates on age-past-threshold AND open-seg
 			workSegments: [{ start: now - 20 * MINUTE }],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.peersStuckOnYou.entries).toHaveLength(1);
 		expect(result.peersStuckOnYou.entries[0].taskId).toBe(taskId);
@@ -191,10 +207,11 @@ describe("stuck-list obligation discriminates on age-past-threshold AND open-seg
 			title: "no open segment, 20 minutes old",
 			startedAtAgeMs: 20 * MINUTE,
 		});
-		const resultHighThreshold = await tLow.query(
-			api.messages.checkNewMessagesEnvelope,
-			{ recipient: "sigma" },
-		);
+		const resultHighThreshold = await tLow
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof tLow.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, { recipient: "sigma" });
 		expect(resultHighThreshold.stuckInProgress.entries).toHaveLength(1);
 		expect(resultHighThreshold.stuckInProgress.actionableStuckCount).toBe(0);
 
@@ -207,10 +224,11 @@ describe("stuck-list obligation discriminates on age-past-threshold AND open-seg
 			title: "no open segment, 20 minutes old",
 			startedAtAgeMs: 20 * MINUTE,
 		});
-		const resultLowThreshold = await tHigh.query(
-			api.messages.checkNewMessagesEnvelope,
-			{ recipient: "sigma" },
-		);
+		const resultLowThreshold = await tHigh
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof tHigh.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, { recipient: "sigma" });
 		expect(resultLowThreshold.stuckInProgress.entries).toHaveLength(1);
 		expect(resultLowThreshold.stuckInProgress.actionableStuckCount).toBe(1);
 	});

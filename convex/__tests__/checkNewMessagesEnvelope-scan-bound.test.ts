@@ -454,9 +454,18 @@ test("role-only branch: a recipient with a large read history still gets exactly
 		}
 	});
 
-	const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-		recipient: "sigma",
-	});
+	// Read-half tenant identity (sigma/read-half-tenant-identity): an
+	// anonymous caller now gets an empty envelope, so this scan-bound probe
+	// (which only cares about the index shape, not tenancy) authenticates as
+	// the service-account master identity — same fixture pattern as the
+	// sibling tests in checkNewMessagesTenantIdentity.test.ts.
+	const result = await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "sigma",
+		});
 
 	expect(result.messages).toHaveLength(3);
 	expect(result.truncated).toBe(false);

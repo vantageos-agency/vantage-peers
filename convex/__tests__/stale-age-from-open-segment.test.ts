@@ -73,9 +73,13 @@ describe("staleness age is derived from the open segment", () => {
 			],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].taskId).toBe(taskId);
@@ -97,9 +101,13 @@ describe("staleness age is derived from the open segment", () => {
 			],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.peersStuckOnYou.entries).toHaveLength(1);
 		expect(result.peersStuckOnYou.entries[0].age).toBeLessThan(5 * MINUTE);
@@ -116,9 +124,13 @@ describe("staleness age is derived from the open segment", () => {
 			workSegments: [{ start: now - 4 * HOUR }],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].age).toBeGreaterThan(
@@ -138,9 +150,13 @@ describe("staleness age is derived from the open segment", () => {
 			startedAtAgeMs: 2 * HOUR,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		// Bracketed, not merely "large": a reference of zero also reads as
@@ -169,9 +185,13 @@ describe("staleness age is derived from the open segment", () => {
 			],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.staleInProgress).toEqual([]);
 	});
@@ -189,9 +209,13 @@ describe("staleness age is derived from the open segment", () => {
 			workSegments: [{ start: now - 10 * 1000, end: now - 5 * 1000 }],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].age).toBeGreaterThan(

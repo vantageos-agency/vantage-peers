@@ -92,9 +92,13 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 			workSegments: [{ start: now - 121 * MINUTE }],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].taskId).toBe(taskId);
@@ -117,9 +121,13 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 			startedAtAgeMs: 6 * 24 * HOUR,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].taskId).toBe(taskId);
@@ -139,9 +147,13 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 			workSegments: [{ start: now - 30 * HOUR, end: now - 29 * HOUR }],
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.peersStuckOnYou.entries).toHaveLength(1);
 		expect(result.peersStuckOnYou.entries[0].taskId).toBe(taskId);
@@ -159,9 +171,13 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 			startedAtAgeMs: 30 * 1000,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries).toHaveLength(1);
 		expect(result.stuckInProgress.entries[0].taskId).toBe(taskId);
@@ -181,10 +197,11 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 			title: "no open segment, 20 minutes old",
 			startedAtAgeMs: 20 * MINUTE,
 		});
-		const resultHighThreshold = await tLow.query(
-			api.messages.checkNewMessagesEnvelope,
-			{ recipient: "sigma" },
-		);
+		const resultHighThreshold = await tLow
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof tLow.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, { recipient: "sigma" });
 		expect(resultHighThreshold.stuckInProgress.entries).toHaveLength(1);
 		expect(resultHighThreshold.stuckInProgress.actionableStuckCount).toBe(0);
 
@@ -197,10 +214,11 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 			title: "no open segment, 20 minutes old",
 			startedAtAgeMs: 20 * MINUTE,
 		});
-		const resultLowThreshold = await tHigh.query(
-			api.messages.checkNewMessagesEnvelope,
-			{ recipient: "sigma" },
-		);
+		const resultLowThreshold = await tHigh
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof tHigh.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, { recipient: "sigma" });
 		expect(resultLowThreshold.stuckInProgress.entries).toHaveLength(1);
 		expect(resultLowThreshold.stuckInProgress.actionableStuckCount).toBe(1);
 	});
@@ -230,9 +248,13 @@ describe("wiring pole: disabling the condition at ONE call site only reddens tha
 			startedAtAgeMs: 2 * HOUR,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
-			recipient: "sigma",
-		});
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
+				recipient: "sigma",
+			});
 
 		expect(result.stuckInProgress.entries.map((e) => e.taskId)).toContain(
 			mineTaskId,
