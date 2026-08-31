@@ -188,6 +188,8 @@ const memoryRowValidator = v.object({
 	),
 	createdAt: v.number(),
 	updatedAt: v.number(),
+	// R-18 import idempotency key; only OKF-imported rows carry it.
+	contentHash: v.optional(v.string()),
 });
 
 export const listMemoriesScoped = query({

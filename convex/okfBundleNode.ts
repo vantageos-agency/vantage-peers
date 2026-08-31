@@ -25,6 +25,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { v } from "convex/values";
 import { extract, pack } from "tar-stream";
@@ -59,6 +60,16 @@ import {
 // keeps this module compilable before `npx convex dev` regenerates `_generated/`.
 // biome-ignore lint/suspicious/noExplicitAny: codegen-lag workaround
 const internal = generatedInternal as any;
+
+// R-18 idempotency key for OKF bundle import inserts. Computed ONCE here in the
+// caller and threaded into each `_insertImported*` mutation, which reads it via
+// its (namespace|orgId, contentHash) index before inserting — an atomic
+// findOrCreate that makes a replayed delivery a no-op. The hashed string mirrors
+// each entity's dedup key exactly: memory = content; briefing = title + "\n" +
+// content; task = title + "\n" + (description ?? "").
+function okfContentHash(input: string): string {
+	return createHash("sha256").update(input, "utf8").digest("hex");
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pagination driver (Eta REVISE iter 2 — fix-pattern m978c0zyjav9tjmp4aq8b04j8n88zhwm).
@@ -977,6 +988,7 @@ export const importOkfBundle = action({
 						type: parsed.type,
 						content: parsed.content,
 						createdBy: parsed.createdBy,
+						contentHash: okfContentHash(parsed.content),
 						now,
 					});
 				}
@@ -1002,6 +1014,7 @@ export const importOkfBundle = action({
 						participants: parsed.participants,
 						content: parsed.content,
 						createdBy: parsed.createdBy,
+						contentHash: okfContentHash(`${parsed.title}\n${parsed.content}`),
 						now,
 					});
 				}
@@ -1028,6 +1041,9 @@ export const importOkfBundle = action({
 						priority: parsed.priority,
 						status: parsed.status,
 						createdBy: parsed.createdBy,
+						contentHash: okfContentHash(
+							`${parsed.title}\n${parsed.description ?? ""}`,
+						),
 						now,
 					});
 				}

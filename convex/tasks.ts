@@ -300,6 +300,8 @@ const taskFullValidator = v.object({
 	// attachReviewArtifact, never by `update`.
 	reviewArtifactRef: v.optional(v.string()),
 	reviewArtifactAttachedBy: v.optional(creatorValidator),
+	// R-18 import idempotency key; only OKF-imported rows carry it.
+	contentHash: v.optional(v.string()),
 });
 
 type TaskLite = {
@@ -489,6 +491,8 @@ export const get = query({
 			// reviewArtifactRef for the full rationale.
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
+			// R-18 import idempotency key; only OKF-imported rows carry it.
+			contentHash: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -558,6 +562,8 @@ export const getById = query({
 			// reviewArtifactRef for the full rationale.
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
+			// R-18 import idempotency key; only OKF-imported rows carry it.
+			contentHash: v.optional(v.string()),
 		}),
 		v.null(),
 	),
