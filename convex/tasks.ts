@@ -193,8 +193,35 @@ async function requireAuthenticatedCaller(
 	return scope;
 }
 
+// computeIsReviewTask — title/tags heuristic, evaluated ONCE at CREATE time and
+// frozen into the immutable `isReviewTask` field (below). A task counts as a review
+// task when its title is tagged "[REVIEW]"/"[Review]" OR its tags array includes
+// "review". This is NEVER read at authorization time — see isReviewTask (Eta REVISE
+// #1254): title and tags are patchable through `update`, so a caller who is currently
+// the assignee could stamp review-ness onto any task it holds, hand it away, and keep
+// the authority it should have lost at handoff (derive-never-type: authorization must
+// not be decided by a caller-supplied, post-create-mutable value).
+function computeIsReviewTask(title: string, tags?: string[]): boolean {
+	return /^\[review\]/i.test(title) || (tags?.includes("review") ?? false);
+}
+
+// isReviewTask — the authorization predicate gating the reviewer-reclaim branch
+// (task k17e1ar4s7pspb0rs74ms25hmd8dhv01). Reads ONLY the immutable `isReviewTask`
+// field stamped at create — `update` cannot patch it, so review-ness cannot be forged
+// after the fact to retain authority through a handoff (Eta REVISE #1254). A row
+// created before this field exists has `isReviewTask === undefined` and cannot be
+// reclaimed — correct for an authorization field: no row silently inherits a right.
+function isReviewTask(task: { isReviewTask?: boolean }): boolean {
+	return task.isReviewTask === true;
+}
+
 function assertTaskCallerAuthorized(
-	task: { createdBy: string; assignedTo?: string },
+	task: {
+		createdBy: string;
+		assignedTo?: string;
+		lastAssignedTo?: string;
+		isReviewTask?: boolean;
+	},
 	callerOrchestrator: string | undefined,
 	taskId: string,
 ): void {
@@ -203,10 +230,21 @@ function assertTaskCallerAuthorized(
 			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId })}`,
 		);
 	}
+	// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — narrowly scoped
+	// THIRD branch: the caller is neither creator nor current assignee, but
+	// IS the immediately PRIOR assignee of a REVIEW task (decided from the
+	// lastAssignedTo field, never from history). This closes the
+	// no-blocked-limbo doctrine's reclaim gap (a reviewer that reassigned a
+	// [REVIEW] task to its author could never take it back) WITHOUT widening
+	// authorization on non-review tasks — a prior assignee of a plain task
+	// remains refused, same as before this branch existed.
+	const isReviewerReclaim =
+		isReviewTask(task) && task.lastAssignedTo === callerOrchestrator;
 	const isAuthorized =
 		task.createdBy === callerOrchestrator ||
 		task.assignedTo === callerOrchestrator ||
-		callerOrchestrator === "system";
+		callerOrchestrator === "system" ||
+		isReviewerReclaim;
 	if (!isAuthorized) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, taskId })}`,
@@ -300,6 +338,8 @@ const taskFullValidator = v.object({
 	// attachReviewArtifact, never by `update`.
 	reviewArtifactRef: v.optional(v.string()),
 	reviewArtifactAttachedBy: v.optional(creatorValidator),
+	lastAssignedTo: v.optional(v.string()),
+	isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
 });
@@ -400,6 +440,10 @@ async function insertTask(
 	const now = Date.now();
 	return await ctx.db.insert("tasks", {
 		...args,
+		// Stamp review-ness ONCE at create from the title/tags, into an immutable field
+		// `update` cannot patch (Eta REVISE #1254) — the reviewer-reclaim authorization
+		// reads this, never the mutable title/tags.
+		isReviewTask: computeIsReviewTask(args.title, args.tags),
 		createdAt: now,
 		updatedAt: now,
 	});
@@ -491,6 +535,8 @@ export const get = query({
 			// reviewArtifactRef for the full rationale.
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
+			lastAssignedTo: v.optional(v.string()),
+			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
 		}),
@@ -562,6 +608,8 @@ export const getById = query({
 			// reviewArtifactRef for the full rationale.
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
+			lastAssignedTo: v.optional(v.string()),
+			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
 		}),
@@ -1200,6 +1248,16 @@ export const update = mutation({
 			if (value !== undefined) {
 				patch[key] = value;
 			}
+		}
+
+		// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — whenever
+		// assignedTo CHANGES, capture the OLD (pre-change) value into
+		// lastAssignedTo in the SAME patch. This is the field
+		// assertTaskCallerAuthorized's reclaim branch reads; it is written
+		// unconditionally on every reassignment (review task or not) so the
+		// gate can decide review-tasks-only scoping at read time.
+		if (patch.assignedTo !== undefined && patch.assignedTo !== task.assignedTo) {
+			patch.lastAssignedTo = task.assignedTo;
 		}
 
 		// Day 159 — the anonymous-block gate must live at the STATUS boundary,
@@ -3316,6 +3374,11 @@ export const createOrUpdateReviewTask = internalMutation({
 			const target = existing.reduce((a, b) =>
 				a.createdAt > b.createdAt ? a : b,
 			);
+			// NOTE (Eta REVISE #1254): title/tags are re-patched here but `isReviewTask`
+			// is DELIBERATELY NOT re-stamped — review-ness is fixed at create and must
+			// not change afterwards (that immutability is the whole point of the field).
+			// Do NOT "fix" this by recomputing isReviewTask on update: it would reopen the
+			// forgery from inside the automation.
 			await ctx.db.patch(target._id, {
 				title,
 				description: args.description,
@@ -3335,6 +3398,11 @@ export const createOrUpdateReviewTask = internalMutation({
 			status: "todo" as const,
 			createdBy: args.createdBy,
 			tags: args.tags,
+			// Stamp review-ness at CREATE from the automation-built title (Eta REVISE
+			// #1254): this internalMutation is the PR-sync path that makes EVERY review
+			// task in a reviewer's real queue — its "[Review] <repo> PR #<n>: …" title makes
+			// computeIsReviewTask true, so the reviewer-reclaim branch fires for them.
+			isReviewTask: computeIsReviewTask(title, args.tags),
 			createdAt: now,
 			updatedAt: now,
 			// Day 130 follow-up #2 — the inforgeable automation signal. This

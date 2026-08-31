@@ -4497,6 +4497,16 @@ export function registerTools(
 	);
 
 	// ── update_task ─────────────────────────────────────────────────────────────
+	// Reviewer-reclaim (task k17e1ar4s7pspb0rs74ms25hmd8dhv01, convex/schema.ts
+	// `lastAssignedTo`): whenever this call CHANGES `assignedTo`, the backend
+	// records the OLD assignee into `lastAssignedTo` (read-only, not an
+	// update_task arg). On a `[REVIEW]`-titled or "review"-tagged task, the
+	// PRIOR assignee (e.g. the reviewer who reassigned the task to its
+	// author for a fix) may later reclaim it by calling update_task with
+	// assignedTo=<itself> — RBAC now permits creator, current assignee, OR
+	// the review task's lastAssignedTo, closing the no-blocked-limbo
+	// hand-back gap. Non-review tasks are unaffected: a prior assignee still
+	// cannot reclaim a plain task.
 
 	defineTool(
 		server,
@@ -4505,7 +4515,8 @@ export function registerTools(
 		"update_task",
 		"Update any mutable field on a task; only provided fields are patched, updatedAt auto-set. " +
 			"WHEN: use to reassign, reprioritize, or add context to an existing task without recreating it. " +
-			"EXAMPLE: update_task taskId='k178d3ns...' status='review' callerOrchestrator='alpha'.",
+			"EXAMPLE: update_task taskId='k178d3ns...' status='review' callerOrchestrator='alpha'. " +
+			"NOTE: on a [REVIEW] task, the orchestrator that most recently reassigned it away (lastAssignedTo) may reclaim it by setting assignedTo back to itself.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to update"),
 			title: z.string().optional().describe("New title"),
