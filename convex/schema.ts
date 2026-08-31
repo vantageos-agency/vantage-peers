@@ -122,7 +122,11 @@ export default defineSchema({
 		.index("by_namespace_type", ["namespace", "type", "isLatest"])
 		// R-18 import idempotency lookup — (namespace, isLatest, contentHash) findOrCreate,
 		// scoped to the LIVE row so a re-import over a superseded memory inserts fresh (Eta #1253).
-		.index("by_namespace_contentHash", ["namespace", "isLatest", "contentHash"]),
+		.index("by_namespace_contentHash", [
+			"namespace",
+			"isLatest",
+			"contentHash",
+		]),
 
 	// ── profiles ────────────────────────────────────────────────────────────────
 	// One row per INSTANCE. orchestratorId = role (pi/tau/phi).
@@ -392,6 +396,7 @@ export default defineSchema({
 		// decided from a FIELD, never from history. Optional so existing
 		// rows validate; undefined until the first reassignment.
 		lastAssignedTo: v.optional(v.string()),
+		isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + (description ?? "")) computed once by the
 		// importer (convex/okfBundleNode.ts); the atomic findOrCreate in
@@ -426,7 +431,11 @@ export default defineSchema({
 		// project filter, apply BOTH status+project+completedAt at the index
 		// level so a single-project billing query is never a post-hoc filter
 		// over a truncated cross-project scan (same disease, same fix).
-		.index("by_status_project_completedAt", ["status", "project", "completedAt"])
+		.index("by_status_project_completedAt", [
+			"status",
+			"project",
+			"completedAt",
+		])
 		// Day-132 live-defect fix: `updatedSince` on `tasks.list` was filtered
 		// IN-MEMORY after a fixed-size widened scan, so narrowing the window
 		// never reduced the number of candidates fetched and the scan cap bit
@@ -436,7 +445,11 @@ export default defineSchema({
 		// no index added for missions/briefingNotes, whose branches were not
 		// measured to exceed the cap.
 		.index("by_assignee_updatedAt", ["assignedTo", "updatedAt"])
-		.index("by_assignee_status_updatedAt", ["assignedTo", "status", "updatedAt"])
+		.index("by_assignee_status_updatedAt", [
+			"assignedTo",
+			"status",
+			"updatedAt",
+		])
 		// Day 159 — reciprocal unblock: find every task waiting on a given
 		// task so it can be swept back to "todo" the moment that task closes.
 		.index("by_blockedOnTaskId", ["blockedOnTaskId"])
