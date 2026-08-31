@@ -120,7 +120,8 @@ export default defineSchema({
 		.index("by_type", ["type", "isLatest"])
 		.index("by_creator", ["createdBy", "isLatest"])
 		.index("by_namespace_type", ["namespace", "type", "isLatest"])
-		// R-18 import idempotency lookup — (namespace, contentHash) findOrCreate.
+		// R-18 import idempotency lookup — (namespace, isLatest, contentHash) findOrCreate,
+		// scoped to the LIVE row so a re-import over a superseded memory inserts fresh (Eta #1253).
 		.index("by_namespace_contentHash", ["namespace", "isLatest", "contentHash"]),
 
 	// ── profiles ────────────────────────────────────────────────────────────────
@@ -379,6 +380,18 @@ export default defineSchema({
 		// an already-attached ref (REVIEW_ARTIFACT_ALREADY_ATTACHED).
 		reviewArtifactRef: v.optional(v.string()),
 		reviewArtifactAttachedBy: v.optional(creatorValidator),
+		// lastAssignedTo -- reviewer-reclaim doctrine (task
+		// k17e1ar4s7pspb0rs74ms25hmd8dhv01). The no-blocked-limbo doctrine
+		// hands a REVIEW task back to the AUTHOR (assignedTo change) and
+		// expects the REVIEWER to reclaim it once the fix lands, but
+		// assertTaskCallerAuthorized only permits the CREATOR or CURRENT
+		// assignee -- the reviewer who just handed the task away is neither
+		// and was refused RBAC_DENIED. This field captures the immediately
+		// PRIOR assignedTo value (written by `update` whenever assignedTo
+		// changes) so a narrow, review-tasks-only reclaim branch can be
+		// decided from a FIELD, never from history. Optional so existing
+		// rows validate; undefined until the first reassignment.
+		lastAssignedTo: v.optional(v.string()),
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + (description ?? "")) computed once by the
 		// importer (convex/okfBundleNode.ts); the atomic findOrCreate in
