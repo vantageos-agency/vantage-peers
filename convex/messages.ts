@@ -71,13 +71,49 @@ export const sendMessage = mutation({
 			scope.orgSlug,
 		);
 
+		// Tenant-scope write symmetry (task sigma/tenant-scope-write-symmetry):
+		// the scoped READS (listMessages/listByChannel/searchMessagesByKeyword)
+		// force `.eq("tenantId", scope.orgSlug)` for non-master callers — the
+		// write must stamp the SAME derived tenant, never trust the
+		// client-supplied args.tenantId, or a non-master send silently
+		// produces a row invisible to (or spoofable across) the caller's own
+		// scoped reads. `scope` reused from the top of this handler.
+		let derivedTenantId: string | undefined;
+		if (scope.isMaster && scope.orgSlug === null) {
+			// TRUE internal master (service account / Laurent) carve-out —
+			// mirrors the broadcast branch's isMaster && orgSlug===null
+			// discriminant below: legitimate internal fleet traffic keeps
+			// today's behavior, writing whatever tenantId (possibly
+			// undefined) the caller supplied.
+			derivedTenantId = args.tenantId;
+		} else if (scope.orgSlug !== null) {
+			// Any real client org (including a client org whose
+			// client_org_mapping row carries the ["*"] read sentinel, whose
+			// isMaster is overloaded true — lib/auth.ts:182): the stamped
+			// tenant is DERIVED from the verified scope, never the
+			// client-supplied args.tenantId. Deriving — not
+			// comparing-then-rejecting — makes a foreign-tenant spoof
+			// impossible: a supplied foreign tenant is simply overridden by
+			// the caller's real org.
+			derivedTenantId = scope.orgSlug;
+		} else {
+			// Anonymous / no-identity, non-master (isMaster===false,
+			// orgSlug===null): an absent tenant is an event, never a rest —
+			// refuse loudly instead of writing a null-tenant receipt that
+			// would be invisible to the caller's own scoped reads (and, for
+			// a DM to a known role, would otherwise silently "succeed").
+			throw new ConvexError(
+				"RBAC_DENIED: sendMessage requires an authenticated org — no tenant could be derived for this write. The caller has no tenantId and is not the authenticated master identity.",
+			);
+		}
+
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
 			fromInstanceId: args.fromInstanceId,
 			channel: args.channel,
 			content: args.content,
 			sessionDay: args.sessionDay,
-			tenantId: args.tenantId,
+			tenantId: derivedTenantId,
 			createdAt: Date.now(),
 		});
 
@@ -226,7 +262,7 @@ export const sendMessage = mutation({
 				messageId,
 				recipient: role,
 				recipientInstanceId: isInstance ? recipient : undefined,
-				tenantId: args.tenantId,
+				tenantId: derivedTenantId,
 				readAt: undefined,
 			});
 		}

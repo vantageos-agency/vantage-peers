@@ -298,7 +298,14 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		const t = createT();
 		await seedProfile(t, "pi");
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		// Internal caller (title says so): authenticate as the service-account
+		// master identity (tenant-scope-write-symmetry closed the silent
+		// no-identity path — a real internal caller is never anonymous).
+		const tInternal = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const messageId = await tInternal.mutation(api.messages.sendMessage, {
 			from: "eta",
 			channel: "pi",
 			content: "hello pi",

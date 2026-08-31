@@ -68,12 +68,20 @@ async function seed(
 			await ensureProfile(t, part);
 		}
 	}
-	await t.mutation(api.messages.sendMessage, {
-		from: opts.from ?? "alpha",
-		channel: opts.channel,
-		content: opts.content ?? "hello world",
-		sessionDay: 1,
-	});
+	// Setup/arrange send: these tests exercise checkNewMessagesEnvelope's
+	// read-side behavior, not sendMessage's own auth — authenticate as the
+	// service-account master identity so the messages simply get created
+	// (tenant-scope-write-symmetry closed the silent no-identity path).
+	await t
+		.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0])
+		.mutation(api.messages.sendMessage, {
+			from: opts.from ?? "alpha",
+			channel: opts.channel,
+			content: opts.content ?? "hello world",
+			sessionDay: 1,
+		});
 }
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,18 @@ const modules = Object.fromEntries(
 
 const createT = () => convexTest(schema, modules);
 
+// These tests assert on the RECIPIENT-RESOLUTION/bounce path specifically —
+// they must authenticate as the service-account master identity so that path
+// is what actually runs, rather than tripping the (separate)
+// tenant-scope-write-symmetry anonymous-refuse branch first and asserting
+// the wrong error. vitest.config.ts sets
+// CLERK_SERVICE_ACCOUNT_USER_ID="test-service-account-user-id".
+function asMaster(t: ReturnType<typeof createT>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 async function seedProfile(
 	t: ReturnType<typeof createT>,
 	orchestratorId: string,
@@ -51,7 +63,7 @@ describe("sendMessage — bounce on empty recipients (phantom channel)", () => {
 
 		let caught: unknown;
 		try {
-			await t.mutation(api.messages.sendMessage, {
+			await asMaster(t).mutation(api.messages.sendMessage, {
 				from: "pi",
 				channel: "direct",
 				content: "hello",
@@ -80,7 +92,7 @@ describe("sendMessage — bounce on empty recipients (phantom channel)", () => {
 
 		let caught: unknown;
 		try {
-			await t.mutation(api.messages.sendMessage, {
+			await asMaster(t).mutation(api.messages.sendMessage, {
 				from: "pi",
 				channel: "role-inexistant-xyz",
 				content: "hello",
@@ -104,7 +116,7 @@ describe("sendMessage — bounce on empty recipients (phantom channel)", () => {
 		const t = createT();
 
 		await expect(
-			t.mutation(api.messages.sendMessage, {
+			asMaster(t).mutation(api.messages.sendMessage, {
 				from: "pi",
 				channel: "",
 				content: "hello",
@@ -117,7 +129,7 @@ describe("sendMessage — bounce on empty recipients (phantom channel)", () => {
 		await seedProfile(t, "eta");
 
 		await expect(
-			t.mutation(api.messages.sendMessage, {
+			asMaster(t).mutation(api.messages.sendMessage, {
 				from: "pi",
 				channel: "eta,talos",
 				content: "hello",
@@ -161,7 +173,7 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 		const t = createT();
 		await seedProfile(t, "pi");
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "eta",
 			channel: "pi",
 			content: "hello pi",
@@ -177,7 +189,7 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 		const t = createT();
 		await seedProfile(t, "pi", "pi-vps");
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "eta",
 			channel: "pi-vps",
 			content: "hello pi-vps",
@@ -194,7 +206,7 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 		await seedProfile(t, "eta");
 		await seedProfile(t, "pi");
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
 			channel: "eta,pi",
 			content: "hello both",

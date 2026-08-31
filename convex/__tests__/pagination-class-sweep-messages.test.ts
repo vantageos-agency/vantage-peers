@@ -51,7 +51,7 @@ describe("messages.listMessages pagination — createdBefore applied after unbou
 
 		const seededIds: string[] = [];
 		for (let i = 0; i < TOTAL; i++) {
-			const id: string = await t.mutation(api.messages.sendMessage, {
+			const id: string = await tInternal.mutation(api.messages.sendMessage, {
 				from: "sweep-sender",
 				channel: "sweep-listener",
 				content: `sweep message ${i}`,

@@ -41,11 +41,19 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 			}),
 		);
 
-		await t.mutation(api.messages.sendMessage, {
-			from: "pi",
-			channel: "tau",
-			content: "Private to tau",
-		});
+		// Setup send: this test exercises markAsRead's ownership check, not
+		// sendMessage's own auth — authenticate as the service-account master
+		// identity (tenant-scope-write-symmetry closed the silent
+		// no-identity path).
+		await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.mutation(api.messages.sendMessage, {
+				from: "pi",
+				channel: "tau",
+				content: "Private to tau",
+			});
 		const receipts = await t.query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
@@ -85,11 +93,19 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 			}),
 		);
 
-		await t.mutation(api.messages.sendMessage, {
-			from: "pi",
-			channel: "tau",
-			content: "Owned by tau",
-		});
+		// Setup send: this test exercises markAsRead's ownership check, not
+		// sendMessage's own auth — authenticate as the service-account master
+		// identity (tenant-scope-write-symmetry closed the silent
+		// no-identity path).
+		await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.mutation(api.messages.sendMessage, {
+				from: "pi",
+				channel: "tau",
+				content: "Owned by tau",
+			});
 		const receipts = await t.query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
