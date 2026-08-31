@@ -193,15 +193,26 @@ async function requireAuthenticatedCaller(
 	return scope;
 }
 
-// isReviewTask — the narrow predicate gating the reviewer-reclaim branch
-// below (task k17e1ar4s7pspb0rs74ms25hmd8dhv01). A task counts as a review
-// task when its title is tagged "[REVIEW]"/"[Review]" OR its tags array
-// includes "review" — never inferred from status alone (a plain task can
-// also carry status="review" transiently via other flows).
-function isReviewTask(task: { title: string; tags?: string[] }): boolean {
-	return (
-		/^\[review\]/i.test(task.title) || (task.tags?.includes("review") ?? false)
-	);
+// computeIsReviewTask — title/tags heuristic, evaluated ONCE at CREATE time and
+// frozen into the immutable `isReviewTask` field (below). A task counts as a review
+// task when its title is tagged "[REVIEW]"/"[Review]" OR its tags array includes
+// "review". This is NEVER read at authorization time — see isReviewTask (Eta REVISE
+// #1254): title and tags are patchable through `update`, so a caller who is currently
+// the assignee could stamp review-ness onto any task it holds, hand it away, and keep
+// the authority it should have lost at handoff (derive-never-type: authorization must
+// not be decided by a caller-supplied, post-create-mutable value).
+function computeIsReviewTask(title: string, tags?: string[]): boolean {
+	return /^\[review\]/i.test(title) || (tags?.includes("review") ?? false);
+}
+
+// isReviewTask — the authorization predicate gating the reviewer-reclaim branch
+// (task k17e1ar4s7pspb0rs74ms25hmd8dhv01). Reads ONLY the immutable `isReviewTask`
+// field stamped at create — `update` cannot patch it, so review-ness cannot be forged
+// after the fact to retain authority through a handoff (Eta REVISE #1254). A row
+// created before this field exists has `isReviewTask === undefined` and cannot be
+// reclaimed — correct for an authorization field: no row silently inherits a right.
+function isReviewTask(task: { isReviewTask?: boolean }): boolean {
+	return task.isReviewTask === true;
 }
 
 function assertTaskCallerAuthorized(
@@ -209,8 +220,7 @@ function assertTaskCallerAuthorized(
 		createdBy: string;
 		assignedTo?: string;
 		lastAssignedTo?: string;
-		title: string;
-		tags?: string[];
+		isReviewTask?: boolean;
 	},
 	callerOrchestrator: string | undefined,
 	taskId: string,
@@ -329,6 +339,7 @@ const taskFullValidator = v.object({
 	reviewArtifactRef: v.optional(v.string()),
 	reviewArtifactAttachedBy: v.optional(creatorValidator),
 	lastAssignedTo: v.optional(v.string()),
+	isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
 });
@@ -429,6 +440,10 @@ async function insertTask(
 	const now = Date.now();
 	return await ctx.db.insert("tasks", {
 		...args,
+		// Stamp review-ness ONCE at create from the title/tags, into an immutable field
+		// `update` cannot patch (Eta REVISE #1254) — the reviewer-reclaim authorization
+		// reads this, never the mutable title/tags.
+		isReviewTask: computeIsReviewTask(args.title, args.tags),
 		createdAt: now,
 		updatedAt: now,
 	});
@@ -521,6 +536,7 @@ export const get = query({
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
 			lastAssignedTo: v.optional(v.string()),
+			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
 		}),
@@ -593,6 +609,7 @@ export const getById = query({
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
 			lastAssignedTo: v.optional(v.string()),
+			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
 		}),

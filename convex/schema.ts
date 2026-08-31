@@ -391,6 +391,7 @@ export default defineSchema({
 		// decided from a FIELD, never from history. Optional so existing
 		// rows validate; undefined until the first reassignment.
 		lastAssignedTo: v.optional(v.string()),
+		isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + (description ?? "")) computed once by the
 		// importer (convex/okfBundleNode.ts); the atomic findOrCreate in

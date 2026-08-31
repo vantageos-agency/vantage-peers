@@ -160,4 +160,81 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 		const task = await t.query(api.tasks.get, { taskId });
 		expect(task?.assignedTo).toBe("sigma");
 	});
+
+	// Eta REVISE #1254: review-ness is stamped ONCE at create into an immutable
+	// `isReviewTask` field. title and tags ARE patchable through `update`, so if the
+	// predicate read them, a current assignee could STAMP review-ness onto a plain task
+	// it holds, hand it away, and keep the authority it should have lost at handoff
+	// (derive-never-type). These probes prove the forgery is refused.
+	test("PROBE 1 (title forgery) — tau stamps [Review] into a plain task's title, hands off, reclaims → REFUSED", async () => {
+		const t = createT();
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "Ship the widget", // plain: isReviewTask stamped FALSE at create
+			assignedTo: "tau",
+			priority: "medium",
+			status: "todo",
+			createdBy: "pi",
+		});
+		// tau (current assignee) patches the title to look like a review task.
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "tau",
+			title: "[Review] Ship the widget",
+		});
+		// hand off to omega — lastAssignedTo becomes tau.
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "tau",
+			assignedTo: "omega",
+		});
+		// tau reclaims — under the old title/tags predicate this was ALLOWED (the hole);
+		// with the immutable field (stamped FALSE at create) it is REFUSED.
+		let thrown: unknown;
+		try {
+			await t.mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "tau",
+				assignedTo: "tau",
+			});
+		} catch (error) {
+			thrown = error;
+		}
+		expect(getConvexErrorMessage(thrown)).toContain("RBAC_DENIED");
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.assignedTo).toBe("omega");
+	});
+
+	test("PROBE 2 (tags forgery) — tau stamps tags:['review'] onto a plain task, hands off, reclaims → REFUSED", async () => {
+		const t = createT();
+		const taskId = await t.mutation(api.tasks.create, {
+			title: "Rotate the API keys", // plain
+			assignedTo: "tau",
+			priority: "medium",
+			status: "todo",
+			createdBy: "pi",
+		});
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "tau",
+			tags: ["review"],
+		});
+		await t.mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "tau",
+			assignedTo: "omega",
+		});
+		let thrown: unknown;
+		try {
+			await t.mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "tau",
+				assignedTo: "tau",
+			});
+		} catch (error) {
+			thrown = error;
+		}
+		expect(getConvexErrorMessage(thrown)).toContain("RBAC_DENIED");
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.assignedTo).toBe("omega");
+	});
 });
