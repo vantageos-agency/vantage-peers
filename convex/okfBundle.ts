@@ -551,9 +551,24 @@ export const _insertImportedMemory = internalMutation({
 		type: memoryTypeValidator,
 		content: v.string(),
 		createdBy: creatorValidator,
+		// R-18 idempotency key — sha256(content) computed once by the importer
+		// (convex/okfBundleNode.ts). Threaded so this mutation is an ATOMIC
+		// findOrCreate: a replayed delivery returns the existing row instead of
+		// writing a duplicate (the pre-fix check-then-insert was a TOCTOU — the
+		// caller's paginated dedup and this insert were two separate round-trips
+		// so a retry between them duplicated the row).
+		contentHash: v.string(),
 		now: v.number(),
 	},
+	returns: v.id("memories"),
 	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("memories")
+			.withIndex("by_namespace_contentHash", (q) =>
+				q.eq("namespace", args.namespace).eq("contentHash", args.contentHash),
+			)
+			.unique();
+		if (existing !== null) return existing._id;
 		return await ctx.db.insert("memories", {
 			namespace: args.namespace,
 			type: args.type,
@@ -561,6 +576,7 @@ export const _insertImportedMemory = internalMutation({
 			createdBy: args.createdBy,
 			relations: [],
 			isLatest: true,
+			contentHash: args.contentHash,
 			createdAt: args.now,
 			updatedAt: args.now,
 		});
@@ -575,6 +591,10 @@ export const _insertImportedBriefing = internalMutation({
 		participants: v.array(v.string()),
 		content: v.string(),
 		createdBy: creatorValidator,
+		// R-18 idempotency key — sha256(title + "\n" + content), same TOCTOU fix
+		// as `_insertImportedMemory`. Keyed on (orgId, contentHash) because
+		// briefingNotes scope by orgId, mirroring `_findBriefingByTitleAndContent`.
+		contentHash: v.string(),
 		now: v.number(),
 	},
 	returns: v.id("briefingNotes"),
@@ -585,12 +605,20 @@ export const _insertImportedBriefing = internalMutation({
 		// written (the row would silently fall outside the tenant's scope on
 		// every future dedup lookup, forcing perpetual duplicate imports).
 		const orgId = expectedOrgIdForNamespace(args.namespace);
+		const existing = await ctx.db
+			.query("briefingNotes")
+			.withIndex("by_orgId_contentHash", (q) =>
+				q.eq("orgId", orgId).eq("contentHash", args.contentHash),
+			)
+			.unique();
+		if (existing !== null) return existing._id;
 		return await ctx.db.insert("briefingNotes", {
 			title: args.title,
 			topic: args.topic,
 			participants: args.participants,
 			content: args.content,
 			createdBy: args.createdBy,
+			contentHash: args.contentHash,
 			createdAt: args.now,
 			orgId,
 		});
@@ -617,12 +645,23 @@ export const _insertImportedTask = internalMutation({
 			v.literal("done"),
 		),
 		createdBy: creatorValidator,
+		// R-18 idempotency key — sha256(title + "\n" + (description ?? "")),
+		// same TOCTOU fix. Keyed on (orgId, contentHash), mirroring
+		// `_findTaskByTitleAndDescription`.
+		contentHash: v.string(),
 		now: v.number(),
 	},
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
 		// Same orgId-tagging rationale as `_insertImportedBriefing` above.
 		const orgId = expectedOrgIdForNamespace(args.namespace);
+		const existing = await ctx.db
+			.query("tasks")
+			.withIndex("by_orgId_contentHash", (q) =>
+				q.eq("orgId", orgId).eq("contentHash", args.contentHash),
+			)
+			.unique();
+		if (existing !== null) return existing._id;
 		return await ctx.db.insert("tasks", {
 			title: args.title,
 			description: args.description,
@@ -630,6 +669,7 @@ export const _insertImportedTask = internalMutation({
 			priority: args.priority,
 			status: args.status,
 			createdBy: args.createdBy,
+			contentHash: args.contentHash,
 			createdAt: args.now,
 			updatedAt: args.now,
 			orgId,

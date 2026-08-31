@@ -102,12 +102,26 @@ export default defineSchema({
 		// Timestamp (ms since epoch)
 		createdAt: v.number(),
 		updatedAt: v.number(),
+
+		// R-18 idempotency key for retriable import inserts (OKF bundle import).
+		// sha256(content) computed once by the importer (convex/okfBundleNode.ts);
+		// the atomic findOrCreate in convex/okfBundle.ts `_insertImportedMemory`
+		// reads it via `by_namespace_contentHash` before insert, so a replayed
+		// delivery returns the existing row instead of writing a duplicate.
+		// OPTIONAL because every non-import write path (memories.create, the
+		// supermemory chain) predates it and never sets it — a required field
+		// would fail schema validation on every existing row and every legacy
+		// insert site. The dedup index below never matches an undefined value
+		// against a real hash, so unset rows never collide.
+		contentHash: v.optional(v.string()),
 	})
 		// Primary query patterns — all filtered to isLatest for active memory reads
 		.index("by_namespace", ["namespace", "isLatest"])
 		.index("by_type", ["type", "isLatest"])
 		.index("by_creator", ["createdBy", "isLatest"])
-		.index("by_namespace_type", ["namespace", "type", "isLatest"]),
+		.index("by_namespace_type", ["namespace", "type", "isLatest"])
+		// R-18 import idempotency lookup — (namespace, contentHash) findOrCreate.
+		.index("by_namespace_contentHash", ["namespace", "contentHash"]),
 
 	// ── profiles ────────────────────────────────────────────────────────────────
 	// One row per INSTANCE. orchestratorId = role (pi/tau/phi).
@@ -365,6 +379,16 @@ export default defineSchema({
 		// an already-attached ref (REVIEW_ARTIFACT_ALREADY_ATTACHED).
 		reviewArtifactRef: v.optional(v.string()),
 		reviewArtifactAttachedBy: v.optional(creatorValidator),
+		// R-18 idempotency key for retriable OKF bundle import inserts.
+		// sha256(title + "\n" + (description ?? "")) computed once by the
+		// importer (convex/okfBundleNode.ts); the atomic findOrCreate in
+		// convex/okfBundle.ts `_insertImportedTask` reads it via
+		// `by_orgId_contentHash` before insert so a replay returns the existing
+		// row. OPTIONAL: `tasks.create` and every webhook/derivation insert
+		// predate it and never set it (a required field would fail validation
+		// on every existing row). The dedup index below never matches an
+		// undefined value against a real hash.
+		contentHash: v.optional(v.string()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])
@@ -403,6 +427,10 @@ export default defineSchema({
 		// Day 159 — reciprocal unblock: find every task waiting on a given
 		// task so it can be swept back to "todo" the moment that task closes.
 		.index("by_blockedOnTaskId", ["blockedOnTaskId"])
+		// R-18 import idempotency lookup — (orgId, contentHash) findOrCreate for
+		// OKF bundle task imports. Tasks scope by orgId (no namespace field),
+		// mirroring the by_orgId dedup key in _findTaskByTitleAndDescription.
+		.index("by_orgId_contentHash", ["orgId", "contentHash"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).
@@ -447,10 +475,23 @@ export default defineSchema({
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
 		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
+		// R-18 idempotency key for retriable OKF bundle import inserts.
+		// sha256(title + "\n" + content) computed once by the importer
+		// (convex/okfBundleNode.ts); the atomic findOrCreate in
+		// convex/okfBundle.ts `_insertImportedBriefing` reads it via
+		// `by_orgId_contentHash` before insert so a replay returns the existing
+		// row. OPTIONAL: every non-import briefing insert predates it (a
+		// required field would fail validation on existing rows). The dedup
+		// index below never matches an undefined value against a real hash.
+		contentHash: v.optional(v.string()),
 	})
 		.index("by_topic", ["topic"])
 		.index("by_creator", ["createdBy", "createdAt"])
 		.index("by_orgId", ["orgId"])
+		// R-18 import idempotency lookup — (orgId, contentHash) findOrCreate for
+		// OKF bundle briefing imports (briefingNotes scope by orgId, mirroring
+		// the by_orgId dedup key in _findBriefingByTitleAndContent).
+		.index("by_orgId_contentHash", ["orgId", "contentHash"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on briefing body, with filterFields for the
 		// common narrowing axes (topic, createdBy).

@@ -118,6 +118,9 @@ export const get = query({
 			updatedBy: v.optional(creatorValidator),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			// R-18 import idempotency key (sha256 of the OKF dedup key). Optional
+			// because only OKF-imported rows carry it.
+			contentHash: v.optional(v.string()),
 		}),
 		v.null(),
 	),

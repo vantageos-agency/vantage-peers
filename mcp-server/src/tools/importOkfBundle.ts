@@ -6,6 +6,17 @@
  * namespace, deduplicating by content equality so replays of the same bundle
  * are no-ops.
  *
+ * Schema mirror (RULE #24 — Day 108): the Convex import path now persists a
+ * per-row `contentHash` (sha256 of each entity's dedup key) on the
+ * `memories` / `briefingNotes` / `tasks` tables, indexed by
+ * `by_namespace_contentHash` (memories) / `by_orgId_contentHash`
+ * (briefings, tasks). That field is the R-18 idempotency backstop: each
+ * `_insertImported*` mutation is an atomic findOrCreate, so a retried delivery
+ * between the caller's dedup scan and the insert can no longer duplicate a row
+ * (the prior check-then-insert was a two-round-trip TOCTOU). The hash is
+ * computed server-side in `convex/okfBundleNode.ts`; this tool forwards no new
+ * argument — the surface is unchanged for MCP clients.
+ *
  * **VantagePeers Cloud, multi-tenant**: this is the Cloud product (NOT
  * Self-host). The Convex action gates cross-tenant writes via the same
  * fail-closed null-identity guard that protects exportOkfBundle (Eta REVISE

@@ -151,6 +151,8 @@ export const getMemory = query({
       ),
       createdAt: v.number(),
       updatedAt: v.number(),
+      // R-18 import idempotency key; only OKF-imported rows carry it.
+      contentHash: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -202,6 +204,8 @@ const memoryDocValidator = v.object({
   ),
   createdAt: v.number(),
   updatedAt: v.number(),
+  // R-18 import idempotency key; only OKF-imported rows carry it.
+  contentHash: v.optional(v.string()),
 });
 
 // Paginated return shape — compat-first: existing callers reading `.value` work unchanged.
