@@ -1,8 +1,14 @@
 import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
-import { requireAgentCredentialMatch, requireScope, withOrgScope } from "./lib/auth";
+import { internalMutation, mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import {
+	requireAgentCredentialMatch,
+	requireScope,
+	withOrgScope,
+	type OrgScope,
+} from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 import {
@@ -40,36 +46,64 @@ const cappedStaleInProgressValidator = v.object({
 // Any orchestrator with a profile receives broadcasts.
 // No hardcoded list — new orchestrators are included automatically after calling update_profile.
 
-export const sendMessage = mutation({
-	args: {
-		from: creatorValidator,
-		fromInstanceId: v.optional(v.string()),
-		channel: v.string(),
-		content: v.string(),
-		sessionDay: v.optional(v.number()),
-		tenantId: v.optional(v.string()),
-		// [P-T5] THE LOCK — optional per-agent credential secret (see
-		// convex/agentCredentials.ts). When presented, `args.from` MUST equal
-		// the agent name the credential resolves to (see
-		// requireAgentCredentialMatch) — a call asserting a DIFFERENT `from`
-		// than the resolved identity is refused with AGENT_IDENTITY_MISMATCH.
-		// Omitted entirely, this is a no-op — pre-P-T5 callers are unchanged.
-		agentCredentialSecret: v.optional(v.string()),
-	},
-	returns: v.id("messages"),
-	handler: async (ctx, args) => {
-		// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] Resolve scope BEFORE the
-		// credential lock so the lock can bind the presented credential's org
-		// against the SAME `orgSlug` the rest of this handler already derives
-		// (reused below in the broadcast branch — never re-derived).
-		const scope = await withOrgScope(ctx);
+// ─────────────────────────────────────────────────────────────────────────────
+// sendMessageCore — shared delivery core for both the public `sendMessage`
+// (task sigma/tenant-scope-write-symmetry). Performs recipient resolution,
+// the zero-recipient bounce, the message insert, and the per-recipient
+// receipt insert, given an ALREADY-RESOLVED `scope`. The two wrappers below
+// (`sendMessage` public, `sendMessageInternal` HMAC-webhook-only) differ
+// ONLY in how they resolve that scope — never duplicate this loop.
+// ─────────────────────────────────────────────────────────────────────────────
 
-		await requireAgentCredentialMatch(
-			ctx,
-			args.agentCredentialSecret,
-			args.from,
-			scope.orgSlug,
-		);
+interface SendMessageArgs {
+	from: string;
+	fromInstanceId?: string;
+	channel: string;
+	content: string;
+	sessionDay?: number;
+	tenantId?: string;
+}
+
+async function sendMessageCore(
+	ctx: MutationCtx,
+	args: SendMessageArgs,
+	scope: OrgScope,
+): Promise<Doc<"messages">["_id"]> {
+	// Tenant-scope write symmetry (task sigma/tenant-scope-write-symmetry):
+		// the scoped READS (listMessages/listByChannel/searchMessagesByKeyword)
+		// force `.eq("tenantId", scope.orgSlug)` for non-master callers — the
+		// write must stamp the SAME derived tenant, never trust the
+		// client-supplied args.tenantId, or a non-master send silently
+		// produces a row invisible to (or spoofable across) the caller's own
+		// scoped reads. `scope` reused from the top of this handler.
+		let derivedTenantId: string | undefined;
+		if (scope.isMaster && scope.orgSlug === null) {
+			// TRUE internal master (service account / Laurent) carve-out —
+			// mirrors the broadcast branch's isMaster && orgSlug===null
+			// discriminant below: legitimate internal fleet traffic keeps
+			// today's behavior, writing whatever tenantId (possibly
+			// undefined) the caller supplied.
+			derivedTenantId = args.tenantId;
+		} else if (scope.orgSlug !== null) {
+			// Any real client org (including a client org whose
+			// client_org_mapping row carries the ["*"] read sentinel, whose
+			// isMaster is overloaded true — lib/auth.ts:182): the stamped
+			// tenant is DERIVED from the verified scope, never the
+			// client-supplied args.tenantId. Deriving — not
+			// comparing-then-rejecting — makes a foreign-tenant spoof
+			// impossible: a supplied foreign tenant is simply overridden by
+			// the caller's real org.
+			derivedTenantId = scope.orgSlug;
+		} else {
+			// Anonymous / no-identity, non-master (isMaster===false,
+			// orgSlug===null): an absent tenant is an event, never a rest —
+			// refuse loudly instead of writing a null-tenant receipt that
+			// would be invisible to the caller's own scoped reads (and, for
+			// a DM to a known role, would otherwise silently "succeed").
+			throw new ConvexError(
+				"RBAC_DENIED: sendMessage requires an authenticated org — no tenant could be derived for this write. The caller has no tenantId and is not the authenticated master identity.",
+			);
+		}
 
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
@@ -77,7 +111,7 @@ export const sendMessage = mutation({
 			channel: args.channel,
 			content: args.content,
 			sessionDay: args.sessionDay,
-			tenantId: args.tenantId,
+			tenantId: derivedTenantId,
 			createdAt: Date.now(),
 		});
 
@@ -226,12 +260,80 @@ export const sendMessage = mutation({
 				messageId,
 				recipient: role,
 				recipientInstanceId: isInstance ? recipient : undefined,
-				tenantId: args.tenantId,
+				tenantId: derivedTenantId,
 				readAt: undefined,
 			});
 		}
 
-		return messageId;
+	return messageId;
+}
+
+export const sendMessage = mutation({
+	args: {
+		from: creatorValidator,
+		fromInstanceId: v.optional(v.string()),
+		channel: v.string(),
+		content: v.string(),
+		sessionDay: v.optional(v.number()),
+		tenantId: v.optional(v.string()),
+		// [P-T5] THE LOCK — optional per-agent credential secret (see
+		// convex/agentCredentials.ts). When presented, `args.from` MUST equal
+		// the agent name the credential resolves to (see
+		// requireAgentCredentialMatch) — a call asserting a DIFFERENT `from`
+		// than the resolved identity is refused with AGENT_IDENTITY_MISMATCH.
+		// Omitted entirely, this is a no-op — pre-P-T5 callers are unchanged.
+		agentCredentialSecret: v.optional(v.string()),
+	},
+	returns: v.id("messages"),
+	handler: async (ctx, args) => {
+		// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] Resolve scope BEFORE the
+		// credential lock so the lock can bind the presented credential's org
+		// against the SAME `orgSlug` the rest of this handler already derives
+		// (reused below by sendMessageCore — never re-derived).
+		const scope = await withOrgScope(ctx);
+
+		await requireAgentCredentialMatch(
+			ctx,
+			args.agentCredentialSecret,
+			args.from,
+			scope.orgSlug,
+		);
+
+		return await sendMessageCore(ctx, args, scope);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sendMessageInternal — HMAC-webhook-only. Called EXCLUSIVELY from
+// convex/http.ts's GitHub-webhook `httpAction` (authed by
+// GITHUB_WEBHOOK_SECRET/HMAC, never a Clerk identity by construction — there
+// is no ctx.auth identity for withOrgScope to resolve). Mirrors
+// internal.tasks.createForWebhook's shape/convention: an internalMutation is
+// structurally unreachable from api.* / the public MCP surface (see
+// convex/_generated/api.d.ts — it is registered only under the `internal`
+// tree), so this bypass cannot be invoked by any client. Scope is resolved
+// via withOrgScope(ctx, { allowNoIdentityMaster: true }), which takes the
+// TRUE-internal-master carve-out (isMaster=true, orgSlug=null) — internal
+// fleet notifications are master/null-tenant traffic, exactly like
+// createForWebhook's task writes. The public `sendMessage` above keeps its
+// strict withOrgScope(ctx) + anonymous-refuse UNCHANGED; this wrapper never
+// relaxes that refusal, it only gives the webhook a distinct, provably
+// unreachable-by-clients path to the SAME delivery core.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const sendMessageInternal = internalMutation({
+	args: {
+		from: creatorValidator,
+		fromInstanceId: v.optional(v.string()),
+		channel: v.string(),
+		content: v.string(),
+		sessionDay: v.optional(v.number()),
+		tenantId: v.optional(v.string()),
+	},
+	returns: v.id("messages"),
+	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
+		return await sendMessageCore(ctx, args, scope);
 	},
 });
 

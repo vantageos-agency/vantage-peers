@@ -59,6 +59,21 @@ async function createMessagingTestConvex() {
 	return t;
 }
 
+// tenant-scope-write-symmetry closed the silent no-identity path in
+// sendMessage — this suite's `sendMessage` calls are legitimate
+// internal-fleet setup, not an anonymous-caller contract. convex-test's
+// `withIdentity()` result does not itself expose `.withIdentity` again (it
+// returns the auth-bound proxy, not the base test object), so this helper
+// re-derives the master-identity proxy per call site rather than trying to
+// chain off an already-identified instance.
+function asMaster<T extends { withIdentity: (identity: { subject: string }) => unknown }>(
+	t: T,
+): ReturnType<T["withIdentity"]> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	}) as ReturnType<T["withIdentity"]>;
+}
+
 // =============================================================================
 // 1. Memories
 // =============================================================================
@@ -565,7 +580,7 @@ describe("Messages", () => {
 	test("send message creates message + receipts", async () => {
 		const t = await createMessagingTestConvex();
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",
 			content: "Hello Tau, task complete",
@@ -634,13 +649,13 @@ describe("Messages", () => {
 	test("check new messages returns unread", async () => {
 		const t = await createMessagingTestConvex();
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
 			channel: "pi",
 			content: "Message 1 for Pi",
 		});
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "phi",
 			channel: "pi",
 			content: "Message 2 for Pi",
@@ -657,7 +672,7 @@ describe("Messages", () => {
 	test("mark as read sets readAt", async () => {
 		const t = await createMessagingTestConvex();
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
 			channel: "pi",
 			content: "Read me",
@@ -677,7 +692,7 @@ describe("Messages", () => {
 	test("after mark as read, checkNewMessages returns empty", async () => {
 		const t = await createMessagingTestConvex();
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
 			channel: "pi",
 			content: "One-time message",
@@ -701,19 +716,19 @@ describe("Messages", () => {
 	test("list messages by sender", async () => {
 		const t = await createMessagingTestConvex();
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",
 			content: "Pi message 1",
 		});
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "phi",
 			content: "Pi message 2",
 		});
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
 			channel: "pi",
 			content: "Tau message",
@@ -730,7 +745,7 @@ describe("Messages", () => {
 		const t = await createMessagingTestConvex();
 
 		// Send a message from pi to tau — creates 1 message + 1 receipt
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",
 			content: "This will be deleted",
@@ -762,7 +777,7 @@ describe("Messages", () => {
 	test("delete message rejects non-sender caller", async () => {
 		const t = await createMessagingTestConvex();
 
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",
 			content: "Only pi can delete this",
@@ -782,7 +797,7 @@ describe("Messages", () => {
 
 		// Send one message so we have a valid-shape ID, then delete it to get a
 		// missing ID for the error path
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",
 			content: "Temporary",
@@ -808,7 +823,7 @@ describe("Messages", () => {
 		const t = await createMessagingTestConvex();
 
 		// Insert a message and get its _id (from the messages table, NOT messageReceipts)
-		const messageId = await t.mutation(api.messages.sendMessage, {
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
 			channel: "tau",
 			content: "Wrong-table ID test",
@@ -826,7 +841,7 @@ describe("Messages", () => {
 	test("checkNewMessages response omits messageId field from each result object", async () => {
 		const t = await createMessagingTestConvex();
 
-		await t.mutation(api.messages.sendMessage, {
+		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "phi",
 			channel: "tau",
 			content: "Field-projection test",
