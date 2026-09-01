@@ -97,6 +97,19 @@ export type ReceiptPairResolution =
 // to exactly one org, AND it must be the SAME clerkOrgSlug. Any other case
 // (either end fleet-internal, either end ambiguous, or the two ends
 // resolving to different orgs) is no-touch.
+//
+// MEMBERSHIP IS A ROSTER FACT, DELIBERATELY NOT AN IDENTITY FACT (Eta,
+// PR #1259 review). `client_org_mapping.allowedOrchestrators` says which
+// orchestrator's DATA a client user may query — it says NOTHING about how
+// that orchestrator itself authenticates. withOrgScope (convex/lib/auth.ts)
+// decides the reading identity from the CLAIM the caller presents (org-claim
+// -> scoped, isMaster:false; service-account / master-secret / no-org-claim
+// -> master), never from a roster. Conflating the two — reading a recipient's
+// roster presence as ownership of every receipt addressed to them — is exactly
+// what produced the leak this narrowed rule closes. A dual-role agent that
+// polls as itself with no org claim reads MASTER, so fleet-internal messages
+// to it stay visible after this backfill; the scoped reader is the client's
+// human user, not the orchestrator.
 export function resolveReceiptPair(
 	clientOrgs: ClientOrg[],
 	sender: string,
