@@ -3,7 +3,7 @@ import { ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { mutation, internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
 import {
@@ -3419,12 +3419,25 @@ export const createOrUpdateReviewTask = internalMutation({
  * `closed`, REGARDLESS of whether the PR was merged: once the PR is closed,
  * there is nothing left to review either way (merged -> covered by the
  * separate Deploy-task flow; closed-without-merge -> review is moot).
+ *
+ * Keyed on the ROW's title-embedded PR link (repoFullName + prNumber),
+ * NEVER on `createdBy`/`origin` — findOpenReviewTasks matches ANY row whose
+ * title parses to this (repoFullName, prNumber) tuple, regardless of which
+ * code path inserted it. This is what makes the close idempotent: rows
+ * already "done" are excluded by findOpenReviewTasks (it only scans
+ * REVIEW_OPEN_STATUSES), so a webhook delivered twice for the same PR finds
+ * zero matches on the second pass and changes nothing (delta zero) — and a
+ * row a human already closed by hand stays closed for the same reason.
+ *
+ * `mergeCommitSha` (optional) is appended to the completion note so the
+ * merge commit is carried on the row without adding a new schema field.
  */
 export const closeReviewTasksForPr = internalMutation({
 	args: {
 		repoFullName: v.string(),
 		prNumber: v.number(),
 		completionNote: v.string(),
+		mergeCommitSha: v.optional(v.string()),
 	},
 	returns: v.object({ closed: v.number() }),
 	handler: async (ctx, args) => {
@@ -3435,16 +3448,86 @@ export const closeReviewTasksForPr = internalMutation({
 			args.prNumber,
 		);
 
+		const note = args.mergeCommitSha
+			? `${args.completionNote} (merge commit ${args.mergeCommitSha})`
+			: args.completionNote;
+
 		for (const t of matches) {
 			await ctx.db.patch(t._id, {
 				status: "done" as const,
 				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
-				completionNote: args.completionNote,
+				completionNote: note,
 			});
 		}
 
 		return { closed: matches.length };
+	},
+});
+
+/**
+ * listReviewBacklogByLineage — backlog-sweep support query (task
+ * k17bh19d6zzf73417j6a9623nn8dh8ek). Scans every OPEN review-tagged row and
+ * splits it by lineage:
+ *   - "automation": title parses as "[Review] <repo> PR #<n>: …"
+ *     (createOrUpdateReviewTask's format) — carries a reliable PR link and
+ *     CAN be closed by closeReviewTasksForPr once the PR's terminal state is
+ *     known.
+ *   - "bootstrap": isReviewTask (tags include "review" or a "[review]"
+ *     title) but the title does NOT parse to a (repoFullName, prNumber)
+ *     tuple — e.g. the IRP mission-template "Code Review" step
+ *     (missionTemplates.ts), whose title is "[#<issueNumber>] T<i> — Code
+ *     Review" and links only to a GitHub ISSUE (via missionId), never to a
+ *     PR. These rows carry NO reliable PR link at all — a PR-terminal-state
+ *     sweep cannot key on a link that does not exist for them. Their actual
+ *     closer is `issueClosedSweepDb.cascadeCloseMission`, triggered when the
+ *     linked GH ISSUE (not PR) closes.
+ */
+export const listReviewBacklogByLineage = internalQuery({
+	args: {},
+	returns: v.object({
+		automation: v.array(
+			v.object({
+				_id: v.id("tasks"),
+				title: v.string(),
+				repoFullName: v.string(),
+				prNumber: v.number(),
+			}),
+		),
+		bootstrapNoPrLink: v.array(
+			v.object({
+				_id: v.id("tasks"),
+				title: v.string(),
+			}),
+		),
+	}),
+	handler: async (ctx) => {
+		const automation: { _id: Id<"tasks">; title: string; repoFullName: string; prNumber: number }[] = [];
+		const bootstrapNoPrLink: { _id: Id<"tasks">; title: string }[] = [];
+
+		for (const status of REVIEW_OPEN_STATUSES) {
+			const batch = await ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+			for (const t of batch) {
+				const parsed = parseReviewTitle(t.title);
+				if (parsed) {
+					automation.push({
+						_id: t._id,
+						title: t.title,
+						repoFullName: parsed.repoFullName,
+						prNumber: parsed.prNumber,
+					});
+					continue;
+				}
+				if (isReviewTask(t) || t.tags?.includes("review")) {
+					bootstrapNoPrLink.push({ _id: t._id, title: t.title });
+				}
+			}
+		}
+
+		return { automation, bootstrapNoPrLink };
 	},
 });
