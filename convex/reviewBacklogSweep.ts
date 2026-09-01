@@ -1,3 +1,8 @@
+// RUNTIME: this action runs in Convex's DEFAULT (V8) runtime — the `"use node"`
+// directive was deliberately removed (Eta REVISE, PR #1258). It uses only
+// `fetch` and `process.env.GITHUB_TOKEN`, both available in the default runtime,
+// and dropping the Node runtime lets `convex-test` exercise the action directly
+// (the credential both-pole test). No behaviour depends on a Node-only API.
 //
 // reviewBacklogSweep — one-time backlog closer for dead "[Review]" rows
 // (task k17bh19d6zzf73417j6a9623nn8dh8ek, Pi).
