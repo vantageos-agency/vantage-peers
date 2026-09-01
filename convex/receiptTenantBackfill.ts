@@ -2,17 +2,29 @@
 // write-fix (ead59b9, this morning) that left `tenantId` undefined —
 // task k171x0td6c1fyecsansna1gbr98dhwnk follow-up (#1257 write half).
 //
-// THE RULE (Pi, binding): every receipt must be readable by its intended
-// recipient UNDER THE IDENTITY THAT RECIPIENT ACTUALLY AUTHENTICATES WITH.
-//   - A recipient that authenticates SCOPED (a client-org orchestrator) must
-//     have its receipts stamped with that org's tenant — the scoped read
-//     path filters `eq("tenantId", scope.orgSlug)` and cannot see a null row.
-//   - A recipient that authenticates as MASTER (fleet-internal orchestrator)
-//     reads the all-tenants path — null is CORRECT for it, never stamp.
-//   - A recipient whose identity cannot be resolved unambiguously goes to a
-//     NAMED, COUNTED "unresolved" bucket — never a guessed tenant. A wrong
-//     stamp (handing a row to a stranger) is categorically worse than a
-//     missing one.
+// THE RULE (Pi, binding, narrowed post-Eta-leak-finding): a receipt is
+// backfilled ONLY IF its message's SENDER and its RECIPIENT both belong to
+// the SAME single active client org. Otherwise it is left UNMARKED — no
+// unresolved bucket, that state dissolves into "not touched".
+//
+// WHY (the leak this closes): the prior recipient-only rule stamped a
+// receipt based on the RECIPIENT alone. A fleet-internal message
+// (sender "pi" -> recipient "sigma") where "sigma" ALSO happens to sit in a
+// client org's `allowedOrchestrators` roster got stamped INTO that client
+// org — handing that client a receipt for a message it never sent or was
+// ever meant to see. Both-ends-same-org is the only decidable, fail-closed
+// fix: the org must be able to see BOTH the sender and the recipient as its
+// own, not merely the recipient.
+//
+// CHANGELOG — knowingly accepted trade (Eta, binding): a receipt whose
+// sender is fleet-internal but whose recipient IS a client-org agent is now
+// NOT stamped, even though that agent could safely have read it under the
+// old (leaky) rule. If that agent later reads scoped, this row stays
+// invisible to them — a withheld grant, not a wrong one. Accepted because a
+// withheld row surfaces as a reportable empty inbox (loud, fixable by a
+// follow-up backfill once sender attribution is available), while a leaked
+// row hands a stranger's message to the wrong tenant silently (unfixable
+// after the fact — the read already happened). WITHHELD > LEAKED.
 //
 // THE SHARED RESOLVER (report and write call the SAME function — never two
 // implementations) and THE ONE ACTION (Eta, binding — report + write share
@@ -74,44 +86,46 @@ export const _listRealClientOrgs = internalQuery({
 // THE SHARED RESOLVER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ReceiptTenantResolution =
-	| { state: "scope"; tenant: string; reason: string }
-	| { state: "null-master"; tenant: null; reason: string }
-	| { state: "unresolved"; tenant: null; reason: string };
+export type ReceiptPairResolution =
+	| { state: "same-client-org"; tenant: string; reason: string }
+	| { state: "no-touch"; tenant: null; reason: string };
 
 // Exported so the resolver and its call sites (report + write) are provably
 // the ONE implementation — never duplicated between the dry-run report path
-// and the write path.
-export function resolveReceiptTenant(
+// and the write path. ONE predicate (Eta: not two lookups that can drift):
+// both the sender's org set and the recipient's org set must each resolve
+// to exactly one org, AND it must be the SAME clerkOrgSlug. Any other case
+// (either end fleet-internal, either end ambiguous, or the two ends
+// resolving to different orgs) is no-touch.
+export function resolveReceiptPair(
 	clientOrgs: ClientOrg[],
+	sender: string,
 	recipient: string,
-	_recipientInstanceId: string | undefined,
-): ReceiptTenantResolution {
-	const matches = clientOrgs.filter((org) =>
+): ReceiptPairResolution {
+	const senderOrgs = clientOrgs.filter((org) =>
+		org.allowedOrchestrators.includes(sender),
+	);
+	const recipientOrgs = clientOrgs.filter((org) =>
 		org.allowedOrchestrators.includes(recipient),
 	);
 
-	if (matches.length === 1) {
+	if (
+		senderOrgs.length === 1 &&
+		recipientOrgs.length === 1 &&
+		senderOrgs[0].clerkOrgSlug === recipientOrgs[0].clerkOrgSlug
+	) {
 		return {
-			state: "scope",
-			tenant: matches[0].clerkOrgSlug,
-			reason: "recipient in exactly one active client org",
-		};
-	}
-
-	if (matches.length === 0) {
-		return {
-			state: "null-master",
-			tenant: null,
-			reason:
-				"recipient in no active client org — authenticates as master, null is correct",
+			state: "same-client-org",
+			tenant: senderOrgs[0].clerkOrgSlug,
+			reason: "sender and recipient both resolve to the same single active client org",
 		};
 	}
 
 	return {
-		state: "unresolved",
+		state: "no-touch",
 		tenant: null,
-		reason: "recipient in multiple client orgs — ambiguous, never guessed",
+		reason:
+			"sender/recipient do not both resolve to the same single active client org — never guessed, left unmarked",
 	};
 }
 
@@ -127,6 +141,7 @@ export const _undefinedTenantReceiptPage = internalQuery({
 		receipts: v.array(
 			v.object({
 				_id: v.id("messageReceipts"),
+				messageId: v.id("messages"),
 				recipient: v.string(),
 				recipientInstanceId: v.optional(v.string()),
 			}),
@@ -140,6 +155,8 @@ export const _undefinedTenantReceiptPage = internalQuery({
 		// this mirrors receiptTenantAudit.ts's full-table scan + paginate — the
 		// table is bounded (46906 rows at brief-authoring time) and this is a
 		// one-shot maintenance action, not a hot query path.
+		// messageId is now PRESENT (not omitted) — the both-ends rule needs it
+		// to look up the message's sender (`message.from`).
 		const page = await ctx.db
 			.query("messageReceipts")
 			.paginate({ numItems: 2000, cursor });
@@ -147,6 +164,7 @@ export const _undefinedTenantReceiptPage = internalQuery({
 			.filter((r) => r.tenantId === undefined)
 			.map((r) => ({
 				_id: r._id,
+				messageId: r.messageId,
 				recipient: r.recipient,
 				recipientInstanceId: r.recipientInstanceId,
 			}));
@@ -159,8 +177,24 @@ export const _undefinedTenantReceiptPage = internalQuery({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sender lookup — the both-ends rule needs `message.from` alongside
+// `receipt.recipient`. A dedicated narrow projection (never spreads the raw
+// message row) so the action only ever sees the one field it needs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const _getMessageFrom = internalQuery({
+	args: { messageId: v.id("messages") },
+	returns: v.union(v.object({ from: v.string() }), v.null()),
+	handler: async (ctx, { messageId }) => {
+		const message = await ctx.db.get(messageId);
+		if (message === null) return null;
+		return { from: message.from };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Patch helper — idempotent (re-checks tenantId is STILL undefined before
-// writing) and only ever called for state==="scope" rows.
+// writing) and only ever called for state==="same-client-org" rows.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const _patchReceiptTenant = internalMutation({
@@ -186,9 +220,7 @@ export const _patchReceiptTenant = internalMutation({
 const backfillResultValidator = v.object({
 	total: v.number(),
 	perScope: v.record(v.string(), v.number()),
-	nullMaster: v.number(),
-	unresolved: v.number(),
-	resolvedScopeCount: v.number(),
+	notTouched: v.number(),
 	positiveControlSample: v.union(
 		v.object({
 			receiptId: v.id("messageReceipts"),
@@ -203,9 +235,7 @@ const backfillResultValidator = v.object({
 export type BackfillReceiptTenantsResult = {
 	total: number;
 	perScope: Record<string, number>;
-	nullMaster: number;
-	unresolved: number;
-	resolvedScopeCount: number;
+	notTouched: number;
 	positiveControlSample: { receiptId: Id<"messageReceipts">; tenant: string } | null;
 	dryRun: boolean;
 	patched: number;
@@ -280,9 +310,7 @@ export const backfillReceiptTenants = internalAction({
 
 		let total = 0;
 		const perScope: Record<string, number> = {};
-		let nullMaster = 0;
-		let unresolved = 0;
-		let resolvedScopeCount = 0;
+		let notTouched = 0;
 		let positiveControlSample: {
 			receiptId: Id<"messageReceipts">;
 			tenant: string;
@@ -296,6 +324,7 @@ export const backfillReceiptTenants = internalAction({
 			const page: {
 				receipts: Array<{
 					_id: Id<"messageReceipts">;
+					messageId: Id<"messages">;
 					recipient: string;
 					recipientInstanceId?: string;
 				}>;
@@ -308,16 +337,31 @@ export const backfillReceiptTenants = internalAction({
 
 			for (const receipt of page.receipts) {
 				total++;
-				const resolution = resolveReceiptTenant(
-					clientOrgs,
-					receipt.recipient,
-					receipt.recipientInstanceId,
+
+				// Look up the message to get its sender — the both-ends rule
+				// requires BOTH the sender and the recipient, not the recipient
+				// alone (the leak the recipient-only rule had).
+				const message = await ctx.runQuery(
+					internal.receiptTenantBackfill._getMessageFrom,
+					{ messageId: receipt.messageId },
 				);
 
-				if (resolution.state === "scope") {
+				if (message === null) {
+					// Dangling messageId (message deleted) — cannot resolve either
+					// end. Fail-closed: no-touch, never guessed.
+					notTouched++;
+					continue;
+				}
+
+				const resolution = resolveReceiptPair(
+					clientOrgs,
+					message.from,
+					receipt.recipient,
+				);
+
+				if (resolution.state === "same-client-org") {
 					perScope[resolution.tenant] =
 						(perScope[resolution.tenant] ?? 0) + 1;
-					resolvedScopeCount++;
 					if (positiveControlSample === null) {
 						positiveControlSample = {
 							receiptId: receipt._id,
@@ -331,10 +375,8 @@ export const backfillReceiptTenants = internalAction({
 						);
 						if (didPatch) patched++;
 					}
-				} else if (resolution.state === "null-master") {
-					nullMaster++;
 				} else {
-					unresolved++;
+					notTouched++;
 				}
 			}
 
@@ -345,9 +387,7 @@ export const backfillReceiptTenants = internalAction({
 		return {
 			total,
 			perScope,
-			nullMaster,
-			unresolved,
-			resolvedScopeCount,
+			notTouched,
 			positiveControlSample,
 			dryRun,
 			patched,
