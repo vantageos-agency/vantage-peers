@@ -1,4 +1,3 @@
-"use node";
 //
 // reviewBacklogSweep — one-time backlog closer for dead "[Review]" rows
 // (task k17bh19d6zzf73417j6a9623nn8dh8ek, Pi).
@@ -25,9 +24,9 @@
 //   npx convex run reviewBacklogSweep:sweepReviewBacklog --once
 //
 
-import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
+import { internalAction } from "./_generated/server";
 
 type ByLineageCount = {
 	before: number;
@@ -39,6 +38,13 @@ type SweepResult = {
 	automation: ByLineageCount;
 	bootstrapSkippedNoPrLink: number;
 	errors: number;
+	// True when the automation backlog exceeded SWEEP_ROW_FANOUT_CAP and this run
+	// processed only the first cap rows. Survivable — `remaining` is re-derived
+	// from a fresh query after the sweep, so a follow-up run drains the rest — but
+	// the result must SAY it truncated, never let a capped run read like a
+	// complete one (Eta REVISE, measurement-integrity §4: absence of signal is an
+	// event, not a silent default).
+	fanoutCapped: boolean;
 };
 
 // Bound the fan-out of GitHub API calls in a single sweep run.
@@ -54,9 +60,24 @@ export const sweepReviewBacklog = internalAction({
 		}),
 		bootstrapSkippedNoPrLink: v.number(),
 		errors: v.number(),
+		fanoutCapped: v.boolean(),
 	}),
 	handler: async (ctx): Promise<SweepResult> => {
 		const githubToken = process.env.GITHUB_TOKEN;
+		// REFUSE BEFORE THE LOOP (Eta REVISE): a missing credential is not a
+		// per-row condition — it means this sweep CANNOT LOOK at a single PR, so it
+		// must not return a result at all. Returning {closed:0, errors:0} here is
+		// byte-identical to a run that authenticated fine and found every PR still
+		// open; the operator reads a clean run and the dead rows stay — the exact
+		// failure k17bh19d6zzf73417j6a9623nn8dh8ek exists to end. A run that cannot
+		// measure throws loudly (three-state-verdict.md; measurement-integrity §3),
+		// never a silent zero, and 500 identical "skipping" log lines is not a
+		// refusal.
+		if (!githubToken) {
+			throw new ConvexError(
+				"REFUSING TO SWEEP: no GITHUB_TOKEN — the sweep verifies each PR's terminal state against the GitHub REST API and cannot look without a credential. A run that cannot measure must fail loudly, not return a clean {closed:0,errors:0} indistinguishable from an authenticated run that found every PR still open.",
+			);
+		}
 		const backlog = await ctx.runQuery(
 			internal.tasks.listReviewBacklogByLineage,
 			{},
@@ -64,6 +85,7 @@ export const sweepReviewBacklog = internalAction({
 
 		const automationBefore = backlog.automation.length;
 		const bootstrapSkippedNoPrLink = backlog.bootstrapNoPrLink.length;
+		const fanoutCapped = automationBefore > SWEEP_ROW_FANOUT_CAP;
 		let closed = 0;
 		let errors = 0;
 
@@ -71,12 +93,6 @@ export const sweepReviewBacklog = internalAction({
 
 		for (const row of rows) {
 			try {
-				if (!githubToken) {
-					console.log(
-						`[reviewBacklogSweep] no GITHUB_TOKEN — skipping ${row.repoFullName}#${row.prNumber}`,
-					);
-					continue;
-				}
 				const [owner, repo] = row.repoFullName.split("/");
 				const resp = await fetch(
 					`https://api.github.com/repos/${owner}/${repo}/pulls/${row.prNumber}`,
@@ -111,7 +127,9 @@ export const sweepReviewBacklog = internalAction({
 						repoFullName: row.repoFullName,
 						prNumber: row.prNumber,
 						completionNote: note,
-						mergeCommitSha: pr.merged ? pr.merge_commit_sha ?? undefined : undefined,
+						mergeCommitSha: pr.merged
+							? (pr.merge_commit_sha ?? undefined)
+							: undefined,
 					},
 				);
 				closed += result.closed;
@@ -129,7 +147,7 @@ export const sweepReviewBacklog = internalAction({
 		);
 
 		console.log(
-			`[reviewBacklogSweep] automation before=${automationBefore} closed=${closed} remaining=${after.automation.length} bootstrapSkippedNoPrLink=${bootstrapSkippedNoPrLink} errors=${errors}`,
+			`[reviewBacklogSweep] automation before=${automationBefore} closed=${closed} remaining=${after.automation.length} bootstrapSkippedNoPrLink=${bootstrapSkippedNoPrLink} errors=${errors} fanoutCapped=${fanoutCapped}`,
 		);
 
 		return {
@@ -140,6 +158,7 @@ export const sweepReviewBacklog = internalAction({
 			},
 			bootstrapSkippedNoPrLink,
 			errors,
+			fanoutCapped,
 		};
 	},
 });
