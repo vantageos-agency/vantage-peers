@@ -274,6 +274,16 @@ function extractDocMatchesFromFile(filePath: string): DocValidatorMatch[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string }> = {
+	"receiptTenantBackfill._receiptsForCaller": {
+		fields: ["messageId", "recipientInstanceId", "readAt"],
+		reason:
+			"Deliberately narrow both-directions isolation-proof projection (_id/recipient/tenantId) for the #1257 receipt-tenant backfill — the test authenticates as a scoped identity and asserts it reads only its own tenant's rows; the full receipt shape (messageId/recipientInstanceId/readAt) is irrelevant to that proof. Handler maps to this shape explicitly, never spreads the raw row.",
+	},
+	"receiptTenantBackfill._undefinedTenantReceiptPage": {
+		fields: ["messageId", "tenantId", "readAt"],
+		reason:
+			"Deliberately narrow page-reader projection (_id/recipient/recipientInstanceId) for the #1257 backfill's one-shot scan — the resolver keys ONLY on the recipient; tenantId is undefined by construction on this population (it is what the backfill sets), and messageId/readAt are irrelevant to tenant resolution. Handler maps to this shape explicitly, never spreads the raw row.",
+	},
 	"episodes.listEpisodes": {
 		fields: ["type", "instanceId", "relations", "ttl", "updatedAt", "contentHash"],
 		reason:
