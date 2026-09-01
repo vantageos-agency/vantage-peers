@@ -82,6 +82,8 @@ import type * as orgRoster from "../orgRoster.js";
 import type * as prMonitor from "../prMonitor.js";
 import type * as profiles from "../profiles.js";
 import type * as ragSync from "../ragSync.js";
+import type * as receiptTenantAudit from "../receiptTenantAudit.js";
+import type * as receiptTenantBackfill from "../receiptTenantBackfill.js";
 import type * as recurringTasks from "../recurringTasks.js";
 import type * as reviewBacklogSweep from "../reviewBacklogSweep.js";
 import type * as search from "../search.js";
@@ -170,6 +172,8 @@ declare const fullApi: ApiFromModules<{
   prMonitor: typeof prMonitor;
   profiles: typeof profiles;
   ragSync: typeof ragSync;
+  receiptTenantAudit: typeof receiptTenantAudit;
+  receiptTenantBackfill: typeof receiptTenantBackfill;
   recurringTasks: typeof recurringTasks;
   reviewBacklogSweep: typeof reviewBacklogSweep;
   search: typeof search;
