@@ -394,6 +394,137 @@ export async function computePendingOnYou(
 	);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Day 158/159 (k175y04n5vhek8zrdxgek0m85h8cry13) — incident-closure both-poles
+// gate. Extends the SAME server-side closure validator `complete` already
+// calls (this file), not a second mechanism.
+//
+// Root cause this closes: #1196/#1205 were misjudged as "recurring" by a
+// counter when the defect was in fact CONTINUOUS (every call failed). The
+// two issues were correctly closed only once an orchestrator actually ran
+// the judging call TWICE — once observing it fail (request id
+// cbd093fa714f6bc6), once observing it succeed (request id
+// a2db9b965398797d) — same command, both poles, executed. This gate makes
+// that pattern mandatory for every incident closure, regardless of who
+// closes it or what they believe.
+//
+// SCOPE (structured signal only — never wording): an "incident closure" is a
+// task carrying the literal tag "incident" (case-insensitive) in its
+// `tags` array (schema.ts:241). Chosen over an issueId/issue-link field
+// because `tasks` has no dedicated issue-link column (only free-text #NNN
+// in the title, itself prose) — `tags` is the same structured, dedicated,
+// non-title mechanism this file already trusts for DORMANT_TAGS (Day 154),
+// so this reuses an established structured-signal pattern instead of
+// inventing a new schema field or parsing the title.
+//
+// BOTH-POLES DETECTOR — structured EVIDENCE, never claim-vocabulary.
+//
+// REWORK (coordinator correction, same cycle): the first version required
+// TWO DISTINCT request ids and a backtick-quoted returning field. Tested
+// against the VERBATIM real closure note for k176kpz2 (author-independent
+// material — not a note this file's author wrote to satisfy its own
+// regexes), it failed both poles: (a) real Convex failures surface as
+// "Server Error" (a space) or "threw" or an ALL_CAPS_ERROR_CODE, not only
+// an attached `FooError` class name; (b) a real returning observation is
+// cited in PLAIN PROSE ("RETURNS THE WHOLE ROW", "blockedOnNobodyReason
+// present", "now serves"), never backtick-quoted; (c) the real note's two
+// request ids are BOTH on the failing pole (the same failing call cited
+// twice) — the returning pole carries no id of its own, because the
+// evidence for "it returns now" is the SAME call named again plus what it
+// gives back, not a second id. Requiring 2 distinct ids therefore rejected
+// every real closure. This is the corrected design:
+//
+//   FAILING pole  = at least one request-id/error-code token (12-40 lower
+//                   hex chars, an HTTP 4xx/5xx code, or an ALL_CAPS_CODE
+//                   token like SCAN_CAP_EXCEEDED) AND an error-surface
+//                   marker ("Server Error", "threw", a `FooError` class
+//                   name, an HTTP 4xx/5xx code, or an ALL_CAPS_CODE token).
+//   RETURNING pole = a returning-surface marker in prose (RETURNS/returns/
+//                   returning, "now serves", "reads whole"/"read back") AND
+//                   a field-or-row reference (a camelCase field identifier,
+//                   a backtick-quoted field, or the word "row").
+//
+// Both poles are independently required conditions over the SAME note —
+// neither depends on request-id distinctness or on backtick formatting.
+// Still never a prose-matcher: no regex here matches "fixed"/"deployed"/
+// "resolved"/"all good"/"PASS" — the NEITHER-pole probe note below ("Fixed
+// the returns-validator omission and deployed to prod, all good now.")
+// carries none of the required error-surface or returning-surface+field
+// tokens and is refused, proving vocabulary alone never satisfies the gate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const INCIDENT_CLOSURE_TAG = "incident";
+
+/** Returns true iff `task.tags` contains the "incident" tag (case-insensitive). */
+export function isIncidentClosure(task: { tags?: string[] }): boolean {
+	if (task.tags === undefined) return false;
+	return task.tags.some((tag) => tag.toLowerCase() === INCIDENT_CLOSURE_TAG);
+}
+
+// A request-id (hex trace id) or a structured error code (HTTP 4xx/5xx, or
+// an ALL_CAPS_WITH_UNDERSCORES token such as SCAN_CAP_EXCEEDED).
+const REQUEST_ID_OR_ERROR_CODE_RE =
+	/\b[0-9a-f]{12,40}\b|\b[45]\d{2}\b|\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
+
+// Real engine failure surfaces: "Server Error" (space-separated, as Convex
+// actually emits it), "threw", an attached exception class name
+// (`FooError`), an HTTP 4xx/5xx code, or an ALL_CAPS_CODE token.
+const FAILING_SURFACE_RE =
+	/\bServer Error\b|\bthrew\b|\b[A-Z][A-Za-z0-9]*Error\b|\b[45]\d{2}\b|\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/;
+
+// A returning observation cited in prose: RETURNS/returns/returning, "now
+// serves"/"serves", "reads whole"/"read whole", "read back".
+const RETURNING_SURFACE_RE =
+	/\bRETURNS?\b|\breturning\b|\bnow serves\b|\bserves\b|\breads?\s+(?:the\s+)?whole\b|\bread back\b/i;
+
+// A field or row reference: a camelCase identifier (blockedOnNobodyReason),
+// a backtick-quoted field, or the word "row" (either case).
+const FIELD_OR_ROW_RE = /\b[a-z]+[A-Z][a-zA-Z0-9]*\b|`[a-zA-Z_][\w.]*`|\b[Rr][Oo][Ww]\b/;
+
+/** True iff the note carries a request-id/error-code token AND an error-surface marker. */
+function hasFailingPole(completionNote: string): boolean {
+	return (
+		REQUEST_ID_OR_ERROR_CODE_RE.test(completionNote) &&
+		FAILING_SURFACE_RE.test(completionNote)
+	);
+}
+
+/** True iff the note carries a returning-surface marker AND a field/row reference. */
+function hasReturningPole(completionNote: string): boolean {
+	return (
+		RETURNING_SURFACE_RE.test(completionNote) && FIELD_OR_ROW_RE.test(completionNote)
+	);
+}
+
+/**
+ * Structured both-poles evidence check (see doc block above). Returns true
+ * only when the note independently satisfies BOTH the failing-pole and the
+ * returning-pole conditions — never on claim-word vocabulary alone.
+ */
+export function hasBothPolesEvidence(completionNote: string | undefined): boolean {
+	if (completionNote === undefined || completionNote.trim() === "") return false;
+	return hasFailingPole(completionNote) && hasReturningPole(completionNote);
+}
+
+/**
+ * Enforces the incident-closure both-poles gate for a single task about to
+ * transition to "done". No-op when the task is not an incident closure
+ * (isIncidentClosure false) — untagged tasks pass through untouched.
+ * Throws a clear, actionable ConvexError when in scope and the
+ * completionNote does not carry both executed-call poles.
+ */
+export function enforceIncidentClosureGate(
+	task: Pick<Doc<"tasks">, "tags">,
+	completionNote: string | undefined,
+	taskId: Id<"tasks">,
+): void {
+	if (!isIncidentClosure(task)) return;
+	if (hasBothPolesEvidence(completionNote)) return;
+	throw new ConvexError(
+		`INCIDENT_CLOSURE_REQUIRES_BOTH_POLES: task ${taskId} is tagged "incident" — closing it requires a completionNote citing an EXECUTED call with BOTH poles: the FAILING observation (a request id or error code, e.g. cbd093fa714f6bc6, plus an error surface such as "Server Error", "threw", a *Error class name, a 4xx/5xx status, or an ALL_CAPS_CODE) AND the RETURNING observation (the same call cited again returning a field or the row — e.g. "get_task now RETURNS the whole row, blockedOnNobodyReason present"). Run the call that judges this incident, once observing it fail and once observing it return, and cite both in the note. Claim-words alone ("fixed", "resolved", "deployed") are not evidence — ${JSON.stringify({ taskId })}`,
+	);
+}
+
 export type StaleInProgressEntry = {
 	taskId: Id<"tasks">;
 	title: string;
