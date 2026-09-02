@@ -652,7 +652,15 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	});
 
 	describe("briefingNotes.list — SCAN_CAP_EXCEEDED", () => {
-		test("cap + 1 candidate rows on the topic branch throws, naming the cap and how to narrow", async () => {
+		// Issue #1260 follow-up: the topic branch is now indexed
+		// (by_topic_updatedAt), so `updatedSince` is a range predicate INSIDE
+		// the query rather than an in-memory filter after a widened `.take()`.
+		// Rows must genuinely satisfy the window to be candidates at all — the
+		// old fixture (all-stale rows, all excluded by a wide window) is no
+		// longer reachable by an overflow, so it is reseeded here to match the
+		// window instead (mirrors tasks.ts's own `updated-since-indexed-bound`
+		// adaptation for its now-indexed branches).
+		test("cap + 1 candidate rows on the (now-indexed) topic branch throws, naming the cap and how to narrow", async () => {
 			const t = convexTest(schema, modules);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < BRIEFING_NOTES_LIST_SCAN_CAP + 1; i++) {
@@ -663,7 +671,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 						content: "fixture content",
 						createdBy: "test-orch-scan-cap-over",
 						createdAt: OLD_UPDATED_AT + i,
-						updatedAt: OLD_UPDATED_AT,
+						updatedAt: RECENT_UPDATED_AT,
 					} as never);
 				}
 			});
@@ -677,7 +685,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				}),
 			).rejects.toThrow(
 				new RegExp(
-					`SCAN_CAP_EXCEEDED.*cap of ${BRIEFING_NOTES_LIST_SCAN_CAP}.*Narrow with topic`,
+					`SCAN_CAP_EXCEEDED.*cap of ${BRIEFING_NOTES_LIST_SCAN_CAP}.*Narrow with topic.*shrink the updatedSince window`,
 					"s",
 				),
 			);

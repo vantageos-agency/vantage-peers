@@ -185,6 +185,17 @@ function projectBriefingNoteLite(doc: Doc<"briefingNotes">): BriefingNoteLite {
 // BRIEFING_NOTES_LIST_SCAN_CAP + 1 rows before the filter runs, then
 // re-sliced to `limit`. If the widened scan itself hits its cap, we refuse
 // to return a silently-incomplete page.
+//
+// Issue #1260 follow-up: the guard above counts ROWS, but the platform
+// ceiling that actually breaks in production is BYTES — `content` holds full
+// briefing bodies, so a widened `.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1)` can
+// exceed Convex's 16MB-per-execution read limit long before
+// BRIEFING_NOTES_LIST_SCAN_CAP rows are even reached. The fix (below, in
+// `list`): when `updatedSince` is supplied, push the bound INTO the query via
+// `by_updatedAt` / `by_topic_updatedAt` (mirrors tasks.ts's
+// `by_assignee_updatedAt`, Day-132) instead of fetching a fixed-size widened
+// page and filtering afterward — narrowing the window now reduces the bytes
+// actually read, not just a row count the byte ceiling never consulted.
 export const BRIEFING_NOTES_LIST_SCAN_CAP = 2000;
 
 export const list = query({
@@ -218,8 +229,30 @@ export const list = query({
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"briefingNotes">[];
+		// Issue #1260 — updatedSince pushes its bound INTO the query via an index
+		// ending in `updatedAt`, so the byte ceiling is measured against the
+		// actually-matching rows, never a fixed-size widened superset of
+		// full-content documents.
+		const usedIndexedUpdatedSinceBound = args.updatedSince !== undefined;
 
-		if (args.topic !== undefined) {
+		if (args.updatedSince !== undefined) {
+			const since = args.updatedSince;
+			if (args.topic !== undefined) {
+				rows = await ctx.db
+					.query("briefingNotes")
+					.withIndex("by_topic_updatedAt", (q) =>
+						q.eq("topic", args.topic as string).gte("updatedAt", since),
+					)
+					.order("desc")
+					.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1);
+			} else {
+				rows = await ctx.db
+					.query("briefingNotes")
+					.withIndex("by_updatedAt", (q) => q.gte("updatedAt", since))
+					.order("desc")
+					.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1);
+			}
+		} else if (args.topic !== undefined) {
 			rows = await ctx.db
 				.query("briefingNotes")
 				.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
@@ -232,27 +265,23 @@ export const list = query({
 		// Refuse to return a silently-incomplete page: if the widened scan
 		// itself hit its cap, there may be matching rows we never looked at.
 		// "I couldn't measure" must never render identically to "complete".
-		// No branch here was measured to exceed the cap in production (unlike
-		// tasks.list's assignedTo branches), so no index was added and the
-		// fetch is still a fixed-size widened scan — "shrink the updatedSince
-		// window" would be a false remedy and is left out of the message.
+		// The visibility-filter-only branch (no updatedSince) is still a
+		// fixed-size widened scan with no index added — "shrink the
+		// updatedSince window" is only offered when it can actually change the
+		// candidate count (the updatedSince branches above, now indexed).
 		if (needsWideScan && rows.length > BRIEFING_NOTES_LIST_SCAN_CAP) {
+			const windowAdvice = usedIndexedUpdatedSinceBound
+				? " or shrink the updatedSince window"
+				: "";
 			throw new ConvexError(
-				`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic.`,
+				`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic${windowAdvice}.`,
 			);
 		}
 
-		// v2.3.3 — updatedSince filter on updatedAt (fallback to _creationTime if missing)
-		if (args.updatedSince !== undefined) {
-			const since = args.updatedSince;
-			rows = rows.filter(
-				(r) => (r.updatedAt ?? r._creationTime) >= since,
-			);
-		}
 		// Day 165 — participant visibility, resolved via the by_participant_note
 		// index inside callerCanRead (never a scan of `participants`/a
-		// post-query handler filter). Runs over the (possibly widened) fetch,
-		// same order as the updatedSince filter above.
+		// post-query handler filter). Runs over the (possibly widened, and now
+		// possibly updatedSince-indexed) fetch above.
 		if (needsVisibilityFilter) {
 			const identities = args.callerIdentities as string[];
 			const checked = await Promise.all(
