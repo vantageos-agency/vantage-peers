@@ -518,6 +518,19 @@ export default defineSchema({
 		// OKF bundle briefing imports (briefingNotes scope by orgId, mirroring
 		// the by_orgId dedup key in _findBriefingByTitleAndContent).
 		.index("by_orgId_contentHash", ["orgId", "contentHash"])
+		// Issue #1260 live-defect fix: `briefingNotes.list`'s `updatedSince`
+		// branch widened to a fixed-size `.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1)`
+		// scan and filtered `updatedAt` IN-MEMORY afterward. The row-count guard
+		// (BRIEFING_NOTES_LIST_SCAN_CAP) is blind to the quantity that actually
+		// breaks in production: `content` holds full briefing bodies, so the
+		// platform's 16MB-per-execution byte ceiling was hit reading the widened
+		// page, before the row guard could ever run. These two indexes end in
+		// `updatedAt` so the bound lives in the query itself (mirrors
+		// `tasks.by_assignee_updatedAt` / `by_assignee_status_updatedAt`, Day-132):
+		// narrowing the window now genuinely reduces the bytes read, not just the
+		// rows counted.
+		.index("by_updatedAt", ["updatedAt"])
+		.index("by_topic_updatedAt", ["topic", "updatedAt"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on briefing body, with filterFields for the
 		// common narrowing axes (topic, createdBy).
