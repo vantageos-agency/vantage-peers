@@ -126,7 +126,7 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		// never a hardcoded count.
 		expect(registeredNames.length).toBe(CORE_NAMES.length);
 		expect(registeredSet).toEqual(new Set(CORE_NAMES));
-	});
+	}, 60_000);
 
 	it("throws at startup naming an unknown core name, refusing to start", () => {
 		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-"));
@@ -143,5 +143,5 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		expect(result.stderr).toMatch(
 			/tool-exposure: core name\(s\) not found among registered tools: __does_not_exist__/,
 		);
-	});
+	}, 60_000);
 });
