@@ -322,14 +322,27 @@ export async function getServiceAccountToken(): Promise<string | null> {
 
 	// Reuse the existing session (cheap: just mints a new template token) if
 	// we have one; only fall through to a brand-new sign-in-ticket flow when
-	// we don't have a session yet, or the session stopped yielding tokens.
+	// we don't have a session yet, or the session stopped yielding tokens —
+	// whether that shows up as a `null` return (documented contract) or a
+	// thrown rejection (e.g. Clerk answers 404 because the session expired or
+	// was revoked server-side). Both are the same fact: this session no
+	// longer yields tokens. A thrown rejection must not skip the
+	// `cachedSessionId = null` reset below, or the cache is poisoned for the
+	// life of the process — every subsequent call keeps retrying the same
+	// dead session and keeps throwing, with no recovery short of a restart.
 	if (cachedSessionId) {
-		const token = await deps.getSessionToken(cachedSessionId, config.template);
+		let token: MintedToken | null;
+		try {
+			token = await deps.getSessionToken(cachedSessionId, config.template);
+		} catch {
+			token = null;
+		}
 		if (token) {
 			cachedToken = token;
 			return token.jwt;
 		}
 		cachedSessionId = null;
+		cachedToken = null;
 	}
 
 	const ticket = await deps.createSignInTicket(config.userId);
