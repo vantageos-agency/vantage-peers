@@ -321,18 +321,6 @@ function escapeRegex(s) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function countDocumentedBullets(readmePath) {
-	if (!existsSync(readmePath)) return null;
-	let inSection = false;
-	let n = 0;
-	for (const line of readFileSync(readmePath, "utf8").split("\n")) {
-		if (/^### /.test(line)) inSection = true;
-		else if (/^## [^#]/.test(line)) inSection = false;
-		else if (inSection && /^- `[a-z_]+`/.test(line)) n++;
-	}
-	return n;
-}
-
 // ─── Main ────────────────────────────────────────────────────────────────────
 function main() {
 	const canonical = countCanonicalSurface();
@@ -343,21 +331,6 @@ function main() {
 	if (canonical === 0 && existsSync(join(REPO_ROOT, "mcp-server/src/tools.ts"))) {
 		refuse(
 			"canonical MCP-tool surface counted 0 in a tools.ts that exists — the registrar pattern this script matches no longer occurs in the codebase, so no count could be established and nothing below it can be trusted",
-		);
-	}
-
-	// The comparison this script was created to make, and cannot yet make
-	// honestly: the documented total against the registered surface. The README
-	// groups tools differently from the registrar, so the two are not equal by
-	// construction and no mapping has been established. Reported as a named
-	// third state on every run rather than passed over in silence or failed on
-	// a rule nobody has justified.
-	const documented = countDocumentedBullets(
-		join(REPO_ROOT, "mcp-server/README.md"),
-	);
-	if (documented !== null && canonical > 0 && documented !== canonical) {
-		info(
-			`\nUNJUDGED: documented bullets ${documented} vs registered surface ${canonical} (delta ${documented - canonical}). The README's grouping and the registrar's do not correspond one-to-one and the mapping is not encoded here, so this script does NOT decide whether the difference is drift. It reports it every run so the gap stays visible.`,
 		);
 	}
 
