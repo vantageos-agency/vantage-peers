@@ -388,11 +388,12 @@ describe("resume_task refuses a non-paused task", () => {
 	});
 });
 
-// A second start_task with no pause in between must refuse, not strand the
-// first open segment. Two poles: the refusal itself, and the money it
-// protects (the reviewer's exact sequence must not silently under-record).
-describe("start_task refuses a second open segment", () => {
-	test("(f) start on a task with an already-open segment throws and leaves exactly one segment", async () => {
+// A second start_task with no pause in between must be a true no-op, not
+// strand the first open segment. Two poles: nothing gets written, and the
+// money it protects (the reviewer's exact sequence must not silently
+// under-record).
+describe("start_task is a no-op on a second open segment", () => {
+	test("(f) start on a task with an already-open segment writes nothing and leaves exactly one segment", async () => {
 		vi.useFakeTimers();
 		try {
 			const t = convexTest(schema, modules).withIdentity({
@@ -413,13 +414,15 @@ describe("start_task refuses a second open segment", () => {
 			});
 
 			await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" });
+			const before = await t.query(api.tasks.get, { taskId });
 			vi.setSystemTime(t0 + 30 * 60_000);
 
 			await expect(
 				t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" }),
-			).rejects.toThrow(/START_REFUSED_OPEN_SEGMENT/);
+			).resolves.toBeNull();
 
 			const task = await t.query(api.tasks.get, { taskId });
+			expect(task).toEqual(before);
 			expect(task?.workSegments).toHaveLength(1);
 			expect(task?.workSegments?.[0]).toEqual({ start: t0 });
 		} finally {
@@ -450,11 +453,11 @@ describe("start_task refuses a second open segment", () => {
 			await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" });
 			vi.setSystemTime(t0 + 30 * 60_000);
 
-			// Second start refused — the caller must pause first to record the
-			// 30 minutes already worked, then start (resume) again.
+			// Second start is a no-op — the caller must pause first to record
+			// the 30 minutes already worked, then start (resume) again.
 			await expect(
 				t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" }),
-			).rejects.toThrow(/START_REFUSED_OPEN_SEGMENT/);
+			).resolves.toBeNull();
 
 			await t.mutation(api.tasks.pause, { taskId, callerOrchestrator: "sigma" });
 			vi.setSystemTime(t0 + 40 * 60_000);
@@ -474,6 +477,38 @@ describe("start_task refuses a second open segment", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	test("in_progress with a CLOSED trailing segment is incoherent, not a replay, and still opens a new segment", async () => {
+		const t = convexTest(schema, modules).withIdentity({
+			subject: "test-service-account-user-id",
+		});
+		await seedBillableConfig(t);
+
+		const closedStart = Date.now() - 15 * 60_000;
+		const closedEnd = Date.now() - 5 * 60_000;
+		const taskId = await t.run(async (ctx) => {
+			return await ctx.db.insert("tasks", {
+				title: "in_progress status but trailing segment already closed",
+				project: BILLABLE_PROJECT,
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "in_progress" as const,
+				createdBy: "sigma",
+				startedAt: closedStart,
+				workSegments: [{ start: closedStart, end: closedEnd }],
+				createdAt: closedStart,
+				updatedAt: closedEnd,
+			});
+		});
+
+		await expect(
+			t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" }),
+		).resolves.toBeNull();
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.workSegments).toHaveLength(2);
+		expect(task?.workSegments?.[1].end).toBeUndefined();
 	});
 });
 

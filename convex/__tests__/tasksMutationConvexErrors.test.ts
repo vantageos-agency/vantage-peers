@@ -191,24 +191,18 @@ describe("tasks.start — TASK_START_BLOCKED (Hephaistos repro)", () => {
 		expect(parsed.attemptedTaskId).toBe(task2);
 	});
 
-	test("re-starting the in_progress target itself is refused with START_REFUSED_OPEN_SEGMENT, not TASK_START_BLOCKED", async () => {
+	test("no TASK_START_BLOCKED when the in_progress task IS the target (idempotent re-start)", async () => {
 		const t = createT();
 		const id = await seedTask(t, { assignedTo: "sigma" });
-		// First start opens the only segment.
+		// First start
 		await t.mutation(api.tasks.start, { taskId: id, callerOrchestrator: "sigma" });
-		// Re-starting while that segment is still open must refuse — the
-		// open-segment guard fires before the different-task concurrency
-		// check, so the code is START_REFUSED_OPEN_SEGMENT, not
-		// TASK_START_BLOCKED (which is reserved for a DIFFERENT task).
-		let thrown: unknown;
-		try {
-			await t.mutation(api.tasks.start, { taskId: id, callerOrchestrator: "sigma" });
-		} catch (e) {
-			thrown = e;
-		}
-		const msg = getConvexErrorMessage(thrown);
-		expect(msg).toMatch(/^START_REFUSED_OPEN_SEGMENT:/);
-		expect(msg).toContain(id);
+		const before = await t.run(async (ctx) => ctx.db.get(id));
+		// Re-starting the same task must not throw
+		await expect(
+			t.mutation(api.tasks.start, { taskId: id, callerOrchestrator: "sigma" }),
+		).resolves.toBeNull();
+		const after = await t.run(async (ctx) => ctx.db.get(id));
+		expect(after).toEqual(before);
 	});
 });
 

@@ -2156,12 +2156,13 @@ export const start = mutation({
 			task.project,
 		);
 
+		// A trailing open segment means work is already in flight: the caller
+		// asking to start again gets a true no-op, nothing written, rather
+		// than a refusal it has to catch.
 		const segments = task.workSegments ?? [];
 		const lastIndex = segments.length - 1;
 		if (lastIndex >= 0 && segments[lastIndex].end === undefined) {
-			throw new ConvexError(
-				`START_REFUSED_OPEN_SEGMENT: task ${args.taskId} already has an open work segment — call resume_task if it was paused, or nothing at all if work is already in flight — ${JSON.stringify({ taskId: args.taskId })}`,
-			);
+			return null;
 		}
 
 		const now = Date.now();
