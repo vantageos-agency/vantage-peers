@@ -67,6 +67,79 @@ export async function getSlaBreachedTopN(
 
 const OVERRIDE_RE = /\/\/\s*allow-no-time-line:\s*(.{6,})/;
 
+// Worked time is the sum of closed segments. Before this, duration was
+// (now - startedAt), so a task left open across a night billed the span.
+
+export type WorkSegment = { start: number; end?: number };
+
+const MAX_SEGMENT_MINUTES_KEY = "maxSegmentMinutes";
+export const DEFAULT_MAX_SEGMENT_MINUTES = 480; // 8h — "a working session's length"
+
+/** Reads the configured max-segment-minutes cap, default DEFAULT_MAX_SEGMENT_MINUTES. */
+export async function getMaxSegmentMinutes(
+	ctx: QueryCtx | MutationCtx,
+): Promise<number> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", MAX_SEGMENT_MINUTES_KEY))
+		.unique();
+	if (row === null || row.value.length === 0) {
+		return DEFAULT_MAX_SEGMENT_MINUTES;
+	}
+	const parsed = Number(row.value[0]);
+	return Number.isFinite(parsed) && parsed > 0
+		? parsed
+		: DEFAULT_MAX_SEGMENT_MINUTES;
+}
+
+export type SegmentClosureResult = {
+	actualMinutes: number;
+	durationSource: "segments";
+	closedSegments: WorkSegment[];
+};
+
+/**
+ * Closes the trailing open segment at `now` and sums the closed ones.
+ * Refuses a segment longer than the configured cap, naming it, and a
+ * multi-segment total of zero. Does not touch the database — the caller
+ * persists `closedSegments` with `actualMinutes` in one patch.
+ */
+export async function closeSegmentsForCompletion(
+	ctx: QueryCtx | MutationCtx,
+	task: { _id: Id<"tasks">; workSegments?: WorkSegment[] },
+	now: number,
+): Promise<SegmentClosureResult> {
+	const maxMinutes = await getMaxSegmentMinutes(ctx);
+	const segments = (task.workSegments ?? []).map((s) => ({ ...s }));
+	const lastIndex = segments.length - 1;
+	if (lastIndex >= 0 && segments[lastIndex].end === undefined) {
+		segments[lastIndex] = { ...segments[lastIndex], end: now };
+	}
+
+	let totalMs = 0;
+	for (const seg of segments) {
+		if (seg.end === undefined) continue; // defensive — closed above
+		const durationMinutes = Math.round((seg.end - seg.start) / 60_000);
+		if (durationMinutes > maxMinutes) {
+			throw new ConvexError(
+				`SEGMENT_DURATION_IMPLAUSIBLE: task ${task._id} has a work segment [start=${seg.start}, end=${seg.end}] spanning ${durationMinutes} minutes, exceeding the configured maximum of ${maxMinutes} minutes — a segment this long crosses an unrecorded pause boundary. Close work with pause_task/resume_task instead of leaving a segment open across a break, or raise taskClosureConfig["maxSegmentMinutes"] if this genuinely reflects one working session — ${JSON.stringify({ taskId: task._id, segmentStart: seg.start, segmentEnd: seg.end, durationMinutes, maxMinutes })}`,
+			);
+		}
+		totalMs += seg.end - seg.start;
+	}
+
+	const actualMinutes = Math.round(totalMs / 60_000);
+	// Only multi-segment: a single segment rounding to 0 is a fast close,
+	// which the legacy path never refused either.
+	if (segments.length > 1 && actualMinutes === 0) {
+		throw new ConvexError(
+			`SEGMENT_TOTAL_ZERO: task ${task._id} has ${segments.length} work segments but their accumulated total is 0 minutes — refusing to close with a zero billable total across multiple segments — ${JSON.stringify({ taskId: task._id, segmentCount: segments.length })}`,
+		);
+	}
+
+	return { actualMinutes, durationSource: "segments", closedSegments: segments };
+}
+
 /**
  * Fail-closed lookup of the billable-projects config row.
  * Throws a loud, actionable ConvexError if the config table has not been
@@ -112,22 +185,36 @@ export function hasTimeLineOverride(
 	return OVERRIDE_RE.test(completionNote);
 }
 
+export type ClosureGateResult = {
+	actualMinutes: number | undefined;
+	// Undefined on the exempt paths, which persist no duration at all.
+	durationSource: "segments" | "legacy" | undefined;
+	// Segments path only; the caller persists it as the new workSegments.
+	closedSegments: WorkSegment[] | undefined;
+};
+
 /**
  * Enforces the closure gate for a single task about to transition to "done".
  * Throws a clear, actionable ConvexError when the task's project is
  * billable, `startedAt` is missing, and no override marker is present.
  *
- * Returns the `actualMinutes` to persist (computed from startedAt →
- * completedAt) when startedAt is present, or `undefined` otherwise (e.g.
- * override path with no startedAt — uncomputable, left blank rather than
- * faked).
+ * Segments take priority over the startedAt/completedAt difference when
+ * present. A task with none keeps the old difference, flagged "legacy",
+ * so an invoice can tell a measured total from an inferred one.
  */
 export async function enforceClosureGate(
 	ctx: QueryCtx | MutationCtx,
 	task: Doc<"tasks">,
 	completionNote: string | undefined,
 	now: number,
-): Promise<{ actualMinutes: number | undefined }> {
+): Promise<ClosureGateResult> {
+	const hasSegments = task.workSegments !== undefined && task.workSegments.length > 0;
+	if (hasSegments) {
+		const { actualMinutes, durationSource, closedSegments } =
+			await closeSegmentsForCompletion(ctx, task, now);
+		return { actualMinutes, durationSource, closedSegments };
+	}
+
 	const billable = await isBillableProject(ctx, task.project);
 
 	if (!billable) {
@@ -136,12 +223,14 @@ export async function enforceClosureGate(
 				task.startedAt !== undefined
 					? Math.round((now - task.startedAt) / 60_000)
 					: undefined,
+			durationSource: task.startedAt !== undefined ? "legacy" : undefined,
+			closedSegments: undefined,
 		};
 	}
 
 	if (task.startedAt === undefined || task.startedAt === null) {
 		if (hasTimeLineOverride(completionNote)) {
-			return { actualMinutes: undefined };
+			return { actualMinutes: undefined, durationSource: undefined, closedSegments: undefined };
 		}
 		// Automation-created tasks (origin: "automation", e.g. the
 		// GitHub-webhook [Review] tasks minted by createOrUpdateReviewTask)
@@ -164,14 +253,18 @@ export async function enforceClosureGate(
 		// webhook path writes it, which makes it inforgeable from the
 		// client-facing surface.
 		if (task.origin === "automation") {
-			return { actualMinutes: undefined };
+			return { actualMinutes: undefined, durationSource: undefined, closedSegments: undefined };
 		}
 		throw new ConvexError(
 			`TASK_NEVER_STARTED_BILLABLE: task ${task._id} (project="${task.project}") has no startedAt — it was never actually started via start_task, so actualMinutes is uncomputable and billing would be false. Call start_task first, or add "// allow-no-time-line: <reason>" (≥6 chars) to completionNote if this task is genuinely non-billable.`,
 		);
 	}
 
-	return { actualMinutes: Math.round((now - task.startedAt) / 60_000) };
+	return {
+		actualMinutes: Math.round((now - task.startedAt) / 60_000),
+		durationSource: "legacy",
+		closedSegments: undefined,
+	};
 }
 
 /**
@@ -183,7 +276,7 @@ export async function enforceClosureGateById(
 	taskId: Id<"tasks">,
 	completionNote: string | undefined,
 	now: number,
-): Promise<{ actualMinutes: number | undefined }> {
+): Promise<ClosureGateResult> {
 	const task = await ctx.db.get(taskId);
 	if (task === null) {
 		throw new ConvexError(`TASK_NOT_FOUND: Task ${taskId} not found`);

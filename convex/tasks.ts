@@ -15,6 +15,7 @@ import {
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { enforceClosureGate } from "./lib/taskClosureGate";
+import type { WorkSegment } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -342,6 +343,11 @@ const taskFullValidator = v.object({
 	isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
+	workSegments: v.optional(
+		v.array(v.object({ start: v.number(), end: v.optional(v.number()) })),
+	),
+	pausedAt: v.optional(v.number()),
+	durationSource: v.optional(v.union(v.literal("segments"), v.literal("legacy"))),
 });
 
 type TaskLite = {
@@ -539,6 +545,15 @@ export const get = query({
 			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
+			workSegments: v.optional(
+				v.array(
+					v.object({ start: v.number(), end: v.optional(v.number()) }),
+				),
+			),
+			pausedAt: v.optional(v.number()),
+			durationSource: v.optional(
+				v.union(v.literal("segments"), v.literal("legacy")),
+			),
 		}),
 		v.null(),
 	),
@@ -612,6 +627,15 @@ export const getById = query({
 			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
+			workSegments: v.optional(
+				v.array(
+					v.object({ start: v.number(), end: v.optional(v.number()) }),
+				),
+			),
+			pausedAt: v.optional(v.number()),
+			durationSource: v.optional(
+				v.union(v.literal("segments"), v.literal("legacy")),
+			),
 		}),
 		v.null(),
 	),
@@ -1336,7 +1360,7 @@ export const update = mutation({
 		// can't bypass the machine-timestamp requirement via this path.
 		if (patch.status === "done") {
 			const now = Date.now();
-			const { actualMinutes } = await enforceClosureGate(
+			const { actualMinutes, durationSource, closedSegments } = await enforceClosureGate(
 				ctx,
 				task,
 				patch.completionNote ?? task.completionNote,
@@ -1347,6 +1371,12 @@ export const update = mutation({
 			}
 			if (actualMinutes !== undefined && patch.actualMinutes === undefined) {
 				patch.actualMinutes = actualMinutes;
+			}
+			if (durationSource !== undefined) {
+				patch.durationSource = durationSource;
+			}
+			if (closedSegments !== undefined) {
+				patch.workSegments = closedSegments;
 			}
 			// T1 — hardcoded, not read from args: `update` has no
 			// `completionOutcome` arg, so there is nothing for a caller to
@@ -1745,7 +1775,7 @@ export const complete = mutation({
 		// machine-recorded startedAt (or an explicit structured override)
 		// before they can close. Billing derives actualMinutes from
 		// startedAt→completedAt, never a hand-typed time line.
-		const { actualMinutes } = await enforceClosureGate(
+		const { actualMinutes, durationSource, closedSegments } = await enforceClosureGate(
 			ctx,
 			task,
 			args.completionNote,
@@ -1766,6 +1796,14 @@ export const complete = mutation({
 
 		if (args.completionNote !== undefined) {
 			patch.completionNote = args.completionNote;
+		}
+
+		if (durationSource !== undefined) {
+			patch.durationSource = durationSource;
+		}
+
+		if (closedSegments !== undefined) {
+			patch.workSegments = closedSegments;
 		}
 
 		if (actualMinutes !== undefined) {
@@ -2035,7 +2073,38 @@ export const failTask = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// start — sets status=in_progress, startedAt=now, updatedAt=now
+// assertNoConcurrentInProgress — one in_progress task per orchestrator per
+// distinct `project`. Shared by start and resume so re-entering the clock
+// via either verb is gated identically.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function assertNoConcurrentInProgress(
+	ctx: MutationCtx,
+	callerOrchestrator: string | undefined,
+	taskId: Id<"tasks">,
+	project: string | undefined,
+): Promise<void> {
+	if (!callerOrchestrator || callerOrchestrator === "system") return;
+	const inProgressTasks = await ctx.db
+		.query("tasks")
+		.withIndex("by_assignee_project", (q) =>
+			q
+				.eq("assignedTo", callerOrchestrator)
+				.eq("project", project)
+				.eq("status", "in_progress"),
+		)
+		.take(2);
+
+	const conflict = inProgressTasks.find((t) => t._id !== taskId);
+	if (conflict !== undefined) {
+		throw new ConvexError(
+			`TASK_START_BLOCKED: Cannot start task ${taskId} — caller ${callerOrchestrator} has an unclosed in_progress task "${conflict.title}" in project ${JSON.stringify(project ?? null)}. Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, attemptedTaskId: taskId, project: project ?? null })}`,
+		);
+	}
+}
+
+// Resumes when the task already carries a segment, keeping the original
+// startedAt; otherwise sets startedAt and opens the first segment.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const start = mutation({
@@ -2078,41 +2147,146 @@ export const start = mutation({
 		}
 
 		// Block if caller has a different unclosed in_progress task IN THE SAME
-		// `project` (repo/stream) as the task being started. Day 156
-		// (mission vp-concurrent-active-tasks-per-stream-v1, T1) — relaxed from
-		// "one in_progress task per orchestrator" (unbounded) to "one
-		// in_progress task per orchestrator PER DISTINCT project". Tasks with
-		// `project === undefined` are treated as one shared "default" stream
-		// (conservative default — preserves pre-relaxation behavior for
-		// un-projected tasks; only projected tasks gain concurrency).
-		// Skip for "system" — it is never an assignee and has no task queue.
-		if (args.callerOrchestrator && args.callerOrchestrator !== "system") {
-			const callerOrc = args.callerOrchestrator;
-			const taskProject = task.project;
-			const inProgressTasks = await ctx.db
-				.query("tasks")
-				.withIndex("by_assignee_project", (q) =>
-					q
-						.eq("assignedTo", callerOrc)
-						.eq("project", taskProject)
-						.eq("status", "in_progress"),
-				)
-				.take(2);
+		// One in_progress task per orchestrator per project; an undefined
+		// project is one shared stream.
+		await assertNoConcurrentInProgress(
+			ctx,
+			args.callerOrchestrator,
+			args.taskId,
+			task.project,
+		);
 
-			const conflict = inProgressTasks.find(
-				(t) => t._id !== args.taskId,
+		const segments = task.workSegments ?? [];
+		const lastIndex = segments.length - 1;
+		if (lastIndex >= 0 && segments[lastIndex].end === undefined) {
+			throw new ConvexError(
+				`START_REFUSED_OPEN_SEGMENT: task ${args.taskId} already has an open work segment — call resume_task if it was paused, or nothing at all if work is already in flight — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
-			if (conflict !== undefined) {
-				throw new ConvexError(
-					`TASK_START_BLOCKED: Cannot start task ${args.taskId} — caller ${callerOrc} has an unclosed in_progress task "${conflict.title}" in project ${JSON.stringify(taskProject ?? null)}. Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, attemptedTaskId: args.taskId, project: taskProject ?? null })}`,
-				);
-			}
 		}
 
 		const now = Date.now();
+		const hasSegments = segments.length > 0;
+		const patch: Record<string, unknown> = {
+			status: "in_progress" as const,
+			updatedAt: now,
+			pausedAt: undefined,
+		};
+		if (hasSegments) {
+			// Resume — original startedAt is never overwritten, just a new
+			// segment opened on top of the existing history.
+			const segments: WorkSegment[] = [...(task.workSegments ?? []), { start: now }];
+			patch.workSegments = segments;
+		} else {
+			patch.startedAt = now;
+			patch.workSegments = [{ start: now }] satisfies WorkSegment[];
+		}
+		await ctx.db.patch(args.taskId, patch);
+		return null;
+	},
+});
+
+// Closes the open segment and stops the clock without ending the task.
+// Paused is not blocked: the work is still there, just off the clock.
+
+export const pause = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+
+		const segments = task.workSegments ?? [];
+		const lastIndex = segments.length - 1;
+		if (lastIndex < 0 || segments[lastIndex].end !== undefined) {
+			throw new ConvexError(
+				`PAUSE_REFUSED_NO_OPEN_SEGMENT: task ${args.taskId} has no open work segment to pause — call start_task or resume_task first — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
+		const now = Date.now();
+		// Close the trailing segment in place and hand the WHOLE array back —
+		// never a fresh array containing only the just-closed segment, which
+		// would silently drop every prior segment's history.
+		const closedSegments: WorkSegment[] = [
+			...segments.slice(0, lastIndex),
+			{ ...segments[lastIndex], end: now },
+		];
+
 		await ctx.db.patch(args.taskId, {
-			status: "in_progress",
-			startedAt: now,
+			status: "todo" as const,
+			pausedAt: now,
+			workSegments: closedSegments,
+			updatedAt: now,
+		});
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resume — opens a new work segment on a paused task and returns it to
+// in_progress. Mirrors start's concurrency gate and never restarts the clock.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const resume = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+
+		if (task.pausedAt === undefined) {
+			throw new ConvexError(
+				`RESUME_REFUSED_NOT_PAUSED: task ${args.taskId} is not paused — call pause_task first — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
+		await assertNoConcurrentInProgress(
+			ctx,
+			args.callerOrchestrator,
+			args.taskId,
+			task.project,
+		);
+
+		const now = Date.now();
+		const segments: WorkSegment[] = [...(task.workSegments ?? []), { start: now }];
+		await ctx.db.patch(args.taskId, {
+			status: "in_progress" as const,
+			pausedAt: undefined,
+			workSegments: segments,
 			updatedAt: now,
 		});
 		return null;
@@ -2150,11 +2324,36 @@ export const checkout = mutation({
 				reason: `Task already ${task.status}${task.claimedByInstance ? ` by ${task.claimedByInstance}` : ""}`,
 			};
 		}
+		// A paused task is also status "todo" — without this guard anyone
+		// could reclaim it here and overwrite the original startedAt below.
+		if (task.pausedAt !== undefined) {
+			return {
+				claimed: false,
+				reason: "Task is paused — resume_task, not checkout_task, to reclaim it",
+			};
+		}
+		// A "todo" task can carry an open trailing segment: block_task leaves
+		// one open, and the reciprocal unblock doesn't close it either.
+		// Overwriting workSegments here would silently strand that time,
+		// same as a bare double-start.
+		const existingSegments = task.workSegments ?? [];
+		const lastExistingIndex = existingSegments.length - 1;
+		if (
+			lastExistingIndex >= 0 &&
+			existingSegments[lastExistingIndex].end === undefined
+		) {
+			return {
+				claimed: false,
+				reason: "Task already has an open work segment — resume_task, not checkout_task, to reclaim it",
+			};
+		}
+		const now = Date.now();
 		await ctx.db.patch(args.taskId, {
 			status: "in_progress",
 			claimedByInstance: args.callerInstance,
-			startedAt: Date.now(),
-			updatedAt: Date.now(),
+			startedAt: now,
+			workSegments: [{ start: now }] satisfies WorkSegment[],
+			updatedAt: now,
 		});
 		return { claimed: true };
 	},
@@ -2918,7 +3117,7 @@ export const bulkComplete = mutation({
 
 		for (let i = 0; i < cappedResults.length; i++) {
 			const task = cappedResults[i];
-			const { actualMinutes } = gateResults[i];
+			const { actualMinutes, durationSource, closedSegments } = gateResults[i];
 			await ctx.db.patch(task._id, {
 				status: "done" as const,
 				completionOutcome: "succeeded" as const,
@@ -2926,6 +3125,8 @@ export const bulkComplete = mutation({
 				updatedAt: now,
 				completionNote: note,
 				...(actualMinutes !== undefined ? { actualMinutes } : {}),
+				...(durationSource !== undefined ? { durationSource } : {}),
+				...(closedSegments !== undefined ? { workSegments: closedSegments } : {}),
 			});
 		}
 
@@ -2974,6 +3175,11 @@ export const billingSummaryByProject = query({
 				project: v.string(),
 				totalMinutes: v.number(),
 				taskCount: v.number(),
+				// Rows whose durationSource isn't "segments" (legacy diff-based
+				// or pre-migration, undefined), reported apart from the measured
+				// mix so an invoice can tell a summed total from an inferred one.
+				legacyTaskCount: v.number(),
+				legacyMinutes: v.number(),
 			}),
 		),
 		unattributedTaskCount: v.number(), // done tasks in range with no project or no actualMinutes
@@ -3024,7 +3230,10 @@ export const billingSummaryByProject = query({
 		const capped = doneTasks.slice(0, BILLING_SUMMARY_SCAN_CAP);
 		const scoped = filterByOrgScope(capped, scope);
 
-		const totals = new Map<string, { totalMinutes: number; taskCount: number }>();
+		const totals = new Map<
+			string,
+			{ totalMinutes: number; taskCount: number; legacyTaskCount: number; legacyMinutes: number }
+		>();
 		let unattributedTaskCount = 0;
 		let invalidDurationTaskCount = 0;
 
@@ -3040,9 +3249,15 @@ export const billingSummaryByProject = query({
 			const existing = totals.get(task.project) ?? {
 				totalMinutes: 0,
 				taskCount: 0,
+				legacyTaskCount: 0,
+				legacyMinutes: 0,
 			};
 			existing.totalMinutes += task.actualMinutes;
 			existing.taskCount += 1;
+			if (task.durationSource !== "segments") {
+				existing.legacyTaskCount += 1;
+				existing.legacyMinutes += task.actualMinutes;
+			}
 			totals.set(task.project, existing);
 		}
 
