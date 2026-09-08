@@ -48,7 +48,3 @@ __pycache__/
 
 # local tooling scratch (grok agents/rules)
 .grok/
-
-# Per-station local settings: one machine's permissions, env and hooks.
-# Never product code, and this repo is public.
-.claude/settings.local.json
