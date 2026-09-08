@@ -10,7 +10,7 @@ A task's billable duration is the sum of the work segments actually worked, not 
 
 ### `pause_task`
 
-Closes the task's currently open work segment and stops the duration clock, **without ending the task**. The task returns to `todo` and stays claimable — pausing is not blocking.
+Closes the task's currently open work segment and stops the duration clock, **without ending the task**. The task returns to `todo`, and its owner picks it back up with `resume_task`. `checkout_task` refuses a paused task rather than letting someone else claim it — that guard exists so a reclaim cannot overwrite the original start.
 
 - **`blocked`** means the task is waiting on someone or something else.
 - **Paused** means nobody is actively working on the task right now, but nothing external is stopping the work — it can be picked back up at any time with `resume_task`.
@@ -30,7 +30,7 @@ When a task closes, each closed segment's duration is checked against a configur
 - **Configuration key:** `maxSegmentMinutes` (in the `taskClosureConfig` table)
 - **Default:** 480 minutes (8 hours) — a working session's length
 
-If a segment is refused for being too long, the fix is to have used `pause_task`/`resume_task` around the break instead of leaving the segment open, or to close the interrupted segment retroactively before completing the task. Raising `maxSegmentMinutes` is only appropriate when a segment that long genuinely reflects one continuous working session.
+If a segment is refused for being too long, the fix is to have used `pause_task`/`resume_task` around the break instead of leaving the segment open. Raising `maxSegmentMinutes` is only appropriate when a segment that long genuinely reflects one continuous working session.
 
 ## Tasks closed before this change
 
