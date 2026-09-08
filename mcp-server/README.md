@@ -371,9 +371,10 @@ Returns `{ count, sampleIds, bulkRunId, executedAt? }`:
 - `update_mission_status` — transition mission state
 - `get_mission_template` — read a mission template
 
-### Mission Templates (2)
+### Mission Templates (3)
 - `update_mission_template` — patch a mission template
 - `instantiate_template_into_mission` — bootstrap a mission from a template
+- `soft_delete_mission_template` — retire a template from reads, keeping the audit row
 
 ### Messages (8)
 - `send_message` — send to `channel=` (NEVER `recipient=`); see schema via `ToolSearch`
@@ -410,11 +411,14 @@ Exports `SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION` from `mcp-server/src
 
 Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
 
-### Search / RAG (4)
+### Search / RAG (7)
 - `search_fix_patterns` — semantic vector-search over fix patterns
 - `text_search` — BM25 keyword search over memories; VP-Sources doctrine applies
 - `search_components` — keyword search over components
 - `hybrid_search` — RRF-fused vector + BM25 search; VP-Sources doctrine applies
+- `generate_upload_url` — mint a signed Convex storage upload URL for a KB document
+- `store_document_chunked` — extract, chunk and schedule embedding for an uploaded document
+- `soft_delete_document` — drop a KB document from reads, keeping the audit row
 
 Knowledge Base document upload is a two-step flow (see `docs/cloud/kb-ingest.md`):
 1. `generate_upload_url` — mints a signed Convex storage upload URL (Convex mutation `kbMutations:generateUploadUrl`, requires a Clerk JWT with `org_id`). `POST` the binary to that URL to obtain a `storageId`.
@@ -661,6 +665,9 @@ Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `nu
 
 ### Session (1)
 - `set_summary` — write the session summary
+
+### Billing (1)
+- `billing_summary_by_project` — machine-derived actual minutes per project over a completion window
 
 ### Observability (1)
 - `improvisation_digest` — weekly advisory scan for fleet-state claims missing VP-Sources footers

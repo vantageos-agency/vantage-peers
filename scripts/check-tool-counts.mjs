@@ -56,8 +56,8 @@ const ERRORS = [];
 const REFUSALS = [];
 const FIXED = [];
 
-function fail(msg) {
-	ERRORS.push(msg);
+function fail(msg, { fixableByUpdate = true } = {}) {
+	ERRORS.push({ msg, fixableByUpdate });
 }
 
 function refuse(msg) {
@@ -95,6 +95,68 @@ function countCanonicalSurface() {
 	return total;
 }
 
+// ─── 1b. Registered tool NAMES ───────────────────────────────────────────────
+// The integer alone cannot see a verb that shipped registered and undocumented
+// while both sides stayed internally consistent. Names can.
+//
+// `defineTool(server, authCtx, scope, <name>, ...)` — the name is the first
+// string literal or SCREAMING_CASE identifier at argument depth after the
+// scope object. An identifier is resolved from its `const X = "literal"`
+// declaration; a registration whose name resolves to nothing is a refusal,
+// never a skipped row.
+function sourceFiles() {
+	const files = [];
+	const mainFile = join(REPO_ROOT, "mcp-server/src/tools.ts");
+	if (existsSync(mainFile)) files.push(mainFile);
+	const toolsDir = join(REPO_ROOT, "mcp-server/src/tools");
+	if (existsSync(toolsDir)) {
+		for (const entry of readdirSync(toolsDir)) {
+			if (!entry.endsWith(".ts") || entry.includes("__tests__")) continue;
+			files.push(join(toolsDir, entry));
+		}
+	}
+	return files;
+}
+
+function collectRegisteredNames() {
+	const files = sourceFiles();
+	// const NAME = "literal" — the value may sit on the following line.
+	const constants = new Map();
+	for (const f of files) {
+		const src = readFileSync(f, "utf8");
+		for (const m of src.matchAll(
+			/(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*=\s*(?:\r?\n\s*)?"([a-z_][a-z0-9_]*)"/g,
+		)) {
+			constants.set(m[1], m[2]);
+		}
+	}
+
+	const names = new Set();
+	const unresolved = [];
+	for (const f of files) {
+		const lines = readFileSync(f, "utf8").split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			if (!/^[ \t]*defineTool\(/.test(lines[i])) continue;
+			let name = null;
+			for (let j = i + 1; j < Math.min(i + 40, lines.length); j++) {
+				const lit = lines[j].match(/^\s*"([a-z_][a-z0-9_]*)",\s*$/);
+				if (lit) {
+					name = lit[1];
+					break;
+				}
+				const ident = lines[j].match(/^\s*([A-Z][A-Z0-9_]*),\s*$/);
+				if (ident && constants.has(ident[1])) {
+					name = constants.get(ident[1]);
+					break;
+				}
+			}
+			if (name) names.add(name);
+			else unresolved.push(`${f.replace(`${REPO_ROOT}/`, "")}:${i + 1}`);
+		}
+	}
+	return { names, unresolved };
+}
+
 // ─── 2. mcp-server/README.md self-consistency ────────────────────────────────
 // Parse blocks of:
 //    ### <Domain> (<N>)
@@ -110,6 +172,9 @@ function checkReadmeCategoryCounts(path) {
 	const src = readFileSync(path, "utf8");
 	const lines = src.split("\n");
 	const drifts = []; // { line, domain, declared, actual }
+	// Only names under a `### Domain (N)` heading count as documented. A
+	// backticked word in prose elsewhere is not a tool entry.
+	const documented = new Set();
 
 	for (let i = 0; i < lines.length; i++) {
 		const m = lines[i].match(/^### (.+?) \((\d+)\)\s*$/);
@@ -164,11 +229,12 @@ function checkReadmeCategoryCounts(path) {
 			if (seenContent) break;
 		}
 		const actual = namesInDomain.size;
+		for (const n of namesInDomain) documented.add(n);
 		if (actual !== declared) {
 			drifts.push({ line: i + 1, domain, declared, actual });
 		}
 	}
-	return { src, lines, drifts };
+	return { src, lines, drifts, documented };
 }
 
 // ─── 3. tools-catalogue.mdx self-consistency ─────────────────────────────────
@@ -354,6 +420,41 @@ function main() {
 		} else {
 			info(`mcp-server/README.md — OK (all category integers match)`);
 		}
+
+		// The comparison the integers cannot make. A heading and its bullets
+		// stay consistent with each other while a verb is missing from both.
+		const registered = collectRegisteredNames();
+		if (registered.unresolved.length > 0) {
+			refuse(
+				`${registered.unresolved.length} defineTool( registration(s) whose tool name could not be resolved — the documented-versus-registered comparison would be missing them: ${registered.unresolved.join(", ")}`,
+			);
+		} else {
+			const undocumented = [...registered.names]
+				.filter((n) => !readme.documented.has(n))
+				.sort();
+			const unregistered = [...readme.documented]
+				.filter((n) => !registered.names.has(n))
+				.sort();
+			info(
+				`\nregistered names ${registered.names.size} vs documented names ${readme.documented.size}`,
+			);
+			if (undocumented.length === 0 && unregistered.length === 0) {
+				info(`  documented set == registered set — OK`);
+			} else {
+				if (undocumented.length > 0) {
+					info(`  registered, not documented: ${undocumented.join(", ")}`);
+				}
+				if (unregistered.length > 0) {
+					info(`  documented, not registered: ${unregistered.join(", ")}`);
+				}
+				// --update rewrites integers; it cannot invent a bullet or
+				// retire one, so this class is not offered that remedy.
+				fail(
+					`mcp-server/README.md does not document the registered tool set (${undocumented.length} missing, ${unregistered.length} stale)`,
+					{ fixableByUpdate: false },
+				);
+			}
+		}
 	}
 
 	// Catalogue check — EN
@@ -397,8 +498,10 @@ function main() {
 	}
 	if (ERRORS.length > 0) {
 		info(`\nFAIL — ${ERRORS.length} drift class(es) detected:`);
-		for (const e of ERRORS) info(`  ${e}`);
-		info(`\nRe-run with --update to auto-fix integers.`);
+		for (const e of ERRORS) info(`  ${e.msg}`);
+		if (ERRORS.some((e) => e.fixableByUpdate)) {
+			info(`\nRe-run with --update to auto-fix integers.`);
+		}
 		process.exit(1);
 	}
 	info(`\nOK — all tool counts consistent.`);
