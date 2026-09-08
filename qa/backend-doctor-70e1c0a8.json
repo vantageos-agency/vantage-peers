@@ -1,0 +1,19 @@
+{
+  "sha": "70e1c0a85b5bb6a74357386e58209acecb2287ea",
+  "cli_commit": "a8e7201",
+  "cli_version": "0.1.15",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 27,
+  "critical_violations": 10,
+  "major_violations": 17,
+  "abstentions": 9,
+  "critical_rules": ["R-5", "R-6", "R-7", "R-10", "R-12", "R-26", "R-37", "R-40", "R-50", "R-51"],
+  "critical_abstentions": ["R-34", "R-48"],
+  "baseline_sha": "ab873b185b9c752722c80639e0b94dce20fcd2c5",
+  "baseline_mechanical_violations": 27,
+  "delta_introduced_by_this_head": 0,
+  "note": "Run twice by the deploying orchestrator, once on this head and once on the pre-merge baseline, in a detached worktree, with the same CLI commit. Both give 10 critical / 17 major / 9 abstentions and name the same ten rules, so this head introduces none of them. The count is real and is NOT zero: this file records the tree as it is, not as the gate would like it."
+}
