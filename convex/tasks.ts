@@ -14,7 +14,7 @@ import {
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
-import { enforceClosureGate } from "./lib/taskClosureGate";
+import { enforceClosureGate, closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1354,6 +1354,20 @@ export const update = mutation({
 			}
 		}
 
+		// "done" closes below via the gate; every other exit needs it here,
+		// or start refuses the row forever.
+		if (patch.status !== undefined && patch.status !== "done") {
+			const closedSegments = closeTrailingSegmentOnExit(
+				task,
+				task.status,
+				patch.status,
+				patch.updatedAt as number,
+			);
+			if (closedSegments !== undefined) {
+				patch.workSegments = closedSegments;
+			}
+		}
+
 		// Day 130 closure gate — `update` is a second path that can also
 		// transition status to "done" (e.g. generic MCP update_task call).
 		// Gate it the same way as `complete` so billable-project closures
@@ -1654,13 +1668,25 @@ export const blockTask = mutation({
 			);
 		}
 
+		const blockedNow = Date.now();
 		const patch: Record<string, unknown> = {
 			status: "blocked",
-			updatedAt: Date.now(),
+			updatedAt: blockedNow,
 			blockedOnTaskId: undefined,
 			blockedOnNobodyReason: undefined,
 			blockedCause: args.blockedCause ?? "other",
 		};
+
+		// Blocking is an exit like any other; the open segment closes here.
+		const closedSegmentsOnBlock = closeTrailingSegmentOnExit(
+			task,
+			task.status,
+			"blocked",
+			blockedNow,
+		);
+		if (closedSegmentsOnBlock !== undefined) {
+			patch.workSegments = closedSegmentsOnBlock;
+		}
 
 		if (args.blockedOnTaskId !== undefined) {
 			const blocker = await ctx.db.get(args.blockedOnTaskId);
@@ -2057,6 +2083,17 @@ export const failTask = mutation({
 			completedAt: now,
 			updatedAt: now,
 		};
+
+		// Terminal exit: nothing later would ever close this segment.
+		const closedSegmentsOnFail = closeTrailingSegmentOnExit(
+			task,
+			task.status,
+			patch.status,
+			now,
+		);
+		if (closedSegmentsOnFail !== undefined) {
+			patch.workSegments = closedSegmentsOnFail;
+		}
 
 		await ctx.db.patch(args.taskId, patch);
 
@@ -2746,12 +2783,21 @@ export const createDeployTaskWithDedup = internalMutation({
 		}
 
 		for (const stale of toSupersede) {
+			const closedSegmentsOnSupersede = closeTrailingSegmentOnExit(
+				stale,
+				stale.status,
+				"done",
+				now,
+			);
 			await ctx.db.patch(stale._id, {
 				status: "done" as const,
 				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: `[SUPERSEDED-BY-k${newId}] ${stale.title}\nfriction_observed: superseded-by-newer-deploy-task`,
+				...(closedSegmentsOnSupersede !== undefined
+					? { workSegments: closedSegmentsOnSupersede }
+					: {}),
 			});
 		}
 
@@ -2860,12 +2906,21 @@ export const resolveStaleDeployTasks = internalMutation({
 				const sha = mapping.lastDeployedSHA ?? "unknown-sha";
 				const at = new Date(mapping.lastDeployedAt).toISOString();
 				const now = Date.now();
+				const closedSegmentsOnAutoResolve = closeTrailingSegmentOnExit(
+					t,
+					t.status,
+					"done",
+					now,
+				);
 				await ctx.db.patch(t._id, {
 					status: "done" as const,
 					completionOutcome: "succeeded" as const,
 					completedAt: now,
 					updatedAt: now,
 					completionNote: `Auto-resolved by Day 98 Mechanism (c2) — repo ${parsed.repo} deployed at ${sha} on ${at} (after task createdAt ${new Date(t.createdAt).toISOString()}). PR #${parsed.prNumber} shipped via bundled deploy chain.\nfriction_observed: per-PR Deploy task accumulated before Mechanism (a) was live — cron sweep closes residue.`,
+					...(closedSegmentsOnAutoResolve !== undefined
+						? { workSegments: closedSegmentsOnAutoResolve }
+						: {}),
 				});
 				closed++;
 			}
@@ -3668,12 +3723,21 @@ export const closeReviewTasksForPr = internalMutation({
 			: args.completionNote;
 
 		for (const t of matches) {
+			const closedSegmentsOnClose = closeTrailingSegmentOnExit(
+				t,
+				t.status,
+				"done",
+				now,
+			);
 			await ctx.db.patch(t._id, {
 				status: "done" as const,
 				completionOutcome: "succeeded" as const,
 				completedAt: now,
 				updatedAt: now,
 				completionNote: note,
+				...(closedSegmentsOnClose !== undefined
+					? { workSegments: closedSegmentsOnClose }
+					: {}),
 			});
 		}
 

@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
+import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 import {
 	internalMutation,
 	internalQuery,
@@ -376,6 +377,12 @@ export const resolveStaleIrpMission = internalMutation({
 		const now = Date.now();
 
 		for (const task of allOpenTasks) {
+			const closedSegmentsOnAutoResolve = closeTrailingSegmentOnExit(
+				task,
+				task.status,
+				"done",
+				now,
+			);
 			await ctx.db.patch(task._id, {
 				status: "done",
 				// T1 — hardcoded; this auto-resolver only fires on a confirmed
@@ -385,6 +392,9 @@ export const resolveStaleIrpMission = internalMutation({
 				completionNote: AUTO_RESOLVE_NOTE,
 				completedAt: now,
 				updatedAt: now,
+				...(closedSegmentsOnAutoResolve !== undefined
+					? { workSegments: closedSegmentsOnAutoResolve }
+					: {}),
 			});
 		}
 

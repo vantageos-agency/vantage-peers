@@ -140,6 +140,28 @@ export async function closeSegmentsForCompletion(
 	return { actualMinutes, durationSource: "segments", closedSegments: segments };
 }
 
+// Every mutation moving a status away from "in_progress" calls this first.
+// Pure; the billable sum and cap stay in the terminal close above.
+export function closeTrailingSegmentOnExit(
+	task: { workSegments?: WorkSegment[] },
+	fromStatus: string,
+	toStatus: string,
+	now: number,
+): WorkSegment[] | undefined {
+	if (fromStatus !== "in_progress" || toStatus === "in_progress") {
+		return undefined;
+	}
+	const segments = task.workSegments ?? [];
+	const lastIndex = segments.length - 1;
+	if (lastIndex < 0 || segments[lastIndex].end !== undefined) {
+		return undefined;
+	}
+	return [
+		...segments.slice(0, lastIndex),
+		{ ...segments[lastIndex], end: now },
+	];
+}
+
 /**
  * Fail-closed lookup of the billable-projects config row.
  * Throws a loud, actionable ConvexError if the config table has not been
