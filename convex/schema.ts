@@ -397,6 +397,24 @@ export default defineSchema({
 		// rows validate; undefined until the first reassignment.
 		lastAssignedTo: v.optional(v.string()),
 		isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
+		// Worked-time segments. When present, billable duration is their sum,
+		// not completedAt - startedAt. startedAt stays the first start.
+		workSegments: v.optional(
+			v.array(
+				v.object({
+					start: v.number(),
+					end: v.optional(v.number()), // undefined = the open segment
+				}),
+			),
+		),
+		// Set by pause, cleared by resume. Paused is not blocked: blocked waits
+		// on someone, paused means nobody is working on it.
+		pausedAt: v.optional(v.number()),
+		// How actualMinutes was obtained: summed from segments, or inferred from
+		// the old two-date difference. An invoice needs to tell them apart.
+		durationSource: v.optional(
+			v.union(v.literal("segments"), v.literal("legacy")),
+		),
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + (description ?? "")) computed once by the
 		// importer (convex/okfBundleNode.ts); the atomic findOrCreate in
@@ -1215,6 +1233,9 @@ export default defineSchema({
 	//   "staleInProgressThresholdMs" — number encoded as a single-element
 	//     string[] (["86400000"]) — age (ms) after which an in_progress task
 	//     is surfaced as staleInProgress in check_messages. Default 24h.
+	//   "maxSegmentMinutes" — number encoded as a single-element string[]
+	//     (["480"]) — longest a single segment may span before closure refuses
+	//     and names it. Default 480. Segments path only, never the legacy one.
 	taskClosureConfig: defineTable({
 		key: v.string(),
 		value: v.array(v.string()),

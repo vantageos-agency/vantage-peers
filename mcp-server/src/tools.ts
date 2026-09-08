@@ -4789,6 +4789,104 @@ export function registerTools(
 		},
 	);
 
+	// ── pause_task ──────────────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
+		"pause_task",
+		"Close the task's open work segment and stop the duration clock, without ending the task. " +
+			"Paused is not blocked: the task remains claimable work, just off the clock until resumed. " +
+			"WHEN: call before stepping away from an in_progress task so its billed duration doesn't " +
+			"keep accruing while idle. " +
+			"EXAMPLE: pause_task taskId='b2v9k4x7p1m6q0z3w8n5r2t4y7c1u9df' callerOrchestrator='gamma'.",
+		{
+			taskId: taskIdSchema.describe("Convex document ID of the task to pause"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Pause task",
+		},
+		async ({ taskId, callerOrchestrator }) => {
+			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
+				await convex.mutation("tasks:pause" as any, {
+					taskId: taskId as any,
+					callerOrchestrator,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ taskId, status: "todo" }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── resume_task ─────────────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
+		"resume_task",
+		"Open a new work segment on a paused task and set it back to in_progress. " +
+			"WHEN: call after pause_task to resume the clock on the same task. " +
+			"EXAMPLE: resume_task taskId='b2v9k4x7p1m6q0z3w8n5r2t4y7c1u9df' callerOrchestrator='gamma'.",
+		{
+			taskId: taskIdSchema.describe("Convex document ID of the task to resume"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Resume task",
+		},
+		async ({ taskId, callerOrchestrator }) => {
+			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
+				await convex.mutation("tasks:resume" as any, {
+					taskId: taskId as any,
+					callerOrchestrator,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ taskId, status: "in_progress" }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── checkout_task ───────────────────────────────────────────────────────────
 
 	defineTool(

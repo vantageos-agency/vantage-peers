@@ -384,6 +384,10 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"lastAssignedTo",
 			"isReviewTask",
 			"contentHash",
+			// Same deliberate narrowing as every other field here.
+			"workSegments",
+			"pausedAt",
+			"durationSource",
 		],
 		reason:
 			"Backlog-sweep support query (task k17bh19d6zzf73417j6a9623nn8dh8ek) deliberately returns only _id/title for both lineage arms, plus repoFullName/prNumber for the automation arm (the two fields parsed out of the title). The bootstrap arm has no repoFullName/prNumber to extract — that is the whole finding: those rows carry no reliable PR link. Handler constructs both shapes explicitly from parseReviewTitle's output, never spreads the raw row.",
