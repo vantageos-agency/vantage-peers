@@ -342,6 +342,16 @@ export async function getServiceAccountToken(): Promise<string | null> {
 			return token.jwt;
 		}
 		cachedSessionId = null;
+		// HYGIENE, NOT A CONTROL — and no test can prove otherwise, which is
+		// the honest thing to record rather than let a green suite imply this
+		// line is load-bearing (Eta, review of PR #1263). Reaching here means
+		// the expiry guard above already refused `cachedToken`, so a stale
+		// token can never be returned whether or not this line runs: removing
+		// it leaves the suite at 8/8 (measured, not assumed). It is kept as
+		// defence in depth against ONE specific future edit — a weakening of
+		// the `cachedToken.exp - now > REFRESH_MARGIN_MS` guard above, after
+		// which a stranded stale token WOULD become returnable. If you change
+		// that guard, this line stops being decorative; give it a test then.
 		cachedToken = null;
 	}
 
