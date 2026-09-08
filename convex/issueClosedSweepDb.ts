@@ -12,6 +12,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal mutation: cascade-close a mission + its open child tasks
@@ -45,6 +46,12 @@ export const cascadeCloseMission = internalMutation({
 				.collect();
 
 			for (const task of batch) {
+				const closedSegmentsOnCascade = closeTrailingSegmentOnExit(
+					task,
+					task.status,
+					"done",
+					now,
+				);
 				await ctx.db.patch(task._id, {
 					status: "done" as const,
 					// T1 — hardcoded, consistent with the other four
@@ -56,6 +63,9 @@ export const cascadeCloseMission = internalMutation({
 					completedAt: now,
 					updatedAt: now,
 					completionNote: `issue-closed-externally: GH issue ${args.issueRef} was closed outside VP. Auto-closed by issueClosedSweep cron.`,
+					...(closedSegmentsOnCascade !== undefined
+						? { workSegments: closedSegmentsOnCascade }
+						: {}),
 				});
 				tasksCompleted++;
 			}
