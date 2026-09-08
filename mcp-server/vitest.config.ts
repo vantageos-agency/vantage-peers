@@ -18,6 +18,11 @@ export default defineConfig({
 			BEARER_SECRET_MASTER: "test-master-token",
 			PUBLIC_BASE_URL: "http://localhost:3000",
 			CONVEX_URL_INTERNAL: "http://localhost:9999",
+			// Mirrors the root vitest.config.ts value. Without it, convex/lib/auth.ts's
+			// service-account carve-out never matches and every tool test that goes
+			// through withOrgScope fails with RBAC_DENIED — 6 tests across 3 files,
+			// proven bipolar: 6/6 green with this line, 6/6 red without it.
+			CLERK_SERVICE_ACCOUNT_USER_ID: "test-service-account-user-id",
 		},
 		coverage: {
 			provider: "v8",
