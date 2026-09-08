@@ -22,8 +22,16 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { ConvexHttpClient as ConvexHttpClientCtor } from "convex/browser";
 import { getServiceAccountToken } from "./serviceAccountAuth.js";
+import { withSingleRetryOnSocketClose } from "./socketRetry.js";
 
 const INTERCEPTED_METHODS = new Set(["query", "mutation", "action"]);
+
+/**
+ * Methods retried once on a dead-keep-alive-socket error (see
+ * socketRetry.ts's module doc for the duplication analysis). `query` only —
+ * `mutation` and `action` are side-effecting and are NOT retried here.
+ */
+const RETRIED_METHODS = new Set(["query"]);
 
 /**
  * Selects the per-request Convex client identity to attach to a /mcp call.
@@ -74,9 +82,32 @@ export function selectConvexClientForRequest(
 	if (clerkJwt) {
 		const client = createPlainClient(convexUrl);
 		client.setAuth(clerkJwt);
-		return client;
+		return withQueryRetry(client);
 	}
 	return createServiceAccountClient(convexUrl);
+}
+
+/**
+ * Wraps an already-authenticated (`.setAuth()` already called) ConvexHttpClient
+ * so that `.query()` alone gets the single dead-socket retry (see
+ * socketRetry.ts). Used by the clerkJwt branch above, which — unlike
+ * {@link createServiceAccountConvexClient} — has no per-call token-refresh
+ * work to do, so it only needs the retry behaviour, not a full auth-refresh
+ * proxy.
+ *
+ * Monkey-patches `.query` on the SAME object (never wraps in a Proxy /
+ * returns a new object) — callers of `selectConvexClientForRequest`
+ * (server-http.ts's /mcp handler, and its tests) depend on the returned
+ * client being reference-identical (`=== `) to the one `createPlainClient`
+ * produced, since it is the object `.setAuth()` was already called on.
+ */
+export function withQueryRetry(client: ConvexHttpClient): ConvexHttpClient {
+	const originalQuery = client.query.bind(client);
+	client.query = ((...args: unknown[]) =>
+		withSingleRetryOnSocketClose(() =>
+			(originalQuery as (...a: unknown[]) => Promise<unknown>)(...args),
+		)) as typeof client.query;
+	return client;
 }
 
 export function createServiceAccountConvexClient(
@@ -92,7 +123,10 @@ export function createServiceAccountConvexClient(
 				INTERCEPTED_METHODS.has(prop) &&
 				typeof original === "function"
 			) {
-				return async (...args: unknown[]) => {
+				// Each attempt re-mints/re-sets the service-account token — a
+				// retry must never replay a possibly-stale token from a prior
+				// attempt.
+				const runOnce = async (...args: unknown[]): Promise<unknown> => {
 					let token: string | null;
 					try {
 						token = await getServiceAccountToken();
@@ -110,6 +144,10 @@ export function createServiceAccountConvexClient(
 					target.setAuth(token);
 					return (original as (...a: unknown[]) => unknown).apply(target, args);
 				};
+				return async (...args: unknown[]) =>
+					RETRIED_METHODS.has(prop)
+						? withSingleRetryOnSocketClose(() => runOnce(...args))
+						: runOnce(...args);
 			}
 			return original;
 		},
