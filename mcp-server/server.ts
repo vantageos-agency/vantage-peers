@@ -2,8 +2,9 @@
 /**
  * VantagePeers MCP Server — stdio transport (Self-host / local Claude Code path).
  *
- * Thin bootstrap: resolves CONVEX_URL, instantiates McpServer + ConvexHttpClient,
- * delegates ALL tool registration to the shared `registerTools(server, convex)`
+ * Thin bootstrap: resolves CONVEX_URL, instantiates McpServer + a
+ * service-account-identified Convex client, delegates ALL tool registration
+ * to the shared `registerTools(server, convex)`
  * surface in src/tools.ts. This guarantees stdio and HTTP transports expose the
  * same tool set (parity locked by src/__tests__/stdio-http-parity.test.ts).
  *
@@ -20,9 +21,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
 import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
 
@@ -62,7 +63,9 @@ function loadConvexUrl(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const convexUrl = loadConvexUrl();
-const convex = new ConvexHttpClient(convexUrl);
+// Grants the stdio path master, via the service-account carve-out —
+// the local-trust posture claimed below, now backed by an actual identity.
+const convex = createServiceAccountConvexClient(convexUrl);
 
 const server = new McpServer({
 	name: "vantage-peers",
