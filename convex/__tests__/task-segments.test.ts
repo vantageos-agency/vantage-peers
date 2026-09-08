@@ -387,3 +387,132 @@ describe("resume_task refuses a non-paused task", () => {
 		).rejects.toThrow(/RESUME_REFUSED_NOT_PAUSED/);
 	});
 });
+
+// A second start_task with no pause in between must refuse, not strand the
+// first open segment. Two poles: the refusal itself, and the money it
+// protects (the reviewer's exact sequence must not silently under-record).
+describe("start_task refuses a second open segment", () => {
+	test("(f) start on a task with an already-open segment throws and leaves exactly one segment", async () => {
+		vi.useFakeTimers();
+		try {
+			const t = convexTest(schema, modules).withIdentity({
+				subject: "test-service-account-user-id",
+			});
+			await seedBillableConfig(t);
+
+			const t0 = Date.parse("2026-04-01T09:00:00.000Z");
+			vi.setSystemTime(t0);
+
+			const taskId = await t.mutation(api.tasks.create, {
+				title: "Double start, no pause between",
+				project: BILLABLE_PROJECT,
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+			});
+
+			await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" });
+			vi.setSystemTime(t0 + 30 * 60_000);
+
+			await expect(
+				t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" }),
+			).rejects.toThrow(/START_REFUSED_OPEN_SEGMENT/);
+
+			const task = await t.query(api.tasks.get, { taskId });
+			expect(task?.workSegments).toHaveLength(1);
+			expect(task?.workSegments?.[0]).toEqual({ start: t0 });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("(g) the reviewer's sequence — start, 30min, start, pause, complete — must not silently under-record", async () => {
+		vi.useFakeTimers();
+		try {
+			const t = convexTest(schema, modules).withIdentity({
+				subject: "test-service-account-user-id",
+			});
+			await seedBillableConfig(t);
+
+			const t0 = Date.parse("2026-04-02T09:00:00.000Z");
+			vi.setSystemTime(t0);
+
+			const taskId = await t.mutation(api.tasks.create, {
+				title: "Reviewer money-pole sequence",
+				project: BILLABLE_PROJECT,
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+			});
+
+			await t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" });
+			vi.setSystemTime(t0 + 30 * 60_000);
+
+			// Second start refused — the caller must pause first to record the
+			// 30 minutes already worked, then start (resume) again.
+			await expect(
+				t.mutation(api.tasks.start, { taskId, callerOrchestrator: "sigma" }),
+			).rejects.toThrow(/START_REFUSED_OPEN_SEGMENT/);
+
+			await t.mutation(api.tasks.pause, { taskId, callerOrchestrator: "sigma" });
+			vi.setSystemTime(t0 + 40 * 60_000);
+			await t.mutation(api.tasks.resume, { taskId, callerOrchestrator: "sigma" });
+			vi.setSystemTime(t0 + 60 * 60_000);
+
+			await t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma",
+				completionNote: "Closed after the refused double-start — PR #9003 merged",
+			});
+
+			const task = await t.query(api.tasks.get, { taskId });
+			// 30 min (segment 1) + 20 min (segment 2, resumed at +40 to +60) = 50.
+			expect(task?.actualMinutes).toBe(50);
+			expect(task?.actualMinutes).not.toBe(20);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+// checkout_task can reach a "todo" task with an OPEN segment via block_task
+// (doesn't close it) plus the reciprocal unblock (doesn't either). Without
+// a guard, checkout's unconditional overwrite would silently discard that
+// segment's time — the same class of loss found in start.
+describe("checkout_task refuses to overwrite an open segment", () => {
+	test("(h) checkout on a todo task with a stranded open segment is refused, not overwritten", async () => {
+		const t = convexTest(schema, modules).withIdentity({
+			subject: "test-service-account-user-id",
+		});
+		await seedBillableConfig(t);
+
+		const now = Date.now();
+		const openStart = now - 15 * 60_000;
+		const taskId = await t.run(async (ctx) => {
+			return await ctx.db.insert("tasks", {
+				title: "Blocked mid-flight, then unblocked, never closed",
+				project: BILLABLE_PROJECT,
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+				startedAt: openStart,
+				workSegments: [{ start: openStart }],
+				createdAt: openStart,
+				updatedAt: now,
+			});
+		});
+
+		const result = await t.mutation(api.tasks.checkout, {
+			taskId,
+			callerOrchestrator: "sigma",
+		});
+		expect(result.claimed).toBe(false);
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.workSegments).toHaveLength(1);
+		expect(task?.workSegments?.[0]).toEqual({ start: openStart });
+	});
+});

@@ -2156,8 +2156,16 @@ export const start = mutation({
 			task.project,
 		);
 
+		const segments = task.workSegments ?? [];
+		const lastIndex = segments.length - 1;
+		if (lastIndex >= 0 && segments[lastIndex].end === undefined) {
+			throw new ConvexError(
+				`START_REFUSED_OPEN_SEGMENT: task ${args.taskId} already has an open work segment — call resume_task if it was paused, or nothing at all if work is already in flight — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
 		const now = Date.now();
-		const hasSegments = (task.workSegments?.length ?? 0) > 0;
+		const hasSegments = segments.length > 0;
 		const patch: Record<string, unknown> = {
 			status: "in_progress" as const,
 			updatedAt: now,
@@ -2322,6 +2330,21 @@ export const checkout = mutation({
 			return {
 				claimed: false,
 				reason: "Task is paused — resume_task, not checkout_task, to reclaim it",
+			};
+		}
+		// A "todo" task can carry an open trailing segment: block_task leaves
+		// one open, and the reciprocal unblock doesn't close it either.
+		// Overwriting workSegments here would silently strand that time,
+		// same as a bare double-start.
+		const existingSegments = task.workSegments ?? [];
+		const lastExistingIndex = existingSegments.length - 1;
+		if (
+			lastExistingIndex >= 0 &&
+			existingSegments[lastExistingIndex].end === undefined
+		) {
+			return {
+				claimed: false,
+				reason: "Task already has an open work segment — resume_task, not checkout_task, to reclaim it",
 			};
 		}
 		const now = Date.now();
