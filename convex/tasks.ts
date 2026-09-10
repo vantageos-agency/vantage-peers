@@ -2818,20 +2818,40 @@ export const createDeployTaskWithDedup = internalMutation({
 // spawning when a deploy already covered the PR. (c2) catches the residual
 // ones already created before the orchestrator called recordDeployment.
 //
-// Bounded by OPEN_STATUSES + same status-index pattern as Fix 1/3 dedup.
+// Recurring production timeout (GitHub issue #1276): `by_status` narrows the
+// per-status collect() to that status's rows, it does not bound the COUNT —
+// four unbounded collects over the whole open-task population, run every 6
+// hours, grew past the request's operation budget as the table grew.
+//
+// Fix chosen: CAP the scan, not a new index. `tasks` has no index on `title`
+// and DEPLOY_TITLE_RE's anchored prefix is the only thing that would make a
+// title-keyed index a genuine narrowing — but that index would be maintained
+// on EVERY task write (title varies per row on effectively every insert),
+// for a benefit confined to the handful of rows that happen to be Deploy
+// tasks. A per-status cap costs nothing on write and reuses the fetch/detect
+// idiom already established at RECURRING_TASKS_LIST_SCAN_CAP
+// (convex/recurringTasks.ts:133): fetch CAP+1 so an extra row PROVES
+// truncation happened rather than silently swallowing it.
 // ─────────────────────────────────────────────────────────────────────────────
+export const RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP = 500;
+
 export const resolveStaleDeployTasks = internalMutation({
 	args: {},
 	returns: v.object({
 		scanned: v.number(),
 		closed: v.number(),
 		skipped: v.number(),
+		// A run that silently processed only part of the open-task population
+		// is the exact disease this bound exists to close — the outcome log
+		// (and this return) must say so, not just report smaller numbers.
+		truncated: v.boolean(),
 	}),
 	handler: async (ctx) => {
 		const OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 		let scanned = 0;
 		let closed = 0;
 		let skipped = 0;
+		let truncated = false;
 
 		// Cache repoMapping lookups within a single cron tick.
 		const repoCache = new Map<
@@ -2873,10 +2893,14 @@ export const resolveStaleDeployTasks = internalMutation({
 		}
 
 		for (const status of OPEN_STATUSES) {
-			const batch = await ctx.db
+			const fetched = await ctx.db
 				.query("tasks")
 				.withIndex("by_status", (q) => q.eq("status", status))
-				.collect();
+				.take(RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1);
+			if (fetched.length > RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP) {
+				truncated = true;
+			}
+			const batch = fetched.slice(0, RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP);
 			for (const t of batch) {
 				const parsed = parseDeployTitle(t.title);
 				if (!parsed) continue;
@@ -2927,9 +2951,9 @@ export const resolveStaleDeployTasks = internalMutation({
 		}
 
 		console.log(
-			`[Mechanism c2] resolveStaleDeployTasks scanned=${scanned} closed=${closed} skipped=${skipped}`,
+			`[Mechanism c2] resolveStaleDeployTasks scanned=${scanned} closed=${closed} skipped=${skipped} truncated=${truncated}`,
 		);
-		return { scanned, closed, skipped };
+		return { scanned, closed, skipped, truncated };
 	},
 });
 

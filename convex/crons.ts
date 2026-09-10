@@ -5,16 +5,13 @@ const crons = cronJobs();
 
 // R-20 — this file only registers cron schedules; it performs no table scan
 // itself. Each target handler enforces its own per-run bound + outcome log:
-//   - recurringTasks.processDueTasks      -> RECURRING_TASKS_LIST_SCAN_CAP (recurringTasks.ts)
+//   - recurringTasks.processDueTasks      -> uncapped, see the reasoning
+//     comment on its own collect() in recurringTasks.ts (definitions table,
+//     not the tasks table — a deliberate, declared divergence)
 //   - errorMonitorActions.pollAllDeployments -> DEPLOY_POLL_CAP (errorMonitorActions.ts)
 //   - errorMonitorAutoResolver.autoResolveStaleIrp -> limit:50 (errorMonitorAutoResolver.ts:119)
+//   - tasks.resolveStaleDeployTasks       -> RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP (tasks.ts)
 //   - issueClosedSweep.sweepIssueClosed   -> SWEEP_MISSION_FANOUT_CAP (issueClosedSweep.ts)
-// This file's own bound is definitional (a fixed cron schedule, not a data
-// scan): CRON_JOB_CAP below is the exact count of jobs registered here, and
-// this module logs it once per cold start so a wiring drift (a job added
-// without updating the cap) is visible immediately.
-const CRON_JOB_CAP = 7;
-console.log(`[crons] registered ${CRON_JOB_CAP} cron job(s).`);
 
 // Process recurring tasks every 15 minutes
 crons.interval(
@@ -80,6 +77,17 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 	{ hours: 6 },
 	internal.issueClosedSweep.sweepIssueClosed,
 	{},
+);
+
+// This file's own bound is definitional (a fixed cron schedule, not a data
+// scan). Rather than a typed literal that drifts silently the moment a job
+// is added or removed above (production had exactly this: the literal read
+// 7 while 8 jobs were registered), the count is DERIVED from what the
+// `Crons` instance actually holds — `crons.crons` is populated by every
+// `.interval`/`.cron`/`.daily`/... call above, so this log can never disagree
+// with the registrations it describes.
+console.log(
+	`[crons] registered ${Object.keys(crons.crons).length} cron job(s).`,
 );
 
 export default crons;

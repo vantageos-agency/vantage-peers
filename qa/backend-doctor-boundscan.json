@@ -1,0 +1,20 @@
+{
+  "sha": "4c6c9a95272ce7831f5ee26b713f44b4585c1b7f",
+  "sha_pinned_by": "git rev-parse HEAD at run time; re-derive with the same command rather than trusting this literal, because committing this file advances the head",
+  "cli_commit": "a8e7201",
+  "cli_ref": "origin/sigma/standard-pin-machine-checkable",
+  "cli_version": "0.1.15",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "convex_tree_sha_at_run": "4c6c9a95272ce7831f5ee26b713f44b4585c1b7f",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 27,
+  "critical_violations": 10,
+  "major_violations": 17,
+  "abstentions": 9,
+  "baseline_sha": "a7cdc11702733b3d5c326cfd0d49a5db82a77cef",
+  "baseline_mechanical_violations": 27,
+  "delta_introduced_by_this_head": 0,
+  "note": "Same 27 as the merge base, same by-rule split (critical 10, major 17). This head bounds a scan and corrects a comment block; it introduces none of them. The count is real and is NOT zero. The head this file names is the one BEFORE the file itself is committed — verify with 'git diff <this sha> HEAD -- convex/', which must be empty, rather than expecting the two shas to match."
+}
