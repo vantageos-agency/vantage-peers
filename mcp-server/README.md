@@ -233,7 +233,7 @@ The full registered list ships in `mcp-server/src/tools.ts` and is enumerated be
 - `list_tasks_by_mission` — page through tasks for a single mission
 - `get_task` — fetch a single task by id
 - `update_task` — patch task fields (incl. cancel: `status="cancelled"` + `cancelReason`, creator-only)
-- `start_task` — transition to `in_progress`; resumes rather than restarts when the task already carries worked time
+- `start_task` — transition to `in_progress`; resumes rather than restarts when the task already carries worked time, and refuses when a segment is already open, naming the verb to call instead
 - `pause_task` — close the open work segment and stop the clock without ending the task; paused is not blocked
 - `resume_task` — open a new work segment and put the task back in `in_progress`
 - `complete_task` — close with evidence-bound `completionNote`

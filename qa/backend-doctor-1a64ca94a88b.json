@@ -1,0 +1,14 @@
+{
+  "sha": "1a64ca94a88bca778bb609f7342e820deca27c7c",
+  "cli_commit": "a8e7201",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 27,
+  "note": "Recorded honestly, NOT tuned to pass. The doctor returned revise-mandatory at this tree: by-rule tally present=14 non-conforming=27 could-not-judge=9 absent=0, with 10 critical violations (R-5 R-6 R-7 R-10 R-12 R-26 R-37 R-40 R-50 R-51) and 2 critical abstentions (R-34 R-48). mechanical_violations is recorded as the 27 non-conforming rules because the report does not expose a mechanical-versus-judgement split, and at least two of them describe themselves as mechanical compares carrying real counts (R-37: 60 unjustified filled-neighbour divergences across 17 tables; R-40: 3 shared field sites diverging between backends). Every candidate reading of the number is greater than zero, so the gate's decision does not depend on resolving that ambiguity. These violations are NOT introduced by the change being deployed: the reviewer measured the same tally on the two heads before and after it. coverage 49 CHECKED + 1 NOT_MECHANICALLY_CHECKABLE = 50 of 50 derived rules, no silent gap.",
+  "cli_ref": "origin/sigma/standard-pin-machine-checkable",
+  "cli_resolves_on": "a8e7201 is not on backend-doctor's default branch (96bdb01 at the time of writing); it lives on the branch named in cli_ref. git cat-file -t a8e7201 fails on a checkout that has not fetched that branch.",
+  "convex_tree_sha_at_run": "1a64ca94a88bca778bb609f7342e820deca27c7c",
+  "convex_tree_attestation": "git -C /root/coding/vantage-memory rev-parse HEAD, run in the same session as the doctor, returned the sha above. The path is outside this repository, so the sha is what ties the scored tree to the recorded commit."
+}
