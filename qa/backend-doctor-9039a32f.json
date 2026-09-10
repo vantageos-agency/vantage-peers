@@ -1,0 +1,22 @@
+{
+  "sha": "9039a32f78a885986c7dfd16fd9b4ff0c0c67cd8",
+  "cli_commit": "a8e7201",
+  "cli_ref": "origin/sigma/standard-pin-machine-checkable",
+  "cli_version": "0.1.15",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "convex_tree_sha_at_run": "9039a32f78a885986c7dfd16fd9b4ff0c0c67cd8",
+  "convex_tree_attestation": "git rev-parse HEAD in the same session as the doctor returned the sha above. The doctor lives outside this repository, so the sha is what ties the scored tree to the recorded head.",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 27,
+  "critical_violations": 10,
+  "major_violations": 17,
+  "abstentions": 9,
+  "baseline_sha": "9001ed815e78156b55ba9cf1061a509a03c7d9f7",
+  "baseline_mechanical_violations": 27,
+  "delta_introduced_by_this_head": 0,
+  "note": "This head adds 39 lines to convex/schema.ts and introduces none of the 27. Same count and same by-rule split as the deployed baseline (critical 10, major 17, identical rule list). The count is real and is NOT zero: this file records the tree as it is, not as a gate would like it.",
+  "head_after_this_file_was_committed": "8d40397e1d865e70eeb9bb9db956bdaddb9ecb30",
+  "why_the_two_shas_differ": "The doctor ran at 9039a32f, then committing this very file advanced the head to 8d40397e. Only qa/ changed between them \u2014 `git diff 9039a32f 8d40397e -- convex/` is empty \u2014 so the scored tree and the current head hold the same convex/. Stated rather than left for a reader to reconcile, because a report pinning a sha other than the current head is the exact shape that hid a stale gate earlier today."
+}
