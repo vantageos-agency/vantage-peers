@@ -86,6 +86,15 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 // `Crons` instance actually holds — `crons.crons` is populated by every
 // `.interval`/`.cron`/`.daily`/... call above, so this log can never disagree
 // with the registrations it describes.
+// JUSTIFIED: this module declares no per-run bound because it performs no
+// run. It registers schedules; the scan bounds live in the handlers it
+// points at, inventoried at the top of this file. A contract scanner will
+// still flag this line, because the token it reads is consulted only for a
+// bounded-but-unlogged job, never for one it reads as unbounded — stated
+// here so the next reader knows the flag is expected and why. The bound
+// token such a scanner looks for was present before only because a typed
+// job counter happened to be NAMED like a cap; reintroducing one to satisfy
+// the pattern would restore exactly the false reassurance removed above.
 console.log(
 	`[crons] registered ${Object.keys(crons.crons).length} cron job(s).`,
 );
