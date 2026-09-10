@@ -10,10 +10,28 @@
   "critical_violations": 10,
   "major_violations": 17,
   "abstentions": 9,
-  "critical_rules": ["R-5", "R-6", "R-7", "R-10", "R-12", "R-26", "R-37", "R-40", "R-50", "R-51"],
-  "critical_abstentions": ["R-34", "R-48"],
+  "critical_rules": [
+    "R-5",
+    "R-6",
+    "R-7",
+    "R-10",
+    "R-12",
+    "R-26",
+    "R-37",
+    "R-40",
+    "R-50",
+    "R-51"
+  ],
+  "critical_abstentions": [
+    "R-34",
+    "R-48"
+  ],
   "baseline_sha": "ab873b185b9c752722c80639e0b94dce20fcd2c5",
   "baseline_mechanical_violations": 27,
   "delta_introduced_by_this_head": 0,
-  "note": "Run twice by the deploying orchestrator, once on this head and once on the pre-merge baseline, in a detached worktree, with the same CLI commit. Both give 10 critical / 17 major / 9 abstentions and name the same ten rules, so this head introduces none of them. The count is real and is NOT zero: this file records the tree as it is, not as the gate would like it."
+  "note": "Run twice by the deploying orchestrator, once on this head and once on the pre-merge baseline, in a detached worktree, with the same CLI commit. Both give 10 critical / 17 major / 9 abstentions and name the same ten rules, so this head introduces none of them. The count is real and is NOT zero: this file records the tree as it is, not as the gate would like it.",
+  "cli_ref": "origin/sigma/standard-pin-machine-checkable",
+  "cli_resolves_on": "a8e7201 is not on backend-doctor's default branch (96bdb01 at the time of writing); it lives on the branch named in cli_ref. git cat-file -t a8e7201 fails on a checkout that has not fetched that branch.",
+  "convex_tree_sha_at_run": "70e1c0a85b5bb6a74357386e58209acecb2287ea",
+  "convex_tree_attestation": "git -C /root/coding/vantage-memory rev-parse HEAD, run in the same session as the doctor, returned the sha above. The path is outside this repository, so the sha is what ties the scored tree to the recorded commit."
 }

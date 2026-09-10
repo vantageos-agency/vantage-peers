@@ -27,6 +27,22 @@ import { createServiceAccountConvexClient } from "./src/authenticatedConvexClien
 import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
 import { registerTools } from "./src/tools.js";
 
+// Advertised version is derived from the manifest, same pattern as
+// server-http.ts, so both transports report identical values in source and
+// dist mode.
+let pkg: { version: string };
+try {
+	// Source mode: server.ts → ./package.json = mcp-server/package.json
+	pkg = JSON.parse(
+		readFileSync(new URL("./package.json", import.meta.url), "utf-8"),
+	) as { version: string };
+} catch {
+	// Dist mode: dist/server.js → ../package.json = mcp-server/package.json
+	pkg = JSON.parse(
+		readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+	) as { version: string };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap: resolve CONVEX_URL from env or .env.local
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +85,7 @@ const convex = createServiceAccountConvexClient(convexUrl);
 
 const server = new McpServer({
 	name: "vantage-peers",
-	version: "2.18.0",
+	version: pkg.version,
 });
 
 // stdio runs on the operator's own machine against their own CONVEX_URL, so it
