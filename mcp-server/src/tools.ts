@@ -1119,19 +1119,24 @@ export const checkMessagesOutputSchema = z.union([
 /**
  * Day-156 reader-first: `stuckInProgress` / `peersStuckOnYou` may be missing
  * (old Convex), a raw `{taskId,title,age}[]` (already-deployed MCP), or the
- * new capped object `{entries,total,truncated}`. Never throw on `.length`.
+ * new capped object `{entries,total,truncated,actionableStuckCount}` — the
+ * last field may itself be absent (Convex older than the one that added
+ * it), and defaults to 0 rather than undefined. Never throw on `.length`.
  */
 export function asCappedStuckList(value: unknown): {
 	entries: Array<{ taskId: string; title: string; age: number }>;
 	total: number;
 	truncated: boolean;
+	actionableStuckCount: number;
 } {
-	if (value == null) return { entries: [], total: 0, truncated: false };
+	if (value == null)
+		return { entries: [], total: 0, truncated: false, actionableStuckCount: 0 };
 	if (Array.isArray(value)) {
 		return {
 			entries: value as Array<{ taskId: string; title: string; age: number }>,
 			total: value.length,
 			truncated: false,
+			actionableStuckCount: 0,
 		};
 	}
 	if (typeof value === "object") {
@@ -1141,9 +1146,11 @@ export function asCappedStuckList(value: unknown): {
 			: [];
 		const total = typeof o.total === "number" ? o.total : entries.length;
 		const truncated = o.truncated === true;
-		return { entries, total, truncated };
+		const actionableStuckCount =
+			typeof o.actionableStuckCount === "number" ? o.actionableStuckCount : 0;
+		return { entries, total, truncated, actionableStuckCount };
 	}
-	return { entries: [], total: 0, truncated: false };
+	return { entries: [], total: 0, truncated: false, actionableStuckCount: 0 };
 }
 
 // mark_as_read

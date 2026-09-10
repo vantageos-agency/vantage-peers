@@ -27,6 +27,17 @@ const BILLABLE_PROJECTS_KEY = "billableProjects";
 const STALE_THRESHOLD_KEY = "staleInProgressThresholdMs";
 const DEFAULT_STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
 
+// The stuck lists (stuckInProgress, peersStuckOnYou) deliberately surface
+// in_progress work at ANY age — waiting for the 24h staleInProgress
+// threshold would be too late for a task stuck for minutes. That design is
+// correct and must not change. But it means the list is non-empty on every
+// cycle where anyone is working, so an obligation hung on "list non-empty"
+// fires continuously and gets learned-then-ignored. This threshold backs a
+// SEPARATE, narrower signal — actionableStuckCount — gating how old an
+// OPEN segment must be before the list is actually actionable.
+const STUCK_ACTIONABLE_THRESHOLD_KEY = "stuckActionableThresholdMs";
+export const DEFAULT_STUCK_ACTIONABLE_THRESHOLD_MS = 15 * 60 * 1000; // 15m
+
 // Day 152 — SLA-AGE extension. `check_messages` is polled by an EXTERNAL
 // orchestrator cron (not a Convex cron), so the "cycle" period cannot be
 // read from any Convex cron definition — it is config-driven, mirroring
@@ -324,6 +335,28 @@ export async function getStaleInProgressThresholdMs(
 }
 
 /**
+ * Reads the configured stuck-actionable threshold (ms), default
+ * DEFAULT_STUCK_ACTIONABLE_THRESHOLD_MS. Mirrors
+ * getStaleInProgressThresholdMs's by_key unique lookup and
+ * Number.isFinite && >0 guard exactly.
+ */
+export async function getStuckActionableThresholdMs(
+	ctx: QueryCtx | MutationCtx,
+): Promise<number> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", STUCK_ACTIONABLE_THRESHOLD_KEY))
+		.unique();
+	if (row === null || row.value.length === 0) {
+		return DEFAULT_STUCK_ACTIONABLE_THRESHOLD_MS;
+	}
+	const parsed = Number(row.value[0]);
+	return Number.isFinite(parsed) && parsed > 0
+		? parsed
+		: DEFAULT_STUCK_ACTIONABLE_THRESHOLD_MS;
+}
+
+/**
  * Matching rows returned in CappedList.entries. The walk keeps going past
  * this cap so `total` is the match count (or a lower bound if truncated).
  */
@@ -515,6 +548,17 @@ export type StaleInProgressEntry = {
 	age: number; // ms since the open work segment started (or startedAt/_creationTime fallback)
 };
 
+export type StaleAgeResult = {
+	age: number;
+	// True iff `age` was measured from a genuinely OPEN trailing segment.
+	// False means the caller fell back to startedAt/_creationTime — either
+	// there are no segments, or the trailing one is already CLOSED. Callers
+	// that need to know which reference was used (the actionable-stuck
+	// discriminator) read this instead of guessing from the magnitude of
+	// `age` alone.
+	fromOpenSegment: boolean;
+};
+
 /**
  * ms since work actually began on `task` right now: the open segment's
  * start when one exists, else the legacy startedAt/_creationTime reference.
@@ -524,14 +568,30 @@ export type StaleInProgressEntry = {
 function staleAge(
 	task: { startedAt?: number; _creationTime: number; workSegments?: WorkSegment[] },
 	now: number,
-): number {
+): StaleAgeResult {
 	const segments = task.workSegments ?? [];
 	const openSegment = segments[segments.length - 1];
-	const reference =
-		openSegment && openSegment.end === undefined
-			? openSegment.start
-			: (task.startedAt ?? task._creationTime);
-	return now - reference;
+	const isOpen = openSegment !== undefined && openSegment.end === undefined;
+	const reference = isOpen
+		? openSegment.start
+		: (task.startedAt ?? task._creationTime);
+	return { age: now - reference, fromOpenSegment: isOpen };
+}
+
+/**
+ * The one true "act now" condition for the stuck lists: an OPEN segment
+ * running past the configured threshold. Deliberately NOT "the list is
+ * non-empty" — that fires on every task in flight by design (see the
+ * threshold comment above STUCK_ACTIONABLE_THRESHOLD_KEY) and would make
+ * the obligation learned-then-ignored again. A closed trailing segment or a
+ * freshly-started task never counts here, however large their fallback age
+ * reads.
+ */
+function isActionableStuck(
+	ageResult: StaleAgeResult,
+	thresholdMs: number,
+): boolean {
+	return ageResult.fromOpenSegment && ageResult.age > thresholdMs;
 }
 
 /**
@@ -559,7 +619,7 @@ export async function computeStaleInProgress(
 
 	const entries: StaleInProgressEntry[] = [];
 	for (const task of inProgressTasks) {
-		const age = staleAge(task, now);
+		const { age } = staleAge(task, now);
 		if (age > thresholdMs) {
 			entries.push({ taskId: task._id, title: task.title, age });
 		}
@@ -567,11 +627,48 @@ export async function computeStaleInProgress(
 	return entries;
 }
 
-function toStuckEntry(
-	task: Doc<"tasks">,
+/**
+ * A stuck list plus the derived count of entries that are actually
+ * actionable right now (see isActionableStuck). `entries`/`total`/
+ * `truncated` keep the existing any-age, unfiltered contract — the guard
+ * this repo already has (a five-minutes-old task must still appear) stays
+ * intact; `actionableStuckCount` is additive, never a filter on the list
+ * itself.
+ */
+export type StuckCappedList<T> = CappedList<T> & {
+	actionableStuckCount: number;
+};
+
+/**
+ * Shared walk for both stuck signals (stuckInProgress, peersStuckOnYou):
+ * builds the any-age entry list/total/truncated exactly as before, and
+ * alongside it counts entries that satisfy the actionable-stuck condition.
+ * A fix here reaches both call sites at once — this repo has shipped the
+ * "proven on one signal, not the other" gap twice already.
+ */
+async function computeStuckList(
+	stream: AsyncIterable<Doc<"tasks">>,
+	matches: (task: Doc<"tasks">) => boolean,
 	now: number,
-): StaleInProgressEntry {
-	return { taskId: task._id, title: task.title, age: staleAge(task, now) };
+	thresholdMs: number,
+): Promise<StuckCappedList<StaleInProgressEntry>> {
+	const entries: StaleInProgressEntry[] = [];
+	let total = 0;
+	let actionableStuckCount = 0;
+
+	const { truncated } = await walkIndexedTasks(stream, (task) => {
+		if (!matches(task)) return;
+		total += 1;
+		const ageResult = staleAge(task, now);
+		if (isActionableStuck(ageResult, thresholdMs)) {
+			actionableStuckCount += 1;
+		}
+		if (entries.length < MATCH_ENTRY_CAP) {
+			entries.push({ taskId: task._id, title: task.title, age: ageResult.age });
+		}
+	});
+
+	return { entries, total, truncated, actionableStuckCount };
 }
 
 /**
@@ -586,44 +683,41 @@ export async function computeStuckInProgress(
 	ctx: QueryCtx | MutationCtx,
 	recipient: string,
 	now: number,
-): Promise<CappedList<StaleInProgressEntry>> {
-	const entries: StaleInProgressEntry[] = [];
-	let total = 0;
-
-	const { truncated } = await walkIndexedTasks(
+): Promise<StuckCappedList<StaleInProgressEntry>> {
+	const thresholdMs = await getStuckActionableThresholdMs(ctx);
+	return computeStuckList(
 		ctx.db
 			.query("tasks")
 			.withIndex("by_assignee", (q) =>
 				q.eq("assignedTo", recipient).eq("status", "in_progress"),
 			)
 			.order("desc"),
-		(task) => {
-			total += 1;
-			if (entries.length < MATCH_ENTRY_CAP) {
-				entries.push(toStuckEntry(task, now));
-			}
-		},
+		() => true,
+		now,
+		thresholdMs,
 	);
-
-	return { entries, total, truncated };
 }
 
 /**
  * in_progress tasks the caller owns as createdBy that are assigned to
  * someone else — work stuck on a peer, visible to the unblock authority.
  *
- * Same by_status walk as computePendingOnYou (scanByStatusMatching) so the
- * take-then-filter class cannot fork.
+ * Same by_status walk shape as computePendingOnYou (scanByStatusMatching)
+ * so the take-then-filter class cannot fork.
  */
 export async function computePeersStuckOnYou(
 	ctx: QueryCtx | MutationCtx,
 	caller: string,
 	now: number,
-): Promise<CappedList<StaleInProgressEntry>> {
-	return scanByStatusMatching(
-		ctx,
-		"in_progress",
+): Promise<StuckCappedList<StaleInProgressEntry>> {
+	const thresholdMs = await getStuckActionableThresholdMs(ctx);
+	return computeStuckList(
+		ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", "in_progress"))
+			.order("desc"),
 		(task) => task.createdBy === caller && task.assignedTo !== caller,
-		(task) => toStuckEntry(task, now),
+		now,
+		thresholdMs,
 	);
 }
