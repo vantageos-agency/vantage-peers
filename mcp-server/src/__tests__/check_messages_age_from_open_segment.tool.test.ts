@@ -18,7 +18,7 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
 import { convexTest } from "convex-test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import schema from "../../../convex/schema.js";
 import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import { registerTools } from "../tools.js";
@@ -91,6 +91,18 @@ function agesIn(text: string, block: string): number[] {
 	return [...section.matchAll(/"age":\s*(\d+)/g)].map((m) => Number(m[1]));
 }
 
+// Sibling of agesIn: reads the derived actionableStuckCount off the same
+// block instead of the raw per-entry ages.
+function actionableStuckCountIn(text: string, block: string): number | null {
+	const start = text.indexOf(`${block}:`);
+	if (start < 0) return null;
+	const rest = text.slice(start);
+	const end = rest.indexOf("\n\n");
+	const section = end < 0 ? rest : rest.slice(0, end);
+	const match = section.match(/"actionableStuckCount":\s*(\d+)/);
+	return match ? Number(match[1]) : null;
+}
+
 describe("check_messages renders the age a station acts on", () => {
 	let t: ReturnType<typeof convexTest>;
 	let tools: Map<string, CapturedTool>;
@@ -134,5 +146,66 @@ describe("check_messages renders the age a station acts on", () => {
 		// both sides: a lower bound alone would pass on any large number.
 		expect(ages[0]).toBeLessThan(5 * MINUTE);
 		expect(ages[0]).toBeGreaterThan(0);
+	});
+});
+
+describe("check_messages renders actionableStuckCount at the threshold boundary", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("a row exactly AT the configured threshold does not count; a row past it does", async () => {
+		const threshold = 10 * MINUTE;
+		const fixedNow = Date.UTC(2026, 0, 1, 0, 0, 0);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(fixedNow);
+
+		const t = convexTest(schema as never, modules as never).withIdentity({
+			subject: "test-service-account-user-id",
+		});
+		const tools = captureTools(makeFakeConvexClient(t));
+
+		await t.run(async (ctx: never) => {
+			const db = (ctx as unknown as { db: { insert: Function } }).db;
+			// The threshold is DATA, never the built-in default.
+			await db.insert("taskClosureConfig", {
+				key: "stuckActionableThresholdMs",
+				value: [String(threshold)],
+				updatedAt: fixedNow,
+			});
+			await db.insert("tasks", {
+				title: "open segment exactly at the threshold",
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "in_progress" as const,
+				startedAt: fixedNow - threshold,
+				createdBy: "pi",
+				createdAt: fixedNow - threshold,
+				updatedAt: fixedNow - threshold,
+				workSegments: [{ start: fixedNow - threshold }],
+			});
+			// Bracket: a row strictly past the threshold, so a count that is
+			// always 0 cannot pass this case vacuously.
+			await db.insert("tasks", {
+				title: "open segment one minute past the threshold",
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "in_progress" as const,
+				startedAt: fixedNow - threshold - MINUTE,
+				createdBy: "pi",
+				createdAt: fixedNow - threshold - MINUTE,
+				updatedAt: fixedNow - threshold - MINUTE,
+				workSegments: [{ start: fixedNow - threshold - MINUTE }],
+			});
+		});
+
+		const text = await callText(tools.get("check_messages")!, {
+			recipient: "sigma",
+		});
+
+		// Two rows in the list either way; only the one strictly past the
+		// threshold is actionable. `>` excludes exact equality.
+		expect(agesIn(text, "stuckInProgress")).toHaveLength(2);
+		expect(actionableStuckCountIn(text, "stuckInProgress")).toBe(1);
 	});
 });

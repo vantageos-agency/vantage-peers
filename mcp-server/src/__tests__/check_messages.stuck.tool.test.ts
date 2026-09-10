@@ -106,11 +106,13 @@ describe("asCappedStuckList", () => {
 			entries: [],
 			total: 0,
 			truncated: false,
+			actionableStuckCount: 0,
 		});
 		expect(asCappedStuckList(null)).toEqual({
 			entries: [],
 			total: 0,
 			truncated: false,
+			actionableStuckCount: 0,
 		});
 	});
 
@@ -119,6 +121,7 @@ describe("asCappedStuckList", () => {
 			entries: [STUCK_ENTRY],
 			total: 1,
 			truncated: false,
+			actionableStuckCount: 0,
 		});
 	});
 
@@ -133,13 +136,30 @@ describe("asCappedStuckList", () => {
 			entries: [STUCK_ENTRY],
 			total: 1,
 			truncated: false,
+			actionableStuckCount: 0,
 		});
 	});
 
 	it("object truncated with empty entries is still a cap signal", () => {
 		expect(
 			asCappedStuckList({ entries: [], total: 0, truncated: true }),
-		).toEqual({ entries: [], total: 0, truncated: true });
+		).toEqual({ entries: [], total: 0, truncated: true, actionableStuckCount: 0 });
+	});
+
+	it("object shape carries actionableStuckCount through when present", () => {
+		expect(
+			asCappedStuckList({
+				entries: [STUCK_ENTRY],
+				total: 1,
+				truncated: false,
+				actionableStuckCount: 1,
+			}),
+		).toEqual({
+			entries: [STUCK_ENTRY],
+			total: 1,
+			truncated: false,
+			actionableStuckCount: 1,
+		});
 	});
 
 	it("junk / non-object → empty, no throw", () => {
@@ -147,11 +167,13 @@ describe("asCappedStuckList", () => {
 			entries: [],
 			total: 0,
 			truncated: false,
+			actionableStuckCount: 0,
 		});
 		expect(asCappedStuckList(42)).toEqual({
 			entries: [],
 			total: 0,
 			truncated: false,
+			actionableStuckCount: 0,
 		});
 	});
 });
