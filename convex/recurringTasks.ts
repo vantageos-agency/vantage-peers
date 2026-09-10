@@ -296,6 +296,14 @@ export const processDueTasks = internalMutation({
 	handler: async (ctx) => {
 		const now = Date.now();
 
+		// Deliberately uncapped, unlike the by_status scans in tasks.ts
+		// (resolveStaleDeployTasks, createDeployTaskWithDedup): this table
+		// holds recurring-task DEFINITIONS, one row per schedule an
+		// orchestrator has registered, not per generated task — it grows by
+		// human/config action, not by cron output feeding itself. Fleet-wide
+		// count is small and bounded by how many distinct recurring jobs
+		// exist, several orders of magnitude below the `tasks` table's open
+		// population. Revisit this call if that assumption stops holding.
 		const dueTasks = await ctx.db
 			.query("recurringTasks")
 			.withIndex("by_active", (q) => q.eq("active", true))
