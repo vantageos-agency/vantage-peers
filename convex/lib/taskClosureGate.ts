@@ -512,8 +512,27 @@ export async function computePendingOnYou(
 export type StaleInProgressEntry = {
 	taskId: Id<"tasks">;
 	title: string;
-	age: number; // ms since startedAt (or _creationTime fallback)
+	age: number; // ms since the open work segment started (or startedAt/_creationTime fallback)
 };
+
+/**
+ * ms since work actually began on `task` right now: the open segment's
+ * start when one exists, else the legacy startedAt/_creationTime reference.
+ * Shared by both stuck-entry derivations so a pause/resume cycle is never
+ * counted as staleness.
+ */
+function staleAge(
+	task: { startedAt?: number; _creationTime: number; workSegments?: WorkSegment[] },
+	now: number,
+): number {
+	const segments = task.workSegments ?? [];
+	const openSegment = segments[segments.length - 1];
+	const reference =
+		openSegment && openSegment.end === undefined
+			? openSegment.start
+			: (task.startedAt ?? task._creationTime);
+	return now - reference;
+}
 
 /**
  * Finds tasks assigned to `recipient` that are `in_progress` and have been
@@ -540,8 +559,7 @@ export async function computeStaleInProgress(
 
 	const entries: StaleInProgressEntry[] = [];
 	for (const task of inProgressTasks) {
-		const reference = task.startedAt ?? task._creationTime;
-		const age = now - reference;
+		const age = staleAge(task, now);
 		if (age > thresholdMs) {
 			entries.push({ taskId: task._id, title: task.title, age });
 		}
@@ -553,8 +571,7 @@ function toStuckEntry(
 	task: Doc<"tasks">,
 	now: number,
 ): StaleInProgressEntry {
-	const reference = task.startedAt ?? task._creationTime;
-	return { taskId: task._id, title: task.title, age: now - reference };
+	return { taskId: task._id, title: task.title, age: staleAge(task, now) };
 }
 
 /**
