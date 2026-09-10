@@ -28,6 +28,7 @@ const modules = Object.fromEntries(
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
+const THRESHOLD = 24 * HOUR; // staleInProgress default
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function seed(
@@ -150,5 +151,55 @@ describe("staleness age is derived from the open segment", () => {
 		expect(result.stuckInProgress.entries[0].age).toBeLessThan(
 			2 * HOUR + MINUTE,
 		);
+	});
+
+	test("staleInProgress uses its own derivation — the third site, not the same function", async () => {
+		const t = convexTest(schema, modules);
+		const now = Date.now();
+		// Old derivation: 30h since the first start, past the 24h threshold.
+		// New derivation: seconds since the open segment, far below it.
+		await seed(t, {
+			assignedTo: "sigma",
+			createdBy: "pi",
+			title: "paused for a day and a half, resumed just now",
+			startedAtAgeMs: 30 * HOUR,
+			workSegments: [
+				{ start: now - 30 * HOUR, end: now - 30 * HOUR + 4 * MINUTE },
+				{ start: now - 10 * 1000 },
+			],
+		});
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "sigma",
+		});
+
+		expect(result.staleInProgress).toEqual([]);
+	});
+
+	test("a last segment that is CLOSED is not an open one — age falls back", async () => {
+		const t = convexTest(schema, modules);
+		const now = Date.now();
+		// Reachable: the gate closes the trailing segment on exit, and a row
+		// can return to in_progress without a new segment opening.
+		await seed(t, {
+			assignedTo: "sigma",
+			createdBy: "pi",
+			title: "back in progress, trailing segment already closed",
+			startedAtAgeMs: 30 * HOUR,
+			workSegments: [{ start: now - 10 * 1000, end: now - 5 * 1000 }],
+		});
+
+		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+			recipient: "sigma",
+		});
+
+		expect(result.stuckInProgress.entries).toHaveLength(1);
+		expect(result.stuckInProgress.entries[0].age).toBeGreaterThan(
+			30 * HOUR - MINUTE,
+		);
+		expect(result.stuckInProgress.entries[0].age).toBeLessThan(
+			30 * HOUR + MINUTE,
+		);
+		expect(result.staleInProgress).toHaveLength(1);
 	});
 });
