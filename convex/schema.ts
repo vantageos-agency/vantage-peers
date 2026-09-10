@@ -536,6 +536,45 @@ export default defineSchema({
 		// OKF bundle briefing imports (briefingNotes scope by orgId, mirroring
 		// the by_orgId dedup key in _findBriefingByTitleAndContent).
 		.index("by_orgId_contentHash", ["orgId", "contentHash"])
+		// Issue #1260 live-defect fix: `briefingNotes.list`'s `updatedSince`
+		// branch widened to a fixed-size `.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1)`
+		// scan and filtered `updatedAt` IN-MEMORY afterward. The row-count guard
+		// (BRIEFING_NOTES_LIST_SCAN_CAP) is blind to the quantity that actually
+		// breaks in production: `content` holds full briefing bodies, so the
+		// platform's 16MB-per-execution byte ceiling was hit reading the widened
+		// page, before the row guard could ever run. These two indexes end in
+		// `updatedAt` so the bound lives in the query itself (mirrors
+		// `tasks.by_assignee_updatedAt` / `by_assignee_status_updatedAt`, Day-132):
+		// narrowing the window now genuinely reduces the bytes read, not just the
+		// rows counted.
+		.index("by_updatedAt", ["updatedAt"])
+		.index("by_topic_updatedAt", ["topic", "updatedAt"])
+		// PR #1261 REVISE fix — `updatedAt` is OPTIONAL ("set on first update",
+		// see the field comment above); a row that was created and never
+		// edited has `updatedAt === undefined` and can NEVER satisfy
+		// `.gte("updatedAt", since)` on the two indexes above, no matter how
+		// early it was created. That's not an edge case, it's this table's
+		// DEFAULT state — `create` (this file) and `_insertImportedBriefing`
+		// (convex/okfBundle.ts) never set `updatedAt`. The `list` handler
+		// below closes the gap as the UNION of two independently indexed,
+		// independently byte-bounded scans: the edited population (by_updatedAt
+		// / by_topic_updatedAt, above) and the never-edited population (these
+		// two indexes), which range on `createdAt` (a real, always-present
+		// column — never `_creationTime`) but ONLY within the equality
+		// prefix `updatedAt === undefined`. That equality prefix is load-
+		// bearing for the byte ceiling, not just correctness: Convex treats
+		// `q.eq("updatedAt", undefined)` as "field is absent" (same pattern
+		// already relied on for `by_orgId` in convex/okfBundle.ts), so the
+		// index narrows to ONLY never-edited rows before the `createdAt`
+		// range ever applies — a bare `by_createdAt` index without this
+		// prefix would let a large-content, updatedAt-set, stale row's
+		// `createdAt` alone pull it into the scan and re-open the exact
+		// 16MB-per-execution defect issue #1260 fixed (see
+		// convex/__tests__/briefing-notes-updatedsince-bytes.test.ts, whose
+		// stale fixture rows all have `updatedAt` SET — they must read zero
+		// bytes through this branch).
+		.index("by_updatedAt_createdAt", ["updatedAt", "createdAt"])
+		.index("by_topic_updatedAt_createdAt", ["topic", "updatedAt", "createdAt"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on briefing body, with filterFields for the
 		// common narrowing axes (topic, createdBy).

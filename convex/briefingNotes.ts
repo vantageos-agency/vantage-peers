@@ -185,7 +185,52 @@ function projectBriefingNoteLite(doc: Doc<"briefingNotes">): BriefingNoteLite {
 // BRIEFING_NOTES_LIST_SCAN_CAP + 1 rows before the filter runs, then
 // re-sliced to `limit`. If the widened scan itself hits its cap, we refuse
 // to return a silently-incomplete page.
+//
+// Issue #1260 follow-up: the guard above counts ROWS, but the platform
+// ceiling that actually breaks in production is BYTES — `content` holds full
+// briefing bodies, so a widened `.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1)` can
+// exceed Convex's 16MB-per-execution read limit long before
+// BRIEFING_NOTES_LIST_SCAN_CAP rows are even reached. The fix (below, in
+// `list`): when `updatedSince` is supplied, push the bound INTO the query via
+// `by_updatedAt` / `by_topic_updatedAt` (mirrors tasks.ts's
+// `by_assignee_updatedAt`, Day-132) instead of fetching a fixed-size widened
+// page and filtering afterward — narrowing the window now reduces the bytes
+// actually read, not just a row count the byte ceiling never consulted.
 export const BRIEFING_NOTES_LIST_SCAN_CAP = 2000;
+
+// Coordinator follow-up on PR #1261 (branch-B byte test) — a ROW-count cap
+// (BRIEFING_NOTES_LIST_SCAN_CAP) is blind to the same quantity issue #1260
+// was about: if the MATCHING population itself (not the excluded/narrowed-
+// away superset) is byte-heavy, `.take(CAP + 1)` reads full documents as it
+// goes and the platform's own 16MB-per-execution ceiling trips mid-read —
+// BEFORE our JS `rows.length > CAP` check ever gets a chance to run. Proven
+// empirically: 100 never-edited rows at the existing byte test's 220KB
+// content scale already throw the raw platform error
+// ("Read too much data in a single function execution (limit: 16777216
+// bytes)"), far short of BRIEFING_NOTES_LIST_SCAN_CAP (2000) rows. Both
+// halves of the updatedSince union (branch A, the edited population; branch
+// B, the never-edited population) share this exposure — anything that reads
+// its own genuine matches via `.take()` does. `fetchCappedOrOverflow` closes
+// it: catch the platform's own byte-ceiling error and treat it exactly like
+// a row-count overflow (empty result, `overflowed: true`), so the REFUSAL
+// that reaches the caller is always our own SCAN_CAP_EXCEEDED ConvexError —
+// never the raw, unactionable platform message.
+const BYTE_LIMIT_ERROR_PATTERN = /too much data|too many bytes|16777216/i;
+
+async function fetchCappedOrOverflow(
+	fetch: () => Promise<Doc<"briefingNotes">[]>,
+): Promise<{ rows: Doc<"briefingNotes">[]; overflowed: boolean }> {
+	try {
+		const rows = await fetch();
+		return { rows, overflowed: rows.length > BRIEFING_NOTES_LIST_SCAN_CAP };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (BYTE_LIMIT_ERROR_PATTERN.test(message)) {
+			return { rows: [], overflowed: true };
+		}
+		throw err;
+	}
+}
 
 export const list = query({
 	args: {
@@ -218,8 +263,88 @@ export const list = query({
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"briefingNotes">[];
+		// Issue #1260 — updatedSince pushes its bound INTO the query via an index
+		// ending in `updatedAt`, so the byte ceiling is measured against the
+		// actually-matching rows, never a fixed-size widened superset of
+		// full-content documents.
+		const usedIndexedUpdatedSinceBound = args.updatedSince !== undefined;
+		// Set to true below if EITHER half of the updatedSince union hit its
+		// own cap — the trigger for the "scan may be incomplete" refusal.
+		let updatedSinceBranchOverflowed = false;
 
-		if (args.topic !== undefined) {
+		if (args.updatedSince !== undefined) {
+			const since = args.updatedSince;
+			// PR #1261 REVISE fix — `updatedAt` is optional ("set on first
+			// update"); a row created and never edited has `updatedAt ===
+			// undefined` and can never satisfy `.gte("updatedAt", since)` below,
+			// regardless of how recently it was created. That's this table's
+			// DEFAULT state (create() and okfBundle._insertImportedBriefing()
+			// never set updatedAt), so `updatedSince` silently dropped every
+			// never-edited note. Cover the same set the pre-index `??` fallback
+			// covered — `(updatedAt ?? createdAt) >= since` — as the UNION of
+			// two independently indexed, independently byte-bounded scans:
+			//   A. updatedAt is set and >= since   (edited population)
+			//   B. updatedAt is undefined and createdAt >= since (never-edited)
+			// Branch B's index leads with `updatedAt === undefined` as an
+			// EQUALITY prefix (Convex matches an absent field via
+			// `q.eq(field, undefined)` — same pattern already used for
+			// `by_orgId` in convex/okfBundle.ts) so it narrows to ONLY
+			// never-edited rows before the createdAt range ever runs; without
+			// that prefix, a large stale row that merely happens to satisfy
+			// createdAt >= since would be read regardless of its updatedAt
+			// state, reopening the exact 16MB byte-ceiling defect issue #1260
+			// fixed. The two branches are set-disjoint (a row is in exactly one
+			// of "updatedAt set" / "updatedAt undefined"), so concatenating
+			// them needs no separate de-dup pass.
+			let branchAResult: { rows: Doc<"briefingNotes">[]; overflowed: boolean };
+			let branchBResult: { rows: Doc<"briefingNotes">[]; overflowed: boolean };
+			if (args.topic !== undefined) {
+				const topic = args.topic;
+				branchAResult = await fetchCappedOrOverflow(() =>
+					ctx.db
+						.query("briefingNotes")
+						.withIndex("by_topic_updatedAt", (q) =>
+							q.eq("topic", topic).gte("updatedAt", since),
+						)
+						.order("desc")
+						.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1),
+				);
+				branchBResult = await fetchCappedOrOverflow(() =>
+					ctx.db
+						.query("briefingNotes")
+						.withIndex("by_topic_updatedAt_createdAt", (q) =>
+							q
+								.eq("topic", topic)
+								.eq("updatedAt", undefined)
+								.gte("createdAt", since),
+						)
+						.order("desc")
+						.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1),
+				);
+			} else {
+				branchAResult = await fetchCappedOrOverflow(() =>
+					ctx.db
+						.query("briefingNotes")
+						.withIndex("by_updatedAt", (q) => q.gte("updatedAt", since))
+						.order("desc")
+						.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1),
+				);
+				branchBResult = await fetchCappedOrOverflow(() =>
+					ctx.db
+						.query("briefingNotes")
+						.withIndex("by_updatedAt_createdAt", (q) =>
+							q.eq("updatedAt", undefined).gte("createdAt", since),
+						)
+						.order("desc")
+						.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1),
+				);
+			}
+			updatedSinceBranchOverflowed =
+				branchAResult.overflowed || branchBResult.overflowed;
+			rows = [...branchAResult.rows, ...branchBResult.rows].sort(
+				(a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
+			);
+		} else if (args.topic !== undefined) {
 			rows = await ctx.db
 				.query("briefingNotes")
 				.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
@@ -232,27 +357,33 @@ export const list = query({
 		// Refuse to return a silently-incomplete page: if the widened scan
 		// itself hit its cap, there may be matching rows we never looked at.
 		// "I couldn't measure" must never render identically to "complete".
-		// No branch here was measured to exceed the cap in production (unlike
-		// tasks.list's assignedTo branches), so no index was added and the
-		// fetch is still a fixed-size widened scan — "shrink the updatedSince
-		// window" would be a false remedy and is left out of the message.
-		if (needsWideScan && rows.length > BRIEFING_NOTES_LIST_SCAN_CAP) {
+		// The visibility-filter-only branch (no updatedSince) is still a
+		// fixed-size widened scan with no index added — "shrink the
+		// updatedSince window" is only offered when it can actually change the
+		// candidate count (the updatedSince branches above, now indexed).
+		//
+		// updatedSince branch: check EACH half's own cap
+		// (updatedSinceBranchOverflowed), not the merged `rows.length` — the
+		// merged length is the SUM of two independently-capped scans and can
+		// exceed BRIEFING_NOTES_LIST_SCAN_CAP even when neither half is
+		// actually saturated (e.g. 1500 + 1500 on a cap of 2000), which would
+		// be a false refusal of a genuinely complete result.
+		const scanOverflowed = usedIndexedUpdatedSinceBound
+			? updatedSinceBranchOverflowed
+			: rows.length > BRIEFING_NOTES_LIST_SCAN_CAP;
+		if (needsWideScan && scanOverflowed) {
+			const windowAdvice = usedIndexedUpdatedSinceBound
+				? " or shrink the updatedSince window"
+				: "";
 			throw new ConvexError(
-				`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic.`,
+				`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic${windowAdvice}.`,
 			);
 		}
 
-		// v2.3.3 — updatedSince filter on updatedAt (fallback to _creationTime if missing)
-		if (args.updatedSince !== undefined) {
-			const since = args.updatedSince;
-			rows = rows.filter(
-				(r) => (r.updatedAt ?? r._creationTime) >= since,
-			);
-		}
 		// Day 165 — participant visibility, resolved via the by_participant_note
 		// index inside callerCanRead (never a scan of `participants`/a
-		// post-query handler filter). Runs over the (possibly widened) fetch,
-		// same order as the updatedSince filter above.
+		// post-query handler filter). Runs over the (possibly widened, and now
+		// possibly updatedSince-indexed) fetch above.
 		if (needsVisibilityFilter) {
 			const identities = args.callerIdentities as string[];
 			const checked = await Promise.all(

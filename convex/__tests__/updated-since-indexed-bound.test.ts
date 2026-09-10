@@ -8,9 +8,12 @@
 // Scope, per measurement: only two `tasks.list` branches were measured to
 // exceed TASK_LIST_SCAN_CAP in production — `assignedTo` alone, and
 // `assignedTo` + `status`. This file exercises exactly those two branches.
-// No index was added for missions/briefingNotes/tasks.listByMission, so
-// their behavior is unchanged (see updated-since-page-filter.test.ts and
-// this file's comments below for what that implies).
+// No index was added for missions/tasks.listByMission, so their behavior is
+// unchanged (see updated-since-page-filter.test.ts and this file's comments
+// below for what that implies). Issue #1260 later added indexes to BOTH of
+// briefingNotes.list's branches (by_updatedAt / by_topic_updatedAt) — see
+// this file's dedicated briefingNotes describe block below, and
+// briefing-notes-updatedsince-bytes.test.ts for the byte-ceiling repro.
 //
 // RED-before / GREEN-after note: these tests were run against the
 // PRE-FIX code (git stash) to capture the RED failure pasted in the PR
@@ -262,14 +265,17 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 });
 
 // ── TASK A (this PR's follow-up): the removal of the false remedy from the
-// three non-indexed SCAN_CAP_EXCEEDED messages (missions.list,
-// briefingNotes.list, tasks.listByMission) was an untested claim — nothing
-// asserted its absence. Each test below forces the relevant handler to throw
-// SCAN_CAP_EXCEEDED and asserts (a) the message does NOT contain the false
-// remedy phrase and (b) the message DOES name the remedy it actually offers,
-// so a test that merely fails to throw, or throws an empty message, cannot
-// pass here.
-describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non-indexed branches", () => {
+// non-indexed SCAN_CAP_EXCEEDED messages (missions.list, tasks.listByMission)
+// was an untested claim — nothing asserted its absence. Each test below
+// forces the relevant handler to throw SCAN_CAP_EXCEEDED and asserts (a) the
+// message does NOT contain the false remedy phrase and (b) the message DOES
+// name the remedy it actually offers, so a test that merely fails to throw,
+// or throws an empty message, cannot pass here.
+//
+// Issue #1260 follow-up: briefingNotes.list's topic branch moved OUT of this
+// group — it is now indexed (by_topic_updatedAt), so the window remedy is a
+// working lever there too. Its adapted test lives below this describe block.
+describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the remaining non-indexed branches", () => {
 	test("missions.list (project branch, no index for updatedSince): message omits the window remedy, names project/pilot/status", async () => {
 		const t = convexTest(schema, modules);
 		await t.run(async (ctx) => {
@@ -301,38 +307,6 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non
 			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with project\/pilot\/status/s);
 			expect(message).not.toContain("shrink the updatedSince window");
 			expect(message).toContain("Narrow with project/pilot/status");
-		}
-	});
-
-	test("briefingNotes.list (topic branch, no index for updatedSince): message omits the window remedy, names topic", async () => {
-		const t = convexTest(schema, modules);
-		await t.run(async (ctx) => {
-			for (let i = 0; i < BRIEFING_NOTES_LIST_SCAN_CAP + 1; i++) {
-				await ctx.db.insert("briefingNotes", {
-					title: `fictitious-overcap-note-${i}`,
-					topic: "fictitious-topic-indexed-bound",
-					participants: ["test-orch-indexed-bound-notes"],
-					content: "fictitious content",
-					createdBy: "test-orch-indexed-bound-notes",
-					createdAt: Date.now() + i,
-					updatedAt: Date.now() - 100_000_000,
-				} as never);
-			}
-		});
-
-		try {
-			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
-				topic: "fictitious-topic-indexed-bound",
-				updatedSince: Date.now() - 1_000,
-				limit: 10,
-				fields: "full",
-			});
-			throw new Error("expected SCAN_CAP_EXCEEDED to throw");
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with topic/s);
-			expect(message).not.toContain("shrink the updatedSince window");
-			expect(message).toContain("Narrow with topic");
 		}
 	});
 
@@ -379,6 +353,49 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the three non
 			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with status/s);
 			expect(message).not.toContain("shrink the updatedSince window");
 			expect(message).toContain("Narrow with status");
+		}
+	});
+});
+
+// Issue #1260 follow-up: the topic branch is now indexed
+// (by_topic_updatedAt) — see convex/schema.ts and convex/briefingNotes.ts.
+// The window remedy is now a REAL lever on this branch, so this test moved
+// out of the "false remedy removed" group above and into its own describe,
+// mirroring the "still overflows the cap, message names a working remedy"
+// test for tasks.list's assignedTo-alone branch above. Fixture reseeded so
+// rows genuinely satisfy the window (an all-stale fixture is no longer
+// reachable by an overflow once the bound lives in the index).
+describe("SCAN_CAP_EXCEEDED message — briefingNotes.list topic branch (now indexed)", () => {
+	test("briefingNotes.list (topic branch, now indexed): wide-enough window still overflows the cap, message names a working remedy", async () => {
+		const t = convexTest(schema, modules);
+		const RECENT_UPDATED_AT = Date.now();
+		await t.run(async (ctx) => {
+			for (let i = 0; i < BRIEFING_NOTES_LIST_SCAN_CAP + 1; i++) {
+				await ctx.db.insert("briefingNotes", {
+					title: `fictitious-overcap-note-${i}`,
+					topic: "fictitious-topic-indexed-bound",
+					participants: ["test-orch-indexed-bound-notes"],
+					content: "fictitious content",
+					createdBy: "test-orch-indexed-bound-notes",
+					createdAt: Date.now() + i,
+					updatedAt: RECENT_UPDATED_AT,
+				} as never);
+			}
+		});
+
+		try {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.briefingNotes.list, {
+				topic: "fictitious-topic-indexed-bound",
+				updatedSince: RECENT_UPDATED_AT - 1_000,
+				limit: 10,
+				fields: "full",
+			});
+			throw new Error("expected SCAN_CAP_EXCEEDED to throw");
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			expect(message).toMatch(/SCAN_CAP_EXCEEDED.*cap of \d+.*Narrow with topic.*shrink the updatedSince window/s);
+			expect(message).toContain("shrink the updatedSince window");
+			expect(message).toContain("Narrow with topic");
 		}
 	});
 });

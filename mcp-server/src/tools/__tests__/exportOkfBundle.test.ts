@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, test, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../../auth";
 import {
 	exportOkfBundleArgsSchema,
 	registerExportOkfBundle,
@@ -100,6 +101,7 @@ describe("export_okf_bundle MCP wrapper", () => {
 		registerExportOkfBundle(
 			server as Parameters<typeof registerExportOkfBundle>[0],
 			{ action } as unknown as Parameters<typeof registerExportOkfBundle>[1],
+			LOCAL_STDIO_TRUST_CTX,
 		);
 		await calls[0].handler({
 			namespace: "project/elpi-corp",
@@ -128,6 +130,7 @@ describe("export_okf_bundle MCP wrapper", () => {
 		registerExportOkfBundle(
 			server as Parameters<typeof registerExportOkfBundle>[0],
 			{ action } as unknown as Parameters<typeof registerExportOkfBundle>[1],
+			LOCAL_STDIO_TRUST_CTX,
 		);
 		await expect(
 			calls[0].handler({
@@ -135,5 +138,38 @@ describe("export_okf_bundle MCP wrapper", () => {
 				format: "tarball",
 			}),
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+	});
+
+	test("no identity on the request refuses before convex.action is ever reached (absence is never master)", async () => {
+		const { calls, server } = makeServer();
+		const action = vi.fn().mockResolvedValue({
+			bundleUrl: "https://x/y",
+			storageId: "kg-1",
+			size: 42,
+			fileCount: 3,
+			manifest: {
+				types: { memoryCount: 1, briefingCount: 1, taskCount: 1 },
+				truncated: false,
+				urlExpiresAt: "2026-06-19T01:00:00.000Z",
+			},
+		});
+		// No third arg (`oauthCtx`) — mirrors a mis-wired call site that forgot
+		// to thread identity through. The `kind: "read"` scope guard in
+		// defineTool/enforceScope must refuse BEFORE convex.action is called;
+		// absence of an identity is never treated as master/permissive.
+		registerExportOkfBundle(
+			server as Parameters<typeof registerExportOkfBundle>[0],
+			{ action } as unknown as Parameters<typeof registerExportOkfBundle>[1],
+		);
+		const result = (await calls[0].handler({
+			namespace: "project/elpi-corp",
+			format: "tarball",
+		})) as { content: { type: string; text: string }[]; isError?: boolean };
+
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toMatch(
+			/no authorization context|absence is never master/i,
+		);
+		expect(action).not.toHaveBeenCalled();
 	});
 });
