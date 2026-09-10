@@ -428,6 +428,14 @@ function main() {
 			refuse(
 				`${registered.unresolved.length} defineTool( registration(s) whose tool name could not be resolved — the documented-versus-registered comparison would be missing them: ${registered.unresolved.join(", ")}`,
 			);
+		} else if (registered.names.size === 0) {
+			// Twin of the canonical-surface refusal above. A name sweep that
+			// resolved nothing has not measured the registrar, so every
+			// documented verb would read as stale and the guard would accuse a
+			// correct README instead of admitting it could not read.
+			refuse(
+				`collected 0 registered tool names from a tools.ts that exists — the registrar pattern this sweep matches no longer occurs, so the documented-versus-registered comparison would report every documented verb as stale`,
+			);
 		} else {
 			const undocumented = [...registered.names]
 				.filter((n) => !readme.documented.has(n))
