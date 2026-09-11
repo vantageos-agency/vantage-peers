@@ -21,7 +21,7 @@
   "critical_rules": ["R-5", "R-10", "R-12", "R-7", "R-37", "R-40", "R-50", "R-51", "R-26", "R-6"],
   "baseline_sha": "9001ed815e78156b55ba9cf1061a509a03c7d9f7",
   "baseline_mechanical_violations": 27,
-  "baseline_source": "the evidence file recorded for the previous production deploy, scored by the same binary (a8e7201). It was NOT re-run in this session, so the by-rule delta below is a comparison of two recorded runs on one instrument, not a same-session measurement of both sides.",
+  "baseline_source": "the evidence file recorded for the previous production deploy, scored at cli_commit a8e7201. That file records no entrypoint, so 'the same instrument' is asserted, not established: at a8e7201 src/cli.ts and a stale dist/cli.js read different counts (see entrypoint_divergence). It was NOT re-run in this session, so the by-rule delta below compares two recorded runs whose entrypoint is known on this side only.",
   "delta_by_rule": 0,
   "note": "Same 27 by rule and the same critical/major split as the previously deployed head. The count is real and is not zero. Any deploy of this sha proceeds only under a documented, operator-authorized override, on the delta rather than on the absolute."
 }
