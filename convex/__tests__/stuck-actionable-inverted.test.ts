@@ -49,7 +49,13 @@ async function seed(
 		createdBy: string;
 		title: string;
 		// When omitted, the row carries neither startedAt nor workSegments —
-		// the never-started shape measured on the live fleet.
+		// the never-started shape measured on the live fleet — but its age
+		// cannot be aged this way in this harness: convex-test stamps
+		// `_creationTime` at insert time, so an omitted startedAtAgeMs
+		// produces a row whose staleAge fallback (startedAt ?? _creationTime)
+		// reads ~0, not days old. Use a closed workSegments trailing entry
+		// (see the "closed trailing segment" test) to get an aged
+		// no-open-segment row instead.
 		startedAtAgeMs?: number;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		workSegments?: any[];
@@ -95,13 +101,19 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 		expect(result.stuckInProgress.actionableStuckCount).toBe(0);
 	});
 
-	test("never started: in_progress with no workSegments and no startedAt, days old -> ACTIONABLE", async () => {
+	// PR #1282: this seeds startedAt (via startedAtAgeMs) and no
+	// workSegments — NOT the true never-started shape (no startedAt, aged
+	// off _creationTime). The production never-started shape is untestable
+	// in this harness: convex-test stamps `_creationTime` at insert, so a
+	// row seeded with no startedAt always reads age ~0 regardless of when
+	// the test intends it to have been created.
+	test("no open segment, startedAt days old, no workSegments -> ACTIONABLE", async () => {
 		const t = convexTest(schema, modules);
 		await seedThreshold(t, 15 * MINUTE);
 		const taskId = await seed(t, {
 			assignedTo: "sigma",
 			createdBy: "pi",
-			title: "marked in_progress, never actually started",
+			title: "marked in_progress, started days ago, no segment",
 			startedAtAgeMs: 6 * 24 * HOUR,
 		});
 
@@ -114,6 +126,7 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 		expect(result.stuckInProgress.actionableStuckCount).toBe(1);
 	});
 
+	// Live-fleet shape measured for PR #1282.
 	test("closed trailing segment: worked then paused without a status change -> ACTIONABLE", async () => {
 		const t = convexTest(schema, modules);
 		await seedThreshold(t, 15 * MINUTE);
@@ -135,6 +148,7 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 		expect(result.peersStuckOnYou.actionableStuckCount).toBe(1);
 	});
 
+	// Boundary/wiring control, PR #1282.
 	test("transient: no open segment but younger than the threshold -> NOT actionable", async () => {
 		const t = convexTest(schema, modules);
 		await seedThreshold(t, 15 * MINUTE);
@@ -154,6 +168,7 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 		expect(result.stuckInProgress.actionableStuckCount).toBe(0);
 	});
 
+	// Boundary/wiring control, PR #1282.
 	test("the threshold is DATA on the no-open-segment path too: the same row flips sides when it changes", async () => {
 		const now = Date.now();
 
@@ -192,6 +207,7 @@ describe("actionable-stuck count fires on the ABSENCE of an open segment, not it
 });
 
 describe("wiring pole: disabling the condition at ONE call site only reddens that signal alone", () => {
+	// Boundary/wiring control, PR #1282.
 	test("stuckInProgress actionableStuckCount is independently wired from peersStuckOnYou", async () => {
 		// Both signals share computeStuckList/isActionableStuck; this seeds one
 		// never-started row visible on EACH signal separately and asserts each

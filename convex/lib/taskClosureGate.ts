@@ -588,8 +588,11 @@ function staleAge(
  * the status ever reverting. Deliberately NOT "the list is non-empty" —
  * that fires on every task in flight by design (see the threshold comment
  * above STUCK_ACTIONABLE_THRESHOLD_KEY) and would make the obligation
- * learned-then-ignored again. The threshold's remaining job is absorbing
- * the transient right after a status change, nothing more.
+ * learned-then-ignored again. Age on this path is measured from
+ * startedAt/_creationTime, not from the status change, so a row that
+ * re-enters in_progress with an old startedAt and no reopened segment
+ * counts immediately -- the threshold's job is absorbing staleness, not
+ * recency of the transition.
  */
 function isActionableStuck(
 	ageResult: StaleAgeResult,
