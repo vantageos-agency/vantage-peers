@@ -34,6 +34,7 @@ import type * as githubComments from "../githubComments.js";
 import type * as githubDeployGate from "../githubDeployGate.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as gumroadWebhook from "../gumroadWebhook.js";
+import type * as healStrandedSegments from "../healStrandedSegments.js";
 import type * as http from "../http.js";
 import type * as iframeEmbedSessions from "../iframeEmbedSessions.js";
 import type * as improvisationDigest from "../improvisationDigest.js";
@@ -122,6 +123,7 @@ declare const fullApi: ApiFromModules<{
   githubDeployGate: typeof githubDeployGate;
   githubRepoMapping: typeof githubRepoMapping;
   gumroadWebhook: typeof gumroadWebhook;
+  healStrandedSegments: typeof healStrandedSegments;
   http: typeof http;
   iframeEmbedSessions: typeof iframeEmbedSessions;
   improvisationDigest: typeof improvisationDigest;
