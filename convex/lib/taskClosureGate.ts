@@ -579,19 +579,26 @@ function staleAge(
 }
 
 /**
- * The one true "act now" condition for the stuck lists: an OPEN segment
- * running past the configured threshold. Deliberately NOT "the list is
- * non-empty" — that fires on every task in flight by design (see the
- * threshold comment above STUCK_ACTIONABLE_THRESHOLD_KEY) and would make
- * the obligation learned-then-ignored again. A closed trailing segment or a
- * freshly-started task never counts here, however large their fallback age
- * reads.
+ * The one true "act now" condition for the stuck lists: an in_progress row
+ * with NO open segment behind it, past the configured threshold. An open
+ * segment means someone is actively on the task right now — however long
+ * that segment has run, it is not the failure this obligation exists to
+ * catch. The failure is a status that claims work is underway while
+ * nothing backs that claim: never started, or started and paused without
+ * the status ever reverting. Deliberately NOT "the list is non-empty" —
+ * that fires on every task in flight by design (see the threshold comment
+ * above STUCK_ACTIONABLE_THRESHOLD_KEY) and would make the obligation
+ * learned-then-ignored again. Age on this path is measured from
+ * startedAt/_creationTime, not from the status change, so a row that
+ * re-enters in_progress with an old startedAt and no reopened segment
+ * counts immediately -- the threshold's job is absorbing staleness, not
+ * recency of the transition.
  */
 function isActionableStuck(
 	ageResult: StaleAgeResult,
 	thresholdMs: number,
 ): boolean {
-	return ageResult.fromOpenSegment && ageResult.age > thresholdMs;
+	return !ageResult.fromOpenSegment && ageResult.age > thresholdMs;
 }
 
 /**

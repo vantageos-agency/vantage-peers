@@ -34,12 +34,12 @@ const cappedStaleInProgressValidator = v.object({
 	entries: staleInProgressValidator,
 	total: v.number(),
 	truncated: v.boolean(),
-	// Count of `entries` whose open segment is past the configured
-	// stuck-actionable threshold — see isActionableStuck in
-	// lib/taskClosureGate.ts. The obligation to act keys on THIS field, not
-	// on entries.length: the list itself is non-empty on every cycle where
-	// anyone is working (any-age by design), so "list non-empty" is not a
-	// usable signal.
+	// Count of `entries` that have NO open work segment behind their
+	// in_progress status and are past the configured stuck-actionable
+	// threshold — see isActionableStuck in lib/taskClosureGate.ts. The
+	// obligation to act keys on THIS field, not on entries.length: the list
+	// itself is non-empty on every cycle where anyone is working (any-age by
+	// design), so "list non-empty" is not a usable signal.
 	actionableStuckCount: v.number(),
 });
 
