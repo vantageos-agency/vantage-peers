@@ -1,0 +1,21 @@
+{
+  "sha": "9001ed815e78156b55ba9cf1061a509a03c7d9f7",
+  "cli_commit": "a8e7201",
+  "cli_ref": "origin/sigma/standard-pin-machine-checkable",
+  "cli_version": "0.1.15",
+  "cli_resolves_on": "a8e7201 is not on backend-doctor's default branch; it lives on the branch named in cli_ref. git cat-file -t a8e7201 fails on a checkout that has not fetched that branch.",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "convex_tree_sha_at_run": "9001ed815e78156b55ba9cf1061a509a03c7d9f7",
+  "convex_tree_attestation": "git -C /root/coding/vantage-memory rev-parse HEAD, run in the same session as the doctor, returned the sha above. The path is outside this repository, so the sha is what ties the scored tree to the recorded commit.",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 27,
+  "critical_violations": 10,
+  "major_violations": 17,
+  "abstentions": 9,
+  "baseline_sha": "2717b1d532ac7a9288d3d4bb3431d37d419f1826",
+  "baseline_mechanical_violations": 27,
+  "delta_introduced_by_this_head": 0,
+  "note": "Same 27 as the two previously deployed heads, same by-rule split (critical 10, major 17). This head introduces none of them. The count is real and is NOT zero: this file records the tree as it is, not as the gate would like it. The deploy proceeds under the documented override, on the delta rather than on the absolute."
+}
