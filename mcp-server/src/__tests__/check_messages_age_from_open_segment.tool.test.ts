@@ -173,8 +173,14 @@ describe("check_messages renders actionableStuckCount at the threshold boundary"
 				value: [String(threshold)],
 				updatedAt: fixedNow,
 			});
+			// Under the inverted predicate (PR #1282) an OPEN trailing segment
+			// never counts as actionable at any age -- `fromOpenSegment` alone
+			// excludes it. So this boundary can no longer be demonstrated with
+			// an open segment; both rows below carry NO open segment (no
+			// workSegments at all), which puts `staleAge` on the
+			// startedAt/_creationTime fallback path instead.
 			await db.insert("tasks", {
-				title: "open segment exactly at the threshold",
+				title: "no open segment, exactly at the threshold",
 				assignedTo: "sigma",
 				priority: "medium" as const,
 				status: "in_progress" as const,
@@ -182,12 +188,11 @@ describe("check_messages renders actionableStuckCount at the threshold boundary"
 				createdBy: "pi",
 				createdAt: fixedNow - threshold,
 				updatedAt: fixedNow - threshold,
-				workSegments: [{ start: fixedNow - threshold }],
 			});
 			// Bracket: a row strictly past the threshold, so a count that is
 			// always 0 cannot pass this case vacuously.
 			await db.insert("tasks", {
-				title: "open segment one minute past the threshold",
+				title: "no open segment, one minute past the threshold",
 				assignedTo: "sigma",
 				priority: "medium" as const,
 				status: "in_progress" as const,
@@ -195,7 +200,6 @@ describe("check_messages renders actionableStuckCount at the threshold boundary"
 				createdBy: "pi",
 				createdAt: fixedNow - threshold - MINUTE,
 				updatedAt: fixedNow - threshold - MINUTE,
-				workSegments: [{ start: fixedNow - threshold - MINUTE }],
 			});
 		});
 
