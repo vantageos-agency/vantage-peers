@@ -58,7 +58,11 @@ describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 			content: "tenant-a instance msg",
 		});
 
-		const results = await t.query(api.messages.checkNewMessages, {
+		const results = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessages, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
 			tenantId: "tenant-a",
@@ -83,7 +87,11 @@ describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 			content: "tenant-b instance msg",
 		});
 
-		const results = await t.query(api.messages.checkNewMessages, {
+		const results = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessages, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
 			tenantId: "tenant-a",
@@ -106,7 +114,11 @@ describe("checkNewMessagesEnvelope — instance branch tenant isolation (R-11)",
 			content: "tenant-a instance msg",
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
 			tenantId: "tenant-a",
@@ -131,7 +143,11 @@ describe("checkNewMessagesEnvelope — instance branch tenant isolation (R-11)",
 			content: "tenant-b instance msg",
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
 			tenantId: "tenant-a",

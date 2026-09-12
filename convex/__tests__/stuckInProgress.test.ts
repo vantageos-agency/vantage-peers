@@ -74,7 +74,11 @@ describe("stuckInProgress — checkNewMessagesEnvelope (k176w8hfeaxq07z500qk71xc
 			ageMs: FIVE_MINUTES_MS,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "sigma",
 		});
 
@@ -102,7 +106,11 @@ describe("stuckInProgress — checkNewMessagesEnvelope (k176w8hfeaxq07z500qk71xc
 			ageMs: FIVE_MINUTES_MS,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 		});
 
@@ -126,7 +134,11 @@ describe("stuckInProgress — checkNewMessagesEnvelope (k176w8hfeaxq07z500qk71xc
 			ageMs: FIVE_MINUTES_MS,
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 		});
 
@@ -162,7 +174,11 @@ describe("stuckInProgress — checkNewMessagesEnvelope (k176w8hfeaxq07z500qk71xc
 			}
 		});
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 		});
 
@@ -180,7 +196,11 @@ describe("stuckInProgress — checkNewMessagesEnvelope (k176w8hfeaxq07z500qk71xc
 
 	test("NEG: pendingOnYou* still absent; envelope keys include the new siblings", async () => {
 		const t = convexTest(schema, modules);
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "victor",
 		});
 

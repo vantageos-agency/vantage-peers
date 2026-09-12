@@ -55,6 +55,7 @@ const cappedStaleInProgressValidator = v.object({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sendMessageCore — shared delivery core for both the public `sendMessage`
+// and the HMAC-webhook-only `sendMessageInternal`
 // (task sigma/tenant-scope-write-symmetry). Performs recipient resolution,
 // the zero-recipient bounce, the message insert, and the per-recipient
 // receipt insert, given an ALREADY-RESOLVED `scope`. The two wrappers below
@@ -93,8 +94,10 @@ async function sendMessageCore(
 			derivedTenantId = args.tenantId;
 		} else if (scope.orgSlug !== null) {
 			// Any real client org (including a client org whose
-			// client_org_mapping row carries the ["*"] read sentinel, whose
-			// isMaster is overloaded true — lib/auth.ts:182): the stamped
+			// client_org_mapping row carries the ["*"] read sentinel): the
+			// client_org_mapping path always returns isMaster: false
+			// unconditionally (lib/auth.ts:~198-210) — this branch selects on
+			// orgSlug alone, never on isMaster. The stamped
 			// tenant is DERIVED from the verified scope, never the
 			// client-supplied args.tenantId. Deriving — not
 			// comparing-then-rejecting — makes a foreign-tenant spoof
@@ -374,10 +377,29 @@ export const checkNewMessages = query({
 	// staleInProgress (Day 130) is delivered there, not here. Protected by
 	// convex/__tests__/staleInProgress.test.ts
 	// "checkNewMessages frozen contract — returns a bare array".
-	// tenantId filtering: when provided, only returns messages for that tenant.
-	// When omitted, returns all messages (backward-compatible single-tenant mode).
-	// This is intentional — omitting tenantId = admin/legacy access, not a bypass.
+	//
+	// Read-half tenant identity (task sigma/read-half-tenant-identity — the
+	// READ half of the tenant-isolation defect; T1 fixed the WRITE half in
+	// sendMessageCore above). `args.tenantId` is no longer trusted verbatim:
+	// the EFFECTIVE tenant is derived from `withOrgScope(ctx)`, mirroring the
+	// sibling reads (listMessages / listByChannel / searchMessagesByKeyword).
+	// A TRUE master identity (isMaster && orgSlug===null) keeps today's
+	// admin/legacy all-tenants behavior when args.tenantId is omitted — that
+	// is now gated on a VERIFIED master principal, not on arg-omission alone.
+	// A non-master caller (orgSlug !== null) always reads its OWN derived
+	// tenant; args.tenantId is ignored for widening. An anonymous caller
+	// (!isMaster && orgSlug===null) sees nothing, mirroring the sibling
+	// reads' `!isMaster && orgSlug===null → []` guard.
 	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+
+		if (!scope.isMaster && scope.orgSlug === null) return [];
+
+		const effectiveTenantId =
+			scope.isMaster && scope.orgSlug === null
+				? args.tenantId
+				: (scope.orgSlug ?? undefined);
+
 		let receipts;
 
 		if (args.recipientInstanceId !== undefined) {
@@ -390,12 +412,12 @@ export const checkNewMessages = query({
 			// the post-query .filter below alone. The .filter is KEPT as
 			// belt-and-suspenders, mirroring the conform pattern at :735/:995.
 			const instanceReceipts =
-				args.tenantId !== undefined
+				effectiveTenantId !== undefined
 					? await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_tenant_instance_unread", (q) =>
 								q
-									.eq("tenantId", args.tenantId!)
+									.eq("tenantId", effectiveTenantId)
 									.eq("recipientInstanceId", args.recipientInstanceId!)
 									.eq("readAt", undefined),
 							)
@@ -419,12 +441,12 @@ export const checkNewMessages = query({
 							.take(100);
 
 			const roleReceipts =
-				args.tenantId !== undefined
+				effectiveTenantId !== undefined
 					? await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_tenant_recipient_unread", (q) =>
 								q
-									.eq("tenantId", args.tenantId!)
+									.eq("tenantId", effectiveTenantId)
 									.eq("recipient", args.recipient)
 									.eq("readAt", undefined),
 							)
@@ -462,17 +484,17 @@ export const checkNewMessages = query({
 			}
 
 			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			if (args.tenantId !== undefined) {
-				receipts = receipts.filter((r) => r.tenantId === args.tenantId);
+			if (effectiveTenantId !== undefined) {
+				receipts = receipts.filter((r) => r.tenantId === effectiveTenantId);
 			}
 		} else {
 			// Role-level: get all unread for this role
-			if (args.tenantId !== undefined) {
+			if (effectiveTenantId !== undefined) {
 				receipts = await ctx.db
 					.query("messageReceipts")
 					.withIndex("by_tenant_recipient_unread", (q) =>
 						q
-							.eq("tenantId", args.tenantId)
+							.eq("tenantId", effectiveTenantId)
 							.eq("recipient", args.recipient)
 							.eq("readAt", undefined),
 					)
@@ -564,6 +586,27 @@ export const checkNewMessagesEnvelope = query({
 		const maxBytes = Math.min(Math.max(args.maxBytes ?? 40_000, 1_000), 60_000);
 		const takeBudget = limit + 1;
 
+		// Read-half tenant identity (task sigma/read-half-tenant-identity) —
+		// see the identical derivation + comment on checkNewMessages above,
+		// which this envelope variant mirrors exactly.
+		const scope = await withOrgScope(ctx);
+
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return {
+				messages: [],
+				truncated: false,
+				nextSince: null,
+				staleInProgress: [],
+				stuckInProgress: { entries: [], total: 0, truncated: false },
+				peersStuckOnYou: { entries: [], total: 0, truncated: false },
+			};
+		}
+
+		const effectiveTenantId =
+			scope.isMaster && scope.orgSlug === null
+				? args.tenantId
+				: (scope.orgSlug ?? undefined);
+
 		let receipts: Doc<"messageReceipts">[];
 
 		if (args.recipientInstanceId !== undefined) {
@@ -573,12 +616,12 @@ export const checkNewMessagesEnvelope = query({
 			// the post-query .filter below alone. The .filter is KEPT as
 			// belt-and-suspenders, mirroring the conform pattern at :735/:995.
 			const instanceReceipts =
-				args.tenantId !== undefined
+				effectiveTenantId !== undefined
 					? await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_tenant_instance_unread", (q) =>
 								q
-									.eq("tenantId", args.tenantId!)
+									.eq("tenantId", effectiveTenantId)
 									.eq("recipientInstanceId", args.recipientInstanceId!)
 									.eq("readAt", undefined),
 							)
@@ -602,12 +645,12 @@ export const checkNewMessagesEnvelope = query({
 							.take(takeBudget);
 
 			const roleReceipts =
-				args.tenantId !== undefined
+				effectiveTenantId !== undefined
 					? await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_tenant_recipient_unread", (q) =>
 								q
-									.eq("tenantId", args.tenantId!)
+									.eq("tenantId", effectiveTenantId)
 									.eq("recipient", args.recipient)
 									.eq("readAt", undefined),
 							)
@@ -643,15 +686,15 @@ export const checkNewMessagesEnvelope = query({
 				}
 			}
 			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			if (args.tenantId !== undefined) {
-				receipts = receipts.filter((r) => r.tenantId === args.tenantId);
+			if (effectiveTenantId !== undefined) {
+				receipts = receipts.filter((r) => r.tenantId === effectiveTenantId);
 			}
-		} else if (args.tenantId !== undefined) {
+		} else if (effectiveTenantId !== undefined) {
 			receipts = await ctx.db
 				.query("messageReceipts")
 				.withIndex("by_tenant_recipient_unread", (q) =>
 					q
-						.eq("tenantId", args.tenantId!)
+						.eq("tenantId", effectiveTenantId)
 						.eq("recipient", args.recipient)
 						.eq("readAt", undefined),
 				)
