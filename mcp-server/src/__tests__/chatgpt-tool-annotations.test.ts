@@ -103,6 +103,10 @@ function buildMockConvex(): ConvexHttpClient {
 //   (check_mandate_spending, search_memories_by_*, search_components_by_keyword,
 //   search_fix_patterns_by_semantic readOnly; delete_repo_mapping,
 //   delete_deployment destructive) are dropped — only their survivors remain.
+// Task k173r2p1yh94m5f7yvgr1b30gx8dn3ez: the `components` table and its six
+//   tools (list_components, register_component, get_component,
+//   update_component, delete_component, search_components) were removed —
+//   dropped from READ_ONLY_TOOLS/DESTRUCTIVE_TOOLS below.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const READ_ONLY_TOOLS = new Set([
@@ -123,9 +127,6 @@ const READ_ONLY_TOOLS = new Set([
 	"get_diary",
 	"list_diaries",
 	"list_briefing_notes",
-	"list_components",
-	"get_component",
-	"search_components",
 	"list_recurring_tasks",
 	"validate_mandate_spending",
 	"list_mandates",
@@ -182,7 +183,6 @@ const DESTRUCTIVE_TOOLS = new Set([
 	"delete_message",
 	"delete_task",
 	"block_task",
-	"delete_component",
 	"delete_recurring_task",
 	"delete_bu",
 	"remove_repo_mapping",

@@ -31,13 +31,12 @@
  * loadConfig() (no dependency override involved in the negative tests).
  *
  * NOT covered by this file, and why: the actual Hono request handler in
- * auth.ts:531-541 (the try/catch around
- * internalClient().query("mcpTenants:getTenantByTokenHash") that emits the
+ * auth.ts (the try/catch around the internal Convex lookup that emits the
  * literal HTTP 503 "Authentication service unavailable" JSON response) is not
  * exercised here. Driving that would require constructing a full Hono
- * request/response cycle plus a real or mocked mcpTenants:getTenantByTokenHash
- * Convex query, which is disproportionate machinery for what this test needs
- * to prove: that the refusal is selective on the two named env vars. The
+ * request/response cycle plus a real or mocked Convex query, which is
+ * disproportionate machinery for what this test needs to prove: that the
+ * refusal is selective on the two named env vars. The
  * positive-path assertions below use injected deps (_setServiceAccountDepsForTest,
  * same pattern as internalClientIdentity.test.ts) specifically so no live
  * Clerk network call happens in this suite either.

@@ -18,12 +18,12 @@
  *                                  an embedded `receipts[]`, not a paginatable
  *                                  list of broadcast events. Cursor paging is
  *                                  semantically meaningless here.
- *     b. search_components       — relevance-ranked semantic search, not a
- *                                  chronological list; `createdBefore` anchor
- *                                  would break ordering. Out of scope.
- *     c. search_fix_patterns     — same rationale: action-backed semantic search
+ *     b. search_fix_patterns     — action-backed semantic search
  *                                  (`search:searchFixPatterns`) ranks by query
  *                                  similarity, not `_creationTime`.
+ *
+ * (search_components was originally exception #b here — removed along with
+ * the `components` table and its tools, task k173r2p1yh94m5f7yvgr1b30gx8dn3ez.)
  *
  * RED expectation: list_peers does NOT today accept `cursor` nor emit
  * `nextCursor`; the cursor-roundtrip + paginate-tail assertions fail until GREEN
@@ -244,33 +244,6 @@ describe("list_broadcast_status — doctrine exception (single-object shape, not
 			.calls[0] as [string, Record<string, unknown>];
 		expect(queryArgs.createdBefore).toBeUndefined();
 		expect(queryArgs.cursor).toBeUndefined();
-	});
-});
-
-describe("search_components — doctrine exception (relevance-ranked, not chronological)", () => {
-	// Rationale: results are scored by query similarity. A `createdBefore`
-	// anchor would skip high-relevance older matches in favor of newer
-	// low-relevance ones, breaking the search contract. Pagination on semantic
-	// search should be score-based (offset / topK), not time-based — that is a
-	// separate workstream from S3.3 B8.
-	it("is registered (handler exists)", async () => {
-		const { server, handlers } = buildFakeServer();
-		const convex = buildMockConvex([]);
-		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
-		expect(handlers.get("search_components")).toBeDefined();
-	});
-
-	it("does NOT emit nextCursor (no cursor paging on relevance-ranked search)", async () => {
-		const { server, handlers } = buildFakeServer();
-		const convex = buildMockConvex([
-			{ _id: "c1", name: "alpha", team: "vantageos" },
-		]);
-		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
-
-		const handler = handlers.get("search_components");
-		const result = await handler?.({ query: "alpha" });
-		const text = extractText(result);
-		expect(text).not.toMatch(/nextCursor/);
 	});
 });
 

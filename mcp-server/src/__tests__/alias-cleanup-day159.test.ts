@@ -2,7 +2,9 @@
 // alias-cleanup-day159.test.ts — mission vp-mcp-alias-cleanup-v1, task S2
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Strict TDD RED→GREEN. For each of the 14 arbitrated pairs (S1), assert:
+// Strict TDD RED→GREEN. For each of the 13 remaining arbitrated pairs (S1),
+// assert (originally 14 — the search_components/search_components_by_keyword
+// pair was removed when search_components itself was deleted, see below):
 //   (a) the SURVIVOR name IS registered, and
 //   (b) the CONDEMNED name is NOT registered.
 //
@@ -31,7 +33,9 @@ const PAIRS: ReadonlyArray<readonly [survivor: string, condemned: string]> = [
 	["add_deployment", "register_deployment"],
 	["set_summary", "update_summary"],
 	["add_task_dependency", "create_task_dependency"],
-	["search_components", "search_components_by_keyword"],
+	// search_components/search_components_by_keyword pair removed —
+	// search_components itself was deleted along with the components table
+	// and its five sibling tools (task k173r2p1yh94m5f7yvgr1b30gx8dn3ez).
 	["search_fix_patterns", "search_fix_patterns_by_semantic"],
 	["recall", "search_memories_by_semantic"],
 	["text_search", "search_memories_by_keyword"],
@@ -52,7 +56,7 @@ function registeredToolNames(): Set<string> {
 	return names;
 }
 
-describe("alias cleanup day159 — 14 condemned tools removed, survivors kept", () => {
+describe("alias cleanup day159 — 13 condemned tools removed, survivors kept", () => {
 	const names = registeredToolNames();
 
 	for (const [survivor, condemned] of PAIRS) {

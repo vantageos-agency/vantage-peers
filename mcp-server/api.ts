@@ -188,67 +188,6 @@ export type PublicApiType = {
       }>
     >;
   };
-  components: {
-    register: FunctionReference<
-      "mutation",
-      "public",
-      {
-        content: string;
-        createdBy: string;
-        name: string;
-        project?: string;
-        team?: string;
-        type: "agent" | "skill" | "hook" | "plugin";
-        version?: string;
-      },
-      { componentId: Id<"components">; created: boolean }
-    >;
-    list: FunctionReference<
-      "query",
-      "public",
-      {
-        limit?: number;
-        team?: string;
-        type?: "agent" | "skill" | "hook" | "plugin";
-      },
-      any
-    >;
-    get: FunctionReference<
-      "query",
-      "public",
-      { name: string; type: "agent" | "skill" | "hook" | "plugin" },
-      any
-    >;
-    update: FunctionReference<
-      "mutation",
-      "public",
-      {
-        componentId: Id<"components">;
-        content?: string;
-        name?: string;
-        project?: string;
-        team?: string;
-        version?: string;
-      },
-      Id<"components">
-    >;
-    remove: FunctionReference<
-      "mutation",
-      "public",
-      { componentId: Id<"components"> },
-      { deleted: boolean }
-    >;
-    search: FunctionReference<
-      "query",
-      "public",
-      {
-        limit?: number;
-        query: string;
-        type?: "agent" | "skill" | "hook" | "plugin";
-      },
-      any
-    >;
-  };
   diary: {
     write: FunctionReference<
       "mutation",

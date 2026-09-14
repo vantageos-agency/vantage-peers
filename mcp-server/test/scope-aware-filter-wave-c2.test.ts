@@ -1,5 +1,5 @@
 /**
- * S3.1.C Wave C Phase C2 — scope-aware filter applied to 7 read-path tools.
+ * S3.1.C Wave C Phase C2 — scope-aware filter applied to 6 read-path tools.
  *
  * Sprint    S3.1.C
  * Mission   k57c7s478gw1a3e5gmhdeptg5n87z78n
@@ -9,20 +9,23 @@
  * Precedent Wave A SHA 251d183 (list_memories + get_memory)
  *           Wave B SHA 0d1ea94 (list_briefing_notes + list_messages + list_peers)
  *           Wave C0 SHA c516b88 (get_briefing_note registration + scope-aware)
- *           Wave C1 SHA 03f4d251 (7 read tools: get_profile + list_broadcast_status
- *                                + list_tasks_by_mission + get_mission + get_diary
- *                                + list_components + get_component)
+ *           Wave C1 SHA 03f4d251 (5 read tools: get_profile + list_broadcast_status
+ *                                + list_tasks_by_mission + get_mission + get_diary)
  *
- * Tools covered in Wave C2 (next 7 read-path guardMasterOnly call sites in
+ * Tools covered in Wave C2 (next read-path guardMasterOnly call sites in
  * source order, excluding everything migrated by Waves A/B/C0/C1):
  *
- *   1. search_components       (tools.ts L3451) — list
- *   2. list_recurring_tasks    (tools.ts L3571) — list
- *   3. list_mandates           (tools.ts L4033) — list
- *   4. get_bu                  (tools.ts L4266) — get
- *   5. list_bus                (tools.ts L4319) — list
- *   6. list_repo_mappings      (tools.ts L4459) — list
- *   7. list_issues             (tools.ts L4565) — list
+ *   1. list_recurring_tasks    (tools.ts L3571) — list
+ *   2. list_mandates           (tools.ts L4033) — list
+ *   3. get_bu                  (tools.ts L4266) — get
+ *   4. list_bus                (tools.ts L4319) — list
+ *   5. list_repo_mappings      (tools.ts L4459) — list
+ *   6. list_issues             (tools.ts L4565) — list
+ *
+ * (Originally also covered search_components as #1 — removed along with the
+ * `components` table and its tools, task k173r2p1yh94m5f7yvgr1b30gx8dn3ez.
+ * Wave C1's reference above is updated to match: it no longer lists
+ * list_components/get_component either.)
  *
  * TDD discipline (mirrors C1):
  *   - At RED, each tool's handler still calls `guardMasterOnly` → a non-master
@@ -138,95 +141,6 @@ function isForbiddenResponse(res: any): boolean {
 	const text = res.content?.[0]?.text ?? "";
 	return typeof text === "string" && text.includes("Forbidden");
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool 1 — search_components (Convex query: components:search)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SEARCH_COMPONENTS_FIXTURE = [
-	{
-		_id: "sc_a1",
-		createdBy: "alpha",
-		namespace: "orchestrator/alpha",
-		name: "alpha-skill",
-		type: "skill",
-	},
-	{
-		_id: "sc_b1",
-		createdBy: "beta",
-		namespace: "orchestrator/beta",
-		name: "beta-skill",
-		type: "skill",
-	},
-	{
-		_id: "sc_g1",
-		createdBy: "gamma",
-		namespace: "global",
-		name: "gamma-skill",
-		type: "skill",
-	},
-];
-
-describe("SCMP — search_components scope-aware", () => {
-	it("SCMP-T1 master scope → all 3 rows visible", async () => {
-		const tools = captureTools(
-			{ "components:search": SEARCH_COMPONENTS_FIXTURE },
-			masterCtx(),
-		);
-		const res = await tools
-			.get("search_components")!
-			.handler({ query: "skill" });
-		expect(res.isError).not.toBe(true);
-		expect(res.content[0].text).toContain("sc_a1");
-		expect(res.content[0].text).toContain("sc_b1");
-	});
-
-	it("SCMP-T2 non-master in-scope → NOT Forbidden", async () => {
-		const tools = captureTools(
-			{ "components:search": SEARCH_COMPONENTS_FIXTURE },
-			alphaCtx(),
-		);
-		const res = await tools
-			.get("search_components")!
-			.handler({ query: "skill" });
-		expect(isForbiddenResponse(res)).toBe(false);
-	});
-
-	it("SCMP-T3 master/local trust → all rows visible", async () => {
-		const tools = captureTools({
-			"components:search": SEARCH_COMPONENTS_FIXTURE,
-		});
-		const res = await tools
-			.get("search_components")!
-			.handler({ query: "skill" });
-		expect(res.isError).not.toBe(true);
-		expect(res.content[0].text).toContain("sc_b1");
-	});
-
-	it("SCMP-M1 alpha scope → beta component filtered out", async () => {
-		const tools = captureTools(
-			{ "components:search": SEARCH_COMPONENTS_FIXTURE },
-			alphaCtx(),
-		);
-		const res = await tools
-			.get("search_components")!
-			.handler({ query: "skill" });
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).not.toContain("sc_b1");
-	});
-
-	it("SCMP-M2 alpha scope → alpha component visible", async () => {
-		const tools = captureTools(
-			{ "components:search": SEARCH_COMPONENTS_FIXTURE },
-			alphaCtx(),
-		);
-		const res = await tools
-			.get("search_components")!
-			.handler({ query: "skill" });
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("sc_a1");
-	});
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool 2 — list_recurring_tasks (Convex query: recurringTasks:list)

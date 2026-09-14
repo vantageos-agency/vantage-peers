@@ -85,12 +85,13 @@ function makeFakeConvex(mappings: Record<string, MappingRow>) {
 				const { orgSlug } = args as { orgSlug: string };
 				return orgSlug in mappings ? mappings[orgSlug] : null;
 			}
-			if (name === "oauthDcr:validateAccessToken") return { valid: false };
-			if (name === "mcpTenants:getTenantByTokenHash") return null;
+			// task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the DCR opaque
+			// token and legacy mcpTenants branches entirely — auth.ts never
+			// issues either lookup below the Clerk-JWT layer, so there is
+			// nothing left to mock here.
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string) => {
-			if (name === "mcpTenants:touchLastUsed") return null;
 			throw new Error(`unmocked mutation: ${name}`);
 		},
 	};

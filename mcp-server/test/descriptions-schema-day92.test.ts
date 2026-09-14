@@ -206,30 +206,6 @@ const TOOL_REGISTRY: Array<[string, string]> = [
 		"List briefing notes filtered by topic, newest first, with cursor paging support. WHEN: use to review recent discussions on a topic or audit the full briefing history. EXAMPLE: list_briefing_notes topic='architecture' limit=10 fields='lite'.",
 	],
 	[
-		"register_component",
-		"Register or upsert a component (agent/skill/hook/plugin) in the VantagePeers registry by name+type. WHEN: use when publishing a new version of an agent skill or hook so peers can discover and use it. EXAMPLE: register_component name='check-tasks' type='skill' version='1.2.0' createdBy='alpha' content='...'.",
-	],
-	[
-		"list_components",
-		"List registered components filtered by type or team, newest first with cursor paging support. WHEN: use to discover available skills before building a workflow or to audit the registry. EXAMPLE: list_components type='skill' team='development' limit=20.",
-	],
-	[
-		"get_component",
-		"Fetch a single component by name and type, returning the full source content and metadata. WHEN: use before invoking a skill to read its interface, version, and implementation. EXAMPLE: get_component name='check-tasks' type='skill'.",
-	],
-	[
-		"update_component",
-		"Update a component's content, version, or team; only provided fields are patched. WHEN: use to bump a skill version or fix content without re-registering from scratch. EXAMPLE: update_component componentId='j57aaaaa...' version='1.3.0' content='...'.",
-	],
-	[
-		"delete_component",
-		"Permanently delete a component from the registry by Convex document ID. WHEN: use to remove deprecated or test components that should no longer be discoverable. EXAMPLE: delete_component componentId='j57aaaaa...'.",
-	],
-	[
-		"search_components",
-		"Search components by name or team substring with optional type filter. WHEN: use before register_component to check if a similar component already exists in the registry. EXAMPLE: search_components query='check-tasks' type='skill' limit=10.",
-	],
-	[
 		"create_recurring_task",
 		"Create a recurring task template that auto-generates tasks on a cron schedule. WHEN: use for daily standups, weekly reviews, or any repeating work item pattern. EXAMPLE: create_recurring_task title='Daily standup' assignedTo='alpha' priority='medium' cronExpression='0 9 * * *' createdBy='alpha'.",
 	],
@@ -526,8 +502,8 @@ describe("B2 §1 canonical verb migration coverage", () => {
 });
 
 describe("B2 §4 aggregate coverage", () => {
-	it("total registered tools >= 97 (87 original + 10 canonical aliases)", () => {
-		expect(TOOL_REGISTRY.length).toBeGreaterThanOrEqual(97);
+	it("total registered tools >= 91 (87 original + 10 canonical aliases - 6 removed components tools)", () => {
+		expect(TOOL_REGISTRY.length).toBeGreaterThanOrEqual(91);
 	});
 
 	it("all descriptions contain WHEN:", () => {

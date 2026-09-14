@@ -297,14 +297,26 @@ def run_inventory() -> int:
 		{
 			"id": 4,
 			"name": "(3) DCR OAuth token (oauthDcr:validateAccessToken)",
-			"status": "ANALYSED",
-			"marker": "SECURITY FIX: DCR tokens from the legacy oauthDcr path",
+			"status": "SKIPPED",
+			"reason": (
+				"Branch REMOVED — task k173r2p1yh94m5f7yvgr1b30gx8dn3ez deleted "
+				"the DCR-token bearer branch entirely (convex/oauthDcr.ts and "
+				"its oauthClients/oauthTokens tables dropped). A bearer token "
+				"shaped like a DCR opaque token is now refused (401) before "
+				"reaching any grant-assignment code — nothing left to classify."
+			),
 		},
 		{
 			"id": 5,
 			"name": "(4) Legacy internal bearer (mcpTenants)",
-			"status": "ANALYSED",
-			"marker": "SECURITY FIX (k17dt8pq4zkafsvt162z9qzgsn8abs0r)",
+			"status": "SKIPPED",
+			"reason": (
+				"Branch REMOVED — task k173r2p1yh94m5f7yvgr1b30gx8dn3ez deleted "
+				"the legacy mcpTenants bearer branch entirely (convex/"
+				"mcpTenants.ts and its table dropped). A bearer token shaped "
+				"like a legacy tenant token is now refused (401) before "
+				"reaching any grant-assignment code — nothing left to classify."
+			),
 		},
 	]
 

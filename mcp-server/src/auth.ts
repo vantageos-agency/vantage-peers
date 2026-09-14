@@ -1,7 +1,7 @@
 /**
  * Bearer token authentication middleware for VantagePeers HTTP MCP server.
  *
- * Two code paths, in order:
+ * Code paths, in order:
  *   1. Master-token shortcut — BEARER_SECRET_MASTER matches raw token.
  *      Used by Pi admin + Claude.ai connector during the MVP transition and
  *      by the new /admin/* endpoints. Routes to the internal deployment with
@@ -11,12 +11,17 @@
  *      the resolved OAuth context is attached to c.set("oauthContext"). The
  *      middleware also sets the tenant to the internal deployment because
  *      OAuth tokens always target the VantagePeers core deployment.
- *   3. Legacy bearer — falls through to mcpTenants table lookup (Pi/Tau/Phi
- *      internal orchestrators on their own Convex deployments). Resolves a
- *      deny-by-default oauthContext (scopeProfile="legacy-tenant-generic",
- *      empty allowlist/prefixes) — the mcpTenants table has no per-tenant
- *      scope config, so this is fail-closed until a tenant is provisioned
- *      through the OAuth scoped-token path with explicit prefixes.
+ *   2.5. Clerk JWT — verified against Clerk's JWKS, then resolved against
+ *      client_org_mapping (see the (2.5) branch below for the full doctrine).
+ *
+ * task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the two legacy fall-through
+ * branches that used to sit after (2.5): a DCR-token path (oauthTokens/
+ * oauthClients tables, owned by the now-deleted convex/oauthDcr.ts) and a
+ * legacy-bearer path (mcpTenants table, owned by the now-deleted
+ * convex/mcpTenants.ts). Both tables were empty on every deployment
+ * inspected before removal. A bearer token that matches none of the
+ * branches above is now refused outright (401) rather than falling through
+ * to either removed path.
  *
  * 401 is returned with a WWW-Authenticate header per RFC 6750 §3 so Claude.ai's
  * OAuth connector can bootstrap discovery.
@@ -58,7 +63,7 @@ export type OAuthContext = {
 	 * server-http.ts forwards this exact token to Convex via
 	 * ConvexHttpClient.setAuth() so `ctx.auth.getUserIdentity()` resolves to
 	 * THIS caller's own org, never the MCP server's service-account identity.
-	 * Every other path (master / OAuth / DCR / legacy) leaves this undefined
+	 * Every other path (master / OAuth) leaves this undefined
 	 * and gets the service-account (master) Convex identity instead — see
 	 * server-http.ts's per-request client selection and the P0 fix note
 	 * there for why that is fail-closed-safe.
@@ -127,13 +132,6 @@ const NO_CONTEXT_REFUSAL =
 	"Forbidden: no authorization context on this request — a scope predicate " +
 	"was reached without an identity. Refusing (absence is never master).";
 
-// Shape returned by mcpTenants:getTenantByTokenHash
-type TenantLookupResult = {
-	tenantName: string;
-	convexUrl: string;
-	enabled: boolean;
-} | null;
-
 // Shape returned by clientOrgMapping:getByClerkSlug
 type OrgMappingLookupResult = {
 	allowedOrchestrators: string[];
@@ -153,18 +151,8 @@ type OAuthLookupResult = {
 	expiresAt: number;
 } | null;
 
-// Shape returned by oauthDcr:validateAccessToken (DCR simple token table)
-type DcrValidResult = {
-	valid: true;
-	clientId: string;
-	scope: string;
-	expiresAt: number;
-};
-
-type DcrLookupResult = DcrValidResult | { valid: false } | null;
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal Convex client (reads mcpTenants + oauth_* tables)
+// Internal Convex client (reads oauth_* tables + client_org_mapping)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildInternalClient(): ConvexHttpClient {
@@ -280,10 +268,9 @@ export function isMasterScope(ctx: OAuthContext | undefined): boolean {
  *
  * A missing `ctx` REFUSES (returns the refusal string), it never passes.
  * Every real auth path sets an oauthContext — the HTTP transport via
- * bearerAuthMiddleware (master, OAuth, Clerk, DCR, and the legacy mcpTenants
- * bearer path, which resolves to a deny-by-default "legacy-tenant-generic"
- * scope), and the stdio transport via the explicit LOCAL_STDIO_TRUST_CTX
- * server.ts hands to registerTools. So a `!ctx` here is a misconfiguration,
+ * bearerAuthMiddleware (master, OAuth, Clerk), and the stdio transport via
+ * the explicit LOCAL_STDIO_TRUST_CTX server.ts hands to registerTools. So a
+ * `!ctx` here is a misconfiguration,
  * and it fails closed rather than granting max authority (clause 3,
  * `.claude/rules/one-identity-layer.md`).
  */
@@ -331,7 +318,7 @@ export function checkFromAllowed(
  *     Convex from that token row). Never `getMyOrgRoster` (service-account
  *     `["*"]` is ETA-M15).
  *   - non-master AND `ctx.clerkJwt` ABSENT AND no token org claim
- *     (DCR client-generic, legacy mcpTenants, unattached OAuth profiles)
+ *     (unattached OAuth profiles)
  *     → REFUSE LOUDLY, `getOrgRoster` is NEVER called. ETA-M15: these paths
  *     route Convex through the MCP service-account; treating its `["*"]`
  *     as the caller org is the leak.
@@ -766,133 +753,19 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return;
 		}
 
-		// ── (3) DCR OAuth token — check oauthTokens via oauthDcr:validateAccessToken
-		// Uses raw token (not hashed) — the DCR table stores tokens in plaintext.
-		// This path handles Claude.ai clients registered via POST /register.
-		// NOTE: validateAccessToken is exposed as a PUBLIC query (not internalQuery)
-		// because ConvexHttpClient.query() only resolves public functions. Making it
-		// internal silently breaks the DCR path (#556). Security: lookup is keyed
-		// on the high-entropy opaque token; returns null on miss with no PII echo.
-		let dcrResult: DcrLookupResult = null;
-		try {
-			dcrResult = (await internalClient().query(
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauthDcr:validateAccessToken" as any,
-				{ accessToken: token },
-			)) as DcrLookupResult;
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			console.warn("[auth] DCR OAuth lookup skipped:", message);
-		}
-
-		if (dcrResult?.valid === true) {
-			const internalUrl = process.env.CONVEX_URL_INTERNAL;
-			if (!internalUrl) {
-				console.error(
-					"[auth] CONVEX_URL_INTERNAL not set — cannot route DCR OAuth token",
-				);
-				return c.json(
-					{ error: "Server misconfigured: internal deployment URL missing" },
-					500,
-				);
-			}
-			// SECURITY FIX: DCR tokens from the legacy oauthDcr path (oauthTokens
-			// table) carry "mcp:full" as a scope string. Previously this was mapped
-			// to scopeProfile="master" which granted cross-tenant, full-access.
-			// This is the DCR master-scope leak identified in VP Cloud audit Day 84.
-			//
-			// Fix: DCR self-registered clients ALWAYS resolve to "client-generic"
-			// (deny-by-default). "mcp:full" in the legacy table is a scope label, NOT
-			// an authorization to bypass namespace isolation. Master scope is only
-			// granted via the master bearer token path (layer 1) or via the
-			// oauth_access_tokens table with an admin-provisioned scopeProfile
-			// (layer 2). The DCR layer (layer 3) never grants master access.
-			const scopes = dcrResult.scope.split(/\s+/).filter(Boolean);
-			c.set("tenant", {
-				tenantName: `dcr:${dcrResult.clientId}`,
-				convexUrl: internalUrl,
-			});
-			c.set("oauthContext", {
-				clientId: dcrResult.clientId,
-				userId: dcrResult.clientId,
-				scopes,
-				// Always tenant-scoped — never master — regardless of scope string value.
-				scopeProfile: "client-generic",
-				fromAllowList: [],
-				namespaceReadPrefixes: [],
-				namespaceWritePrefixes: [],
-				expiresAt: dcrResult.expiresAt,
-				isMaster: false,
-			});
-			await next();
-			return;
-		}
-
-		// ── (4) Legacy internal bearer — mcpTenants table ───────────────────────
-		let tenant: TenantLookupResult;
-
-		try {
-			tenant = (await internalClient().query(
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"mcpTenants:getTenantByTokenHash" as any,
-				{ tokenHash },
-			)) as TenantLookupResult;
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			console.error("[auth] Convex lookup failed:", message);
-			return c.json({ error: "Authentication service unavailable" }, 503);
-		}
-
-		if (!tenant) {
-			c.header("WWW-Authenticate", wwwAuthHeader);
-			return c.json({ error: "Invalid bearer token" }, 401);
-		}
-
-		if (!tenant.enabled) {
-			return c.json(
-				{
-					error: "Tenant account is not yet enabled. Contact support.",
-					tenant: tenant.tenantName,
-				},
-				403,
-			);
-		}
-
-		c.set("tenant", {
-			tenantName: tenant.tenantName,
-			convexUrl: tenant.convexUrl,
-		});
-
-		// SECURITY FIX (k17dt8pq4zkafsvt162z9qzgsn8abs0r): legacy bearer tokens
-		// used to leave oauthContext unset, which made every guard in tools.ts
-		// (guardRead/guardWrite/guardMasterOnly) and every checkNamespace*/
-		// checkFromAllowed predicate here treat the request as unscoped/allowed.
-		// A legacy bearer could therefore read/write any namespace and call any
-		// master-only tool. The mcpTenants table carries no per-tenant scope
-		// config (no namespacePrefixes field), so there is nothing to honor —
-		// deny-by-default (empty prefixes/allowlist) is the only defensible
-		// scope until tenants are re-provisioned with explicit prefixes.
-		c.set("oauthContext", {
-			clientId: `legacy:${tenant.tenantName}`,
-			userId: `legacy:${tenant.tenantName}`,
-			scopes: [],
-			scopeProfile: "legacy-tenant-generic",
-			fromAllowList: [],
-			namespaceReadPrefixes: [],
-			namespaceWritePrefixes: [],
-			expiresAt: Date.now() + 3600 * 1000,
-			isMaster: false,
-		});
-
-		// Fire-and-forget lastUsedAt update (non-blocking)
-		internalClient()
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			.mutation("mcpTenants:touchLastUsed" as any, { tokenHash })
-			.catch(() => {
-				// Not critical — ignore failures
-			});
-
-		await next();
+		// ── (terminal) No matching auth path — REFUSE ───────────────────────────
+		// task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed two legacy bearer branches
+		// that used to sit here:
+		//   (3) DCR OAuth token   — oauthTokens/oauthClients tables + oauthDcr.ts
+		//   (4) Legacy internal bearer — mcpTenants table + mcpTenants.ts
+		// Both tables were empty on every deployment inspected before removal —
+		// no live credential depended on either path. A token that reaches this
+		// point matched none of (1) master, (2) OAuth scoped access token, or
+		// (2.5) Clerk JWT — it is refused outright, never silently granted. This
+		// mirrors the DENY discipline of every branch above: an unresolved
+		// credential is a 401, not a fall-through to a populated default.
+		c.header("WWW-Authenticate", wwwAuthHeader);
+		return c.json({ error: "Invalid bearer token" }, 401);
 	};
 }
 

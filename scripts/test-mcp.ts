@@ -916,66 +916,10 @@ async function main() {
 			fail("delete_bu", "skipped — no buId");
 		}
 
-		// ── register_component ───────────────────────────────────────────────
-		try {
-			const res = await client.callTool("register_component", {
-				name: "mcp-test-component",
-				type: "skill",
-				content: "Smoke test component",
-				createdBy: "sigma",
-			});
-			pass("register_component", res.componentId ? `componentId=${res.componentId}` : "ok");
-		} catch (e: any) {
-			fail("register_component", e.message);
-		}
-
-		// ── list_components ──────────────────────────────────────────────────
-		try {
-			const res = await client.callTool("list_components", {});
-			pass("list_components", `${Array.isArray(res) ? res.length : 0} component(s)`);
-		} catch (e: any) {
-			fail("list_components", e.message);
-		}
-
-		// ── get_component ────────────────────────────────────────────────────
-		try {
-			const res = await client.callTool("get_component", { name: "mcp-test-component", type: "skill" });
-			pass("get_component", res?.name ? `found: ${res.name}` : "ok");
-		} catch (e: any) {
-			fail("get_component", e.message);
-		}
-
-		// ── update_component ─────────────────────────────────────────────────
-		try {
-			await client.callTool("update_component", { componentId: "invalid-id", name: "test" });
-			pass("update_component", "ok");
-		} catch (e: any) {
-			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
-				pass("update_component", "correctly rejects invalid ID");
-			} else {
-				fail("update_component", e.message);
-			}
-		}
-
-		// ── delete_component ─────────────────────────────────────────────────
-		try {
-			await client.callTool("delete_component", { componentId: "invalid-id" });
-			pass("delete_component", "ok");
-		} catch (e: any) {
-			if (e.message?.includes("not found") || e.message?.includes("invalid")) {
-				pass("delete_component", "correctly rejects invalid ID");
-			} else {
-				fail("delete_component", e.message);
-			}
-		}
-
-		// ── search_components ─────────────────────────────────────────────────
-		try {
-			const res = await client.callTool("search_components", { query: "test" });
-			pass("search_components", `found ${Array.isArray(res) ? res.length : 0} result(s)`);
-		} catch (e: any) {
-			fail("search_components", e.message);
-		}
+		// register_component/list_components/get_component/update_component/
+		// delete_component/search_components removed — task
+		// k173r2p1yh94m5f7yvgr1b30gx8dn3ez dropped the components table and
+		// its six MCP tools (served nothing, zero rows in every deployment).
 
 		// ── create_recurring_task ────────────────────────────────────────────
 		let recurringId: string | undefined;

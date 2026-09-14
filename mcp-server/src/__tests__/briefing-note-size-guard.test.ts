@@ -2,8 +2,8 @@
  * Pre-flight content-size guard tests (S-BN-T2 / L2 fix).
  *
  * Convex has a 1 MiB HTTP body limit. The MCP tools
- * (`create_briefing_note`, `store_memory`, `send_message`, `write_diary`,
- * `register_component`, `update_component`) forward their `content` arg to
+ * (`create_briefing_note`, `update_briefing_note`, `store_memory`,
+ * `send_message`, `write_diary`) forward their `content` arg to
  * Convex mutations. Without a client-side guard, oversized payloads surface
  * as an opaque "Server Error" from Convex.
  *
@@ -123,8 +123,7 @@ describe("assertContentSize — reject path", () => {
 			"send_message",
 			"write_diary",
 			"create_briefing_note",
-			"register_component",
-			"update_component",
+			"update_briefing_note",
 		]) {
 			try {
 				assertContentSize(content, tool);

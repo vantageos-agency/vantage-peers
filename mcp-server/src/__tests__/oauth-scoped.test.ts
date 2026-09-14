@@ -321,7 +321,7 @@ describe("Extended tool guard coverage (newly guarded tools)", () => {
 		expect(checkFromAllowed(marieCtx, "sigma")).toMatch(/Forbidden/);
 	});
 
-	it("register_component(createdBy='marie') from Marie → OK", () => {
+	it("create_briefing_note(createdBy='marie') from Marie → OK", () => {
 		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
 	});
 
@@ -343,16 +343,15 @@ describe("Extended tool guard coverage (newly guarded tools)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Issue #556 (Day 88) — DCR auth path e2e regression
-//
-// Verifies bearerAuthMiddleware layer 3 (DCR token) succeeds when the upstream
-// Convex query `oauthDcr:validateAccessToken` is callable. Before the fix the
-// function was declared `internalQuery`, causing ConvexHttpClient.query() to
-// throw "Could not find public function for 'oauthDcr:validateAccessToken'",
-// the catch block swallowed it, dcrResult stayed null, and Path 3 returned 401.
+// task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the legacy DCR-token bearer
+// branch (oauthTokens/oauthClients tables + convex/oauthDcr.ts, formerly
+// "path 3"). This block now proves the DENY pole: a bearer token shaped
+// like a DCR opaque token — the credential type that USED to authenticate
+// on this path — is refused (401), and the middleware never even attempts
+// the removed `oauthDcr:validateAccessToken` lookup.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("bearerAuthMiddleware DCR path e2e (#556)", () => {
+describe("bearerAuthMiddleware DCR path removed (#556 path retired, k173r2p1y)", () => {
 	beforeEach(() => {
 		vi.stubEnv("CONVEX_URL_INTERNAL", "https://example.convex.cloud");
 		vi.stubEnv("BEARER_SECRET_MASTER", "test-master-not-used-here");
@@ -362,65 +361,47 @@ describe("bearerAuthMiddleware DCR path e2e (#556)", () => {
 		_setInternalClientForTest(null);
 	});
 
-	function buildMockConvex(
-		dcrResponse:
-			| { valid: true; clientId: string; scope: string; expiresAt: number }
-			| { valid: false },
-	): ConvexHttpClient {
-		// Layers 2 (oauth:getAccessTokenByHash) → null (miss), Layer 3 → DCR
+	function buildMockConvex(): { client: ConvexHttpClient; queryFn: ReturnType<typeof vi.fn> } {
+		// Only layer 2 (oauth:getAccessTokenByHash) is ever consulted now — the
+		// removed DCR/mcpTenants branches never issue a lookup at all.
 		const queryFn = vi.fn(async (name: string) => {
 			if (name === "oauth:getAccessTokenByHash") return null;
-			if (name === "oauthDcr:validateAccessToken") return dcrResponse;
-			if (name === "mcpTenants:getTenantByTokenHash") return null;
 			return null;
 		});
 		return {
-			query: queryFn,
-			mutation: vi.fn().mockResolvedValue(null),
-			action: vi.fn().mockResolvedValue(null),
-		} as unknown as ConvexHttpClient;
+			client: {
+				query: queryFn,
+				mutation: vi.fn().mockResolvedValue(null),
+				action: vi.fn().mockResolvedValue(null),
+			} as unknown as ConvexHttpClient,
+			queryFn,
+		};
 	}
 
-	it("returns 200 and sets DCR oauthContext for a valid DCR bearer token", async () => {
-		const expiresAt = Date.now() + 3600_000;
-		_setInternalClientForTest(
-			buildMockConvex({
-				valid: true,
-				clientId: "claude-ai-dcr-client-abc",
-				scope: "mcp:full",
-				expiresAt,
-			}),
-		);
+	it("DENY pole: a DCR-shaped opaque bearer token is refused (401), not silently granted", async () => {
+		const { client, queryFn } = buildMockConvex();
+		_setInternalClientForTest(client);
 
 		const app = new Hono();
 		app.use("*", bearerAuthMiddleware());
-		app.get("/protected", (c) => {
-			const ctx = c.get("oauthContext");
-			return c.json({
-				ok: true,
-				clientId: ctx?.clientId,
-				scopeProfile: ctx?.scopeProfile,
-				isMaster: ctx?.isMaster,
-			});
-		});
+		app.get("/protected", (c) => c.json({ ok: true }));
 
 		const res = await app.request("/protected", {
 			headers: { Authorization: "Bearer dcr-valid-opaque-token-xyz" },
 		});
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body).toEqual({
-			ok: true,
-			clientId: "claude-ai-dcr-client-abc",
-			// Security: DCR always resolves to client-generic, never master.
-			scopeProfile: "client-generic",
-			isMaster: false,
-		});
+		expect(res.status).toBe(401);
+		// The removed lookup is never attempted — proves the branch is gone,
+		// not just returning a miss.
+		expect(queryFn).not.toHaveBeenCalledWith(
+			"oauthDcr:validateAccessToken",
+			expect.anything(),
+		);
 	});
 
-	it("returns 401 when DCR validateAccessToken reports { valid: false }", async () => {
-		_setInternalClientForTest(buildMockConvex({ valid: false }));
+	it("returns 401 for an unknown/unresolved bearer token", async () => {
+		const { client } = buildMockConvex();
+		_setInternalClientForTest(client);
 
 		const app = new Hono();
 		app.use("*", bearerAuthMiddleware());
@@ -437,7 +418,8 @@ describe("bearerAuthMiddleware DCR path e2e (#556)", () => {
 	// connector can bootstrap PRM discovery on a 401. With the old `resource=`
 	// form, the entire DCR chain breaks before any token is issued.
 	it("emits WWW-Authenticate with resource_metadata= (not resource=) on 401", async () => {
-		_setInternalClientForTest(buildMockConvex({ valid: false }));
+		const { client } = buildMockConvex();
+		_setInternalClientForTest(client);
 
 		const app = new Hono();
 		app.use("*", bearerAuthMiddleware());
@@ -561,24 +543,18 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TDD: Legacy internal bearer (path 4 — mcpTenants table) must be fail-closed.
+// Legacy internal bearer (former path 4 — mcpTenants table) is REMOVED.
 //
-// Task k17dt8pq4zkafsvt162z9qzgsn8abs0r. Audited hole: auth.ts path (4) resolves
-// a tenant via mcpTenants:getTenantByTokenHash and calls c.set("tenant", ...)
-// but NEVER calls c.set("oauthContext", ...). Every guard in tools.ts
-// (guardRead/guardWrite/guardMasterOnly) and every checkNamespace*/checkFromAllowed
-// predicate in this file treats oauthContext===undefined as "unscoped — allow
-// everything" (legacy Pi/Tau/Phi trust model). That means a legacy bearer token
-// today bypasses namespace isolation AND all 20+ master-only tools.
-//
-// mcpTenants schema (convex/schema.ts) carries no namespacePrefixes field, so
-// there is no per-tenant scope config to honor — deny-by-default is the only
-// defensible fix. This test asserts oauthContext IS set on the legacy path with
-// an empty (deny-by-default) scope. Before the fix in auth.ts this test FAILS
-// (oauthContext stays undefined and the exposed predicates report "allowed").
+// Task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the mcpTenants table + the
+// mcpTenants:getTenantByTokenHash branch entirely (convex/mcpTenants.ts
+// deleted, table dropped — it held zero rows on every inspected deployment).
+// This block now proves the DENY pole for the removed path: a bearer token
+// shaped like a legacy tenant token — the credential type that USED to
+// authenticate here — is refused (401), and the middleware never attempts
+// the removed `mcpTenants:getTenantByTokenHash` lookup.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Legacy internal bearer (path 4 — mcpTenants) must be fail-closed", () => {
+describe("Legacy internal bearer (former path 4 — mcpTenants) is removed and fail-closed", () => {
 	beforeEach(() => {
 		vi.stubEnv("CONVEX_URL_INTERNAL", "https://example.convex.cloud");
 		vi.stubEnv("BEARER_SECRET_MASTER", "test-master-not-used-here");
@@ -588,30 +564,27 @@ describe("Legacy internal bearer (path 4 — mcpTenants) must be fail-closed", (
 		_setInternalClientForTest(null);
 	});
 
-	function buildMockConvexForLegacyTenant(): ConvexHttpClient {
+	function buildMockConvexForRemovedLegacyPath(): {
+		client: ConvexHttpClient;
+		queryFn: ReturnType<typeof vi.fn>;
+	} {
 		const queryFn = vi.fn(async (name: string) => {
 			if (name === "oauth:getAccessTokenByHash") return null;
-			if (name === "oauthDcr:validateAccessToken") return null;
-			if (name === "mcpTenants:getTenantByTokenHash") {
-				return {
-					tenantName: "legacy-test-tenant",
-					convexUrl: "https://legacy-tenant.convex.cloud",
-					enabled: true,
-				};
-			}
 			return null;
 		});
 		return {
-			query: queryFn,
-			mutation: vi.fn().mockResolvedValue(null),
-			action: vi.fn().mockResolvedValue(null),
-		} as unknown as ConvexHttpClient;
+			client: {
+				query: queryFn,
+				mutation: vi.fn().mockResolvedValue(null),
+				action: vi.fn().mockResolvedValue(null),
+			} as unknown as ConvexHttpClient,
+			queryFn,
+		};
 	}
 
-	async function resolveLegacyOauthContext(): Promise<
-		OAuthContext | undefined
-	> {
-		_setInternalClientForTest(buildMockConvexForLegacyTenant());
+	it("DENY pole: a legacy-tenant-shaped bearer token is refused (401), not silently granted", async () => {
+		const { client, queryFn } = buildMockConvexForRemovedLegacyPath();
+		_setInternalClientForTest(client);
 
 		const app = new Hono();
 		app.use("*", bearerAuthMiddleware());
@@ -624,53 +597,32 @@ describe("Legacy internal bearer (path 4 — mcpTenants) must be fail-closed", (
 		const res = await app.request("/protected", {
 			headers: { Authorization: "Bearer legacy-tenant-bearer-token" },
 		});
-		expect(res.status).toBe(200);
-		return captured;
-	}
 
-	it("sets a deny-by-default oauthContext on the legacy bearer path (was: undefined)", async () => {
-		const ctx = await resolveLegacyOauthContext();
-
-		// The exact regression: before the fix, ctx is undefined here, which
-		// makes every downstream guard in tools.ts a no-op.
-		expect(ctx).toBeDefined();
-		expect(ctx?.isMaster).toBe(false);
-		expect(ctx?.scopeProfile).not.toBe("master");
+		expect(res.status).toBe(401);
+		// No oauthContext is ever attached on a refused request.
+		expect(captured).toBeUndefined();
+		// The removed lookup is never attempted — proves the branch is gone,
+		// not just returning a miss.
+		expect(queryFn).not.toHaveBeenCalledWith(
+			"mcpTenants:getTenantByTokenHash",
+			expect.anything(),
+		);
 	});
 
-	it("legacy bearer with the fixed oauthContext CANNOT read an arbitrary namespace (fail-closed)", async () => {
-		const ctx = await resolveLegacyOauthContext();
+	it("emits WWW-Authenticate on the refusal, per RFC 6750 §3", async () => {
+		const { client } = buildMockConvexForRemovedLegacyPath();
+		_setInternalClientForTest(client);
 
-		// This is the concrete exploit: today a legacy bearer can recall() any
-		// namespace across every tenant because checkNamespaceRead(undefined, x)
-		// returns null (allowed). After the fix, the same call must be denied
-		// unless the tenant carries explicit read prefixes (none exist in the
-		// current mcpTenants schema, so this must be Forbidden).
-		expect(checkNamespaceRead(ctx, "orchestrator/pi")).toMatch(/Forbidden/);
-		expect(checkNamespaceRead(ctx, "project/secret")).toMatch(/Forbidden/);
-	});
+		const app = new Hono();
+		app.use("*", bearerAuthMiddleware());
+		app.get("/protected", (c) => c.json({ ok: true }));
 
-	it("legacy bearer with the fixed oauthContext CANNOT write an arbitrary namespace (fail-closed)", async () => {
-		const ctx = await resolveLegacyOauthContext();
-		expect(checkNamespaceWrite(ctx, "global")).toMatch(/Forbidden/);
-		expect(checkNamespaceWrite(ctx, "orchestrator/pi")).toMatch(/Forbidden/);
-	});
-
-	it("legacy bearer with the fixed oauthContext is NOT master scope", () => {
-		// Static assertion mirroring the resolved context shape below — kept
-		// separate from the async tests so isMasterScope's pure logic is
-		// exercised directly.
-		const deniedLegacyCtx: OAuthContext = {
-			clientId: "legacy:legacy-test-tenant",
-			userId: "legacy:legacy-test-tenant",
-			scopes: [],
-			scopeProfile: "legacy-tenant-generic",
-			fromAllowList: [],
-			namespaceReadPrefixes: [],
-			namespaceWritePrefixes: [],
-			expiresAt: now + 3600_000,
-			isMaster: false,
-		};
-		expect(isMasterScope(deniedLegacyCtx)).toBe(false);
+		const res = await app.request("/protected", {
+			headers: { Authorization: "Bearer legacy-tenant-bearer-token" },
+		});
+		expect(res.status).toBe(401);
+		expect(res.headers.get("WWW-Authenticate")).toMatch(
+			/^Bearer resource_metadata="/,
+		);
 	});
 });

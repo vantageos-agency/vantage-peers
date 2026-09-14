@@ -121,7 +121,7 @@ describe("capListResponseBytes — over cap", () => {
 			"list_diaries",
 			"list_memories",
 			"list_messages",
-			"list_components",
+			"list_recurring_tasks",
 		]) {
 			const out = capListResponseBytes(items, raw, toolName);
 			const parsed = JSON.parse(out);

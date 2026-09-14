@@ -10,7 +10,7 @@
  *   - Each /mcp request authenticated via bearer token → either:
  *       · master bearer (admin shortcut, scopeProfile=master)
  *       · OAuth access_token (scoped, persisted in oauth_access_tokens)
- *       · legacy mcpTenants bearer (internal orchestrators on their own deployment)
+ *       · Clerk JWT (verified against JWKS, resolved via client_org_mapping)
  *   - Per-request ConvexHttpClient pointed at the resolved deployment, with
  *     the CALLER'S identity attached (see selectConvexClientForRequest in
  *     src/authenticatedConvexClient.ts) — the caller's own Clerk JWT on the

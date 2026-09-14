@@ -1,5 +1,5 @@
 /**
- * S3.1.C Wave C Phase C1 — scope-aware filter applied to 7 read-path tools.
+ * S3.1.C Wave C Phase C1 — scope-aware filter applied to 5 read-path tools.
  *
  * Sprint    S3.1.C
  * Mission   k57c7s478gw1a3e5gmhdeptg5n87z78n
@@ -18,8 +18,11 @@
  *   3. list_tasks_by_mission   (tools.ts L2383) — list
  *   4. get_mission             (tools.ts L2585) — get
  *   5. get_diary               (tools.ts L2802) — get
- *   6. list_components         (tools.ts L3266) — list
- *   7. get_component           (tools.ts L3307) — get
+ *
+ * (Originally also covered list_components + get_component as #6/#7 — both
+ * removed along with the `components` table and its tools, task
+ * k173r2p1yh94m5f7yvgr1b30gx8dn3ez; betaCtx() was only used by those two
+ * blocks and was removed with them.)
  *
  * TDD discipline (mirrors C0 R-tests):
  *   - At RED, each tool's handler still calls `guardMasterOnly` → a non-master
@@ -66,20 +69,6 @@ function alphaCtx(): OAuthContext {
 		fromAllowList: ["alpha"],
 		namespaceReadPrefixes: ["orchestrator/alpha", "project/alpha"],
 		namespaceWritePrefixes: ["project/alpha"],
-		expiresAt: Date.now() + 3600_000,
-		isMaster: false,
-	};
-}
-
-function betaCtx(): OAuthContext {
-	return {
-		clientId: "client-beta",
-		userId: "user-beta",
-		scopes: ["vantage:read"],
-		scopeProfile: "tenant-beta",
-		fromAllowList: ["beta"],
-		namespaceReadPrefixes: ["orchestrator/beta", "project/beta"],
-		namespaceWritePrefixes: ["project/beta"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
 	};
@@ -511,162 +500,3 @@ describe("GDIA — get_diary scope-aware", () => {
 	});
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool 6 — list_components (Convex query: components:list)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const COMPONENTS_FIXTURE = [
-	{
-		_id: "c_a1",
-		createdBy: "alpha",
-		namespace: "orchestrator/alpha",
-		name: "alpha-skill",
-		type: "skill",
-	},
-	{
-		_id: "c_b1",
-		createdBy: "beta",
-		namespace: "orchestrator/beta",
-		name: "beta-skill",
-		type: "skill",
-	},
-	{
-		_id: "c_g1",
-		createdBy: "gamma",
-		namespace: "global",
-		name: "gamma-skill",
-		type: "skill",
-	},
-];
-
-describe("LCMP — list_components scope-aware", () => {
-	it("LCMP-T1 master scope → all 3 rows visible", async () => {
-		const tools = captureTools(
-			{ "components:list": COMPONENTS_FIXTURE },
-			masterCtx(),
-		);
-		const res = await tools.get("list_components")!.handler({});
-		expect(res.isError).not.toBe(true);
-		expect(res.content[0].text).toContain("c_a1");
-		expect(res.content[0].text).toContain("c_b1");
-	});
-
-	it("LCMP-T2 non-master → NOT Forbidden", async () => {
-		const tools = captureTools(
-			{ "components:list": COMPONENTS_FIXTURE },
-			alphaCtx(),
-		);
-		const res = await tools.get("list_components")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
-	});
-
-	it("LCMP-T3 master/local trust → all rows visible", async () => {
-		const tools = captureTools({ "components:list": COMPONENTS_FIXTURE });
-		const res = await tools.get("list_components")!.handler({});
-		expect(res.isError).not.toBe(true);
-		expect(res.content[0].text).toContain("c_b1");
-	});
-
-	it("LCMP-M1 alpha scope → beta component filtered out", async () => {
-		const tools = captureTools(
-			{ "components:list": COMPONENTS_FIXTURE },
-			alphaCtx(),
-		);
-		const res = await tools.get("list_components")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).not.toContain("c_b1");
-	});
-
-	it("LCMP-M2 alpha scope → alpha component visible", async () => {
-		const tools = captureTools(
-			{ "components:list": COMPONENTS_FIXTURE },
-			alphaCtx(),
-		);
-		const res = await tools.get("list_components")!.handler({});
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("c_a1");
-	});
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool 7 — get_component (Convex query: components:get)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const alphaComponent = {
-	_id: "cmp_a",
-	createdBy: "alpha",
-	namespace: "orchestrator/alpha",
-	name: "alpha-skill",
-	type: "skill",
-};
-
-const betaComponent = {
-	_id: "cmp_b",
-	createdBy: "beta",
-	namespace: "orchestrator/beta",
-	name: "beta-skill",
-	type: "skill",
-};
-
-describe("GCMP — get_component scope-aware", () => {
-	it("GCMP-T1 master scope → row returned", async () => {
-		const tools = captureTools(
-			{ "components:get": alphaComponent },
-			masterCtx(),
-		);
-		const res = await tools.get("get_component")!.handler({
-			name: "alpha-skill",
-			type: "skill",
-		});
-		expect(res.isError).not.toBe(true);
-		expect(res.content[0].text).toContain("alpha-skill");
-	});
-
-	it("GCMP-T2 non-master in-scope → NOT Forbidden", async () => {
-		const tools = captureTools(
-			{ "components:get": alphaComponent },
-			alphaCtx(),
-		);
-		const res = await tools.get("get_component")!.handler({
-			name: "alpha-skill",
-			type: "skill",
-		});
-		expect(isForbiddenResponse(res)).toBe(false);
-	});
-
-	it("GCMP-T3 master/local trust → row returned", async () => {
-		const tools = captureTools({ "components:get": betaComponent });
-		const res = await tools.get("get_component")!.handler({
-			name: "beta-skill",
-			type: "skill",
-		});
-		expect(res.isError).not.toBe(true);
-		expect(res.content[0].text).toContain("beta-skill");
-	});
-
-	it("GCMP-M1 cross-tenant: alpha caller, beta component → NOT Forbidden", async () => {
-		const tools = captureTools({ "components:get": betaComponent }, alphaCtx());
-		const res = await tools.get("get_component")!.handler({
-			name: "beta-skill",
-			type: "skill",
-		});
-		expect(isForbiddenResponse(res)).toBe(false);
-	});
-
-	it("GCMP-M2 alpha caller, alpha component → content visible (no Forbidden)", async () => {
-		const tools = captureTools(
-			{ "components:get": alphaComponent },
-			alphaCtx(),
-		);
-		const res = await tools.get("get_component")!.handler({
-			name: "alpha-skill",
-			type: "skill",
-		});
-		expect(isForbiddenResponse(res)).toBe(false);
-		expect(res.content[0].text).toContain("alpha-skill");
-	});
-});
-
-// betaCtx exported via builder for symmetry; not asserted directly to keep
-// the 35-test envelope tight (5 tests × 7 tools).
-void betaCtx;

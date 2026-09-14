@@ -49,21 +49,25 @@ const RETRIED_METHODS = new Set(["query"]);
  *   - `clerkJwt` present  → forward the CALLER'S OWN verified Clerk JWT via
  *     `.setAuth()`. Convex resolves the caller's own org — genuine,
  *     Convex-layer multi-tenant isolation, never cross-tenant.
- *   - `clerkJwt` absent (master / OAuth-scoped / DCR / legacy mcpTenants) →
+ *   - `clerkJwt` absent (master / OAuth-scoped) →
  *     the MCP server's own Clerk service-account identity
  *     (`createServiceAccountConvexClient`). Convex's withOrgScope
  *     service-account carve-out (CLERK_SERVICE_ACCOUNT_USER_ID) grants
  *     isMaster=true for this identity. Isolation for the non-master-bearer
- *     variants among these (OAuth scoped tokens, DCR clients, legacy
- *     tenants) is enforced at the MCP tool layer instead
- *     (guardRead/guardWrite/checkNamespaceRead/checkNamespaceWrite in
- *     tools.ts, run BEFORE any Convex call) — exactly the enforcement layer
- *     these paths already relied on before this fix (Convex itself
- *     previously granted them master via the now-removed
- *     `allowNoIdentityMaster` fail-open carve-out). This fix does not widen
- *     access for any of these paths; it restores the master-identity access
- *     they already had at the Convex layer while leaving the MCP-layer
- *     guard as the (unchanged) isolation boundary for them.
+ *     variant among these (OAuth scoped tokens) is enforced at the MCP
+ *     tool layer instead (guardRead/guardWrite/checkNamespaceRead/
+ *     checkNamespaceWrite in tools.ts, run BEFORE any Convex call) —
+ *     exactly the enforcement layer this path already relied on before
+ *     this fix (Convex itself previously granted it master via the
+ *     now-removed `allowNoIdentityMaster` fail-open carve-out). This fix
+ *     does not widen access for this path; it restores the master-identity
+ *     access it already had at the Convex layer while leaving the MCP-layer
+ *     guard as the (unchanged) isolation boundary for it.
+ *
+ *     Task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the DCR-token and
+ *     legacy mcpTenants bearer branches entirely (auth.ts no longer sets
+ *     an oauthContext for either shape — that credential class is refused
+ *     with 401 before it ever reaches this selector).
  */
 export function selectConvexClientForRequest(
 	convexUrl: string,

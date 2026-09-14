@@ -9,10 +9,12 @@
  *
  *   1. list_missions          (convex/missions.ts: list)
  *   2. list_diaries           (convex/diary.ts: list)
- *   3. list_components        (convex/components.ts: list)
- *   4. list_recurring_tasks   (convex/recurringTasks.ts: list)
- *   5. list_mandates          (convex/mandates.ts: list)
- *   6. list_bus               (convex/businessUnits.ts: list)
+ *   3. list_recurring_tasks   (convex/recurringTasks.ts: list)
+ *   4. list_mandates          (convex/mandates.ts: list)
+ *   5. list_bus               (convex/businessUnits.ts: list)
+ *
+ * (list_components was originally #3 in this batch — removed along with the
+ * `components` table and its tools, task k173r2p1yh94m5f7yvgr1b30gx8dn3ez.)
  *
  * Each tool gains a `cursor` arg + optional `createdBefore` forwarded to the
  * Convex query. The Convex queries gain a `createdBefore: v.optional(v.number())`
@@ -104,7 +106,6 @@ interface ToolSpec {
 const TOOLS: ToolSpec[] = [
 	{ mcpName: "list_missions", convexFn: "missions:list", baseArgs: {} },
 	{ mcpName: "list_diaries", convexFn: "diary:list", baseArgs: {} },
-	{ mcpName: "list_components", convexFn: "components:list", baseArgs: {} },
 	{
 		mcpName: "list_recurring_tasks",
 		convexFn: "recurringTasks:list",

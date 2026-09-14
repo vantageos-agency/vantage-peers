@@ -5,7 +5,7 @@
  * outputSchema (Zod object) that matches the handler's success-path return.
  *
  * Asserts:
- *   1. Every tool name listed in the 87-tool matrix has a corresponding
+ *   1. Every tool name listed in the tool matrix has a corresponding
  *      exported `<toolName>OutputSchema` from tools.ts.
  *   2. Each schema is a valid Zod schema (has a `.parse` method).
  *   3. Each schema validates a representative success response for that tool.
@@ -20,8 +20,10 @@ import { describe, expect, it } from "vitest";
 import * as tools from "../src/tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tool matrix — all 87 tool names with their exported schema name
-// (86 original + validate_task_payload added in Day 92 F1)
+// Tool matrix — tool names with their exported schema name.
+// (86 original + validate_task_payload added in Day 92 F1; 6 component
+// tools — register/list/get/update/delete_component + search_components —
+// removed along with the `components` table, task k173r2p1yh94m5f7yvgr1b30gx8dn3ez.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TOOL_SCHEMA_MAP: Record<string, keyof typeof tools> = {
@@ -65,12 +67,6 @@ const TOOL_SCHEMA_MAP: Record<string, keyof typeof tools> = {
 	update_briefing_note: "updateBriefingNoteOutputSchema",
 	get_briefing_note: "getBriefingNoteOutputSchema",
 	list_briefing_notes: "listBriefingNotesOutputSchema",
-	register_component: "registerComponentOutputSchema",
-	list_components: "listComponentsOutputSchema",
-	get_component: "getComponentOutputSchema",
-	update_component: "updateComponentOutputSchema",
-	delete_component: "deleteComponentOutputSchema",
-	search_components: "searchComponentsOutputSchema",
 	create_recurring_task: "createRecurringTaskOutputSchema",
 	list_recurring_tasks: "listRecurringTasksOutputSchema",
 	pause_recurring_task: "pauseRecurringTaskOutputSchema",
@@ -159,12 +155,6 @@ const REPRESENTATIVE_RESPONSES: Record<string, unknown> = {
 	update_briefing_note: { noteId: "abc123def456abc123def456abc12345", updated: true },
 	get_briefing_note: { _id: "abc123def456abc123def456abc12345", title: "C1 Brief", topic: "architecture", content: "Notes" },
 	list_briefing_notes: [{ _id: "abc123def456abc123def456abc12345", title: "C1 Brief", topic: "architecture" }],
-	register_component: { _id: "abc123def456abc123def456abc12345", name: "my-agent", type: "agent" },
-	list_components: [{ _id: "abc123def456abc123def456abc12345", name: "my-agent", type: "agent" }],
-	get_component: { _id: "abc123def456abc123def456abc12345", name: "my-agent", type: "agent", content: "..." },
-	update_component: { componentId: "abc123def456abc123def456abc12345", updated: true },
-	delete_component: { deleted: true },
-	search_components: [{ _id: "abc123def456abc123def456abc12345", name: "my-agent", type: "agent" }],
 	create_recurring_task: { taskId: "abc123def456abc123def456abc12345", cronExpression: "0 9 * * *" },
 	list_recurring_tasks: [{ _id: "abc123def456abc123def456abc12345", title: "Daily standup", cronExpression: "0 9 * * *" }],
 	pause_recurring_task: { paused: true },
@@ -215,8 +205,8 @@ const REPRESENTATIVE_RESPONSES: Record<string, unknown> = {
 describe("C1 — outputSchema coverage (B2 §3)", () => {
 	const toolNames = Object.keys(TOOL_SCHEMA_MAP);
 
-	it(`covers all 87 tools (found ${toolNames.length})`, () => {
-		expect(toolNames.length).toBe(87);
+	it(`covers all 81 tools (found ${toolNames.length})`, () => {
+		expect(toolNames.length).toBe(81);
 	});
 
 	it.each(toolNames)("%s — outputSchema is exported", (toolName) => {

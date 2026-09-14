@@ -63,17 +63,17 @@ async function mintClerkJwt(opts: {
 function makeFakeConvex() {
 	return {
 		query: async (name: string) => {
-			// Every layer below the Clerk-JWT layer (DCR opaque token,
-			// legacy mcpTenants) reports a clean miss so a Clerk JWT that the
-			// Clerk layer refuses falls all the way through to the real
-			// "Invalid bearer token" 401 rather than an unrelated 5xx.
+			// The only layer below the Clerk-JWT layer is the OAuth scoped
+			// access-token lookup — it reports a clean miss so a Clerk JWT
+			// that the Clerk layer refuses falls all the way through to the
+			// real "Invalid bearer token" 401 rather than an unrelated 5xx.
+			// (task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the DCR opaque
+			// token and legacy mcpTenants branches entirely — auth.ts never
+			// issues either lookup, so there is nothing left to mock here.)
 			if (name === "oauth:getAccessTokenByHash") return null;
-			if (name === "oauthDcr:validateAccessToken") return { valid: false };
-			if (name === "mcpTenants:getTenantByTokenHash") return null;
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string) => {
-			if (name === "mcpTenants:touchLastUsed") return null;
 			throw new Error(`unmocked mutation: ${name}`);
 		},
 	};
