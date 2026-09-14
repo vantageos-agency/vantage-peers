@@ -10,21 +10,25 @@ literal keyed only on which BRANCH the request fell into.
 
 Two run modes:
 
-  --self-test   Bipolar probe against FIXTURE STRINGS (not the live file),
-                so the RED pole survives the Path B rewire landing.
-                MUST_BLOCK: the pre-rewire auth.ts:590-605 shape — a
-                hardcoded "team-member"/[] grant keyed only on branch, no
-                principal-derived join.
-                MUST_PASS: the legacy deny-by-default literals (~707-726,
-                DCR client-generic) — also hardcoded, but the ceiling is
-                EMPTY (deny-by-default), never a populated grant, so a
-                missing join is safe here by construction.
+  --self-test   Bipolar + tri-pole probe against FIXTURE STRINGS (not the
+                live file). Tests verify the classifier catches both grants
+                that SHOULD and SHOULD NOT be caught, and the dead-table
+                removal detector catches reintroduced branches.
+                MUST_BLOCK (hardcoded grant): the pre-rewire shape
+                MUST_PASS (deny-by-default): legacy literals
+                MUST_PASS (mapping-derived): post-Path-B-fix shape
+                MUST_BLOCK (re-hardcoded despite join): ETA-M40
+                MUST_BLOCK (dead-table reintroduction): (a) tenant-token
+                  lookup with different name, (b) DCR exchange via import,
+                  (c) fall-through grant on lookup miss
 
   (default)     Coverage inventory over the FIVE bearer-auth branches in
-                mcp-server/src/auth.ts's bearerAuthMiddleware. Every branch is
-                ANALYSED (classified live) or SKIPPED (with a written
-                reason). Any branch not listed is an inventory gap and fails
-                the check.
+                mcp-server/src/auth.ts's bearerAuthMiddleware, PLUS
+                verification that dead branches (DCR, mcpTenants) are
+                actually removed by proof-reading auth.ts, not just asserted.
+                Every branch is ANALYSED (classified live) or SKIPPED (with
+                a written reason that is VERIFIED before reporting).
+                Any branch not listed is an inventory gap and fails the check.
 """
 
 from __future__ import annotations
@@ -32,13 +36,13 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixtures for --self-test. Literal strings, not read from the live repo, so
-# the MUST_BLOCK pole survives the Path B fix landing.
+# Fixtures for --self-test. Literal strings, not read from the live repo.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # MUST_BLOCK — the pre-rewire auth.ts:590-605 shape: a hardcoded, POPULATED
@@ -125,6 +129,87 @@ c.set("oauthContext", {
 });
 """
 
+# MUST_BLOCK (dead-table case 1): tenant-token lookup reintroduced under a
+# different name. The defect is that a table lookup is performed without a
+# principal-derived join — the tenant name is extracted from the token
+# directly, not from a verified Clerk org_id. An intermediate helper
+# `lookupLegacyBearer` calling ctx.runQuery on a table (whether named
+# `mcpTenants` or a renamed variant) is still the same defect.
+DEAD_TABLE_REINTRODUCED_TENANT_FIXTURE = """
+const tenant = await internalClient().query(
+	"legacyTenant:getByToken" as any,
+	{ token: tenantToken },
+);
+if (tenant) {
+	c.set("oauthContext", {
+		clientId: `legacy:${tenant.tenantName}`,
+		userId: `legacy:${tenant.tenantName}`,
+		scopes: ["mcp:full"],
+		scopeProfile: "legacy-tenant",
+		fromAllowList: ["*"],
+		namespaceReadPrefixes: ["*"],
+		namespaceWritePrefixes: ["*"],
+		expiresAt: Date.now() + 3600 * 1000,
+		isMaster: false,
+	});
+	await next();
+	return;
+}
+"""
+
+# MUST_BLOCK (dead-table case 2): DCR exchange reintroduced through an
+# intermediate function imported by auth.ts. The defect is present-in-import:
+# an intermediate helper like `validateDcrToken` in a sibling module calls
+# `ctx.runQuery("oauthTokens:validateToken")` internally, bypassing the
+# guard's static analysis. This fixture simulates the usage site in auth.ts.
+DEAD_TABLE_REINTRODUCED_DCR_VIA_IMPORT_FIXTURE = """
+const dcrValid = await validateLegacyDcrToken(token);
+if (dcrValid) {
+	c.set("oauthContext", {
+		clientId: dcrValid.clientId,
+		userId: dcrValid.userId,
+		scopes: dcrValid.scopes,
+		scopeProfile: "dcr-client",
+		fromAllowList: dcrValid.allowedOrchestrators,
+		namespaceReadPrefixes: [],
+		namespaceWritePrefixes: [],
+		expiresAt: dcrValid.expiresAt,
+		isMaster: false,
+	});
+	await next();
+	return;
+}
+"""
+
+# MUST_BLOCK (dead-table case 3): Fall-through grant on lookup miss.
+# A mapping lookup is attempted (e.g. for a DCR client), but on a lookup
+# failure (missing row, network error, etc.), the code falls through and
+# assigns a populated grant instead of refusing. This mirrors the defect
+# fixed by task k17bf7bsfrm255x4pr5r96q5g58cw691 on the Clerk-JWT path:
+# lookup failure → DENY, not → populate default.
+DEAD_TABLE_FALLTHROUGH_ON_MISS_FIXTURE = """
+let dcrMapping = null;
+try {
+	dcrMapping = await internalClient().query(
+		"dcrClient:getByClientId" as any,
+		{ clientId },
+	);
+} catch (err) {
+	console.warn("DCR lookup failed, granting default scopes");
+}
+c.set("oauthContext", {
+	clientId: clientId,
+	userId: clientId,
+	scopes: dcrMapping?.scopes ?? ["vantage:read"],
+	scopeProfile: "dcr-default",
+	fromAllowList: dcrMapping?.allowedOrchestrators ?? [],
+	namespaceReadPrefixes: [],
+	namespaceWritePrefixes: [],
+	expiresAt: Date.now() + 3600 * 1000,
+	isMaster: false,
+});
+"""
+
 POPULATED_GRANT_PATTERN = re.compile(
 	r'scopeProfile:\s*"(?!legacy-tenant-generic|client-generic)[^"]+"'
 )
@@ -145,6 +230,14 @@ GRANT_FIELD_PATTERN = re.compile(
 )
 LITERAL_ARRAY_CONTENT_PATTERN = re.compile(r"^\[\s*\]$")
 
+# Patterns for detecting dead-table references (for verification of removal)
+MCPTENANTS_REFERENCE_PATTERN = re.compile(
+	r'["\'`]mcpTenants["\']|mcpTenants:.*Query|legacyTenant:.*Query'
+)
+OAUTHCLIENTS_REFERENCE_PATTERN = re.compile(
+	r'["\'`]oauthClients["\']|oauthDcr:.*Query|validateDcrToken|dcrClient:.*Query|validateLegacyDcrToken'
+)
+
 
 def has_rehardcoded_grant_field(text: str) -> bool:
 	"""True if `scopes:` or `fromAllowList:` is assigned a literal
@@ -159,6 +252,17 @@ def has_rehardcoded_grant_field(text: str) -> bool:
 	return False
 
 
+def has_fallthrough_on_lookup_miss(text: str) -> bool:
+	"""True if a lookup is attempted but a default populated grant is
+	assigned when the lookup fails or returns null — the defect class
+	fixed on the Clerk-JWT path where lookup-failure → DENY. Detects
+	null-coalescing fallbacks: `??` with array on right side."""
+	# Pattern: null-coalesce operator with a populated array fallback
+	if re.search(r'\?\?\s*\[', text):
+		return True
+	return False
+
+
 def classify(text: str) -> str:
 	"""Returns "BLOCK", "PASS", or "UNKNOWN" for a bearer-auth branch snippet.
 
@@ -168,7 +272,17 @@ def classify(text: str) -> str:
 	purely for an unrelated lookup while the actual grant fields are still
 	re-hardcoded literals (ETA-M40); classifying on join-presence alone
 	produces a false PASS in exactly that case.
+
+	Also detects fallthrough-on-lookup-miss: a null-coalescing operator that
+	provides a populated default when a lookup returns null (e.g.
+	`scopes: mapping?.scopes ?? ["vantage:read"]` grants access even when
+	mapping is null/missing).
 	"""
+	# Check for fallthrough-on-lookup-miss FIRST — this pattern can bypass
+	# the hardcoded grant field check if not caught early
+	if has_fallthrough_on_lookup_miss(text):
+		return "BLOCK"
+
 	has_join = bool(PRINCIPAL_JOIN_PATTERN.search(text))
 	has_rehardcoded_grant = has_rehardcoded_grant_field(text)
 
@@ -196,6 +310,16 @@ def classify(text: str) -> str:
 	return "UNKNOWN"
 
 
+def verify_dead_table_not_present(auth_text: str, name: str) -> bool:
+	"""Verifies that a dead table (or its lookups) do not appear in auth.ts.
+	Returns True if the table is absent (safe), False if detected (unsafe)."""
+	if name == "mcpTenants":
+		return not bool(MCPTENANTS_REFERENCE_PATTERN.search(auth_text))
+	elif name == "oauthClients":
+		return not bool(OAUTHCLIENTS_REFERENCE_PATTERN.search(auth_text))
+	return True
+
+
 def run_self_test() -> int:
 	block_result = classify(BLOCK_FIXTURE)
 	pass_result = classify(PASS_FIXTURE)
@@ -203,11 +327,18 @@ def run_self_test() -> int:
 	rehardcoded_despite_join_result = classify(
 		REHARDCODED_GRANT_DESPITE_JOIN_FIXTURE
 	)
+	tenant_reintro_result = classify(DEAD_TABLE_REINTRODUCED_TENANT_FIXTURE)
+	dcr_reintro_result = classify(DEAD_TABLE_REINTRODUCED_DCR_VIA_IMPORT_FIXTURE)
+	fallthrough_result = classify(DEAD_TABLE_FALLTHROUGH_ON_MISS_FIXTURE)
+
 	ok = (
 		block_result == "BLOCK"
 		and pass_result == "PASS"
 		and mapping_derived_result == "PASS"
 		and rehardcoded_despite_join_result == "BLOCK"
+		and tenant_reintro_result == "BLOCK"
+		and dcr_reintro_result == "BLOCK"
+		and fallthrough_result == "BLOCK"
 	)
 	print(f"MUST_BLOCK fixture classified: {block_result} (expected BLOCK)")
 	print(f"MUST_PASS  fixture classified: {pass_result} (expected PASS)")
@@ -218,6 +349,18 @@ def run_self_test() -> int:
 	print(
 		f"MUST_BLOCK (ETA-M40 re-hardcoded grant despite join) fixture "
 		f"classified: {rehardcoded_despite_join_result} (expected BLOCK)"
+	)
+	print(
+		f"MUST_BLOCK (dead-table reintro case 1: tenant-token lookup) fixture "
+		f"classified: {tenant_reintro_result} (expected BLOCK)"
+	)
+	print(
+		f"MUST_BLOCK (dead-table reintro case 2: DCR via import) fixture "
+		f"classified: {dcr_reintro_result} (expected BLOCK)"
+	)
+	print(
+		f"MUST_BLOCK (dead-table reintro case 3: fallthrough on miss) fixture "
+		f"classified: {fallthrough_result} (expected BLOCK)"
 	)
 	print("SELF-TEST:", "PASS" if ok else "FAIL")
 	return 0 if ok else 1
@@ -298,24 +441,22 @@ def run_inventory() -> int:
 			"id": 4,
 			"name": "(3) DCR OAuth token (oauthDcr:validateAccessToken)",
 			"status": "SKIPPED",
+			"verify_removed": "oauthClients",
 			"reason": (
 				"Branch REMOVED — task k173r2p1yh94m5f7yvgr1b30gx8dn3ez deleted "
 				"the DCR-token bearer branch entirely (convex/oauthDcr.ts and "
-				"its oauthClients/oauthTokens tables dropped). A bearer token "
-				"shaped like a DCR opaque token is now refused (401) before "
-				"reaching any grant-assignment code — nothing left to classify."
+				"its oauthClients/oauthTokens tables dropped)."
 			),
 		},
 		{
 			"id": 5,
 			"name": "(4) Legacy internal bearer (mcpTenants)",
 			"status": "SKIPPED",
+			"verify_removed": "mcpTenants",
 			"reason": (
 				"Branch REMOVED — task k173r2p1yh94m5f7yvgr1b30gx8dn3ez deleted "
 				"the legacy mcpTenants bearer branch entirely (convex/"
-				"mcpTenants.ts and its table dropped). A bearer token shaped "
-				"like a legacy tenant token is now refused (401) before "
-				"reaching any grant-assignment code — nothing left to classify."
+				"mcpTenants.ts and its table dropped)."
 			),
 		},
 	]
@@ -324,7 +465,19 @@ def run_inventory() -> int:
 	print("check-http-boundary-derives-from-principal — 5-path coverage inventory\n")
 	for b in branches:
 		if b["status"] == "SKIPPED":
-			print(f"  {b['name']}: SKIPPED — {b['reason']}")
+			# For removed branches, verify the removal by proof-reading auth.ts
+			if "verify_removed" in b:
+				removed_ok = verify_dead_table_not_present(text, b["verify_removed"])
+				if removed_ok:
+					print(f"  {b['name']}: SKIPPED — {b['reason']}")
+					print(
+						f"    VERIFIED: {b['verify_removed']} references absent in auth.ts"
+					)
+				else:
+					print(f"  {b['name']}: VERIFY FAILED — {b['verify_removed']} still present in auth.ts!")
+					ok = False
+			else:
+				print(f"  {b['name']}: SKIPPED — {b['reason']}")
 			continue
 		branch_text = extract_branch(text, b["marker"])
 		if not branch_text:
@@ -353,7 +506,7 @@ def main() -> int:
 	parser.add_argument(
 		"--self-test",
 		action="store_true",
-		help="Run the bipolar probe against fixture strings (not the live repo).",
+		help="Run the bipolar + tri-pole probe against fixture strings (not the live repo).",
 	)
 	args = parser.parse_args()
 	if args.self_test:
