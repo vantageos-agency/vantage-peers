@@ -617,20 +617,21 @@ export async function computeStaleInProgress(
 ): Promise<StaleInProgressEntry[]> {
 	const thresholdMs = await getStaleInProgressThresholdMs(ctx);
 
-	const inProgressTasks = await ctx.db
-		.query("tasks")
-		.withIndex("by_assignee", (q) =>
-			q.eq("assignedTo", recipient).eq("status", "in_progress"),
-		)
-		.collect();
-
 	const entries: StaleInProgressEntry[] = [];
-	for (const task of inProgressTasks) {
-		const { age } = staleAge(task, now);
-		if (age > thresholdMs) {
-			entries.push({ taskId: task._id, title: task.title, age });
-		}
-	}
+	await walkIndexedTasks(
+		ctx.db
+			.query("tasks")
+			.withIndex("by_assignee", (q) =>
+				q.eq("assignedTo", recipient).eq("status", "in_progress"),
+			)
+			.order("desc"),
+		(task) => {
+			const { age } = staleAge(task, now);
+			if (age > thresholdMs && entries.length < MATCH_ENTRY_CAP) {
+				entries.push({ taskId: task._id, title: task.title, age });
+			}
+		},
+	);
 	return entries;
 }
 
