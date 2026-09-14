@@ -322,7 +322,16 @@ VantagePeers is a standard MCP server — works with any client supporting the M
 
 See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for copy-paste config snippets per tool.
 
-## MCP Tools Reference (109 tools)
+## MCP Tools Reference (107 tools)
+
+<!-- Count derived by running mcp-server/src/tools.ts's registerTools() against
+     a fake MCP server that records every registerTool()/tool() call name,
+     after `npm run build` (see mcp-server/CHANGELOG.md for the exact
+     one-liner). The per-category subtotals below are a manually maintained
+     enumeration that predates this count and does not sum to it (a
+     pre-existing drift unrelated to this removal, out of scope here) —
+     treat the header as the authoritative, code-derived total. -->
+
 
 <details>
 <summary><b>Memory + Episodes (14 tools)</b></summary>
@@ -427,13 +436,6 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `get_briefing_note` | Fetch a single briefing note by ID |
 | `list_briefing_notes` | List briefing notes filtered by topic or creator |
 | `search_briefing_notes_by_keyword` | BM25 full-text search over briefing note content |
-
-</details>
-
-<details>
-<summary><b>Components (6 tools)</b></summary>
-
-**Components (6):** `register_component`, `list_components`, `get_component`, `update_component`, `delete_component`, `search_components`
 
 </details>
 
@@ -787,7 +789,7 @@ A **role** (e.g., `pi`, `sigma`) is a logical identity. An **instance** (e.g., `
 ## Testing
 
 ```bash
-# MCP smoke tests — all 109 tools against a live Convex deployment
+# MCP smoke tests — the served tools against a live Convex deployment
 bun scripts/test-mcp.ts
 
 # Convex function unit tests

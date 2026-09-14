@@ -82,7 +82,7 @@ do {
 } while (cursor);
 ```
 
-The same loop works verbatim for every `list_*` tool (`list_memories`, `list_episodes`, `list_missions`, `list_briefing_notes`, `list_bus`, `list_components`, `list_repo_mappings`, `list_messages`, `list_issues`, `list_fix_patterns`, `list_errors`, `list_mandates`, `list_recurring_tasks`, `list_diaries`, `list_peers`, `list_tasks_by_mission`, `list_broadcast_status`).
+The same loop works verbatim for every `list_*` tool (`list_memories`, `list_episodes`, `list_missions`, `list_briefing_notes`, `list_bus`, `list_repo_mappings`, `list_messages`, `list_issues`, `list_fix_patterns`, `list_errors`, `list_mandates`, `list_recurring_tasks`, `list_diaries`, `list_peers`, `list_tasks_by_mission`, `list_broadcast_status`).
 
 ### Status aliases (read this before flattening `status` to a CSV)
 
@@ -188,8 +188,8 @@ VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web ca
 | 1 | `BEARER_SECRET_MASTER` static token | `master` | Full — all namespaces |
 | 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `<client-profile>`) | Per-profile prefix list |
 | 2.5 | **Clerk JWT** (org session, `org_id` claim present) | `team-member` | `team/<orgId>/*` only |
-| 3 | DCR auto-registered client (`oauthTokens` table) | `client-generic` | Deny-by-default (empty prefixes) |
-| 4 | Legacy internal bearer (`mcpTenants` table) | unscoped | Tenant deployment URL routing |
+
+Task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the two legacy fall-through layers that used to sit after 2.5: a DCR-token layer (`oauthTokens`/`oauthClients` tables, `convex/oauthDcr.ts`) and a legacy internal-bearer layer (`mcpTenants` table, `convex/mcpTenants.ts`). Both tables held zero rows on every inspected deployment. A bearer token that matches none of the layers above is now refused outright (401), never falling through to either removed layer.
 
 **Layer 2.5 (Clerk JWT / `team-member`):** Claude.ai clients that authenticate via the Clerk OIDC flow receive a `scopeProfile="team-member"` context. Their `namespaceReadPrefixes` and `namespaceWritePrefixes` are locked to `["team/<orgId>"]` — cross-tenant access is rejected at the middleware layer before any Convex call is made. The JWKS is fetched from `CLERK_DOMAIN/.well-known/jwks.json` (default: `https://sharp-sponge-67.clerk.accounts.dev`) and cached in-process with a 10-minute TTL.
 
@@ -411,10 +411,9 @@ Exports `SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION` from `mcp-server/src
 
 Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
 
-### Search / RAG (7)
+### Search / RAG (6)
 - `search_fix_patterns` — semantic vector-search over fix patterns
 - `text_search` — BM25 keyword search over memories; VP-Sources doctrine applies
-- `search_components` — keyword search over components
 - `hybrid_search` — RRF-fused vector + BM25 search; VP-Sources doctrine applies
 - `generate_upload_url` — mint a signed Convex storage upload URL for a KB document
 - `store_document_chunked` — extract, chunk and schedule embedding for an uploaded document
@@ -613,30 +612,6 @@ list_bus(orchestratorId?, status?, limit?, cursor?, fields?)
 
 Returns `{ items: BusinessUnit[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
 
-### Components (6)
-- `register_component` — register an agent / skill / hook / plugin
-- `list_components` — page through components; filter by `type` / `team`
-- `get_component` — fetch a single component
-- `update_component` — patch component fields
-- `delete_component` — destructive delete (master-gated)
-- `search_components` — keyword search over components
-
-#### `list_components` — args schema + defaults (PR-B)
-
-```
-list_components(type?, team?, limit?, cursor?, fields?)
-```
-
-| Arg | Type | Default | Notes |
-|-----|------|---------|-------|
-| `type` | `"agent"\|"skill"\|"hook"\|"plugin"` | — | Filter by component type. |
-| `team` | string | — | Filter by team (e.g. `"development"`). |
-| `limit` | number 1–200 | `20` | Page size. Capped at `200` server-side. |
-| `cursor` | string | — | Opaque token from prior `nextCursor`. |
-| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, _creationTime, name, type, team}`. `"full"` returns complete component object. |
-
-Returns `{ items: Component[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
-
 ### Mandates (7)
 - `create_mandate` — create a delegated-spend mandate
 - `list_mandates` — page through mandates
@@ -723,7 +698,7 @@ Examples:
 
 ### `fields=lite` — reduced token payloads
 
-`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `list_bus`, `list_components`, and `list_repo_mappings` accept an optional `fields` parameter:
+`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `list_bus`, and `list_repo_mappings` accept an optional `fields` parameter:
 
 | Value | Behaviour |
 |-------|-----------|
@@ -738,7 +713,6 @@ Lite projections per entity:
 | `list_missions` | `_id`, `_creationTime`, `name`, `status`, `pilot`, `priority`, `project` |
 | `list_briefing_notes` | `_id`, `_creationTime`, `topic`, `title`, `participants`, `createdBy` |
 | `list_bus` | `_id`, `_creationTime`, `name`, `status`, `orchestratorId` — PR-A activated actual projection (was no-op since v2.4.12) |
-| `list_components` | `_id`, `_creationTime`, `name`, `type`, `team` — PR-B activated actual projection (was no-op — returned full row) |
 | `list_repo_mappings` | `_id`, `_creationTime`, `repo`, `orchestrator`, `project` — PR-C activated actual projection (excludes `active`, `lastDeployedSHA`, `lastDeployedAt`) |
 
 Example (tasks lite):
