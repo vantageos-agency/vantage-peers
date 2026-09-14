@@ -15,7 +15,6 @@ import type * as agents from "../agents.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as clientOrgMapping from "../clientOrgMapping.js";
-import type * as components_ from "../components.js";
 import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
@@ -54,7 +53,6 @@ import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as licenses from "../licenses.js";
 import type * as mandates from "../mandates.js";
-import type * as mcpTenants from "../mcpTenants.js";
 import type * as memories from "../memories.js";
 import type * as memoriesScoped from "../memoriesScoped.js";
 import type * as messages from "../messages.js";
@@ -64,6 +62,7 @@ import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2
 import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_stale_deploy_tasks.js";
 import type * as migrations_diary_backfill_createdBy from "../migrations/diary_backfill_createdBy.js";
 import type * as migrations_drop_client_scope_global_prefix from "../migrations/drop_client_scope_global_prefix.js";
+import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_patch_marie_iris_rh_scope from "../migrations/patch_marie_iris_rh_scope.js";
 import type * as migrations_populateOrgIds from "../migrations/populateOrgIds.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
@@ -71,7 +70,6 @@ import type * as migrations_seed_task_closure_config from "../migrations/seed_ta
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as oauth from "../oauth.js";
-import type * as oauthDcr from "../oauthDcr.js";
 import type * as oauthMigrations from "../oauthMigrations.js";
 import type * as okfBundle from "../okfBundle.js";
 import type * as okfBundleDurable from "../okfBundleDurable.js";
@@ -103,7 +101,6 @@ declare const fullApi: ApiFromModules<{
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   clientOrgMapping: typeof clientOrgMapping;
-  components: typeof components_;
   credentials: typeof credentials;
   crons: typeof crons;
   dashboard: typeof dashboard;
@@ -142,7 +139,6 @@ declare const fullApi: ApiFromModules<{
   "lib/tenantSlug": typeof lib_tenantSlug;
   licenses: typeof licenses;
   mandates: typeof mandates;
-  mcpTenants: typeof mcpTenants;
   memories: typeof memories;
   memoriesScoped: typeof memoriesScoped;
   messages: typeof messages;
@@ -152,6 +148,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/dedup_stale_deploy_tasks": typeof migrations_dedup_stale_deploy_tasks;
   "migrations/diary_backfill_createdBy": typeof migrations_diary_backfill_createdBy;
   "migrations/drop_client_scope_global_prefix": typeof migrations_drop_client_scope_global_prefix;
+  "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/patch_marie_iris_rh_scope": typeof migrations_patch_marie_iris_rh_scope;
   "migrations/populateOrgIds": typeof migrations_populateOrgIds;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
@@ -159,7 +156,6 @@ declare const fullApi: ApiFromModules<{
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
   oauth: typeof oauth;
-  oauthDcr: typeof oauthDcr;
   oauthMigrations: typeof oauthMigrations;
   okfBundle: typeof okfBundle;
   okfBundleDurable: typeof okfBundleDurable;

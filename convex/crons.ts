@@ -39,14 +39,6 @@ crons.cron(
 // Poll open PRs on external repos every hour
 crons.interval("pr monitor", { hours: 1 }, internal.prMonitor.pollOpenPRs, {});
 
-// Purge expired OAuth auth codes + tokens every hour (B2)
-crons.interval(
-	"cleanup expired oauth",
-	{ hours: 1 },
-	internal.oauthDcr.cleanupExpiredOAuth,
-	{},
-);
-
 // Auto-resolve stale false-positive IRP missions.
 // Day 76 doctrine mechanism 3: "any automation that creates work must resolve it."
 // Closes missions + tasks + GH issues for errors that stopped recurring (>24h quiet).

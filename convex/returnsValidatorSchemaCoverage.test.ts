@@ -310,11 +310,6 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 		reason:
 			"`fields: \"lite\"|\"full\"` API (documented at the `list` query) — `liteValidator` is the deliberate lite projection; `buObject` (the full shape, in the same union) already COVERS.",
 	},
-	"components.list#componentLiteObject": {
-		fields: ["content", "version", "project", "createdBy", "createdAt", "updatedAt"],
-		reason:
-			"Same `fields: \"lite\"|\"full\"` API as businessUnits.list — `componentLiteObject` is the deliberate lite projection; `componentFullObject` (in the same union) already COVERS.",
-	},
 	"githubRepoMapping.list#repoMappingLiteObject": {
 		fields: ["active", "lastDeployedSHA", "lastDeployedAt"],
 		reason:
@@ -422,11 +417,6 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 		fields: ["clientSecretHash", "tokenEndpointAuthMethod"],
 		reason:
 			"`clientPublicShape` is a named, deliberate security projection — clientSecretHash must never leave the server. Handler maps explicitly, never spreads the raw row.",
-	},
-	"oauthDcr.listClientsInWindow": {
-		fields: ["clientSecret", "redirectUris", "createdAt", "scope"],
-		reason:
-			"Internal backfill/window-audit helper (internalQuery) deliberately returns only _id/_creationTime/clientId/clientName — the minimum needed to identify clients created in a time window. Also excludes the secret. Handler maps explicitly.",
 	},
 };
 

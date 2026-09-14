@@ -597,29 +597,6 @@ export default defineSchema({
 		.index("by_participant_note", ["participant", "noteId"])
 		.index("by_note", ["noteId"]),
 
-	// ── components ──────────────────────────────────────────────────────────
-	// Registry of agents, skills, hooks, plugins — backup + inventory.
-	// Content stores the full file so nothing is lost if filesystem is destroyed.
-	components: defineTable({
-		name: v.string(),
-		type: v.union(
-			v.literal("agent"),
-			v.literal("skill"),
-			v.literal("hook"),
-			v.literal("plugin"),
-		),
-		team: v.optional(v.string()), // e.g. "marketing", "development"
-		content: v.string(), // full file content
-		version: v.optional(v.string()),
-		project: v.optional(v.string()),
-		createdBy: creatorValidator,
-		createdAt: v.number(),
-		updatedAt: v.number(),
-	})
-		.index("by_type", ["type"])
-		.index("by_team", ["team", "type"])
-		.index("by_name_type", ["name", "type"]),
-
 	// ── mandates ──────────────────────────────────────────────────────────────
 	// Cross-orchestrator service requests. One orchestrator requests a service from another.
 	// Budget (token allocation) is agreed upfront; cost is recorded on settle.
@@ -1041,22 +1018,6 @@ export default defineSchema({
 		.index("by_profileId", ["profileId"])
 		.index("by_clerkOrgSlug", ["clerkOrgSlug"]),
 
-	// ── mcpTenants ────────────────────────────────────────────────────────────
-	// Registry of VIP tenants for HTTP MCP transport.
-	// Each tenant has a hashed bearer token and a target Convex deployment URL.
-	// The HTTP MCP server (Railway) looks up tenants by tokenHash on every request
-	// and proxies to the correct Convex deployment.
-	// tokenHash = SHA-256 hex of the raw bearer token (raw token never stored).
-	mcpTenants: defineTable({
-		tokenHash: v.string(), // SHA-256 hex of bearer token
-		tenantName: v.string(), // e.g. "perello-consulting-vip-1"
-		convexUrl: v.string(), // e.g. "https://xxxx.convex.cloud"
-		createdAt: v.number(),
-		enabledAt: v.optional(v.number()), // undefined = disabled
-		lastUsedAt: v.optional(v.number()),
-		revokedAt: v.optional(v.number()),
-	}).index("by_tokenHash", ["tokenHash"]),
-
 	// ── errorMonitorFilterRules ──────────────────────────────────────────────
 	// Runtime-configurable filter rules for the auto-IRP bot.
 	// Each rule matches (functionName, errorMessageRegex) and assigns a severity:
@@ -1096,44 +1057,6 @@ export default defineSchema({
 	})
 		.index("by_active", ["active"])
 		.index("by_function", ["functionName", "active"]),
-
-	// ── oauthClients ─────────────────────────────────────────────────────────
-	// OAuth 2.1 Dynamic Client Registration (RFC 7591) clients.
-	// Issued by the DCR /register endpoint without admin gating.
-	// clientSecret = 64-char hex (raw value — returned once on registration,
-	// stored here for PKCE / client_secret_post auth on the token endpoint).
-	oauthClients: defineTable({
-		clientId: v.string(), // crypto.randomUUID()
-		clientSecret: v.string(), // 64-char hex (raw — transmitted once)
-		clientName: v.string(),
-		redirectUris: v.array(v.string()),
-		createdAt: v.number(),
-		scope: v.optional(v.string()), // default "mcp:full"
-	}).index("by_clientId", ["clientId"]),
-
-	// ── oauthTokens ──────────────────────────────────────────────────────────
-	// Auth codes and access/refresh tokens for the DCR OAuth 2.1 flow.
-	// A single row covers both the auth-code phase (authCode set, accessToken
-	// absent) and the token phase (accessToken set, authCode consumed).
-	// Index on authCode supports code exchange; index on accessToken supports
-	// bearer validation; index on clientId supports revocation/listing.
-	oauthTokens: defineTable({
-		clientId: v.string(),
-		accessToken: v.string(), // crypto.randomUUID()
-		refreshToken: v.optional(v.string()),
-		scope: v.string(),
-		expiresAt: v.number(), // ms since epoch
-		authCode: v.optional(v.string()), // PKCE authorization code
-		codeChallenge: v.optional(v.string()),
-		codeChallengeMethod: v.optional(v.string()),
-		redirectUri: v.optional(v.string()),
-		used: v.optional(v.boolean()), // auth code single-use flag
-		createdAt: v.number(),
-	})
-		.index("by_accessToken", ["accessToken"])
-		.index("by_authCode", ["authCode"])
-		.index("by_clientId", ["clientId"])
-		.index("by_refreshToken", ["refreshToken"]),
 
 	// ── errorLogs ────────────────────────────────────────────────────────────
 	// Deduplicated log of detected function errors across monitored deployments.
