@@ -29,6 +29,16 @@ Two run modes:
                 Every branch is ANALYSED (classified live) or SKIPPED (with
                 a written reason that is VERIFIED before reporting).
                 Any branch not listed is an inventory gap and fails the check.
+
+KNOWN GAP (stated, not caught): the dead-table absence proof reads auth.ts
+only. A removed table read hidden inside a helper in ANOTHER module that
+auth.ts imports (e.g. a sibling file calling
+ctx.runQuery("oauthTokens:...")) is not seen by this static proof-read. What
+IS caught: any reference to the dead table names in auth.ts itself, and any
+populated grant at the usage site (hardcoded, or a fallthrough on lookup
+miss), whatever helper produced it. Closing the gap needs a runtime pole
+(an MCP integration test calling a removed path and asserting 401), not a
+wider regex.
 """
 
 from __future__ import annotations
