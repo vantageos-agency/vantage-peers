@@ -408,14 +408,15 @@ export const checkNewMessages = query({
 					: await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_instance_unread", (q) =>
-								q.eq("recipientInstanceId", args.recipientInstanceId!),
+								q
+									.eq("recipientInstanceId", args.recipientInstanceId!)
+									.eq("readAt", undefined),
 							)
-							.filter((q) => {
-								const base = q.eq(q.field("readAt"), undefined);
-								return args.since !== undefined
-									? q.and(base, q.gt(q.field("_creationTime"), args.since))
-									: base;
-							})
+							.filter((q) =>
+								args.since !== undefined
+									? q.gt(q.field("_creationTime"), args.since)
+									: true,
+							)
 							.take(100);
 
 			const roleReceipts =
@@ -438,13 +439,10 @@ export const checkNewMessages = query({
 					: await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_recipient_unread", (q) =>
-								q.eq("recipient", args.recipient),
+								q.eq("recipient", args.recipient).eq("readAt", undefined),
 							)
 							.filter((q) => {
-								const base = q.and(
-									q.eq(q.field("readAt"), undefined),
-									q.eq(q.field("recipientInstanceId"), undefined),
-								);
+								const base = q.eq(q.field("recipientInstanceId"), undefined);
 								return args.since !== undefined
 									? q.and(base, q.gt(q.field("_creationTime"), args.since))
 									: base;
@@ -486,14 +484,13 @@ export const checkNewMessages = query({
 				receipts = await ctx.db
 					.query("messageReceipts")
 					.withIndex("by_recipient_unread", (q) =>
-						q.eq("recipient", args.recipient),
+						q.eq("recipient", args.recipient).eq("readAt", undefined),
 					)
-					.filter((q) => {
-						const base = q.eq(q.field("readAt"), undefined);
-						return args.since !== undefined
-							? q.and(base, q.gt(q.field("_creationTime"), args.since))
-							: base;
-					})
+					.filter((q) =>
+						args.since !== undefined
+							? q.gt(q.field("_creationTime"), args.since)
+							: true,
+					)
 					.take(100);
 			}
 		}
@@ -591,14 +588,15 @@ export const checkNewMessagesEnvelope = query({
 					: await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_instance_unread", (q) =>
-								q.eq("recipientInstanceId", args.recipientInstanceId!),
+								q
+									.eq("recipientInstanceId", args.recipientInstanceId!)
+									.eq("readAt", undefined),
 							)
-							.filter((q) => {
-								const base = q.eq(q.field("readAt"), undefined);
-								return args.since !== undefined
-									? q.and(base, q.gt(q.field("_creationTime"), args.since))
-									: base;
-							})
+							.filter((q) =>
+								args.since !== undefined
+									? q.gt(q.field("_creationTime"), args.since)
+									: true,
+							)
 							.take(takeBudget);
 
 			const roleReceipts =
@@ -621,13 +619,10 @@ export const checkNewMessagesEnvelope = query({
 					: await ctx.db
 							.query("messageReceipts")
 							.withIndex("by_recipient_unread", (q) =>
-								q.eq("recipient", args.recipient),
+								q.eq("recipient", args.recipient).eq("readAt", undefined),
 							)
 							.filter((q) => {
-								const base = q.and(
-									q.eq(q.field("readAt"), undefined),
-									q.eq(q.field("recipientInstanceId"), undefined),
-								);
+								const base = q.eq(q.field("recipientInstanceId"), undefined);
 								return args.since !== undefined
 									? q.and(base, q.gt(q.field("_creationTime"), args.since))
 									: base;
@@ -665,14 +660,13 @@ export const checkNewMessagesEnvelope = query({
 			receipts = await ctx.db
 				.query("messageReceipts")
 				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", args.recipient),
+					q.eq("recipient", args.recipient).eq("readAt", undefined),
 				)
-				.filter((q) => {
-					const base = q.eq(q.field("readAt"), undefined);
-					return args.since !== undefined
-						? q.and(base, q.gt(q.field("_creationTime"), args.since))
-						: base;
-				})
+				.filter((q) =>
+					args.since !== undefined
+						? q.gt(q.field("_creationTime"), args.since)
+						: true,
+				)
 				.take(takeBudget);
 		}
 
@@ -967,9 +961,8 @@ export const getUnreadCount = query({
 		const receipts = await ctx.db
 			.query("messageReceipts")
 			.withIndex("by_recipient_unread", (q) =>
-				q.eq("recipient", orchestratorId),
+				q.eq("recipient", orchestratorId).eq("readAt", undefined),
 			)
-			.filter((q) => q.eq(q.field("readAt"), undefined))
 			.take(UNREAD_RECEIPTS_SCAN_CAP);
 		return receipts.length;
 	},
