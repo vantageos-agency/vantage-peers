@@ -27,20 +27,34 @@
 //       "readAt".
 //
 // FAIL-CLOSED on anything this scan cannot statically prove: an unresolved
-// INDEX NAME (neither a string literal nor a same-file `const` string) is
+// INDEX NAME on a chain that is NOT provably `.query("messageReceipts")` is
 // SKIPPED as "not relevant" — we cannot tell whether it names one of our
 // tracked unread indexes, so it is neither a pass nor a violation, just
 // invisible (see NAMED GAPS). An unresolved withIndex CALLBACK shape (index
 // name IS one of ours, but the range-builder argument cannot be resolved to
-// a param+body by `resolveRangeBuilder`) is treated as a VIOLATION, not a
-// silent pass — see `NAMED GAPS` below and in the test file header.
+// a param+body by `resolveRangeBuilder`), a withIndex call missing its
+// range-builder argument entirely, an unresolvable index name on a chain
+// that DOES provably read `.query("messageReceipts")`, and any template
+// literal with an interpolated (non-const) value are all treated as
+// VIOLATIONS, never a silent pass — see `NAMED GAPS` below and in the test
+// file header.
 //
 // NAMED GAPS (this scan does NOT catch, by construction):
-//   - Index names built from string concatenation, template literals with
-//     an interpolated non-const value, or destructured/imported from
-//     another module — these are indistinguishable from an unrelated index
-//     name and are silently skipped (not flagged as a violation, not
-//     flagged as a pass — simply invisible to this scan).
+//   - Index names built from string concatenation or destructured/imported
+//     from another module, ON A NON-`messageReceipts` CHAIN — these are
+//     indistinguishable from an unrelated index name on an unrelated table
+//     and are silently skipped (not flagged as a violation, not flagged as
+//     a pass — simply invisible to this scan). The SAME shapes on a chain
+//     that provably reads `.query("messageReceipts")` ARE now flagged as
+//     violations (fail-closed) — see `chainHasMessageReceiptsQuery` — because
+//     we know statically which table is involved even when we cannot
+//     resolve which index. Template literals are no longer categorically
+//     invisible: a `` `by_recipient_unread` `` (no-substitution) template
+//     literal resolves exactly like the equivalent string literal, and a
+//     template literal WITH an interpolated value (`` `${x}_unread` ``)
+//     fails closed as a violation regardless of which table it chains from,
+//     since a dynamically-built index name on ANY table is itself a red
+//     flag for this class of bug.
 //   - Helper functions for shape (b) that live in ANOTHER file (imported)
 //     rather than the same file — these fall through to the fail-closed
 //     "unresolved shape" violation, which means a LEGITIMATE cross-file
@@ -77,6 +91,20 @@ export interface ScanResult {
 }
 
 const RANGE_METHODS = new Set(["eq", "gt", "gte", "lt", "lte"]);
+
+/**
+ * Resolve a node to a literal string IF it is either a plain string literal
+ * or a no-substitution template literal (`` `by_recipient_unread` `` with no
+ * `${...}` inside it) — the two shapes are semantically identical string
+ * constants, so both are resolved identically. A template literal WITH a
+ * substitution (`` `${x}_unread` ``) is deliberately NOT handled here — it is
+ * left unresolved so callers can fail closed on it.
+ */
+function resolveStringLike(node: ts.Node): string | undefined {
+	if (ts.isStringLiteral(node)) return node.text;
+	if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+	return undefined;
+}
 
 function listTsFiles(dir: string, out: string[] = []): string[] {
 	for (const entry of readdirSync(dir)) {
@@ -178,8 +206,9 @@ function collectBoundFields(bodyNode: ts.Node, paramName: string): Set<string> {
 		) {
 			const methodName = node.expression.name.text;
 			const firstArg = node.arguments[0];
-			if (methodName === "eq" && firstArg && ts.isStringLiteral(firstArg)) {
-				fields.add(firstArg.text);
+			if (methodName === "eq" && firstArg) {
+				const fieldName = resolveStringLike(firstArg);
+				if (fieldName !== undefined) fields.add(fieldName);
 			}
 		}
 		ts.forEachChild(node, visit);
@@ -287,18 +316,19 @@ function resolveRangeBuilder(
 	return null;
 }
 
-/** Find same-file top-level `const NAME = "literal"` string declarations, keyed by name. */
+/**
+ * Find same-file top-level `const NAME = "literal"` (or
+ * `` const NAME = `literal` `` no-substitution template) string
+ * declarations, keyed by name.
+ */
 function collectTopLevelStringConsts(sf: ts.SourceFile): Map<string, string> {
 	const consts = new Map<string, string>();
 	function visit(node: ts.Node) {
 		if (ts.isVariableStatement(node)) {
 			for (const decl of node.declarationList.declarations) {
-				if (
-					ts.isIdentifier(decl.name) &&
-					decl.initializer &&
-					ts.isStringLiteral(decl.initializer)
-				) {
-					consts.set(decl.name.text, decl.initializer.text);
+				if (ts.isIdentifier(decl.name) && decl.initializer) {
+					const literal = resolveStringLike(decl.initializer);
+					if (literal !== undefined) consts.set(decl.name.text, literal);
 				}
 			}
 		}
@@ -306,6 +336,42 @@ function collectTopLevelStringConsts(sf: ts.SourceFile): Map<string, string> {
 	}
 	visit(sf);
 	return consts;
+}
+
+/**
+ * Walk the object chain a `.withIndex(...)` call is invoked on (e.g. the
+ * `ctx.db.query("messageReceipts")` in
+ * `ctx.db.query("messageReceipts").withIndex(...)`) looking for a
+ * `.query("messageReceipts")` call anywhere in that chain. Used to decide
+ * whether an UNRESOLVABLE index-name argument should fail closed (we know
+ * statically which table is involved) or be silently skipped as a NAMED GAP
+ * (we don't know the table, so we can't know if it's one of our tracked
+ * indexes either).
+ */
+function chainHasMessageReceiptsQuery(expr: ts.Expression): boolean {
+	let cur: ts.Expression = expr;
+	for (;;) {
+		if (ts.isParenthesizedExpression(cur)) {
+			cur = cur.expression;
+			continue;
+		}
+		if (ts.isCallExpression(cur)) {
+			if (ts.isPropertyAccessExpression(cur.expression)) {
+				if (cur.expression.name.text === "query") {
+					const arg = cur.arguments[0];
+					if (arg && resolveStringLike(arg) === "messageReceipts") return true;
+				}
+				cur = cur.expression.expression;
+				continue;
+			}
+			return false;
+		}
+		if (ts.isPropertyAccessExpression(cur)) {
+			cur = cur.expression;
+			continue;
+		}
+		return false;
+	}
 }
 
 export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): ScanResult {
@@ -324,38 +390,23 @@ export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): 
 				ts.isCallExpression(node) &&
 				ts.isPropertyAccessExpression(node.expression) &&
 				node.expression.name.text === "withIndex" &&
-				node.arguments.length === 2
+				node.arguments.length >= 1
 			) {
 				const nameArg = node.arguments[0];
-				let resolvedName: string | undefined;
-				if (ts.isStringLiteral(nameArg)) {
-					resolvedName = nameArg.text;
-				} else if (ts.isIdentifier(nameArg) && stringConsts.has(nameArg.text)) {
+				let resolvedName: string | undefined = resolveStringLike(nameArg);
+				if (resolvedName === undefined && ts.isIdentifier(nameArg) && stringConsts.has(nameArg.text)) {
 					resolvedName = stringConsts.get(nameArg.text);
 				}
+				const isDynamicTemplate = resolvedName === undefined && ts.isTemplateExpression(nameArg);
 
 				if (resolvedName !== undefined && indexNames.has(resolvedName)) {
 					const requiredFields = schemaIndexes[resolvedName];
 					const rangeArg = node.arguments[1];
-					const resolved = resolveRangeBuilder(rangeArg, helperFns);
-					const reason = resolved
-						? undefined
-						: `range-builder argument (kind=${ts.SyntaxKind[rangeArg.kind]}) is not a same-file-resolvable arrow/function, bare helper reference, or (curried) helper call — fail-closed`;
 
-					if (resolved) {
-						const { paramName, body } = resolved;
-						const boundFields = collectBoundFields(body, paramName);
-						const missingFields = requiredFields.filter((f) => !boundFields.has(f));
-						matches.push({
-							file,
-							line: lineOf(sf, node),
-							indexName: resolvedName,
-							requiredFields,
-							boundFields: [...boundFields],
-							missingFields,
-							resolved: true,
-						});
-					} else {
+					if (!rangeArg) {
+						// A withIndex call whose first argument resolves to one of our
+						// tracked unread indexes but supplies NO range-builder argument
+						// at all is a full index walk — every field is unbound.
 						matches.push({
 							file,
 							line: lineOf(sf, node),
@@ -363,8 +414,68 @@ export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): 
 							requiredFields,
 							boundFields: [],
 							missingFields: requiredFields,
+							resolved: true,
+							reason: "withIndex called with no range-builder argument (arguments.length < 2) — full index walk, all fields unbound",
+						});
+					} else {
+						const resolved = resolveRangeBuilder(rangeArg, helperFns);
+						const reason = resolved
+							? undefined
+							: `range-builder argument (kind=${ts.SyntaxKind[rangeArg.kind]}) is not a same-file-resolvable arrow/function, bare helper reference, or (curried) helper call — fail-closed`;
+
+						if (resolved) {
+							const { paramName, body } = resolved;
+							const boundFields = collectBoundFields(body, paramName);
+							const missingFields = requiredFields.filter((f) => !boundFields.has(f));
+							matches.push({
+								file,
+								line: lineOf(sf, node),
+								indexName: resolvedName,
+								requiredFields,
+								boundFields: [...boundFields],
+								missingFields,
+								resolved: true,
+							});
+						} else {
+							matches.push({
+								file,
+								line: lineOf(sf, node),
+								indexName: resolvedName,
+								requiredFields,
+								boundFields: [],
+								missingFields: requiredFields,
+								resolved: false,
+								reason,
+							});
+						}
+					}
+				} else if (resolvedName === undefined) {
+					// The index name could not be resolved to a string literal, a
+					// no-substitution template literal, or a same-file const. Fail
+					// closed (rather than silently skip as a NAMED GAP) when either:
+					//   - it's a template literal WITH an interpolated value — a
+					//     dynamically-built index name is itself suspicious on ANY
+					//     table, or
+					//   - the withIndex call's object chain provably reads
+					//     `.query("messageReceipts")` — we know the table, so an
+					//     unresolvable name here could still be one of our tracked
+					//     unread indexes and we cannot rule that out.
+					// Otherwise (unresolvable name, chain does NOT provably read
+					// messageReceipts) this remains the pre-existing NAMED GAP: we
+					// cannot tell if it's even relevant, so it's skipped.
+					const onMessageReceiptsChain = chainHasMessageReceiptsQuery(node.expression.expression);
+					if (isDynamicTemplate || onMessageReceiptsChain) {
+						matches.push({
+							file,
+							line: lineOf(sf, node),
+							indexName: nameArg.getText(sf),
+							requiredFields: [],
+							boundFields: [],
+							missingFields: ["<unresolved index name>"],
 							resolved: false,
-							reason,
+							reason: isDynamicTemplate
+								? "index name is a template literal with an interpolated (non-const) value — cannot statically resolve; fails closed regardless of table"
+								: 'index name argument could not be resolved to a string literal, no-substitution template literal, or same-file const, and this withIndex call chains from query("messageReceipts") — fails closed because it could name a tracked unread index',
 						});
 					}
 				}

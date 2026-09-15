@@ -61,14 +61,69 @@
 // GREEN on fixed code: every by_recipient_unread / by_instance_unread /
 // by_tenant_recipient_unread / by_tenant_instance_unread withIndex call
 // (anywhere under convex/) binds every field the index declares.
+//
+// THIRD VERSION — PR #1287, Eta REVISE (comment #5670724031): the scanner
+// itself failed open on two shapes the AST walk never reached at all —
+// probed at the real `getUnreadCount` call site (messages.ts, around
+// line ~963) but demonstrated here on FIXTURE FILES fed to the scanner API
+// through a temp `convex/` directory copy, so the suite never mutates this
+// repo's own real files to prove the point:
+//   - MX2b: `.withIndex("by_recipient_unread")` with NO range-builder
+//     argument at all — a full, unbounded index walk, the #1285 class in
+//     its worst form — sailed through GREEN because the old scan required
+//     `node.arguments.length === 2` and simply never matched (and thus
+//     never even added) a 1-argument withIndex call.
+//   - MX3b: a no-substitution template literal index name
+//     (`` `by_recipient_unread` `` — no `${...}` inside it) with `readAt`
+//     dropped from the range builder sailed through GREEN because the old
+//     scan only resolved `ts.StringLiteral` nodes for the index-name
+//     argument; a template literal with the exact same runtime string value
+//     was invisible to it.
+// Both are now closed in `./lib/unreadIndexScan.ts`: a withIndex call
+// resolving to a tracked index with fewer than 2 arguments is a violation
+// (missingFields = every required field); `ts.NoSubstitutionTemplateLiteral`
+// is resolved identically to a string literal for both the index-name
+// argument and field names inside `q.eq(...)`. A template literal WITH an
+// interpolated value, or any other unresolvable index name on a chain that
+// provably reads `.query("messageReceipts")`, now fails closed as a
+// violation too, rather than being silently skipped as a NAMED GAP.
 
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { scanUnreadIndexBindings } from "./lib/unreadIndexScan";
 
 const CONVEX_DIR = join(__dirname, "..");
 const SCHEMA_PATH = join(CONVEX_DIR, "schema.ts");
 const MESSAGES_PATH = join(CONVEX_DIR, "messages.ts");
+
+/**
+ * Build a throwaway `convex/` directory containing ONLY `schema.ts` (copied
+ * verbatim from the real one, so the required-fields derivation is
+ * accurate) plus whatever fixture files the caller writes into it — never
+ * the repo's own real source files. Callers MUST clean up via the returned
+ * `cleanup()` (also swept by the module-level `afterEach` below as a
+ * belt-and-suspenders backstop).
+ */
+function makeFixtureConvexDir(): { dir: string; schemaPath: string; cleanup: () => void } {
+	const root = mkdtempSync(join(tmpdir(), "unread-index-scan-fixture-"));
+	const dir = join(root, "convex");
+	mkdirSync(dir, { recursive: true });
+	const schemaSrc = readFileSync(SCHEMA_PATH, "utf8");
+	const schemaPath = join(dir, "schema.ts");
+	writeFileSync(schemaPath, schemaSrc);
+	return { dir, schemaPath, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+const fixtureRootsToSweep: string[] = [];
+afterEach(() => {
+	while (fixtureRootsToSweep.length > 0) {
+		const root = fixtureRootsToSweep.pop();
+		if (root && existsSync(root)) rmSync(root, { recursive: true, force: true });
+	}
+});
 
 describe("every *_unread index withIndex call, anywhere under convex/, binds the full index field list (readAt included) in its own range-builder chain", () => {
 	test("schema.ts declares at least one unread index for messageReceipts (guard against a schema rename making this scan vacuous)", () => {
@@ -107,6 +162,174 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 				.join("\n");
 			throw new Error(`unread-index withIndex violations:\n${detail}`);
 		}
+	});
+
+	// -------------------------------------------------------------------------
+	// MX1 — positive control (PR #1287, Eta comment #5670724031). The scanner
+	// run over the KNOWN-BAD pre-fix `messages.ts` (commit 335791f, the last
+	// commit on `main` before the by_recipient_unread/by_instance_unread range
+	// fix landed) must report EXACTLY the 7 known unbound call sites. Fed via
+	// `git show <sha>:convex/messages.ts` into a throwaway fixture directory —
+	// this repo's real files are never touched.
+	// -------------------------------------------------------------------------
+	test("MX1 positive control: the scanner over the pre-fix messages.ts (git show 335791f) reports all 7 unbound sites", () => {
+		const PRE_FIX_SHA = "335791f";
+		const fixture = makeFixtureConvexDir();
+		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
+
+		const preFixMessagesSrc = execFileSync("git", ["show", `${PRE_FIX_SHA}:convex/messages.ts`], {
+			cwd: CONVEX_DIR,
+			encoding: "utf8",
+		});
+		writeFileSync(join(fixture.dir, "messages.ts"), preFixMessagesSrc);
+
+		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const violations = matches.filter((m) => !m.resolved || m.missingFields.length > 0);
+
+		const detail = violations
+			.map((v) => `${v.file}:${v.line} index="${v.indexName}" missingFields=[${v.missingFields.join(", ")}]`)
+			.join("\n");
+		expect(violations.length, `expected exactly 7 unbound sites in pre-fix ${PRE_FIX_SHA}:convex/messages.ts, got ${violations.length}:\n${detail}`).toBe(7);
+		for (const v of violations) {
+			expect(v.missingFields).toContain("readAt");
+		}
+
+		fixture.cleanup();
+	});
+
+	// -------------------------------------------------------------------------
+	// MX2b (MUST_BLOCK, Eta comment #5670724031): a withIndex call resolving
+	// to a tracked unread index with NO range-builder argument at all — a full
+	// index walk — must be a violation. Fixture-only; never mutates this
+	// repo's real messages.ts.
+	// -------------------------------------------------------------------------
+	test("MX2b MUST_BLOCK: withIndex(\"by_recipient_unread\") with no range-builder argument is a violation with missingFields = every required field", () => {
+		const fixture = makeFixtureConvexDir();
+		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
+
+		const fixturePath = join(fixture.dir, "mx2bNoRangeArg.ts");
+		writeFileSync(
+			fixturePath,
+			[
+				'import { query } from "./_generated/server";',
+				'import { v } from "convex/values";',
+				"",
+				"export const mx2bProbe = query({",
+				"\targs: { orchestratorId: v.string() },",
+				"\treturns: v.number(),",
+				"\thandler: async (ctx, { orchestratorId }) => {",
+				"\t\tconst receipts = await ctx.db",
+				'\t\t\t.query("messageReceipts")',
+				'\t\t\t.withIndex("by_recipient_unread")',
+				"\t\t\t.take(200);",
+				"\t\treturn receipts.length;",
+				"\t},",
+				"});",
+				"",
+			].join("\n"),
+		);
+
+		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const violation = matches.find((m) => m.file === fixturePath);
+
+		expect(violation, `expected the scan to report a violation for ${fixturePath}, but no match was recorded for that file at all — the missing-range-arg shape is invisible again`).toBeDefined();
+		expect(violation!.resolved).toBe(true);
+		expect(violation!.indexName).toBe("by_recipient_unread");
+		expect(violation!.missingFields).toEqual(["recipient", "readAt"]);
+		expect(`${violation!.file}:${violation!.line}`).toBe(`${fixturePath}:8`);
+
+		fixture.cleanup();
+	});
+
+	// -------------------------------------------------------------------------
+	// MX3b (MUST_BLOCK, Eta comment #5670724031): a no-substitution template
+	// literal index name (`` `by_recipient_unread` ``, no `${...}` inside it)
+	// with `readAt` dropped from the range builder is a violation. Fixture-
+	// only; never mutates this repo's real messages.ts.
+	// -------------------------------------------------------------------------
+	test("MX3b MUST_BLOCK: a no-substitution template literal index name with readAt dropped is a violation, not silently skipped", () => {
+		const fixture = makeFixtureConvexDir();
+		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
+
+		const fixturePath = join(fixture.dir, "mx3bTemplateLiteralName.ts");
+		writeFileSync(
+			fixturePath,
+			[
+				'import { query } from "./_generated/server";',
+				'import { v } from "convex/values";',
+				"",
+				"export const mx3bProbe = query({",
+				"\targs: { orchestratorId: v.string() },",
+				"\treturns: v.number(),",
+				"\thandler: async (ctx, { orchestratorId }) => {",
+				"\t\tconst receipts = await ctx.db",
+				'\t\t\t.query("messageReceipts")',
+				'\t\t\t.withIndex(`by_recipient_unread`, (q) => q.eq("recipient", orchestratorId))',
+				"\t\t\t.take(200);",
+				"\t\treturn receipts.length;",
+				"\t},",
+				"});",
+				"",
+			].join("\n"),
+		);
+
+		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const violation = matches.find((m) => m.file === fixturePath);
+
+		expect(violation, `expected the scan to report a violation for ${fixturePath}, but no match was recorded for that file at all — the no-substitution template literal index name is invisible again`).toBeDefined();
+		expect(violation!.resolved).toBe(true);
+		expect(violation!.indexName).toBe("by_recipient_unread");
+		expect(violation!.boundFields).toEqual(["recipient"]);
+		expect(violation!.missingFields).toEqual(["readAt"]);
+		expect(`${violation!.file}:${violation!.line}`).toBe(`${fixturePath}:8`);
+
+		fixture.cleanup();
+	});
+
+	// -------------------------------------------------------------------------
+	// MX4 (bonus, self-test of the new messageReceipts-chain fail-closed
+	// branch added alongside MX2b/MX3b — not itself required by Eta's
+	// comment, but exercises the "unresolvable index name on a chain that
+	// provably reads .query(\"messageReceipts\")" path this PR adds). A
+	// template literal WITH an interpolated (non-const) value must fail
+	// closed as a violation rather than be silently skipped.
+	// -------------------------------------------------------------------------
+	test("MX4 (bonus): a template literal index name WITH an interpolated value fails closed as a violation on a messageReceipts chain", () => {
+		const fixture = makeFixtureConvexDir();
+		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
+
+		const fixturePath = join(fixture.dir, "mx4DynamicTemplateName.ts");
+		writeFileSync(
+			fixturePath,
+			[
+				'import { query } from "./_generated/server";',
+				'import { v } from "convex/values";',
+				"",
+				'const suffix = "unread";',
+				"",
+				"export const mx4Probe = query({",
+				"\targs: { orchestratorId: v.string() },",
+				"\treturns: v.number(),",
+				"\thandler: async (ctx, { orchestratorId }) => {",
+				"\t\tconst receipts = await ctx.db",
+				'\t\t\t.query("messageReceipts")',
+				'\t\t\t.withIndex(`by_recipient_${suffix}`, (q) => q.eq("recipient", orchestratorId))',
+				"\t\t\t.take(200);",
+				"\t\treturn receipts.length;",
+				"\t},",
+				"});",
+				"",
+			].join("\n"),
+		);
+
+		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const violation = matches.find((m) => m.file === fixturePath);
+
+		expect(violation, `expected the scan to report a violation for ${fixturePath}, but the dynamic template literal index name was invisible again`).toBeDefined();
+		expect(violation!.resolved).toBe(false);
+		expect(violation!.missingFields).toEqual(["<unresolved index name>"]);
+
+		fixture.cleanup();
 	});
 });
 
