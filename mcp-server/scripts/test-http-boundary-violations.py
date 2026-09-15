@@ -65,6 +65,40 @@ def test_violation(test_name: str, injection_code: str, expected_exit: int) -> b
 		return False
 
 
+def test_with_auth_ts_path(test_name: str, auth_ts_path: Path, expected_exit: int) -> bool:
+	"""Test the guard against a specific auth.ts file."""
+	print(f"{YELLOW}Testing: {test_name}{NC}")
+
+	if not auth_ts_path.exists():
+		print(f"  {RED}ERROR: auth.ts file not found at {auth_ts_path}{NC}")
+		return False
+
+	# Run the guard script against the specified auth.ts
+	result = subprocess.run(
+		[
+			sys.executable,
+			str(SCRIPT_DIR / "check-http-boundary-derives-from-principal.py"),
+			"--auth-ts",
+			str(auth_ts_path),
+		],
+		cwd=str(MCP_ROOT),
+		capture_output=True,
+		text=True,
+	)
+
+	if result.returncode == expected_exit:
+		print(f"  {GREEN}✓ Exit code {result.returncode} (expected {expected_exit}){NC}")
+		print(f"  Output summary: {result.stdout.split(chr(10))[-2]}")  # Last meaningful line
+		return True
+	else:
+		print(f"  {RED}✗ Exit code {result.returncode} (expected {expected_exit}){NC}")
+		print("\nScript output:")
+		print(result.stdout)
+		if result.stderr:
+			print("Stderr:", result.stderr)
+		return False
+
+
 def main() -> int:
 	print("Test harness for check-http-boundary-derives-from-principal")
 	print("=" * 60)
@@ -72,7 +106,61 @@ def main() -> int:
 
 	all_ok = True
 
+	# ────────────────────────────────────────────────────────────────────────
+	# MV1: Verify guard detects dead-table references in old auth.ts (main)
+	# ────────────────────────────────────────────────────────────────────────
+	print("=== MV1 Test: Dead-Table Detection (old auth.ts from main) ===")
+	print()
+
+	# Extract the old auth.ts from main commit 335791f
+	old_auth_result = subprocess.run(
+		["git", "show", "335791f:mcp-server/src/auth.ts"],
+		cwd=str(MCP_ROOT.parent),
+		capture_output=True,
+		text=True,
+	)
+
+	if old_auth_result.returncode != 0:
+		print(f"  {RED}ERROR: Could not extract old auth.ts from commit 335791f{NC}")
+		all_ok = False
+	else:
+		# Write to temp file
+		with tempfile.NamedTemporaryFile(
+			mode="w", suffix=".ts", delete=False, dir="/tmp"
+		) as f:
+			f.write(old_auth_result.stdout)
+			old_auth_path = Path(f.name)
+
+		try:
+			# Grep-assert the removed functions are present
+			if (
+				"mcpTenants:getTenantByTokenHash" in old_auth_result.stdout
+				and "oauthDcr:validateAccessToken" in old_auth_result.stdout
+			):
+				print("  ✓ Old auth.ts contains both removed function references")
+				print("    - Found: mcpTenants:getTenantByTokenHash")
+				print("    - Found: oauthDcr:validateAccessToken")
+			else:
+				print(
+					f"  {RED}ERROR: Old auth.ts missing expected references{NC}"
+				)
+				all_ok = False
+
+			# Test that the guard FAILS (exit 1) on old auth.ts
+			mv1_ok = test_with_auth_ts_path(
+				"MV1: guard detects dead-table references",
+				old_auth_path,
+				1,
+			)
+			all_ok = all_ok and mv1_ok
+		finally:
+			old_auth_path.unlink()
+
+	print()
+
+	# ────────────────────────────────────────────────────────────────────────
 	# MUST_PASS: head as-is (exit 0)
+	# ────────────────────────────────────────────────────────────────────────
 	print("=== MUST_PASS Test ===")
 	print()
 	print(f"{YELLOW}Testing: MUST_PASS — head as-is{NC}")
@@ -90,7 +178,9 @@ def main() -> int:
 		all_ok = False
 	print()
 
+	# ────────────────────────────────────────────────────────────────────────
 	# MUST_BLOCK cases
+	# ────────────────────────────────────────────────────────────────────────
 	print("=== MUST_BLOCK Tests (Dead-Table Reintroduction) ===")
 	print()
 
@@ -170,6 +260,42 @@ def main() -> int:
 		1,
 	)
 	all_ok = all_ok and case3_ok
+	print()
+
+	# ────────────────────────────────────────────────────────────────────────
+	# MV2: Deny-by-default reintroduction (should STILL fail)
+	# ────────────────────────────────────────────────────────────────────────
+	print("=== MV2 Test: Deny-by-Default Reintroduction ===")
+	print()
+
+	# Test a call to a removed function that grants nothing (deny-by-default)
+	# This should STILL fail because the presence of the call is the defect,
+	# not just the grant size.
+	mv2_ok = test_violation(
+		"MV2: deny-by-default call to removed function",
+		'''		// DANGEROUS: calling removed function with empty grant is still wrong
+		const tenant = await internalClient().query(
+			"mcpTenants:getTenantByTokenHash" as any,
+			{ tokenHash },
+		);
+		if (tenant) {
+			c.set("oauthContext", {
+				clientId: `legacy:${tenant.tenantName}`,
+				userId: `legacy:${tenant.tenantName}`,
+				scopes: [],
+				scopeProfile: "legacy-tenant-generic",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				expiresAt: Date.now() + 3600 * 1000,
+				isMaster: false,
+			});
+			await next();
+			return;
+		}''',
+		1,
+	)
+	all_ok = all_ok and mv2_ok
 	print()
 
 	# Summary

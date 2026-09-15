@@ -240,12 +240,14 @@ GRANT_FIELD_PATTERN = re.compile(
 )
 LITERAL_ARRAY_CONTENT_PATTERN = re.compile(r"^\[\s*\]$")
 
-# Patterns for detecting dead-table references (for verification of removal)
+# Patterns for detecting dead-table references (for verification of removal).
+# These match: quoted string references like "mcpTenants:getTenantByTokenHash"
+# or "oauthDcr:validateAccessToken", quoted table names, and api.* references.
 MCPTENANTS_REFERENCE_PATTERN = re.compile(
-	r'["\'`]mcpTenants["\']|mcpTenants:.*Query|legacyTenant:.*Query'
+	r'["\'`]mcpTenants["\'`]|["\'`]mcpTenants:|mcpTenants:.*|api\.mcpTenants|internal\.mcpTenants|legacyTenant:'
 )
 OAUTHCLIENTS_REFERENCE_PATTERN = re.compile(
-	r'["\'`]oauthClients["\']|oauthDcr:.*Query|validateDcrToken|dcrClient:.*Query|validateLegacyDcrToken'
+	r'["\'`]oauthClients["\'`]|["\'`]oauthTokens["\'`]|["\'`]oauthDcr:|oauthDcr:[a-zA-Z]|api\.oauthDcr|internal\.oauthDcr|api\.oauthClients|api\.oauthTokens|validateDcrToken|validateLegacyDcrToken'
 )
 
 
@@ -400,18 +402,19 @@ def extract_branch(text: str, marker: str, window: int = 6000) -> str:
 	return text[idx : idx + window]
 
 
-def run_inventory() -> int:
-	auth_ts = REPO_ROOT / "src" / "auth.ts"
-	if not auth_ts.exists() or auth_ts.stat().st_size == 0:
+def run_inventory(auth_ts_path: Path | None = None) -> int:
+	if auth_ts_path is None:
+		auth_ts_path = REPO_ROOT / "src" / "auth.ts"
+	if not auth_ts_path.exists() or auth_ts_path.stat().st_size == 0:
 		print(
-			"REFUSING TO JUDGE: unreadable subject mcp-server/src/auth.ts "
+			f"REFUSING TO JUDGE: unreadable subject {auth_ts_path} "
 			"(missing or empty)"
 		)
 		return 2
-	text = auth_ts.read_text(encoding="utf-8")
+	text = auth_ts_path.read_text(encoding="utf-8")
 	if not text.strip():
 		print(
-			"REFUSING TO JUDGE: unreadable subject mcp-server/src/auth.ts "
+			f"REFUSING TO JUDGE: unreadable subject {auth_ts_path} "
 			"(blank content)"
 		)
 		return 2
@@ -493,7 +496,7 @@ def run_inventory() -> int:
 		if not branch_text:
 			print(
 				f"REFUSING TO JUDGE: marker {b['marker']!r} not found in "
-				"mcp-server/src/auth.ts — cannot classify branch "
+				f"{auth_ts_path} — cannot classify branch "
 				f"{b['name']}"
 			)
 			return 2
@@ -518,10 +521,15 @@ def main() -> int:
 		action="store_true",
 		help="Run the bipolar + tri-pole probe against fixture strings (not the live repo).",
 	)
+	parser.add_argument(
+		"--auth-ts",
+		type=Path,
+		help="Path to auth.ts file to check (default: mcp-server/src/auth.ts).",
+	)
 	args = parser.parse_args()
 	if args.self_test:
 		return run_self_test()
-	return run_inventory()
+	return run_inventory(args.auth_ts)
 
 
 if __name__ == "__main__":

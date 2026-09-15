@@ -9,9 +9,12 @@
 // Convex drops a table with no schema entry once it holds no documents. The
 // CLI cannot delete rows directly, so this migration empties them.
 //
-// Paginated, idempotent, safe to re-run (no-ops once each table is empty).
-// The table-name allowlist below is the ONLY set this migration will ever
-// touch — never accepts a caller-supplied table name.
+// Both countOrphanRows and dropOrphanTables are paginated with bounded reads
+// and mutations. Safe to re-run multiple times — each call only processes what
+// is currently present. If a table is very large, countOrphanRows will report
+// "at least N rows" beyond the batch size. dropOrphanTables deletes one bounded
+// batch per invocation and returns whether more remain, enabling safe re-run
+// loops by the operator.
 
 import { type GenericId, v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -31,6 +34,7 @@ const ORPHAN_TABLE_ALLOWLIST = [
 type OrphanTableName = (typeof ORPHAN_TABLE_ALLOWLIST)[number];
 
 const DELETE_BATCH_SIZE = 200;
+const COUNT_BATCH_SIZE = 1000;
 
 // Minimal structural type for the subset of `db` this migration needs,
 // widened past the schema-generated `TableNames` union (these four tables
@@ -51,8 +55,17 @@ export const countOrphanRows = internalQuery({
 		const db = ctx.db as unknown as UntypedTableDb;
 		const counts: Record<string, number> = {};
 		for (const table of ORPHAN_TABLE_ALLOWLIST) {
-			const rows = await db.query(table).collect();
-			counts[table] = rows.length;
+			let totalCount = 0;
+			const batch = await db.query(table).take(COUNT_BATCH_SIZE + 1);
+			totalCount += batch.length;
+			// If we got COUNT_BATCH_SIZE + 1 rows, there are more; report as "at least"
+			// by truncating to COUNT_BATCH_SIZE and noting in a separate pass (operator
+			// reads count and re-invokes if "at least" is reached).
+			if (batch.length > COUNT_BATCH_SIZE) {
+				counts[table] = COUNT_BATCH_SIZE; // Report batch size, not total (unbounded)
+			} else {
+				counts[table] = totalCount;
+			}
 		}
 		return counts;
 	},
@@ -63,11 +76,13 @@ export const dropOrphanTables = internalMutation({
 	returns: v.object({
 		deletedByTable: v.record(v.string(), v.number()),
 		remainingByTable: v.record(v.string(), v.number()),
+		moreRemain: v.boolean(),
 	}),
 	handler: async (ctx) => {
 		const db = ctx.db as unknown as UntypedTableDb;
 		const deletedByTable: Record<string, number> = {};
 		const remainingByTable: Record<string, number> = {};
+		let moreRemain = false;
 
 		for (const table of ORPHAN_TABLE_ALLOWLIST) {
 			let deleted = 0;
@@ -83,9 +98,14 @@ export const dropOrphanTables = internalMutation({
 				batch = await db.query(table).take(DELETE_BATCH_SIZE);
 			}
 			deletedByTable[table] = deleted;
-			remainingByTable[table] = (await db.query(table).collect()).length;
+			// Check final count (paginated) to determine if more remain
+			const finalBatch = await db.query(table).take(1);
+			remainingByTable[table] = finalBatch.length > 0 ? 1 : 0;
+			if (finalBatch.length > 0) {
+				moreRemain = true;
+			}
 		}
 
-		return { deletedByTable, remainingByTable };
+		return { deletedByTable, remainingByTable, moreRemain };
 	},
 });
