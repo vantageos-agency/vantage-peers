@@ -2,8 +2,8 @@
 /**
  * Migration test: dropOrphanTables must delete exactly one batch per call.
  *
- * task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed four orphan tables
- * (chunks, memoryEmbeddings, memorySearch, vp_migrations) by emptying them.
+ * Removed five orphan tables (chunks, mcpTenants, memoryEmbeddings,
+ * memorySearch, vp_migrations) by emptying them.
  * The migration must be bounded: each call deletes exactly DELETE_BATCH_SIZE
  * rows from the first non-empty table and returns moreRemain = true/false.
  *
@@ -122,5 +122,55 @@ describe("dropOrphanTables — one bounded batch per call", () => {
 			return rows.length;
 		});
 		expect(finalCount).toBe(0);
+	});
+});
+
+describe("dropOrphanTables — mcpTenants allowlist coverage", () => {
+	test("allowlist reports exactly five orphan table names", async () => {
+		const t = createT();
+
+		const counts = await t.query(internal.migrations.countOrphanRows, {});
+
+		expect(Object.keys(counts).sort()).toEqual(
+			[
+				"chunks",
+				"mcpTenants",
+				"memoryEmbeddings",
+				"memorySearch",
+				"vp_migrations",
+			].sort(),
+		);
+	});
+
+	test("mcpTenants row is emptied by dropOrphanTables", async () => {
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			await ctx.db.insert("mcpTenants" as any, {
+				name: "orphan-row",
+			});
+		});
+
+		const before = await t.query(internal.migrations.countOrphanRows, {});
+		expect(before.mcpTenants).toBe(1);
+
+		let moreRemain = true;
+		let iterations = 0;
+		while (moreRemain && iterations < 10) {
+			const result = await t.mutation(
+				internal.migrations.dropOrphanTables,
+				{},
+			);
+			moreRemain = result.moreRemain;
+			iterations++;
+		}
+
+		const after = await t.query(internal.migrations.countOrphanRows, {});
+		expect(after.mcpTenants).toBe(0);
+
+		const remainingRows = await t.run(async (ctx) => {
+			return (await ctx.db.query("mcpTenants" as any).collect()).length;
+		});
+		expect(remainingRows).toBe(0);
 	});
 });

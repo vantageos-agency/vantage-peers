@@ -3,12 +3,15 @@
 //   npx convex run "migrations/drop_orphan_tables:dropOrphanTables" '{}'
 //   (repeat the second command until it returns moreRemain: false)
 //
-// Purpose: task k173r2p1yh94m5f7yvgr1b30gx8dn3ez — remove four orphan tables
-// that carry zero references in convex/schema.ts and zero source references:
-// "chunks", "memoryEmbeddings", "memorySearch", "vp_migrations". Because they
-// are not declared in the schema, there is nothing to remove from schema.ts —
-// Convex drops a table with no schema entry once it holds no documents. The
-// CLI cannot delete rows directly, so this migration empties them.
+// Purpose: remove five orphan tables that carry zero references in
+// convex/schema.ts and zero source references: "chunks", "mcpTenants",
+// "memoryEmbeddings", "memorySearch", "vp_migrations". "mcpTenants" was
+// declared in the schema until the table-removal PR dropped its schema
+// entry; it is now undeclared with leftover rows, exactly the same state
+// as the other four. Because none of the five are declared in the schema,
+// there is nothing to remove from schema.ts. This migration empties the
+// rows — removing the resulting empty table shell is a separate dashboard
+// step, not performed here.
 //
 // Each call to dropOrphanTables deletes exactly one bounded batch
 // (DELETE_BATCH_SIZE=200 rows) from the first non-empty table, then returns.
@@ -21,12 +24,13 @@ import { type GenericId, v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 
 // Hardcoded allowlist — the only table names this migration will ever act on.
-// None of these four names are declared in convex/schema.ts (that is exactly
+// None of these five names are declared in convex/schema.ts (that is exactly
 // why they are orphans), so they carry no `TableNames` type — every access
 // below goes through a narrow, explicitly-typed escape hatch keyed ONLY off
 // this literal tuple, never off a caller-supplied string.
 const ORPHAN_TABLE_ALLOWLIST = [
 	"chunks",
+	"mcpTenants",
 	"memoryEmbeddings",
 	"memorySearch",
 	"vp_migrations",
@@ -38,7 +42,7 @@ const DELETE_BATCH_SIZE = 200;
 const COUNT_BATCH_SIZE = 1000;
 
 // Minimal structural type for the subset of `db` this migration needs,
-// widened past the schema-generated `TableNames` union (these four tables
+// widened past the schema-generated `TableNames` union (these five tables
 // have no schema entry, hence no generated type) while still requiring the
 // caller to pass one of the hardcoded literal names above.
 type UntypedTableDb = {
