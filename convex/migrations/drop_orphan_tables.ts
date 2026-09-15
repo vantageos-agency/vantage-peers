@@ -1,4 +1,5 @@
-// MANUAL INVOCATION REQUIRED — DEV ONLY, DO NOT auto-run against prod:
+// MANUAL INVOCATION ONLY — on prod only under the coordinator's deploy
+// authorization, after the table-removal deploy; never auto-run:
 //   npx convex run "migrations/drop_orphan_tables:countOrphanRows" '{}'
 //   npx convex run "migrations/drop_orphan_tables:dropOrphanTables" '{}'
 //   (repeat the second command until it returns moreRemain: false)
@@ -93,24 +94,38 @@ export const dropOrphanTables = internalMutation({
 		// Operator must call repeatedly until moreRemain is false.
 		// This ensures one call never deletes more than DELETE_BATCH_SIZE rows
 		// across all tables, keeping mutation execution budget bounded.
-		for (const table of ORPHAN_TABLE_ALLOWLIST) {
+		for (let i = 0; i < ORPHAN_TABLE_ALLOWLIST.length; i++) {
+			const table = ORPHAN_TABLE_ALLOWLIST[i];
 			// Take one batch of rows from this table
 			const batch = await db.query(table).take(DELETE_BATCH_SIZE);
-			let deleted = 0;
 
 			if (batch.length > 0) {
 				// Delete this batch
+				let deleted = 0;
 				for (const doc of batch) {
 					await db.delete(doc._id);
 					deleted++;
 				}
 				deletedByTable[table] = deleted;
 
-				// Check if more rows remain in this table
-				const remaining = await db.query(table).take(1);
-				remainingByTable[table] = remaining.length > 0 ? 1 : 0;
-				if (remaining.length > 0) {
+				// moreRemain must reflect the WHOLE allowlist, not just the
+				// table this call happened to act on — a later table with
+				// rows left untouched by this call must not read as done.
+				// At most five take(1) reads total (this table + every
+				// later one), still bounded.
+				const remainingHere = await db.query(table).take(1);
+				remainingByTable[table] = remainingHere.length > 0 ? 1 : 0;
+				if (remainingHere.length > 0) {
 					moreRemain = true;
+				}
+
+				for (let j = i + 1; j < ORPHAN_TABLE_ALLOWLIST.length; j++) {
+					const laterTable = ORPHAN_TABLE_ALLOWLIST[j];
+					const remainingLater = await db.query(laterTable).take(1);
+					remainingByTable[laterTable] = remainingLater.length > 0 ? 1 : 0;
+					if (remainingLater.length > 0) {
+						moreRemain = true;
+					}
 				}
 
 				// Stop after this table — one batch per call

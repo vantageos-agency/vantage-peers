@@ -2,6 +2,9 @@
 /**
  * Migration test: dropOrphanTables must delete exactly one batch per call.
  *
+ * Origin: #1286 removed four orphan tables; #1289 adds mcpTenants and fixes
+ * moreRemain across tables.
+ *
  * Removed five orphan tables (chunks, mcpTenants, memoryEmbeddings,
  * memorySearch, vp_migrations) by emptying them.
  * The migration must be bounded: each call deletes exactly DELETE_BATCH_SIZE
@@ -26,6 +29,18 @@ const modules = Object.fromEntries(
 const createT = () => convexTest(schema, modules);
 
 const DELETE_BATCH_SIZE = 200;
+
+// The mcpTenants field set actually read on production for #1289 (dummy
+// values; tokenHash is an obviously fake string, never a real credential).
+const seedMcpTenantsRow = (ctx: { db: { insert: (table: any, doc: any) => Promise<unknown> } }) =>
+	ctx.db.insert("mcpTenants" as any, {
+		convexUrl: "https://example-dummy-deployment.convex.cloud",
+		createdAt: 0,
+		enabledAt: 0,
+		lastUsedAt: 0,
+		tenantName: "orphan-row-fixture",
+		tokenHash: "dummy-fake-token-hash-not-a-real-credential",
+	});
 
 describe("dropOrphanTables — one bounded batch per call", () => {
 	test("RED (looping version fails): first call deletes all rows (unbounded)", async () => {
@@ -146,9 +161,7 @@ describe("dropOrphanTables — mcpTenants allowlist coverage", () => {
 		const t = createT();
 
 		await t.run(async (ctx) => {
-			await ctx.db.insert("mcpTenants" as any, {
-				name: "orphan-row",
-			});
+			await seedMcpTenantsRow(ctx);
 		});
 
 		const before = await t.query(internal.migrations.countOrphanRows, {});
@@ -172,5 +185,76 @@ describe("dropOrphanTables — mcpTenants allowlist coverage", () => {
 			return (await ctx.db.query("mcpTenants" as any).collect()).length;
 		});
 		expect(remainingRows).toBe(0);
+	});
+});
+
+describe("dropOrphanTables — moreRemain must reflect every later allowlisted table, not just the one just emptied", () => {
+	test("3 chunks rows + 1 mcpTenants row: first call empties chunks but must still report moreRemain: true", async () => {
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 3; i++) {
+				await ctx.db.insert("chunks" as any, {
+					text: `chunk-${i}`,
+					metadata: { index: i },
+				});
+			}
+			await seedMcpTenantsRow(ctx);
+		});
+
+		const firstResult = await t.mutation(
+			internal.migrations.dropOrphanTables,
+			{},
+		);
+
+		// chunks table is now empty (all 3 rows deleted in the one batch),
+		// but mcpTenants still holds 1 row — moreRemain must not go false
+		// just because the table this call happened to act on is empty.
+		expect(firstResult.deletedByTable["chunks"]).toBe(3);
+		expect(firstResult.moreRemain).toBe(true);
+
+		const counts = await t.query(internal.migrations.countOrphanRows, {});
+		expect(counts.mcpTenants).toBe(1);
+	});
+
+	test("450 chunks rows + 1 mcpTenants row: looping until moreRemain false empties every allowlisted table", async () => {
+		const t = createT();
+
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 450; i++) {
+				await ctx.db.insert("chunks" as any, {
+					text: `chunk-${i}`,
+					metadata: { index: i },
+				});
+			}
+			await seedMcpTenantsRow(ctx);
+		});
+
+		let moreRemain = true;
+		let iterations = 0;
+		const MAX_ITERATIONS = 20;
+		while (moreRemain && iterations < MAX_ITERATIONS) {
+			const result = await t.mutation(
+				internal.migrations.dropOrphanTables,
+				{},
+			);
+			moreRemain = result.moreRemain;
+			iterations++;
+		}
+
+		// If the operator's own stop condition ("repeat until moreRemain:
+		// false") never fires within a generous cap, the loop-until contract
+		// is broken — fail loudly instead of silently accepting a short loop.
+		expect(iterations).toBeLessThan(MAX_ITERATIONS);
+		expect(moreRemain).toBe(false);
+
+		const finalCounts = await t.query(internal.migrations.countOrphanRows, {});
+		expect(finalCounts).toEqual({
+			chunks: 0,
+			mcpTenants: 0,
+			memoryEmbeddings: 0,
+			memorySearch: 0,
+			vp_migrations: 0,
+		});
 	});
 });
