@@ -70,7 +70,7 @@
 //     checks presence of a `.eq(fieldName, ...)` call per required field,
 //     not that the resulting range is a well-formed Convex IndexRange.
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import * as ts from "typescript";
 
@@ -129,9 +129,16 @@ function lineOf(sf: ts.SourceFile, node: ts.Node): number {
  * indexName -> ordered field list, exactly as declared via `.index(name, [fields])`.
  * Only indexes whose field list includes "readAt" are relevant to this guard.
  */
-export function extractSchemaUnreadIndexes(schemaPath: string): Record<string, string[]> {
+export function extractSchemaUnreadIndexes(
+	schemaPath: string,
+): Record<string, string[]> {
 	const source = readFileSync(schemaPath, "utf8");
-	const sf = ts.createSourceFile(schemaPath, source, ts.ScriptTarget.Latest, true);
+	const sf = ts.createSourceFile(
+		schemaPath,
+		source,
+		ts.ScriptTarget.Latest,
+		true,
+	);
 	const indexes: Record<string, string[]> = {};
 
 	function collectIndexCalls(node: ts.Node) {
@@ -182,7 +189,10 @@ function chainRootIsParam(expr: ts.Expression, paramName: string): boolean {
 			continue;
 		}
 		if (ts.isIdentifier(cur)) return cur.text === paramName;
-		if (ts.isCallExpression(cur) && ts.isPropertyAccessExpression(cur.expression)) {
+		if (
+			ts.isCallExpression(cur) &&
+			ts.isPropertyAccessExpression(cur.expression)
+		) {
 			cur = cur.expression.expression;
 			continue;
 		}
@@ -217,10 +227,15 @@ function collectBoundFields(bodyNode: ts.Node, paramName: string): Set<string> {
 	return fields;
 }
 
-type FunctionLike = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+type FunctionLike =
+	| ts.FunctionDeclaration
+	| ts.ArrowFunction
+	| ts.FunctionExpression;
 
 /** Find same-file top-level function/arrow-const declarations, keyed by name (raw nodes, not yet resolved to a q-param). */
-function collectTopLevelFunctions(sf: ts.SourceFile): Map<string, FunctionLike> {
+function collectTopLevelFunctions(
+	sf: ts.SourceFile,
+): Map<string, FunctionLike> {
 	const fns = new Map<string, FunctionLike>();
 
 	function visit(node: ts.Node) {
@@ -232,7 +247,8 @@ function collectTopLevelFunctions(sf: ts.SourceFile): Map<string, FunctionLike> 
 				if (
 					ts.isIdentifier(decl.name) &&
 					decl.initializer &&
-					(ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+					(ts.isArrowFunction(decl.initializer) ||
+						ts.isFunctionExpression(decl.initializer))
 				) {
 					fns.set(decl.name.text, decl.initializer);
 				}
@@ -299,7 +315,8 @@ function resolveRangeBuilder(
 				if (
 					ts.isReturnStatement(stmt) &&
 					stmt.expression &&
-					(ts.isArrowFunction(stmt.expression) || ts.isFunctionExpression(stmt.expression))
+					(ts.isArrowFunction(stmt.expression) ||
+						ts.isFunctionExpression(stmt.expression))
 				) {
 					return resolveRangeBuilder(stmt.expression, helperFns, depth + 1);
 				}
@@ -374,7 +391,10 @@ function chainHasMessageReceiptsQuery(expr: ts.Expression): boolean {
 	}
 }
 
-export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): ScanResult {
+export function scanUnreadIndexBindings(
+	convexDir: string,
+	schemaPath: string,
+): ScanResult {
 	const schemaIndexes = extractSchemaUnreadIndexes(schemaPath);
 	const indexNames = new Set(Object.keys(schemaIndexes));
 	const matches: UnreadIndexMatch[] = [];
@@ -394,10 +414,15 @@ export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): 
 			) {
 				const nameArg = node.arguments[0];
 				let resolvedName: string | undefined = resolveStringLike(nameArg);
-				if (resolvedName === undefined && ts.isIdentifier(nameArg) && stringConsts.has(nameArg.text)) {
+				if (
+					resolvedName === undefined &&
+					ts.isIdentifier(nameArg) &&
+					stringConsts.has(nameArg.text)
+				) {
 					resolvedName = stringConsts.get(nameArg.text);
 				}
-				const isDynamicTemplate = resolvedName === undefined && ts.isTemplateExpression(nameArg);
+				const isDynamicTemplate =
+					resolvedName === undefined && ts.isTemplateExpression(nameArg);
 
 				if (resolvedName !== undefined && indexNames.has(resolvedName)) {
 					const requiredFields = schemaIndexes[resolvedName];
@@ -415,7 +440,8 @@ export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): 
 							boundFields: [],
 							missingFields: requiredFields,
 							resolved: true,
-							reason: "withIndex called with no range-builder argument (arguments.length < 2) — full index walk, all fields unbound",
+							reason:
+								"withIndex called with no range-builder argument (arguments.length < 2) — full index walk, all fields unbound",
 						});
 					} else {
 						const resolved = resolveRangeBuilder(rangeArg, helperFns);
@@ -426,7 +452,9 @@ export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): 
 						if (resolved) {
 							const { paramName, body } = resolved;
 							const boundFields = collectBoundFields(body, paramName);
-							const missingFields = requiredFields.filter((f) => !boundFields.has(f));
+							const missingFields = requiredFields.filter(
+								(f) => !boundFields.has(f),
+							);
 							matches.push({
 								file,
 								line: lineOf(sf, node),
@@ -463,7 +491,9 @@ export function scanUnreadIndexBindings(convexDir: string, schemaPath: string): 
 					// Otherwise (unresolvable name, chain does NOT provably read
 					// messageReceipts) this remains the pre-existing NAMED GAP: we
 					// cannot tell if it's even relevant, so it's skipped.
-					const onMessageReceiptsChain = chainHasMessageReceiptsQuery(node.expression.expression);
+					const onMessageReceiptsChain = chainHasMessageReceiptsQuery(
+						node.expression.expression,
+					);
 					if (isDynamicTemplate || onMessageReceiptsChain) {
 						matches.push({
 							file,

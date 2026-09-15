@@ -38,7 +38,7 @@
 // author.
 //
 // THIS VERSION uses a real TypeScript AST (see
-// `./lib/unreadIndexScan.ts` for the full design writeup, including the
+// `tests/lib/unreadIndexScan.ts` for the full design writeup, including the
 // NAMED GAPS this scan does not close) to:
 //   - derive the required field list for every "*_unread" index from
 //     schema.ts itself (not re-typed here), so the assertion tracks the
@@ -79,7 +79,7 @@
 //     scan only resolved `ts.StringLiteral` nodes for the index-name
 //     argument; a template literal with the exact same runtime string value
 //     was invisible to it.
-// Both are now closed in `./lib/unreadIndexScan.ts`: a withIndex call
+// Both are now closed in `tests/lib/unreadIndexScan.ts`: a withIndex call
 // resolving to a tracked index with fewer than 2 arguments is a violation
 // (missingFields = every required field); `ts.NoSubstitutionTemplateLiteral`
 // is resolved identically to a string literal for both the index-name
@@ -88,11 +88,21 @@
 // provably reads `.query("messageReceipts")`, now fails closed as a
 // violation too, rather than being silently skipped as a NAMED GAP.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { scanUnreadIndexBindings } from "./lib/unreadIndexScan";
+// The scanner lives outside convex/ on purpose: it imports Node builtins, and
+// the Convex CLI bundles every single-dot file under convex/ as a function
+// entry point (scripts/check-convex-node-builtins.mjs guards that class).
+import { scanUnreadIndexBindings } from "../../tests/lib/unreadIndexScan";
 
 const CONVEX_DIR = join(__dirname, "..");
 const SCHEMA_PATH = join(CONVEX_DIR, "schema.ts");
@@ -106,21 +116,30 @@ const MESSAGES_PATH = join(CONVEX_DIR, "messages.ts");
  * `cleanup()` (also swept by the module-level `afterEach` below as a
  * belt-and-suspenders backstop).
  */
-function makeFixtureConvexDir(): { dir: string; schemaPath: string; cleanup: () => void } {
+function makeFixtureConvexDir(): {
+	dir: string;
+	schemaPath: string;
+	cleanup: () => void;
+} {
 	const root = mkdtempSync(join(tmpdir(), "unread-index-scan-fixture-"));
 	const dir = join(root, "convex");
 	mkdirSync(dir, { recursive: true });
 	const schemaSrc = readFileSync(SCHEMA_PATH, "utf8");
 	const schemaPath = join(dir, "schema.ts");
 	writeFileSync(schemaPath, schemaSrc);
-	return { dir, schemaPath, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+	return {
+		dir,
+		schemaPath,
+		cleanup: () => rmSync(root, { recursive: true, force: true }),
+	};
 }
 
 const fixtureRootsToSweep: string[] = [];
 afterEach(() => {
 	while (fixtureRootsToSweep.length > 0) {
 		const root = fixtureRootsToSweep.pop();
-		if (root && existsSync(root)) rmSync(root, { recursive: true, force: true });
+		if (root && existsSync(root))
+			rmSync(root, { recursive: true, force: true });
 	}
 });
 
@@ -129,14 +148,21 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 		const { schemaIndexes } = scanUnreadIndexBindings(CONVEX_DIR, SCHEMA_PATH);
 		expect(Object.keys(schemaIndexes).length).toBeGreaterThan(0);
 		expect(schemaIndexes.by_recipient_unread).toEqual(["recipient", "readAt"]);
-		expect(schemaIndexes.by_instance_unread).toEqual(["recipientInstanceId", "readAt"]);
+		expect(schemaIndexes.by_instance_unread).toEqual([
+			"recipientInstanceId",
+			"readAt",
+		]);
 	});
 
 	test("MUST_REFUSE: messages.ts must be readable and must itself contain resolvable by_recipient_unread / by_instance_unread withIndex calls — never pass vacuously off other files alone", () => {
 		const { matches } = scanUnreadIndexBindings(CONVEX_DIR, SCHEMA_PATH);
 		const inMessagesTs = matches.filter((m) => m.file === MESSAGES_PATH);
-		const recipientCalls = inMessagesTs.filter((m) => m.indexName === "by_recipient_unread");
-		const instanceCalls = inMessagesTs.filter((m) => m.indexName === "by_instance_unread");
+		const recipientCalls = inMessagesTs.filter(
+			(m) => m.indexName === "by_recipient_unread",
+		);
+		const instanceCalls = inMessagesTs.filter(
+			(m) => m.indexName === "by_instance_unread",
+		);
 		expect(
 			recipientCalls.length,
 			`expected at least one resolvable by_recipient_unread withIndex call in ${MESSAGES_PATH} — found ${recipientCalls.length}. Either the file is unreadable/renamed, or the known call-sites moved to a shape this scan cannot resolve.`,
@@ -151,7 +177,9 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 		const { matches } = scanUnreadIndexBindings(CONVEX_DIR, SCHEMA_PATH);
 		expect(matches.length).toBeGreaterThan(0);
 
-		const violations = matches.filter((m) => !m.resolved || m.missingFields.length > 0);
+		const violations = matches.filter(
+			(m) => !m.resolved || m.missingFields.length > 0,
+		);
 		if (violations.length > 0) {
 			const detail = violations
 				.map(
@@ -181,7 +209,11 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 	// full local clone (Eta comment on PR #1287, CI run 34944088155).
 	// -------------------------------------------------------------------------
 	test("MX1 positive control: the scanner over the pre-fix messages.ts fixture (origin 335791f) reports all 7 unbound sites", () => {
-		const PRE_FIX_FIXTURE_PATH = join(__dirname, "fixtures", "pre-fix-messages-335791f.ts.txt");
+		const PRE_FIX_FIXTURE_PATH = join(
+			__dirname,
+			"fixtures",
+			"pre-fix-messages-335791f.ts.txt",
+		);
 		const fixture = makeFixtureConvexDir();
 		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
 
@@ -189,16 +221,30 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 		// Strip the leading "// origin: ..." header line before feeding the
 		// scanner — it must see exactly the pre-fix `messages.ts` source, not
 		// this fixture's own provenance comment.
-		const preFixMessagesSrc = preFixFixtureRaw.replace(/^\/\/ origin:.*\r?\n/, "");
+		const preFixMessagesSrc = preFixFixtureRaw.replace(
+			/^\/\/ origin:.*\r?\n/,
+			"",
+		);
 		writeFileSync(join(fixture.dir, "messages.ts"), preFixMessagesSrc);
 
-		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
-		const violations = matches.filter((m) => !m.resolved || m.missingFields.length > 0);
+		const { matches } = scanUnreadIndexBindings(
+			fixture.dir,
+			fixture.schemaPath,
+		);
+		const violations = matches.filter(
+			(m) => !m.resolved || m.missingFields.length > 0,
+		);
 
 		const detail = violations
-			.map((v) => `${v.file}:${v.line} index="${v.indexName}" missingFields=[${v.missingFields.join(", ")}]`)
+			.map(
+				(v) =>
+					`${v.file}:${v.line} index="${v.indexName}" missingFields=[${v.missingFields.join(", ")}]`,
+			)
 			.join("\n");
-		expect(violations.length, `expected exactly 7 unbound sites in pre-fix (origin 335791f) messages.ts, got ${violations.length}:\n${detail}`).toBe(7);
+		expect(
+			violations.length,
+			`expected exactly 7 unbound sites in pre-fix (origin 335791f) messages.ts, got ${violations.length}:\n${detail}`,
+		).toBe(7);
 		for (const v of violations) {
 			expect(v.missingFields).toContain("readAt");
 		}
@@ -212,7 +258,7 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 	// index walk — must be a violation. Fixture-only; never mutates this
 	// repo's real messages.ts.
 	// -------------------------------------------------------------------------
-	test("MX2b MUST_BLOCK: withIndex(\"by_recipient_unread\") with no range-builder argument is a violation with missingFields = every required field", () => {
+	test('MX2b MUST_BLOCK: withIndex("by_recipient_unread") with no range-builder argument is a violation with missingFields = every required field', () => {
 		const fixture = makeFixtureConvexDir();
 		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
 
@@ -238,10 +284,16 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 			].join("\n"),
 		);
 
-		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const { matches } = scanUnreadIndexBindings(
+			fixture.dir,
+			fixture.schemaPath,
+		);
 		const violation = matches.find((m) => m.file === fixturePath);
 
-		expect(violation, `expected the scan to report a violation for ${fixturePath}, but no match was recorded for that file at all — the missing-range-arg shape is invisible again`).toBeDefined();
+		expect(
+			violation,
+			`expected the scan to report a violation for ${fixturePath}, but no match was recorded for that file at all — the missing-range-arg shape is invisible again`,
+		).toBeDefined();
 		expect(violation!.resolved).toBe(true);
 		expect(violation!.indexName).toBe("by_recipient_unread");
 		expect(violation!.missingFields).toEqual(["recipient", "readAt"]);
@@ -282,10 +334,16 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 			].join("\n"),
 		);
 
-		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const { matches } = scanUnreadIndexBindings(
+			fixture.dir,
+			fixture.schemaPath,
+		);
 		const violation = matches.find((m) => m.file === fixturePath);
 
-		expect(violation, `expected the scan to report a violation for ${fixturePath}, but no match was recorded for that file at all — the no-substitution template literal index name is invisible again`).toBeDefined();
+		expect(
+			violation,
+			`expected the scan to report a violation for ${fixturePath}, but no match was recorded for that file at all — the no-substitution template literal index name is invisible again`,
+		).toBeDefined();
 		expect(violation!.resolved).toBe(true);
 		expect(violation!.indexName).toBe("by_recipient_unread");
 		expect(violation!.boundFields).toEqual(["recipient"]);
@@ -331,10 +389,16 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 			].join("\n"),
 		);
 
-		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
+		const { matches } = scanUnreadIndexBindings(
+			fixture.dir,
+			fixture.schemaPath,
+		);
 		const violation = matches.find((m) => m.file === fixturePath);
 
-		expect(violation, `expected the scan to report a violation for ${fixturePath}, but the dynamic template literal index name was invisible again`).toBeDefined();
+		expect(
+			violation,
+			`expected the scan to report a violation for ${fixturePath}, but the dynamic template literal index name was invisible again`,
+		).toBeDefined();
 		expect(violation!.resolved).toBe(false);
 		expect(violation!.missingFields).toEqual(["<unresolved index name>"]);
 

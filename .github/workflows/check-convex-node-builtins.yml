@@ -1,0 +1,40 @@
+name: Check Convex node builtins
+
+# The Convex CLI bundler treats every single-dot .ts/.js file under convex/ as a
+# function entry point and refuses the WHOLE deploy when one of them imports a
+# Node builtin without a top-level "use node" directive. Unit tests cannot see
+# this (vitest runs everything under Node), so without this gate the defect
+# surfaces only when a prod deploy is refused. A test-only helper under
+# convex/__tests__/lib/ did exactly that.
+#
+# Triggers and concurrency follow check-tool-counts.yml: `pull_request` (target
+# `main`) is the ONLY trigger for a PR, so every PR produces exactly one run of
+# this context that actually executes; `push` (target `main`) covers the
+# post-merge commit. No per-job fork `if:` guard, since a skipped job reports as
+# a passing context that measured nothing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: check-convex-node-builtins-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-convex-node-builtins:
+    name: scripts/check-convex-node-builtins.mjs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Assert no Convex entry point imports a Node builtin without "use node"
+        # Exit 1 names each file:line and module; exit 2 refuses to judge
+        # (convex/ unreadable, a file unreadable, or zero entry points scanned).
+        # Stdlib-only Node script — no `npm install` step required.
+        run: node scripts/check-convex-node-builtins.mjs
