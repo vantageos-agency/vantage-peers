@@ -88,7 +88,6 @@
 // provably reads `.query("messageReceipts")`, now fails closed as a
 // violation too, rather than being silently skipped as a NAMED GAP.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,19 +167,29 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 	// MX1 — positive control (PR #1287, Eta comment #5670724031). The scanner
 	// run over the KNOWN-BAD pre-fix `messages.ts` (commit 335791f, the last
 	// commit on `main` before the by_recipient_unread/by_instance_unread range
-	// fix landed) must report EXACTLY the 7 known unbound call sites. Fed via
-	// `git show <sha>:convex/messages.ts` into a throwaway fixture directory —
-	// this repo's real files are never touched.
+	// fix landed) must report EXACTLY the 7 known unbound call sites. Fed from
+	// a committed fixture file (`fixtures/pre-fix-messages-335791f.ts.txt`, a
+	// verbatim copy of that commit's `convex/messages.ts` with a one-line
+	// origin header) into a throwaway fixture directory — this repo's real
+	// files are never touched.
+	//
+	// The fixture is committed (rather than fetched via `git show` at test
+	// time) because CI's checkout is shallow (`actions/checkout@v4` default
+	// depth 1): the pre-fix commit object is absent from a depth-1 clone, so
+	// `git show 335791f:convex/messages.ts` fails there with "fatal: invalid
+	// object name '335791f'" even though the same command succeeds in any
+	// full local clone (Eta comment on PR #1287, CI run 34944088155).
 	// -------------------------------------------------------------------------
-	test("MX1 positive control: the scanner over the pre-fix messages.ts (git show 335791f) reports all 7 unbound sites", () => {
-		const PRE_FIX_SHA = "335791f";
+	test("MX1 positive control: the scanner over the pre-fix messages.ts fixture (origin 335791f) reports all 7 unbound sites", () => {
+		const PRE_FIX_FIXTURE_PATH = join(__dirname, "fixtures", "pre-fix-messages-335791f.ts.txt");
 		const fixture = makeFixtureConvexDir();
 		fixtureRootsToSweep.push(fixture.dir.replace(/\/convex$/, ""));
 
-		const preFixMessagesSrc = execFileSync("git", ["show", `${PRE_FIX_SHA}:convex/messages.ts`], {
-			cwd: CONVEX_DIR,
-			encoding: "utf8",
-		});
+		const preFixFixtureRaw = readFileSync(PRE_FIX_FIXTURE_PATH, "utf8");
+		// Strip the leading "// origin: ..." header line before feeding the
+		// scanner — it must see exactly the pre-fix `messages.ts` source, not
+		// this fixture's own provenance comment.
+		const preFixMessagesSrc = preFixFixtureRaw.replace(/^\/\/ origin:.*\r?\n/, "");
 		writeFileSync(join(fixture.dir, "messages.ts"), preFixMessagesSrc);
 
 		const { matches } = scanUnreadIndexBindings(fixture.dir, fixture.schemaPath);
@@ -189,7 +198,7 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 		const detail = violations
 			.map((v) => `${v.file}:${v.line} index="${v.indexName}" missingFields=[${v.missingFields.join(", ")}]`)
 			.join("\n");
-		expect(violations.length, `expected exactly 7 unbound sites in pre-fix ${PRE_FIX_SHA}:convex/messages.ts, got ${violations.length}:\n${detail}`).toBe(7);
+		expect(violations.length, `expected exactly 7 unbound sites in pre-fix (origin 335791f) messages.ts, got ${violations.length}:\n${detail}`).toBe(7);
 		for (const v of violations) {
 			expect(v.missingFields).toContain("readAt");
 		}
