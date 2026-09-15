@@ -348,3 +348,11 @@ export const backfillBriefingNoteParticipants = internalMutation({
 		};
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Migration: drop four orphan tables (task k173r2p1yh94m5f7yvgr1b30gx8dn3ez)
+// Run: npx convex run migrations:countOrphanRows
+//      npx convex run migrations:dropOrphanTables (repeat until moreRemain=false)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { countOrphanRows, dropOrphanTables } from "./migrations/drop_orphan_tables.js";

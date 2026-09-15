@@ -1,6 +1,7 @@
 // MANUAL INVOCATION REQUIRED — DEV ONLY, DO NOT auto-run against prod:
 //   npx convex run "migrations/drop_orphan_tables:countOrphanRows" '{}'
 //   npx convex run "migrations/drop_orphan_tables:dropOrphanTables" '{}'
+//   (repeat the second command until it returns moreRemain: false)
 //
 // Purpose: task k173r2p1yh94m5f7yvgr1b30gx8dn3ez — remove four orphan tables
 // that carry zero references in convex/schema.ts and zero source references:
@@ -9,12 +10,12 @@
 // Convex drops a table with no schema entry once it holds no documents. The
 // CLI cannot delete rows directly, so this migration empties them.
 //
-// Both countOrphanRows and dropOrphanTables are paginated with bounded reads
-// and mutations. Safe to re-run multiple times — each call only processes what
-// is currently present. If a table is very large, countOrphanRows will report
-// "at least N rows" beyond the batch size. dropOrphanTables deletes one bounded
-// batch per invocation and returns whether more remain, enabling safe re-run
-// loops by the operator.
+// Each call to dropOrphanTables deletes exactly one bounded batch
+// (DELETE_BATCH_SIZE=200 rows) from the first non-empty table, then returns.
+// The operator must call it repeatedly until moreRemain is false.
+// This ensures mutation execution budget is never exceeded, even on very large
+// tables. Idempotent: safe to invoke repeatedly until all orphan tables are
+// empty.
 
 import { type GenericId, v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -84,28 +85,40 @@ export const dropOrphanTables = internalMutation({
 		const remainingByTable: Record<string, number> = {};
 		let moreRemain = false;
 
+		// Delete one bounded batch from the first non-empty table, then return.
+		// Operator must call repeatedly until moreRemain is false.
+		// This ensures one call never deletes more than DELETE_BATCH_SIZE rows
+		// across all tables, keeping mutation execution budget bounded.
 		for (const table of ORPHAN_TABLE_ALLOWLIST) {
+			// Take one batch of rows from this table
+			const batch = await db.query(table).take(DELETE_BATCH_SIZE);
 			let deleted = 0;
-			// Paginate in fixed-size batches so a large table never blows the
-			// mutation's execution budget; safe to re-run — each call only ever
-			// deletes what is currently present.
-			let batch = await db.query(table).take(DELETE_BATCH_SIZE);
-			while (batch.length > 0) {
+
+			if (batch.length > 0) {
+				// Delete this batch
 				for (const doc of batch) {
 					await db.delete(doc._id);
 					deleted++;
 				}
-				batch = await db.query(table).take(DELETE_BATCH_SIZE);
-			}
-			deletedByTable[table] = deleted;
-			// Check final count (paginated) to determine if more remain
-			const finalBatch = await db.query(table).take(1);
-			remainingByTable[table] = finalBatch.length > 0 ? 1 : 0;
-			if (finalBatch.length > 0) {
-				moreRemain = true;
+				deletedByTable[table] = deleted;
+
+				// Check if more rows remain in this table
+				const remaining = await db.query(table).take(1);
+				remainingByTable[table] = remaining.length > 0 ? 1 : 0;
+				if (remaining.length > 0) {
+					moreRemain = true;
+				}
+
+				// Stop after this table — one batch per call
+				return { deletedByTable, remainingByTable, moreRemain };
+			} else {
+				// This table is empty; record it and move to next
+				deletedByTable[table] = 0;
+				remainingByTable[table] = 0;
 			}
 		}
 
+		// All tables are empty
 		return { deletedByTable, remainingByTable, moreRemain };
 	},
 });
