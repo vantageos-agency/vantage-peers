@@ -695,6 +695,43 @@ def iter_real_commands(cmd: str):
         yield (piece, tokens)
 
 
+def raw_carries_action_words(text: str, binary: str, verb: str,
+                             skip_subcommands=frozenset()) -> bool:
+    """Last-resort probe on RAW text, for a segment the tokenizer could not
+    split (`tokens is None`) or a payload that could not be parsed at all.
+
+    Before this helper each deploy gate carried its own `"convex" in low and
+    "deploy" in low` substring test, and the env var NAME `CONVEX_DEPLOY_KEY`
+    alone satisfied both substrings: a catalogue write (`CONVEX_DEPLOY_KEY=...
+    convex run <fn> "$(cat args.json)"`, whose `"$(...)"` leaves an orphan quote
+    in the piece split_commands yields) was refused as a code deploy.
+
+    The rule here is WORDS, not substrings:
+      * `binary` must be a standalone word (a path prefix `node_modules/.bin/`
+        and a version suffix `@latest` are allowed; an identifier fragment
+        such as `CONVEX_DEPLOY_KEY`, `convex.json` or `$convex` is not).
+      * `verb` must be a standalone word AFTER that binary word (never part of
+        `DEPLOY_KEY`, `deployKey`, `deploy.sh`, `scripts/deploy`, `DEPLOY=1`).
+      * a binary word whose next word is in `skip_subcommands` (e.g. `run`)
+        is not the action -- unless `--push` follows, which uploads code.
+    It stays FAIL-CLOSED in intent: any binary word NOT followed by a skipped
+    subcommand, with the verb word anywhere after it, returns True."""
+    low = (text or "").lower()
+    binary_re = re.compile(
+        r"(?<![\w.$-])" + re.escape(binary) + r"(?:@[^\s'\"]*)?(?![\w.=-])"
+    )
+    verb_re = re.compile(r"(?<![\w./$-])" + re.escape(verb) + r"(?![\w.=-])")
+    for m in binary_re.finditer(low):
+        after = low[m.end():]
+        nxt = re.match(r"""[\s'"]*([^\s'"]+)""", after)
+        if (nxt and nxt.group(1) in skip_subcommands
+                and not re.search(r"(?<!\S)" + re.escape(DEPLOY_FLAG) + r"(?![\w-])", after)):
+            continue
+        if verb_re.search(after):
+            return True
+    return False
+
+
 def head_matches(tokens, name: str) -> bool:
     """True if `tokens[0]`, basename- and version-suffix-normalized, equals
     `name` literally -- never a substring match."""

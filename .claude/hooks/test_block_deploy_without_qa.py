@@ -170,3 +170,78 @@ def test_autre_outil_ignore():
         input=json.dumps({"tool_name": "Read", "tool_input": {"file_path": "x"}}),
         capture_output=True, text=True)
     assert p.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# v4.1.0 — `convex run` + CONVEX_DEPLOY_KEY n'est PAS un deploy (operator ruling
+# 2026-09-15). Le repli NON TOKENISABLE decide sur des MOTS, pas des sous-chaines.
+# MUST_BLOCK d'abord, MUST_PASS ensuite. Chaque cas verifie que la charge
+# contient bien ce qu'il pretend tester (atterrissage asserte).
+# ---------------------------------------------------------------------------
+
+_spec = importlib.util.spec_from_file_location("_qa_gate", HOOK)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+
+FIXTURE = pathlib.Path(__file__).with_name("tests") / "fixtures" / "catalogue-write-convex-run.sh"
+
+MUST_BLOCK = [
+    "npx convex deploy --yes",
+    "CONVEX_DEPLOY_KEY=x npx convex deploy --yes",
+    "bunx convex deploy",
+    "echo 'unclosed ; npx convex deploy",
+    "npx --yes convex deploy",
+    'sh -c "npx convex deploy"',
+]
+
+MUST_PASS = [
+    "CONVEX_DEPLOY_KEY=x node_modules/.bin/convex run hookContent:upsertHookContent '{\"name\":\"a\"}'",
+    "grep CONVEX_DEPLOY_KEY .env.local",
+    "npx convex dev --once",
+]
+
+
+def test_must_block_reste_un_deploy():
+    for cmd in MUST_BLOCK:
+        assert "convex deploy" in cmd
+        assert _mod.is_prod_deploy(cmd) is True, cmd
+        assert run(cmd) == 2, cmd
+
+
+def test_must_block_non_tokenisable_passe_bien_par_le_repli():
+    cmd = "echo 'unclosed ; npx convex deploy"
+    segs = list(_mod.iter_real_commands(cmd))
+    assert any(tokens is None for _, tokens in segs), segs
+
+
+def test_must_pass_convex_run_et_lectures():
+    for cmd in MUST_PASS:
+        assert _mod.is_prod_deploy(cmd) is False, cmd
+        assert run(cmd) == 0, cmd
+
+
+def test_must_pass_forme_refusee_catalogue_write():
+    payload = FIXTURE.read_text()
+    assert 'CONVEX_DEPLOY_KEY="${K#*=}"' in payload
+    assert "node_modules/.bin/convex run" in payload
+    assert "python3 -c '" in payload and "pub()" in payload
+    # atterrissage : la forme passe bien par le repli non tokenisable
+    assert any(t is None for _, t in _mod.iter_real_commands(payload))
+    assert _mod.is_prod_deploy(payload) is False
+    assert run(payload) == 0
+
+
+def test_convex_run_push_non_tokenisable_reste_ferme():
+    # `--push` leve l'exemption `run` : avec un mot deploy present, le segment
+    # non tokenisable reste ferme.
+    cmd = "CONVEX_DEPLOY_KEY=x npx convex run --push fn deploy 'unclosed"
+    assert any(t is None for _, t in _mod.iter_real_commands(cmd))
+    assert _mod.is_prod_deploy(cmd) is True
+    assert _mod.is_prod_deploy(cmd.replace("--push ", "")) is False
+
+
+def test_must_refuse_stdin_illisible_comportement_inchange():
+    for raw in ("pas du json", "pas du json npx convex deploy"):
+        p = subprocess.run([sys.executable, str(HOOK)], input=raw,
+                           capture_output=True, text=True)
+        assert p.returncode == 0, raw

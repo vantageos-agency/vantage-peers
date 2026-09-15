@@ -327,3 +327,96 @@ def test_other_tool_ignored():
         input=json.dumps({"tool_name": "Read", "tool_input": {"file_path": "x"}}),
         capture_output=True, text=True)
     assert p.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0 -- `convex run` with CONVEX_DEPLOY_KEY in the environment is NOT a
+# deploy (operator ruling 2026-09-15). The untokenisable / raw fallback keys on
+# WORDS, never on substrings of an env var name. MUST_BLOCK first. Every case
+# asserts its payload carries what it claims to test (landing).
+# ---------------------------------------------------------------------------
+
+FIXTURE = HOOK.with_name("tests") / "fixtures" / "catalogue-write-convex-run.sh"
+
+MUST_BLOCK = [
+    "npx convex deploy --yes",
+    "CONVEX_DEPLOY_KEY=x npx convex deploy --yes",
+    "bunx convex deploy",
+    "echo 'unclosed ; npx convex deploy",
+    "npx --yes convex deploy",
+    'sh -c "npx convex deploy"',
+]
+
+MUST_PASS = [
+    "CONVEX_DEPLOY_KEY=x node_modules/.bin/convex run hookContent:upsertHookContent '{\"name\":\"a\"}'",
+    "grep CONVEX_DEPLOY_KEY .env.local",
+    "npx convex dev --once",
+]
+
+
+def test_must_block_still_a_deploy():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        for cmd in MUST_BLOCK:
+            assert "convex deploy" in cmd
+            assert _mod.is_backend_deploy(cmd) is True, cmd
+            assert _run(repo, cmd) == 2, cmd
+
+
+def test_must_block_untokenisable_case_exercises_the_fallback():
+    segs = list(_mod.iter_real_commands("echo 'unclosed ; npx convex deploy"))
+    assert any(tokens is None for _, tokens in segs), segs
+
+
+def test_must_pass_convex_run_and_reads():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        for cmd in MUST_PASS:
+            assert _mod.is_backend_deploy(cmd) is False, cmd
+            assert _run(repo, cmd) == 0, cmd
+
+
+def test_must_pass_refused_catalogue_write_shape():
+    payload = FIXTURE.read_text()
+    assert 'CONVEX_DEPLOY_KEY="${K#*=}"' in payload
+    assert "node_modules/.bin/convex run" in payload
+    assert "python3 -c '" in payload and "pub()" in payload
+    # landing: the shape really goes through the untokenisable fallback
+    assert any(t is None for _, t in _mod.iter_real_commands(payload))
+    assert _mod.is_backend_deploy(payload) is False
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _head = _init_repo(tmp)
+        assert _run(repo, payload) == 0
+
+
+def test_untokenisable_convex_run_push_stays_closed():
+    # `--push` lifts the `run` exemption: with a deploy word present, the
+    # untokenisable segment still fails closed.
+    cmd = "CONVEX_DEPLOY_KEY=x npx convex run --push fn deploy 'unclosed"
+    assert any(t is None for _, t in _mod.iter_real_commands(cmd))
+    assert _mod.is_backend_deploy(cmd) is True
+    assert _mod.is_backend_deploy(cmd.replace("--push ", "")) is False
+
+
+def test_raw_signal_words_not_substrings():
+    sig = _mod._raw_has_deploy_signal
+    assert sig("npx convex deploy --yes") is True
+    assert sig("npx convex@latest deploy") is True
+    assert sig("node_modules/.bin/convex deploy") is True
+    assert sig("CONVEX_DEPLOY_KEY=x npx convex dev") is False
+    assert sig("DEPLOY_KEY=1 convex dev") is False
+    assert sig("CONVEX_DEPLOY_KEY=x convex run fn '{\"deploy\":1}'") is False
+    assert sig("convex run --push fn") is False  # no deploy word at all
+    assert sig("convex run --push fn deploy") is True
+
+
+def test_must_refuse_unreadable_input_unchanged():
+    p = subprocess.run([sys.executable, str(HOOK)],
+                       input="not json npx convex deploy",
+                       capture_output=True, text=True)
+    assert p.returncode == 2
+    assert "could not parse the hook payload" in p.stderr
+    p = subprocess.run([sys.executable, str(HOOK)], input="not json",
+                       capture_output=True, text=True)
+    assert p.returncode == 0
+    assert "[hook warning]" in p.stderr

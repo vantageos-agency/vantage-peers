@@ -83,9 +83,14 @@ from _lib.command_predicate import (  # noqa: E402
     has_safe_flag,
     head_matches,
     iter_real_commands,
+    raw_carries_action_words,
 )
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+# `convex run <module>:<fn>` executes an existing function; it pushes no code.
+# (`run --push` does, and raw_carries_action_words keeps that case closed.)
+NON_DEPLOY_SUBCOMMANDS = frozenset({"run"})
 
 EVIDENCE_GLOB = "qa/backend-doctor-*.json"
 OVERRIDE_RE = re.compile(r"#\s*allow-no-backend-doctor:\s*(\S.{5,})", re.IGNORECASE)
@@ -115,8 +120,10 @@ def is_backend_deploy(cmd: str) -> bool:
     interpreter recursion) comes from _lib -- no copy lives here."""
     for piece, tokens in iter_real_commands(cmd):
         if tokens is None:
-            low = piece.lower()
-            if "convex" in low and "deploy" in low:
+            # v1.1.0: WORDS, not substrings -- the env var name
+            # CONVEX_DEPLOY_KEY is not a deploy signal.
+            if raw_carries_action_words(piece, "convex", "deploy",
+                                        NON_DEPLOY_SUBCOMMANDS):
                 return True
             continue
         if _segment_is_deploy(tokens):
@@ -338,8 +345,8 @@ def _raw_has_deploy_signal(command: str) -> bool:
     """Cheap, exception-proof last-resort probe: does the raw text even mention
     a Convex deploy? Used only when structured detection itself raised, so we
     can decide fail-open (clearly not a deploy) vs fail-closed (might be one)."""
-    low = (command or "").lower()
-    return "convex" in low and "deploy" in low
+    return raw_carries_action_words(command or "", "convex", "deploy",
+                                    NON_DEPLOY_SUBCOMMANDS)
 
 
 def run_hook(command: str, cwd: str | None = None, data: dict | None = None) -> int:

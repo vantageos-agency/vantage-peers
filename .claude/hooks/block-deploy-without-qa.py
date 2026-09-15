@@ -72,9 +72,14 @@ from _lib.command_predicate import (  # noqa: E402
     has_safe_flag,
     head_matches,
     iter_real_commands,
+    raw_carries_action_words,
 )
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
+
+# `convex run <module>:<fn>` executes an existing function; it pushes no code.
+# (`run --push` does, and raw_carries_action_words keeps that case closed.)
+NON_DEPLOY_SUBCOMMANDS = frozenset({"run"})
 
 BREADCRUMB = "/tmp/.qa-passed"
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
@@ -177,11 +182,11 @@ def is_prod_deploy(cmd: str) -> bool:
             # etant quote-aware, un ValueError ici est RARE, donc reellement
             # suspect. On n'ESCALADE en BLOCK que si le texte BRUT porte de
             # facon plausible un deploy (`convex` ET `deploy`) ; sinon fail-open
-            # LOUD. Ce pre-filtre par sous-chaine est acceptable ICI -- et
-            # seulement ici -- parce qu'il ne peut QUE remonter vers une
-            # decision visible par un humain : il n'autorise rien.
-            low = piece.lower()
-            if "convex" in low and "deploy" in low:
+            # LOUD. v4.1.0 : ce pre-filtre porte sur des MOTS, plus sur des
+            # sous-chaines -- le NOM de variable CONVEX_DEPLOY_KEY n'est pas un
+            # signal de deploy, et `convex run` (sans --push) non plus.
+            if raw_carries_action_words(piece, "convex", "deploy",
+                                        NON_DEPLOY_SUBCOMMANDS):
                 print(
                     "block-deploy-without-qa: segment NON TOKENISABLE contenant "
                     f"'convex'+'deploy' -- traite comme deploy potentiel: {piece!r}",
