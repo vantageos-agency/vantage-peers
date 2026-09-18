@@ -66,10 +66,17 @@ export type ClientOrg = {
 };
 
 // Real client orgs = active mapping rows that are NOT the master sentinel
-// (allowedOrchestrators === ["*"]). Fetched ONCE per page by the mutation
-// below — never requeried per row. Shared as a plain helper (not routed
-// through ctx.runQuery) so the self-scheduling mutation reads it inside its
-// own transaction, same discipline as `backfillReviewPrLinkFields`.
+// (allowedOrchestrators === ["*"]) AND NOT the operator's own organisation
+// (orgKind === "operator"). Fetched ONCE per page by the mutation below —
+// never requeried per row. Shared as a plain helper (not routed through
+// ctx.runQuery) so the self-scheduling mutation reads it inside its own
+// transaction, same discipline as `backfillReviewPrLinkFields`.
+//
+// orgKind is absent on the vast majority of existing rows — absent means
+// "client", so this filter is additive and changes nothing for any row that
+// predates the field. Only a row explicitly marked "operator" is skipped,
+// joining the existing master-sentinel skip as ONE filter predicate (never a
+// second code path).
 async function loadRealClientOrgs(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<ClientOrg[]> {
@@ -83,7 +90,7 @@ async function loadRealClientOrgs(
 				!(
 					r.allowedOrchestrators.length === 1 &&
 					r.allowedOrchestrators[0] === MASTER_SENTINEL
-				),
+				) && r.orgKind !== "operator",
 		)
 		.map((r) => ({
 			clerkOrgSlug: r.clerkOrgSlug,

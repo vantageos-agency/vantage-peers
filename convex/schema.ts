@@ -1260,6 +1260,10 @@ export default defineSchema({
 		displayName: v.string(), // "<redacted-client>"
 		isActive: v.boolean(),
 		createdAt: v.number(),
+		// orgKind: "operator" marks a row as the operator's own organisation
+		// (never a customer). Absent means "client" — no existing row changes
+		// meaning.
+		orgKind: v.optional(v.union(v.literal("operator"), v.literal("client"))),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_isActive", ["isActive"]),

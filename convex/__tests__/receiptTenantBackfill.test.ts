@@ -74,6 +74,7 @@ async function seedOrgMapping(
 		clerkOrgSlug: string;
 		allowedOrchestrators: string[];
 		isActive?: boolean;
+		orgKind?: "operator" | "client";
 	},
 ) {
 	await t.run(async (ctx) => {
@@ -84,6 +85,7 @@ async function seedOrgMapping(
 			displayName: opts.clerkOrgSlug,
 			isActive: opts.isActive ?? true,
 			createdAt: Date.now(),
+			...(opts.orgKind !== undefined ? { orgKind: opts.orgKind } : {}),
 		});
 	});
 }
@@ -406,6 +408,172 @@ describe("backfillReceiptTenants — write (dryRun:false) pole", () => {
 		expect(second.perScope["acme-client"]).toBeUndefined();
 		expect(second.notTouched).toBe(2); // same leak-trap rows, still not-touched
 		expect(second.total).toBe(2);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// orgKind — a row marked "operator" is the operator's OWN organisation, never
+// a customer. `loadRealClientOrgs` must skip it exactly as it skips the
+// master sentinel (["*"]): both ends of a receipt sitting in an
+// operator-kind row's roster must resolve to no-touch, in BOTH dryRun and
+// write mode. Absent `orgKind` (and `orgKind:"client"`) must behave exactly
+// as before this change — the no-regression pole.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("orgKind: operator-kind rows are skipped like the master sentinel", () => {
+	test("_listRealClientOrgs excludes an orgKind:\"operator\" row", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "fleet-station",
+			allowedOrchestrators: ["pi", "sigma"],
+			orgKind: "operator",
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		const orgs = await t.query(
+			internal.receiptTenantBackfill._listRealClientOrgs,
+			{},
+		);
+		expect(orgs.map((o) => o.clerkOrgSlug).sort()).toEqual(["acme-client"]);
+	});
+
+	test("dryRun: a receipt whose sender and recipient both sit in an operator-kind roster is notTouched, not stamped", async () => {
+		const t = createT();
+		// Two fleet stations, "pi" and "sigma", both sit in the SAME
+		// operator-kind row's roster. Before this fix they would resolve to
+		// "same-client-org" against that row and be (mis)stamped into it.
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "fleet-station",
+			allowedOrchestrators: ["pi", "sigma"],
+			orgKind: "operator",
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		const ids = await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "pi", recipient: "sigma" },
+			3,
+		);
+
+		const result = await runBackfillToCompletion(t, { dryRun: true });
+
+		expect(result.total).toBe(3);
+		expect(result.notTouched).toBe(3);
+		expect(result.perScope["fleet-station"]).toBeUndefined();
+		expect(result.patched).toBe(0);
+
+		await t.run(async (ctx) => {
+			for (const id of ids) {
+				const row = await ctx.db.get(id);
+				expect(row?.tenantId).toBeUndefined();
+			}
+		});
+	});
+
+	test("write: a receipt whose sender and recipient both sit in an operator-kind roster is never patched", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "fleet-station",
+			allowedOrchestrators: ["pi", "sigma"],
+			orgKind: "operator",
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		const ids = await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "pi", recipient: "sigma" },
+			2,
+		);
+
+		const result = await runBackfillToCompletion(t, { dryRun: false });
+
+		expect(result.patched).toBe(0);
+		expect(result.notTouched).toBe(2);
+		expect(result.perScope["fleet-station"]).toBeUndefined();
+
+		await t.run(async (ctx) => {
+			for (const id of ids) {
+				const row = await ctx.db.get(id);
+				expect(row?.tenantId).toBeUndefined();
+			}
+		});
+	});
+
+	test("no-regression: orgKind absent behaves exactly as today (still stamped)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+			// orgKind omitted entirely — the pre-existing row shape.
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		const ids = await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "victor", recipient: "victor" },
+			2,
+		);
+
+		const result = await runBackfillToCompletion(t, { dryRun: false });
+
+		expect(result.patched).toBe(2);
+		expect(result.perScope["acme-client"]).toBe(2);
+		expect(result.notTouched).toBe(0);
+
+		await t.run(async (ctx) => {
+			for (const id of ids) {
+				const row = await ctx.db.get(id);
+				expect(row?.tenantId).toBe("acme-client");
+			}
+		});
+	});
+
+	test("no-regression: orgKind:\"client\" behaves exactly as absent (still stamped)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+			orgKind: "client",
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		const ids = await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "victor", recipient: "victor" },
+			2,
+		);
+
+		const result = await runBackfillToCompletion(t, { dryRun: false });
+
+		expect(result.patched).toBe(2);
+		expect(result.perScope["acme-client"]).toBe(2);
+		expect(result.notTouched).toBe(0);
+
+		await t.run(async (ctx) => {
+			for (const id of ids) {
+				const row = await ctx.db.get(id);
+				expect(row?.tenantId).toBe("acme-client");
+			}
+		});
 	});
 });
 
