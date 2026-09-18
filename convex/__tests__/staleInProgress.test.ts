@@ -66,7 +66,11 @@ describe("staleInProgress — checkNewMessagesEnvelope (Day 130, the real path)"
 		const t = convexTest(schema, modules);
 		await seedInProgressTask(t, "victor", TWENTY_FIVE_HOURS_MS);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "victor",
 		});
 
@@ -78,7 +82,11 @@ describe("staleInProgress — checkNewMessagesEnvelope (Day 130, the real path)"
 		const t = convexTest(schema, modules);
 		await seedInProgressTask(t, "victor", ONE_HOUR_MS);
 
-		const result = await t.query(api.messages.checkNewMessagesEnvelope, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "victor",
 		});
 
@@ -111,7 +119,11 @@ describe("checkNewMessages — frozen legacy contract (Day 130 regression guard)
 				content: "Frozen contract smoke",
 			});
 
-		const result = await t.query(api.messages.checkNewMessages, {
+		const result = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.query(api.messages.checkNewMessages, {
 			recipient: "tau",
 		});
 
