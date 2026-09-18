@@ -27,17 +27,31 @@
 // after the fact — the read already happened). WITHHELD > LEAKED.
 //
 // THE SHARED RESOLVER (report and write call the SAME function — never two
-// implementations) and THE ONE ACTION (Eta, binding — report + write share
+// implementations) and THE ONE MUTATION (Eta, binding — report + write share
 // one code path, a flag decides only whether the patch is issued) both live
 // here.
+//
+// #1259 REVISE fix (Eta, backend-doctor R-11/R-46/R-6): the prior shape was
+// an `internalAction` walking the whole table with one `runQuery`/
+// `runMutation` round-trip PER ROW and no resume cursor — on prod (46906+
+// rows) this both violated R-11 (page-then-post-filter selection) and had no
+// bounded-transaction resume story: an action that hits the time limit
+// restarts from row one, redoing already-patched work indefinitely. This is
+// now a single self-scheduling `internalMutation`, modeled on
+// `backfillReviewPrLinkFields` (convex/migrations.ts): each execution reads
+// at most one bounded page via `.paginate()`, resolves + patches within that
+// SAME transaction (no cross-call round-trips), and schedules its own
+// continuation with the accumulated counters until `isDone`. No execution's
+// read/write footprint depends on corpus size.
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import {
-	internalAction,
 	internalMutation,
 	internalQuery,
+	type MutationCtx,
+	type QueryCtx,
 } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,8 +66,33 @@ export type ClientOrg = {
 };
 
 // Real client orgs = active mapping rows that are NOT the master sentinel
-// (allowedOrchestrators === ["*"]). Fetched ONCE per run by the caller and
-// passed into the resolver — never requeried per row.
+// (allowedOrchestrators === ["*"]). Fetched ONCE per page by the mutation
+// below — never requeried per row. Shared as a plain helper (not routed
+// through ctx.runQuery) so the self-scheduling mutation reads it inside its
+// own transaction, same discipline as `backfillReviewPrLinkFields`.
+async function loadRealClientOrgs(
+	ctx: QueryCtx | MutationCtx,
+): Promise<ClientOrg[]> {
+	const rows = await ctx.db
+		.query("client_org_mapping")
+		.withIndex("by_isActive", (q) => q.eq("isActive", true))
+		.collect();
+	return rows
+		.filter(
+			(r) =>
+				!(
+					r.allowedOrchestrators.length === 1 &&
+					r.allowedOrchestrators[0] === MASTER_SENTINEL
+				),
+		)
+		.map((r) => ({
+			clerkOrgSlug: r.clerkOrgSlug,
+			allowedOrchestrators: r.allowedOrchestrators,
+		}));
+}
+
+// Public-shaped wrapper kept for direct inspection/testing of the same join
+// the mutation below uses — never re-implemented, just exposed.
 export const _listRealClientOrgs = internalQuery({
 	args: {},
 	returns: v.array(
@@ -62,33 +101,21 @@ export const _listRealClientOrgs = internalQuery({
 			allowedOrchestrators: v.array(v.string()),
 		}),
 	),
-	handler: async (ctx): Promise<ClientOrg[]> => {
-		const rows = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_isActive", (q) => q.eq("isActive", true))
-			.collect();
-		return rows
-			.filter(
-				(r) =>
-					!(
-						r.allowedOrchestrators.length === 1 &&
-						r.allowedOrchestrators[0] === MASTER_SENTINEL
-					),
-			)
-			.map((r) => ({
-				clerkOrgSlug: r.clerkOrgSlug,
-				allowedOrchestrators: r.allowedOrchestrators,
-			}));
-	},
+	handler: async (ctx): Promise<ClientOrg[]> => loadRealClientOrgs(ctx),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SHARED RESOLVER
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The success arm's field is named `orgSlug` (not `tenant`) to match this
+// codebase's established vocabulary for a resolved Clerk org slug
+// (`ClientOrg.clerkOrgSlug`, `OrgScope.orgSlug` in convex/lib/auth.ts) — the
+// SAME value this resolver hands to the write site below, so its provenance
+// reads as what it is: a scope-derived slug, never a caller argument.
 export type ReceiptPairResolution =
-	| { state: "same-client-org"; tenant: string; reason: string }
-	| { state: "no-touch"; tenant: null; reason: string };
+	| { state: "same-client-org"; orgSlug: string; reason: string }
+	| { state: "no-touch"; orgSlug: null; reason: string };
 
 // Exported so the resolver and its call sites (report + write) are provably
 // the ONE implementation — never duplicated between the dry-run report path
@@ -129,27 +156,38 @@ export function resolveReceiptPair(
 	) {
 		return {
 			state: "same-client-org",
-			tenant: senderOrgs[0].clerkOrgSlug,
+			orgSlug: senderOrgs[0].clerkOrgSlug,
 			reason: "sender and recipient both resolve to the same single active client org",
 		};
 	}
 
 	return {
 		state: "no-touch",
-		tenant: null,
+		orgSlug: null,
 		reason:
 			"sender/recipient do not both resolve to the same single active client org — never guessed, left unmarked",
 	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Paginated page reader — mirrors receiptTenantAudit.ts's `_receiptTenantPage`
-// shape, but only pages rows where tenantId === undefined (the closed,
-// finite backfill population).
+// Paginated page reader — pages ONLY rows where tenantId === undefined via
+// the `by_tenant` index's `eq("tenantId", undefined)` branch (R-11 fix: the
+// prior version paged the WHOLE table then post-filtered `tenantId ===
+// undefined` in application code; this pushes the selection into the index
+// itself, so a page can never contain an already-tenanted row at all — no
+// post-filter needed or present).
+//
+// returns-projection: page reader for the #1259 backfill's one-shot scan —
+// the both-ends resolver keys on recipient AND the message's sender (looked
+// up via messageId), so messageId is present; tenantId is undefined by
+// construction on this population (it is what the backfill sets) and readAt
+// is irrelevant to tenant resolution, so both are omitted.
 // ─────────────────────────────────────────────────────────────────────────────
-
 export const _undefinedTenantReceiptPage = internalQuery({
-	args: { cursor: v.union(v.string(), v.null()) },
+	args: {
+		cursor: v.union(v.string(), v.null()),
+		numItems: v.optional(v.number()),
+	},
 	returns: v.object({
 		receipts: v.array(
 			v.object({
@@ -162,25 +200,17 @@ export const _undefinedTenantReceiptPage = internalQuery({
 		isDone: v.boolean(),
 		continueCursor: v.union(v.string(), v.null()),
 	}),
-	handler: async (ctx, { cursor }) => {
-		// undefined is not a valid index-equality value on a v.optional field via
-		// a compound index here (no by_tenant index usable for "is undefined"), so
-		// this mirrors receiptTenantAudit.ts's full-table scan + paginate — the
-		// table is bounded (46906 rows at brief-authoring time) and this is a
-		// one-shot maintenance action, not a hot query path.
-		// messageId is now PRESENT (not omitted) — the both-ends rule needs it
-		// to look up the message's sender (`message.from`).
+	handler: async (ctx, { cursor, numItems }) => {
 		const page = await ctx.db
 			.query("messageReceipts")
-			.paginate({ numItems: 2000, cursor });
-		const receipts = page.page
-			.filter((r) => r.tenantId === undefined)
-			.map((r) => ({
-				_id: r._id,
-				messageId: r.messageId,
-				recipient: r.recipient,
-				recipientInstanceId: r.recipientInstanceId,
-			}));
+			.withIndex("by_tenant", (q) => q.eq("tenantId", undefined))
+			.paginate({ numItems: numItems ?? BACKFILL_BATCH_SIZE, cursor });
+		const receipts = page.page.map((r) => ({
+			_id: r._id,
+			messageId: r.messageId,
+			recipient: r.recipient,
+			recipientInstanceId: r.recipientInstanceId,
+		}));
 		return {
 			receipts,
 			isDone: page.isDone,
@@ -190,47 +220,26 @@ export const _undefinedTenantReceiptPage = internalQuery({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sender lookup — the both-ends rule needs `message.from` alongside
-// `receipt.recipient`. A dedicated narrow projection (never spreads the raw
-// message row) so the action only ever sees the one field it needs.
+// THE ONE MUTATION — self-scheduling, bounded per page. Report and write
+// share this exact code path; `dryRun` decides only whether the patch is
+// issued. Modeled on `backfillReviewPrLinkFields` (convex/migrations.ts):
+// each execution reads and resolves at most `batchSize` rows inside its OWN
+// transaction, then either returns (isDone) or schedules its own
+// continuation carrying the running totals forward — never a per-row
+// runQuery/runMutation round-trip, and never a single transaction whose
+// footprint scales with corpus size.
+//
+// R-6 fix: the value patched into `tenantId` is `resolution.orgSlug` (bound
+// to the local `tenantSlug` at the write site) — always DERIVED from the
+// resource (the message's sender + the receipt's recipient, resolved
+// through `resolveReceiptPair` against `client_org_mapping`) inside this
+// same handler, never accepted as a caller-supplied argument. There is no
+// exported mutation anywhere in this file that takes a `tenantId` argument.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const _getMessageFrom = internalQuery({
-	args: { messageId: v.id("messages") },
-	returns: v.union(v.object({ from: v.string() }), v.null()),
-	handler: async (ctx, { messageId }) => {
-		const message = await ctx.db.get(messageId);
-		if (message === null) return null;
-		return { from: message.from };
-	},
-});
+const BACKFILL_BATCH_SIZE = 200;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Patch helper — idempotent (re-checks tenantId is STILL undefined before
-// writing) and only ever called for state==="same-client-org" rows.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const _patchReceiptTenant = internalMutation({
-	args: {
-		receiptId: v.id("messageReceipts"),
-		tenantId: v.string(),
-	},
-	returns: v.boolean(),
-	handler: async (ctx, { receiptId, tenantId }) => {
-		const row = await ctx.db.get(receiptId);
-		if (row === null) return false;
-		if (row.tenantId !== undefined) return false; // already stamped — idempotent no-op
-		await ctx.db.patch(receiptId, { tenantId });
-		return true;
-	},
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THE ONE ACTION — report and write share this exact code path; `dryRun`
-// decides only whether the patch is issued.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const backfillResultValidator = v.object({
+const backfillPageResultValidator = v.object({
 	total: v.number(),
 	perScope: v.record(v.string(), v.number()),
 	notTouched: v.number(),
@@ -243,6 +252,7 @@ const backfillResultValidator = v.object({
 	),
 	dryRun: v.boolean(),
 	patched: v.number(),
+	isDone: v.boolean(),
 });
 
 export type BackfillReceiptTenantsResult = {
@@ -252,6 +262,7 @@ export type BackfillReceiptTenantsResult = {
 	positiveControlSample: { receiptId: Id<"messageReceipts">; tenant: string } | null;
 	dryRun: boolean;
 	patched: number;
+	isDone: boolean;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,6 +307,11 @@ function capOrOverflow<T>(rows: T[], cap: number, label: string): T[] {
 	return rows;
 }
 
+// returns-projection: both-directions isolation-proof projection for the
+// #1259 receipt-tenant backfill — the test authenticates as a scoped
+// identity and asserts it reads only its own tenant's rows; the full
+// receipt shape (messageId/recipientInstanceId/readAt) is irrelevant to that
+// proof. Handler maps to this shape explicitly, never spreads the raw row.
 export const _receiptsForCaller = internalQuery({
 	// scanCapOverride exists ONLY so the pole test can seed CAP+1 rows
 	// without seeding thousands — never set outside a test.
@@ -346,90 +362,127 @@ export const _receiptsForCaller = internalQuery({
 	},
 });
 
-export const backfillReceiptTenants = internalAction({
-	args: { dryRun: v.boolean() },
-	returns: backfillResultValidator,
-	handler: async (ctx, { dryRun }): Promise<BackfillReceiptTenantsResult> => {
-		const clientOrgs: ClientOrg[] = await ctx.runQuery(
-			internal.receiptTenantBackfill._listRealClientOrgs,
-			{},
-		);
+export const backfillReceiptTenants = internalMutation({
+	args: {
+		dryRun: v.boolean(),
+		// Accumulator/continuation args — all optional so a first call
+		// (`{ dryRun }` only) works exactly like the old entry point. The
+		// self-scheduled continuation below always passes every field.
+		cursor: v.optional(v.union(v.string(), v.null())),
+		total: v.optional(v.number()),
+		perScope: v.optional(v.record(v.string(), v.number())),
+		notTouched: v.optional(v.number()),
+		patched: v.optional(v.number()),
+		positiveControlSample: v.optional(
+			v.union(
+				v.object({ receiptId: v.id("messageReceipts"), tenant: v.string() }),
+				v.null(),
+			),
+		),
+		// Test-only page-size override — never set outside a test — so the
+		// pagination/resume path can be exercised without seeding thousands
+		// of rows.
+		batchSize: v.optional(v.number()),
+	},
+	returns: backfillPageResultValidator,
+	handler: async (ctx, args): Promise<BackfillReceiptTenantsResult> => {
+		const dryRun = args.dryRun;
+		const batchSize = args.batchSize ?? BACKFILL_BATCH_SIZE;
+		let total = args.total ?? 0;
+		const perScope: Record<string, number> = { ...(args.perScope ?? {}) };
+		let notTouched = args.notTouched ?? 0;
+		let patched = args.patched ?? 0;
+		let positiveControlSample: { receiptId: Id<"messageReceipts">; tenant: string } | null =
+			args.positiveControlSample ?? null;
 
-		let total = 0;
-		const perScope: Record<string, number> = {};
-		let notTouched = 0;
-		let positiveControlSample: {
-			receiptId: Id<"messageReceipts">;
-			tenant: string;
-		} | null = null;
-		let patched = 0;
+		const clientOrgs = await loadRealClientOrgs(ctx);
 
-		let cursor: string | null = null;
-		let isDone = false;
+		// Bound selection pushed into the index itself (R-11 fix) — a page can
+		// never contain an already-tenanted row, no post-filter needed.
+		const page = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_tenant", (q) => q.eq("tenantId", undefined))
+			.paginate({ numItems: batchSize, cursor: args.cursor ?? null });
 
-		while (!isDone) {
-			const page: {
-				receipts: Array<{
-					_id: Id<"messageReceipts">;
-					messageId: Id<"messages">;
-					recipient: string;
-					recipientInstanceId?: string;
-				}>;
-				isDone: boolean;
-				continueCursor: string | null;
-			} = await ctx.runQuery(
-				internal.receiptTenantBackfill._undefinedTenantReceiptPage,
-				{ cursor },
-			);
+		for (const receipt of page.page) {
+			total++;
 
-			for (const receipt of page.receipts) {
-				total++;
+			// Look up the message to get its sender — the both-ends rule
+			// requires BOTH the sender and the recipient, not the recipient
+			// alone (the leak the recipient-only rule had). Direct ctx.db.get —
+			// same transaction as the page read, no per-row round-trip.
+			const message = await ctx.db.get(receipt.messageId);
 
-				// Look up the message to get its sender — the both-ends rule
-				// requires BOTH the sender and the recipient, not the recipient
-				// alone (the leak the recipient-only rule had).
-				const message = await ctx.runQuery(
-					internal.receiptTenantBackfill._getMessageFrom,
-					{ messageId: receipt.messageId },
-				);
-
-				if (message === null) {
-					// Dangling messageId (message deleted) — cannot resolve either
-					// end. Fail-closed: no-touch, never guessed.
-					notTouched++;
-					continue;
-				}
-
-				const resolution = resolveReceiptPair(
-					clientOrgs,
-					message.from,
-					receipt.recipient,
-				);
-
-				if (resolution.state === "same-client-org") {
-					perScope[resolution.tenant] =
-						(perScope[resolution.tenant] ?? 0) + 1;
-					if (positiveControlSample === null) {
-						positiveControlSample = {
-							receiptId: receipt._id,
-							tenant: resolution.tenant,
-						};
-					}
-					if (!dryRun) {
-						const didPatch: boolean = await ctx.runMutation(
-							internal.receiptTenantBackfill._patchReceiptTenant,
-							{ receiptId: receipt._id, tenantId: resolution.tenant },
-						);
-						if (didPatch) patched++;
-					}
-				} else {
-					notTouched++;
-				}
+			if (message === null) {
+				// Dangling messageId (message deleted) — cannot resolve either
+				// end. Fail-closed: no-touch, never guessed.
+				notTouched++;
+				continue;
 			}
 
-			isDone = page.isDone;
-			cursor = page.continueCursor;
+			const resolution = resolveReceiptPair(
+				clientOrgs,
+				message.from,
+				receipt.recipient,
+			);
+
+			if (resolution.state === "same-client-org") {
+				perScope[resolution.orgSlug] = (perScope[resolution.orgSlug] ?? 0) + 1;
+				if (positiveControlSample === null) {
+					positiveControlSample = {
+						receiptId: receipt._id,
+						tenant: resolution.orgSlug,
+					};
+				}
+				if (!dryRun) {
+					// The written value: `tenantSlug` — the resolved Clerk org slug
+					// (never a caller argument; `resolution.orgSlug` is derived above
+					// from the message's sender + this receipt's recipient against
+					// `client_org_mapping`, the SAME shared resolver the dry-run
+					// report path also reads).
+					const tenantSlug = resolution.orgSlug;
+					// GUARD (R-6): a receipt already carrying a tenantId is NEVER
+					// re-tenanted. Re-checked via a fresh `ctx.db.get` (rather than
+					// trusting the page snapshot) so the guard holds even if the
+					// selection query above is ever loosened.
+					const current = await ctx.db.get(receipt._id);
+					if (current !== null && current.tenantId === undefined) {
+						await ctx.db.patch(receipt._id, { tenantId: tenantSlug });
+						patched++;
+					}
+				}
+			} else {
+				notTouched++;
+			}
 		}
+
+		const isDone = page.isDone;
+
+		if (!isDone) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.receiptTenantBackfill.backfillReceiptTenants,
+				{
+					dryRun,
+					cursor: page.continueCursor,
+					total,
+					perScope,
+					notTouched,
+					patched,
+					positiveControlSample,
+					batchSize: args.batchSize,
+				},
+			);
+		}
+
+		// Per-page counts only (never a corpus-wide claim from a single
+		// execution) — same discipline as backfillReviewPrLinkFields /
+		// backfillBriefingNoteParticipants. `isDone` is the only field that
+		// means "the whole backfill is finished"; everything else here is the
+		// running total carried across self-scheduled continuations.
+		console.log(
+			`receiptTenantBackfill: dryRun=${dryRun} scanned=${page.page.length} total=${total} patched=${patched} notTouched=${notTouched} isDone=${isDone}`,
+		);
 
 		return {
 			total,
@@ -438,6 +491,7 @@ export const backfillReceiptTenants = internalAction({
 			positiveControlSample,
 			dryRun,
 			patched,
+			isDone,
 		};
 	},
 });

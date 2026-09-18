@@ -16,7 +16,7 @@
 // that leak.
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";
 import {
@@ -30,6 +30,39 @@ const modules = Object.fromEntries(
 );
 
 const createT = () => convexTest(schema, modules);
+
+// #1259 fix: `backfillReceiptTenants` is now a self-scheduling
+// `internalMutation` (one bounded page per execution, modeled on
+// `backfillReviewPrLinkFields`), so fake timers + `finishAllScheduledFunctions`
+// drive every continuation to completion — same discipline as
+// backfillBriefingNoteParticipants.test.ts / drop_orphan_tables.test.ts.
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
+
+// Runs the first page, then drains every self-scheduled continuation.
+// Every test in this file either seeds few enough rows that the FIRST page
+// already covers the whole corpus (isDone true on the first call, so its
+// returned totals ARE the whole-backfill totals), or is the dedicated
+// pagination test below, which asserts on `ctx.db` state after the drain
+// rather than on a single call's return value (the scheduled continuations'
+// own returns are not observable from the caller).
+async function runBackfillToCompletion(
+	t: ReturnType<typeof createT>,
+	args: { dryRun: boolean; batchSize?: number },
+) {
+	const result = await t.mutation(
+		internal.receiptTenantBackfill.backfillReceiptTenants,
+		args,
+	);
+	if (!result.isDone) {
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+	}
+	return result;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed helpers
@@ -140,13 +173,13 @@ function resolveReceiptTenantRecipientOnly(
 	if (matches.length === 1) {
 		return {
 			state: "same-client-org",
-			tenant: matches[0].clerkOrgSlug,
+			orgSlug: matches[0].clerkOrgSlug,
 			reason: "OLD recipient-only rule — reconstructed for the RED-proof only",
 		};
 	}
 	return {
 		state: "no-touch",
-		tenant: null,
+		orgSlug: null,
 		reason: "OLD recipient-only rule — reconstructed for the RED-proof only",
 	};
 }
@@ -160,7 +193,7 @@ describe("resolveReceiptPair — decision table (both-ends)", () => {
 		const r = resolveReceiptPair(clientOrgs, "victor", "victor");
 		expect(r).toEqual({
 			state: "same-client-org",
-			tenant: "acme-client",
+			orgSlug: "acme-client",
 			reason: "sender and recipient both resolve to the same single active client org",
 		});
 	});
@@ -168,7 +201,7 @@ describe("resolveReceiptPair — decision table (both-ends)", () => {
 	test("MUST_PASS: distinct sender/recipient, both in the same org -> same-client-org", () => {
 		const r = resolveReceiptPair(clientOrgs, "victor", "clio");
 		expect(r.state).toBe("same-client-org");
-		expect(r.tenant).toBe("acme-client");
+		expect(r.orgSlug).toBe("acme-client");
 	});
 
 	test("MUST_BLOCK (the leak): fleet sender, client-org recipient -> no-touch", () => {
@@ -182,13 +215,13 @@ describe("resolveReceiptPair — decision table (both-ends)", () => {
 		// RED-proof: the OLD recipient-only rule DOES stamp this (the leak).
 		const oldRuleResult = resolveReceiptTenantRecipientOnly(orgsWithSigma, "sigma");
 		expect(oldRuleResult.state).toBe("same-client-org"); // RED: old rule leaks
-		expect(oldRuleResult.tenant).toBe("acme-client");
+		expect(oldRuleResult.orgSlug).toBe("acme-client");
 
 		// GREEN: the new both-ends rule refuses because sender "pi" resolves
 		// to NO client org (senderOrgs.length === 0 !== 1).
 		const newRuleResult = resolveReceiptPair(orgsWithSigma, "pi", "sigma");
 		expect(newRuleResult.state).toBe("no-touch"); // GREEN: leak closed
-		expect(newRuleResult.tenant).toBeNull();
+		expect(newRuleResult.orgSlug).toBeNull();
 	});
 
 	test("MUST_BLOCK: sender in one org, recipient in a DIFFERENT org -> no-touch", () => {
@@ -198,7 +231,7 @@ describe("resolveReceiptPair — decision table (both-ends)", () => {
 		];
 		const r = resolveReceiptPair(twoOrgs, "victor", "clio");
 		expect(r.state).toBe("no-touch");
-		expect(r.tenant).toBeNull();
+		expect(r.orgSlug).toBeNull();
 	});
 
 	test("no-touch: both ends fleet-internal (neither in any client org)", () => {
@@ -255,10 +288,7 @@ describe("backfillReceiptTenants — report (dryRun:true) pole", () => {
 			1,
 		);
 
-		const result = await t.action(
-			internal.receiptTenantBackfill.backfillReceiptTenants,
-			{ dryRun: true },
-		);
+		const result = await runBackfillToCompletion(t, { dryRun: true });
 
 		expect(result.total).toBe(6);
 		expect(result.perScope["acme-client"]).toBe(3);
@@ -316,10 +346,7 @@ describe("backfillReceiptTenants — write (dryRun:false) pole", () => {
 			1,
 		);
 
-		const result = await t.action(
-			internal.receiptTenantBackfill.backfillReceiptTenants,
-			{ dryRun: false },
-		);
+		const result = await runBackfillToCompletion(t, { dryRun: false });
 
 		expect(result.patched).toBe(4);
 		expect(result.perScope["acme-client"]).toBe(4);
@@ -366,18 +393,12 @@ describe("backfillReceiptTenants — write (dryRun:false) pole", () => {
 			2,
 		);
 
-		const first = await t.action(
-			internal.receiptTenantBackfill.backfillReceiptTenants,
-			{ dryRun: false },
-		);
+		const first = await runBackfillToCompletion(t, { dryRun: false });
 		expect(first.patched).toBe(3);
 		expect(first.perScope["acme-client"]).toBe(3);
 		expect(first.notTouched).toBe(2);
 
-		const second = await t.action(
-			internal.receiptTenantBackfill.backfillReceiptTenants,
-			{ dryRun: false },
-		);
+		const second = await runBackfillToCompletion(t, { dryRun: false });
 		// Second scan only sees rows still undefined — the already-stamped
 		// "victor" rows have left the undefined-tenant population entirely.
 		// The leak-trap rows stay undefined and are counted notTouched again.
@@ -422,9 +443,7 @@ describe("both-directions: scoped IDENTITY read after write only sees own tenant
 			2,
 		);
 
-		await t.action(internal.receiptTenantBackfill.backfillReceiptTenants, {
-			dryRun: false,
-		});
+		await runBackfillToCompletion(t, { dryRun: false });
 
 		// POLE A — identity: subject "user-acme", organizationId "acme-client".
 		const tAcme = t.withIdentity({
@@ -472,9 +491,7 @@ describe("both-directions: scoped IDENTITY read after write only sees own tenant
 			1,
 		); // stays undefined — no-touch
 
-		await t.action(internal.receiptTenantBackfill.backfillReceiptTenants, {
-			dryRun: false,
-		});
+		await runBackfillToCompletion(t, { dryRun: false });
 
 		const tMaster = t.withIdentity({
 			subject: "test-service-account-user-id",
@@ -562,5 +579,139 @@ describe("SCAN_CAP_EXCEEDED: the read is loud on overflow, never a silent short 
 				scanCapOverride: TEST_CAP,
 			}),
 		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1259 REVISE follow-ups (Eta) — the guard that an already-tenanted receipt
+// is never re-tenanted, the refusal for a scope with no resolvable identity,
+// and the paginated resume path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("guard: an already-tenanted receipt is never re-tenanted", () => {
+	test("pre-stamped receipt (tenantId=A) stays on A even though the resolver would give B", async () => {
+		const t = createT();
+		// acme-client: sender "victor" -> resolver would give "acme-client" (B)
+		// for this pair if it were ever visited.
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		// Pre-stamped to "legacy-tenant" (A) BEFORE this run — the receipt is
+		// already tenanted, so it must never even be visited by the
+		// `by_tenant`/`eq(undefined)` page, let alone re-patched to
+		// "acme-client" (B).
+		const preStampedId = await seedStampedReceipt(t, {
+			from: "victor",
+			recipient: "victor",
+			tenantId: "legacy-tenant",
+		});
+
+		await runBackfillToCompletion(t, { dryRun: false });
+
+		const row = await t.run(async (ctx) => ctx.db.get(preStampedId));
+		expect(row?.tenantId).toBe("legacy-tenant"); // GREEN: never re-tenanted to "acme-client"
+
+		// RED-proof performed manually (reported alongside this PR, not
+		// committed): with the `by_tenant`/`eq(undefined)` selection widened to
+		// a full-table scan AND the in-loop `ctx.db.get`/`tenantId===undefined`
+		// re-check removed, this same assertion fails — the row gets
+		// re-patched to "acme-client".
+	});
+});
+
+describe("guard: an identity with no resolvable scope is refused, not defaulted to master", () => {
+	test("anonymous caller (no identity at all) reads zero rows via the early return", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+		});
+		await seedManyStampedReceipts(
+			t,
+			{ from: "victor", recipient: "victor", tenantId: "acme-client" },
+			2,
+		);
+
+		// No `.withIdentity()` at all — `ctx.auth.getUserIdentity()` resolves to
+		// null, `withOrgScope` returns the fail-closed
+		// `{ isMaster: false, orgSlug: null }` default, and `_receiptsForCaller`'s
+		// early return (`if (!scope.isMaster && scope.orgSlug === null) return
+		// [];`) must refuse before ever touching `messageReceipts`.
+		const rows = await t.query(internal.receiptTenantBackfill._receiptsForCaller, {});
+		expect(rows).toEqual([]); // GREEN: refused explicitly, not a partial/master read
+
+		// RED-proof performed manually (reported alongside this PR, not
+		// committed): with the early return deleted, this same call falls
+		// through to the scoped branch with `orgSlug` cast from `null`, which
+		// either throws a validator/type error or (if it somehow proceeded)
+		// would no longer be the deliberate, explicit refusal this guard is —
+		// either way the assertion above stops passing.
+	});
+});
+
+describe("pagination: forced-small batch resumes via continueCursor across multiple pages", () => {
+	const TEST_BATCH_SIZE = 3;
+
+	test("more rows than one batch: the drain stamps every resolvable row; a second run stamps 0", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor", "sigma"],
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "master",
+			allowedOrchestrators: ["*"],
+		});
+
+		// 10 same-client-org rows across a batch size of 3 forces 4 pages
+		// (3 + 3 + 3 + 1), exercising the self-scheduling continuation path.
+		const sameOrgIds = await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "victor", recipient: "victor" },
+			10,
+		);
+		// 2 leak-trap rows (never resolvable) mixed into the same population.
+		const leakTrapIds = await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "pi", recipient: "sigma" },
+			2,
+		);
+
+		const first = await runBackfillToCompletion(t, {
+			dryRun: false,
+			batchSize: TEST_BATCH_SIZE,
+		});
+		expect(first.isDone).toBe(false); // first execution covers only ONE page (3 of 12 rows)
+		expect(first.patched).toBeLessThanOrEqual(TEST_BATCH_SIZE);
+
+		// The drain (inside runBackfillToCompletion) has already run every
+		// self-scheduled continuation via finishAllScheduledFunctions — assert
+		// on final `ctx.db` state, which IS observable across executions.
+		await t.run(async (ctx) => {
+			for (const id of sameOrgIds) {
+				const row = await ctx.db.get(id);
+				expect(row?.tenantId).toBe("acme-client");
+			}
+			for (const id of leakTrapIds) {
+				const row = await ctx.db.get(id);
+				expect(row?.tenantId).toBeUndefined();
+			}
+		});
+
+		// Second full run: the undefined-tenant population is now just the 2
+		// leak-trap rows — one page, patched 0, isDone true immediately.
+		const second = await runBackfillToCompletion(t, {
+			dryRun: false,
+			batchSize: TEST_BATCH_SIZE,
+		});
+		expect(second.patched).toBe(0);
+		expect(second.total).toBe(2);
+		expect(second.isDone).toBe(true);
 	});
 });
