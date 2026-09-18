@@ -3621,29 +3621,27 @@ export const REVIEW_OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"]
  *
  * Issue #1293: this used to scan the by_status index per open status
  * (4 unbounded `.collect()` calls over EVERY row in that status, fleet-wide)
- * and filter in memory by parsing each row's title, on EVERY call. Once
- * reviewBacklogSweep started calling closeReviewTasksForPr once per backlog
- * row, that same unbounded scan ran up to SWEEP_ROW_FANOUT_CAP times per
- * sweep run — that multiplication (fixed separately, by closeReviewTasksForPr
- * accepting a caller-known `taskId`) is what actually blew the "too many
- * system operations" budget in production.
+ * and filter in memory by parsing each row's title, on EVERY call — and
+ * "no match" (a new PR with no review task yet, or a PR whose review task is
+ * already closed) is the COMMON case, so that unbounded scan ran on most
+ * webhook events, not just the sweep's multiplied calls.
  *
- * Fast path: bound by the `by_review_pr` index (reviewPrRepoFullName,
- * reviewPrNumber, status). Each of the 4 lookups below only ever touches
- * rows that share this exact PR link and this exact status — typically 0 or
- * 1 rows — no matter how large the `tasks` table grows, and no title parsing
- * needed. Every row created by createOrUpdateReviewTask going forward is
- * stamped with these fields, so this is the ONLY path that ever runs once
- * the one-time backfill (migrations.ts `backfillReviewPrLinkFields`) has been
- * applied to pre-existing rows.
+ * Now bound by the `by_review_pr` index (reviewPrRepoFullName, reviewPrNumber,
+ * status) ONLY — this is the sole lookup on the hot path, deliberately with
+ * no scan-based fallback. Each of the 4 lookups below only ever touches rows
+ * that share this exact PR link and this exact status — typically 0 or 1
+ * rows — no matter how large the `tasks` table grows or how many calls find
+ * nothing to close. No title parsing on this path.
  *
- * Fallback: rows inserted before this field existed (or seeded directly, not
- * through createOrUpdateReviewTask) have reviewPrRepoFullName/reviewPrNumber
- * undefined, so the index above cannot find them by definition — no index
- * can look up a value that was never written. Only when the fast path finds
- * nothing does this fall back to the legacy by_status scan + title parse, so
- * a not-yet-backfilled row is still found and closed correctly instead of
- * silently left open.
+ * Every row created by createOrUpdateReviewTask is stamped with these
+ * fields at insert, so this index sees every row this mutation itself ever
+ * creates. Rows that predate this field (or were seeded directly, bypassing
+ * createOrUpdateReviewTask) are invisible to this index BY DESIGN — see
+ * migrations.ts `backfillReviewPrLinkFields` (must run once immediately
+ * after this deploy) and reviewBacklogSweep.ts, which closes exactly those
+ * legacy rows in the interim by passing `closeReviewTasksForPr` the row's
+ * own `taskId` (a direct `ctx.db.get`, not a scan) rather than relying on
+ * this function to find them.
  */
 async function findOpenReviewTasks(
 	ctx: MutationCtx,
@@ -3662,36 +3660,6 @@ async function findOpenReviewTasks(
 			)
 			.collect();
 		matches.push(...batch);
-	}
-	if (matches.length > 0) {
-		return matches;
-	}
-	return findOpenReviewTasksLegacyScan(ctx, repoFullName, prNumber);
-}
-
-/**
- * Fallback for rows never stamped with reviewPrRepoFullName/reviewPrNumber
- * (see findOpenReviewTasks above). Deliberately the ONLY remaining unbounded
- * by_status scan in the hot close/dedup path — it must stay a last resort,
- * never the first lookup attempted.
- */
-async function findOpenReviewTasksLegacyScan(
-	ctx: MutationCtx,
-	repoFullName: string,
-	prNumber: number,
-): Promise<Doc<"tasks">[]> {
-	const matches: Doc<"tasks">[] = [];
-	for (const status of REVIEW_OPEN_STATUSES) {
-		const batch = await ctx.db
-			.query("tasks")
-			.withIndex("by_status", (q) => q.eq("status", status))
-			.collect();
-		for (const t of batch) {
-			const p = parseReviewTitle(t.title);
-			if (p && p.repoFullName === repoFullName && p.prNumber === prNumber) {
-				matches.push(t);
-			}
-		}
 	}
 	return matches;
 }

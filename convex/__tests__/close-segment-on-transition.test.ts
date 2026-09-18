@@ -207,12 +207,21 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 	test("closeReviewTasksForPr closes the trailing segment", async () => {
 		const t = createT();
 		const repoFullName = "vantageos-agency/vantage-memory";
-		const title = `[Review] ${repoFullName} PR #501: Title`;
-		const taskId = await seedInProgressWithOpenSegment(t, { title });
+		const prNumber = 501;
+		const title = `[Review] ${repoFullName} PR #${prNumber}: Title`;
+		// Issue #1293: closeReviewTasksForPr's (repoFullName, prNumber) lookup
+		// is index-only (by_review_pr) — it no longer re-derives a match by
+		// parsing the title, so the seeded row must carry the same stamped
+		// columns createOrUpdateReviewTask writes at insert.
+		const taskId = await seedInProgressWithOpenSegment(t, {
+			title,
+			reviewPrRepoFullName: repoFullName,
+			reviewPrNumber: prNumber,
+		});
 
 		const result = await t.mutation(internal.tasks.closeReviewTasksForPr, {
 			repoFullName,
-			prNumber: 501,
+			prNumber,
 			completionNote: "PR merged",
 		});
 		expect(result.closed).toBe(1);

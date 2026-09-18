@@ -362,63 +362,126 @@ export { countOrphanRows, dropOrphanTables } from "./migrations/drop_orphan_tabl
 // Migration: backfill reviewPrRepoFullName/reviewPrNumber on legacy "[Review]"
 // tasks (issue #1293)
 //
-// findOpenReviewTasks/closeReviewTasksForPr now look rows up through the
-// `by_review_pr` index instead of scanning by_status and parsing every row's
-// title. Rows inserted by createOrUpdateReviewTask BEFORE that field existed
-// have reviewPrRepoFullName/reviewPrNumber undefined, so they are invisible
-// to the new index-bound lookup until backfilled once here. This is a one-time
-// admin migration — it intentionally does the full by_status scan the
-// production code path no longer does, because a one-off manual run is not
-// the recurring, N-times-per-sweep call site that timed out.
+// findOpenReviewTasks/closeReviewTasksForPr now look rows up ONLY through the
+// `by_review_pr` index — no by_status-scan fallback (that fallback was the
+// exact defect: "no match" is the COMMON case on the hot webhook path, so a
+// fallback there meant the unbounded scan still ran on most calls). Rows
+// inserted by createOrUpdateReviewTask BEFORE that field existed have
+// reviewPrRepoFullName/reviewPrNumber undefined, so they are now genuinely
+// invisible to findOpenReviewTasks until backfilled once here.
 //
-// Run: npx convex run migrations:backfillReviewPrLinkFields
+// MUST RUN ONCE, IMMEDIATELY AFTER THIS DEPLOY. Until this migration reaches
+// isDone, pre-existing open "[Review]" rows will not be found by
+// findOpenReviewTasks (so createOrUpdateReviewTask may insert a duplicate for
+// one of them, and closeReviewTasksForPr will not close it via the webhook
+// path). The gap is covered in the interim by reviewBacklogSweep, which
+// closes exactly these legacy rows by passing closeReviewTasksForPr the
+// row's own `taskId` (a direct ctx.db.get from listReviewBacklogByLineage's
+// own by_status scan, not a re-derived lookup) — so nothing is silently
+// stuck, but running this migration promptly still matters for the webhook
+// dedup path.
+//
+// Bounded + self-scheduling, same pattern as backfillBriefingNoteParticipants
+// above: each execution reads at most BACKFILL_REVIEW_LINK_BATCH_SIZE rows via
+// `.paginate()` on the SAME by_status index the old code used, then either
+// continues the current status's cursor or advances to the next status in
+// REVIEW_OPEN_STATUSES, until every open status is drained. No single
+// execution's read footprint depends on corpus size.
+//
+// Run (kicks off the drain; it self-schedules until every open status is
+// fully processed — call with no args):
+//   npx convex run migrations:backfillReviewPrLinkFields
 // ─────────────────────────────────────────────────────────────────────────────
 
+const BACKFILL_REVIEW_LINK_BATCH_SIZE = 200;
+
 export const backfillReviewPrLinkFields = internalMutation({
-	args: {},
+	args: {
+		statusIndex: v.optional(v.number()),
+		cursor: v.optional(v.union(v.string(), v.null())),
+	},
 	returns: v.object({
 		scanned: v.number(),
 		backfilled: v.number(),
 		skippedAlreadySet: v.number(),
 		skippedNoTitleMatch: v.number(),
+		isDone: v.boolean(),
 	}),
-	handler: async (ctx) => {
-		let scanned = 0;
+	handler: async (ctx, args) => {
+		const statusIndex = args.statusIndex ?? 0;
+		if (statusIndex >= REVIEW_OPEN_STATUSES.length) {
+			return {
+				scanned: 0,
+				backfilled: 0,
+				skippedAlreadySet: 0,
+				skippedNoTitleMatch: 0,
+				isDone: true,
+			};
+		}
+		const status = REVIEW_OPEN_STATUSES[statusIndex];
+
+		const page = await ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", status))
+			.paginate({
+				cursor: args.cursor ?? null,
+				numItems: BACKFILL_REVIEW_LINK_BATCH_SIZE,
+			});
+
 		let backfilled = 0;
 		let skippedAlreadySet = 0;
 		let skippedNoTitleMatch = 0;
 
-		for (const status of REVIEW_OPEN_STATUSES) {
-			const batch = await ctx.db
-				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.collect();
-
-			for (const task of batch) {
-				scanned++;
-				if (
-					task.reviewPrRepoFullName !== undefined &&
-					task.reviewPrNumber !== undefined
-				) {
-					skippedAlreadySet++;
-					continue;
-				}
-				const parsed = parseReviewTitle(task.title);
-				if (!parsed) {
-					skippedNoTitleMatch++;
-					continue;
-				}
-				await ctx.db.patch(task._id, {
-					reviewPrRepoFullName: parsed.repoFullName,
-					reviewPrNumber: parsed.prNumber,
-				});
-				backfilled++;
+		for (const task of page.page) {
+			if (
+				task.reviewPrRepoFullName !== undefined &&
+				task.reviewPrNumber !== undefined
+			) {
+				skippedAlreadySet++;
+				continue;
 			}
+			const parsed = parseReviewTitle(task.title);
+			if (!parsed) {
+				skippedNoTitleMatch++;
+				continue;
+			}
+			await ctx.db.patch(task._id, {
+				reviewPrRepoFullName: parsed.repoFullName,
+				reviewPrNumber: parsed.prNumber,
+			});
+			backfilled++;
+		}
+
+		let isDone = false;
+		if (!page.isDone) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.migrations.backfillReviewPrLinkFields,
+				{ statusIndex, cursor: page.continueCursor },
+			);
+		} else if (statusIndex + 1 < REVIEW_OPEN_STATUSES.length) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.migrations.backfillReviewPrLinkFields,
+				{ statusIndex: statusIndex + 1, cursor: null },
+			);
+		} else {
+			isDone = true;
 		}
 
 		console.log(
-			`backfillReviewPrLinkFields: scanned=${scanned} backfilled=${backfilled} skippedAlreadySet=${skippedAlreadySet} skippedNoTitleMatch=${skippedNoTitleMatch}`,
+			`backfillReviewPrLinkFields: status=${status} scanned=${page.page.length} backfilled=${backfilled} skippedAlreadySet=${skippedAlreadySet} skippedNoTitleMatch=${skippedNoTitleMatch} isDone=${isDone}`,
 		);
-		return { scanned, backfilled, skippedAlreadySet, skippedNoTitleMatch };
+		// NOTE (same discipline as backfillBriefingNoteParticipants): this is a
+		// per-page count, not a corpus-wide total — the drain spans multiple
+		// scheduled executions. `isDone` is the only field that means "the
+		// whole migration is finished", not "this page found nothing".
+		return {
+			scanned: page.page.length,
+			backfilled,
+			skippedAlreadySet,
+			skippedNoTitleMatch,
+			isDone,
+		};
 	},
 });
