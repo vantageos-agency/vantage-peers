@@ -147,12 +147,80 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _lib.command_predicate import (  # noqa: E402
-    INTERPRETER_RE,
-    carries_prod_action,
-    head_prod_action,
-    iter_real_commands,
-)
+# The shared module is imported INSIDE a guard of its own. A module-level
+# import that fails exits 1, and 1 is not a blocking code here: the deploy then
+# proceeds with no authorization at all. That is precisely the half-landed
+# station this file exists to protect — a guard present, named correctly, and
+# unable to run. A refusal that cannot be reached is not a refusal.
+try:
+    from _lib.command_predicate import (  # noqa: E402
+        INTERPRETER_RE,
+        carries_prod_action,
+        head_prod_action,
+        iter_real_commands,
+    )
+except Exception as _import_error:  # pragma: no cover - exercised by the probe
+    def _refuse_unjudgeable() -> None:
+        """Refuse a production deploy we cannot analyse; allow everything else.
+
+        Read stdin ONCE here, because the normal entrypoint below never runs.
+        The decision is deliberately crude — text, not the tokenizer, which is
+        the thing that failed to load — and it errs towards refusing: a command
+        naming a convex deploy is refused, anything else passes.
+
+        Three corrections measured on this path, all by the reviewer. Requiring
+        the two words ADJACENT missed every command that puts a flag between
+        them, so the words are now required in ORDER and not side by side. The
+        words were invisible inside quotes, so quotes are resolved first. And
+        the resolution here is NOT the healthy path's whitespace rule: quote
+        CHARACTERS are removed and every body is kept, whatever it contains.
+
+        The whitespace rule keeps a quoted PHRASE inert, which is right where a
+        tokenizer can then tell a search from a command. Here nothing can, and
+        an interpreter payload IS a quoted phrase — so treating phrases as
+        prose let `bash -c "…deploy…"` through, the exact form this path exists
+        to catch. Refusing prose that merely names the action is the price, and
+        it is the declared direction of this world: a station that cannot judge
+        refuses and says which module it could not load. A search naming the
+        action passes in the healthy world and is refused here; that asymmetry
+        is deliberate, not an oversight.
+        """
+        import json as _json
+        import re as _re
+
+        try:
+            _raw = sys.stdin.read()
+        except Exception:
+            _raw = ""
+        try:
+            _cmd = _json.loads(_raw or "{}").get("tool_input", {}).get("command", "")
+        except Exception:
+            _cmd = _raw or ""
+
+        # Quotes are DELETED, never replaced by a space. The shell concatenates
+        # adjacent quoted runs into one word, so a space here splits the very
+        # word the shell will run: `"con"'vex'` is the binary, and a space-strip
+        # reads two fragments and finds none. Deleting reproduces what the shell
+        # does, which is the only reading that can be right.
+        _cmd = (_cmd or "").replace('"', "").replace("'", "")
+        if _re.search(
+            r"\bconvex(?:@[\w.\-]+)?\b.*\bdeploy\b", _cmd or "", _re.IGNORECASE
+        ):
+            print(
+                "REFUSING TO JUDGE: the authorization guard could not load its "
+                f"command module ({_import_error}).\n"
+                "This station has the guard but not the module it needs, so nothing "
+                "here can tell an authorized deploy from an unauthorized one.\n"
+                '"I could not check" and "this is authorized" are different answers.\n'
+                "Restore .claude/hooks/_lib/command_predicate.py beside this file.\n",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        sys.exit(0)
+
+    if not globals().get("_TESTING"):
+        _refuse_unjudgeable()
+    raise
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -341,14 +409,40 @@ HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?\n\1\b", re.DOTALL)
 # deploy -- mirroring how the npm-publish guard uses it.
 # ---------------------------------------------------------------------------
 def strip_quoted_strings(command: str) -> str:
-    """Remove content inside single/double quotes to avoid false positives
-    on text like `git commit -m "docs about npm publish flow"`.
-    Day 79 v1.0.1 fix §B from sigma -- original regex matched publish patterns
-    inside commit message strings, blocking legitimate `git commit` calls."""
-    # Remove "..." (double-quoted)
-    command = re.sub(r'"[^"]*"', '""', command)
-    # Remove '...' (single-quoted)
-    command = re.sub(r"'[^']*'", "''", command)
+    """Neutralise CITED text without neutralising a quoted ARGUMENT.
+
+    Quoting is doing two unrelated jobs on one command line, and collapsing
+    them is what opened this guard. In `git commit -m "docs about the deploy
+    flow"` the quotes carry PROSE: the shell passes it as data and the words
+    inside name nothing the shell will run. In `npx 'convex' deploy` the very
+    same characters carry an ARGUMENT: the shell removes them before exec and
+    runs exactly what the unquoted form runs. Emptying both alike made the
+    second invisible -- `npx 'convex' deploy` became `npx '' deploy`, no
+    convex binary, no deploy, and the production gate opened on a command one
+    keystroke away from the form it refuses.
+
+    The discriminant is WHITESPACE, and it is a property of the shell rather
+    than of the text: a quoted run with no whitespace inside is a token the
+    shell would have passed identically unquoted, so the quotes are noise and
+    only they are removed. A quoted run containing whitespace is a phrase that
+    exists BECAUSE it is quoted -- unquoted it would be several arguments --
+    so it is emptied, and `grep -r "convex deploy" docs/` still reads as one
+    argument to a reader rather than as a deployment.
+
+    This is never a judgement about what the words mean: `"deploy"` is kept
+    whatever it says, and the head test downstream decides whether the command
+    it belongs to executes anything.
+    """
+
+    def _resolve(match: "re.Match") -> str:
+        body = match.group(1)
+        quote = match.group(0)[0]
+        if body and not re.search(r"\s", body):
+            return body
+        return quote * 2
+
+    command = re.sub(r'"([^"]*)"', _resolve, command)
+    command = re.sub(r"'([^']*)'", _resolve, command)
     return command
 
 
