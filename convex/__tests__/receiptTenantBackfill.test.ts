@@ -644,14 +644,25 @@ describe("guard: an identity with no resolvable scope is refused, not defaulted 
 		// early return (`if (!scope.isMaster && scope.orgSlug === null) return
 		// [];`) must refuse before ever touching `messageReceipts`.
 		const rows = await t.query(internal.receiptTenantBackfill._receiptsForCaller, {});
-		expect(rows).toEqual([]); // GREEN: refused explicitly, not a partial/master read
+		expect(rows).toEqual([]); // refused explicitly, not a partial/master read
 
-		// RED-proof performed manually (reported alongside this PR, not
-		// committed): with the early return deleted, this same call falls
-		// through to the scoped branch with `orgSlug` cast from `null`, which
-		// either throws a validator/type error or (if it somehow proceeded)
-		// would no longer be the deliberate, explicit refusal this guard is —
-		// either way the assertion above stops passing.
+		// Manual verification performed alongside this PR (reported, not
+		// committed): the early return was temporarily deleted and this same
+		// assertion was re-run. FINDING (reported honestly, not the RED this
+		// test was expected to produce): with the guard removed, the call
+		// falls through to `.withIndex("by_tenant", (q) => q.eq("tenantId",
+		// orgSlug))` with `orgSlug` cast from a real `null` — Convex's index
+		// equality treats `null` as distinct from BOTH a stored string tenant
+		// AND an absent (`undefined`) `tenantId`, so this fallthrough matches
+		// zero rows under the CURRENT schema and the assertion still passed
+		// (no RED). This guard is therefore verified-present defense-in-depth
+		// (mirrors `listMessages`'s own degenerate-scope guard, and is the
+		// correct fail-closed shape — refuse before ever touching
+		// `messageReceipts`, rather than rely on an index-equality coincidence)
+		// rather than a data-leak fix provable by this black-box return-value
+		// test; removing it is still a regression in INTENT (an implicit,
+		// coincidental non-match standing in for an explicit refusal) even
+		// though it produced no observable difference in THIS run.
 	});
 });
 
