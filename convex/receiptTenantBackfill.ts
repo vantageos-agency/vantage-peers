@@ -77,7 +77,7 @@ export type ClientOrg = {
 // predates the field. Only a row explicitly marked "operator" is skipped,
 // joining the existing master-sentinel skip as ONE filter predicate (never a
 // second code path).
-async function loadRealClientOrgs(
+export async function loadRealClientOrgs(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<ClientOrg[]> {
 	const rows = await ctx.db

@@ -18,6 +18,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
+import { loadRealClientOrgs } from "./receiptTenantBackfill";
 
 export const _receiptTenantPage = internalQuery({
 	args: { cursor: v.union(v.string(), v.null()) },
@@ -115,6 +116,185 @@ export const countReceiptTenantPresence = internalAction({
 			withTenant,
 			withoutTenant,
 			positiveControlSampleReceiptId: sampleWith,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// countWithheldRecipientReceipts — task k17bf7bsfrm255x4pr5r96q5g58cw691
+// follow-up (PR #1257 read-half gate, withheld-population instrument).
+//
+// `countReceiptTenantPresence` above answers "how many rows have no
+// tenantId at all". It does NOT answer the question that actually matters
+// once reads derive the tenant from the verified identity: of those
+// untenanted rows, how many are addressed to a name that sits in a REAL
+// client org's roster, and would therefore go dark the instant a scoped
+// reader queries `eq("tenantId", orgSlug)`? `npx convex data` caps at 8192
+// rows with no cursor, so this population was previously unmeasured on
+// prod. This is READ-ONLY — it patches nothing, it only counts.
+//
+// Reuses `loadRealClientOrgs` (convex/receiptTenantBackfill.ts) — the SAME
+// join the backfill uses to build its roster (excludes the master sentinel
+// `allowedOrchestrators === ["*"]` and `orgKind === "operator"` rows) — never
+// a duplicated predicate. A receipt's `recipient` OR `recipientInstanceId`
+// matching a roster entry counts it as withheld under that org's slug; a
+// name that sits in TWO OR MORE client rosters is ambiguous — counted once
+// under the `ambiguous` bucket, never split or double-counted into perOrg.
+const WITHHELD_RECIPIENT_PAGE_BATCH_SIZE = 2000;
+
+export const _withheldRecipientPage = internalQuery({
+	args: {
+		cursor: v.union(v.string(), v.null()),
+		// Test-only page-size override — never set outside a test — mirrors
+		// receiptTenantBackfill's `batchSize` so the pagination/resume path can
+		// be exercised without seeding thousands of rows.
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		scanned: v.number(),
+		withheld: v.number(),
+		perOrg: v.record(v.string(), v.number()),
+		ambiguous: v.number(),
+		sampleReceiptId: v.union(v.id("messageReceipts"), v.null()),
+		// Distinct roster names checked THIS page — same value every page (the
+		// roster is loaded once per page, never accumulated across pages), so
+		// the caller can tell "checked against zero names" from "checked, no
+		// match" rather than reading a bare zero.
+		rosterSize: v.number(),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, { cursor, batchSize }) => {
+		// Loaded ONCE per page — never requeried per row.
+		const clientOrgs = await loadRealClientOrgs(ctx);
+		const rosterNames = new Set<string>();
+		for (const org of clientOrgs) {
+			for (const name of org.allowedOrchestrators) {
+				rosterNames.add(name);
+			}
+		}
+
+		const page = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_tenant", (q) => q.eq("tenantId", undefined))
+			.paginate({
+				numItems: batchSize ?? WITHHELD_RECIPIENT_PAGE_BATCH_SIZE,
+				cursor,
+			});
+
+		let withheld = 0;
+		let ambiguous = 0;
+		const perOrg: Record<string, number> = {};
+		let sampleReceiptId: Id<"messageReceipts"> | null = null;
+
+		for (const r of page.page) {
+			const matchedSlugs = new Set<string>();
+			for (const org of clientOrgs) {
+				const recipientMatches = org.allowedOrchestrators.includes(
+					r.recipient,
+				);
+				const instanceMatches =
+					r.recipientInstanceId !== undefined &&
+					org.allowedOrchestrators.includes(r.recipientInstanceId);
+				if (recipientMatches || instanceMatches) {
+					matchedSlugs.add(org.clerkOrgSlug);
+				}
+			}
+
+			if (matchedSlugs.size === 1) {
+				const [slug] = matchedSlugs;
+				perOrg[slug] = (perOrg[slug] ?? 0) + 1;
+				withheld++;
+				if (sampleReceiptId === null) sampleReceiptId = r._id;
+			} else if (matchedSlugs.size > 1) {
+				ambiguous++;
+				withheld++;
+				if (sampleReceiptId === null) sampleReceiptId = r._id;
+			}
+		}
+
+		return {
+			scanned: page.page.length,
+			withheld,
+			perOrg,
+			ambiguous,
+			sampleReceiptId,
+			rosterSize: rosterNames.size,
+			isDone: page.isDone,
+			continueCursor: page.isDone ? null : page.continueCursor,
+		};
+	},
+});
+
+// Named page cap — same discipline as RECEIPT_TENANT_AUDIT_PAGE_CAP above:
+// a page-walking loop that never spins forever, throws rather than
+// truncating silently past the cap.
+const WITHHELD_RECIPIENT_AUDIT_PAGE_CAP = 200; // 200 * 2000/page = 400,000 rows headroom
+
+export const countWithheldRecipientReceipts = internalAction({
+	args: {},
+	returns: v.object({
+		scanned: v.number(),
+		withheld: v.number(),
+		perOrg: v.record(v.string(), v.number()),
+		ambiguous: v.number(),
+		positiveControlSampleReceiptId: v.union(v.id("messageReceipts"), v.null()),
+		// Distinct roster names checked — makes a zero withheld count with an
+		// EMPTY roster visible as such, rather than indistinguishable from a
+		// populated roster with zero matches.
+		clientRosterSize: v.number(),
+	}),
+	handler: async (ctx) => {
+		let scanned = 0;
+		let withheld = 0;
+		let ambiguous = 0;
+		const perOrg: Record<string, number> = {};
+		let sample: Id<"messageReceipts"> | null = null;
+		let clientRosterSize = 0;
+
+		let cursor: string | null = null;
+		let isDone = false;
+		let pages = 0;
+
+		while (!isDone) {
+			pages++;
+			if (pages > WITHHELD_RECIPIENT_AUDIT_PAGE_CAP) {
+				throw new Error(
+					`countWithheldRecipientReceipts: exceeded ${WITHHELD_RECIPIENT_AUDIT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+				);
+			}
+			const page: {
+				scanned: number;
+				withheld: number;
+				perOrg: Record<string, number>;
+				ambiguous: number;
+				sampleReceiptId: Id<"messageReceipts"> | null;
+				rosterSize: number;
+				isDone: boolean;
+				continueCursor: string | null;
+			} = await ctx.runQuery(
+				internal.receiptTenantAudit._withheldRecipientPage,
+				{ cursor },
+			);
+			scanned += page.scanned;
+			withheld += page.withheld;
+			ambiguous += page.ambiguous;
+			for (const [slug, count] of Object.entries(page.perOrg)) {
+				perOrg[slug] = (perOrg[slug] ?? 0) + count;
+			}
+			if (sample === null) sample = page.sampleReceiptId;
+			clientRosterSize = page.rosterSize;
+			isDone = page.isDone;
+			cursor = page.continueCursor;
+		}
+
+		return {
+			scanned,
+			withheld,
+			perOrg,
+			ambiguous,
+			positiveControlSampleReceiptId: sample,
+			clientRosterSize,
 		};
 	},
 });
