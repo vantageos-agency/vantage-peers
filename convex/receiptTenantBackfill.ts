@@ -481,7 +481,7 @@ export const backfillReceiptTenants = internalMutation({
 		// means "the whole backfill is finished"; everything else here is the
 		// running total carried across self-scheduled continuations.
 		console.log(
-			`receiptTenantBackfill: dryRun=${dryRun} scanned=${page.page.length} total=${total} patched=${patched} notTouched=${notTouched} isDone=${isDone}`,
+			`receiptTenantBackfill: dryRun=${dryRun} scanned=${page.page.length} total=${total} patched=${patched} notTouched=${notTouched} isDone=${isDone} perScope=${JSON.stringify(perScope)}`,
 		);
 
 		return {

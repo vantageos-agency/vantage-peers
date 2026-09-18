@@ -726,3 +726,50 @@ describe("pagination: forced-small batch resumes via continueCursor across multi
 		expect(second.isDone).toBe(true);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// perScope observability: production only ever reads the per-PAGE log line
+// (a page's own return value is never observable beyond the first call —
+// every later self-scheduled continuation's return is opaque to the caller).
+// The FINAL page's log line must therefore carry the CUMULATIVE split across
+// every page, not just what that one page resolved.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("perScope observability: the final log line carries the cumulative split", () => {
+	test("multi-page run logs the FULL cumulative perScope on its last (isDone=true) line", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+		});
+
+		// 7 resolvable rows across a batch size of 3 forces 3 pages (3 + 3 + 1)
+		// — the cumulative perScope only reaches its final value {acme-client:7}
+		// on the LAST page's own log line; any single page only ever resolves
+		// at most 3 of them.
+		await seedManyUndefinedTenantReceipts(
+			t,
+			{ from: "victor", recipient: "victor" },
+			7,
+		);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		await runBackfillToCompletion(t, { dryRun: true, batchSize: 3 });
+
+		// Read the recorded calls BEFORE `mockRestore()` — restoring a spy also
+		// clears `.mock.calls`, so the read must happen first.
+		const lines = logSpy.mock.calls.map((call) => String(call[0]));
+		logSpy.mockRestore();
+
+		const doneLines = lines.filter((line) => line.includes("isDone=true"));
+		expect(doneLines.length).toBe(1); // exactly one page (the last) is done
+
+		// GREEN: the final line carries the full 7-row cumulative split, never
+		// just the last page's own (at most 1-row) resolution. This assertion
+		// goes RED if `perScope=${JSON.stringify(perScope)}` is removed from
+		// the log line (verified manually alongside this PR — reported below).
+		expect(doneLines[0]).toContain(
+			`perScope=${JSON.stringify({ "acme-client": 7 })}`,
+		);
+	});
+});
