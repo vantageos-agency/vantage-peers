@@ -1,5 +1,5 @@
-import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { internalMutation, query } from "./_generated/server";
 import { lookupOrgMapping } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,5 +38,51 @@ export const getByClerkSlug = query({
 	),
 	handler: async (ctx, args) => {
 		return await lookupOrgMapping(ctx, args.orgSlug);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setOrgKind — the ONE instrument for marking a client_org_mapping row as the
+// operator's own organisation ("operator") vs a customer ("client"). Run
+// once per row in production via `npx convex run clientOrgMapping:setOrgKind
+// '{"clerkOrgSlug":"...","orgKind":"operator"}'` — never wired to any MCP
+// tool or client-facing surface (internalMutation).
+//
+// Looked up by the `by_clerk_slug` index with `.unique()` — throws if the
+// slug is ambiguous (more than one row), same discipline as the rest of this
+// module's index reads. Patches ONLY `orgKind`; isActive, allowedOrchestrators
+// and scopes are untouched, so this instrument can never silently widen or
+// narrow a row's live auth grant while marking its kind.
+// ─────────────────────────────────────────────────────────────────────────────
+export const setOrgKind = internalMutation({
+	args: {
+		clerkOrgSlug: v.string(),
+		orgKind: v.union(v.literal("operator"), v.literal("client")),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		previous: v.union(v.literal("operator"), v.literal("client"), v.null()),
+		current: v.union(v.literal("operator"), v.literal("client")),
+	}),
+	handler: async (ctx, args) => {
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", args.clerkOrgSlug))
+			.unique();
+
+		if (!row) {
+			throw new ConvexError(
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+
+		const previous = row.orgKind ?? null;
+		await ctx.db.patch(row._id, { orgKind: args.orgKind });
+
+		return {
+			clerkOrgSlug: args.clerkOrgSlug,
+			previous,
+			current: args.orgKind,
+		};
 	},
 });
