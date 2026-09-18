@@ -30,7 +30,7 @@
 // implementations) and THE ONE ACTION (Eta, binding — report + write share
 // one code path, a flag decides only whether the patch is issued) both live
 // here.
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import {
 	internalAction,
@@ -276,10 +276,30 @@ export type BackfillReceiptTenantsResult = {
 // forbid an unbounded `.collect()`. 5000 comfortably exceeds any fixture
 // this test seeds while staying well under the platform's per-execution
 // document ceiling.
-const RECEIPTS_FOR_CALLER_SCAN_CAP = 5000;
+//
+// LOUD, not silent (coordinator follow-up on the first cut of this fix,
+// mirrors `fetchCappedOrOverflow`'s SCAN_CAP_EXCEEDED doctrine in
+// briefingNotes.ts/tasks.ts): a `.take(CAP)` that quietly returns a
+// truncated page is indistinguishable from "this is everyone" — on a
+// backfill probe that is exactly the failure this whole PR closes for the
+// underlying data, just relocated into the verification tool. So this
+// fetches CAP+1 and THROWS ConvexError SCAN_CAP_EXCEEDED if that many come
+// back, rather than silently handing the caller a short list.
+export const RECEIPTS_FOR_CALLER_SCAN_CAP = 5000;
+
+function capOrOverflow<T>(rows: T[], cap: number, label: string): T[] {
+	if (rows.length > cap) {
+		throw new ConvexError(
+			`receiptTenantBackfill._receiptsForCaller: SCAN_CAP_EXCEEDED — ${label} hit the cap of ${cap} rows before the read completed. The result would be incomplete and indistinguishable from a full match.`,
+		);
+	}
+	return rows;
+}
 
 export const _receiptsForCaller = internalQuery({
-	args: {},
+	// scanCapOverride exists ONLY so the pole test can seed CAP+1 rows
+	// without seeding thousands — never set outside a test.
+	args: { scanCapOverride: v.optional(v.number()) },
 	returns: v.array(
 		v.object({
 			_id: v.id("messageReceipts"),
@@ -287,8 +307,9 @@ export const _receiptsForCaller = internalQuery({
 			tenantId: v.optional(v.string()),
 		}),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, { scanCapOverride }) => {
 		const scope = await withOrgScope(ctx);
+		const cap = scanCapOverride ?? RECEIPTS_FOR_CALLER_SCAN_CAP;
 
 		// Defense-in-depth (mirrors listMessages's own degenerate-scope guard):
 		// a non-master scope with no org slug can serve nothing.
@@ -298,9 +319,8 @@ export const _receiptsForCaller = internalQuery({
 			// Master reads the all-tenants path — not exercised by the
 			// both-directions litmus (which asserts on the two SCOPED poles),
 			// but kept honest with the rest of the repo's master/scoped split.
-			const rows = await ctx.db
-				.query("messageReceipts")
-				.take(RECEIPTS_FOR_CALLER_SCAN_CAP);
+			const fetched = await ctx.db.query("messageReceipts").take(cap + 1);
+			const rows = capOrOverflow(fetched, cap, "master all-tenants scan");
 			return rows.map((r) => ({
 				_id: r._id,
 				recipient: r.recipient,
@@ -313,10 +333,11 @@ export const _receiptsForCaller = internalQuery({
 		// probe wants every receipt in the tenant, read and unread alike, so
 		// binding only tenantId is correct here and the *_unread scan-bound
 		// class check does not track this index (no readAt field).
-		const rows = await ctx.db
+		const fetched = await ctx.db
 			.query("messageReceipts")
 			.withIndex("by_tenant", (q) => q.eq("tenantId", orgSlug))
-			.take(RECEIPTS_FOR_CALLER_SCAN_CAP);
+			.take(cap + 1);
+		const rows = capOrOverflow(fetched, cap, "scoped per-tenant scan");
 		return rows.map((r) => ({
 			_id: r._id,
 			recipient: r.recipient,

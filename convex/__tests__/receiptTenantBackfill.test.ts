@@ -89,6 +89,40 @@ async function seedManyUndefinedTenantReceipts(
 	return ids;
 }
 
+// Seeds a message + an ALREADY-STAMPED receipt (tenantId set) — for the
+// SCAN_CAP_EXCEEDED pole, which reads `_receiptsForCaller` directly and has
+// no need to run the backfill action first.
+async function seedStampedReceipt(
+	t: ReturnType<typeof createT>,
+	opts: { from: string; recipient: string; tenantId: string },
+) {
+	return await t.run(async (ctx) => {
+		const messageId = await ctx.db.insert("messages", {
+			from: opts.from,
+			channel: "broadcast",
+			content: `msg from ${opts.from} to ${opts.recipient}`,
+			createdAt: Date.now(),
+		});
+		return await ctx.db.insert("messageReceipts", {
+			messageId,
+			recipient: opts.recipient,
+			tenantId: opts.tenantId,
+		});
+	});
+}
+
+async function seedManyStampedReceipts(
+	t: ReturnType<typeof createT>,
+	opts: { from: string; recipient: string; tenantId: string },
+	count: number,
+) {
+	const ids = [];
+	for (let i = 0; i < count; i++) {
+		ids.push(await seedStampedReceipt(t, opts));
+	}
+	return ids;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveReceiptPair — the shared resolver, unit-level
 // ─────────────────────────────────────────────────────────────────────────────
@@ -450,5 +484,83 @@ describe("both-directions: scoped IDENTITY read after write only sees own tenant
 			{},
 		);
 		expect(masterRead.length).toBe(3); // 2 stamped acme rows + 1 still-null row
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCAN_CAP_EXCEEDED — the loud pole (coordinator follow-up). A `.take(CAP)`
+// read that quietly hands back a short list is indistinguishable from "this
+// is everyone". `scanCapOverride` lets this pole seed CAP+1 rows without
+// seeding thousands.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SCAN_CAP_EXCEEDED: the read is loud on overflow, never a silent short list", () => {
+	const TEST_CAP = 3;
+
+	test("scoped branch: CAP+1 rows in the caller's own tenant throws, not a truncated page", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+		});
+		await seedManyStampedReceipts(
+			t,
+			{ from: "victor", recipient: "victor", tenantId: "acme-client" },
+			TEST_CAP + 1,
+		);
+
+		const tAcme = t.withIdentity({
+			subject: "user-acme",
+			organizationId: "acme-client",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		await expect(
+			tAcme.query(internal.receiptTenantBackfill._receiptsForCaller, {
+				scanCapOverride: TEST_CAP,
+			}),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
+	});
+
+	test("scoped branch: exactly CAP rows in the caller's own tenant still returns the full set", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["victor"],
+		});
+		await seedManyStampedReceipts(
+			t,
+			{ from: "victor", recipient: "victor", tenantId: "acme-client" },
+			TEST_CAP,
+		);
+
+		const tAcme = t.withIdentity({
+			subject: "user-acme",
+			organizationId: "acme-client",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		const rows = await tAcme.query(
+			internal.receiptTenantBackfill._receiptsForCaller,
+			{ scanCapOverride: TEST_CAP },
+		);
+		expect(rows.length).toBe(TEST_CAP);
+	});
+
+	test("master branch: CAP+1 rows across the whole table throws, not a truncated page", async () => {
+		const t = createT();
+		await seedManyStampedReceipts(
+			t,
+			{ from: "victor", recipient: "victor", tenantId: "acme-client" },
+			TEST_CAP + 1,
+		);
+
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		await expect(
+			tMaster.query(internal.receiptTenantBackfill._receiptsForCaller, {
+				scanCapOverride: TEST_CAP,
+			}),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
 	});
 });
