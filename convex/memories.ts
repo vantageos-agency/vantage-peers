@@ -5,6 +5,20 @@ import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityV
 import { requireId } from "./lib/ids";
 import { withOrgScope, type OrgScope } from "./lib/auth";
 
+// sha256 hex digest of a UTF-8 string — mirrors okfContentHash in
+// okfBundleNode.ts (node:crypto is only available in "use node" actions;
+// this file's functions run in the default V8 runtime, so SubtleCrypto is
+// used instead). Same local-copy convention as convex/lib/agentIdentity.ts
+// and convex/lib/license.ts — each call site keeps its own copy rather than
+// importing across unrelated modules.
+async function sha256Hex(input: string): Promise<string> {
+  const encoded = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
 // cron batch size, not an expected total-row count, so 500 is a safe ceiling
 // for a per-run cleanup pass.
@@ -413,5 +427,81 @@ export const expireMemoriesByTtl = internalMutation({
     }
 
     return expired;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// redactMemoryContent (internal) — a real erase path for a credential value
+// (or any other secret-shaped substring) that slipped into a memory's body.
+// softDeleteMemory only flips isLatest to false — the body stays readable by
+// id and the RAG entry keeps the original text. This mutation replaces the
+// body in place, recomputes contentHash the same way the OKF import path
+// does (okfContentHash in okfBundleNode.ts — sha256 hex of the content, no
+// salt), and schedules an action that re-indexes the RAG entry AND purges
+// the superseded chunks so the secret text is not retrievable through
+// search either (convex/ragSync.ts's replaceRagEntryContent).
+//
+// The find/replace pairs are never logged and never returned — the return
+// shape only carries counts and a boolean, never the strings themselves.
+// A zero-occurrence call throws so a silent no-op (e.g. a typo'd find
+// string) cannot be mistaken for a successful redaction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const redactMemoryContent = internalMutation({
+  args: {
+    memoryId: v.id("memories"),
+    redactions: v.array(
+      v.object({ find: v.string(), replaceWith: v.string() }),
+    ),
+  },
+  returns: v.object({
+    memoryId: v.id("memories"),
+    replacements: v.number(),
+    contentHashChanged: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const memory = await ctx.db.get(args.memoryId);
+    if (memory === null) {
+      throw new Error(`Memory ${args.memoryId} not found`);
+    }
+
+    let content = memory.content;
+    let replacements = 0;
+    for (const { find, replaceWith } of args.redactions) {
+      if (find.length === 0) continue;
+      const occurrences = content.split(find).length - 1;
+      if (occurrences > 0) {
+        content = content.split(find).join(replaceWith);
+        replacements += occurrences;
+      }
+    }
+
+    if (replacements === 0) {
+      // Refuse rather than silently no-op — a caller relying on this to
+      // erase a credential must know the erase did NOT happen.
+      throw new Error(
+        "redactMemoryContent found zero occurrences of the given find strings — refusing a silent no-op.",
+      );
+    }
+
+    const newContentHash = await sha256Hex(content);
+    const contentHashChanged = memory.contentHash !== newContentHash;
+    const now = Date.now();
+
+    await ctx.db.patch(args.memoryId, {
+      content,
+      contentHash: newContentHash,
+      updatedAt: now,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.ragSync.replaceRagEntryContent, {
+      memoryId: args.memoryId,
+      content,
+      namespace: memory.namespace,
+      type: memory.type,
+      isLatest: memory.isLatest,
+    });
+
+    return { memoryId: args.memoryId, replacements, contentHashChanged };
   },
 });

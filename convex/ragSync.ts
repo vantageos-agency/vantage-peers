@@ -1,6 +1,7 @@
 "use node";
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
+import { entryIdToPurgeAfterReplace } from "./lib/ragEntryReplacement";
 import { rag } from "./search";
 import { memoryTypeValidator } from "./schema";
 
@@ -111,6 +112,55 @@ export const markRagEntrySuperseded = internalAction({
         { name: "isLatest", value: "false" },
       ],
     });
+    return null;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// replaceRagEntryContent — re-index a memory under the SAME key after its
+// content was rewritten by memories.redactMemoryContent, then PURGE the
+// superseded entry's chunks.
+//
+// rag.add() replacing an existing key only marks the previous version
+// "replaced" (see convex/lib/ragEntryReplacement.ts for the file:line
+// citation) — its chunks still hold the old (pre-redaction) text unless we
+// explicitly delete them. `rag.delete` (as opposed to `rag.deleteAsync`) is
+// used here because this handler already runs in an action (has
+// `ctx.runAction`), so the purge completes synchronously with the redact
+// call instead of racing a background workpool.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const replaceRagEntryContent = internalAction({
+  args: {
+    memoryId: v.id("memories"),
+    content: v.string(),
+    namespace: v.string(),
+    type: memoryTypeValidator,
+    isLatest: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = await rag.add(ctx, {
+      namespace: args.namespace,
+      key: args.memoryId,
+      text: args.content,
+      title: args.content.substring(0, 100),
+      metadata: {
+        namespace: args.namespace,
+        type: args.type,
+        memoryId: args.memoryId,
+      },
+      filterValues: [
+        { name: "namespace", value: args.namespace },
+        { name: "type", value: args.type },
+        { name: "isLatest", value: args.isLatest ? "true" : "false" },
+      ],
+    });
+
+    const purgeEntryId = entryIdToPurgeAfterReplace(result.replacedEntry);
+    if (purgeEntryId !== null) {
+      await rag.delete(ctx, { entryId: purgeEntryId });
+    }
     return null;
   },
 });
