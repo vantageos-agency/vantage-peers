@@ -232,7 +232,13 @@ export const _withheldRecipientPage = internalQuery({
 const WITHHELD_RECIPIENT_AUDIT_PAGE_CAP = 200; // 200 * 2000/page = 400,000 rows headroom
 
 export const countWithheldRecipientReceipts = internalAction({
-	args: {},
+	args: {
+		// Test-only page-size override — never set outside a test — mirrors
+		// receiptTenantBackfill's `batchSize` so the multi-page walk THROUGH
+		// THIS ACTION (not just the underlying query) can be exercised without
+		// seeding thousands of rows.
+		batchSize: v.optional(v.number()),
+	},
 	returns: v.object({
 		scanned: v.number(),
 		withheld: v.number(),
@@ -244,7 +250,7 @@ export const countWithheldRecipientReceipts = internalAction({
 		// populated roster with zero matches.
 		clientRosterSize: v.number(),
 	}),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		let scanned = 0;
 		let withheld = 0;
 		let ambiguous = 0;
@@ -274,7 +280,7 @@ export const countWithheldRecipientReceipts = internalAction({
 				continueCursor: string | null;
 			} = await ctx.runQuery(
 				internal.receiptTenantAudit._withheldRecipientPage,
-				{ cursor },
+				{ cursor, batchSize: args.batchSize },
 			);
 			scanned += page.scanned;
 			withheld += page.withheld;

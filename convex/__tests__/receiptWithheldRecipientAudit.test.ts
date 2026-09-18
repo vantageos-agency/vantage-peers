@@ -276,4 +276,31 @@ describe("receiptTenantAudit._withheldRecipientPage — multi-page accumulation"
 		expect(withheld).toBe(TOTAL);
 		expect(perOrg).toEqual({ "acme-client": TOTAL });
 	});
+
+	test("countWithheldRecipientReceipts ACTION walks multiple pages, not just the query directly", async () => {
+		// The test above drives `_withheldRecipientPage` by hand, one page at a
+		// time — it proves the QUERY accumulates correctly across pages but
+		// never proves the ACTION's own while-loop keeps going past page 1.
+		// This test drives the ACTION itself with a forced small `batchSize`
+		// so 7 rows require 3 pages (3+3+1) THROUGH the action's loop.
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["client-agent"],
+		});
+
+		const TOTAL = 7;
+		for (let i = 0; i < TOTAL; i++) {
+			await seedUntenantedReceipt(t, { from: "pi", recipient: "client-agent" });
+		}
+
+		const r = await t.action(
+			internal.receiptTenantAudit.countWithheldRecipientReceipts,
+			{ batchSize: 3 },
+		);
+
+		expect(r.scanned).toBe(TOTAL);
+		expect(r.withheld).toBe(TOTAL);
+		expect(r.perOrg).toEqual({ "acme-client": TOTAL });
+	});
 });
