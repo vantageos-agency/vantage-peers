@@ -383,6 +383,12 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"workSegments",
 			"pausedAt",
 			"durationSource",
+			// Issue #1293 — the stored PR-link columns are a lookup key for
+			// findOpenReviewTasks/closeReviewTasksForPr, not something this
+			// backlog-listing shape needs to expose (it already re-derives
+			// repoFullName/prNumber from the title via parseReviewTitle).
+			"reviewPrRepoFullName",
+			"reviewPrNumber",
 		],
 		reason:
 			"Backlog-sweep support query (task k17bh19d6zzf73417j6a9623nn8dh8ek) deliberately returns only _id/title for both lineage arms, plus repoFullName/prNumber for the automation arm (the two fields parsed out of the title). The bootstrap arm has no repoFullName/prNumber to extract — that is the whole finding: those rows carry no reliable PR link. Handler constructs both shapes explicitly from parseReviewTitle's output, never spreads the raw row.",

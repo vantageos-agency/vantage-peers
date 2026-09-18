@@ -425,6 +425,17 @@ export default defineSchema({
 		// on every existing row). The dedup index below never matches an
 		// undefined value against a real hash.
 		contentHash: v.optional(v.string()),
+		// Bound key for the (repoFullName, prNumber) review-task dedup lookup
+		// (issue #1293). Stamped ONLY by createOrUpdateReviewTask, directly from
+		// its own args -- the same values already embedded in the "[Review]
+		// <repoFullName> PR #<prNumber>: ..." title, kept here as real columns so
+		// findOpenReviewTasks/closeReviewTasksForPr can look them up through
+		// `by_review_pr` instead of scanning every open-status row and parsing
+		// the title of each one. Optional: rows inserted before this field
+		// existed have neither value set; see migrations.ts
+		// backfillReviewPrLinkFields for the one-time backfill of those rows.
+		reviewPrRepoFullName: v.optional(v.string()),
+		reviewPrNumber: v.optional(v.number()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_project", ["project", "status"])
@@ -475,6 +486,16 @@ export default defineSchema({
 		// OKF bundle task imports. Tasks scope by orgId (no namespace field),
 		// mirroring the by_orgId dedup key in _findTaskByTitleAndDescription.
 		.index("by_orgId_contentHash", ["orgId", "contentHash"])
+		// Issue #1293 — the (repoFullName, prNumber, status) lookup key for
+		// findOpenReviewTasks/closeReviewTasksForPr, replacing the by_status
+		// scan-then-parse-the-title pattern that timed out in production once
+		// reviewBacklogSweep started calling closeReviewTasksForPr once per
+		// backlog row (multiplying the unbounded scan N times per sweep run).
+		.index("by_review_pr", [
+			"reviewPrRepoFullName",
+			"reviewPrNumber",
+			"status",
+		])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).

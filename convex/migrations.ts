@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { syncParticipantIndex } from "./briefingNotes";
+import { REVIEW_OPEN_STATUSES, parseReviewTitle } from "./tasks";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration: backfill startedAt + completedAt on tasks
@@ -356,3 +357,68 @@ export const backfillBriefingNoteParticipants = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export { countOrphanRows, dropOrphanTables } from "./migrations/drop_orphan_tables.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Migration: backfill reviewPrRepoFullName/reviewPrNumber on legacy "[Review]"
+// tasks (issue #1293)
+//
+// findOpenReviewTasks/closeReviewTasksForPr now look rows up through the
+// `by_review_pr` index instead of scanning by_status and parsing every row's
+// title. Rows inserted by createOrUpdateReviewTask BEFORE that field existed
+// have reviewPrRepoFullName/reviewPrNumber undefined, so they are invisible
+// to the new index-bound lookup until backfilled once here. This is a one-time
+// admin migration — it intentionally does the full by_status scan the
+// production code path no longer does, because a one-off manual run is not
+// the recurring, N-times-per-sweep call site that timed out.
+//
+// Run: npx convex run migrations:backfillReviewPrLinkFields
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const backfillReviewPrLinkFields = internalMutation({
+	args: {},
+	returns: v.object({
+		scanned: v.number(),
+		backfilled: v.number(),
+		skippedAlreadySet: v.number(),
+		skippedNoTitleMatch: v.number(),
+	}),
+	handler: async (ctx) => {
+		let scanned = 0;
+		let backfilled = 0;
+		let skippedAlreadySet = 0;
+		let skippedNoTitleMatch = 0;
+
+		for (const status of REVIEW_OPEN_STATUSES) {
+			const batch = await ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", status))
+				.collect();
+
+			for (const task of batch) {
+				scanned++;
+				if (
+					task.reviewPrRepoFullName !== undefined &&
+					task.reviewPrNumber !== undefined
+				) {
+					skippedAlreadySet++;
+					continue;
+				}
+				const parsed = parseReviewTitle(task.title);
+				if (!parsed) {
+					skippedNoTitleMatch++;
+					continue;
+				}
+				await ctx.db.patch(task._id, {
+					reviewPrRepoFullName: parsed.repoFullName,
+					reviewPrNumber: parsed.prNumber,
+				});
+				backfilled++;
+			}
+		}
+
+		console.log(
+			`backfillReviewPrLinkFields: scanned=${scanned} backfilled=${backfilled} skippedAlreadySet=${skippedAlreadySet} skippedNoTitleMatch=${skippedNoTitleMatch}`,
+		);
+		return { scanned, backfilled, skippedAlreadySet, skippedNoTitleMatch };
+	},
+});

@@ -126,6 +126,12 @@ export const sweepReviewBacklog = internalAction({
 				const note = pr.merged
 					? `[PR-MERGED] backlog sweep — ${row.repoFullName} PR #${row.prNumber}`
 					: `[PR-CLOSED-NO-MERGE] backlog sweep — ${row.repoFullName} PR #${row.prNumber}`;
+				// Issue #1293: pass the row's own `_id` (already known from
+				// listReviewBacklogByLineage's scan) so this call closes it by a
+				// direct `ctx.db.get` instead of re-deriving the row through
+				// findOpenReviewTasks. Without this, a sweep over N backlog rows
+				// re-ran that lookup N times per run, which is what actually blew
+				// the mutation's system-operations budget in production.
 				const result = await ctx.runMutation(
 					internal.tasks.closeReviewTasksForPr,
 					{
@@ -135,6 +141,7 @@ export const sweepReviewBacklog = internalAction({
 						mergeCommitSha: pr.merged
 							? (pr.merge_commit_sha ?? undefined)
 							: undefined,
+						taskId: row._id,
 					},
 				);
 				closed += result.closed;
