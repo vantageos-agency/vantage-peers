@@ -217,7 +217,17 @@ export default defineSchema({
 			"tenantId",
 			"recipientInstanceId",
 			"readAt",
-		]),
+		])
+		// #1259 fix — a plain tenant-only index for reads that want EVERY
+		// receipt in a tenant (read + unread alike), never just the unread
+		// slice. Reusing by_tenant_recipient_unread and binding only
+		// tenantId left recipient/readAt unbound in the index range (an
+		// unbounded per-tenant scan flagged by the *_unread scan-bound
+		// class check in checkNewMessagesEnvelope-scan-bound.test.ts,
+		// which requires ALL fields of a "*_unread" index to be bound).
+		// This index carries no readAt field, so it is outside that
+		// check's tracked set by construction, not by evasion.
+		.index("by_tenant", ["tenantId"]),
 
 	// ── missions ──────────────────────────────────────────────────────────────
 	missions: defineTable({

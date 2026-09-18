@@ -64,7 +64,7 @@ describe("receiptTenantAudit.countReceiptTenantPresence — mechanism + positive
 			}
 		});
 
-		const r = await t.query(
+		const r = await t.action(
 			internal.receiptTenantAudit.countReceiptTenantPresence,
 			{},
 		);
@@ -89,7 +89,7 @@ describe("receiptTenantAudit.countReceiptTenantPresence — mechanism + positive
 			}
 		});
 
-		const r = await t.query(
+		const r = await t.action(
 			internal.receiptTenantAudit.countReceiptTenantPresence,
 			{},
 		);
@@ -102,7 +102,7 @@ describe("receiptTenantAudit.countReceiptTenantPresence — mechanism + positive
 
 	test("empty table: total 0 and a NULL positive control — the un-trustworthy zero, made explicit", async () => {
 		const t = createT();
-		const r = await t.query(
+		const r = await t.action(
 			internal.receiptTenantAudit.countReceiptTenantPresence,
 			{},
 		);

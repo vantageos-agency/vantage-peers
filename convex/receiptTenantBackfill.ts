@@ -271,6 +271,13 @@ export type BackfillReceiptTenantsResult = {
 // both-directions pole.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Named cap: this is a test-only scoped-identity probe (the both-directions
+// litmus), never a hot production path, but the query guidelines still
+// forbid an unbounded `.collect()`. 5000 comfortably exceeds any fixture
+// this test seeds while staying well under the platform's per-execution
+// document ceiling.
+const RECEIPTS_FOR_CALLER_SCAN_CAP = 5000;
+
 export const _receiptsForCaller = internalQuery({
 	args: {},
 	returns: v.array(
@@ -291,7 +298,9 @@ export const _receiptsForCaller = internalQuery({
 			// Master reads the all-tenants path — not exercised by the
 			// both-directions litmus (which asserts on the two SCOPED poles),
 			// but kept honest with the rest of the repo's master/scoped split.
-			const rows = await ctx.db.query("messageReceipts").collect();
+			const rows = await ctx.db
+				.query("messageReceipts")
+				.take(RECEIPTS_FOR_CALLER_SCAN_CAP);
 			return rows.map((r) => ({
 				_id: r._id,
 				recipient: r.recipient,
@@ -300,10 +309,14 @@ export const _receiptsForCaller = internalQuery({
 		}
 
 		const orgSlug = scope.orgSlug as string;
+		// by_tenant (tenantId-only) — NOT by_tenant_recipient_unread: this
+		// probe wants every receipt in the tenant, read and unread alike, so
+		// binding only tenantId is correct here and the *_unread scan-bound
+		// class check does not track this index (no readAt field).
 		const rows = await ctx.db
 			.query("messageReceipts")
-			.withIndex("by_tenant_recipient_unread", (q) => q.eq("tenantId", orgSlug))
-			.collect();
+			.withIndex("by_tenant", (q) => q.eq("tenantId", orgSlug))
+			.take(RECEIPTS_FOR_CALLER_SCAN_CAP);
 		return rows.map((r) => ({
 			_id: r._id,
 			recipient: r.recipient,

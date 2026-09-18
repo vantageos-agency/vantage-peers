@@ -16,7 +16,8 @@
 // the exact measure-nothing failure this audit exists to avoid).
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalAction, internalQuery } from "./_generated/server";
 
 export const _receiptTenantPage = internalQuery({
 	args: { cursor: v.union(v.string(), v.null()) },
@@ -54,13 +55,19 @@ export const _receiptTenantPage = internalQuery({
 	},
 });
 
-// Top-level entry is a QUERY, not an action: `convex run` treats an action as a
-// write vector (the prod guard refuses to classify it read-only), and a query is
-// a single transaction that either scans the whole table or throws LOUDLY on the
-// read cap — it never silently undercounts, which is the measurement-integrity
-// property this audit must hold. If it throws on prod (table over the cap), that
-// is a loud signal to page via `_receiptTenantPage` under a Pi token, not a zero.
-export const countReceiptTenantPresence = internalQuery({
+// #1259 fix: this was a single-transaction `for await` walk over the WHOLE
+// table — the file's own prior comment admitted it "throws on prod over the
+// read cap", which is exactly the unbounded-scan class this repo's other
+// backend-doctor fixes (#1287/#1290) close elsewhere. A single transaction
+// that throws past ~32k documents is not a bound, it is a landmine sized to
+// today's row count. Rewritten as an internalAction that walks the SAME
+// paginated `_receiptTenantPage` query the file already exports, accumulating
+// exact totals across pages — no single transaction ever reads more than one
+// page's worth, and the loop itself is capped by a named constant so a
+// pagination bug (a cursor that never reports isDone) cannot spin forever.
+const RECEIPT_TENANT_AUDIT_PAGE_CAP = 200; // 200 * 2000/page = 400,000 rows headroom
+
+export const countReceiptTenantPresence = internalAction({
 	args: {},
 	returns: v.object({
 		total: v.number(),
@@ -73,15 +80,36 @@ export const countReceiptTenantPresence = internalQuery({
 		let withTenant = 0;
 		let withoutTenant = 0;
 		let sampleWith: Id<"messageReceipts"> | null = null;
-		for await (const r of ctx.db.query("messageReceipts")) {
-			total++;
-			if (r.tenantId === undefined) {
-				withoutTenant++;
-			} else {
-				withTenant++;
-				if (sampleWith === null) sampleWith = r._id;
+
+		let cursor: string | null = null;
+		let isDone = false;
+		let pages = 0;
+
+		while (!isDone) {
+			pages++;
+			if (pages > RECEIPT_TENANT_AUDIT_PAGE_CAP) {
+				throw new Error(
+					`countReceiptTenantPresence: exceeded ${RECEIPT_TENANT_AUDIT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+				);
 			}
+			const page: {
+				count: number;
+				withTenant: number;
+				withoutTenant: number;
+				sampleWith: Id<"messageReceipts"> | null;
+				isDone: boolean;
+				continueCursor: string | null;
+			} = await ctx.runQuery(internal.receiptTenantAudit._receiptTenantPage, {
+				cursor,
+			});
+			total += page.count;
+			withTenant += page.withTenant;
+			withoutTenant += page.withoutTenant;
+			if (sampleWith === null) sampleWith = page.sampleWith;
+			isDone = page.isDone;
+			cursor = page.continueCursor;
 		}
+
 		return {
 			total,
 			withTenant,
