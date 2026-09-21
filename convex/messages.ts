@@ -23,6 +23,24 @@ import {
 // rather than reflecting an expected volume.
 const UNREAD_RECEIPTS_SCAN_CAP = 500;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-scope orchestrator enforcement (same defect class as
+// convex/memories.ts's isNamespaceAllowedForScope — see
+// .claude/rules/authority-attached-to-anonymous-object.md). markAsRead and
+// deleteMessage act on a receipt/message identified by a stored orchestrator
+// name (receipt.recipient / message.from). Master scope (no identity with
+// legacy opt-in, or the recognized service-account identity) retains
+// unrestricted access — preserves internal/MCP-server behaviour unchanged. A
+// Clerk-org-scoped caller may only act on an orchestrator listed in its own
+// client_org_mapping row's allowedOrchestrators; anything else is denied.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return scope.allowedOrchestrators.includes(orchestrator);
+}
+
 const staleInProgressValidator = v.array(
 	v.object({
 		taskId: v.id("tasks"),
@@ -847,6 +865,20 @@ export const markAsRead = mutation({
 	returns: v.number(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("messages:markAsRead", …) at mcp-server/src/tools.ts:3393 (imperative), never a subscribing pre-org client shell; the org/RBAC-keyed throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
+		//
+		// Fail-closed multi-tenant fix (defect class: authority attached to an
+		// anonymously-registered object — see
+		// .claude/rules/authority-attached-to-anonymous-object.md). markAsRead
+		// used to authorize solely on the client-supplied callerOrchestrator
+		// argument: an anonymous caller (or a caller from a DIFFERENT org)
+		// could pass ANY orchestrator name and mark that org's receipts read.
+		// withOrgScope is called WITHOUT allowNoIdentityMaster — the MCP
+		// server always presents a real Clerk identity (the caller's own org
+		// JWT or its service-account token; see
+		// mcp-server/src/authenticatedConvexClient.ts), so the fail-closed
+		// default here never breaks that live path.
+		const scope = await withOrgScope(ctx);
+
 		const normalizedIds = args.receiptIds.map((raw, index) =>
 			requireId(
 				ctx,
@@ -862,6 +894,11 @@ export const markAsRead = mutation({
 		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
 			if (receipt === null) continue;
+			if (!isOrchestratorAllowedForScope(scope, receipt.recipient)) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not mark receipt ${receiptId} (recipient "${receipt.recipient}") as read — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				);
+			}
 			if (
 				args.callerOrchestrator !== undefined &&
 				receipt.recipient !== args.callerOrchestrator
@@ -892,8 +929,41 @@ export const deleteMessage = mutation({
 	},
 	returns: v.object({ deleted: v.boolean(), receiptsDeleted: v.number() }),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as markAsRead
+		// above) — deleteMessage used to authorize solely on the
+		// client-supplied callerOrchestrator argument: an anonymous caller
+		// (or a caller from a DIFFERENT org) could pass "system" or the
+		// sender's own name and delete any org's message. withOrgScope is
+		// called WITHOUT allowNoIdentityMaster for the same reason as
+		// markAsRead: the MCP server always presents a real Clerk identity
+		// on this path.
+		//
+		// Resolved BEFORE ctx.db.get(args.messageId) (convex-reviewer REVISE
+		// on PR #1313): an anonymous caller must get RBAC_DENIED, never
+		// "Message not found" — a get-then-scope order lets messageId
+		// existence act as an unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+
+		// Anonymous/no-identity, non-master (isMaster===false, orgSlug===null)
+		// can never pass isOrchestratorAllowedForScope for ANY message.from —
+		// refuse here, before ctx.db.get, so a non-existent messageId cannot
+		// be distinguished from an existing-but-foreign one by an
+		// unauthenticated caller (mirrors checkNewMessages'/listMessages'
+		// `!isMaster && orgSlug===null` guard above).
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete message ${args.messageId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const message = await ctx.db.get(args.messageId);
 		if (!message) throw new Error("Message not found");
+
+		if (!isOrchestratorAllowedForScope(scope, message.from)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete message ${args.messageId} (sender "${message.from}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
 
 		// RBAC: callerOrchestrator is required and must match message.from
 		if (args.callerOrchestrator === undefined) {

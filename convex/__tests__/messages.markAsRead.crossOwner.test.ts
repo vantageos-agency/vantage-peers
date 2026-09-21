@@ -123,10 +123,18 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 			});
 		expect(receipts).toHaveLength(1);
 
-		const count = await t.mutation(api.messages.markAsRead, {
-			receiptIds: [receipts[0].receiptId],
-			callerOrchestrator: "tau",
-		});
+		// markAsRead now derives scope via withOrgScope — authenticate as the
+		// same service-account master identity used above (tau has no Clerk
+		// org of its own in this fixture; the recognized service-account
+		// carve-out is the identity the MCP server presents on this path).
+		const count = await t
+			.withIdentity({
+				subject: "test-service-account-user-id",
+			} as Parameters<typeof t.withIdentity>[0])
+			.mutation(api.messages.markAsRead, {
+				receiptIds: [receipts[0].receiptId],
+				callerOrchestrator: "tau",
+			});
 		expect(count).toBe(1);
 	});
 });
