@@ -93,7 +93,7 @@ describe("errorMonitor:getError — wrong-table ID (issue #1064, reads)", () => 
 		// Literal hint string (not the imported constant) — a mutant that empties
 		// the hint at the call-site must redden this.
 		expect(payload?.message).toBe(
-			"errorId is not a valid errorLogs ID. Use the full 32-char errorId returned by list_errors.",
+			"errorId is not a valid errorLogs ID. Use the full 32-char errorId returned when the error log was listed.",
 		);
 		expect(payload?.message).not.toBe(
 			"errorId is not a valid errorLogs ID.",

@@ -281,7 +281,7 @@ export const get = query({
 			"mandates",
 			args.mandateId,
 			"mandateId",
-			"Use the full 32-char mandateId returned by list_mandates or create_mandate.",
+			"Use the full 32-char mandateId returned when the mandate was created or listed.",
 		);
 		return await ctx.db.get(mandateId);
 	},

@@ -34,7 +34,12 @@ await import(SERVER_JS.href);
 // non-CORE tool is registered (present in __VP_TOOLS__) but disabled by the
 // tool-exposure filter, so it is excluded here exactly as a real client
 // would never see it in tools/list.
-const names = globalThis.__VP_TOOLS__.filter((t) => t.enabled)
+// VP_DUMP_ALL_REGISTERED=1 lists every registered name instead, enabled or
+// masked — used to intersect free text (e.g. a refusal message) with the
+// real tool-name set without scraping source.
+const dumpAll = process.env.VP_DUMP_ALL_REGISTERED === "1";
+const names = globalThis.__VP_TOOLS__
+	.filter((t) => dumpAll || t.enabled)
 	.map((t) => t.name)
 	.sort();
 process.stdout.write(JSON.stringify(names));

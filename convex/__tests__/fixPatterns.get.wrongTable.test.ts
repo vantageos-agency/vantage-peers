@@ -111,7 +111,7 @@ describe("fixPatterns:get — wrong-table ID (issue #1064, reads)", () => {
 		// Literal hint string (not the imported constant) — a mutant that empties
 		// the hint at the call-site must redden this.
 		expect(payload?.message).toBe(
-			"patternId is not a valid fixPatterns ID. Use the full 32-char patternId returned by list_fix_patterns or search_fix_patterns.",
+			"patternId is not a valid fixPatterns ID. Use the full 32-char patternId returned when the fix pattern was created, listed or searched.",
 		);
 		expect(payload?.message).not.toBe(
 			"patternId is not a valid fixPatterns ID.",
