@@ -48,7 +48,7 @@ describe("diary.list pagination — createdBefore applied after unbounded take",
 		for (let i = 0; i < TOTAL; i++) {
 			const date = `2026-01-${String(i + 1).padStart(2, "0")}`;
 			seededDates.push(date);
-			await t.mutation(api.diary.write, {
+			await tInternal.mutation(api.diary.write, {
 				date,
 				orchestrator: "sigma",
 				content: `entry ${i}`,

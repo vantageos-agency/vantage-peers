@@ -1,7 +1,9 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
+import { withOrgScope } from "./lib/auth";
+import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeEpisode
@@ -35,6 +37,26 @@ export const storeEpisode = mutation({
   },
   returns: v.id("memories"),
   handler: async (ctx, args) => {
+    // Fail-closed multi-tenant fix (defect class: authority attached
+    // to an anonymously-registered object — see
+    // .claude/rules/authority-attached-to-anonymous-object.md). storeEpisode
+    // used to write into the memories table with NO identity/scope check at
+    // all; a direct call to the public Convex deployment could write into
+    // (and thus read back via listEpisodes/getCriticalInsights) any org's
+    // namespace. withOrgScope is called WITHOUT allowNoIdentityMaster — the
+    // MCP server always presents a real Clerk identity (the caller's own
+    // org JWT or its service-account token; see
+    // mcp-server/src/authenticatedConvexClient.ts), so the fail-closed
+    // default here never breaks that live path. Reuses
+    // isNamespaceAllowedForScope from memories.ts (the SAME check
+    // storeMemory applies) rather than duplicating the rule.
+    const scope = await withOrgScope(ctx);
+    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+      throw new ConvexError(
+        `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+      );
+    }
+
     const now = Date.now();
 
     // Build the searchable content from all episode fields
