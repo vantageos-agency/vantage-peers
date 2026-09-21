@@ -12,9 +12,10 @@
  * above the export.
  *
  * This test does not FIX any mutation. It is a ratchet: known, classified
- * offenders are listed in KNOWN_OFFENDERS below (kept in this PR's diff
- * only for the two memories.ts mutations this PR fixes — see
- * memoriesWriteScope.test.ts). The test fails if:
+ * offenders are listed in KNOWN_OFFENDERS below — see
+ * memoriesWriteScope.test.ts (the memories.ts fix) and
+ * messagesWriteScope.test.ts (the messages.ts markAsRead/deleteMessage fix)
+ * for the entries this ratchet has already resolved. The test fails if:
  *   - a NEW offender appears (an unguarded, unmarked public mutation not in
  *     KNOWN_OFFENDERS), or
  *   - a KNOWN offender becomes guarded/marked without being removed from
@@ -391,6 +392,11 @@ function runScan(): Classified[] {
 //     are NOT in this list — their file-local requireMasterAuth() (constant-time
 //     compare against process.env.BEARER_SECRET_MASTER) is recognised by the
 //     scanner's second seed criterion (referencesMasterSecretEnvVar), class (a).
+//   - convex/messages.ts:markAsRead and convex/messages.ts:deleteMessage are
+//     NOT in this list — guarded via withOrgScope +
+//     isOrchestratorAllowedForScope, with the pre-existing callerOrchestrator
+//     argument kept as a narrowing-only layer on top (never a substitute),
+//     class (a). See convex/__tests__/messagesWriteScope.test.ts.
 //   - convex/memoriesScoped.ts:storeMemoryScoped is NOT in this list — guarded
 //     via its file-local resolveOrgId(), which calls ctx.auth.getUserIdentity,
 //     class (a).
@@ -405,8 +411,6 @@ const KNOWN_OFFENDERS = new Set<string>([
 	"convex/mandates.ts:accept",
 	"convex/mandates.ts:update",
 	"convex/mandates.ts:settle",
-	"convex/messages.ts:markAsRead",
-	"convex/messages.ts:deleteMessage",
 	// no caller-identity argument or check of any kind (class c):
 	"convex/businessUnits.ts:create",
 	"convex/businessUnits.ts:update",
@@ -481,6 +485,16 @@ describe("public mutation auth guard (source-tree-derived, ratchet)", () => {
 			storeMemoryScoped?.status,
 			"memoriesScoped.storeMemoryScoped is guarded via resolveOrgId's ctx.auth.getUserIdentity call",
 		).toBe("guarded");
+		const markAsRead = results.find(
+			(r) => r.file === "convex/messages.ts" && r.name === "markAsRead",
+		);
+		expect(markAsRead?.status, "messages.markAsRead must be guarded post-fix").toBe("guarded");
+		const deleteMessage = results.find(
+			(r) => r.file === "convex/messages.ts" && r.name === "deleteMessage",
+		);
+		expect(deleteMessage?.status, "messages.deleteMessage must be guarded post-fix").toBe(
+			"guarded",
+		);
 
 		console.log(
 			`public mutations: ${results.length}; guarded: ${guarded.length}; allow-marked: ${allowMarkedNote(allowMarked)}; offenders: ${offenders.length}`,

@@ -683,7 +683,7 @@ describe("Messages", () => {
 		});
 		expect(messages).toHaveLength(1);
 
-		const count = await t.mutation(api.messages.markAsRead, {
+		const count = await asMaster(t).mutation(api.messages.markAsRead, {
 			receiptIds: [messages[0].receiptId],
 		});
 		expect(count).toBe(1);
@@ -703,7 +703,7 @@ describe("Messages", () => {
 		});
 		expect(before).toHaveLength(1);
 
-		await t.mutation(api.messages.markAsRead, {
+		await asMaster(t).mutation(api.messages.markAsRead, {
 			receiptIds: [before[0].receiptId],
 		});
 
@@ -759,7 +759,7 @@ describe("Messages", () => {
 		expect(before[0].messageId).toBe(messageId);
 
 		// Delete the message as the sender
-		const result = await t.mutation(api.messages.deleteMessage, {
+		const result = await asMaster(t).mutation(api.messages.deleteMessage, {
 			messageId,
 			callerOrchestrator: "pi",
 		});
@@ -785,7 +785,7 @@ describe("Messages", () => {
 
 		// Phi tries to delete a message sent by pi — should be rejected
 		await expect(
-			t.mutation(api.messages.deleteMessage, {
+			asMaster(t).mutation(api.messages.deleteMessage, {
 				messageId,
 				callerOrchestrator: "phi",
 			}),
@@ -803,14 +803,14 @@ describe("Messages", () => {
 			content: "Temporary",
 		});
 
-		await t.mutation(api.messages.deleteMessage, {
+		await asMaster(t).mutation(api.messages.deleteMessage, {
 			messageId,
 			callerOrchestrator: "system",
 		});
 
 		// Deleting again should throw "Message not found"
 		await expect(
-			t.mutation(api.messages.deleteMessage, {
+			asMaster(t).mutation(api.messages.deleteMessage, {
 				messageId,
 				callerOrchestrator: "system",
 			}),
