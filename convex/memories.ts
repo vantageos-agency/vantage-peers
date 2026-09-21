@@ -21,7 +21,7 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // "team/<orgSlug>" prefix; anything else is denied (never leaked cross-tenant).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isNamespaceAllowedForScope(scope: OrgScope, namespace: string): boolean {
+export function isNamespaceAllowedForScope(scope: OrgScope, namespace: string): boolean {
   if (scope.isMaster) return true;
   if (scope.orgSlug === null) return false;
   const ownPrefix = `team/${scope.orgSlug}`;

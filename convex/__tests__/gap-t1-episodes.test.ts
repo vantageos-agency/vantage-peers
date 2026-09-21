@@ -42,7 +42,14 @@ describe("GAP-T1 store_episode — storeEpisode mutation", () => {
 	test("happy path — inserts episode with all 5 fields + severity, returns memoryId", async () => {
 		const t = createTestConvex();
 
-		const memoryId = await t.mutation(api.episodes.storeEpisode, {
+		// storeEpisode now derives the caller's scope via withOrgScope and
+		// refuses an anonymous (no-identity) caller — see
+		// convex/episodes.ts. Use the service-account/master identity, the
+		// SAME identity the MCP server presents when no Clerk-org JWT is
+		// attached.
+		const memoryId = await t
+			.withIdentity({ subject: "test-service-account-user-id" })
+			.mutation(api.episodes.storeEpisode, {
 			namespace: "orchestrator/sigma",
 			createdBy: "sigma",
 			context: "GAP-T1 dispatch from Pi on D90 audit",
@@ -96,16 +103,18 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 	test("happy path — returns full episode row for a known id", async () => {
 		const t = createTestConvex();
 
-		const memoryId = await t.mutation(api.episodes.storeEpisode, {
-			namespace: "orchestrator/sigma",
-			createdBy: "sigma",
-			context: "ctx",
-			goal: "goal",
-			action: "action",
-			outcome: "outcome",
-			insight: "insight",
-			severity: "minor",
-		});
+		const memoryId = await t
+			.withIdentity({ subject: "test-service-account-user-id" })
+			.mutation(api.episodes.storeEpisode, {
+				namespace: "orchestrator/sigma",
+				createdBy: "sigma",
+				context: "ctx",
+				goal: "goal",
+				action: "action",
+				outcome: "outcome",
+				insight: "insight",
+				severity: "minor",
+			});
 
 		const row = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
 		expect(row).not.toBeNull();

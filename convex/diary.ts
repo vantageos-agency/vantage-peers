@@ -1,7 +1,26 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
-import { withOrgScope } from "./lib/auth";
+import { withOrgScope, type OrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-scope orchestrator enforcement (same defect class as
+// convex/memories.ts's isNamespaceAllowedForScope and
+// convex/messages.ts's isOrchestratorAllowedForScope — see
+// .claude/rules/authority-attached-to-anonymous-object.md). diary has no
+// namespace column; the owner key here is the `orchestrator` field. Master
+// scope (no identity with legacy opt-in, or the recognized service-account
+// identity) retains unrestricted access — preserves internal/MCP-server
+// behaviour unchanged. A Clerk-org-scoped caller may only write/delete a
+// diary entry whose `orchestrator` is in its own client_org_mapping row's
+// allowedOrchestrators; anything else is denied.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return scope.allowedOrchestrators.includes(orchestrator);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // write — upsert diary entry (if entry exists for date+orchestrator, update it)
@@ -26,6 +45,24 @@ export const write = mutation({
 	},
 	returns: v.id("diary"),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (defect class: authority attached
+		// to an anonymously-registered object — see
+		// .claude/rules/authority-attached-to-anonymous-object.md). write
+		// used to accept ANY orchestrator name with no identity/scope
+		// check at all — a direct call to the public Convex deployment
+		// could write (or overwrite) any org's diary entries. withOrgScope
+		// is called WITHOUT allowNoIdentityMaster — the MCP server always
+		// presents a real Clerk identity (the caller's own org JWT or its
+		// service-account token; see
+		// mcp-server/src/authenticatedConvexClient.ts), so the
+		// fail-closed default here never breaks that live path.
+		const scope = await withOrgScope(ctx);
+		if (!isOrchestratorAllowedForScope(scope, args.orchestrator)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		const now = Date.now();
 
 		// Check for existing entry
@@ -199,8 +236,41 @@ export const deleteDiary = mutation({
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as write above)
+		// — deleteDiary used to authorize solely on the client-supplied
+		// callerOrchestrator argument: an anonymous caller (or a caller from
+		// a DIFFERENT org) could pass "system" or the entry's own
+		// orchestrator name and delete any org's diary entry. withOrgScope
+		// is called WITHOUT allowNoIdentityMaster for the same reason as
+		// write: the MCP server always presents a real Clerk identity on
+		// this path.
+		//
+		// Resolved BEFORE ctx.db.get(args.diaryId) (mirrors convex-reviewer
+		// REVISE on PR #1313 / messages.ts deleteMessage): an anonymous
+		// caller must get RBAC_DENIED, never "Diary entry not found" — a
+		// get-then-scope order lets diaryId existence act as an
+		// unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+
+		// Anonymous/no-identity, non-master (isMaster===false, orgSlug===null)
+		// can never pass isOrchestratorAllowedForScope for ANY orchestrator —
+		// refuse here, before ctx.db.get, so a non-existent diaryId cannot be
+		// distinguished from an existing-but-foreign one by an unauthenticated
+		// caller.
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const entry = await ctx.db.get(args.diaryId);
 		if (!entry) throw new Error("Diary entry not found");
+
+		if (!isOrchestratorAllowedForScope(scope, entry.orchestrator)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} (orchestrator "${entry.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
 
 		if (args.callerOrchestrator === undefined) {
 			throw new Error(
