@@ -104,7 +104,7 @@ describe("mandates:get — wrong-table ID (issue #1064, reads)", () => {
 		// Literal hint string (not the imported constant) — a mutant that empties
 		// the hint at the call-site must redden this.
 		expect(payload?.message).toBe(
-			"mandateId is not a valid mandates ID. Use the full 32-char mandateId returned by list_mandates or create_mandate.",
+			"mandateId is not a valid mandates ID. Use the full 32-char mandateId returned when the mandate was created or listed.",
 		);
 		expect(payload?.message).not.toBe(
 			"mandateId is not a valid mandates ID.",

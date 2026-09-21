@@ -590,7 +590,7 @@ export const getError = query({
 			"errorLogs",
 			args.errorId,
 			"errorId",
-			"Use the full 32-char errorId returned by list_errors.",
+			"Use the full 32-char errorId returned when the error log was listed.",
 		);
 		return await ctx.db.get(errorId);
 	},

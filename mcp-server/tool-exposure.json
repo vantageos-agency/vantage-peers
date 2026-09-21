@@ -16,6 +16,7 @@
 		"delete_recurring_task",
 		"delete_task",
 		"export_okf_bundle",
+		"fail_task",
 		"get_briefing_note",
 		"get_diary",
 		"get_episode",

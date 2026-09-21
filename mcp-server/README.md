@@ -6,7 +6,7 @@
 [![MCP tools: 109+](https://img.shields.io/badge/MCP_tools-109+-green)]()
 
 > **Package:** `vantage-peers-mcp` (plain — NOT `@vantageos/vantage-peers-mcp`)
-> **Current version:** `2.18.0` (S8 CORE tool-exposure filter release — server now advertises only 69 CORE tools of 108 registered; masking is data-driven (`tool-exposure.json`) and reversible, non-CORE tools stay registered/handler-wired but are not listed)
+> **Current version:** `2.18.0` (S8 CORE tool-exposure filter release — server now advertises only 70 CORE tools of 108 registered; masking is data-driven (`tool-exposure.json`) and reversible, non-CORE tools stay registered/handler-wired but are not listed)
 > **License:** FSL-1.1-Apache-2.0
 > **Repo:** https://github.com/vantageos-agency/vantage-peers (full monorepo README at `/README.md`)
 > **Docs:** https://vantagepeers.com/docs

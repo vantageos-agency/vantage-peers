@@ -38,13 +38,15 @@ import { spawnSync } from "node:child_process";
 import {
 	existsSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const HERE = new URL(".", import.meta.url);
@@ -105,6 +107,206 @@ function runDumpToolNames(extraEnv: Record<string, string> = {}) {
 	});
 }
 
+// ─── Refusal-text scan ──────────────────────────────────────────────────────
+// Scope is DERIVED from the source tree: every non-test .ts file under
+// convex/ (minus _generated/ and __tests__/) and under mcp-server/src (minus
+// __tests__/). Refusal texts are the string/template literals inside the
+// arguments of `throw ...`, `new <X>Error(...)` (ConvexError, Error,
+// McpError, ...), the MCP error-result helpers `mcpError(...)` /
+// `mcpConvexError(...)`, and any REFUSAL HELPER derived from the tree: a
+// function with a parameter used only inside its own refusals (e.g.
+// `requireId(..., hint)` throws `${base} ${hint}`), iterated to a fixed
+// point so helpers of helpers count too. A refusal inside a tool's own
+// registration that names that same tool is exempt (it can only fire once
+// the tool is callable). A message stored in a local variable before being
+// thrown is not followed (no data flow); inline literals are the
+// established style.
+const REPO_ROOT = join(PKG_ROOT, "..");
+const SEED_REFUSAL_CALLEES = ["mcpError", "mcpConvexError"];
+const LITERAL_KINDS = new Set([
+	ts.SyntaxKind.StringLiteral,
+	ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+	ts.SyntaxKind.TemplateHead,
+	ts.SyntaxKind.TemplateMiddle,
+	ts.SyntaxKind.TemplateTail,
+]);
+
+function listSourceFiles(dir: string): string[] {
+	const out: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			if (["_generated", "__tests__", "node_modules"].includes(entry.name))
+				continue;
+			out.push(...listSourceFiles(full));
+		} else if (
+			entry.name.endsWith(".ts") &&
+			!entry.name.endsWith(".test.ts") &&
+			!entry.name.endsWith(".d.ts")
+		) {
+			out.push(full);
+		}
+	}
+	return out;
+}
+
+function isRefusalNode(node: ts.Node, callees: Set<string>): boolean {
+	if (ts.isThrowStatement(node)) return true;
+	if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
+		return node.expression.text.endsWith("Error");
+	}
+	if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+		return callees.has(node.expression.text);
+	}
+	return false;
+}
+
+// Arguments only, never the callee itself.
+function refusalPayloads(node: ts.Node): ts.Node[] {
+	if (ts.isNewExpression(node) || ts.isCallExpression(node)) {
+		return [...(node.arguments ?? [])];
+	}
+	return [node];
+}
+
+type NamedFn = { name: string; params: Set<string>; body: ts.Node };
+
+function paramNames(fn: ts.SignatureDeclarationBase): Set<string> {
+	const names = new Set<string>();
+	for (const p of fn.parameters) {
+		if (ts.isIdentifier(p.name)) names.add(p.name.text);
+	}
+	return names;
+}
+
+function namedFunctions(sf: ts.SourceFile): NamedFn[] {
+	const out: NamedFn[] = [];
+	const visit = (node: ts.Node) => {
+		if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+			out.push({
+				name: node.name.text,
+				params: paramNames(node),
+				body: node.body,
+			});
+		} else if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.initializer &&
+			(ts.isArrowFunction(node.initializer) ||
+				ts.isFunctionExpression(node.initializer))
+		) {
+			out.push({
+				name: node.name.text,
+				params: paramNames(node.initializer),
+				body: node.initializer.body,
+			});
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sf);
+	return out;
+}
+
+// A refusal helper has a MESSAGE parameter: one referenced in its body, and
+// only ever inside a refusal payload (requireId's `hint`). A parameter that
+// also drives other logic (defineTool's tool `name`) does not qualify.
+function hasMessageParam(fn: NamedFn, callees: Set<string>): boolean {
+	const total = new Map<string, number>();
+	const inRefusal = new Map<string, number>();
+	const bump = (m: Map<string, number>, k: string) =>
+		m.set(k, (m.get(k) ?? 0) + 1);
+	const countIn = (m: Map<string, number>) => (node: ts.Node) => {
+		const walk = (n: ts.Node) => {
+			if (ts.isIdentifier(n) && fn.params.has(n.text)) bump(m, n.text);
+			ts.forEachChild(n, walk);
+		};
+		walk(node);
+	};
+	countIn(total)(fn.body);
+	const visit = (node: ts.Node) => {
+		if (isRefusalNode(node, callees)) {
+			for (const payload of refusalPayloads(node)) countIn(inRefusal)(payload);
+			return;
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(fn.body);
+	for (const [param, n] of total) {
+		if (n > 0 && inRefusal.get(param) === n) return true;
+	}
+	return false;
+}
+
+type RefusalHit = { file: string; line: number; tool: string };
+
+function scanRefusalToolNames(registered: Set<string>): RefusalHit[] {
+	const parsed = [
+		...listSourceFiles(join(REPO_ROOT, "convex")),
+		...listSourceFiles(join(PKG_ROOT, "src")),
+	].map((path) =>
+		ts.createSourceFile(
+			path,
+			readFileSync(path, "utf-8"),
+			ts.ScriptTarget.Latest,
+			true,
+		),
+	);
+
+	// Derive refusal helpers from the tree, to a fixed point.
+	const callees = new Set(SEED_REFUSAL_CALLEES);
+	const fns = parsed.flatMap(namedFunctions);
+	let grew = true;
+	while (grew) {
+		grew = false;
+		for (const fn of fns) {
+			if (!callees.has(fn.name) && hasMessageParam(fn, callees)) {
+				callees.add(fn.name);
+				grew = true;
+			}
+		}
+	}
+
+	const hits = new Map<string, RefusalHit>();
+	for (const sf of parsed) {
+		const rel = relative(REPO_ROOT, sf.fileName);
+		const collect = (node: ts.Node, self: Set<string>) => {
+			if (LITERAL_KINDS.has(node.kind)) {
+				const raw = node.getText(sf);
+				const base = node.getStart(sf);
+				for (const m of raw.matchAll(/[a-z][a-z0-9_]*/g)) {
+					if (!registered.has(m[0]) || self.has(m[0])) continue;
+					const line =
+						sf.getLineAndCharacterOfPosition(base + (m.index ?? 0)).line + 1;
+					hits.set(`${rel}:${line}:${m[0]}`, { file: rel, line, tool: m[0] });
+				}
+			}
+			ts.forEachChild(node, (child) => collect(child, self));
+		};
+		// Names carried as a direct string argument by an ENCLOSING call (the
+		// tool's own registration, e.g. defineTool(..., "delete_bu", ...)).
+		// A refusal inside tool X's own handler that names X can only fire
+		// once X is callable, so it never points a caller at a dead verb.
+		const enclosing: string[][] = [];
+		const visit = (node: ts.Node) => {
+			if (isRefusalNode(node, callees)) {
+				const self = new Set(enclosing.flat());
+				for (const payload of refusalPayloads(node)) collect(payload, self);
+			}
+			const own =
+				ts.isCallExpression(node) || ts.isNewExpression(node)
+					? (node.arguments ?? []).filter(ts.isStringLiteral).map((a) => a.text)
+					: [];
+			enclosing.push(own);
+			ts.forEachChild(node, visit);
+			enclosing.pop();
+		};
+		visit(sf);
+	}
+	return [...hits.values()].sort(
+		(a, b) => a.file.localeCompare(b.file) || a.line - b.line,
+	);
+}
+
 describe("tool-exposure filter (data-driven allowlist, registration-point)", () => {
 	it("advertises only tool-exposure.json's core names, hides every other registered tool", () => {
 		const result = runDumpToolNames();
@@ -139,34 +341,31 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		}
 	}, 60_000);
 
-	it("advertises every registered tool named in a closure-gate refusal message, so no refusal points at an uncallable verb", () => {
+	it("advertises every registered tool named in any refusal text in the source tree, so no refusal points at an uncallable verb", () => {
 		// Every tool the server REGISTERS, enabled or masked.
 		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
 		expect(all.status).toBe(0);
 		const registered = new Set<string>(JSON.parse(all.stdout));
-		expect(registered.has("pause_task")).toBe(true);
+		expect(registered.has("fail_task")).toBe(true);
 
-		const gateSrc = readFileSync(
-			join(PKG_ROOT, "..", "convex", "lib", "taskClosureGate.ts"),
-			"utf-8",
-		);
-		const named = [
-			...new Set(
-				[...gateSrc.matchAll(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)].map(
-					(m) => m[0],
-				),
-			),
-		].filter((n) => registered.has(n));
-		// Positive control: the gate's current refusal text names these.
-		expect(named).toEqual(
-			expect.arrayContaining(["pause_task", "resume_task", "start_task"]),
-		);
+		const hits = scanRefusalToolNames(registered);
+		const found = (file: string, tool: string) =>
+			hits.some((h) => h.file === file && h.tool === tool);
+		// Positive controls: the scan reaches both known refusal sites.
+		expect(found("convex/lib/taskClosureGate.ts", "pause_task")).toBe(true);
+		expect(found("convex/tasks.ts", "fail_task")).toBe(true);
+		// A derived refusal helper (requireId's hint argument) is scanned too.
+		expect(found("convex/missions.ts", "list_missions")).toBe(true);
 
-		const result = runDumpToolNames();
-		expect(result.status).toBe(0);
-		const advertised = new Set<string>(JSON.parse(result.stdout));
-		const unreachable = named.filter((n) => !advertised.has(n));
-		expect(unreachable).toEqual([]);
+		const core = new Set(CORE_NAMES);
+		const offenders = hits
+			.filter((h) => !core.has(h.tool))
+			.map((h) => `${h.file}:${h.line} -> ${h.tool}`);
+		const namedTools = new Set(hits.map((h) => h.tool));
+		console.log(
+			`refusal-named tools: ${namedTools.size} (${hits.length} sites); offenders: ${offenders.length}`,
+		);
+		expect(offenders, `refusal text names non-core tools`).toEqual([]);
 	}, 60_000);
 
 	it("throws at startup naming an unknown core name, refusing to start", () => {

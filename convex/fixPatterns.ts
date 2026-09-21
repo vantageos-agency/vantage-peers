@@ -205,7 +205,7 @@ export const get = query({
 			"fixPatterns",
 			args.patternId,
 			"patternId",
-			"Use the full 32-char patternId returned by list_fix_patterns or search_fix_patterns.",
+			"Use the full 32-char patternId returned when the fix pattern was created, listed or searched.",
 		);
 		const pattern = await ctx.db.get(patternId);
 		if (pattern === null) return null;
