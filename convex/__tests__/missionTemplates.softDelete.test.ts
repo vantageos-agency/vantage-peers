@@ -101,15 +101,24 @@ describe("missionTemplates.softDelete", () => {
 		await seedTemplate(t, name);
 		await t.mutation(api.missionTemplates.softDelete, { name });
 
-		const missionId = await t.mutation(api.missions.create, {
-			name: "Test Mission",
-			project: "test-project",
-			status: "execute",
-			priority: "high",
-			pilot: "pi",
-			agents: [],
-			createdBy: "pi",
-		});
+		// Fail-closed multi-tenant fix: missions.create now derives the
+		// caller's scope via withOrgScope and refuses an anonymous
+		// (no-identity) caller — authenticate as the service-account/master
+		// identity (the same identity the MCP server presents when no
+		// Clerk-org JWT is attached).
+		const missionId = await t
+			.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+				typeof t.withIdentity
+			>[0])
+			.mutation(api.missions.create, {
+				name: "Test Mission",
+				project: "test-project",
+				status: "execute",
+				priority: "high",
+				pilot: "pi",
+				agents: [],
+				createdBy: "pi",
+			});
 
 		await expect(
 			t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {

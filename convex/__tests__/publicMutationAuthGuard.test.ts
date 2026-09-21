@@ -437,18 +437,9 @@ const KNOWN_OFFENDERS = new Set<string>([
 	"convex/missionTemplates.ts:upsert",
 	"convex/missionTemplates.ts:softDelete",
 	"convex/missionTemplates.ts:instantiateTemplateIntoMission",
-	"convex/missions.ts:create",
-	"convex/missions.ts:update",
-	"convex/missions.ts:updateStatus",
-	"convex/missions.ts:updateProgress",
 	"convex/okfBundleDurable.ts:cancelOkfBundleExportDurable",
 	"convex/profiles.ts:upsertProfile",
 	"convex/profiles.ts:updateDynamic",
-	"convex/recurringTasks.ts:create",
-	"convex/recurringTasks.ts:update",
-	"convex/recurringTasks.ts:pause",
-	"convex/recurringTasks.ts:resume",
-	"convex/recurringTasks.ts:remove",
 ]);
 
 describe("public mutation auth guard (source-tree-derived, ratchet)", () => {

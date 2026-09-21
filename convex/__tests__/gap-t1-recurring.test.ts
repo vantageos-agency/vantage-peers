@@ -21,7 +21,15 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createTestConvex = () => convexTest(schema, modules);
+// Fail-closed multi-tenant fix: recurringTasks' create/update/pause/resume/
+// remove now derive the caller's scope via withOrgScope and refuse an
+// anonymous (no-identity) caller — authenticate as the service-account/
+// master identity (the same identity the MCP server presents when no
+// Clerk-org JWT is attached).
+const createTestConvex = () =>
+	convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	});
 
 async function seedRecurringTask(
 	t: ReturnType<typeof createTestConvex>,

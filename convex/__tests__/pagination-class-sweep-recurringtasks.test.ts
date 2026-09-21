@@ -28,7 +28,14 @@ const modules = Object.fromEntries(
 
 describe("recurringTasks.list pagination — createdBefore applied after unbounded take", () => {
 	test("RED/GREEN: paginating to the end must return every seeded recurring task", async () => {
-		const t = convexTest(schema, modules);
+		// Fail-closed multi-tenant fix: recurringTasks.create now derives the
+		// caller's scope via withOrgScope and refuses an anonymous
+		// (no-identity) caller — authenticate as the service-account/master
+		// identity (the same identity the MCP server presents when no
+		// Clerk-org JWT is attached).
+		const t = convexTest(schema, modules).withIdentity({
+			subject: "test-service-account-user-id",
+		});
 		const TOTAL = 12;
 		const PAGE_LIMIT = 5;
 		const assignedTo = "sweep-assignee";

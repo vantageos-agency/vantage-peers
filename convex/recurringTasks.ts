@@ -1,9 +1,10 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
+import { withOrgScope, type OrgScope } from "./lib/auth";
 
 // Issue #1064 slice-6 (FINAL) — same hint for all five single-id handlers
 // below, all reads/writes on the recurringTasks table.
@@ -19,6 +20,27 @@ const priorityValidator = v.union(
 	v.literal("medium"),
 	v.literal("low"),
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-scope orchestrator enforcement (same defect class as
+// convex/messages.ts's isOrchestratorAllowedForScope / convex/diary.ts's
+// isOrchestratorAllowedForScope — see
+// .claude/rules/authority-attached-to-anonymous-object.md). recurringTasks
+// has NO orgId (or any other org-scoping) column — see convex/schema.ts's
+// `recurringTasks` table. The owner key here is the `assignedTo` field
+// (indexed via `by_assignee`), the same shape #1313 (messages.ts) applies.
+// Master scope (no identity with legacy opt-in, or the recognized
+// service-account identity) retains unrestricted access — preserves
+// internal/MCP-server behaviour unchanged. A Clerk-org-scoped caller may
+// only act on a recurring task whose `assignedTo` is in its own
+// client_org_mapping row's allowedOrchestrators; anything else is denied.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return scope.allowedOrchestrators.includes(orchestrator);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Simple cron expression → next run time calculator
@@ -100,6 +122,25 @@ export const create = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (defect class: authority attached to an
+		// anonymously-registered object — see
+		// .claude/rules/authority-attached-to-anonymous-object.md). create
+		// used to insert with NO identity/scope check at all; a direct call
+		// to the public Convex deployment could create a recurring task
+		// assigned to ANY orchestrator, including one outside the caller's
+		// own org. withOrgScope is called WITHOUT allowNoIdentityMaster — the
+		// MCP server always presents a real Clerk identity (the caller's own
+		// org JWT or its service-account token; see
+		// mcp-server/src/authenticatedConvexClient.ts), so the fail-closed
+		// default here never breaks that live path. An org caller may create
+		// only for an owner (assignedTo) inside its own scope.
+		const scope = await withOrgScope(ctx);
+		if (!isOrchestratorAllowedForScope(scope, args.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not create a recurring task assigned to "${args.assignedTo}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
 
@@ -194,6 +235,26 @@ export const update = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as create above) —
+		// update used to authorize on NOTHING at all: an anonymous caller (or
+		// a caller from a DIFFERENT org) could pass any recurringTaskId and
+		// mutate another org's recurring task. withOrgScope is called WITHOUT
+		// allowNoIdentityMaster for the same reason as create: the MCP server
+		// always presents a real Clerk identity on this path.
+		//
+		// Resolved BEFORE ctx.db.get(recurringTaskId) (mirrors
+		// convex/messages.ts's deleteMessage / convex/diary.ts's
+		// deleteDiary): an anonymous caller must get RBAC_DENIED, never
+		// "Recurring task not found" — a get-then-scope order lets
+		// recurringTaskId existence act as an unauthenticated existence
+		// oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update recurring task ${args.recurringTaskId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const recurringTaskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -203,6 +264,26 @@ export const update = mutation({
 		);
 		const existing = await ctx.db.get(recurringTaskId);
 		if (!existing) throw new Error("Recurring task not found");
+
+		// The STORED owner (existing.assignedTo) is checked here, never
+		// anything caller-supplied.
+		if (!isOrchestratorAllowedForScope(scope, existing.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
+		// A patch that REASSIGNS the task must never move it into another
+		// org's scope: the NEW assignedTo (not just the stored one above)
+		// must also be inside the caller's own allowedOrchestrators.
+		if (
+			args.assignedTo !== undefined &&
+			!isOrchestratorAllowedForScope(scope, args.assignedTo)
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not reassign recurring task ${recurringTaskId} to "${args.assignedTo}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
 
 		const patch: Record<string, any> = { updatedAt: Date.now() };
 		if (args.title !== undefined) patch.title = args.title;
@@ -228,6 +309,24 @@ export const update = mutation({
 export const pause = mutation({
 	args: { taskId: v.string() },
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as update above) —
+		// pause used to authorize on NOTHING at all: an anonymous caller (or
+		// a caller from a DIFFERENT org) could pass any taskId and pause
+		// another org's recurring task. withOrgScope is called WITHOUT
+		// allowNoIdentityMaster for the same reason as update: the MCP
+		// server always presents a real Clerk identity on this path.
+		//
+		// Resolved BEFORE ctx.db.get(taskId): an anonymous caller must get
+		// RBAC_DENIED, never "Recurring task not found" — a get-then-scope
+		// order lets taskId existence act as an unauthenticated existence
+		// oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not pause recurring task ${args.taskId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -235,6 +334,15 @@ export const pause = mutation({
 			"taskId",
 			RECURRING_TASK_ID_HINT,
 		);
+		const existing = await ctx.db.get(taskId);
+		if (!existing) throw new Error("Recurring task not found");
+
+		if (!isOrchestratorAllowedForScope(scope, existing.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not pause recurring task ${taskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		await ctx.db.patch(taskId, { active: false, updatedAt: Date.now() });
 		return { taskId, active: false };
 	},
@@ -247,6 +355,24 @@ export const pause = mutation({
 export const resume = mutation({
 	args: { taskId: v.string() },
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as pause above) —
+		// resume used to authorize on NOTHING at all: an anonymous caller (or
+		// a caller from a DIFFERENT org) could pass any taskId and resume
+		// another org's recurring task. withOrgScope is called WITHOUT
+		// allowNoIdentityMaster for the same reason as pause: the MCP server
+		// always presents a real Clerk identity on this path.
+		//
+		// Resolved BEFORE ctx.db.get(taskId) (mirrors pause above): an
+		// anonymous caller must get RBAC_DENIED, never "Recurring task not
+		// found" — a get-then-scope order lets taskId existence act as an
+		// unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not resume recurring task ${args.taskId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -256,6 +382,12 @@ export const resume = mutation({
 		);
 		const task = await ctx.db.get(taskId);
 		if (!task) throw new Error("Recurring task not found");
+
+		if (!isOrchestratorAllowedForScope(scope, task.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not resume recurring task ${taskId} (assignedTo "${task.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
 
 		const nextRunAt = getNextRunTime(task.cronExpression, Date.now());
 		await ctx.db.patch(taskId, {
@@ -274,6 +406,24 @@ export const resume = mutation({
 export const remove = mutation({
 	args: { taskId: v.string() },
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as pause/resume
+		// above) — remove used to authorize on NOTHING at all: an anonymous
+		// caller (or a caller from a DIFFERENT org) could pass any taskId and
+		// delete another org's recurring task. withOrgScope is called
+		// WITHOUT allowNoIdentityMaster for the same reason as pause/resume:
+		// the MCP server always presents a real Clerk identity on this path.
+		//
+		// Resolved BEFORE ctx.db.get(taskId) (mirrors pause/resume above): an
+		// anonymous caller must get RBAC_DENIED, never "Recurring task not
+		// found" — a get-then-scope order lets taskId existence act as an
+		// unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete recurring task ${args.taskId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -281,6 +431,15 @@ export const remove = mutation({
 			"taskId",
 			RECURRING_TASK_ID_HINT,
 		);
+		const existing = await ctx.db.get(taskId);
+		if (!existing) throw new Error("Recurring task not found");
+
+		if (!isOrchestratorAllowedForScope(scope, existing.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete recurring task ${taskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		await ctx.db.delete(taskId);
 		return { deleted: true };
 	},

@@ -27,20 +27,29 @@ function createTestConvex() {
 }
 
 // Helper: create a mission and return its ID
+//
+// Fail-closed multi-tenant fix: missions.create now derives the caller's
+// scope via withOrgScope and refuses an anonymous (no-identity) caller —
+// authenticate as the service-account/master identity (the same identity
+// the MCP server presents when no Clerk-org JWT is attached).
 async function seedMission(
 	t: ReturnType<typeof createTestConvex>,
 	overrides: { pilot?: string; project?: string; brief?: string } = {},
 ) {
-	return await t.mutation(api.missions.create, {
-		name: "Test Mission",
-		project: overrides.project ?? "test-project",
-		status: "execute",
-		priority: "high",
-		pilot: overrides.pilot ?? "pi",
-		agents: [],
-		brief: overrides.brief,
-		createdBy: "pi",
-	});
+	return await t
+		.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+			typeof t.withIdentity
+		>[0])
+		.mutation(api.missions.create, {
+			name: "Test Mission",
+			project: overrides.project ?? "test-project",
+			status: "execute",
+			priority: "high",
+			pilot: overrides.pilot ?? "pi",
+			agents: [],
+			brief: overrides.brief,
+			createdBy: "pi",
+		});
 }
 
 // Helper: seed the real "daily-passation-v1" template fixture with a brief.

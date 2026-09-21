@@ -122,7 +122,12 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 			missionId = await seedMissionWithOrgId(ctx);
 		});
 
-		await t.mutation(api.missions.update, {
+		// Fail-closed multi-tenant fix: missions.update now derives the
+		// caller's scope via withOrgScope and refuses an anonymous
+		// (no-identity) caller — authenticate as the service-account/master
+		// identity (the same identity the MCP server presents when no
+		// Clerk-org JWT is attached).
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.missions.update, {
 			missionId: missionId as any,
 			priority: "urgent",
 		});
@@ -140,7 +145,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 			missionId = await seedMissionWithoutOrgId(ctx);
 		});
 
-		await t.mutation(api.missions.update, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.missions.update, {
 			missionId: missionId as any,
 			priority: "low",
 		});
@@ -158,7 +163,7 @@ describe("missions.update + missions.updateStatus — smoke test with orgId miss
 			missionId = await seedMissionWithOrgId(ctx);
 		});
 
-		await t.mutation(api.missions.updateStatus, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.missions.updateStatus, {
 			missionId: missionId as any,
 			status: "validate",
 		});
