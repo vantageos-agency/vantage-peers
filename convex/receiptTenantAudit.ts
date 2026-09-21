@@ -304,3 +304,289 @@ export const countWithheldRecipientReceipts = internalAction({
 		};
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listReceiptsWithTenant / listOrphanTenants — task k17235zncknhn971xcfkp9pjb18emm6z
+// follow-up. The master-carve-out write fix (sendMessageCore) closes the
+// FUTURE hole; these two answer the DISPOSITION question for what already
+// landed: the 2 prod receipts tenanted "project/example-client" were found in a
+// 16k-row SAMPLE of ~54k receipts — a full, exact count needs a full scan,
+// not a sample. Both are READ-ONLY: no `ctx.db.patch`/`insert`/`delete`
+// anywhere below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RECEIPTS_WITH_TENANT_PAGE_BATCH_SIZE = 2000;
+const RECEIPTS_WITH_TENANT_SAMPLE_CAP = 20;
+
+const receiptSampleValidator = v.object({
+	receiptId: v.id("messageReceipts"),
+	messageId: v.id("messages"),
+	recipient: v.string(),
+	recipientInstanceId: v.optional(v.string()),
+	readAt: v.optional(v.number()),
+	createdAt: v.number(),
+});
+
+// Pages the `messageReceipts` rows for ONE exact tenantId, via the existing
+// `by_tenant` index (`eq("tenantId", args.tenantId)` — no new index, no
+// full-table scan). Per page: the row count, up to
+// RECEIPTS_WITH_TENANT_SAMPLE_CAP samples (never more, even on a huge
+// single-tenant page), and a full per-page recipient tally — the tally
+// covers EVERY row on the page, not just the sampled ones, so
+// `listReceiptsWithTenant`'s `recipients` total is exact even when
+// `samples` is truncated at 20.
+export const _receiptsWithTenantPage = internalQuery({
+	args: {
+		tenantId: v.string(),
+		cursor: v.union(v.string(), v.null()),
+		// Test-only page-size override — mirrors the sibling audits above.
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		count: v.number(),
+		samples: v.array(receiptSampleValidator),
+		recipientCounts: v.record(v.string(), v.number()),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, { tenantId, cursor, batchSize }) => {
+		const page = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_tenant", (q) => q.eq("tenantId", tenantId))
+			.paginate({
+				numItems: batchSize ?? RECEIPTS_WITH_TENANT_PAGE_BATCH_SIZE,
+				cursor,
+			});
+
+		const samples: Array<{
+			receiptId: Id<"messageReceipts">;
+			messageId: Id<"messages">;
+			recipient: string;
+			recipientInstanceId: string | undefined;
+			readAt: number | undefined;
+			createdAt: number;
+		}> = [];
+		const recipientCounts: Record<string, number> = {};
+
+		for (const r of page.page) {
+			recipientCounts[r.recipient] = (recipientCounts[r.recipient] ?? 0) + 1;
+			if (samples.length < RECEIPTS_WITH_TENANT_SAMPLE_CAP) {
+				samples.push({
+					receiptId: r._id,
+					messageId: r.messageId,
+					recipient: r.recipient,
+					recipientInstanceId: r.recipientInstanceId,
+					readAt: r.readAt,
+					createdAt: r._creationTime,
+				});
+			}
+		}
+
+		return {
+			count: page.page.length,
+			samples,
+			recipientCounts,
+			isDone: page.isDone,
+			continueCursor: page.isDone ? null : page.continueCursor,
+		};
+	},
+});
+
+// Named page cap — same discipline as the sibling audits above: a
+// page-walking loop that never spins forever, throws rather than
+// truncating silently past the cap.
+const RECEIPTS_WITH_TENANT_PAGE_CAP = 200; // 200 * 2000/page = 400,000 rows headroom
+
+export const listReceiptsWithTenant = internalAction({
+	args: {
+		tenantId: v.string(),
+		// Test-only page-size override, forwarded to _receiptsWithTenantPage.
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		tenantId: v.string(),
+		total: v.number(),
+		samples: v.array(receiptSampleValidator),
+		recipients: v.record(v.string(), v.number()),
+	}),
+	handler: async (ctx, args) => {
+		let total = 0;
+		const samples: Array<{
+			receiptId: Id<"messageReceipts">;
+			messageId: Id<"messages">;
+			recipient: string;
+			recipientInstanceId: string | undefined;
+			readAt: number | undefined;
+			createdAt: number;
+		}> = [];
+		const recipients: Record<string, number> = {};
+
+		let cursor: string | null = null;
+		let isDone = false;
+		let pages = 0;
+
+		while (!isDone) {
+			pages++;
+			if (pages > RECEIPTS_WITH_TENANT_PAGE_CAP) {
+				throw new Error(
+					`listReceiptsWithTenant: exceeded ${RECEIPTS_WITH_TENANT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+				);
+			}
+			const page: {
+				count: number;
+				samples: Array<{
+					receiptId: Id<"messageReceipts">;
+					messageId: Id<"messages">;
+					recipient: string;
+					recipientInstanceId: string | undefined;
+					readAt: number | undefined;
+					createdAt: number;
+				}>;
+				recipientCounts: Record<string, number>;
+				isDone: boolean;
+				continueCursor: string | null;
+			} = await ctx.runQuery(
+				internal.receiptTenantAudit._receiptsWithTenantPage,
+				{ tenantId: args.tenantId, cursor, batchSize: args.batchSize },
+			);
+			total += page.count;
+			for (const s of page.samples) {
+				if (samples.length < RECEIPTS_WITH_TENANT_SAMPLE_CAP) samples.push(s);
+			}
+			for (const [recipient, count] of Object.entries(page.recipientCounts)) {
+				recipients[recipient] = (recipients[recipient] ?? 0) + count;
+			}
+			isDone = page.isDone;
+			cursor = page.continueCursor;
+		}
+
+		return { tenantId: args.tenantId, total, samples, recipients };
+	},
+});
+
+// Every DISTINCT slug `client_org_mapping` has ever registered — active OR
+// inactive. Deliberately NOT filtered to `by_isActive` like
+// `loadRealClientOrgs`: orphan detection below asks "does any registration
+// exist for this slug at all", not "is it currently usable". This table is
+// a small config registry (same discipline the broadcast-fan-out branch in
+// convex/messages.ts already relies on for a full `.collect()`), so an
+// unindexed collect here is not the unbounded-scan class the paginated
+// audits above exist to guard against.
+export const _allClientOrgSlugs = internalQuery({
+	args: {},
+	returns: v.array(
+		v.object({ clerkOrgSlug: v.string(), isActive: v.boolean() }),
+	),
+	handler: async (ctx) => {
+		const rows = await ctx.db.query("client_org_mapping").collect();
+		return rows.map((r) => ({
+			clerkOrgSlug: r.clerkOrgSlug,
+			isActive: r.isActive,
+		}));
+	},
+});
+
+const ORPHAN_TENANT_PAGE_BATCH_SIZE = 2000;
+
+// Full-table tenant tally, one page at a time — there is no index for "every
+// distinct tenantId", so this walks messageReceipts unfiltered (same shape
+// as countReceiptTenantPresence's `_receiptTenantPage` above), tallying
+// non-null tenantId values per page.
+export const _messageReceiptsTenantTallyPage = internalQuery({
+	args: {
+		cursor: v.union(v.string(), v.null()),
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		count: v.number(),
+		tenantCounts: v.record(v.string(), v.number()),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, { cursor, batchSize }) => {
+		const page = await ctx.db
+			.query("messageReceipts")
+			.paginate({
+				numItems: batchSize ?? ORPHAN_TENANT_PAGE_BATCH_SIZE,
+				cursor,
+			});
+
+		const tenantCounts: Record<string, number> = {};
+		for (const r of page.page) {
+			if (r.tenantId !== undefined) {
+				tenantCounts[r.tenantId] = (tenantCounts[r.tenantId] ?? 0) + 1;
+			}
+		}
+
+		return {
+			count: page.page.length,
+			tenantCounts,
+			isDone: page.isDone,
+			continueCursor: page.isDone ? null : page.continueCursor,
+		};
+	},
+});
+
+const ORPHAN_TENANT_PAGE_CAP = 200; // 200 * 2000/page = 400,000 rows headroom
+
+// DECISION (pinned by test): an INACTIVE org's slug is NOT an orphan. Its
+// client_org_mapping row still exists — it is a known registration that is
+// currently disabled, a different problem class from a tenantId value no
+// organisation has EVER claimed (e.g. "project/example-client", a namespace where
+// a slug belongs). `_allClientOrgSlugs` above deliberately includes
+// inactive rows in `knownSlugs` so this action's orphan set is membership,
+// not activeness.
+export const listOrphanTenants = internalAction({
+	args: {
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		scanned: v.number(),
+		orphans: v.record(v.string(), v.number()),
+	}),
+	handler: async (ctx, args) => {
+		const slugRows: Array<{ clerkOrgSlug: string; isActive: boolean }> =
+			await ctx.runQuery(internal.receiptTenantAudit._allClientOrgSlugs, {});
+		const knownSlugs = new Set(slugRows.map((r) => r.clerkOrgSlug));
+
+		let scanned = 0;
+		const tenantTotals: Record<string, number> = {};
+
+		let cursor: string | null = null;
+		let isDone = false;
+		let pages = 0;
+
+		while (!isDone) {
+			pages++;
+			if (pages > ORPHAN_TENANT_PAGE_CAP) {
+				throw new Error(
+					`listOrphanTenants: exceeded ${ORPHAN_TENANT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+				);
+			}
+			const page: {
+				count: number;
+				tenantCounts: Record<string, number>;
+				isDone: boolean;
+				continueCursor: string | null;
+			} = await ctx.runQuery(
+				internal.receiptTenantAudit._messageReceiptsTenantTallyPage,
+				{ cursor, batchSize: args.batchSize },
+			);
+			scanned += page.count;
+			for (const [tenantId, count] of Object.entries(page.tenantCounts)) {
+				tenantTotals[tenantId] = (tenantTotals[tenantId] ?? 0) + count;
+			}
+			isDone = page.isDone;
+			cursor = page.continueCursor;
+		}
+
+		const orphans: Record<string, number> = {};
+		for (const [tenantId, count] of Object.entries(tenantTotals)) {
+			if (!knownSlugs.has(tenantId)) {
+				orphans[tenantId] = count;
+			}
+		}
+
+		return { scanned, orphans };
+	},
+});
