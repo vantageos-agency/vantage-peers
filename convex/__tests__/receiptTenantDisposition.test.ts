@@ -86,7 +86,10 @@ describe("receiptTenantAudit — listReceiptsWithTenant", () => {
 		expect(result.tenantId).toBe("acme");
 		expect(result.total).toBe(2);
 		expect(result.samples.length).toBe(2);
-		expect(result.recipients).toEqual({ victor: 1, noe: 1 });
+		expect(result.recipients).toEqual([
+			{ recipient: "noe", count: 1 },
+			{ recipient: "victor", count: 1 },
+		]);
 	});
 
 	test("orphan tenant \"project/example-client\" — production incident shape, full count over a sample larger than the known 2 rows", async () => {
@@ -102,7 +105,10 @@ describe("receiptTenantAudit — listReceiptsWithTenant", () => {
 
 		expect(result.total).toBe(2);
 		expect(result.samples.length).toBe(2);
-		expect(result.recipients).toEqual({ phi: 1, "phi-vps": 1 });
+		expect(result.recipients).toEqual([
+			{ recipient: "phi", count: 1 },
+			{ recipient: "phi-vps", count: 1 },
+		]);
 	});
 
 	test("samples cap at 20 even when total exceeds 20, but the recipient tally stays exact", async () => {
@@ -117,7 +123,7 @@ describe("receiptTenantAudit — listReceiptsWithTenant", () => {
 
 		expect(result.total).toBe(25);
 		expect(result.samples.length).toBe(20);
-		const recipientTotal = Object.values(result.recipients).reduce((a, b) => a + b, 0);
+		const recipientTotal = result.recipients.reduce((a, r) => a + r.count, 0);
 		expect(recipientTotal).toBe(25);
 	});
 
@@ -134,11 +140,11 @@ describe("receiptTenantAudit — listReceiptsWithTenant", () => {
 
 		expect(result.total).toBe(47);
 		expect(result.samples.length).toBe(20);
-		const recipientTotal = Object.values(result.recipients).reduce((a, b) => a + b, 0);
+		const recipientTotal = result.recipients.reduce((a, r) => a + r.count, 0);
 		expect(recipientTotal).toBe(47);
 	});
 
-	test("page cap: exceeding the named page cap throws rather than truncating silently", async () => {
+	test("sanity: a small row count under a small batchSize stays well under the page cap", async () => {
 		const t = createT();
 		await seedReceipt(t, { from: "system", recipient: "victor", tenantId: "capped" });
 		await seedReceipt(t, { from: "system", recipient: "noe", tenantId: "capped" });
@@ -148,7 +154,35 @@ describe("receiptTenantAudit — listReceiptsWithTenant", () => {
 				tenantId: "capped",
 				batchSize: 1,
 			}),
-		).resolves.toMatchObject({ total: 2 }); // sanity: 2 rows / batchSize 1 stays well under the 200-page cap
+		).resolves.toMatchObject({ total: 2 });
+	});
+
+	test("page cap: exceeding the named page cap throws rather than truncating silently", async () => {
+		const t = createT();
+		// 3 rows / batchSize 1 = 3 pages, which exceeds a pageCap of 2.
+		await seedReceipt(t, { from: "system", recipient: "victor", tenantId: "capped" });
+		await seedReceipt(t, { from: "system", recipient: "noe", tenantId: "capped" });
+		await seedReceipt(t, { from: "system", recipient: "pi", tenantId: "capped" });
+
+		await expect(
+			t.action(internal.receiptTenantAudit.listReceiptsWithTenant, {
+				tenantId: "capped",
+				batchSize: 1,
+				pageCap: 2,
+			}),
+		).rejects.toThrow(/exceeded 2 pages without isDone/);
+	});
+
+	test("ASCII cap: a recipient name with non-ASCII characters is returned, not thrown", async () => {
+		const t = createT();
+		await seedReceipt(t, { from: "system", recipient: "Hélène-test", tenantId: "intl" });
+
+		const result = await t.action(internal.receiptTenantAudit.listReceiptsWithTenant, {
+			tenantId: "intl",
+		});
+
+		expect(result.total).toBe(1);
+		expect(result.recipients).toEqual([{ recipient: "Hélène-test", count: 1 }]);
 	});
 });
 
@@ -164,8 +198,8 @@ describe("receiptTenantAudit — listOrphanTenants", () => {
 
 		const result = await t.action(internal.receiptTenantAudit.listOrphanTenants, {});
 
-		expect(result.orphans).toEqual({ "project/example-client": 2 });
-		expect(result.orphans.acme).toBeUndefined();
+		expect(result.orphans).toEqual([{ tenantId: "project/example-client", count: 2 }]);
+		expect(result.orphans.find((o) => o.tenantId === "acme")).toBeUndefined();
 	});
 
 	test("DECISION pinned: an inactive org's slug is NOT counted as an orphan — its mapping row still exists", async () => {
@@ -181,8 +215,8 @@ describe("receiptTenantAudit — listOrphanTenants", () => {
 
 		const result = await t.action(internal.receiptTenantAudit.listOrphanTenants, {});
 
-		expect(result.orphans["dormant-co"]).toBeUndefined();
-		expect(result.orphans["truly-unknown"]).toBe(1);
+		expect(result.orphans.find((o) => o.tenantId === "dormant-co")).toBeUndefined();
+		expect(result.orphans.find((o) => o.tenantId === "truly-unknown")?.count).toBe(1);
 	});
 
 	test("multi-page case: orphan totals are exact across a forced small page size", async () => {
@@ -201,7 +235,7 @@ describe("receiptTenantAudit — listOrphanTenants", () => {
 		});
 
 		expect(result.scanned).toBe(40);
-		expect(result.orphans).toEqual({ "orphan-many": 30 });
+		expect(result.orphans).toEqual([{ tenantId: "orphan-many", count: 30 }]);
 	});
 
 	test("no orphans when every tenanted receipt matches a known (active or inactive) slug", async () => {
@@ -218,6 +252,30 @@ describe("receiptTenantAudit — listOrphanTenants", () => {
 
 		const result = await t.action(internal.receiptTenantAudit.listOrphanTenants, {});
 
-		expect(result.orphans).toEqual({});
+		expect(result.orphans).toEqual([]);
+	});
+
+	test("page cap: exceeding the named page cap throws rather than truncating silently", async () => {
+		const t = createT();
+		// 3 rows / batchSize 1 = 3 pages, which exceeds a pageCap of 2.
+		await seedReceipt(t, { from: "system", recipient: "a", tenantId: "orphan-cap" });
+		await seedReceipt(t, { from: "system", recipient: "b", tenantId: "orphan-cap" });
+		await seedReceipt(t, { from: "system", recipient: "c", tenantId: "orphan-cap" });
+
+		await expect(
+			t.action(internal.receiptTenantAudit.listOrphanTenants, {
+				batchSize: 1,
+				pageCap: 2,
+			}),
+		).rejects.toThrow(/exceeded 2 pages without isDone/);
+	});
+
+	test("ASCII cap: an orphan tenantId with a non-ASCII character is returned, not thrown", async () => {
+		const t = createT();
+		await seedReceipt(t, { from: "system", recipient: "a", tenantId: "project/Zoë" });
+
+		const result = await t.action(internal.receiptTenantAudit.listOrphanTenants, {});
+
+		expect(result.orphans).toEqual([{ tenantId: "project/Zoë", count: 1 }]);
 	});
 });

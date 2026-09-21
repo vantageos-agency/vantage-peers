@@ -115,7 +115,7 @@ describe("receiptTenantAudit.countWithheldRecipientReceipts — positive control
 
 		expect(r.scanned).toBe(2); // only the two untenanted rows are scanned
 		expect(r.withheld).toBe(1);
-		expect(r.perOrg).toEqual({ "acme-client": 1 });
+		expect(r.perOrg).toEqual([{ orgSlug: "acme-client", count: 1 }]);
 		expect(r.ambiguous).toBe(0);
 		expect(r.positiveControlSampleReceiptId).toBe(withheldId);
 		expect(r.clientRosterSize).toBe(1);
@@ -140,7 +140,7 @@ describe("receiptTenantAudit.countWithheldRecipientReceipts — positive control
 		);
 
 		expect(r.withheld).toBe(1);
-		expect(r.perOrg).toEqual({ "acme-client": 1 });
+		expect(r.perOrg).toEqual([{ orgSlug: "acme-client", count: 1 }]);
 		expect(r.positiveControlSampleReceiptId).toBe(withheldId);
 	});
 
@@ -160,7 +160,7 @@ describe("receiptTenantAudit.countWithheldRecipientReceipts — positive control
 		);
 
 		expect(r.withheld).toBe(0);
-		expect(r.perOrg).toEqual({});
+		expect(r.perOrg).toEqual([]);
 		expect(r.positiveControlSampleReceiptId).toBeNull();
 		expect(r.clientRosterSize).toBe(0);
 	});
@@ -206,7 +206,7 @@ describe("receiptTenantAudit.countWithheldRecipientReceipts — positive control
 
 		expect(r.withheld).toBe(1);
 		expect(r.ambiguous).toBe(1);
-		expect(r.perOrg).toEqual({});
+		expect(r.perOrg).toEqual([]);
 		expect(r.positiveControlSampleReceiptId).toBe(ambiguousId);
 		expect(r.clientRosterSize).toBe(2); // shared-name, victor -- distinct names across both rosters
 	});
@@ -245,14 +245,14 @@ describe("receiptTenantAudit._withheldRecipientPage — multi-page accumulation"
 		let pages = 0;
 		let scanned = 0;
 		let withheld = 0;
-		const perOrg: Record<string, number> = {};
+		const perOrg = new Map<string, number>();
 
 		while (!isDone) {
 			pages++;
 			const page: {
 				scanned: number;
 				withheld: number;
-				perOrg: Record<string, number>;
+				perOrg: Array<{ orgSlug: string; count: number }>;
 				ambiguous: number;
 				sampleReceiptId: Id<"messageReceipts"> | null;
 				rosterSize: number;
@@ -264,8 +264,8 @@ describe("receiptTenantAudit._withheldRecipientPage — multi-page accumulation"
 			});
 			scanned += page.scanned;
 			withheld += page.withheld;
-			for (const [slug, count] of Object.entries(page.perOrg)) {
-				perOrg[slug] = (perOrg[slug] ?? 0) + count;
+			for (const { orgSlug, count } of page.perOrg) {
+				perOrg.set(orgSlug, (perOrg.get(orgSlug) ?? 0) + count);
 			}
 			isDone = page.isDone;
 			cursor = page.continueCursor;
@@ -274,7 +274,7 @@ describe("receiptTenantAudit._withheldRecipientPage — multi-page accumulation"
 		expect(pages).toBe(3);
 		expect(scanned).toBe(TOTAL);
 		expect(withheld).toBe(TOTAL);
-		expect(perOrg).toEqual({ "acme-client": TOTAL });
+		expect(Object.fromEntries(perOrg)).toEqual({ "acme-client": TOTAL });
 	});
 
 	test("countWithheldRecipientReceipts ACTION walks multiple pages, not just the query directly", async () => {
@@ -301,6 +301,26 @@ describe("receiptTenantAudit._withheldRecipientPage — multi-page accumulation"
 
 		expect(r.scanned).toBe(TOTAL);
 		expect(r.withheld).toBe(TOTAL);
-		expect(r.perOrg).toEqual({ "acme-client": TOTAL });
+		expect(r.perOrg).toEqual([{ orgSlug: "acme-client", count: TOTAL }]);
+	});
+
+	test("page cap: exceeding the named page cap throws rather than truncating silently", async () => {
+		const t = createT();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "acme-client",
+			allowedOrchestrators: ["client-agent"],
+		});
+
+		// 3 rows / batchSize 1 = 3 pages, which exceeds a pageCap of 2.
+		for (let i = 0; i < 3; i++) {
+			await seedUntenantedReceipt(t, { from: "pi", recipient: "client-agent" });
+		}
+
+		await expect(
+			t.action(internal.receiptTenantAudit.countWithheldRecipientReceipts, {
+				batchSize: 1,
+				pageCap: 2,
+			}),
+		).rejects.toThrow(/exceeded 2 pages without isDone/);
 	});
 });
