@@ -14,6 +14,7 @@
  */
 
 import { v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
 import { internalQuery, mutation, query } from "./_generated/server";
 import { requireOrgAdmin } from "./lib/auth";
 
@@ -534,6 +535,95 @@ function randomOpaqueHex(bytes = 32): string {
 
 const RESERVED_ORCH_NAMES = new Set(["master", "*", ""]);
 
+// SEAT_NAME_TAKEN — cross-org / fleet seat-name collision guard.
+//
+// `provisionOrganization` used to check orchestrator-name uniqueness only
+// WITHIN one call and one clerkOrgSlug: the `seen` Set below, plus the
+// per-slug `existing` row compare. Nothing consulted any OTHER org's
+// already-provisioned seats before minting
+// `namespaceReadPrefixes`/`namespaceWritePrefixes` =
+// [`orchestrator/<name>`, `project/<slug>`] — `orchestrator/<name>` is NOT
+// org-qualified, so two different orgs provisioning the SAME seat name both
+// received read/write on the IDENTICAL namespace prefix (org X's admin
+// could read/write org Y's `orchestrator/<name>` memories through MCP).
+//
+// This derives the "taken" set from EXISTING DATA — never a hand-maintained
+// name list — via THREE sources:
+//   - every OTHER org's `client_org_mapping.allowedOrchestrators` (this
+//     also covers the operator's own fleet, once the operator's fleet is
+//     itself represented as a `client_org_mapping` row with concrete
+//     orchestrator names, e.g. orgKind "operator");
+//   - every OTHER org's `oauth_scope_profiles.fromAllowList` (covers
+//     legacy/catalog profiles seeded outside `provisionOrganization`, e.g.
+//     `seedDefaultProfiles`, which may have no matching `client_org_mapping`
+//     row at all);
+//   - any EXISTING memory already stored in the `orchestrator/<name>`
+//     namespace. The operator's fleet orchestrators (pi, sigma, eta, …)
+//     write to that namespace but are not guaranteed to appear in either
+//     table above — a brand-new org can never legitimately own a
+//     pre-existing memory, so any hit here is taken, full stop, with no
+//     "unless it's mine" carve-out (a brand-new org has no memories yet by
+//     construction). Uses the `by_namespace` index (`["namespace",
+//     "isLatest"]`) with `.first()` — an indexed existence probe, not a
+//     scan, so it needs no bound.
+// "Other" means `clerkOrgSlug !== ownSlug` — a profile/mapping with an
+// undefined `clerkOrgSlug` (fleet/catalog rows) always counts as "other".
+//
+// The two catalog scans below are bounded, FAIL-CLOSED reads: both source
+// tables are small, catalog-scale data (one row per org / one row per
+// provisioned seat) — never per-memory or per-message volume — so a bounded
+// scan at this rare, admin-only provisioning path is the correct tool
+// (there is no indexable "array contains" query in Convex for membership
+// inside `allowedOrchestrators`/`fromAllowList`). A scan that returns
+// EXACTLY the configured limit means rows beyond it were never inspected —
+// silently returning "no collision" in that case would be fail-OPEN (a real
+// collision past the bound goes unseen), so it throws
+// `SEAT_NAME_CHECK_INCOMPLETE` instead of resolving `false`.
+const SEAT_NAME_COLLISION_SCAN_LIMIT = 2000;
+
+// Exported so tests can inject a small `scanLimit` and prove the
+// fail-closed behaviour without seeding 2000+ rows.
+export async function findSeatNameCollision(
+	ctx: { db: MutationCtx["db"] },
+	name: string,
+	ownSlug: string,
+	scanLimit: number = SEAT_NAME_COLLISION_SCAN_LIMIT,
+): Promise<boolean> {
+	const mappings = await ctx.db.query("client_org_mapping").take(scanLimit);
+	if (mappings.length === scanLimit) {
+		throw new Error(
+			`SEAT_NAME_CHECK_INCOMPLETE: client_org_mapping scan hit its ${scanLimit}-row bound before finishing — refusing to certify seat name "${name}" as free`,
+		);
+	}
+	for (const mapping of mappings) {
+		if (mapping.clerkOrgSlug === ownSlug) continue;
+		if (mapping.allowedOrchestrators.includes(name)) return true;
+	}
+
+	const profiles = await ctx.db.query("oauth_scope_profiles").take(scanLimit);
+	if (profiles.length === scanLimit) {
+		throw new Error(
+			`SEAT_NAME_CHECK_INCOMPLETE: oauth_scope_profiles scan hit its ${scanLimit}-row bound before finishing — refusing to certify seat name "${name}" as free`,
+		);
+	}
+	for (const profile of profiles) {
+		if (profile.clerkOrgSlug === ownSlug) continue;
+		if (profile.fromAllowList.includes(name)) return true;
+	}
+
+	// Third source: any existing memory in orchestrator/<name> — an indexed
+	// existence probe (by_namespace), bounded by construction, no scan
+	// limit needed. A brand-new org can never legitimately own a
+	// pre-existing memory, so any hit here makes the name taken.
+	const existingMemory = await ctx.db
+		.query("memories")
+		.withIndex("by_namespace", (q) => q.eq("namespace", `orchestrator/${name}`))
+		.first();
+	if (existingMemory) return true;
+
+	return false;
+}
+
 // D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr): ADDITIVE org-admin authorization
 // path. `callerToken` is now OPTIONAL — when present (non-empty), the
 // pre-existing master path runs UNCHANGED (`requireMasterAuth`, byte-
@@ -647,6 +737,18 @@ export const provisionOrganization = mutation({
 				replay: true,
 				orchestrators: seats,
 			};
+		}
+
+		// Cross-org / fleet collision — checked for EVERY name before any row
+		// for this (brand-new) org is written, so the mutation stays
+		// all-or-nothing. Idempotent replay (the `existing` branch above) is
+		// unaffected — a same-org, same-name-set call never reaches here.
+		for (const name of names) {
+			if (await findSeatNameCollision(ctx, name, slug)) {
+				throw new Error(
+					`SEAT_NAME_TAKEN: seat name "${name}" is already in use`,
+				);
+			}
 		}
 
 		const now = Date.now();
