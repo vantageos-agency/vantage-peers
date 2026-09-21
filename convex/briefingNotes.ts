@@ -3,7 +3,7 @@ import { ConvexError } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
-import { withOrgScope, requireScope } from "./lib/auth";
+import { withOrgScope, requireScope, type OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,6 +36,36 @@ export async function syncParticipantIndex(
 	for (const participant of unique) {
 		await ctx.db.insert("briefingNoteParticipants", { noteId, participant });
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-scope owner enforcement (same defect class as convex/messages.ts's
+// isOrchestratorAllowedForScope / convex/memories.ts's
+// isNamespaceAllowedForScope — see
+// .claude/rules/authority-attached-to-anonymous-object.md). create, update
+// and deleteBriefingNote used to authorize solely on the client-supplied
+// `callerOrchestrator`/`createdBy` STRING ARGUMENT compared against a stored
+// field — never a verified identity. An anonymous caller (or a caller
+// authenticated as a DIFFERENT org) could pass any orchestrator name and
+// create a note under another org's scope, or pass the note's own
+// `createdBy` value (or the "system" narrowing bypass) and mutate/delete
+// another org's note.
+//
+// A note's owner is its STORED `orgId` (Beta multi-tenant scope field —
+// null/undefined = master/internal Alpha). Master scope (no identity with
+// legacy opt-in, or the recognized service-account identity) retains
+// unrestricted access. A Clerk-org-scoped caller may only act on a note
+// whose `orgId` equals its OWN resolved org slug; a note with no `orgId`
+// (master-created, legacy) is never visible/writable to an org caller.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isOrgAllowedForScope(
+	scope: OrgScope,
+	orgId: string | undefined,
+): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return orgId === scope.orgSlug;
 }
 
 async function callerCanRead(
@@ -75,9 +105,32 @@ export const create = mutation({
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (defect class: authority attached to an
+		// anonymously-registered object — see
+		// .claude/rules/authority-attached-to-anonymous-object.md). create used
+		// to insert with NO identity/scope check at all; a direct call to the
+		// public Convex deployment could write a note under any org (the
+		// `orgId` field simply was not set at all, leaving every created note
+		// unscoped). withOrgScope is called WITHOUT allowNoIdentityMaster — the
+		// MCP server always presents a real Clerk identity (the caller's own
+		// org JWT or its service-account token; see
+		// mcp-server/src/authenticatedConvexClient.ts), so the fail-closed
+		// default here never breaks that live path. `orgId` is derived SOLELY
+		// from the resolved scope, never a client-supplied argument (there is
+		// no `orgId` in this mutation's args) — an org caller may create only
+		// for an owner (org) inside its own scope, by construction: the value
+		// written can never be anything other than the caller's own
+		// `scope.orgSlug`.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not create a briefing note — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
 		const noteId = await ctx.db.insert("briefingNotes", {
 			...args,
 			createdAt: Date.now(),
+			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;
@@ -421,8 +474,34 @@ export const deleteBriefingNote = mutation({
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class as create above) —
+		// deleteBriefingNote used to authorize solely on the client-supplied
+		// callerOrchestrator argument: an anonymous caller (or a caller from a
+		// DIFFERENT org) could pass "system" or the note's own createdBy value
+		// and delete any org's note. withOrgScope is called WITHOUT
+		// allowNoIdentityMaster for the same reason as create: the MCP server
+		// always presents a real Clerk identity on this path.
+		//
+		// Resolved BEFORE ctx.db.get(args.noteId) (mirrors convex/messages.ts's
+		// deleteMessage, PR #1313 REVISE fix): an anonymous caller must get
+		// RBAC_DENIED, never "Briefing note not found" — a get-then-scope
+		// order lets noteId existence act as an unauthenticated existence
+		// oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete briefing note ${args.noteId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const note = await ctx.db.get(args.noteId);
 		if (!note) throw new Error("Briefing note not found");
+
+		if (!isOrgAllowedForScope(scope, note.orgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete briefing note ${args.noteId} (orgId "${note.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
 
 		if (args.callerOrchestrator === undefined) {
 			throw new Error(
@@ -463,10 +542,42 @@ export const update = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const { noteId, callerOrchestrator, ...fields } = args;
+
+		// Fail-closed multi-tenant fix (same defect class as create/
+		// deleteBriefingNote above) — update used to authorize solely on the
+		// client-supplied callerOrchestrator argument: an anonymous caller (or
+		// a caller from a DIFFERENT org) could pass "system" or the note's own
+		// createdBy value and mutate any org's note. withOrgScope is called
+		// WITHOUT allowNoIdentityMaster for the same reason as create/
+		// deleteBriefingNote: the MCP server always presents a real Clerk
+		// identity on this path.
+		//
+		// Resolved BEFORE ctx.db.get(noteId) (mirrors deleteBriefingNote/
+		// deleteMessage above): an anonymous caller must get RBAC_DENIED, never
+		// "BriefingNote ... not found" — a get-then-scope order lets noteId
+		// existence act as an unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update briefing note ${noteId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const note = await ctx.db.get(noteId);
 		if (note === null) {
 			throw new Error(`BriefingNote ${noteId} not found`);
 		}
+
+		// `fields` never includes `orgId` (not part of this mutation's args
+		// validator) — an org caller can never move a note into another org's
+		// scope via the patch; the org-scope check below binds ONLY to the
+		// note's STORED orgId, never anything caller-supplied.
+		if (!isOrgAllowedForScope(scope, note.orgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update briefing note ${noteId} (orgId "${note.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		const isAuthorized =
 			note.createdBy === callerOrchestrator || callerOrchestrator === "system";
 		if (!isAuthorized) {

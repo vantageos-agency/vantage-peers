@@ -36,6 +36,13 @@ const modules = Object.fromEntries(
 	),
 );
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function asMaster(t: any) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	});
+}
+
 // ─── Seed helpers ─────────────────────────────────────────────────────────────
 
 /** Insert a briefing note WITH orgId (simulates post-PR #360 tenant-scoped row). */
@@ -115,8 +122,11 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 			noteId = await seedNoteWithOrgId(ctx);
 		});
 
-		// update mutation — should not throw
-		await t.mutation(api.briefingNotes.update, {
+		// update mutation — should not throw. Authenticated as the
+		// service-account/master identity (never anonymous — see
+		// briefingNotesWriteScope.test.ts for the write-scope enforcement this
+		// smoke test does not itself exercise).
+		await asMaster(t).mutation(api.briefingNotes.update, {
 			noteId: noteId as any,
 			callerOrchestrator: "sigma",
 			content: "Updated content after orgId fix",
@@ -136,7 +146,8 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 			noteId = await seedNoteWithoutOrgId(ctx);
 		});
 
-		await t.mutation(api.briefingNotes.update, {
+		// Authenticated as master — never anonymous (see comment above).
+		await asMaster(t).mutation(api.briefingNotes.update, {
 			noteId: noteId as any,
 			callerOrchestrator: "pi",
 			content: "Updated legacy content without orgId",
