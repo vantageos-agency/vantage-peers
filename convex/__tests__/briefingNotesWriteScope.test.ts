@@ -311,6 +311,42 @@ describe("briefingNotes.update — write-scope enforcement", () => {
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
+
+	// Reviewer REVISE on #1315 (mutant B2): a mutant that widens
+	// isOrgAllowedForScope to also let `orgId === undefined` through for a
+	// non-master scope survived because no test pinned the claim in the PR
+	// body — that every note stored without an orgId (every legacy/pre-Beta
+	// production row) is NOT reachable by an org-scoped caller. Seeded via
+	// t.run directly (never via create/update, which would themselves stamp
+	// an orgId) to reproduce the exact shape of a legacy row.
+	test("org-a updating a legacy note (no orgId at all) is refused with RBAC_DENIED, and the note is unchanged", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		const noteId = await t.run(async (ctx) => {
+			return await ctx.db.insert("briefingNotes", {
+				title: "legacy note",
+				topic: "handoff",
+				participants: ["seat-legacy"],
+				content: "legacy content",
+				createdBy: "seat-legacy",
+				createdAt: Date.now(),
+				// no orgId field at all — the exact shape of a pre-Beta row.
+			});
+		});
+		const before = await t.run((ctx) => ctx.db.get(noteId));
+		const tA = asOrgA(t);
+
+		await expect(
+			tA.mutation(api.briefingNotes.update, {
+				noteId,
+				callerOrchestrator: "seat-legacy",
+				content: "hijacked",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+
+		const after = await t.run((ctx) => ctx.db.get(noteId));
+		expect(after).toEqual(before);
+	});
 });
 
 describe("briefingNotes.deleteBriefingNote — write-scope enforcement", () => {
@@ -425,5 +461,35 @@ describe("briefingNotes.deleteBriefingNote — write-scope enforcement", () => {
 				callerOrchestrator: "seat-b",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	// Reviewer REVISE on #1315 (mutant B2) — same claim as the update test
+	// above, pinned for deleteBriefingNote: a legacy note (no orgId at all,
+	// seeded via t.run directly) must stay out of an org-scoped caller's
+	// reach.
+	test("org-a deleting a legacy note (no orgId at all) is refused with RBAC_DENIED, and the note still exists", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		const noteId = await t.run(async (ctx) => {
+			return await ctx.db.insert("briefingNotes", {
+				title: "legacy note",
+				topic: "handoff",
+				participants: ["seat-legacy"],
+				content: "legacy content",
+				createdBy: "seat-legacy",
+				createdAt: Date.now(),
+				// no orgId field at all — the exact shape of a pre-Beta row.
+			});
+		});
+		const tA = asOrgA(t);
+
+		await expect(
+			tA.mutation(api.briefingNotes.deleteBriefingNote, {
+				noteId,
+				callerOrchestrator: "seat-legacy",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+
+		expect(await t.run((ctx) => ctx.db.get(noteId))).not.toBeNull();
 	});
 });
