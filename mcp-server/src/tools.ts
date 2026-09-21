@@ -4841,6 +4841,78 @@ export function registerTools(
 		},
 	);
 
+	// ── correct_task_segment ────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{ kind: "from", fromArg: "callerOrchestrator" },
+		"correct_task_segment",
+		"Restate the real boundaries of ONE recorded work segment, when it grew across an unrecorded " +
+			"break (e.g. a station's session ended without pause_task and the segment stayed open for " +
+			"days). The original machine-recorded span is kept, never overwritten — the corrected " +
+			"segment carries the original bounds, the reason, and who corrected it. A correction can " +
+			"only SHRINK a span to lie inside what the machine recorded; it can never extend it or move " +
+			"it outside that span, and the configured segment-duration cap still applies. One " +
+			"correction per segment. " +
+			"WHEN: call when complete_task/pause_task refuse a task because its trailing segment spans " +
+			"an implausible duration and the over-cap attestation marker doesn't fit (span exceeds 2x " +
+			"the cap, or the segment is still open) — correct the segment first, then complete_task or " +
+			"pause_task normally. " +
+			"EXAMPLE: correct_task_segment taskId='k178d3ns...' segmentIndex=0 start=1767250800000 " +
+			"end=1767268800000 reason='unrecorded break, real work was 5 hours' callerOrchestrator='gamma'.",
+		{
+			taskId: taskIdSchema.describe("Convex document ID of the task whose segment is being corrected"),
+			segmentIndex: z
+				.number()
+				.int()
+				.min(0)
+				.describe("Index into the task's workSegments array of the segment to correct"),
+			start: z.number().describe("Corrected segment start, ms since epoch — must be >= the recorded start"),
+			end: z.number().describe("Corrected segment end, ms since epoch — must be <= the recorded end (or now, if still open)"),
+			reason: z
+				.string()
+				.describe("Why the correction is honest — at least 12 non-space characters"),
+			callerOrchestrator: creatorSchema
+				.optional()
+				.describe("Optional RBAC — if provided, must be creator or assignee"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Correct task segment",
+		},
+		async ({ taskId, segmentIndex, start, end, reason, callerOrchestrator }) => {
+			try {
+				if (callerOrchestrator) {
+					const fromDenied = guardFrom(callerOrchestrator);
+					if (fromDenied) return fromDenied;
+				}
+
+				await convex.mutation("tasks:correctSegment" as any, {
+					taskId: taskId as any,
+					segmentIndex,
+					start,
+					end,
+					reason,
+					callerOrchestrator,
+				});
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ taskId, segmentIndex, corrected: true }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── checkout_task ───────────────────────────────────────────────────────────
 
 	defineTool(

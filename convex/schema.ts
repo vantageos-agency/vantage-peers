@@ -414,6 +414,20 @@ export default defineSchema({
 				v.object({
 					start: v.number(),
 					end: v.optional(v.number()), // undefined = the open segment
+					// Segment-correction route -- the original machine-recorded span
+					// is NEVER overwritten in place; this carries the pre-correction
+					// boundaries plus who/why/when. Present only on a segment that
+					// has been corrected via tasks.correctSegment.
+					correction: v.optional(
+						v.object({
+							originalStart: v.number(),
+							// undefined = the original segment was still open when corrected.
+							originalEnd: v.optional(v.number()),
+							reason: v.string(),
+							by: v.string(),
+							at: v.number(),
+						}),
+					),
 				}),
 			),
 		),

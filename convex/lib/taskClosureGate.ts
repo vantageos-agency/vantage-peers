@@ -81,7 +81,23 @@ const OVERRIDE_RE = /\/\/\s*allow-no-time-line:\s*(.{6,})/;
 // Worked time is the sum of closed segments. Before this, duration was
 // (now - startedAt), so a task left open across a night billed the span.
 
-export type WorkSegment = { start: number; end?: number };
+export type SegmentCorrection = {
+	originalStart: number;
+	// undefined = the original segment was still open when corrected.
+	originalEnd?: number;
+	reason: string;
+	by: string;
+	at: number;
+};
+
+export type WorkSegment = {
+	start: number;
+	end?: number;
+	// Present only on a segment corrected via tasks.correctSegment — see
+	// convex/schema.ts's workSegments.correction for the full rationale.
+	// Closure math (below) is unchanged: it reads only start/end.
+	correction?: SegmentCorrection;
+};
 
 const MAX_SEGMENT_MINUTES_KEY = "maxSegmentMinutes";
 export const DEFAULT_MAX_SEGMENT_MINUTES = 480; // 8h — "a working session's length"

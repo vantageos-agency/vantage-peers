@@ -14,7 +14,11 @@ import {
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
-import { enforceClosureGate, closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
+import {
+	enforceClosureGate,
+	closeTrailingSegmentOnExit,
+	getMaxSegmentMinutes,
+} from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,7 +348,21 @@ const taskFullValidator = v.object({
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
 	workSegments: v.optional(
-		v.array(v.object({ start: v.number(), end: v.optional(v.number()) })),
+		v.array(
+			v.object({
+				start: v.number(),
+				end: v.optional(v.number()),
+				correction: v.optional(
+					v.object({
+						originalStart: v.number(),
+						originalEnd: v.optional(v.number()),
+						reason: v.string(),
+						by: v.string(),
+						at: v.number(),
+					}),
+				),
+			}),
+		),
 	),
 	pausedAt: v.optional(v.number()),
 	durationSource: v.optional(v.union(v.literal("segments"), v.literal("legacy"))),
@@ -550,7 +568,19 @@ export const get = query({
 			contentHash: v.optional(v.string()),
 			workSegments: v.optional(
 				v.array(
-					v.object({ start: v.number(), end: v.optional(v.number()) }),
+					v.object({
+						start: v.number(),
+						end: v.optional(v.number()),
+						correction: v.optional(
+							v.object({
+								originalStart: v.number(),
+								originalEnd: v.optional(v.number()),
+								reason: v.string(),
+								by: v.string(),
+								at: v.number(),
+							}),
+						),
+					}),
 				),
 			),
 			pausedAt: v.optional(v.number()),
@@ -635,7 +665,19 @@ export const getById = query({
 			contentHash: v.optional(v.string()),
 			workSegments: v.optional(
 				v.array(
-					v.object({ start: v.number(), end: v.optional(v.number()) }),
+					v.object({
+						start: v.number(),
+						end: v.optional(v.number()),
+						correction: v.optional(
+							v.object({
+								originalStart: v.number(),
+								originalEnd: v.optional(v.number()),
+								reason: v.string(),
+								by: v.string(),
+								at: v.number(),
+							}),
+						),
+					}),
 				),
 			),
 			pausedAt: v.optional(v.number()),
@@ -2335,6 +2377,147 @@ export const resume = mutation({
 			workSegments: segments,
 			updatedAt: now,
 		});
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// correctSegment — restates the real boundaries of ONE recorded work
+// segment (e.g. a station's session ended without pause_task, leaving a
+// segment open for days). The original machine-recorded span is kept,
+// never overwritten: the corrected segment carries a `correction` object
+// naming the original bounds, who corrected it, why, and when. A
+// correction can only SHRINK a span to lie inside what the machine
+// recorded — it can never extend it or move it outside that span, and the
+// cap (getMaxSegmentMinutes) still applies to the corrected duration. One
+// correction per segment; a segment already corrected is refused.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const correctSegment = mutation({
+	args: {
+		taskId: v.id("tasks"),
+		segmentIndex: v.number(),
+		start: v.number(),
+		end: v.number(),
+		reason: v.string(),
+		callerOrchestrator: v.optional(creatorValidator),
+		// [P-T5] THE LOCK — see requireAgentCredentialMatch. When presented,
+		// `callerOrchestrator` (the asserted actor) must equal the resolved
+		// agent identity; no-op if omitted.
+		agentCredentialSecret: v.optional(v.string()),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+		);
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) {
+			throw new ConvexError(
+				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		// assertTaskCallerAuthorized above already refuses an undefined
+		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
+		// `correction.by` write below, mirroring attachReviewArtifact's
+		// explicit undefined check.
+		const callerOrchestrator = args.callerOrchestrator;
+		if (callerOrchestrator === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required to correct a work segment — ${JSON.stringify({ taskId: args.taskId })}`,
+			);
+		}
+
+		if (task.status === "done" || task.status === "cancelled") {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: task ${args.taskId} is ${task.status} — a closed task's work segments cannot be corrected — ${JSON.stringify({ taskId: args.taskId, status: task.status })}`,
+			);
+		}
+
+		const reason = args.reason.trim();
+		if (reason.replace(/\s/g, "").length < 12) {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: reason must be at least 12 non-space characters — ${JSON.stringify({ taskId: args.taskId, segmentIndex: args.segmentIndex, reason: args.reason })}`,
+			);
+		}
+
+		const segments = task.workSegments ?? [];
+		const original = segments[args.segmentIndex];
+		if (original === undefined) {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: task ${args.taskId} has no work segment at index ${args.segmentIndex} — ${JSON.stringify({ taskId: args.taskId, segmentIndex: args.segmentIndex, segmentCount: segments.length })}`,
+			);
+		}
+		if (original.correction !== undefined) {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: task ${args.taskId} segment ${args.segmentIndex} was already corrected — one correction per segment keeps the audit simple — ${JSON.stringify({ taskId: args.taskId, segmentIndex: args.segmentIndex, priorCorrection: original.correction })}`,
+			);
+		}
+
+		if (args.start >= args.end) {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: corrected start must be before end — ${JSON.stringify({ taskId: args.taskId, segmentIndex: args.segmentIndex, start: args.start, end: args.end })}`,
+			);
+		}
+
+		const now = Date.now();
+		const originalEndBound = original.end ?? now;
+		if (args.start < original.start || args.end > originalEndBound) {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: corrected span [${args.start}, ${args.end}] must lie inside the recorded span [${original.start}, ${originalEndBound}] — a correction can only shrink a span, never extend it or move it outside what the machine recorded — ${JSON.stringify({ taskId: args.taskId, segmentIndex: args.segmentIndex, originalStart: original.start, originalEnd: original.end ?? null, correctedStart: args.start, correctedEnd: args.end })}`,
+			);
+		}
+
+		const maxMinutes = await getMaxSegmentMinutes(ctx);
+		const correctedMinutes = Math.round((args.end - args.start) / 60_000);
+		if (correctedMinutes > maxMinutes) {
+			throw new ConvexError(
+				`SEGMENT_CORRECTION_REFUSED: corrected span is ${correctedMinutes} minutes, exceeding the configured maximum of ${maxMinutes} minutes — the cap still applies; a correction states real boundaries, it does not exceed them — ${JSON.stringify({ taskId: args.taskId, segmentIndex: args.segmentIndex, correctedMinutes, maxMinutes })}`,
+			);
+		}
+
+		const originalStart = original.start;
+		const originalEnd = original.end;
+		const correctedSegment: WorkSegment = {
+			start: args.start,
+			end: args.end,
+			correction: {
+				originalStart,
+				originalEnd,
+				reason,
+				by: callerOrchestrator,
+				at: now,
+			},
+		};
+
+		const newSegments: WorkSegment[] = [
+			...segments.slice(0, args.segmentIndex),
+			correctedSegment,
+			...segments.slice(args.segmentIndex + 1),
+		];
+
+		await ctx.db.patch(args.taskId, {
+			workSegments: newSegments,
+			updatedAt: now,
+		});
+
+		console.log(
+			"SEGMENT_CORRECTED",
+			JSON.stringify({
+				taskId: args.taskId,
+				segmentIndex: args.segmentIndex,
+				originalStart,
+				originalEnd,
+				start: args.start,
+				end: args.end,
+				reason,
+				by: callerOrchestrator,
+			}),
+		);
+
 		return null;
 	},
 });
