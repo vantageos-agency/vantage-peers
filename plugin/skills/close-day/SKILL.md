@@ -96,54 +96,40 @@ rises two evenings running is a steering failure, not an accident.
 ## Step 4 — Leave the disk clean
 
 A full disk makes an install die on ENOSPC, which surfaces as a false "build broken" and costs
-the whole fleet review cycles refuting a regression that never existed. The probe is **whole
-filesystem**, never scoped to repository clones alone — node_modules and worktrees are one
-perimeter among several (`/home`, `/root`, `/tmp`, `/var`), and a probe that only ever looks at
-repository clones will report a clean disk while a different perimeter fills it. This was the
-recurring defect: a single-directory read presented as a machine-wide figure.
+the whole fleet review cycles refuting a regression that never existed.
+
+**Scope: your own workspace, and nothing else.** Derive its root once, from where the session
+runs — never type it, never widen it:
+
+```
+OWN_ROOT=$(git rev-parse --show-toplevel)
+```
+
+Every path this step deletes must sit under `OWN_ROOT` (your worktrees and your sandboxes
+included, because they live there or were created by you from it). Everything else — another
+workspace, another repository, a shared package cache, another session's temporary files,
+anything under `/tmp` you did not create in this session — is **out of scope, whether it looks
+abandoned or not**. You measure it and report it to pi; you never delete it. A file that looks
+stale to you may be the only copy of someone else's work, and a deletion there cannot be undone.
 
 1. `df -h /` **before** — record it.
-2. **Enumerate every top-level perimeter**, not only repository clones:
-   ```
-   du -sh /* 2>/dev/null | sort -rh | head
-   du -sh /home/elpi/.[!.]* 2>/dev/null | sort -rh | head
-   du -sh /tmp/* 2>/dev/null | sort -rh | head
-   ```
-   Read the output before touching anything. Name every directory examined, not just the ones
-   reclaimed.
-3. **node_modules and abandoned worktrees/sandboxes** are reclaimed first — reinstallable,
-   destroys zero work. **Audit each worktree before removing it**: `git -C <wt> worktree list`
-   (never delete a live one) and `git -C <wt> log @{u}..HEAD` (non-empty means unpushed commits
-   — do not delete).
-4. **Regenerable package-manager and tool caches** are the next highest-value reclaim on a
-   shared box: `~/.npm/_cacache`, `~/.bun/install/cache`, `~/.cache/puppeteer`,
-   `~/.cache/ms-playwright`, and similar re-downloadable caches under `~/.cache`. Name each
-   before/after.
-5. **Dead session scratch under `/tmp/claude-<uid>/<workspace>/<uuid>/`** — a session dir is
-   reclaimable only if its mtime is older than 48h AND its uuid is not in the live set (cross-
-   check `ps aux | grep -oE 'resume=[a-f0-9-]{36}'`) AND it is not this session's own scratch.
-   When uncertain, skip it.
-6. **Never touch another orchestrator's live sandbox**, never delete client data, and never
-   delete another user's home directory (`/home/<other-user>`), a backup/archive path, or
-   anything whose owner or liveness was not established — flag it to the human instead.
-7. **Print a SKIPPED (and why) list.** Every perimeter examined in Step 2 that was NOT
-   reclaimed gets one line: the path and the reason (another user's home, live session,
-   installed tooling not a cache, backup/archive, owner unconfirmed).
-8. **Positive control.** Run one reclaim/measurement command against a path that does not
-   exist (e.g. `du -sh /home/elpi/.nonexistent-xyz`) and confirm it FAILS LOUDLY, naming the
-   path it could not read (`No such file or directory`). A command that silently prints `0` or
-   nothing for a missing path is not trustworthy for the real perimeters — re-verify the probe
-   before relying on it.
-9. `df -h /` **after** — record it. Still above 85%, escalate to pi: the pressure comes from
-   another perimeter not yet identified, and it is named in the escalation.
+2. **node_modules first**, only in terminal or abandoned worktrees and sandboxes **under
+   `OWN_ROOT`**. It is the weight, it is reinstallable, and deleting it destroys zero work.
+3. **Audit each worktree before removing it**: `git -C <wt> worktree list` (never delete a live
+   one) and `git -C <wt> log @{u}..HEAD` (non-empty means unpushed commits — do not delete).
+4. **Before each deletion, prove the path is yours**: `realpath <path>` must start with
+   `OWN_ROOT`. If it does not, stop — that path goes in the report, not in `rm`. Never delete
+   client data, even inside your own workspace — flag it to the human instead.
+5. `df -h /` **after** — record it. Still above 85%, send pi the list of the largest paths
+   **outside** `OWN_ROOT` with their sizes (`du -sh`), and stop there. Pi routes each one to
+   its owner. The pressure comes from another perimeter, and that perimeter cleans its own.
 
 ```
 DISK:
+- own root: <OWN_ROOT>
 - df /: <X%> -> <Y%>
-- perimeters examined: /home/elpi/*, /root, /tmp/*, /var, /  (paste the du -sh output, or its top lines)
-- reclaimed: <path> <before> -> <after>, <path> <before> -> <after>, ...
-- skipped (and why): <path> (<reason>), <path> (<reason>), ...
-- positive control: <command run against a missing path> -> <loud failure text, never a silent zero>
+- node_modules purged: <N> | worktrees reaped: <M> (unpushed=0 verified on each; all under own root)
+- outside own root, reported to pi (not deleted): <path size, ...> | none
 - escalated: yes/no
 ```
 
@@ -282,6 +268,8 @@ without having to ask you for them.
 ## RULES
 
 - Every displayed count carries the command that produced it. A typed count is a lie in waiting.
+- Step 4 deletes only under your own workspace root. Outside it you measure and report to pi,
+  never delete — however abandoned it looks.
 - Steps 2, 3 and 4 are non-negotiable. A day closed on a dirty tree hands tomorrow a branch
   nobody will ever close; a day closed on a full disk hands it false regressions.
 - One branch per day, opened by `daily-start`, closed here. A surviving branch carries a
@@ -306,13 +294,11 @@ without having to ask you for them.
 
 ## Changelog
 
-- **v2.4.0** — The disk step enumerates the whole filesystem (`/home/elpi/.*`, `/tmp/*`,
-  `/root`, `/var`, `/*`) and reports a SKIPPED (and why) list, instead of scoping the probe to
-  node_modules and worktrees inside repository clones. A single-directory read reporting a
-  machine-wide figure was the recurring defect — a probe that only ever looked at repository
-  clones reported a clean disk while `/tmp/claude-<uid>` session scratch and package-manager
-  caches filled it. Adds a positive control: a reclaim command run against a path that does not
-  exist must fail loudly, naming the path, never print a silent zero.
+- **v2.4.0** — Disk cleanup is bound to the station's own workspace root, derived from the
+  session, and every deletion proves its path sits under it. The previous wording protected only
+  another orchestrator's *live* sandbox, so anything that looked abandoned elsewhere read as fair
+  game: a station deleted another session's temporary files and the dependencies of other
+  repositories. Outside the own root, large paths are now reported to pi, never deleted.
 - **v2.3.0** — The index moves out of `summary` and into its own field, `endOfDayIndex`. Written
   into `summary`, it was destroyed every morning before anyone read it: `summary` is the live
   status and the first write of the day overwrites it, leaving no trace that an index had ever
