@@ -43,9 +43,18 @@
  */
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+
+const MASTER_TOKEN = "test-master-token-oauth-dcr-scope-deadbeef";
+
+beforeEach(() => {
+	vi.stubEnv("BEARER_SECRET_MASTER", MASTER_TOKEN);
+});
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -65,6 +74,30 @@ const createT = () => convexTest(schema, modules);
 // faithful proxy for "the real token-mint path caller".
 function asServiceAccount(t: ReturnType<typeof createT>) {
 	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
+// org-a — an org-scoped, NON-master Clerk identity (client_org_mapping row
+// required for withOrgScope to resolve it instead of RBAC_DENYing on an
+// unmapped org). Fictitious identifier, mirrors
+// diaryEpisodesWriteScope.test.ts's asOrgA pattern.
+async function seedOrgAMapping(t: ReturnType<typeof createT>) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "org-a",
+			allowedOrchestrators: ["seat-a"],
+			scopes: ["view-own-tasks"],
+			displayName: "org-a",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+}
+
+function asOrgA(t: ReturnType<typeof createT>) {
+	return t.withIdentity({
+		subject: "user-org-a",
+		organizationId: "org-a",
+	} as Parameters<typeof t.withIdentity>[0]);
 }
 
 async function seedScopeProfile(
@@ -153,6 +186,28 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
+	// ── O2 mutant kill — org-scoped non-master caller reading ACROSS orgs ───
+	// A mutant that widens getClientByClientId's refusal to "anonymous callers
+	// only" (allowing any caller with a non-null orgSlug through) would let
+	// org-a read org-b's client scopeProfile here. The current code refuses
+	// ALL non-master callers, so this passes now and must go RED under that
+	// mutant.
+	test("org-scoped non-master caller (org-a) reading a client whose profile belongs to org-b is refused", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		await seedScopeProfile(t, "org-b-generic", {
+			fromAllowList: [],
+			selfRegistrable: true,
+		});
+		await registerClient(t, "client-org-b-lookup", "org-b-generic");
+
+		await expect(
+			asOrgA(t).query(api.oauth.getClientByClientId, {
+				clientId: "client-org-b-lookup",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
 	// ── GREEN positive pole 1 — the safe generic profile still works ────────
 	test("a flagged generic profile still registers anonymously", async () => {
 		const t = createT();
@@ -207,6 +262,63 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 		});
 
 		const id = await registerClient(t, "client-post-flag", "client-generic");
+		expect(id).toBeTruthy();
+	});
+
+	// ── O4 mutant kill — the reseed drift patch must actually flip an
+	// ALREADY-SEEDED row that predates the selfRegistrable field ─────────────
+	// Models the real deploy-time hazard: a pre-fix prod `client-generic` row
+	// has no `selfRegistrable` key at all (never `false` — genuinely absent,
+	// the way a row created before this field existed looks). The operator's
+	// prescribed fix is to re-run `seedDefaultProfiles`, which must patch that
+	// row's `selfRegistrable` to `true` via the catalog-drift diff. A mutant
+	// that drops `selfRegistrable` from that diff (or drops the patch
+	// entirely) leaves the row unflagged — every new connector registration
+	// against "client-generic" would then be refused in prod, and this test
+	// must go RED under that mutant.
+	test("seedDefaultProfiles reseed patches a pre-fix client-generic row missing selfRegistrable, and anonymous DCR then succeeds", async () => {
+		const t = createT();
+		const now = Date.now();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "client-generic",
+				description:
+					"Deny-by-default template for new clients. MUST be overridden before issuing tokens.",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				// selfRegistrable intentionally OMITTED — models the pre-fix row.
+				createdAt: now,
+				updatedAt: now,
+			});
+		});
+
+		// Sanity: the pre-fix row genuinely refuses anonymous DCR before reseed.
+		await expect(
+			registerClient(t, "client-pre-reseed", "client-generic"),
+		).rejects.toThrow(/ScopeViolation|self-registrable|not flagged/i);
+
+		const seedResult = await t.mutation(api.oauth.seedDefaultProfiles, {
+			callerToken: MASTER_TOKEN,
+		});
+		expect(seedResult.updated).toContain("client-generic");
+
+		// getScopeProfile's public projection omits selfRegistrable (it is an
+		// internal enforcement flag, not client-facing metadata) — read the row
+		// directly, the way the fixture helpers in this file already do.
+		const patched = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", "client-generic"))
+				.unique();
+		});
+		expect(patched?.selfRegistrable).toBe(true);
+
+		const id = await registerClient(
+			t,
+			"client-post-reseed",
+			"client-generic",
+		);
 		expect(id).toBeTruthy();
 	});
 });
