@@ -34,19 +34,31 @@ export const getMyOrgRoster = query({
 // The organisation is derived INSIDE this query from the oauth_access_tokens
 // row keyed by THIS request's token hash. A caller cannot name another org.
 //
-// Does NOT consult withOrgScope for the roster. The MCP OAuth path
-// authenticates to Convex as the service account; withOrgScope on that
-// identity is ["*"] (ETA-M15). Using it here would re-open the leak.
+// Does NOT consult withOrgScope for the RETURNED ROSTER (that would be
+// ["*"] for the service account, ETA-M15 — using it as the returned data
+// would re-open the leak the token-hash derivation exists to close).
+// `withOrgScope` IS consulted below purely as the CALLER GATE: this query is
+// public (`client.query` over HTTP, mcp-server/src/tools.ts:1851 — an
+// internalQuery would be unreachable from that transport), so ANY caller
+// holding the deployment URL and a guessed/leaked `tokenHash` could
+// previously read that token's org roster with no identity at all. Only
+// master/service-account callers may ask this question now — the MCP
+// server's `internalClient()`-backed transport is the only production
+// caller and always resolves isMaster=true via the by-id
+// `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out, so no legitimate caller is
+// narrowed out (matching the #1318 `getScopeProfile` pattern).
 // ─────────────────────────────────────────────────────────────────────────────
 export const getForAccessToken = query({
 	args: { tokenHash: v.string() },
 	returns: v.array(v.string()),
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport via imperative client.query (mcp-server/src/auth.ts getOrgRoster + tools.ts:1897), never a reactive client useQuery. The fail-closed AUTH_REQUIRED/RBAC_DENIED throws are caught by the MCP auth layer's try/catch and returned as refusals, so no subscribing client ever receives an uncaught Server Error. R-50 declared divergence (a claim, verified here against the call sites).
-		const identity = await ctx.auth.getUserIdentity();
-		if (identity === null) {
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
 			throw new ConvexError(
-				"AUTH_REQUIRED: no verified identity — cannot resolve an org roster from an unauthenticated call",
+				"RBAC_DENIED: orgRoster.getForAccessToken requires master or " +
+					"service-account scope — anonymous and org-scoped callers may " +
+					"never resolve another organisation's roster by token hash.",
 			);
 		}
 
