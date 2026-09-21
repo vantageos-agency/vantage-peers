@@ -4,6 +4,7 @@ import type { Doc } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import {
+	lookupOrgMapping,
 	requireAgentCredentialMatch,
 	requireScope,
 	withOrgScope,
@@ -89,9 +90,40 @@ async function sendMessageCore(
 			// TRUE internal master (service account / Laurent) carve-out —
 			// mirrors the broadcast branch's isMaster && orgSlug===null
 			// discriminant below: legitimate internal fleet traffic keeps
-			// today's behavior, writing whatever tenantId (possibly
-			// undefined) the caller supplied.
-			derivedTenantId = args.tenantId;
+			// today's behavior when no tenantId is supplied. BUT a master
+			// caller supplying a tenantId is no longer written verbatim — a
+			// master credential could otherwise stamp ANY string, including
+			// a namespace-shaped value no organisation can ever match
+			// (production incident: 2 receipts stamped "project/example-client", a
+			// namespace where an org SLUG belongs — invisible to every
+			// scoped reader and unreachable by the no-tenant backfill).
+			// Reuses the SAME client_org_mapping join withOrgScope/
+			// requireOrgAdmin already use (lookupOrgMapping) — no new
+			// source of truth.
+			if (args.tenantId === undefined) {
+				// Absent tenant on the master path: unchanged legacy
+				// internal-fleet behavior (e.g. the GitHub webhook's
+				// sendMessageInternal calls, which never pass tenantId).
+				derivedTenantId = undefined;
+			} else if (args.tenantId === "") {
+				// Empty string is a VALUE the caller explicitly supplied, not
+				// an omission — silently treating "" as "absent" would mask
+				// a caller bug (e.g. a template that interpolates an unset
+				// variable into an empty string) behind today's "legacy
+				// internal traffic" carve-out. Refused, same as any other
+				// non-matching value.
+				throw new ConvexError(
+					'TENANT_UNKNOWN: sendMessage tenantId "" is not a valid tenant. Accepted: no tenantId (omit the field entirely), or an active organisation slug registered in client_org_mapping.',
+				);
+			} else {
+				const mapping = await lookupOrgMapping(ctx, args.tenantId);
+				if (!mapping || !mapping.isActive) {
+					throw new ConvexError(
+						`TENANT_UNKNOWN: sendMessage tenantId "${args.tenantId}" is not a known, active organisation slug. Accepted: no tenantId (legacy internal fleet traffic), or an active organisation slug registered in client_org_mapping.`,
+					);
+				}
+				derivedTenantId = args.tenantId;
+			}
 		} else if (scope.orgSlug !== null) {
 			// Any real client org (including a client org whose
 			// client_org_mapping row carries the ["*"] read sentinel): the

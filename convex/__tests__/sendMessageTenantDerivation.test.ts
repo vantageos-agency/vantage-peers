@@ -30,7 +30,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -212,6 +212,189 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		const receipts = await receiptsFor(t, messageId);
 		expect(receipts.length).toBe(1);
 		// Carve-out: master path writes args.tenantId verbatim (undefined here).
+		expect(receipts[0].tenantId).toBeUndefined();
+	});
+
+	// ─────────────────────────────────────────────────────────────────────
+	// Master carve-out defect: master could stamp ANY string as tenantId,
+	// including a namespace-shaped value no organisation can ever match
+	// (production incident: 2 receipts stamped "project/example-client").
+	// ─────────────────────────────────────────────────────────────────────
+
+	function asMaster(t: ReturnType<typeof createT>) {
+		return t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
+	}
+
+	test("RED (pre-fix documents the defect / post-fix proves the fix): master send with tenantId \"project/example-client\" is REFUSED, naming the value", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+
+		await expect(
+			asMaster(t).mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "master namespace-shaped tenant attempt",
+				tenantId: "project/example-client",
+			}),
+		).rejects.toThrow(/TENANT_UNKNOWN/);
+		await expect(
+			asMaster(t).mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "master namespace-shaped tenant attempt 2",
+				tenantId: "project/example-client",
+			}),
+		).rejects.toThrow(/project\/example-client/);
+	});
+
+	test("GREEN: master send, no tenant — succeeds, tenant undefined", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
+			from: "eta",
+			channel: "pi",
+			content: "master no tenant",
+		});
+
+		const receipts = await receiptsFor(t, messageId);
+		expect(receipts.length).toBe(1);
+		expect(receipts[0].tenantId).toBeUndefined();
+	});
+
+	test("GREEN: master send, active org slug — succeeds, tenant stamped", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "acme", ["pi"]);
+		await seedProfile(t, "pi");
+
+		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
+			from: "eta",
+			channel: "pi",
+			content: "master active org slug",
+			tenantId: "acme",
+		});
+
+		const receipts = await receiptsFor(t, messageId);
+		expect(receipts.length).toBe(1);
+		expect(receipts[0].tenantId).toBe("acme");
+	});
+
+	test("GREEN: master send, unknown slug — refused, naming it", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+
+		await expect(
+			asMaster(t).mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "master unknown slug",
+				tenantId: "no-such-org",
+			}),
+		).rejects.toThrow(/TENANT_UNKNOWN/);
+		await expect(
+			asMaster(t).mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "master unknown slug 2",
+				tenantId: "no-such-org",
+			}),
+		).rejects.toThrow(/no-such-org/);
+	});
+
+	test("GREEN: master send, inactive org slug — refused", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "dormant-co",
+				allowedOrchestrators: ["pi"],
+				scopes: ["view-own-tasks"],
+				displayName: "dormant-co",
+				isActive: false,
+				createdAt: Date.now(),
+			});
+		});
+
+		await expect(
+			asMaster(t).mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "master inactive org slug",
+				tenantId: "dormant-co",
+			}),
+		).rejects.toThrow(/TENANT_UNKNOWN/);
+	});
+
+	// Empty-string decision: an explicitly-supplied "" is refused, not
+	// silently treated as "absent" — see the comment in
+	// sendMessageCore/messages.ts next to the branch that implements this.
+	test("GREEN: master send, empty-string tenantId — refused (not treated as absent)", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+
+		await expect(
+			asMaster(t).mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "master empty string tenant",
+				tenantId: "",
+			}),
+		).rejects.toThrow(/TENANT_UNKNOWN/);
+	});
+
+	test("GREEN: scoped caller with a foreign tenantId — still overridden by its own org (unchanged)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "acme", ["victor", "noe"]);
+		await seedOrgMapping(t, "project/foreign", ["marie"]);
+		await seedProfile(t, "victor");
+		await seedProfile(t, "noe");
+
+		const sender = identityFor(t, "user-acme-victor", "acme");
+		const messageId = await sender.mutation(api.messages.sendMessage, {
+			from: "victor",
+			channel: "noe",
+			content: "scoped caller foreign tenant, still overridden",
+			tenantId: "project/foreign",
+		});
+
+		const receipts = await receiptsFor(t, messageId);
+		expect(receipts.length).toBeGreaterThan(0);
+		for (const r of receipts) {
+			expect(r.tenantId).toBe("acme");
+		}
+	});
+
+	test("GREEN: anonymous caller — still RBAC_DENIED", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+
+		await expect(
+			t.mutation(api.messages.sendMessage, {
+				from: "eta",
+				channel: "pi",
+				content: "anonymous, still denied",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("GREEN: webhook path (sendMessageInternal) real callers — no tenantId, still succeeds via the master no-tenant carve-out", async () => {
+		const t = createT();
+		await seedProfile(t, "pi");
+
+		// Mirrors every real convex/http.ts call site: internalMutation,
+		// allowNoIdentityMaster resolution (no Clerk identity for an
+		// HMAC-authed webhook call), and no tenantId argument — exactly what
+		// every GitHub-webhook notification in convex/http.ts sends today.
+		const messageId = await t.mutation(internal.messages.sendMessageInternal, {
+			from: "system",
+			channel: "pi",
+			content: "[GitHub] webhook notification, no tenantId",
+		});
+
+		const receipts = await receiptsFor(t, messageId);
+		expect(receipts.length).toBe(1);
 		expect(receipts[0].tenantId).toBeUndefined();
 	});
 
