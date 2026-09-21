@@ -400,11 +400,15 @@ function runScan(): Classified[] {
 //   - convex/memoriesScoped.ts:storeMemoryScoped is NOT in this list — guarded
 //     via its file-local resolveOrgId(), which calls ctx.auth.getUserIdentity,
 //     class (a).
+//   - convex/briefingNotes.ts:create, convex/briefingNotes.ts:update and
+//     convex/briefingNotes.ts:deleteBriefingNote are NOT in this list —
+//     guarded via withOrgScope + isOrgAllowedForScope (org-scope owner
+//     check on the note's STORED orgId), with the pre-existing
+//     callerOrchestrator argument kept as a narrowing-only layer on top
+//     (never a substitute), class (a). See
+//     convex/__tests__/briefingNotesWriteScope.test.ts.
 const KNOWN_OFFENDERS = new Set<string>([
 	// callerOrchestrator-asserted-only (class c) — no verified identity:
-	"convex/briefingNotes.ts:create",
-	"convex/briefingNotes.ts:update",
-	"convex/briefingNotes.ts:deleteBriefingNote",
 	"convex/mandates.ts:create",
 	"convex/mandates.ts:accept",
 	"convex/mandates.ts:update",

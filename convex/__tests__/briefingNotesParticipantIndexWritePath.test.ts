@@ -23,7 +23,14 @@ const modules = Object.fromEntries(
 	),
 );
 
-const createTestConvex = () => convexTest(schema, modules);
+// Authenticated as the service-account/master identity — briefingNotes
+// write-scope enforcement (convex/__tests__/briefingNotesWriteScope.test.ts)
+// refuses anonymous callers; this suite exercises the junction-table write
+// path, not the scope check itself.
+const createTestConvex = () =>
+	convexTest(schema, modules).withIdentity({
+		subject: "test-service-account-user-id",
+	});
 
 async function junctionParticipants(
 	t: ReturnType<typeof createTestConvex>,
