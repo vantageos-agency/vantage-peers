@@ -43,6 +43,17 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// getScopeProfile now requires master/service-account scope (SEC fix,
+// task-local to convex/__tests__/oauthScopeProfileRead.test.ts) -- this
+// fixture mirrors the mcp-server internalClient() service-account identity
+// (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact
+// subject) so pre-existing test infrastructure that reads a profile's
+// fromAllowList/prefixes keeps working without going through anonymous
+// access.
+function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 // ── Seed helpers ──────────────────────────────────────────────────────────────
 
 async function seedProfile(
@@ -437,7 +448,7 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 		expect(clients[0].scopeProfile).toBe("iris-rh");
 
 		// Verify profile has no global
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "iris-rh",
 		});
 		expect(profile).not.toBeNull();
@@ -445,7 +456,7 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 		expect(profile?.namespaceWritePrefixes).not.toContain("global");
 
 		// Verify old name gone
-		const oldProfile = await t.query(api.oauth.getScopeProfile, {
+		const oldProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
 		});
 		expect(oldProfile).toBeNull();
