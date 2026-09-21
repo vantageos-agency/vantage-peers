@@ -13,11 +13,16 @@
  * process.env.BEARER_SECRET_MASTER via constant-time comparison.
  */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
-import { internalQuery, mutation, query } from "./_generated/server";
+import {
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
+} from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
-import { requireOrgAdmin } from "./lib/auth";
+import { requireOrgAdmin, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -69,6 +74,7 @@ const scopeProfileShape = v.object({
 	namespaceReadPrefixes: v.array(v.string()),
 	namespaceWritePrefixes: v.array(v.string()),
 	clerkOrgSlug: v.optional(v.string()),
+	selfRegistrable: v.optional(v.boolean()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,6 +228,15 @@ export const seedDefaultProfiles = mutation({
 				fromAllowList: [],
 				namespaceReadPrefixes: [],
 				namespaceWritePrefixes: [],
+				// SECURITY: this is the ONLY profile DEFAULT_PUBLIC_DCR_PROFILE
+				// (mcp-server/server-http.ts) ever requests on behalf of an
+				// anonymous DCR client, and it grants nothing (empty
+				// fromAllowList/prefixes) — safe to flag self-registrable in the
+				// catalog itself so the seed closes the post-deploy window
+				// without requiring a separate operator mutation on a fresh
+				// deploy (see setProfileSelfRegistrable for the retrofit path on
+				// an ALREADY-seeded row).
+				selfRegistrable: true,
 			},
 			{
 				// Day 88: minimum-read scope profile for self-registered (DCR) clients
@@ -239,6 +254,10 @@ export const seedDefaultProfiles = mutation({
 				// This is the "global/*" intent expressed in prefix form (no glob support).
 				namespaceReadPrefixes: ["global"],
 				namespaceWritePrefixes: [],
+				// SECURITY: same reasoning as client-generic above — explicitly
+				// named "anonymous DCR clients" in its own description and grants
+				// only global/* read, so it is safe to self-register.
+				selfRegistrable: true,
 			},
 		];
 
@@ -300,6 +319,17 @@ export const seedDefaultProfiles = mutation({
 				!arraysEqual(existing.namespaceWritePrefixes, p.namespaceWritePrefixes)
 			) {
 				patch.namespaceWritePrefixes = p.namespaceWritePrefixes;
+			}
+			// selfRegistrable is catalog-SSOT like every other field above: only
+			// "client-generic" / "public-readonly" carry `selfRegistrable: true`
+			// in `defaults`; every other entry implicitly wants `false`. A row
+			// that drifted from that (an operator manually flipped a SEAT
+			// profile's flag, or a stale pre-fix row) is patched back — the
+			// catalog is the ceiling, never widened by drift.
+			const catalogSelfRegistrable = p.selfRegistrable ?? false;
+			const existingSelfRegistrable = existing.selfRegistrable ?? false;
+			if (existingSelfRegistrable !== catalogSelfRegistrable) {
+				patch.selfRegistrable = catalogSelfRegistrable;
 			}
 
 			if (Object.keys(patch).length === 0) {
@@ -905,27 +935,32 @@ export const provisionOrganization = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECURITY: scope profiles that must NEVER be granted via public DCR self-reg.
+// SECURITY: public DCR self-registration accepts ONLY profiles the DATA row
+// itself flags `selfRegistrable: true` (convex/schema.ts). This REPLACES the
+// prior CODE denylist (`BLOCKED_PUBLIC_DCR_PROFILES = new Set(["master"])`),
+// which enumerated what to refuse instead of what to allow — any OTHER
+// existing `oauth_scope_profiles` row, including a per-org SEAT profile
+// created by `provisionOrganization` and carrying that seat's own
+// `fromAllowList`, was requestable by an anonymous caller. Absence of the
+// flag is deny-by-default; only the catalog's "client-generic" /
+// "public-readonly" templates ever carry it (see seedDefaultProfiles).
 // Master scope is admin-only; it requires explicit Pi authorization via the
 // POST /admin/oauth/clients endpoint (masterOnlyMiddleware gated).
 // ─────────────────────────────────────────────────────────────────────────────
-
-const BLOCKED_PUBLIC_DCR_PROFILES: ReadonlySet<string> = new Set(["master"]);
 
 // Public DCR path — anonymous clients (Claude.ai connector) register themselves
 // with the default profile. The returned clientSecret is the caller's
 // responsibility to capture; we store only the hash.
 //
-// SECURITY: This function enforces that self-registration NEVER yields master
-// scope. Any attempt to pass scopeProfile="master" is rejected with an explicit
-// ScopeViolation error. Profiles are further constrained to only the safe
-// deny-by-default "client-generic" value; all other non-blocked profiles still
-// require admin elevation post-registration before tokens carry real scopes.
+// SECURITY: This function enforces that self-registration NEVER yields a
+// profile that has not been explicitly data-flagged `selfRegistrable: true`
+// — master scope, per-org seat profiles, and any future admin-only profile
+// are refused by construction (they simply lack the flag), not by name.
 // public-mutation: RFC 7591 dynamic client registration is intentionally
 // open to anonymous callers by design — no caller identity to derive.
 // Defense-in-depth against privilege escalation lives in-handler (rejects
-// empty redirectUris, blocks master/admin-only scopeProfile values via
-// BLOCKED_PUBLIC_DCR_PROFILES, requires an existing safe scope_profiles row).
+// empty redirectUris, requires an existing scope_profiles row flagged
+// selfRegistrable=true).
 export const registerPublicClient = mutation({
 	args: {
 		clientId: v.string(),
@@ -948,24 +983,25 @@ export const registerPublicClient = mutation({
 			);
 		}
 
-		// SECURITY: Refuse master scope (and any future admin-only profiles) at the
-		// Convex layer. This is defense-in-depth: server-http.ts already hardcodes
-		// DEFAULT_PUBLIC_DCR_PROFILE, but a direct Convex call must also be safe.
-		if (BLOCKED_PUBLIC_DCR_PROFILES.has(args.scopeProfile)) {
-			throw new Error(
-				`ScopeViolation: scopeProfile="${args.scopeProfile}" cannot be requested via self-registration. ` +
-					"Master scope requires admin authorization via POST /admin/oauth/clients.",
-			);
-		}
-
 		// Enforce a strict default profile for anonymous DCR — no admin required,
-		// but the profile MUST exist and be safe (deny-by-default or marie flow).
+		// but the profile MUST exist and be DATA-flagged selfRegistrable=true.
 		const profile = await ctx.db
 			.query("oauth_scope_profiles")
 			.withIndex("by_profileId", (q) => q.eq("profileId", args.scopeProfile))
 			.unique();
 		if (!profile) {
 			throw new Error(`Unknown scope_profile: ${args.scopeProfile}`);
+		}
+
+		// SECURITY: the ONLY gate. A profile with no `selfRegistrable: true`
+		// data flag — master, every per-org seat profile, any future
+		// admin-only profile — is refused here, never by enumerating its name.
+		if (profile.selfRegistrable !== true) {
+			throw new Error(
+				`ScopeViolation: scopeProfile="${args.scopeProfile}" is not flagged self-registrable. ` +
+					"This profile requires admin authorization via POST /admin/oauth/clients, or an " +
+					"operator running oauth:setProfileSelfRegistrable.",
+			);
 		}
 
 		const existing = await ctx.db
@@ -991,6 +1027,19 @@ export const registerPublicClient = mutation({
 	},
 });
 
+// SECURITY: this query used to be reachable by ANY anonymous caller holding
+// the deployment URL and disclosed `scopeProfile` (and the client's
+// `clientSecretHash`) to anyone who asked, by clientId, with no auth check
+// at all. It now resolves the CALLER via `withOrgScope` and refuses
+// (RBAC_DENIED) any caller that does not resolve to master scope.
+//
+// This does NOT break the real consumer: mcp-server/server-http.ts's
+// internalClient() always presents the MCP server's service-account Clerk
+// identity (see mcp-server/src/auth.ts's createServiceAccountConvexClient),
+// which withOrgScope resolves to isMaster=true via the by-id
+// CLERK_SERVICE_ACCOUNT_USER_ID carve-out — every legitimate /authorize and
+// /token call is unaffected. Only a caller with no identity, or a non-master
+// Clerk identity, is refused.
 export const getClientByClientId = query({
 	args: { clientId: v.string() },
 	returns: v.union(
@@ -1006,6 +1055,14 @@ export const getClientByClientId = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: getClientByClientId requires master scope — " +
+					"anonymous and non-master callers may never read an OAuth client's scopeProfile.",
+			);
+		}
+
 		const row = await ctx.db
 			.query("oauth_clients")
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
@@ -1020,6 +1077,43 @@ export const getClientByClientId = query({
 			revokedAt: row.revokedAt,
 			tokenEndpointAuthMethod: row.tokenEndpointAuthMethod,
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setProfileSelfRegistrable — operator-only, post-deploy retrofit mutation.
+//
+// ZERO-DOWNTIME NOTE: the catalog seed (`defaults` in seedDefaultProfiles,
+// above) already flags "client-generic" / "public-readonly" as
+// `selfRegistrable: true` in CODE, so a deployment that runs
+// `oauth:seedDefaultProfiles` as part of its normal deploy step closes the
+// window automatically (the catalog-SSOT upsert loop patches any existing
+// row's `selfRegistrable` to match). This mutation exists for the case where
+// seedDefaultProfiles is NOT re-run immediately after deploy: an operator
+// runs it directly against the target profile to flip the flag without
+// waiting for (or triggering) a full catalog reseed.
+//
+// internalMutation: no callerToken/master-gate needed — internal functions
+// are only reachable via `npx convex run` with a deploy key, never from the
+// public HTTP/MCP surface.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const setProfileSelfRegistrable = internalMutation({
+	args: { profileId: v.string(), value: v.boolean() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.profileId))
+			.unique();
+		if (!profile) {
+			throw new Error(`scope_profile not found: ${args.profileId}`);
+		}
+		await ctx.db.patch(profile._id, {
+			selfRegistrable: args.value,
+			updatedAt: Date.now(),
+		});
+		return null;
 	},
 });
 

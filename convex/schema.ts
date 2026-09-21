@@ -1059,6 +1059,17 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number(),
 		clerkOrgSlug: v.optional(v.string()),
+		// SECURITY (task oauth-dcr-scope-allowlist): whether anonymous public
+		// DCR self-registration (registerPublicClient) may request this
+		// profile. Additive; absent === false (deny-by-default). Only the
+		// deny-by-default "client-generic" / "public-readonly" catalog
+		// profiles are ever flagged true — per-org SEAT profiles created by
+		// provisionOrganization must NEVER carry this flag. Replaces the
+		// prior CODE denylist (BLOCKED_PUBLIC_DCR_PROFILES), which enumerated
+		// what to refuse instead of what to allow — any new profile inserted
+		// into oauth_scope_profiles (a seat profile, in particular) was
+		// self-registrable by default under that scheme.
+		selfRegistrable: v.optional(v.boolean()),
 	})
 		.index("by_profileId", ["profileId"])
 		.index("by_clerkOrgSlug", ["clerkOrgSlug"]),
