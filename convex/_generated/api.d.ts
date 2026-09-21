@@ -34,7 +34,6 @@ import type * as githubDeployGate from "../githubDeployGate.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as gumroadWebhook from "../gumroadWebhook.js";
 import type * as http from "../http.js";
-import type * as iframeEmbedSessions from "../iframeEmbedSessions.js";
 import type * as improvisationDigest from "../improvisationDigest.js";
 import type * as issueClosedSweep from "../issueClosedSweep.js";
 import type * as issueClosedSweepDb from "../issueClosedSweepDb.js";
@@ -122,7 +121,6 @@ declare const fullApi: ApiFromModules<{
   githubRepoMapping: typeof githubRepoMapping;
   gumroadWebhook: typeof gumroadWebhook;
   http: typeof http;
-  iframeEmbedSessions: typeof iframeEmbedSessions;
   improvisationDigest: typeof improvisationDigest;
   issueClosedSweep: typeof issueClosedSweep;
   issueClosedSweepDb: typeof issueClosedSweepDb;

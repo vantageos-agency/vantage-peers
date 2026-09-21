@@ -1198,6 +1198,9 @@ export default defineSchema({
 	// provides immediate invalidation without waiting for TTL.
 	//
 	// Mission : sigma-vantage-peers-mcp-gui-iframe-embed-v1 (k5730xct6rvrwkvxhy5t5js12d87jwfw).
+	// The public createSession/touchSession/revokeSession/getSession functions
+	// were removed (unauthenticated, no consumer). The table is kept only so
+	// any existing rows are not orphaned by a schema validation failure.
 	iframeEmbedSessions: defineTable({
 		sessionId: v.string(),
 		tenantId: v.optional(v.string()),

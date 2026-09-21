@@ -1059,62 +1059,6 @@
         }
       }
     },
-    "iframeEmbedSessions": {
-      "file": "convex/iframeEmbedSessions.ts",
-      "publicFunctions": [
-        "createSession",
-        "getSession",
-        "touchSession",
-        "revokeSession"
-      ],
-      "internalFunctions": [],
-      "functions": {
-        "createSession": {
-          "kind": "mutation",
-          "public": true,
-          "args": "{ sessionId: v.string(), tenantId: v.optional(v.string()), origin: v.string(), userId: v.optional(v.string()), expiresAt: v.number(), }",
-          "argNames": [
-            "sessionId",
-            "tenantId",
-            "origin",
-            "userId",
-            "expiresAt"
-          ],
-          "file": "convex/iframeEmbedSessions.ts:18",
-          "errorCodes": []
-        },
-        "getSession": {
-          "kind": "query",
-          "public": true,
-          "args": "{ sessionId: v.string(), }",
-          "argNames": [
-            "sessionId"
-          ],
-          "file": "convex/iframeEmbedSessions.ts:44",
-          "errorCodes": []
-        },
-        "touchSession": {
-          "kind": "mutation",
-          "public": true,
-          "args": "{ sessionId: v.string(), }",
-          "argNames": [
-            "sessionId"
-          ],
-          "file": "convex/iframeEmbedSessions.ts:85",
-          "errorCodes": []
-        },
-        "revokeSession": {
-          "kind": "mutation",
-          "public": true,
-          "args": "{ sessionId: v.string(), }",
-          "argNames": [
-            "sessionId"
-          ],
-          "file": "convex/iframeEmbedSessions.ts:107",
-          "errorCodes": []
-        }
-      }
-    },
     "issueStats": {
       "file": "convex/issueStats.ts",
       "publicFunctions": [],
