@@ -32,6 +32,19 @@ const createTestConvex = () =>
 		subject: "test-service-account-user-id",
 	});
 
+// Fail-closed multi-tenant fix: briefingNotes.get now derives the caller's
+// scope via withOrgScope and refuses an anonymous (no-identity) caller.
+// `createTestConvex()` already returns a client authenticated as the
+// service-account/master identity (required above for the write-scope
+// mutations), so the read-side calls already carry that same identity —
+// `asService` is a pass-through kept for call-site clarity (same #1309
+// pattern as sibling suites, where `t` and the read identity can differ).
+function asService(
+	t: ReturnType<typeof createTestConvex>,
+): ReturnType<typeof createTestConvex> {
+	return t;
+}
+
 async function junctionParticipants(
 	t: ReturnType<typeof createTestConvex>,
 	noteId: string,
@@ -72,7 +85,7 @@ describe("briefingNotes.create — populates briefingNoteParticipants via the re
 			createdBy: "sigma",
 		});
 
-		const note = await t.query(api.briefingNotes.get, {
+		const note = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["prometheus"],
@@ -122,14 +135,14 @@ describe("briefingNotes.update — keeps briefingNoteParticipants in sync via th
 			participants: ["sigma", "eta"],
 		});
 
-		const etaCanRead = await t.query(api.briefingNotes.get, {
+		const etaCanRead = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["eta"],
 		});
 		expect(etaCanRead).not.toBeNull();
 
-		const piCanRead = await t.query(api.briefingNotes.get, {
+		const piCanRead = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["pi"],

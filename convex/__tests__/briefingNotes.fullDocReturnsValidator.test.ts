@@ -36,11 +36,29 @@ const modules = Object.fromEntries(
 	),
 );
 
+const createTestConvex = () => convexTest(schema, modules);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function asMaster(t: any) {
 	return t.withIdentity({
 		subject: "test-service-account-user-id",
 	});
+}
+
+// Fail-closed multi-tenant fix: briefingNotes.get/list now derive the
+// caller's scope via withOrgScope and refuse an anonymous (no-identity)
+// caller. This helper reads as the service-account/master identity — the
+// SAME identity the MCP server presents when no Clerk-org JWT is attached —
+// so the returns-validator assertions below (unrelated to auth) keep
+// exercising the same fixtures (#1309 pattern).
+function asService(
+	t: ReturnType<typeof createTestConvex>,
+): ReturnType<typeof createTestConvex> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]) as unknown as ReturnType<
+		typeof createTestConvex
+	>;
 }
 
 // ─── Seed helpers ─────────────────────────────────────────────────────────────
@@ -79,7 +97,7 @@ describe("briefingNotes.get — orgId returns-validator regression", () => {
 
 	// ── T1: get — note WITH orgId ────────────────────────────────────────────
 	test("T1: briefingNotes.get returns full doc for note WITH orgId (no validator 500)", async () => {
-		const t = convexTest(schema, modules);
+		const t = createTestConvex();
 		let noteId: string | undefined;
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithOrgId(ctx);
@@ -87,7 +105,7 @@ describe("briefingNotes.get — orgId returns-validator regression", () => {
 
 		// Before the fix this call triggered a 500: orgId was in the stored doc
 		// but absent from the returns validator → Convex rejects the response.
-		const result = await t.query(api.briefingNotes.get, { noteId: noteId as any });
+		const result = await asService(t).query(api.briefingNotes.get, { noteId: noteId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Briefing with orgId");
@@ -97,13 +115,13 @@ describe("briefingNotes.get — orgId returns-validator regression", () => {
 
 	// ── T2: get — note WITHOUT orgId (backward compat) ──────────────────────
 	test("T2: briefingNotes.get returns full doc for note WITHOUT orgId (backward compat)", async () => {
-		const t = convexTest(schema, modules);
+		const t = createTestConvex();
 		let noteId: string | undefined;
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.briefingNotes.get, { noteId: noteId as any });
+		const result = await asService(t).query(api.briefingNotes.get, { noteId: noteId as any });
 
 		expect(result).not.toBeNull();
 		expect(result?.title).toBe("Briefing without orgId");
@@ -116,7 +134,7 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 
 	// ── T3: update on note WITH orgId ────────────────────────────────────────
 	test("T3: briefingNotes.update on note WITH orgId → updates + get returns full doc with orgId", async () => {
-		const t = convexTest(schema, modules);
+		const t = createTestConvex();
 		let noteId: string | undefined;
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithOrgId(ctx);
@@ -133,14 +151,14 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 		});
 
 		// get should return the updated doc (with orgId still present)
-		const result = await t.query(api.briefingNotes.get, { noteId: noteId as any });
+		const result = await asService(t).query(api.briefingNotes.get, { noteId: noteId as any });
 		expect(result?.content).toBe("Updated content after orgId fix");
 		expect((result as any).orgId).toBe("acme-hr");
 	});
 
 	// ── T4: update on note WITHOUT orgId ─────────────────────────────────────
 	test("T4: briefingNotes.update on note WITHOUT orgId → updates + get returns full doc (backward compat)", async () => {
-		const t = convexTest(schema, modules);
+		const t = createTestConvex();
 		let noteId: string | undefined;
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithoutOrgId(ctx);
@@ -153,7 +171,7 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 			content: "Updated legacy content without orgId",
 		});
 
-		const result = await t.query(api.briefingNotes.get, { noteId: noteId as any });
+		const result = await asService(t).query(api.briefingNotes.get, { noteId: noteId as any });
 		expect(result?.content).toBe("Updated legacy content without orgId");
 		expect((result as any).orgId).toBeUndefined();
 	});
@@ -163,13 +181,13 @@ describe("briefingNotes.list — regression guard (no returns validator — smok
 
 	// ── T5: list regression ──────────────────────────────────────────────────
 	test("T5: briefingNotes.list still returns docs for notes with and without orgId", async () => {
-		const t = convexTest(schema, modules);
+		const t = createTestConvex();
 		await t.run(async (ctx) => {
 			await seedNoteWithOrgId(ctx);
 			await seedNoteWithoutOrgId(ctx);
 		});
 
-		const result = await t.query(api.briefingNotes.list, { limit: 10 });
+		const result = await asService(t).query(api.briefingNotes.list, { limit: 10 });
 
 		expect(Array.isArray(result)).toBe(true);
 		const items = result as Array<Record<string, unknown>>;

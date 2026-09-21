@@ -68,14 +68,11 @@ function isOrgAllowedForScope(
 	return orgId === scope.orgSlug;
 }
 
-async function callerCanRead(
+async function identityMatchesParticipant(
 	ctx: QueryCtx,
 	note: Doc<"briefingNotes">,
-	master: boolean | undefined,
-	callerIdentities: string[] | undefined,
+	callerIdentities: string[],
 ): Promise<boolean> {
-	if (master === true) return true;
-	if (callerIdentities === undefined) return true; // legacy unscoped call
 	if (callerIdentities.includes(note.createdBy)) return true;
 	for (const identity of callerIdentities) {
 		const row = await ctx.db
@@ -87,6 +84,64 @@ async function callerCanRead(
 		if (row !== null) return true;
 	}
 	return false;
+}
+
+// LEGACY — master/service-account path ONLY. `master`/`callerIdentities` are
+// safe to honour here because the caller has already been proven, via
+// `withOrgScope(ctx)`, to be the verified master identity or the recognized
+// service-account carve-out (convex/lib/auth.ts) — never a raw client
+// argument standing in for that proof. Non-master (org-scoped) callers MUST
+// go through `callerCanReadForScope` below instead, which ignores the
+// client-supplied `master` bool entirely and enforces orgId isolation first.
+async function callerCanRead(
+	ctx: QueryCtx,
+	note: Doc<"briefingNotes">,
+	master: boolean | undefined,
+	callerIdentities: string[] | undefined,
+): Promise<boolean> {
+	if (master === true) return true;
+	if (callerIdentities === undefined) return true; // legacy unscoped call
+	return identityMatchesParticipant(ctx, note, callerIdentities);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Security fix (URGENT) — `get`/`list` used to authorize solely on the
+// client-supplied `master`/`callerIdentities` arguments: an anonymous caller
+// could pass `master: true` (or omit `callerIdentities` entirely, the
+// pre-Day-165 default) and read ANY note, across every tenant. Briefing
+// notes carry client material.
+//
+// Fix: resolve the caller's verified org scope via `withOrgScope(ctx)`
+// FIRST (same #1313 pattern as convex/messages.ts's markAsRead/
+// deleteMessage). `scope.isMaster` is derived from the VERIFIED identity —
+// the real master secret, or the recognized CLERK_SERVICE_ACCOUNT_USER_ID
+// carve-out (convex/lib/auth.ts) — never from the client-supplied `master`
+// argument. A verified Clerk-org (non-master) caller may read only notes
+// whose stored `orgId` equals its own `orgSlug`, intersected with any
+// `callerIdentities` it passes; its `master` argument is IGNORED. A
+// verified master/service-account caller keeps today's exact behaviour
+// (delegates to the LEGACY `callerCanRead` above), because only the MCP
+// server holds that credential and uses `master`/`callerIdentities` to
+// narrow per OAuth seat.
+async function callerCanReadForScope(
+	ctx: QueryCtx,
+	note: Doc<"briefingNotes">,
+	scope: OrgScope,
+	master: boolean | undefined,
+	callerIdentities: string[] | undefined,
+): Promise<boolean> {
+	if (scope.isMaster) {
+		return callerCanRead(ctx, note, master, callerIdentities);
+	}
+	// Anonymous / no-org caller (withOrgScope's fail-closed default) — the
+	// public `get`/`list` handlers below already refuse this case with
+	// RBAC_DENIED before reaching here; this branch is defense-in-depth so
+	// callerCanReadForScope never leaks a note on its own if that upstream
+	// refusal is ever bypassed or reordered.
+	if (scope.orgSlug === null) return false;
+	if (note.orgId !== scope.orgSlug) return false;
+	if (callerIdentities === undefined) return true;
+	return identityMatchesParticipant(ctx, note, callerIdentities);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +233,19 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// Security fix — resolve the VERIFIED caller scope before anything
+		// else. No identity (and no recognized service-account carve-out)
+		// means REFUSED: there is no legacy unscoped read any more (mirrors
+		// #1313's deleteMessage — the RBAC_DENIED throw happens BEFORE
+		// ctx.db.get, so a non-existent noteId can never be distinguished
+		// from an existing-but-foreign one by an unauthenticated caller).
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not read briefing notes — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const noteId = requireId(
 			ctx,
 			"briefingNotes",
@@ -187,9 +255,10 @@ export const get = query({
 		);
 		const note = await ctx.db.get(noteId);
 		if (note === null) return null;
-		const visible = await callerCanRead(
+		const visible = await callerCanReadForScope(
 			ctx,
 			note,
+			scope,
 			args.master,
 			args.callerIdentities,
 		);
@@ -299,6 +368,17 @@ export const list = query({
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"briefingNotes"> optionality
 	handler: async (ctx, args) => {
+		// Security fix — same defect and same fix as `get` above: resolve the
+		// VERIFIED caller scope FIRST. Anonymous (no identity, no recognized
+		// service-account carve-out) is REFUSED with RBAC_DENIED — there is
+		// no legacy unscoped `list` any more.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not list briefing notes — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const lite = args.fields === "lite";
 		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit
 		const explicitLimit = args.limit !== undefined;
@@ -309,8 +389,15 @@ export const list = query({
 				`[briefingNotes.list] auto-clamp: limit=15 applied (fields=full, no explicit limit).`,
 			);
 		}
-		const needsVisibilityFilter =
-			args.master !== true && args.callerIdentities !== undefined;
+		// A verified Clerk-org (non-master) caller ALWAYS needs at least the
+		// orgId isolation filter below — its client-supplied `master` argument
+		// is IGNORED (master is derived from the verified scope, never from a
+		// client bool). A master/service-account caller preserves the
+		// original opt-in shape (only widen-scan/filter when a real
+		// callerIdentities narrowing was requested and master wasn't set).
+		const needsVisibilityFilter = scope.isMaster
+			? args.master !== true && args.callerIdentities !== undefined
+			: true;
 		const needsWideScan =
 			args.updatedSince !== undefined || needsVisibilityFilter;
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
@@ -434,18 +521,37 @@ export const list = query({
 		}
 
 		// Day 165 — participant visibility, resolved via the by_participant_note
-		// index inside callerCanRead (never a scan of `participants`/a
-		// post-query handler filter). Runs over the (possibly widened, and now
-		// possibly updatedSince-indexed) fetch above.
+		// index inside callerCanRead/identityMatchesParticipant (never a scan
+		// of `participants`/a post-query handler filter). Runs over the
+		// (possibly widened, and now possibly updatedSince-indexed) fetch
+		// above. Security fix — a non-master (org-scoped) caller ALWAYS gets
+		// the orgId isolation check here (never just the participant check),
+		// and its `master` argument is IGNORED — only a verified
+		// scope.isMaster caller reaches the legacy `callerCanRead` path.
 		if (needsVisibilityFilter) {
-			const identities = args.callerIdentities as string[];
-			const checked = await Promise.all(
-				rows.map(async (r) => ({
-					row: r,
-					visible: await callerCanRead(ctx, r, args.master, identities),
-				})),
-			);
-			rows = checked.filter((c) => c.visible).map((c) => c.row);
+			if (scope.isMaster) {
+				const identities = args.callerIdentities as string[];
+				const checked = await Promise.all(
+					rows.map(async (r) => ({
+						row: r,
+						visible: await callerCanRead(ctx, r, args.master, identities),
+					})),
+				);
+				rows = checked.filter((c) => c.visible).map((c) => c.row);
+			} else {
+				const orgSlug = scope.orgSlug as string;
+				const identities = args.callerIdentities;
+				const checked = await Promise.all(
+					rows.map(async (r) => ({
+						row: r,
+						visible:
+							r.orgId === orgSlug &&
+							(identities === undefined ||
+								(await identityMatchesParticipant(ctx, r, identities))),
+					})),
+				);
+				rows = checked.filter((c) => c.visible).map((c) => c.row);
+			}
 		}
 		// Re-bound to the requested page size now that the filter has run over
 		// the widened superset (no-op when a wide scan wasn't needed).
@@ -654,20 +760,33 @@ export const searchBriefingNotesByKeyword = query({
 
 		// Day 165 — participant visibility, applied WITHIN the tenant set
 		// established above (never overrides tenant isolation). Resolved via
-		// the by_participant_note index inside callerCanRead.
-		const needsVisibilityFilter =
-			args.master !== true && args.callerIdentities !== undefined;
+		// the by_participant_note index inside callerCanRead/
+		// identityMatchesParticipant. Security hardening (same fix as
+		// `get`/`list`): a non-master (org-scoped) caller's client-supplied
+		// `master` argument is IGNORED here too — a client-supplied
+		// `master: true` must never let an org-scoped caller bypass its own
+		// org's participant restriction. Only a verified scope.isMaster
+		// caller (the legacy `callerCanRead` path) honours the `master` arg.
+		const needsVisibilityFilter = scope.isMaster
+			? args.master !== true && args.callerIdentities !== undefined
+			: args.callerIdentities !== undefined;
 		const filtered = needsVisibilityFilter
 			? (
 					await Promise.all(
 						tenantFiltered.map(async (r) => ({
 							row: r,
-							visible: await callerCanRead(
-								ctx,
-								r,
-								args.master,
-								args.callerIdentities,
-							),
+							visible: scope.isMaster
+								? await callerCanRead(
+										ctx,
+										r,
+										args.master,
+										args.callerIdentities,
+									)
+								: await identityMatchesParticipant(
+										ctx,
+										r,
+										args.callerIdentities as string[],
+									),
 						})),
 					)
 				)

@@ -29,6 +29,22 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// Fail-closed multi-tenant fix: briefingNotes.get now derives the caller's
+// scope via withOrgScope and refuses an anonymous (no-identity) caller.
+// Read as the service-account/master identity — the SAME identity the MCP
+// server presents when no Clerk-org JWT is attached — so the migration
+// read-back assertions below (unrelated to org-scope) keep exercising the
+// same fixtures (#1309 pattern).
+function asService(
+	t: ReturnType<typeof createTestConvex>,
+): ReturnType<typeof createTestConvex> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]) as unknown as ReturnType<
+		typeof createTestConvex
+	>;
+}
+
 // Direct-insert fixture: bypasses briefingNotes.create entirely, so
 // syncParticipantIndex NEVER runs and briefingNoteParticipants stays empty
 // for this note — exactly the production defect (task
@@ -74,7 +90,7 @@ describe("migrations:backfillBriefingNoteParticipants", () => {
 		// scoped caller who is NOT a participant. The junction table is
 		// empty, so callerCanRead's index-range probe finds nothing for
 		// either case.
-		const deniedBeforeMigration = await t.query(api.briefingNotes.get, {
+		const deniedBeforeMigration = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["laurent"],
@@ -84,7 +100,7 @@ describe("migrations:backfillBriefingNoteParticipants", () => {
 		// A caller who is NOT a participant is denied identically — proving
 		// the pre-migration state cannot discriminate a real participant
 		// from a stranger.
-		const strangerBeforeMigration = await t.query(api.briefingNotes.get, {
+		const strangerBeforeMigration = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["stranger"],
@@ -113,7 +129,7 @@ describe("migrations:backfillBriefingNoteParticipants", () => {
 		]);
 
 		// GREEN: the scoped participant now reads the note.
-		const readAfterMigration = await t.query(api.briefingNotes.get, {
+		const readAfterMigration = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["laurent"],
@@ -122,7 +138,7 @@ describe("migrations:backfillBriefingNoteParticipants", () => {
 
 		// The stranger is still correctly denied — the migration didn't
 		// grant blanket access, only real participants.
-		const strangerAfterMigration = await t.query(api.briefingNotes.get, {
+		const strangerAfterMigration = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["stranger"],
