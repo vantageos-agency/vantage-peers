@@ -473,13 +473,46 @@ export const upsertScopeProfile = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getScopeProfile — internal use by token-issuance path
+// getScopeProfile — token-issuance path (mcp-server/server-http.ts's
+// loadScopeProfile, the ONLY production caller, via internalClient() —
+// the MCP server's service-account Clerk identity, which withOrgScope
+// resolves to isMaster=true through the by-id CLERK_SERVICE_ACCOUNT_USER_ID
+// carve-out).
+//
+// SECURITY: this query used to be reachable by ANY anonymous caller holding
+// the deployment URL and disclosed a profile's `fromAllowList` +
+// `namespaceReadPrefixes`/`namespaceWritePrefixes` to anyone who asked, by
+// profileId, with no auth check at all. Per-seat profiles minted by
+// `provisionOrganization` are named `<seat>-<org>`, so an anonymous caller
+// could enumerate an organisation's seats and namespaces simply by guessing
+// (or brute-forcing) profileId strings. It now resolves the CALLER via
+// `withOrgScope` and refuses (RBAC_DENIED) any caller that does not resolve
+// to master scope — the same refusal shape #1317 applied to
+// `getClientByClientId`.
+//
+// Org-scoped (non-master) callers are refused ENTIRELY rather than narrowed
+// to "their own org's profiles": no real org-scoped caller of this query
+// exists today (the only production caller is the MCP server's service
+// account, which always resolves isMaster=true), so there is nothing to
+// narrow FOR — adding an org-scoped read path here would open a surface
+// with zero legitimate consumers, exactly the anti-pattern #1317 rejected
+// for `getClientByClientId`. If a real org-scoped consumer is ever added,
+// it must derive its own org's profiles via `clerkOrgSlug` equality (never
+// widen this refusal implicitly).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getScopeProfile = query({
 	args: { profileId: v.string() },
 	returns: v.union(scopeProfileShape, v.null()),
 	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: getScopeProfile requires master scope — " +
+					"anonymous and non-master callers may never read an OAuth scope profile's fromAllowList or namespace prefixes.",
+			);
+		}
+
 		const row = await ctx.db
 			.query("oauth_scope_profiles")
 			.withIndex("by_profileId", (q) => q.eq("profileId", args.profileId))

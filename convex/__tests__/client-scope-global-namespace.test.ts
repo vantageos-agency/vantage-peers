@@ -67,6 +67,17 @@ afterEach(() => {
 
 const createT = () => convexTest(schema, modules);
 
+// getScopeProfile now requires master/service-account scope (SEC fix,
+// task-local to convex/__tests__/oauthScopeProfileRead.test.ts) -- this
+// fixture mirrors the mcp-server internalClient() service-account identity
+// (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact
+// subject) so pre-existing test infrastructure that reads a profile's
+// fromAllowList/prefixes keeps working without going through anonymous
+// access.
+function asServiceAccount(t: ReturnType<typeof createT>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 /**
  * Verbatim mirror of `checkNamespacePrefix` (mcp-server/src/auth.ts:380-390).
  * A prefix of "*" means any namespace; otherwise the target namespace must
@@ -91,7 +102,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 			callerToken: MASTER_TOKEN,
 		});
 
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
@@ -106,7 +117,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: MASTER_TOKEN,
 		});
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
@@ -121,7 +132,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: MASTER_TOKEN,
 		});
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
@@ -142,7 +153,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: MASTER_TOKEN,
 		});
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
@@ -160,7 +171,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: MASTER_TOKEN,
 		});
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
@@ -186,7 +197,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 		await t.mutation(api.oauth.seedDefaultProfiles, {
 			callerToken: MASTER_TOKEN,
 		});
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();

@@ -33,6 +33,17 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// getScopeProfile now requires master/service-account scope (SEC fix,
+// task-local to convex/__tests__/oauthScopeProfileRead.test.ts) -- this
+// fixture mirrors the mcp-server internalClient() service-account identity
+// (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact
+// subject) so pre-existing test infrastructure that reads a profile's
+// fromAllowList/prefixes keeps working without going through anonymous
+// access.
+function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 describe("oauth:provisionOrganization", () => {
 	test("one call creates mapping + two seats with clerkOrgSlug on profile and token", async () => {
 		const t = createTestConvex();
@@ -59,7 +70,7 @@ describe("oauth:provisionOrganization", () => {
 		expect(mapping?.allowedOrchestrators).toEqual(["orch-a", "orch-b"]);
 		expect(mapping?.isActive).toBe(true);
 
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "orch-a-plan-org-alpha",
 		});
 		expect(profile?.clerkOrgSlug).toBe("plan-org-alpha");

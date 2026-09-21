@@ -47,6 +47,17 @@ afterEach(() => {
 
 const createT = () => convexTest(schema, modules);
 
+// getScopeProfile now requires master/service-account scope (SEC fix,
+// task-local to convex/__tests__/oauthScopeProfileRead.test.ts) -- this
+// fixture mirrors the mcp-server internalClient() service-account identity
+// (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact
+// subject) so pre-existing test infrastructure that reads a profile's
+// fromAllowList/prefixes keeps working without going through anonymous
+// access.
+function asServiceAccount(t: ReturnType<typeof createT>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
 	organizationSlug: org,
@@ -66,7 +77,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 
 		// Collision proof: had X been allowed, it would mint the IDENTICAL
 		// orchestrator/alpha prefix already granted to Y's seat.
-		const yProfile = await t.query(api.oauth.getScopeProfile, {
+		const yProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "alpha-org-y",
 		});
 		expect(yProfile?.namespaceReadPrefixes).toContain("orchestrator/alpha");
@@ -88,7 +99,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 				.unique(),
 		);
 		expect(xMapping).toBeNull();
-		const xProfile = await t.query(api.oauth.getScopeProfile, {
+		const xProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "alpha-org-x",
 		});
 		expect(xProfile).toBeNull();

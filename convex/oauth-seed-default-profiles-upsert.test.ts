@@ -48,6 +48,17 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// getScopeProfile now requires master/service-account scope (SEC fix,
+// task-local to convex/__tests__/oauthScopeProfileRead.test.ts) -- this
+// fixture mirrors the mcp-server internalClient() service-account identity
+// (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact
+// subject) so pre-existing test infrastructure that reads a profile's
+// fromAllowList/prefixes keeps working without going through anonymous
+// access.
+function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 	test("T1: empty DB → inserts all seed profiles (baseline)", async () => {
 		const t = createTestConvex();
@@ -126,7 +137,7 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		// `global` for marie-iris-rh, but orchestrator/victor (this client's
 		// own second orchestrator seat) is preserved alongside
 		// orchestrator/marie + project/marie.
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
 		});
 		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/marie");
@@ -168,13 +179,13 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			callerToken: MASTER_TOKEN,
 		});
 
-		const custom = await t.query(api.oauth.getScopeProfile, {
+		const custom = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "operator-custom-tenant-x",
 		});
 		expect(custom).not.toBeNull();
 		expect(custom?.fromAllowList).toEqual(["tenant-x"]);
 
-		const renamed = await t.query(api.oauth.getScopeProfile, {
+		const renamed = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "iris-rh",
 		});
 		expect(renamed).not.toBeNull();

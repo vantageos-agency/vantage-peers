@@ -45,6 +45,17 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// getScopeProfile now requires master/service-account scope (SEC fix,
+// task-local to convex/__tests__/oauthScopeProfileRead.test.ts) -- this
+// fixture mirrors the mcp-server internalClient() service-account identity
+// (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact
+// subject) so pre-existing test infrastructure that reads a profile's
+// fromAllowList/prefixes keeps working without going through anonymous
+// access.
+function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 async function seedLeakedProfile(t: ReturnType<typeof createTestConvex>) {
 	// Insert a profile that has `global` in prefixes — the Day 90 leak state
 	await t.run(async (ctx) => {
@@ -239,14 +250,14 @@ describe("T7 — rename: old profileId → new profileId persisted", () => {
 		expect(result.patchedProfileId).toBe("iris-rh");
 
 		// Query by new name succeeds
-		const newProfile = await t.query(api.oauth.getScopeProfile, {
+		const newProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "iris-rh",
 		});
 		expect(newProfile).not.toBeNull();
 		expect(newProfile?.profileId).toBe("iris-rh");
 
 		// Query by old name fails (returns null)
-		const oldProfile = await t.query(api.oauth.getScopeProfile, {
+		const oldProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
 		});
 		expect(oldProfile).toBeNull();
@@ -423,7 +434,7 @@ describe("T12 — partial patch: only fromAllowList changes", () => {
 			reason: "Partial patch test — adding victor to fromAllowList for audit",
 		});
 
-		const updated = await t.query(api.oauth.getScopeProfile, {
+		const updated = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "partial-test",
 		});
 		// fromAllowList was updated
@@ -610,7 +621,7 @@ describe("SL1 — D4 post-condition: no global in resulting prefixes after patch
 			reason: REASON_OK,
 		});
 
-		const profile = await t.query(api.oauth.getScopeProfile, {
+		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
 		});
 		expect(profile?.namespaceReadPrefixes).not.toContain("global");
@@ -641,7 +652,7 @@ describe("SL2 — master profile retains wildcard after non-master patch", () =>
 		});
 
 		// Master profile must still retain its wildcards
-		const masterProfile = await t.query(api.oauth.getScopeProfile, {
+		const masterProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "master",
 		});
 		expect(masterProfile?.namespaceReadPrefixes).toContain("*");
