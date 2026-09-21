@@ -16,6 +16,7 @@
 import { v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
 import { internalQuery, mutation, query } from "./_generated/server";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { requireOrgAdmin } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -569,6 +570,20 @@ const RESERVED_ORCH_NAMES = new Set(["master", "*", ""]);
 // "Other" means `clerkOrgSlug !== ownSlug` — a profile/mapping with an
 // undefined `clerkOrgSlug` (fleet/catalog rows) always counts as "other".
 //
+// EVERY comparison below is done on `normalizeOrchestratorId` (NFC +
+// lowercase + trim) form, on BOTH sides — `name` is normalized once at the
+// top, and every stored value read from `allowedOrchestrators`/
+// `fromAllowList`/the memory namespace is normalized before comparing.
+// `provisionOrganization` itself refuses to WRITE a non-canonical name (see
+// `SEAT_NAME_NOT_CANONICAL` below), but legacy rows written before that
+// refusal existed — or by a path outside `provisionOrganization` — may
+// still hold a non-canonical name (e.g. "Sigma"), and MCP's own identity
+// gates (`isInAllowList`, `convex/_helpers/normalizeOrchestratorId.ts`)
+// already treat "sigma"/"Sigma"/"SIGMA" as the SAME identity. Comparing
+// exact strings here would let a new org provision "SIGMA" right past an
+// existing "sigma" — same namespace, same allow-list identity, different
+// literal bytes.
+//
 // The two catalog scans below are bounded, FAIL-CLOSED reads: both source
 // tables are small, catalog-scale data (one row per org / one row per
 // provisioned seat) — never per-memory or per-message volume — so a bounded
@@ -589,6 +604,8 @@ export async function findSeatNameCollision(
 	ownSlug: string,
 	scanLimit: number = SEAT_NAME_COLLISION_SCAN_LIMIT,
 ): Promise<boolean> {
+	const normalizedName = normalizeOrchestratorId(name);
+
 	const mappings = await ctx.db.query("client_org_mapping").take(scanLimit);
 	if (mappings.length === scanLimit) {
 		throw new Error(
@@ -597,7 +614,13 @@ export async function findSeatNameCollision(
 	}
 	for (const mapping of mappings) {
 		if (mapping.clerkOrgSlug === ownSlug) continue;
-		if (mapping.allowedOrchestrators.includes(name)) return true;
+		if (
+			mapping.allowedOrchestrators.some(
+				(entry) => normalizeOrchestratorId(entry) === normalizedName,
+			)
+		) {
+			return true;
+		}
 	}
 
 	const profiles = await ctx.db.query("oauth_scope_profiles").take(scanLimit);
@@ -608,16 +631,29 @@ export async function findSeatNameCollision(
 	}
 	for (const profile of profiles) {
 		if (profile.clerkOrgSlug === ownSlug) continue;
-		if (profile.fromAllowList.includes(name)) return true;
+		if (
+			profile.fromAllowList.some(
+				(entry) => normalizeOrchestratorId(entry) === normalizedName,
+			)
+		) {
+			return true;
+		}
 	}
 
-	// Third source: any existing memory in orchestrator/<name> — an indexed
-	// existence probe (by_namespace), bounded by construction, no scan
-	// limit needed. A brand-new org can never legitimately own a
-	// pre-existing memory, so any hit here makes the name taken.
+	// Third source: any existing memory in orchestrator/<normalized name> —
+	// an indexed existence probe (by_namespace), bounded by construction, no
+	// scan limit needed. A brand-new org can never legitimately own a
+	// pre-existing memory, so any hit here makes the name taken. The
+	// namespace itself is looked up in CANONICAL form: `storeMemory` and
+	// every other write path normalize the orchestrator id before writing
+	// (B2 §6+§7), so a legacy `orchestrator/Sigma` namespace does not exist
+	// — only `orchestrator/sigma` does, regardless of what case the caller
+	// who provisioned that seat originally typed.
 	const existingMemory = await ctx.db
 		.query("memories")
-		.withIndex("by_namespace", (q) => q.eq("namespace", `orchestrator/${name}`))
+		.withIndex("by_namespace", (q) =>
+			q.eq("namespace", `orchestrator/${normalizedName}`),
+		)
 		.first();
 	if (existingMemory) return true;
 
@@ -685,10 +721,25 @@ export const provisionOrganization = mutation({
 			if (RESERVED_ORCH_NAMES.has(name) || name.toLowerCase() === "master") {
 				throw new Error(`reserved orchestrator name: ${name}`);
 			}
-			if (seen.has(name)) {
+			// SEAT_NAME_NOT_CANONICAL — a stored seat name must already be its
+			// own `normalizeOrchestratorId` form (NFC + lowercase + trim).
+			// MCP's identity gates (`isInAllowList`, `listTasksGate`, etc.)
+			// normalize every comparison, so a non-canonical stored name (e.g.
+			// "SIGMA") is the SAME identity as its canonical form ("sigma") at
+			// every read site downstream — refusing to write anything but the
+			// canonical form here means the namespace this seat is granted
+			// (`orchestrator/<name>`) and the identity MCP resolves for it can
+			// never diverge by case or Unicode normalization form.
+			const canonical = normalizeOrchestratorId(name);
+			if (name !== canonical) {
+				throw new Error(
+					`SEAT_NAME_NOT_CANONICAL: seat name "${name}" must be provided in its canonical form "${canonical}"`,
+				);
+			}
+			if (seen.has(canonical)) {
 				throw new Error(`duplicate orchestrator name: ${name}`);
 			}
-			seen.add(name);
+			seen.add(canonical);
 		}
 
 		const existing = await ctx.db
