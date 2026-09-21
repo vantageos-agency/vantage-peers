@@ -768,6 +768,11 @@ const BLOCKED_PUBLIC_DCR_PROFILES: ReadonlySet<string> = new Set(["master"]);
 // ScopeViolation error. Profiles are further constrained to only the safe
 // deny-by-default "client-generic" value; all other non-blocked profiles still
 // require admin elevation post-registration before tokens carry real scopes.
+// public-mutation: RFC 7591 dynamic client registration is intentionally
+// open to anonymous callers by design — no caller identity to derive.
+// Defense-in-depth against privilege escalation lives in-handler (rejects
+// empty redirectUris, blocks master/admin-only scopeProfile values via
+// BLOCKED_PUBLIC_DCR_PROFILES, requires an existing safe scope_profiles row).
 export const registerPublicClient = mutation({
 	args: {
 		clientId: v.string(),
@@ -1191,6 +1196,10 @@ export const createAuthorizationCode = mutation({
 	},
 });
 
+// public-mutation: OAuth authorization-code exchange — the presented
+// single-use `code` itself IS the credential (deleted on first consumption),
+// public by design per the OAuth 2.0 authorization-code grant; there is no
+// separate caller identity to derive at this step.
 export const consumeAuthorizationCode = mutation({
 	args: { code: v.string() },
 	returns: v.union(

@@ -61,13 +61,23 @@ const decodePayload = (caught: unknown): WrongTablePayload => {
 	return typeof raw === "string" ? (JSON.parse(raw) as WrongTablePayload) : raw;
 };
 
+// Fail-closed multi-tenant fix: storeMemory now derives the
+// caller's scope via withOrgScope and refuses an anonymous (no-identity)
+// caller. This helper seeds a probe memory as the service-account/master
+// identity — the SAME identity the MCP server presents when no Clerk-org
+// JWT is attached — so the wrong-table-ID assertions below (unrelated to
+// auth) keep exercising the same fixture.
 const newMemory = (t: ReturnType<typeof createT>) =>
-	t.mutation(api.memories.storeMemory, {
-		namespace: "global",
-		type: "reference",
-		content: "Probe memory",
-		createdBy: "sigma",
-	});
+	t
+		.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+			typeof t.withIdentity
+		>[0])
+		.mutation(api.memories.storeMemory, {
+			namespace: "global",
+			type: "reference",
+			content: "Probe memory",
+			createdBy: "sigma",
+		});
 
 const newMission = (t: ReturnType<typeof createT>) =>
 	t.mutation(api.missions.create, {

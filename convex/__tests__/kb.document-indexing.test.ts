@@ -144,12 +144,22 @@ describe("Control — memories.storeMemory schedules exactly 1 addRagEntry (non-
 	test("storeMemory schedules 1 ragSync.addRagEntry call", async () => {
 		const t = createTestConvex();
 
-		await t.mutation(api.memories.storeMemory, {
-			namespace: "orchestrator/sigma",
-			type: "user",
-			content: "Control-group memory for T1 scheduling assertion.",
-			createdBy: "sigma",
-		});
+		// Fail-closed multi-tenant fix: storeMemory now derives the
+		// caller's scope via withOrgScope and refuses an anonymous
+		// (no-identity) caller. This control test is about RAG scheduling,
+		// not auth, so it runs as the service-account/master identity — the
+		// SAME identity the MCP server presents when no Clerk-org JWT is
+		// attached.
+		await t
+			.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+				typeof t.withIdentity
+			>[0])
+			.mutation(api.memories.storeMemory, {
+				namespace: "orchestrator/sigma",
+				type: "user",
+				content: "Control-group memory for T1 scheduling assertion.",
+				createdBy: "sigma",
+			});
 
 		const scheduledAddRagEntryCount = await countScheduledAddRagEntry(t);
 		expect(scheduledAddRagEntryCount).toBe(1);
