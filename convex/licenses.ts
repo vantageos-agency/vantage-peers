@@ -130,6 +130,11 @@ export const generate = mutation({
 // activate — mark a license as activated (sets activatedAt on first call)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// public-mutation: gated by its own credential — the presented licenseKey
+// (hashed and matched against an active, non-expired license row) plus a
+// matching customerEmail IS the authorization; there is no separate caller
+// identity to derive, license activation is public by design (RFC-style
+// bearer-key redemption).
 export const activate = mutation({
 	args: {
 		licenseKey: v.string(),

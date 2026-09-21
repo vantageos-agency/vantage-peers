@@ -53,8 +53,21 @@ const decodePayload = (caught: unknown): WrongTablePayload => {
 	return typeof raw === "string" ? (JSON.parse(raw) as WrongTablePayload) : raw;
 };
 
+// Fail-closed multi-tenant fix: storeMemory/softDeleteMemory now
+// derive the caller's scope via withOrgScope and refuse an anonymous
+// (no-identity) caller. These tests are about wrong-table ID handling, not
+// auth, so they run as the service-account/master identity — the SAME
+// identity the MCP server presents when no Clerk-org JWT is attached (see
+// mcp-server/src/authenticatedConvexClient.ts, and
+// CLERK_SERVICE_ACCOUNT_USER_ID="test-service-account-user-id" set in
+// vitest.config.ts).
+const asMaster = (t: ReturnType<typeof createT>) =>
+	t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+
 const newMemory = (t: ReturnType<typeof createT>) =>
-	t.mutation(api.memories.storeMemory, {
+	asMaster(t).mutation(api.memories.storeMemory, {
 		namespace: "global",
 		type: "reference",
 		content: "Probe memory",
@@ -62,7 +75,7 @@ const newMemory = (t: ReturnType<typeof createT>) =>
 	});
 
 const newMission = (t: ReturnType<typeof createT>) =>
-	t.mutation(api.missions.create, {
+	asMaster(t).mutation(api.missions.create, {
 		name: "Probe mission",
 		project: "vantage-peers",
 		status: "plan",
@@ -79,7 +92,7 @@ describe("memories:softDeleteMemory — wrong-table ID (issue #1064, writes)", (
 
 		let caught: unknown;
 		try {
-			await t.mutation(api.memories.softDeleteMemory, {
+			await asMaster(t).mutation(api.memories.softDeleteMemory, {
 				memoryId: missionId as unknown as Id<"memories">,
 			});
 			throw new Error(
@@ -106,7 +119,7 @@ describe("memories:softDeleteMemory — wrong-table ID (issue #1064, writes)", (
 		const t = createT();
 		const memoryId = await newMemory(t);
 
-		await t.mutation(api.memories.softDeleteMemory, { memoryId });
+		await asMaster(t).mutation(api.memories.softDeleteMemory, { memoryId });
 
 		const doc = await t.run(async (ctx) => ctx.db.get(memoryId));
 		expect(doc?.isLatest).toBe(false);
@@ -121,7 +134,7 @@ describe("memories:softDeleteMemory — wrong-table ID (issue #1064, writes)", (
 
 		let caught: unknown;
 		try {
-			await t.mutation(api.memories.softDeleteMemory, { memoryId });
+			await asMaster(t).mutation(api.memories.softDeleteMemory, { memoryId });
 			throw new Error(
 				"softDeleteMemory did not throw — expected the not-found Error",
 			);

@@ -1,9 +1,10 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import { withOrgScope, type OrgScope } from "./lib/auth";
+import type { Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
 // cron batch size, not an expected total-row count, so 500 is a safe ceiling
@@ -11,7 +12,7 @@ import { withOrgScope, type OrgScope } from "./lib/auth";
 const TTL_EXPIRY_SCAN_CAP = 500;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org-scope namespace enforcement (Day 108 fail-closed multi-tenant fix,
+// Org-scope namespace enforcement (Fail-closed multi-tenant fix,
 // task k176d9q9h6b33e8y1qgwnnx2x18aa40s).
 //
 // Master scope (no identity with legacy opt-in, or identity with no Clerk org)
@@ -64,8 +65,44 @@ export const storeMemory = mutation({
   },
   returns: v.id("memories"),
   handler: async (ctx, args) => {
+    // Fail-closed multi-tenant fix (defect class: authority attached
+    // to an anonymously-registered object — see
+    // .claude/rules/authority-attached-to-anonymous-object.md). storeMemory
+    // used to write with NO identity/scope check at all; a direct call to
+    // the public Convex deployment could write into (and, via an "updates"
+    // relation, supersede) any org's namespace. withOrgScope is called
+    // WITHOUT allowNoIdentityMaster — the MCP server always presents a real
+    // Clerk identity (the caller's own org JWT or its service-account
+    // token; see mcp-server/src/authenticatedConvexClient.ts), so the
+    // fail-closed default here never breaks that live path.
+    const scope = await withOrgScope(ctx);
+    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+      throw new ConvexError(
+        `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+      );
+    }
+
     const now = Date.now();
     const relations = args.relations ?? [];
+
+    // Validate every "updates" relation's TARGET namespace against the
+    // caller's scope BEFORE any write happens — a caller may not supersede
+    // a memory it could not itself write. Targets are fetched once here and
+    // reused below so a missing/renamed target is only ever read twice
+    // (this validation pass + the RAG-scheduling read), matching the
+    // pre-existing read count for the not-found case.
+    const updateTargets = new Map<string, Doc<"memories"> | null>();
+    for (const relation of relations) {
+      if (relation.type === "updates") {
+        const target = await ctx.db.get(relation.targetId);
+        updateTargets.set(relation.targetId, target);
+        if (target !== null && !isNamespaceAllowedForScope(scope, target.namespace)) {
+          throw new ConvexError(
+            `RBAC_DENIED: caller may not update memory ${relation.targetId} in namespace "${target.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+          );
+        }
+      }
+    }
 
     // 1. Create the memory row
     const memoryId = await ctx.db.insert("memories", {
@@ -86,7 +123,7 @@ export const storeMemory = mutation({
     // searches filtered to isLatest="true".
     for (const relation of relations) {
       if (relation.type === "updates") {
-        const target = await ctx.db.get(relation.targetId);
+        const target = updateTargets.get(relation.targetId) ?? null;
         if (target !== null) {
           await ctx.db.patch(relation.targetId, {
             isLatest: false,
@@ -364,6 +401,18 @@ export const softDeleteMemory = mutation({
     const memory = await ctx.db.get(memoryId);
     if (memory === null) {
       throw new Error(`Memory ${memoryId} not found`);
+    }
+
+    // Fail-closed multi-tenant fix (same defect class as
+    // storeMemory above) — softDeleteMemory used to patch ANY memory by id
+    // with no identity/scope check. withOrgScope is called WITHOUT
+    // allowNoIdentityMaster for the same reason as storeMemory: the MCP
+    // server always presents a real Clerk identity on this path.
+    const scope = await withOrgScope(ctx);
+    if (!isNamespaceAllowedForScope(scope, memory.namespace)) {
+      throw new ConvexError(
+        `RBAC_DENIED: caller may not delete memory ${memoryId} in namespace "${memory.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+      );
     }
 
     await ctx.db.patch(memoryId, { isLatest: false, updatedAt: Date.now() });
