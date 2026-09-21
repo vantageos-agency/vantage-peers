@@ -23,6 +23,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { parseSessionAttestation } from "../lib/taskClosureGate";
 
 // `backfill` was in this exclusion list, which meant the backfill migration —
 // the subject of the fix below — was never loaded, so nothing could exercise it.
@@ -535,5 +536,281 @@ describe("backfill migration — the cursor must walk past a zero-update page", 
 			// scope is how a fix becomes an incident.
 			expect(rows.filter((r) => r.origin === "automation")).toHaveLength(1);
 		});
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attested-session closure route — an honest way to close a single work
+// segment longer than the configured cap. Real case: one 740-min segment,
+// assignee declares 560 min of real work (a session with an unrecorded
+// break). Pausing closes the same span, raising the global cap is banned,
+// typing a fake pause split is banned, and rerouting through update_task to
+// skip the gate is banned — this marker is the only honest route.
+//
+// RED-before-GREEN: (a) and (b) below were run against the pre-fix tree
+// (no `// attest-session-minutes:` marker support at all) and FAILED — (a)
+// threw SEGMENT_DURATION_IMPLAUSIBLE where it should have accepted the
+// attestation; the parser import itself failed to resolve. This file is
+// committed only once green.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("task closure gate — attested-session closure", () => {
+	const CAP_MINUTES = 480;
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedMaxSegmentMinutes(t: any, minutes: number) {
+		await t.run(async (ctx: any) => {
+			await ctx.db.insert("taskClosureConfig", {
+				key: "maxSegmentMinutes",
+				value: [String(minutes)],
+				updatedAt: Date.now(),
+			});
+		});
+	}
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedOverCapTask(
+		t: any,
+		spanMinutes: number,
+		assignedTo = "sigma",
+	): Promise<{ taskId: any; start: number; end: number }> {
+		const start = Date.parse("2026-05-01T09:00:00.000Z");
+		const end = start + spanMinutes * 60_000;
+		const taskId = await t.run(async (ctx: any) => {
+			return await ctx.db.insert("tasks", {
+				title: "One long unrecorded-break segment",
+				project: NON_BILLABLE_PROJECT,
+				assignedTo,
+				priority: "high" as const,
+				status: "in_progress" as const,
+				createdBy: assignedTo,
+				startedAt: start,
+				workSegments: [{ start, end }],
+				createdAt: start,
+				updatedAt: start,
+			});
+		});
+		return { taskId, start, end };
+	}
+
+	test("(a) valid attestation accepted — actualMinutes 560, span kept unchanged", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const { taskId, start, end } = await seedOverCapTask(t, 740);
+
+		await t.mutation(api.tasks.complete, {
+			taskId,
+			callerOrchestrator: "sigma",
+			completionNote:
+				"// attest-session-minutes: 560 — single session, break not recorded",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+		expect(task?.actualMinutes).toBe(560);
+		expect(task?.durationSource).toBe("segments");
+		expect(task?.workSegments).toHaveLength(1);
+		expect(task?.workSegments?.[0]).toEqual({ start, end });
+	});
+
+	test("(b) same 740-min segment WITHOUT marker → SEGMENT_DURATION_IMPLAUSIBLE", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const { taskId } = await seedOverCapTask(t, 740, "sigma-b");
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma-b",
+				completionNote: "Closing after a long session, no marker",
+			}),
+		).rejects.toThrow(/SEGMENT_DURATION_IMPLAUSIBLE/);
+	});
+
+	test("(c) attested N greater than the segment's own span → SEGMENT_ATTESTATION_REFUSED", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const { taskId } = await seedOverCapTask(t, 740, "sigma-c");
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma-c",
+				completionNote:
+					"// attest-session-minutes: 800 — claiming more than the span itself",
+			}),
+		).rejects.toThrow(/SEGMENT_ATTESTATION_REFUSED/);
+	});
+
+	test("(d) attested N greater than 2x the cap → SEGMENT_ATTESTATION_REFUSED", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES); // cap 480, hard ceiling 960
+
+		const { taskId } = await seedOverCapTask(t, 1200, "sigma-d");
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma-d",
+				completionNote:
+					"// attest-session-minutes: 1000 — a session this long is not credible",
+			}),
+		).rejects.toThrow(/SEGMENT_ATTESTATION_REFUSED/);
+	});
+
+	test("(e) two over-cap segments with one marker → SEGMENT_ATTESTATION_REFUSED", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const start1 = Date.parse("2026-05-02T09:00:00.000Z");
+		const end1 = start1 + 700 * 60_000;
+		const start2 = end1 + 60 * 60_000;
+		const end2 = start2 + 700 * 60_000;
+
+		const taskId = await t.run(async (ctx) => {
+			return await ctx.db.insert("tasks", {
+				title: "Two long segments, only one attestation",
+				project: NON_BILLABLE_PROJECT,
+				assignedTo: "sigma-e",
+				priority: "high" as const,
+				status: "in_progress" as const,
+				createdBy: "sigma-e",
+				startedAt: start1,
+				workSegments: [
+					{ start: start1, end: end1 },
+					{ start: start2, end: end2 },
+				],
+				createdAt: start1,
+				updatedAt: start1,
+			});
+		});
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma-e",
+				completionNote:
+					"// attest-session-minutes: 500 — only covers one of the two",
+			}),
+		).rejects.toThrow(/SEGMENT_ATTESTATION_REFUSED/);
+	});
+
+	test("(f) malformed marker — reason too short → SEGMENT_DURATION_IMPLAUSIBLE", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const { taskId } = await seedOverCapTask(t, 740, "sigma-f1");
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma-f1",
+				completionNote: "// attest-session-minutes: 560 — too short",
+			}),
+		).rejects.toThrow(/SEGMENT_DURATION_IMPLAUSIBLE/);
+	});
+
+	test("(f2) malformed marker — non-integer minutes → SEGMENT_DURATION_IMPLAUSIBLE", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const { taskId } = await seedOverCapTask(t, 740, "sigma-f2");
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma-f2",
+				completionNote:
+					"// attest-session-minutes: five-sixty — single session, break not recorded",
+			}),
+		).rejects.toThrow(/SEGMENT_DURATION_IMPLAUSIBLE/);
+	});
+
+	test("(g) normal under-cap close is unchanged — marker ignored, actualMinutes from segments", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		await seedMaxSegmentMinutes(t, CAP_MINUTES);
+
+		const start = Date.parse("2026-05-03T09:00:00.000Z");
+		const end = start + 90 * 60_000; // 90 min, well under the 480 cap
+		const taskId = await t.run(async (ctx) => {
+			return await ctx.db.insert("tasks", {
+				title: "Ordinary under-cap segment, marker present but irrelevant",
+				project: NON_BILLABLE_PROJECT,
+				assignedTo: "sigma-g",
+				priority: "medium" as const,
+				status: "in_progress" as const,
+				createdBy: "sigma-g",
+				startedAt: start,
+				workSegments: [{ start, end }],
+				createdAt: start,
+				updatedAt: start,
+			});
+		});
+
+		await t.mutation(api.tasks.complete, {
+			taskId,
+			callerOrchestrator: "sigma-g",
+			completionNote:
+				"// attest-session-minutes: 10 — an ignored marker under the cap",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+		expect(task?.actualMinutes).toBe(90);
+		expect(task?.durationSource).toBe("segments");
+	});
+});
+
+describe("parseSessionAttestation — pure parser", () => {
+	test("parses a valid hyphen-separated marker", () => {
+		const result = parseSessionAttestation(
+			"// attest-session-minutes: 560 - single session, break not recorded",
+		);
+		expect(result).toEqual({
+			minutes: 560,
+			reason: "single session, break not recorded",
+		});
+	});
+
+	test("parses a valid em-dash-separated marker embedded in a longer note", () => {
+		const result = parseSessionAttestation(
+			"Done — PR #123 merged\n// attest-session-minutes: 120 — travel day, worked in bursts",
+		);
+		expect(result).toEqual({
+			minutes: 120,
+			reason: "travel day, worked in bursts",
+		});
+	});
+
+	test("returns null when there is no marker", () => {
+		expect(parseSessionAttestation("Just a normal completion note")).toBeNull();
+	});
+
+	test("returns null when completionNote is undefined", () => {
+		expect(parseSessionAttestation(undefined)).toBeNull();
+	});
+
+	test("returns null when the reason is under 12 non-space characters", () => {
+		expect(
+			parseSessionAttestation("// attest-session-minutes: 100 — short"),
+		).toBeNull();
+	});
+
+	test("returns null when minutes is not a plain integer", () => {
+		expect(
+			parseSessionAttestation(
+				"// attest-session-minutes: 12.5 — a decimal minute count here",
+			),
+		).toBeNull();
 	});
 });

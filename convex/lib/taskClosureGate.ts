@@ -109,16 +109,55 @@ export type SegmentClosureResult = {
 	closedSegments: WorkSegment[];
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Attested-session closure route. A single work segment that spans longer
+// than maxSegmentMinutes (an unrecorded pause boundary was crossed) has no
+// honest close today: pausing after the fact closes the same span, raising
+// the global cap widens the gate for everyone, and a hand-typed fake pause
+// split is banned by the derive-never-type doctrine. This marker lets the
+// assignee ATTEST to the real worked minutes inside that one long segment —
+// the machine-recorded span stays on the document UNCHANGED (never rewritten
+// down to the attested number), and the attestation can only LOWER the
+// billed total for that segment, never extend it past the span it names.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SESSION_ATTESTATION_RE =
+	/\/\/\s*attest-session-minutes:\s*(\d+)\s*[-–—]\s*(.+)/;
+
+export type SessionAttestation = { minutes: number; reason: string };
+
+/**
+ * Parses the `// attest-session-minutes: <N> — <reason>` marker out of a
+ * completionNote. Accepts a hyphen, en dash, or em dash as separator.
+ * Returns null (never throws) on ANY malformed input — no digits, no
+ * separator, or a reason with fewer than 12 non-whitespace characters — so
+ * the caller falls back to the ordinary refusal path.
+ */
+export function parseSessionAttestation(
+	note: string | undefined,
+): SessionAttestation | null {
+	if (note === undefined) return null;
+	const match = SESSION_ATTESTATION_RE.exec(note);
+	if (match === null) return null;
+	const minutes = Number(match[1]);
+	if (!Number.isFinite(minutes)) return null;
+	const reason = match[2].trim();
+	if (reason.replace(/\s/g, "").length < 12) return null;
+	return { minutes, reason };
+}
+
 /**
  * Closes the trailing open segment at `now` and sums the closed ones.
- * Refuses a segment longer than the configured cap, naming it, and a
- * multi-segment total of zero. Does not touch the database — the caller
- * persists `closedSegments` with `actualMinutes` in one patch.
+ * Refuses a segment longer than the configured cap unless a valid
+ * `// attest-session-minutes:` marker is present in `completionNote` — see
+ * the attested-session-closure block above. Does not touch the database —
+ * the caller persists `closedSegments` with `actualMinutes` in one patch.
  */
 export async function closeSegmentsForCompletion(
 	ctx: QueryCtx | MutationCtx,
 	task: { _id: Id<"tasks">; workSegments?: WorkSegment[] },
 	now: number,
+	completionNote?: string,
 ): Promise<SegmentClosureResult> {
 	const maxMinutes = await getMaxSegmentMinutes(ctx);
 	const segments = (task.workSegments ?? []).map((s) => ({ ...s }));
@@ -127,16 +166,66 @@ export async function closeSegmentsForCompletion(
 		segments[lastIndex] = { ...segments[lastIndex], end: now };
 	}
 
+	const overCap: { index: number; seg: WorkSegment; spanMinutes: number }[] = [];
 	let totalMs = 0;
-	for (const seg of segments) {
+	for (let i = 0; i < segments.length; i++) {
+		const seg = segments[i];
 		if (seg.end === undefined) continue; // defensive — closed above
 		const durationMinutes = Math.round((seg.end - seg.start) / 60_000);
 		if (durationMinutes > maxMinutes) {
-			throw new ConvexError(
-				`SEGMENT_DURATION_IMPLAUSIBLE: task ${task._id} has a work segment [start=${seg.start}, end=${seg.end}] spanning ${durationMinutes} minutes, exceeding the configured maximum of ${maxMinutes} minutes — a segment this long crosses an unrecorded pause boundary. Close work with pause_task/resume_task instead of leaving a segment open across a break, or raise taskClosureConfig["maxSegmentMinutes"] if this genuinely reflects one working session — ${JSON.stringify({ taskId: task._id, segmentStart: seg.start, segmentEnd: seg.end, durationMinutes, maxMinutes })}`,
-			);
+			overCap.push({ index: i, seg, spanMinutes: durationMinutes });
+			continue;
 		}
 		totalMs += seg.end - seg.start;
+	}
+
+	if (overCap.length > 0) {
+		const attestation = parseSessionAttestation(completionNote);
+		if (attestation === null) {
+			const { seg, spanMinutes } = overCap[0];
+			throw new ConvexError(
+				`SEGMENT_DURATION_IMPLAUSIBLE: task ${task._id} has a work segment [start=${seg.start}, end=${seg.end}] spanning ${spanMinutes} minutes, exceeding the configured maximum of ${maxMinutes} minutes — a segment this long crosses an unrecorded pause boundary. Close work with pause_task/resume_task instead of leaving a segment open across a break, or attest to the real worked minutes with "// attest-session-minutes: <N> — <reason>" (reason ≥12 non-space chars) in completionNote if this genuinely reflects one working session with an unrecorded break — ${JSON.stringify({ taskId: task._id, segmentStart: seg.start, segmentEnd: seg.end, durationMinutes: spanMinutes, maxMinutes })}`,
+			);
+		}
+
+		if (overCap.length > 1) {
+			throw new ConvexError(
+				`SEGMENT_ATTESTATION_REFUSED: task ${task._id} has ${overCap.length} work segments exceeding the configured maximum of ${maxMinutes} minutes — an attestation marker covers exactly one over-cap segment, not several — ${JSON.stringify({ taskId: task._id, overCapSegmentCount: overCap.length, maxMinutes })}`,
+			);
+		}
+
+		const { seg, spanMinutes } = overCap[0];
+		const hardCeilingMinutes = 2 * maxMinutes;
+
+		if (!Number.isInteger(attestation.minutes) || attestation.minutes <= 0) {
+			throw new ConvexError(
+				`SEGMENT_ATTESTATION_REFUSED: task ${task._id} attested minutes must be a positive integer — ${JSON.stringify({ taskId: task._id, segmentStart: seg.start, segmentEnd: seg.end, attestedMinutes: attestation.minutes, maxMinutes })}`,
+			);
+		}
+		if (attestation.minutes > spanMinutes) {
+			throw new ConvexError(
+				`SEGMENT_ATTESTATION_REFUSED: task ${task._id} attested ${attestation.minutes} minutes exceeds the segment's own recorded span of ${spanMinutes} minutes — the machine record is the ceiling, an attestation can only lower it, never extend it — ${JSON.stringify({ taskId: task._id, segmentStart: seg.start, segmentEnd: seg.end, spanMinutes, attestedMinutes: attestation.minutes, maxMinutes })}`,
+			);
+		}
+		if (attestation.minutes > hardCeilingMinutes) {
+			throw new ConvexError(
+				`SEGMENT_ATTESTATION_REFUSED: task ${task._id} attested ${attestation.minutes} minutes exceeds the hard ceiling of ${hardCeilingMinutes} minutes (2x the configured maximum of ${maxMinutes}) — a declared session is still bounded — ${JSON.stringify({ taskId: task._id, segmentStart: seg.start, segmentEnd: seg.end, attestedMinutes: attestation.minutes, maxMinutes, hardCeilingMinutes })}`,
+			);
+		}
+
+		totalMs += attestation.minutes * 60_000;
+		console.log(
+			"SEGMENT_ATTESTED",
+			JSON.stringify({
+				taskId: task._id,
+				segmentStart: seg.start,
+				segmentEnd: seg.end,
+				spanMinutes,
+				attestedMinutes: attestation.minutes,
+				maxMinutes,
+				reason: attestation.reason,
+			}),
+		);
 	}
 
 	const actualMinutes = Math.round(totalMs / 60_000);
@@ -244,7 +333,7 @@ export async function enforceClosureGate(
 	const hasSegments = task.workSegments !== undefined && task.workSegments.length > 0;
 	if (hasSegments) {
 		const { actualMinutes, durationSource, closedSegments } =
-			await closeSegmentsForCompletion(ctx, task, now);
+			await closeSegmentsForCompletion(ctx, task, now, completionNote);
 		return { actualMinutes, durationSource, closedSegments };
 	}
 
