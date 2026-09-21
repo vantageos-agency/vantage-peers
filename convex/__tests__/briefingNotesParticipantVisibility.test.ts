@@ -30,6 +30,22 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+// Fail-closed multi-tenant fix: briefingNotes.get/list now derive the
+// caller's scope via withOrgScope and refuse an anonymous (no-identity)
+// caller. Read as the service-account/master identity — the SAME identity
+// the MCP server presents when no Clerk-org JWT is attached — so the
+// participant-visibility assertions below (unrelated to org-scope) keep
+// exercising the same fixtures (#1309 pattern).
+function asService(
+	t: ReturnType<typeof createTestConvex>,
+): ReturnType<typeof createTestConvex> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]) as unknown as ReturnType<
+		typeof createTestConvex
+	>;
+}
+
 async function seedNote(
 	t: ReturnType<typeof createTestConvex>,
 	opts: {
@@ -66,7 +82,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 			participants: ["pi", "sigma", "prometheus", "laurent"],
 		});
 
-		const note = await t.query(api.briefingNotes.get, {
+		const note = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["prometheus"],
@@ -84,7 +100,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 			participants: ["pi", "sigma", "prometheus", "laurent"],
 		});
 
-		const note = await t.query(api.briefingNotes.get, {
+		const note = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["eta"],
@@ -101,7 +117,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 			participants: [],
 		});
 
-		const note = await t.query(api.briefingNotes.get, {
+		const note = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["sigma"],
@@ -118,7 +134,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 			participants: ["pi", "sigma"],
 		});
 
-		const note = await t.query(api.briefingNotes.get, {
+		const note = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: true,
 			callerIdentities: [],
@@ -135,7 +151,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 			participants: ["pi"],
 		});
 
-		const note = await t.query(api.briefingNotes.get, { noteId });
+		const note = await asService(t).query(api.briefingNotes.get, { noteId });
 
 		expect(note).not.toBeNull();
 	});
@@ -161,7 +177,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 			return id;
 		});
 
-		const note = await t.query(api.briefingNotes.get, {
+		const note = await asService(t).query(api.briefingNotes.get, {
 			noteId,
 			master: false,
 			callerIdentities: ["prometheus"],
@@ -185,7 +201,7 @@ describe("briefingNotes.list — participant visibility parity", () => {
 			participants: ["pi"],
 		});
 
-		const notes = await t.query(api.briefingNotes.list, {
+		const notes = await asService(t).query(api.briefingNotes.list, {
 			fields: "full",
 			master: false,
 			callerIdentities: ["prometheus"],
