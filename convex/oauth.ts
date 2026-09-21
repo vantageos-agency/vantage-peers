@@ -14,7 +14,9 @@
  */
 
 import { v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
 import { internalQuery, mutation, query } from "./_generated/server";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { requireOrgAdmin } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -534,6 +536,130 @@ function randomOpaqueHex(bytes = 32): string {
 
 const RESERVED_ORCH_NAMES = new Set(["master", "*", ""]);
 
+// SEAT_NAME_TAKEN — cross-org / fleet seat-name collision guard.
+//
+// `provisionOrganization` used to check orchestrator-name uniqueness only
+// WITHIN one call and one clerkOrgSlug: the `seen` Set below, plus the
+// per-slug `existing` row compare. Nothing consulted any OTHER org's
+// already-provisioned seats before minting
+// `namespaceReadPrefixes`/`namespaceWritePrefixes` =
+// [`orchestrator/<name>`, `project/<slug>`] — `orchestrator/<name>` is NOT
+// org-qualified, so two different orgs provisioning the SAME seat name both
+// received read/write on the IDENTICAL namespace prefix (org X's admin
+// could read/write org Y's `orchestrator/<name>` memories through MCP).
+//
+// This derives the "taken" set from EXISTING DATA — never a hand-maintained
+// name list — via THREE sources:
+//   - every OTHER org's `client_org_mapping.allowedOrchestrators` (this
+//     also covers the operator's own fleet, once the operator's fleet is
+//     itself represented as a `client_org_mapping` row with concrete
+//     orchestrator names, e.g. orgKind "operator");
+//   - every OTHER org's `oauth_scope_profiles.fromAllowList` (covers
+//     legacy/catalog profiles seeded outside `provisionOrganization`, e.g.
+//     `seedDefaultProfiles`, which may have no matching `client_org_mapping`
+//     row at all);
+//   - any EXISTING memory already stored in the `orchestrator/<name>`
+//     namespace. The operator's fleet orchestrators (pi, sigma, eta, …)
+//     write to that namespace but are not guaranteed to appear in either
+//     table above — a brand-new org can never legitimately own a
+//     pre-existing memory, so any hit here is taken, full stop, with no
+//     "unless it's mine" carve-out (a brand-new org has no memories yet by
+//     construction). Uses the `by_namespace` index (`["namespace",
+//     "isLatest"]`) with `.first()` — an indexed existence probe, not a
+//     scan, so it needs no bound.
+// "Other" means `clerkOrgSlug !== ownSlug` — a profile/mapping with an
+// undefined `clerkOrgSlug` (fleet/catalog rows) always counts as "other".
+//
+// EVERY comparison below is done on `normalizeOrchestratorId` (NFC +
+// lowercase + trim) form, on BOTH sides — `name` is normalized once at the
+// top, and every stored value read from `allowedOrchestrators`/
+// `fromAllowList`/the memory namespace is normalized before comparing.
+// `provisionOrganization` itself refuses to WRITE a non-canonical name (see
+// `SEAT_NAME_NOT_CANONICAL` below), but legacy rows written before that
+// refusal existed — or by a path outside `provisionOrganization` — may
+// still hold a non-canonical name (e.g. "Sigma"), and MCP's own identity
+// gates (`isInAllowList`, `convex/_helpers/normalizeOrchestratorId.ts`)
+// already treat "sigma"/"Sigma"/"SIGMA" as the SAME identity. Comparing
+// exact strings here would let a new org provision "SIGMA" right past an
+// existing "sigma" — same namespace, same allow-list identity, different
+// literal bytes.
+//
+// The two catalog scans below are bounded, FAIL-CLOSED reads: both source
+// tables are small, catalog-scale data (one row per org / one row per
+// provisioned seat) — never per-memory or per-message volume — so a bounded
+// scan at this rare, admin-only provisioning path is the correct tool
+// (there is no indexable "array contains" query in Convex for membership
+// inside `allowedOrchestrators`/`fromAllowList`). A scan that returns
+// EXACTLY the configured limit means rows beyond it were never inspected —
+// silently returning "no collision" in that case would be fail-OPEN (a real
+// collision past the bound goes unseen), so it throws
+// `SEAT_NAME_CHECK_INCOMPLETE` instead of resolving `false`.
+const SEAT_NAME_COLLISION_SCAN_LIMIT = 2000;
+
+// Exported so tests can inject a small `scanLimit` and prove the
+// fail-closed behaviour without seeding 2000+ rows.
+export async function findSeatNameCollision(
+	ctx: { db: MutationCtx["db"] },
+	name: string,
+	ownSlug: string,
+	scanLimit: number = SEAT_NAME_COLLISION_SCAN_LIMIT,
+): Promise<boolean> {
+	const normalizedName = normalizeOrchestratorId(name);
+
+	const mappings = await ctx.db.query("client_org_mapping").take(scanLimit);
+	if (mappings.length === scanLimit) {
+		throw new Error(
+			`SEAT_NAME_CHECK_INCOMPLETE: client_org_mapping scan hit its ${scanLimit}-row bound before finishing — refusing to certify seat name "${name}" as free`,
+		);
+	}
+	for (const mapping of mappings) {
+		if (mapping.clerkOrgSlug === ownSlug) continue;
+		if (
+			mapping.allowedOrchestrators.some(
+				(entry) => normalizeOrchestratorId(entry) === normalizedName,
+			)
+		) {
+			return true;
+		}
+	}
+
+	const profiles = await ctx.db.query("oauth_scope_profiles").take(scanLimit);
+	if (profiles.length === scanLimit) {
+		throw new Error(
+			`SEAT_NAME_CHECK_INCOMPLETE: oauth_scope_profiles scan hit its ${scanLimit}-row bound before finishing — refusing to certify seat name "${name}" as free`,
+		);
+	}
+	for (const profile of profiles) {
+		if (profile.clerkOrgSlug === ownSlug) continue;
+		if (
+			profile.fromAllowList.some(
+				(entry) => normalizeOrchestratorId(entry) === normalizedName,
+			)
+		) {
+			return true;
+		}
+	}
+
+	// Third source: any existing memory in orchestrator/<normalized name> —
+	// an indexed existence probe (by_namespace), bounded by construction, no
+	// scan limit needed. A brand-new org can never legitimately own a
+	// pre-existing memory, so any hit here makes the name taken. The
+	// namespace itself is looked up in CANONICAL form: `storeMemory` and
+	// every other write path normalize the orchestrator id before writing
+	// (B2 §6+§7), so a legacy `orchestrator/Sigma` namespace does not exist
+	// — only `orchestrator/sigma` does, regardless of what case the caller
+	// who provisioned that seat originally typed.
+	const existingMemory = await ctx.db
+		.query("memories")
+		.withIndex("by_namespace", (q) =>
+			q.eq("namespace", `orchestrator/${normalizedName}`),
+		)
+		.first();
+	if (existingMemory) return true;
+
+	return false;
+}
+
 // D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr): ADDITIVE org-admin authorization
 // path. `callerToken` is now OPTIONAL — when present (non-empty), the
 // pre-existing master path runs UNCHANGED (`requireMasterAuth`, byte-
@@ -595,10 +721,25 @@ export const provisionOrganization = mutation({
 			if (RESERVED_ORCH_NAMES.has(name) || name.toLowerCase() === "master") {
 				throw new Error(`reserved orchestrator name: ${name}`);
 			}
-			if (seen.has(name)) {
+			// SEAT_NAME_NOT_CANONICAL — a stored seat name must already be its
+			// own `normalizeOrchestratorId` form (NFC + lowercase + trim).
+			// MCP's identity gates (`isInAllowList`, `listTasksGate`, etc.)
+			// normalize every comparison, so a non-canonical stored name (e.g.
+			// "SIGMA") is the SAME identity as its canonical form ("sigma") at
+			// every read site downstream — refusing to write anything but the
+			// canonical form here means the namespace this seat is granted
+			// (`orchestrator/<name>`) and the identity MCP resolves for it can
+			// never diverge by case or Unicode normalization form.
+			const canonical = normalizeOrchestratorId(name);
+			if (name !== canonical) {
+				throw new Error(
+					`SEAT_NAME_NOT_CANONICAL: seat name "${name}" must be provided in its canonical form "${canonical}"`,
+				);
+			}
+			if (seen.has(canonical)) {
 				throw new Error(`duplicate orchestrator name: ${name}`);
 			}
-			seen.add(name);
+			seen.add(canonical);
 		}
 
 		const existing = await ctx.db
@@ -647,6 +788,18 @@ export const provisionOrganization = mutation({
 				replay: true,
 				orchestrators: seats,
 			};
+		}
+
+		// Cross-org / fleet collision — checked for EVERY name before any row
+		// for this (brand-new) org is written, so the mutation stays
+		// all-or-nothing. Idempotent replay (the `existing` branch above) is
+		// unaffected — a same-org, same-name-set call never reaches here.
+		for (const name of names) {
+			if (await findSeatNameCollision(ctx, name, slug)) {
+				throw new Error(
+					`SEAT_NAME_TAKEN: seat name "${name}" is already in use`,
+				);
+			}
 		}
 
 		const now = Date.now();
