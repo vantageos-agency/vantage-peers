@@ -142,6 +142,27 @@ export const countReceiptTenantPresence = internalAction({
 // under the `ambiguous` bucket, never split or double-counted into perOrg.
 const WITHHELD_RECIPIENT_PAGE_BATCH_SIZE = 2000;
 
+// Every tally below is keyed by DATA (a recipient name, a tenant/org slug)
+// rather than by a fixed set of known field names. Convex object field
+// names must be non-control ASCII (`v.record` keys included), so a tally
+// shaped as `Record<string, number>` throws the instant a non-ASCII value
+// (e.g. a recipient named "Hélène") shows up in the corpus. Every such tally
+// is therefore returned as a sorted ARRAY of `{ key, count }` pairs, never
+// as an object keyed by the data itself. `sortTally` gives a deterministic
+// order (count desc, then key asc) so callers never see acc
+// insertion-order-dependent output.
+function sortTally<K extends string>(
+	counts: Map<K, number>,
+): Array<{ key: K; count: number }> {
+	return Array.from(counts.entries())
+		.map(([key, count]) => ({ key, count }))
+		.sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+const perOrgTallyValidator = v.array(
+	v.object({ orgSlug: v.string(), count: v.number() }),
+);
+
 export const _withheldRecipientPage = internalQuery({
 	args: {
 		cursor: v.union(v.string(), v.null()),
@@ -153,7 +174,7 @@ export const _withheldRecipientPage = internalQuery({
 	returns: v.object({
 		scanned: v.number(),
 		withheld: v.number(),
-		perOrg: v.record(v.string(), v.number()),
+		perOrg: perOrgTallyValidator,
 		ambiguous: v.number(),
 		sampleReceiptId: v.union(v.id("messageReceipts"), v.null()),
 		// Distinct roster names checked THIS page — same value every page (the
@@ -184,7 +205,7 @@ export const _withheldRecipientPage = internalQuery({
 
 		let withheld = 0;
 		let ambiguous = 0;
-		const perOrg: Record<string, number> = {};
+		const perOrg = new Map<string, number>();
 		let sampleReceiptId: Id<"messageReceipts"> | null = null;
 
 		for (const r of page.page) {
@@ -203,7 +224,7 @@ export const _withheldRecipientPage = internalQuery({
 
 			if (matchedSlugs.size === 1) {
 				const [slug] = matchedSlugs;
-				perOrg[slug] = (perOrg[slug] ?? 0) + 1;
+				perOrg.set(slug, (perOrg.get(slug) ?? 0) + 1);
 				withheld++;
 				if (sampleReceiptId === null) sampleReceiptId = r._id;
 			} else if (matchedSlugs.size > 1) {
@@ -216,7 +237,10 @@ export const _withheldRecipientPage = internalQuery({
 		return {
 			scanned: page.page.length,
 			withheld,
-			perOrg,
+			perOrg: sortTally(perOrg).map(({ key, count }) => ({
+				orgSlug: key,
+				count,
+			})),
 			ambiguous,
 			sampleReceiptId,
 			rosterSize: rosterNames.size,
@@ -238,11 +262,15 @@ export const countWithheldRecipientReceipts = internalAction({
 		// THIS ACTION (not just the underlying query) can be exercised without
 		// seeding thousands of rows.
 		batchSize: v.optional(v.number()),
+		// Test-only page-cap override — never set outside a test — lets a test
+		// exceed the cap deterministically without seeding hundreds of pages.
+		// Defaults to WITHHELD_RECIPIENT_AUDIT_PAGE_CAP.
+		pageCap: v.optional(v.number()),
 	},
 	returns: v.object({
 		scanned: v.number(),
 		withheld: v.number(),
-		perOrg: v.record(v.string(), v.number()),
+		perOrg: perOrgTallyValidator,
 		ambiguous: v.number(),
 		positiveControlSampleReceiptId: v.union(v.id("messageReceipts"), v.null()),
 		// Distinct roster names checked — makes a zero withheld count with an
@@ -251,10 +279,11 @@ export const countWithheldRecipientReceipts = internalAction({
 		clientRosterSize: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		const pageCap = args.pageCap ?? WITHHELD_RECIPIENT_AUDIT_PAGE_CAP;
 		let scanned = 0;
 		let withheld = 0;
 		let ambiguous = 0;
-		const perOrg: Record<string, number> = {};
+		const perOrg = new Map<string, number>();
 		let sample: Id<"messageReceipts"> | null = null;
 		let clientRosterSize = 0;
 
@@ -264,15 +293,15 @@ export const countWithheldRecipientReceipts = internalAction({
 
 		while (!isDone) {
 			pages++;
-			if (pages > WITHHELD_RECIPIENT_AUDIT_PAGE_CAP) {
+			if (pages > pageCap) {
 				throw new Error(
-					`countWithheldRecipientReceipts: exceeded ${WITHHELD_RECIPIENT_AUDIT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+					`countWithheldRecipientReceipts: exceeded ${pageCap} pages without isDone — refusing to spin forever rather than silently truncating`,
 				);
 			}
 			const page: {
 				scanned: number;
 				withheld: number;
-				perOrg: Record<string, number>;
+				perOrg: Array<{ orgSlug: string; count: number }>;
 				ambiguous: number;
 				sampleReceiptId: Id<"messageReceipts"> | null;
 				rosterSize: number;
@@ -285,8 +314,8 @@ export const countWithheldRecipientReceipts = internalAction({
 			scanned += page.scanned;
 			withheld += page.withheld;
 			ambiguous += page.ambiguous;
-			for (const [slug, count] of Object.entries(page.perOrg)) {
-				perOrg[slug] = (perOrg[slug] ?? 0) + count;
+			for (const { orgSlug, count } of page.perOrg) {
+				perOrg.set(orgSlug, (perOrg.get(orgSlug) ?? 0) + count);
 			}
 			if (sample === null) sample = page.sampleReceiptId;
 			clientRosterSize = page.rosterSize;
@@ -297,7 +326,10 @@ export const countWithheldRecipientReceipts = internalAction({
 		return {
 			scanned,
 			withheld,
-			perOrg,
+			perOrg: sortTally(perOrg).map(({ key, count }) => ({
+				orgSlug: key,
+				count,
+			})),
 			ambiguous,
 			positiveControlSampleReceiptId: sample,
 			clientRosterSize,
@@ -345,7 +377,9 @@ export const _receiptsWithTenantPage = internalQuery({
 	returns: v.object({
 		count: v.number(),
 		samples: v.array(receiptSampleValidator),
-		recipientCounts: v.record(v.string(), v.number()),
+		recipientCounts: v.array(
+			v.object({ recipient: v.string(), count: v.number() }),
+		),
 		isDone: v.boolean(),
 		continueCursor: v.union(v.string(), v.null()),
 	}),
@@ -366,10 +400,13 @@ export const _receiptsWithTenantPage = internalQuery({
 			readAt: number | undefined;
 			createdAt: number;
 		}> = [];
-		const recipientCounts: Record<string, number> = {};
+		const recipientCounts = new Map<string, number>();
 
 		for (const r of page.page) {
-			recipientCounts[r.recipient] = (recipientCounts[r.recipient] ?? 0) + 1;
+			recipientCounts.set(
+				r.recipient,
+				(recipientCounts.get(r.recipient) ?? 0) + 1,
+			);
 			if (samples.length < RECEIPTS_WITH_TENANT_SAMPLE_CAP) {
 				samples.push({
 					receiptId: r._id,
@@ -385,7 +422,10 @@ export const _receiptsWithTenantPage = internalQuery({
 		return {
 			count: page.page.length,
 			samples,
-			recipientCounts,
+			recipientCounts: sortTally(recipientCounts).map(({ key, count }) => ({
+				recipient: key,
+				count,
+			})),
 			isDone: page.isDone,
 			continueCursor: page.isDone ? null : page.continueCursor,
 		};
@@ -402,14 +442,21 @@ export const listReceiptsWithTenant = internalAction({
 		tenantId: v.string(),
 		// Test-only page-size override, forwarded to _receiptsWithTenantPage.
 		batchSize: v.optional(v.number()),
+		// Test-only page-cap override — never set outside a test — lets a test
+		// exceed the cap deterministically without seeding hundreds of pages.
+		// Defaults to RECEIPTS_WITH_TENANT_PAGE_CAP.
+		pageCap: v.optional(v.number()),
 	},
 	returns: v.object({
 		tenantId: v.string(),
 		total: v.number(),
 		samples: v.array(receiptSampleValidator),
-		recipients: v.record(v.string(), v.number()),
+		recipients: v.array(
+			v.object({ recipient: v.string(), count: v.number() }),
+		),
 	}),
 	handler: async (ctx, args) => {
+		const pageCap = args.pageCap ?? RECEIPTS_WITH_TENANT_PAGE_CAP;
 		let total = 0;
 		const samples: Array<{
 			receiptId: Id<"messageReceipts">;
@@ -419,7 +466,7 @@ export const listReceiptsWithTenant = internalAction({
 			readAt: number | undefined;
 			createdAt: number;
 		}> = [];
-		const recipients: Record<string, number> = {};
+		const recipients = new Map<string, number>();
 
 		let cursor: string | null = null;
 		let isDone = false;
@@ -427,9 +474,9 @@ export const listReceiptsWithTenant = internalAction({
 
 		while (!isDone) {
 			pages++;
-			if (pages > RECEIPTS_WITH_TENANT_PAGE_CAP) {
+			if (pages > pageCap) {
 				throw new Error(
-					`listReceiptsWithTenant: exceeded ${RECEIPTS_WITH_TENANT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+					`listReceiptsWithTenant: exceeded ${pageCap} pages without isDone — refusing to spin forever rather than silently truncating`,
 				);
 			}
 			const page: {
@@ -442,7 +489,7 @@ export const listReceiptsWithTenant = internalAction({
 					readAt: number | undefined;
 					createdAt: number;
 				}>;
-				recipientCounts: Record<string, number>;
+				recipientCounts: Array<{ recipient: string; count: number }>;
 				isDone: boolean;
 				continueCursor: string | null;
 			} = await ctx.runQuery(
@@ -453,14 +500,22 @@ export const listReceiptsWithTenant = internalAction({
 			for (const s of page.samples) {
 				if (samples.length < RECEIPTS_WITH_TENANT_SAMPLE_CAP) samples.push(s);
 			}
-			for (const [recipient, count] of Object.entries(page.recipientCounts)) {
-				recipients[recipient] = (recipients[recipient] ?? 0) + count;
+			for (const { recipient, count } of page.recipientCounts) {
+				recipients.set(recipient, (recipients.get(recipient) ?? 0) + count);
 			}
 			isDone = page.isDone;
 			cursor = page.continueCursor;
 		}
 
-		return { tenantId: args.tenantId, total, samples, recipients };
+		return {
+			tenantId: args.tenantId,
+			total,
+			samples,
+			recipients: sortTally(recipients).map(({ key, count }) => ({
+				recipient: key,
+				count,
+			})),
+		};
 	},
 });
 
@@ -499,7 +554,9 @@ export const _messageReceiptsTenantTallyPage = internalQuery({
 	},
 	returns: v.object({
 		count: v.number(),
-		tenantCounts: v.record(v.string(), v.number()),
+		tenantCounts: v.array(
+			v.object({ tenantId: v.string(), count: v.number() }),
+		),
 		isDone: v.boolean(),
 		continueCursor: v.union(v.string(), v.null()),
 	}),
@@ -511,16 +568,19 @@ export const _messageReceiptsTenantTallyPage = internalQuery({
 				cursor,
 			});
 
-		const tenantCounts: Record<string, number> = {};
+		const tenantCounts = new Map<string, number>();
 		for (const r of page.page) {
 			if (r.tenantId !== undefined) {
-				tenantCounts[r.tenantId] = (tenantCounts[r.tenantId] ?? 0) + 1;
+				tenantCounts.set(r.tenantId, (tenantCounts.get(r.tenantId) ?? 0) + 1);
 			}
 		}
 
 		return {
 			count: page.page.length,
-			tenantCounts,
+			tenantCounts: sortTally(tenantCounts).map(({ key, count }) => ({
+				tenantId: key,
+				count,
+			})),
 			isDone: page.isDone,
 			continueCursor: page.isDone ? null : page.continueCursor,
 		};
@@ -539,18 +599,23 @@ const ORPHAN_TENANT_PAGE_CAP = 200; // 200 * 2000/page = 400,000 rows headroom
 export const listOrphanTenants = internalAction({
 	args: {
 		batchSize: v.optional(v.number()),
+		// Test-only page-cap override — never set outside a test — lets a test
+		// exceed the cap deterministically without seeding hundreds of pages.
+		// Defaults to ORPHAN_TENANT_PAGE_CAP.
+		pageCap: v.optional(v.number()),
 	},
 	returns: v.object({
 		scanned: v.number(),
-		orphans: v.record(v.string(), v.number()),
+		orphans: v.array(v.object({ tenantId: v.string(), count: v.number() })),
 	}),
 	handler: async (ctx, args) => {
+		const pageCap = args.pageCap ?? ORPHAN_TENANT_PAGE_CAP;
 		const slugRows: Array<{ clerkOrgSlug: string; isActive: boolean }> =
 			await ctx.runQuery(internal.receiptTenantAudit._allClientOrgSlugs, {});
 		const knownSlugs = new Set(slugRows.map((r) => r.clerkOrgSlug));
 
 		let scanned = 0;
-		const tenantTotals: Record<string, number> = {};
+		const tenantTotals = new Map<string, number>();
 
 		let cursor: string | null = null;
 		let isDone = false;
@@ -558,14 +623,14 @@ export const listOrphanTenants = internalAction({
 
 		while (!isDone) {
 			pages++;
-			if (pages > ORPHAN_TENANT_PAGE_CAP) {
+			if (pages > pageCap) {
 				throw new Error(
-					`listOrphanTenants: exceeded ${ORPHAN_TENANT_PAGE_CAP} pages without isDone — refusing to spin forever rather than silently truncating`,
+					`listOrphanTenants: exceeded ${pageCap} pages without isDone — refusing to spin forever rather than silently truncating`,
 				);
 			}
 			const page: {
 				count: number;
-				tenantCounts: Record<string, number>;
+				tenantCounts: Array<{ tenantId: string; count: number }>;
 				isDone: boolean;
 				continueCursor: string | null;
 			} = await ctx.runQuery(
@@ -573,20 +638,26 @@ export const listOrphanTenants = internalAction({
 				{ cursor, batchSize: args.batchSize },
 			);
 			scanned += page.count;
-			for (const [tenantId, count] of Object.entries(page.tenantCounts)) {
-				tenantTotals[tenantId] = (tenantTotals[tenantId] ?? 0) + count;
+			for (const { tenantId, count } of page.tenantCounts) {
+				tenantTotals.set(tenantId, (tenantTotals.get(tenantId) ?? 0) + count);
 			}
 			isDone = page.isDone;
 			cursor = page.continueCursor;
 		}
 
-		const orphans: Record<string, number> = {};
-		for (const [tenantId, count] of Object.entries(tenantTotals)) {
+		const orphanTotals = new Map<string, number>();
+		for (const [tenantId, count] of tenantTotals) {
 			if (!knownSlugs.has(tenantId)) {
-				orphans[tenantId] = count;
+				orphanTotals.set(tenantId, count);
 			}
 		}
 
-		return { scanned, orphans };
+		return {
+			scanned,
+			orphans: sortTally(orphanTotals).map(({ key, count }) => ({
+				tenantId: key,
+				count,
+			})),
+		};
 	},
 });
