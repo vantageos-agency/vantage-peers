@@ -20,7 +20,8 @@
     - A missing or stale `_lib/command_predicate.py` crashed the import and exited 1, which does not block a hook. A production code push then went through.
     - With the module present, a quoted program or verb went through without a token, for example `npx 'convex' …`, `npx "con"'vex' …` or a quoted verb.
   - Now:
-    - An unloadable module gets a named refusal for any command that names a production code push. Other commands still pass.
+    - An unloadable module gets a named refusal for any command in the guard's production set. Other commands still pass.
+    - The degraded fallback now refuses every production form (`deploy`, `--prod` on any subcommand, and `run --push --prod`), not deploy alone. Before, `env set --prod`, `env remove --prod`, `run --prod` and `import --prod` exited 0 there. A `run --push` without `--prod` still passes, as it does on the healthy path.
     - A quoted run with no whitespace is read as the argument it is.
     - The degraded fallback strips quotes and matches the words in order, which covers interpreter payloads and flags placed between the words.
   - The body is the one reviewed on the canonical fleet copy, and it keeps this repository's own command module.

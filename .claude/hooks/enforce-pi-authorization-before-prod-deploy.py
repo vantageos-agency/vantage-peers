@@ -161,12 +161,20 @@ try:
     )
 except Exception as _import_error:  # pragma: no cover - exercised by the probe
     def _refuse_unjudgeable() -> None:
-        """Refuse a production deploy we cannot analyse; allow everything else.
+        """Refuse the guard's production set we cannot analyse; allow the rest.
 
         Read stdin ONCE here, because the normal entrypoint below never runs.
         The decision is deliberately crude — text, not the tokenizer, which is
-        the thing that failed to load — and it errs towards refusing: a command
-        naming a convex deploy is refused, anything else passes.
+        the thing that failed to load — and it errs towards refusing. It
+        refuses the guard's WHOLE production set, not deploy alone: a command
+        naming `convex … deploy`, or `convex … --prod` on any subcommand
+        (`env set`, `env remove`, `run`, `import`, and `run --push --prod`,
+        the code upload). Anything else passes.
+
+        `--push` is refused only through its `--prod` leg. That is the healthy
+        path's own reading (a `run --push` without `--prod` targets the
+        default deployment and is not a production action there), so the
+        fallback mirrors the healthy set rather than inventing a wider one.
 
         Three corrections measured on this path, all by the reviewer. Requiring
         the two words ADJACENT missed every command that puts a flag between
@@ -203,8 +211,15 @@ except Exception as _import_error:  # pragma: no cover - exercised by the probe
         # reads two fragments and finds none. Deleting reproduces what the shell
         # does, which is the only reading that can be right.
         _cmd = (_cmd or "").replace('"', "").replace("'", "")
+        # Two legs, both in ORDER and never adjacency, `convex` a whole word
+        # with an optional pinned version. The `--prod` leg mirrors
+        # UNTOKENIZABLE_PROD_RE below, which this branch cannot reach.
         if _re.search(
             r"\bconvex(?:@[\w.\-]+)?\b.*\bdeploy\b", _cmd or "", _re.IGNORECASE
+        ) or _re.search(
+            r"(?<![\w-])convex(?:@[\w.\-]+)?(?![\w-]).*?\s--prod(?![\w-])",
+            _cmd or "",
+            _re.IGNORECASE,
         ):
             print(
                 "REFUSING TO JUDGE: the authorization guard could not load its "

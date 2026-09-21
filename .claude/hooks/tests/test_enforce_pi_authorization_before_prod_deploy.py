@@ -546,6 +546,74 @@ def test_import_failure_lookalike_binary_not_matched():
     assert rc == 0, f"conex is not convex, rc={rc} out={out}"
 
 
+# --- The degraded fallback refuses the guard's WHOLE production set -------
+# Not `deploy` alone: every form the healthy path refuses without a token
+# (a `--prod` flag on any subcommand, a `run --push --prod` code upload) must
+# be refused when the module is gone or stale. `--push` WITHOUT `--prod`
+# targets the default (dev) deployment and passes in the healthy world, so it
+# passes here too -- the fallback mirrors the healthy set, it does not invent
+# a wider one.
+
+DEGRADED_PROD_MUST_BLOCK = (
+    "npx convex env set FOO bar --prod",
+    "npx convex env remove FOO --prod",
+    "npx convex run someModule:fn --prod",
+    "npx convex import --prod data.zip",
+    "npx convex run someModule:fn --push --prod",
+    "npx convex@1.2.3 run someModule:fn --prod",
+    "npx \"con\"'vex' env set FOO bar --prod",
+    "bash -c \"npx convex run someModule:fn --prod\"",
+)
+
+DEGRADED_PROD_MUST_PASS = (
+    "ls",
+    "npx convex dev --once",
+    "npx \"con\"'ex' deploy",
+    "npx \"con\"'ex' run someModule:fn --prod",
+    "npx convex run someModule:fn --push",
+    "npx convex env set FOO bar",
+    "git commit -m \"fix: the prod flag is documented\"",
+    "export CONVEX_DEPLOY_KEY_NAME=x; echo --prod",
+)
+
+
+def _degraded_cells(guard, commands, expected_rc):
+    wrong = []
+    for cmd in commands:
+        rc, out = run_degraded_hook(guard, cmd)
+        if rc != expected_rc:
+            wrong.append((cmd, rc))
+        elif expected_rc == 2:
+            assert "REFUSING TO JUDGE" in out and "command_predicate" in out, (
+                f"{cmd!r} refused without naming the module: {out}"
+            )
+    return wrong
+
+
+def test_import_failure_module_deleted_refuses_every_prod_form():
+    guard = build_degraded_world(delete_module=True)
+    wrong = _degraded_cells(guard, DEGRADED_PROD_MUST_BLOCK, 2)
+    assert not wrong, f"module deleted: these must refuse (cmd, rc): {wrong}"
+
+
+def test_import_failure_stale_module_refuses_every_prod_form():
+    guard = build_degraded_world(strip_carries_prod_action=True)
+    wrong = _degraded_cells(guard, DEGRADED_PROD_MUST_BLOCK, 2)
+    assert not wrong, f"stale module: these must refuse (cmd, rc): {wrong}"
+
+
+def test_import_failure_module_deleted_non_prod_stays_open():
+    guard = build_degraded_world(delete_module=True)
+    wrong = _degraded_cells(guard, DEGRADED_PROD_MUST_PASS, 0)
+    assert not wrong, f"module deleted: these must stay open (cmd, rc): {wrong}"
+
+
+def test_import_failure_stale_module_non_prod_stays_open():
+    guard = build_degraded_world(strip_carries_prod_action=True)
+    wrong = _degraded_cells(guard, DEGRADED_PROD_MUST_PASS, 0)
+    assert not wrong, f"stale module: these must stay open (cmd, rc): {wrong}"
+
+
 # --- strip_quoted_strings: an argument is unquoted, a phrase stays inert ---
 
 def test_strip_quoted_single_word_unquotes_as_argument():
