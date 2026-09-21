@@ -929,9 +929,6 @@ export const deleteMessage = mutation({
 	},
 	returns: v.object({ deleted: v.boolean(), receiptsDeleted: v.number() }),
 	handler: async (ctx, args) => {
-		const message = await ctx.db.get(args.messageId);
-		if (!message) throw new Error("Message not found");
-
 		// Fail-closed multi-tenant fix (same defect class as markAsRead
 		// above) — deleteMessage used to authorize solely on the
 		// client-supplied callerOrchestrator argument: an anonymous caller
@@ -940,7 +937,28 @@ export const deleteMessage = mutation({
 		// called WITHOUT allowNoIdentityMaster for the same reason as
 		// markAsRead: the MCP server always presents a real Clerk identity
 		// on this path.
+		//
+		// Resolved BEFORE ctx.db.get(args.messageId) (convex-reviewer REVISE
+		// on PR #1313): an anonymous caller must get RBAC_DENIED, never
+		// "Message not found" — a get-then-scope order lets messageId
+		// existence act as an unauthenticated existence oracle.
 		const scope = await withOrgScope(ctx);
+
+		// Anonymous/no-identity, non-master (isMaster===false, orgSlug===null)
+		// can never pass isOrchestratorAllowedForScope for ANY message.from —
+		// refuse here, before ctx.db.get, so a non-existent messageId cannot
+		// be distinguished from an existing-but-foreign one by an
+		// unauthenticated caller (mirrors checkNewMessages'/listMessages'
+		// `!isMaster && orgSlug===null` guard above).
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete message ${args.messageId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
+		const message = await ctx.db.get(args.messageId);
+		if (!message) throw new Error("Message not found");
+
 		if (!isOrchestratorAllowedForScope(scope, message.from)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} (sender "${message.from}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
