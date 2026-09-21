@@ -129,6 +129,35 @@ describe("diary.write — write-scope enforcement", () => {
 		});
 		expect(diaryId).toBeDefined();
 	});
+
+	// Owner (args.orchestrator) vs actor (args.createdBy) confusion: an
+	// org-a caller must NOT be able to write into org-b's seat merely
+	// because its OWN createdBy identity (seat-a, allow-listed) is
+	// attached to the request. Authorization is decided on the diary
+	// OWNER (`orchestrator`), never on `createdBy ?? orchestrator` — see
+	// convex-reviewer REVISE on PR #1314: this mutant survives when no
+	// diary test passes `createdBy` alongside a foreign `orchestrator`.
+	test("an org-a caller cannot write into org-b's seat by attaching its own createdBy", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		const tA = asOrgA(t);
+
+		await expect(
+			tA.mutation(api.diary.write, {
+				date: "2026-09-21",
+				orchestrator: "seat-b",
+				createdBy: "seat-a",
+				content: "owner/actor confusion attempt",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+
+		const rows = await asMaster(t).query(api.diary.listByDateRange, {
+			from: "2026-09-21",
+			to: "2026-09-21",
+			orchestrator: "seat-b",
+		});
+		expect(rows).toHaveLength(0);
+	});
 });
 
 describe("diary.deleteDiary — write-scope enforcement", () => {
@@ -138,6 +167,30 @@ describe("diary.deleteDiary — write-scope enforcement", () => {
 			date: "2026-09-21",
 			orchestrator: "seat-b",
 			content: "org-b's entry",
+		});
+
+		await expect(
+			t.mutation(api.diary.deleteDiary, {
+				diaryId,
+				callerOrchestrator: "seat-b",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	// Anonymous caller on a NON-EXISTENT diaryId must still get RBAC_DENIED
+	// — never "Diary entry not found". A get-then-scope order lets diaryId
+	// existence act as an unauthenticated existence oracle (same defect
+	// class messages.ts's deleteMessage closed on PR #1313).
+	test("an anonymous (no identity) caller deleting a non-existent diaryId gets RBAC_DENIED, not 'not found'", async () => {
+		const t = createT();
+		const diaryId = await asMaster(t).mutation(api.diary.write, {
+			date: "2026-09-21",
+			orchestrator: "seat-b",
+			content: "org-b's entry, to be deleted first",
+		});
+		await asMaster(t).mutation(api.diary.deleteDiary, {
+			diaryId,
+			callerOrchestrator: "seat-b",
 		});
 
 		await expect(
