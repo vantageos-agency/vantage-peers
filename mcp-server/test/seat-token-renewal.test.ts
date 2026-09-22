@@ -291,6 +291,49 @@ describe("seat token renewal — /token refresh_token grant", () => {
 		expect(r.status).toBe(400);
 		expect(r.body.error).toBe("invalid_grant");
 	});
+
+	// A pre-deploy seat has NO refresh token row at all until the operator
+	// runs oauth:retrofitSeatRefreshToken (convex/oauth.ts) — that mutation
+	// is Convex-internal and covered directly by
+	// convex/__tests__/provisionOrganizationRefreshTokenRetrofit.test.ts.
+	// What THIS test proves is the other half of the property: a token that
+	// mutation hands the operator is not special — it renews through the
+	// exact same /token refresh_token grant as any other seat refresh token,
+	// closing the loop end-to-end for a retrofitted seat.
+	it("a retrofitted seat (no refresh token until the operator mints one) renews through /token exactly like any other seat", async () => {
+		// A seat with NO refresh token yet — the pre-deploy shape.
+		const RETROFIT_CLIENT_ID = "seat-client-retrofit-target";
+		const RETROFIT_SECRET = "seat-retrofit-raw-secret-002";
+		state.clients.set(RETROFIT_CLIENT_ID, {
+			clientId: RETROFIT_CLIENT_ID,
+			clientSecretHash: await sha256Hex(RETROFIT_SECRET),
+			redirectUris: ["https://localhost/dev-null"],
+			name: SEAT_PROFILE_ID,
+			scopeProfile: SEAT_PROFILE_ID,
+			tokenEndpointAuthMethod: "client_secret_basic",
+		});
+		// No entry in state.refreshTokensByRaw for RETROFIT_CLIENT_ID — mirrors
+		// a real pre-deploy seat exactly.
+
+		// Simulate the operator having just run oauth:retrofitSeatRefreshToken
+		// — it hands back exactly one raw refresh token, which we seed here
+		// the same way the real mutation would have persisted it.
+		const retrofittedRefreshToken = "retrofit-minted-refresh-raw-token";
+		state.refreshTokensByRaw.set(retrofittedRefreshToken, {
+			clientId: RETROFIT_CLIENT_ID,
+			userId: "sigma",
+			scopeProfile: SEAT_PROFILE_ID,
+			expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
+		});
+
+		const r = await postRefresh(
+			retrofittedRefreshToken,
+			basicAuth(RETROFIT_CLIENT_ID, RETROFIT_SECRET),
+		);
+		expect(r.status).toBe(200);
+		expect(typeof r.body.access_token).toBe("string");
+		expect(r.body.refresh_token).not.toBe(retrofittedRefreshToken);
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

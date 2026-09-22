@@ -1200,6 +1200,113 @@ export const setProfileSelfRegistrable = internalMutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SEAT_REFRESH_TOKEN_RETROFIT (k1784cq353qpmw9fmn8me551qs8ev2z9) — same class
+// of post-deploy operator mutation as setProfileSelfRegistrable above: this
+// PR's `provisionOrganization` fix only mints a refresh token for seats
+// provisioned AFTER the deploy. Every seat already in the field was
+// provisioned before `oauth_refresh_tokens` gained a row for it, and the
+// replay path deliberately returns `refreshToken: null` (consistent with
+// `clientSecret`/`accessToken`, never re-shown) — so nothing in the normal
+// `provisionOrganization` path can ever backfill an existing seat. An
+// operator runs this once per pre-deploy seat's `clientId` after the deploy.
+//
+// POLICY on a client that already holds a LIVE refresh token (not revoked,
+// not expired): REFUSE, do not mint a second one. Minting a second live
+// refresh token per seat is a live-token-count invariant this task's own
+// brief asked to keep pinned by a test either way ("provisioning twice does
+// not leave a seat with two live refresh tokens, or a test says so") — this
+// mutation keeps that invariant true for the retrofit path too, by refusing
+// rather than by silently returning the same token (silent-replace was
+// explicitly ruled out: it would either re-disclose an already-consumed
+// secret-shaped value or silently mint a duplicate, neither of which an
+// operator re-running this against a full seat list can safely assume).
+// Idempotent behaviour for an operator re-running the retrofit script over
+// every seat is therefore: first call mints, every call after REFUSES.
+//
+// internalMutation: no callerToken/master-gate needed — internal functions
+// are only reachable via `npx convex run` with a deploy key, never from the
+// public HTTP/MCP surface.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const retrofitSeatRefreshToken = internalMutation({
+	args: { clientId: v.string() },
+	returns: v.object({
+		clientId: v.string(),
+		userId: v.string(),
+		scopeProfile: v.string(),
+		refreshToken: v.string(),
+		expiresAt: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		const client = await ctx.db
+			.query("oauth_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		if (!client || client.revokedAt !== undefined) {
+			throw new Error(
+				`SEAT_CLIENT_NOT_FOUND: no active oauth_clients row for clientId "${args.clientId}"`,
+			);
+		}
+
+		// Identity (userId) is not stored on oauth_clients itself — every
+		// legitimately provisioned seat has at least one oauth_access_tokens
+		// row (provisionOrganization always inserts one), so that row is the
+		// source of the seat's userId. A client with zero access-token rows
+		// was never actually provisioned as a seat — refuse rather than
+		// guess an identity.
+		const accessRow = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.first();
+		if (!accessRow) {
+			throw new Error(
+				`SEAT_CLIENT_NOT_FOUND: clientId "${args.clientId}" has no oauth_access_tokens row — cannot derive seat identity`,
+			);
+		}
+
+		// POLE REFUSE: a live (non-revoked, non-expired) refresh token
+		// already exists for this client — do not mint a second one.
+		const existingRefresh = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.collect();
+		const now = Date.now();
+		const hasLiveRefresh = existingRefresh.some(
+			(r) => r.revokedAt === undefined && r.expiresAt > now,
+		);
+		if (hasLiveRefresh) {
+			throw new Error(
+				`SEAT_ALREADY_HAS_LIVE_REFRESH_TOKEN: clientId "${args.clientId}" already holds a live refresh token — retrofit refuses to mint a second one`,
+			);
+		}
+
+		// scopeProfile from the CLIENT row (current catalog assignment),
+		// same source authorization_code issuance reads via
+		// loadScopeProfile(client.scopeProfile) — not from the (possibly
+		// stale) access-token row's snapshot.
+		const refreshToken = randomOpaqueHex(32);
+		const refreshTokenHash = await sha256Hex(refreshToken);
+		const expiresAt = now + 30 * 24 * 3600 * 1000;
+		await ctx.db.insert("oauth_refresh_tokens", {
+			tokenHash: refreshTokenHash,
+			clientId: args.clientId,
+			userId: accessRow.userId,
+			scopeProfile: client.scopeProfile,
+			expiresAt,
+			createdAt: now,
+		});
+
+		return {
+			clientId: args.clientId,
+			userId: accessRow.userId,
+			scopeProfile: client.scopeProfile,
+			refreshToken,
+			expiresAt,
+		};
+	},
+});
+
 // returns-projection: security — clientSecretHash is never returned to any caller (secret hash, not for display); tokenEndpointAuthMethod is admin-console metadata omitted from this public listing shape
 export const listClients = query({
 	args: { callerToken: v.string() },
