@@ -95,7 +95,29 @@ export async function upsertAdminMembership(
 // An anonymous caller (no verified identity at all — withOrgScope's
 // fail-closed default) is refused with RBAC_DENIED BEFORE any db read, so
 // there is no existence oracle on that path either.
+//
+// BOUND — both reads below are catalog-scale (one row per org-admin per
+// org — the same scale as `client_org_mapping`/`oauth_scope_profiles`,
+// never per-memory or per-message volume), so a bounded read at this
+// rare, admin/audit-only surface is the correct tool, mirroring
+// `findSeatNameCollision`'s `SEAT_NAME_COLLISION_SCAN_LIMIT` discipline in
+// convex/oauth.ts. `.take(MEMBERSHIP_QUERY_LIMIT)` replaces `.collect()`;
+// hitting the limit exactly means rows beyond it were never read —
+// silently returning a partial membership list in that case would
+// misinform an admin/audit caller about who actually holds an org, so
+// this throws `MEMBERSHIP_QUERY_INCOMPLETE` instead of resolving a
+// truncated array.
 // ─────────────────────────────────────────────────────────────────────────────
+const MEMBERSHIP_QUERY_LIMIT = 1000;
+
+function assertNotTruncated(rowCount: number, describe: string): void {
+	if (rowCount === MEMBERSHIP_QUERY_LIMIT) {
+		throw new ConvexError(
+			`MEMBERSHIP_QUERY_INCOMPLETE: orgMembership read for ${describe} hit its ${MEMBERSHIP_QUERY_LIMIT}-row bound before finishing — refusing to return a truncated membership list`,
+		);
+	}
+}
+
 export const getMembership = query({
 	args: { clerkOrgSlug: v.optional(v.string()) },
 	returns: v.array(membershipShape),
@@ -125,14 +147,16 @@ export const getMembership = query({
 				.withIndex("by_org", (q) =>
 					q.eq("clerkOrgSlug", args.clerkOrgSlug as string),
 				)
-				.collect();
+				.take(MEMBERSHIP_QUERY_LIMIT);
+			assertNotTruncated(rows.length, `org "${args.clerkOrgSlug}"`);
 			return rows.map(toShape);
 		}
 
 		const rows = await ctx.db
 			.query("orgMembership")
 			.withIndex("by_user", (q) => q.eq("clerkUserId", scope.userId))
-			.collect();
+			.take(MEMBERSHIP_QUERY_LIMIT);
+		assertNotTruncated(rows.length, `subject "${scope.userId}"`);
 		return rows.map(toShape);
 	},
 });

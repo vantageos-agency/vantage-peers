@@ -289,7 +289,7 @@ describe("orgMembership.getMembership — direction 2: which orgs does the calle
 		// requirement); the result is keyed on subject, not on this session's
 		// active org, so both f1 and f2 come back — and f3 does NOT.
 		const rows = await tAdminOrg1.query(api.orgMembership.getMembership, {});
-		const slugs = rows.map((r) => r.clerkOrgSlug).sort();
+		const slugs = rows.map((r: { clerkOrgSlug: string }) => r.clerkOrgSlug).sort();
 		expect(slugs).toEqual(["org-membership-f1", "org-membership-f2"]);
 		expect(slugs).not.toContain("org-membership-f3");
 	});
