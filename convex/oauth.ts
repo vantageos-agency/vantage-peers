@@ -1589,6 +1589,30 @@ const oauthContextShape = v.object({
 	clerkOrgSlug: v.optional(v.string()),
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// getAccessTokenByHash — SECURITY: deliberately public, no auth gate.
+//
+// `args.tokenHash` is `sha256Hex(accessToken)` where `accessToken` is a
+// 256-bit value from `crypto.getRandomValues` (mcp-server/server-http.ts's
+// `randomOpaqueToken`), hashed CLIENT-SIDE so the raw bearer never crosses
+// the wire to Convex (mcp-server/src/auth.ts case (2), `sha256Hex(token)`
+// before this call). SHA-256 is one-way: the ONLY way to present the exact
+// hash this query looks up BY is to already hold the raw 256-bit token —
+// there is no brute-force or enumeration path shorter than already
+// possessing the credential. Presenting the hash is therefore equivalent,
+// as an authorization signal, to presenting the bearer token itself; a
+// caller who can compute this hash already has everything this query
+// returns (the same scopes/fromAllowList/namespace prefixes the token
+// itself grants at the MCP tool layer). Adding a `ctx.auth` gate here would
+// not narrow the readable set — token-hash possession IS the credential —
+// and would break the legitimate caller: `internalClient()` in
+// mcp-server/src/auth.ts case (2) calls this over Convex's public HTTP
+// query API before any Convex-side identity has been established for the
+// bearer being verified.
+//
+// Row-level checks (revoked / expired) still apply below — a valid hash for
+// a dead token yields null, not the dead grant.
+// ─────────────────────────────────────────────────────────────────────────────
 export const getAccessTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(oauthContextShape, v.null()),
@@ -1644,6 +1668,21 @@ export const createRefreshToken = mutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// getRefreshTokenByHash — SECURITY: deliberately public, no auth gate. Same
+// reasoning as `getAccessTokenByHash` above: `args.tokenHash` is
+// `sha256Hex(refreshToken)` where `refreshToken` is an independent 256-bit
+// `randomOpaqueToken()` value, hashed client-side before it ever reaches
+// Convex (mcp-server/server-http.ts's `/oauth/token` refresh-grant path,
+// `sha256Hex(refreshTokenRaw)`). Possession of the hash requires possession
+// of the raw refresh token; the returned `scopeProfile` is re-resolved
+// against the CURRENT `oauth_scope_profiles` row during token re-issue
+// (`loadScopeProfile`), never trusted verbatim, so this read adds nothing an
+// attacker without the raw token could not already do with it. Do not add a
+// `ctx.auth` gate: the caller (`internalClient()` in mcp-server/server-http.ts)
+// presents this hash before any Convex-side identity is established for the
+// refresh token being redeemed.
+// ─────────────────────────────────────────────────────────────────────────────
 export const getRefreshTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(

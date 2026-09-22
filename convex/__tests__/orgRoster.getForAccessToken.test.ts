@@ -1,11 +1,23 @@
 /// <reference types="vite/client" />
 /**
- * orgRoster:getForAccessToken — organisation derived from the access-token
- * row, never from an org argument, never from withOrgScope (service-account
- * ["*"] is ETA-M15).
+ * orgRoster:getForAccessToken — organisation ROSTER derived from the
+ * access-token row, never from an org argument, never from
+ * `scope.allowedOrchestrators` (the service-account's own withOrgScope
+ * resolution is ["*"], ETA-M15 — using it as the RETURNED roster would leak
+ * a cross-tenant wildcard).
  *
  * Mission vp-cloud-org-provision-v1 T1 k1735t6jy0gpkd3gr13xznp3f18cx1c4
  * Spec pin e936a5eb.
+ *
+ * CLASS-sweep gate (task following k17bf7bsfrm255x4pr5r96q5g58cw691): this
+ * query is public (`client.query` over HTTP from mcp-server/src/tools.ts) —
+ * before the gate below it required only "any authenticated identity", so a
+ * stray Clerk-authenticated caller from an unrelated org could read another
+ * org's roster by presenting a guessed/leaked `tokenHash`. `withOrgScope` IS
+ * now consulted, but ONLY as the CALLER gate (master/service-account only —
+ * the ETA-M15 invariant above is about the RETURN VALUE, not about whether
+ * `withOrgScope` may appear in this function at all). Refusals are
+ * RBAC_DENIED throughout, per the CLASS-sweep refusal-shape convention.
  */
 
 import { readFileSync } from "node:fs";
@@ -87,7 +99,7 @@ describe("orgRoster:getForAccessToken — no organisation argument", () => {
 		expect(argsBlock).not.toMatch(/withOrgScope/);
 	});
 
-	test("anonymous caller → AUTH_REQUIRED", async () => {
+	test("anonymous caller → RBAC_DENIED", async () => {
 		const t = createTestConvex();
 		await seedTokenAndOrg(t, {
 			tokenHash: "hash-a",
@@ -96,7 +108,34 @@ describe("orgRoster:getForAccessToken — no organisation argument", () => {
 		});
 		await expect(
 			t.query(api.orgRoster.getForAccessToken, { tokenHash: "hash-a" }),
-		).rejects.toThrow(/AUTH_REQUIRED/);
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("a non-master, org-scoped Clerk identity → RBAC_DENIED (not just 'any identity')", async () => {
+		const t = createTestConvex();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "org-a",
+				allowedOrchestrators: ["seat-a"],
+				scopes: ["view-own-tasks"],
+				displayName: "org-a",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		await seedTokenAndOrg(t, {
+			tokenHash: "hash-a",
+			clerkOrgSlug: "plan-org-alpha",
+			allowedOrchestrators: ["orch-a", "orch-b"],
+		});
+		await expect(
+			t
+				.withIdentity({
+					subject: "user-org-a",
+					organizationId: "org-a",
+				} as Parameters<typeof t.withIdentity>[0])
+				.query(api.orgRoster.getForAccessToken, { tokenHash: "hash-a" }),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("service-account identity + scoped token returns THAT mapping, not ['*']", async () => {
@@ -152,11 +191,33 @@ describe("orgRoster:getForAccessToken — no organisation argument", () => {
 		).rejects.toThrow(/inactive|RBAC_DENIED/);
 	});
 
-	test("handler body does not call withOrgScope (would return service-account *)", () => {
+	test("handler body's return statement reads mapping.allowedOrchestrators, never scope.allowedOrchestrators", () => {
 		const here = dirname(fileURLToPath(import.meta.url));
 		const src = readFileSync(join(here, "../orgRoster.ts"), "utf8");
 		const start = src.indexOf("export const getForAccessToken");
 		const fn = src.slice(start);
-		expect(fn).not.toMatch(/withOrgScope/);
+		const returnStart = fn.lastIndexOf("return");
+		const returnStatement = fn.slice(returnStart);
+		expect(returnStatement).toMatch(/return mapping\.allowedOrchestrators/);
+		expect(returnStatement).not.toMatch(/scope\.allowedOrchestrators/);
+	});
+
+	// ETA-M15 mutant kill — the service-account's OWN withOrgScope resolution
+	// is `["*"]` (master carve-out). If the return value were ever swapped to
+	// `scope.allowedOrchestrators` instead of `mapping.allowedOrchestrators`,
+	// this positive-pole test (already asserting `roster.not.toContain("*")`
+	// above) is the behavioural guard against that regression — this test
+	// pins the SOURCE shape so the mutation is caught even before running the
+	// positive pole.
+	test("handler body calls withOrgScope only as the caller gate, before any token/mapping lookup", () => {
+		const here = dirname(fileURLToPath(import.meta.url));
+		const src = readFileSync(join(here, "../orgRoster.ts"), "utf8");
+		const start = src.indexOf("export const getForAccessToken");
+		const fn = src.slice(start);
+		const gateIdx = fn.indexOf("withOrgScope");
+		const tokenLookupIdx = fn.indexOf('.query("oauth_access_tokens"');
+		expect(gateIdx).toBeGreaterThan(-1);
+		expect(tokenLookupIdx).toBeGreaterThan(-1);
+		expect(gateIdx).toBeLessThan(tokenLookupIdx);
 	});
 });
