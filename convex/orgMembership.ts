@@ -108,7 +108,10 @@ export async function upsertAdminMembership(
 // this throws `MEMBERSHIP_QUERY_INCOMPLETE` instead of resolving a
 // truncated array.
 // ─────────────────────────────────────────────────────────────────────────────
-const MEMBERSHIP_QUERY_LIMIT = 1000;
+// Exported so the test suite seeds exactly this many rows to prove the
+// MEMBERSHIP_QUERY_INCOMPLETE refusal fires, rather than hard-coding 1000
+// in two places that could silently drift apart.
+export const MEMBERSHIP_QUERY_LIMIT = 1000;
 
 function assertNotTruncated(rowCount: number, describe: string): void {
 	if (rowCount === MEMBERSHIP_QUERY_LIMIT) {

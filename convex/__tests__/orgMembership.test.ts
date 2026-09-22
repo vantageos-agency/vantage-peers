@@ -27,6 +27,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { MEMBERSHIP_QUERY_LIMIT } from "../orgMembership";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -299,5 +300,45 @@ describe("orgMembership.getMembership — direction 2: which orgs does the calle
 		await expect(
 			t.query(api.orgMembership.getMembership, {}),
 		).rejects.toThrow(/RBAC_DENIED/);
+	});
+});
+
+describe("orgMembership.getMembership — MEMBERSHIP_QUERY_INCOMPLETE bound", () => {
+	// Seeds exactly MEMBERSHIP_QUERY_LIMIT rows for a SINGLE org (direct
+	// db.insert, not MEMBERSHIP_QUERY_LIMIT provisioning calls — provisioning
+	// is not the property under test here, the read-side bound is) and
+	// proves the refusal actually fires rather than resolving a silently
+	// truncated array. MEMBERSHIP_QUERY_LIMIT is imported from the source
+	// module rather than hard-coded here, so this test tracks the real
+	// bound if it is ever tuned.
+	test("hitting MEMBERSHIP_QUERY_LIMIT rows for one org throws MEMBERSHIP_QUERY_INCOMPLETE, not a truncated list", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-membership-bound", ["seat-bound"]);
+
+		await t.run(async (ctx) => {
+			const now = Date.now();
+			for (let i = 0; i < MEMBERSHIP_QUERY_LIMIT; i++) {
+				await ctx.db.insert("orgMembership", {
+					clerkOrgSlug: "org-membership-bound",
+					clerkUserId: `admin-bound-${i}`,
+					role: "admin",
+					createdAt: now,
+					updatedAt: now,
+				});
+			}
+		});
+
+		const tAdminBound = t.withIdentity(
+			orgAdminIdentity(
+				"admin-bound-0",
+				"org-membership-bound",
+			) as Parameters<typeof t.withIdentity>[0],
+		);
+
+		await expect(
+			tAdminBound.query(api.orgMembership.getMembership, {
+				clerkOrgSlug: "org-membership-bound",
+			}),
+		).rejects.toThrow(/MEMBERSHIP_QUERY_INCOMPLETE/);
 	});
 });
