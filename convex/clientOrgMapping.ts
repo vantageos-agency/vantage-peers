@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
-import { lookupOrgMapping } from "./lib/auth";
+import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getByClerkSlug — the HTTP-layer accessor onto client_org_mapping.
@@ -17,10 +17,29 @@ import { lookupOrgMapping } from "./lib/auth";
 // `orgSlug` here is the verified `org_id` claim lifted from a Clerk JWT that
 // the CALLER (mcp-server) has already cryptographically verified against
 // Clerk's JWKS — it is not an attacker-controlled free-form string reaching
-// this query from an unauthenticated request. This query itself performs no
-// further authentication; it is a pure data accessor keyed on that
-// already-verified claim, exactly mirroring the trust boundary
-// `orgRoster:getForAccessToken` establishes for the token-hash path.
+// this query from an unauthenticated request, PROVIDED the request itself
+// reaches Convex over the MCP server's own identity (below), not as a
+// direct anonymous call against Convex's public query API.
+//
+// SECURITY (CLASS sweep, task following k17bf7bsfrm255x4pr5r96q5g58cw691):
+// this query used to have no guard at all — an anonymous caller holding
+// only the deployment URL could enumerate `allowedOrchestrators` for ANY
+// org by guessing `orgSlug`, without ever presenting a Clerk JWT. It is
+// called EXCLUSIVELY via `internalClient()` (mcp-server/src/auth.ts case
+// 2.5), which always attaches the MCP server's own service-account Clerk
+// identity (`createServiceAccountConvexClient`) — `withOrgScope` resolves
+// that identity's `ctx.auth` to `isMaster=true` via the by-id
+// `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out (see convex/lib/auth.ts). The
+// `orgSlug` ARGUMENT is the verified end-caller's org (mcp-server's own
+// JWKS check, not Convex's `ctx.auth`) — Convex cannot re-derive it from
+// `ctx.auth` here, because `ctx.auth` on this path is the SERVICE
+// ACCOUNT'S identity, not the end caller's. So the gate below authenticates
+// WHO is allowed to ask this question (master/service-account only,
+// mirroring the #1318 `getScopeProfile` pattern) — it does not, and cannot,
+// re-verify the JWT the argument was extracted from; that verification
+// already happened at the transport boundary
+// (.claude/rules/http-boundary-derives-from-principal.md) before this call
+// was ever made.
 //
 // Returns null when no row exists for `orgSlug`, or `isActive: false` when
 // the row exists but the org has been disabled. The caller (auth.ts) MUST
@@ -37,6 +56,15 @@ export const getByClerkSlug = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: clientOrgMapping.getByClerkSlug requires master or " +
+					"service-account scope — anonymous and org-scoped callers may " +
+					"never read another organisation's allowedOrchestrators/scopes " +
+					"by slug.",
+			);
+		}
 		return await lookupOrgMapping(ctx, args.orgSlug);
 	},
 });
