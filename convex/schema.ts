@@ -1293,6 +1293,47 @@ export default defineSchema({
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_isActive", ["isActive"]),
 
+	// ── orgMembership ────────────────────────────────────────────────────────
+	// Task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp. One administrator holds MULTIPLE
+	// organisations, with real users behind them, and VantagePeers had no
+	// record of who administers which org — only Clerk did. This table is
+	// that record.
+	//
+	// AUDIT RECORD ONLY — NEVER AN AUTHORISATION SOURCE. `requireOrgAdmin`
+	// (convex/lib/auth.ts) keeps deciding admin status from the verified
+	// `org_role` JWT claim at request time, exactly as before this table
+	// existed. No code path may read a row here to decide whether an action
+	// is allowed — that would let a stale/replayed row grant authority the
+	// live Clerk session no longer holds. This table only answers "who
+	// administers/belongs to which org", for display/audit/reporting.
+	//
+	// Written ONLY at provisioning time (`convex/oauth.ts`'s
+	// `provisionOrganization`, org-admin path) — there is no Clerk webhook
+	// yet to keep it in sync with later member add/remove in Clerk itself.
+	// Until that webhook exists, this table records provisioning-time
+	// membership only.
+	//
+	// clerkOrgSlug: the Clerk organisation SLUG — same slug-to-slug
+	//   convention as `client_org_mapping.clerkOrgSlug` (see the long
+	//   comment on `requireOrgAdmin` in convex/lib/auth.ts for why the slug,
+	//   and never `organizationId`, is the compared claim).
+	// clerkUserId: the Clerk `sub` (subject) claim of the administering user.
+	// role: "admin" (the only role this table currently writes) or "member"
+	//   (reserved for the future webhook-driven sync).
+	orgMembership: defineTable({
+		clerkOrgSlug: v.string(),
+		clerkUserId: v.string(),
+		role: v.union(v.literal("admin"), v.literal("member")),
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		// "who administers/belongs to org X" — no table scan.
+		.index("by_org", ["clerkOrgSlug"])
+		// "which orgs does subject S belong to" — no table scan.
+		.index("by_user", ["clerkUserId"])
+		// Idempotent upsert key at provisioning time — one row per (org, user).
+		.index("by_org_user", ["clerkOrgSlug", "clerkUserId"]),
+
 	// ── userBearerTokens ─────────────────────────────────────────────────────
 	// Bearer tokens issued to VP webapp users via Clerk JWT exchange
 	// (POST /issueBearerFromClerk). Separate from the OAuth DCR flow in

@@ -23,6 +23,7 @@ import {
 } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { requireOrgAdmin, withOrgScope } from "./lib/auth";
+import { upsertAdminMembership } from "./orgMembership";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -771,6 +772,18 @@ export const provisionOrganization = mutation({
 			await requireOrgAdmin(ctx, slug);
 		}
 
+		// orgMembership audit write (task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp) —
+		// only the org-admin path (empty/absent callerToken) has a real
+		// VERIFIED human subject to record here; the master path has no Clerk
+		// identity in general (a bare secret string, no session), so nothing
+		// is written for it. See convex/orgMembership.ts's table/function
+		// comments: this row is an AUDIT RECORD ONLY, never consulted by
+		// `requireOrgAdmin` or any other authorization decision.
+		const provisioningAdminSubject =
+			args.callerToken && args.callerToken.length > 0
+				? null
+				: ((await ctx.auth.getUserIdentity())?.subject ?? null);
+
 		if (args.displayName.trim().length === 0) {
 			throw new Error("displayName is required");
 		}
@@ -844,6 +857,9 @@ export const provisionOrganization = mutation({
 					clientSecret: null,
 					accessToken: null,
 				});
+			}
+			if (provisioningAdminSubject) {
+				await upsertAdminMembership(ctx, slug, provisioningAdminSubject);
 			}
 			return {
 				clerkOrgSlug: slug,
@@ -957,6 +973,10 @@ export const provisionOrganization = mutation({
 			clientsRetargeted: 0,
 			createdAt: now,
 		});
+
+		if (provisioningAdminSubject) {
+			await upsertAdminMembership(ctx, slug, provisioningAdminSubject);
+		}
 
 		return {
 			clerkOrgSlug: slug,
