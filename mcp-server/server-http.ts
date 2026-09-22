@@ -886,6 +886,35 @@ app.post("/token", async (c) => {
 		const accessToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
 		const now = Date.now();
+
+		// SEAT_TOKEN_RENEWAL (k1784cq353qpmw9fmn8me551qs8ev2z9): each refresh
+		// mints a NEW refresh token rather than handing the presented one
+		// back unchanged. Without this, the refresh token itself carried a
+		// fixed 30-day expiry from the moment it was first issued and a
+		// renewing client still died at day 30 — fixing only the access
+		// token's renewal moved the fuse, it did not remove it.
+		//
+		// Deliberately NOT revoke-on-use: the OLD refresh token
+		// (`refreshTokenRaw`/`refreshTokenHash`) is left standing until its
+		// own expiry rather than revoked here. A client that ignores this
+		// response's `refresh_token` and replays the old value keeps
+		// working until that old token's own 30-day clock runs out — see
+		// PR body for why revoke-on-use rotation is deferred rather than
+		// shipped in this change.
+		const newRefreshToken = randomOpaqueToken();
+		const newRefreshTokenHash = await sha256Hex(newRefreshToken);
+		await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:createRefreshToken" as any,
+			{
+				callerToken: masterTokenForRefresh,
+				tokenHash: newRefreshTokenHash,
+				clientId: record.clientId,
+				userId: record.userId,
+				scopeProfile: profile.profileId,
+				expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
+			},
+		);
 		await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
@@ -901,7 +930,7 @@ app.post("/token", async (c) => {
 				namespaceReadPrefixes: profile.namespaceReadPrefixes,
 				namespaceWritePrefixes: profile.namespaceWritePrefixes,
 				expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
-				refreshTokenHash,
+				refreshTokenHash: newRefreshTokenHash,
 				clerkOrgSlug: profile.clerkOrgSlug,
 			},
 		);
@@ -909,7 +938,7 @@ app.post("/token", async (c) => {
 			access_token: accessToken,
 			token_type: "Bearer",
 			expires_in: ACCESS_TOKEN_TTL_SECONDS,
-			refresh_token: refreshTokenRaw, // reused
+			refresh_token: newRefreshToken,
 			// SC: standardized on mcp:full
 			scope: "mcp:full",
 		});
