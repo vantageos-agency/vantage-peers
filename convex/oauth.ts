@@ -751,6 +751,12 @@ export const provisionOrganization = mutation({
 				clientId: v.string(),
 				clientSecret: v.union(v.string(), v.null()),
 				accessToken: v.union(v.string(), v.null()),
+				// SEAT_REFRESH_TOKEN (k1784cq353qpmw9fmn8me551qs8ev2z9): a
+				// provisioned seat's OWN refresh token, minted alongside its
+				// access token, same 30-day life the HTTP authorization_code
+				// flow gives every other refresh token. Returned once, like
+				// clientSecret/accessToken -- null on replay, never re-shown.
+				refreshToken: v.union(v.string(), v.null()),
 			}),
 		),
 	}),
@@ -856,6 +862,7 @@ export const provisionOrganization = mutation({
 					clientId: client?.clientId ?? "",
 					clientSecret: null,
 					accessToken: null,
+					refreshToken: null,
 				});
 			}
 			if (provisioningAdminSubject) {
@@ -927,6 +934,27 @@ export const provisionOrganization = mutation({
 				tokenEndpointAuthMethod: "client_secret_basic",
 			});
 
+			// SEAT_REFRESH_TOKEN (k1784cq353qpmw9fmn8me551qs8ev2z9): mint the
+			// refresh token BEFORE the access token so the access-token row's
+			// `refreshTokenHash` can carry its hash, exactly like the /token
+			// authorization_code flow links the two. Life is 30 days — the
+			// same duration the HTTP path's REFRESH_TOKEN_TTL_SECONDS uses.
+			// The access token's own 7-day life is UNCHANGED: a provisioned
+			// seat's access token has always lived a week, and widening that
+			// here would be a silent behaviour change for seats already in
+			// the field. The two TTLs deliberately differ from the
+			// authorization_code flow's 1 hour / 30 days — see PR body.
+			const refreshToken = randomOpaqueHex(32);
+			const refreshTokenHash = await sha256Hex(refreshToken);
+			await ctx.db.insert("oauth_refresh_tokens", {
+				tokenHash: refreshTokenHash,
+				clientId,
+				userId: name,
+				scopeProfile: profileId,
+				expiresAt: now + 30 * 24 * 3600 * 1000,
+				createdAt: now,
+			});
+
 			const accessToken = randomOpaqueHex(32);
 			const tokenHash = await sha256Hex(accessToken);
 			await ctx.db.insert("oauth_access_tokens", {
@@ -939,6 +967,7 @@ export const provisionOrganization = mutation({
 				namespaceReadPrefixes: [`orchestrator/${name}`, `project/${slug}`],
 				namespaceWritePrefixes: [`orchestrator/${name}`, `project/${slug}`],
 				expiresAt: now + 7 * 24 * 3600 * 1000,
+				refreshTokenHash,
 				createdAt: now,
 				clerkOrgSlug: slug,
 			});
@@ -949,6 +978,7 @@ export const provisionOrganization = mutation({
 				clientId,
 				clientSecret,
 				accessToken,
+				refreshToken,
 			});
 		}
 
