@@ -360,6 +360,41 @@ DECIDES_NOTHING = [
         "Please do not add it yourself; someone will get to this next week.",
         id="the-marker-quoted-inside-an-instruction",
     ),
+    # The reviewer's four, and the fact that they are the REVIEWER's is the finding.
+    # Everything above was written by the matcher's own author. The corpus had reached
+    # thirty-two cases and still held neither a blockquote nor a wrapped line. Both
+    # were found in minutes by asking "what does a person TYPE on a thread" instead of
+    # "what does a verdict LOOK like" — which is the operative form of the rule this
+    # file already states, now applied by someone else to the same matcher.
+    #
+    # Three of the four share one cause: `>` was in the leading class of all three
+    # anchors. A blockquote is markdown for "someone else said this", so the detector
+    # read a CITATION as an UTTERANCE — the delivery's own failure, returning inside
+    # the fix for it.
+    pytest.param(
+        "> ### Eta - APPROVED - #1327 at 4f0d4ae\n\n"
+        "That is the shape I meant. Have not looked at yours yet.",
+        id="a-blockquote-of-another-pull-requests-header",
+    ),
+    pytest.param(
+        "For reference, the footer looks like this:\n\n"
+        "> ETA_REVIEWED_COMMIT_SHA: 4f0d4ae\n\n"
+        "Mine is not written yet.",
+        id="a-blockquote-of-the-trailer-with-an-example-sha",
+    ),
+    pytest.param(
+        "Pi writes it like so:\n\n> [MERGE-APPROVED]\n\n"
+        "I am not the one who writes that.",
+        id="a-blockquote-of-the-marker-on-its-own-quoted-line",
+    ),
+    # The fourth is separate: `.` was in the header's TRAILING separator class, so
+    # under re.MULTILINE any hand-wrapped line beginning "approved." was a header. A
+    # dash, colon or pipe INTRODUCES what follows; a full stop ENDS a sentence.
+    pytest.param(
+        "I read it twice and nothing here is\n"
+        "approved. I will get to it properly tomorrow.",
+        id="a-hand-wrapped-line-beginning-with-approved-full-stop",
+    ),
 ]
 
 
@@ -397,3 +432,52 @@ def test_prose_in_a_review_body_is_not_a_verdict_either(tmp_path, body):
         ],
     }
     assert run_snapshot(snapshot(tmp_path, [prose])).returncode == 1
+
+
+QUOTATION_CLASSES = [
+    pytest.param(
+        '    r"^[ \\t#*_]*"',
+        '    r"^[ \\t>#*_]*"',
+        id="the-header-anchor-admits-a-blockquote-again",
+    ),
+    pytest.param(
+        'r"^[ \\t*_]*\\[MERGE-APPROVED\\]',
+        'r"^[ \\t>*_]*\\[MERGE-APPROVED\\]',
+        id="the-marker-anchor-admits-a-blockquote-again",
+    ),
+    pytest.param(
+        'r"^[ \\t*_]*[A-Z][A-Z0-9]*_REVIEWED_COMMIT_SHA',
+        'r"^[ \\t>*_]*[A-Z][A-Z0-9]*_REVIEWED_COMMIT_SHA',
+        id="the-trailer-anchor-admits-a-blockquote-again",
+    ),
+    pytest.param(
+        '    r"[ \\t]*(?:[—–:|*_-]|$)",',
+        '    r"[ \\t]*(?:[—–:|*_.-]|$)",',
+        id="the-header-separator-admits-a-full-stop-again",
+    ),
+]
+
+
+@pytest.mark.parametrize("present,relapsed", QUOTATION_CLASSES)
+def test_each_removed_character_is_load_bearing(tmp_path, present, relapsed):
+    """Put ONE character back and the probe must go red.
+
+    Four characters were removed across the three anchors — `>` from each leading
+    class, `.` from the header's trailing class. This restores them one at a time in a
+    COPY of the script and requires `--self-test` to fail each time. A character
+    removed without this is a character nobody can prove was doing harm, and the next
+    person to find the regex ugly will put it back."""
+    source = CHECK.read_text()
+    assert present in source, f"the script no longer contains {present!r}"
+    mutant = tmp_path / "relapsed.py"
+    mutant.write_text(source.replace(present, relapsed, 1))
+    result = subprocess.run(
+        [sys.executable, str(mutant), "--self-test"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1, (
+        "the self-test passed with the character restored, so it proves nothing: "
+        + result.stdout
+        + result.stderr
+    )

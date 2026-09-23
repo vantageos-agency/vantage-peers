@@ -141,26 +141,40 @@ _WORDS = "|".join(VERDICT_WORDS)
 # words, a DASH-OR-COLON separator, the decision, then a separator or end of line.
 # The separator before the decision is what prose lacks: "I will revise the wording"
 # and "I have NOT approved this yet" have only a space there.
+#
+# `>` is NOT in the leading class, and this is the one prefix that had to go. The
+# others — `#`, `*`, `_`, whitespace — are a person formatting their OWN verdict. A
+# blockquote is markdown for "someone else said this", so admitting it makes the
+# detector read a CITATION as an UTTERANCE: the delivery's own failure returning
+# inside the fix for it.
+#
+# `.` is NOT in the trailing separator class. A dash, colon or pipe INTRODUCES what
+# follows; a full stop ENDS a sentence. With re.MULTILINE, admitting it made any
+# hand-wrapped line beginning "approved." a header — "nothing here is\napproved. I
+# will get to it tomorrow" matched at span (55,64).
 VERDICT_HEADER_RE = re.compile(
-    r"^[ \t>#*_]*"
+    r"^[ \t#*_]*"
     r"(?:[A-Za-z][A-Za-z.'-]{0,20}(?:[ \t]+[A-Za-z][A-Za-z.'-]{0,20}){0,2}"
     r"[ \t]*[—–:|-]+[ \t]*)?"
     rf"(?:{_WORDS})\b"
-    r"[ \t]*(?:[—–:|*_.-]|$)",
+    r"[ \t]*(?:[—–:|*_-]|$)",
     re.IGNORECASE | re.MULTILINE,
 )
 
 # ANCHOR 2 — the doctrine marker standing as the utterance of its line. A short
-# citation (a sha, a task id) may follow it; a sentence may not.
+# citation (a sha, a task id) may follow it; a sentence may not. No `>`: quoting the
+# marker inside a blockquote does not count, which is what this docstring already
+# claimed while the leading class contradicted it.
 VERDICT_MARKER_RE = re.compile(
-    r"^[ \t>*_]*\[MERGE-APPROVED\][ \t]*[—–:|-]*[ \t]*\S{0,64}[ \t]*$",
+    r"^[ \t*_]*\[MERGE-APPROVED\][ \t]*[—–:|-]*[ \t]*\S{0,64}[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
 # ANCHOR 3 — the trailer every posted verdict carries, WITH its commit id. Naming
-# the trailer in prose without a sha after it does not match.
+# the trailer in prose without a sha after it does not match. No `>`: quoting someone
+# else's trailer, sha and all, is a citation of their verdict, never this author's.
 VERDICT_TRAILER_RE = re.compile(
-    r"^[ \t>*_]*[A-Z][A-Z0-9]*_REVIEWED_COMMIT_SHA\**[ \t]*:?[ \t]*`?[0-9a-f]{7,40}`?",
+    r"^[ \t*_]*[A-Z][A-Z0-9]*_REVIEWED_COMMIT_SHA\**[ \t]*:?[ \t]*`?[0-9a-f]{7,40}`?",
     re.MULTILINE,
 )
 
@@ -517,6 +531,45 @@ MUST_REPORT = [
                 "body": (
                     "[MERGE-APPROVED] is the marker a coordinator posts, never the "
                     "contributor. Please do not add it yourself."
+                ),
+            },
+            # The four below are the reviewer's, not the author's, and that is why
+            # they are here. The corpus had grown from six cases to thirty-two and
+            # still held neither a blockquote nor a wrapped line — both were found in
+            # minutes by asking "what does a person TYPE on a thread" instead of
+            # "what does a verdict LOOK like". Three share one cause (`>` in the
+            # leading class), the fourth is the full stop in the header's separator.
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-21T15:00:00Z",
+                "body": (
+                    "> ### Eta - APPROVED - #1327 at 4f0d4ae\n\n"
+                    "That is the shape I meant. Have not looked at yours yet."
+                ),
+            },
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-21T15:10:00Z",
+                "body": (
+                    "For reference, the footer looks like this:\n\n"
+                    "> ETA_REVIEWED_COMMIT_SHA: 4f0d4ae\n\n"
+                    "Mine is not written yet."
+                ),
+            },
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-21T15:20:00Z",
+                "body": (
+                    "Pi writes it like so:\n\n> [MERGE-APPROVED]\n\n"
+                    "I am not the one who writes that."
+                ),
+            },
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-21T15:30:00Z",
+                "body": (
+                    "I read it twice and nothing here is\n"
+                    "approved. I will get to it properly tomorrow."
                 ),
             },
         ],
