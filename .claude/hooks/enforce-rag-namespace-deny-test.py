@@ -70,6 +70,107 @@ OVERRIDE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches a `git commit` invocation ANYWHERE in the command line — never
+# anchored to the start of the string. The anchored form
+# (`^\s*git\s+commit\b`) was the trigger defect: `cd <repo> && git commit
+# -m x` and `git -C <repo> commit -m x` are the ORDINARY shape a subagent
+# commits from inside a git worktree — neither starts with "git commit" —
+# so the anchored regex silently passed exactly the population this gate
+# exists to inspect (measured: exit 0 on a real RULE #24-sibling violation).
+GIT_COMMIT_RE = re.compile(r"\bgit\b[^;&|\n]*?\bcommit\b")
+
+# Shell metacharacters that separate one command from the next in a chain.
+CHAIN_SPLIT_RE = re.compile(r"&&|\|\||[;\n|]")
+
+# Flags that tell git to operate on a repository OTHER than its cwd.
+REPO_FLAG_RE = re.compile(r"(^|\s)(-C(\s|=)|--git-dir(=|\s)|--work-tree(=|\s))")
+
+CD_RE = re.compile(r"^\s*cd\b")
+
+
+def _strip_quoted_strings(command: str) -> str:
+    """Blank out the contents of single- and double-quoted substrings so a
+    commit MESSAGE that merely mentions "cd" or "git commit" (e.g.
+    `git commit -m "fix: cd into the dir and git commit"`) is never
+    mistaken for an actual shell `cd` or a second git invocation. Only the
+    unquoted shell structure is judged."""
+    out = []
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch in ("'", '"'):
+            quote = ch
+            j = i + 1
+            while j < n and command[j] != quote:
+                if quote == '"' and command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                j += 1
+            out.append(" ")
+            i = j + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _invokes_git_commit(command: str) -> bool:
+    return bool(GIT_COMMIT_RE.search(_strip_quoted_strings(command)))
+
+
+def _names_unresolved_repo(command: str) -> bool:
+    """True when the command's git-commit invocation explicitly names a
+    repository the hook did not resolve from the payload's own `cwd` —
+    either via a `-C <dir>` / `--git-dir=` / `--work-tree=` flag on the
+    git invocation itself, or via a `cd` earlier in the SAME shell chain
+    (joined by `&&`, `;`, `|`) that could move the working directory
+    before the commit runs.
+
+    DECISION (fail-closed, chosen over parsing the target and judging it
+    anyway): the hook REFUSES rather than guesses which repository the
+    command actually targets. An over-fire here is a false RED, which is
+    survivable; guessing wrong and silently passing a real violation is
+    not — that is the exact defect this rewrite closes. This extends the
+    same "an unreadable subject is a refusal, not conformance" doctrine
+    `_resolve_repo` already applies to a missing/unresolvable cwd, to a
+    command that NAMES a different repo than that cwd.
+    """
+    stripped = _strip_quoted_strings(command)
+    parts = CHAIN_SPLIT_RE.split(stripped)
+    commit_part = None
+    commit_idx = None
+    for idx, part in enumerate(parts):
+        if GIT_COMMIT_RE.search(part):
+            commit_part = part
+            commit_idx = idx
+            break
+    if commit_part is None:
+        return False
+    if REPO_FLAG_RE.search(commit_part):
+        return True
+    for earlier in parts[:commit_idx]:
+        if CD_RE.match(earlier):
+            return True
+    return False
+
+
+UNRESOLVED_REPO_STDERR_MSG = """\
+BLOCKED: this command names a repository the hook did not resolve.
+
+Your command invokes `git commit` together with `-C <dir>`,
+`--git-dir=`, `--work-tree=`, or a `cd` earlier in the same shell chain
+(e.g. `cd <dir> && git commit ...`). This hook resolves the repository
+being judged from the PreToolUse payload's own `cwd` — a `cd` or a
+`-C` / `--git-dir` / `--work-tree` flag can move the actual commit
+somewhere else entirely, and the hook cannot honour that without
+guessing.
+
+DECISION: guessing is refused. Run `git commit` directly, from the
+repository's own working directory, with no `cd` chaining and no
+`-C` / `--git-dir` / `--work-tree` flag — so the payload `cwd` IS the
+repository being committed to.
+"""
+
 
 class RepoResolutionError(Exception):
     """Raised when the PreToolUse payload's cwd cannot be resolved to a git
@@ -221,9 +322,16 @@ def main() -> int:
         if not isinstance(command, str):
             return 0
 
-        # Only fire on git commit commands
-        if not re.match(r"\s*git\s+commit\b", command):
+        # Only fire on commands that invoke git commit — anywhere in the
+        # command line, not only at the start (see GIT_COMMIT_RE docstring).
+        if not _invokes_git_commit(command):
             return 0
+
+        # Fail-closed: a command that names a repository this hook did not
+        # resolve from the payload cwd is refused, never guessed at.
+        if _names_unresolved_repo(command):
+            sys.stderr.write(UNRESOLVED_REPO_STDERR_MSG)
+            return 2
 
         if _has_override(command):
             return 0
