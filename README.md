@@ -20,12 +20,6 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 Multi-agent Claude Code crews share one persistent brain via 109 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
 
-## Deploy on Railway (1-click)
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
-
-Deploy your own VantagePeers MCP server in 1 click. Auto-configures `CONVEX_URL` + healthcheck + public HTTPS endpoint. Free Convex tier sufficient for solo + small-team deployments. See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full quick-start guide.
-
 ## Backend: Convex
 
 VantagePeers runs on [Convex](https://convex.dev) — a real-time database with serverless functions, vector search, and built-in cron. `CONVEX_URL` in your environment points to a specific Convex deployment.
@@ -46,6 +40,11 @@ VantagePeers runs on [Convex](https://convex.dev) — a real-time database with 
 
 For any path, the MCP server is identical (`npm install -g vantage-peers-mcp` then `vantage-peers-mcp` to start) — only the `CONVEX_URL` differs.
 
+## Deploy on Railway (1-click)
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/vantagepeers-mcp)
+
+Deploy your own VantagePeers MCP server in 1 click. Auto-configures `CONVEX_URL` + healthcheck + public HTTPS endpoint. Free Convex tier sufficient for solo + small-team deployments. See [vantagepeers.com/docs](https://vantagepeers.com/docs) for the full quick-start guide.
 ## Architecture
 
 ```mermaid
