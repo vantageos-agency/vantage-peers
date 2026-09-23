@@ -267,6 +267,130 @@ check_exit "Pole 6 (schema-mirror, payload has no cwd key)" 2 "$(cat "$P6.rc")" 
 run_hook "$RAG_HOOK" "$P6"
 check_exit "Pole 7 (rag-deny-test, payload has no cwd key)" 2 "$(cat "$P6.rc")" "$P6.out"
 
+# =======================================================================
+# Poles 8-13 — the TRIGGER itself, not the body.
+#
+# Every payload above (Poles 1-7) carries a BARE `git commit -m "…"` —
+# the only shape the pre-fix anchored regex (`^\s*git\s+commit\b`) ever
+# matched. That means Poles 1-7 prove the hooks' BODY (what they decide
+# once they fire) and say NOTHING about whether they RUN on the ordinary
+# shape a subagent commits from inside a git worktree: `cd <repo> &&
+# git commit ...` or `git -C <repo> commit ...`. Measured against the
+# unmodified hooks at this branch's merge-base: both shapes returned
+# exit 0 — a SILENT PASS — on a genuinely staged RULE #24 / rag-deny-test
+# violation, in the same breath as a bare `git commit -m x` on the SAME
+# violating tree returning exit 2 (BLOCKED). The gate was alive and the
+# tree really violated; it simply never looked. Poles 8-11 pin the fix:
+# fail-closed REFUSAL (exit 2, distinct message) whenever a command both
+# invokes `git commit` and names a repository the hook did not resolve
+# from the payload's own `cwd`. Poles 12-13 pin the false-positive guard:
+# a commit MESSAGE that merely mentions "cd" or "git commit" in quotes
+# must still be judged NORMALLY, never refused.
+#
+# The WORKTREE fixture, at this point in the script, already carries a
+# real unresolved violation on BOTH hooks simultaneously: convex/schema.ts
+# is staged with no mcp-server/src/tools/ file staged (Poles 1-4's state,
+# untouched since), and convex/auth.ts is staged with no deny test staged
+# (Poles 5a-5d's state, untouched since). Reused as-is — no restaging.
+# =======================================================================
+echo
+echo "### Pole 8 — schema-mirror, 'cd <repo> && git commit' on a REAL violation -> must NOT be exit 0"
+P8="$TMP_ROOT/p8.json"
+python3 - "$WORKTREE" > "$P8" <<'PYEOF'
+import json, sys
+cwd = sys.argv[1]
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": f'cd {cwd} && git commit -m x'},
+    "cwd": cwd,
+}))
+PYEOF
+run_hook "$SCHEMA_HOOK" "$P8"
+check_exit "Pole 8 (schema-mirror, cd-chained commit, REFUSED not silently passed)" 2 "$(cat "$P8.rc")" "$P8.out"
+
+echo
+echo "### Pole 9 — schema-mirror, 'git -C <repo> commit' on a REAL violation -> must NOT be exit 0"
+P9="$TMP_ROOT/p9.json"
+python3 - "$WORKTREE" > "$P9" <<'PYEOF'
+import json, sys
+cwd = sys.argv[1]
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": f'git -C {cwd} commit -m x'},
+    "cwd": cwd,
+}))
+PYEOF
+run_hook "$SCHEMA_HOOK" "$P9"
+check_exit "Pole 9 (schema-mirror, -C flagged commit, REFUSED not silently passed)" 2 "$(cat "$P9.rc")" "$P9.out"
+
+echo
+echo "### Pole 10 — rag-deny-test, 'cd <repo> && git commit' on a REAL violation -> must NOT be exit 0"
+P10="$TMP_ROOT/p10.json"
+python3 - "$WORKTREE" > "$P10" <<'PYEOF'
+import json, sys
+cwd = sys.argv[1]
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": f'cd {cwd} && git commit -m x'},
+    "cwd": cwd,
+}))
+PYEOF
+run_hook "$RAG_HOOK" "$P10"
+check_exit "Pole 10 (rag-deny-test, cd-chained commit, REFUSED not silently passed)" 2 "$(cat "$P10.rc")" "$P10.out"
+
+echo
+echo "### Pole 11 — rag-deny-test, 'git -C <repo> commit' on a REAL violation -> must NOT be exit 0"
+P11="$TMP_ROOT/p11.json"
+python3 - "$WORKTREE" > "$P11" <<'PYEOF'
+import json, sys
+cwd = sys.argv[1]
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": f'git -C {cwd} commit -m x'},
+    "cwd": cwd,
+}))
+PYEOF
+run_hook "$RAG_HOOK" "$P11"
+check_exit "Pole 11 (rag-deny-test, -C flagged commit, REFUSED not silently passed)" 2 "$(cat "$P11.rc")" "$P11.out"
+
+echo
+echo "### Pole 12 — schema-mirror, message MENTIONS 'cd'/'git commit' in quotes on a CONFORMING tree -> exit 0"
+echo "// mirror tool re-add $(date +%s)" >> "$WORKTREE/mcp-server/src/tools/newentity.ts"
+git -C "$WORKTREE" add mcp-server/src/tools/newentity.ts
+P12="$TMP_ROOT/p12.json"
+python3 - "$WORKTREE" > "$P12" <<'PYEOF'
+import json, sys
+cwd = sys.argv[1]
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": 'git commit -m "fix: cd into the dir and git commit"'},
+    "cwd": cwd,
+}))
+PYEOF
+run_hook "$SCHEMA_HOOK" "$P12"
+check_exit "Pole 12 (schema-mirror, quoted mention is NOT mistaken for a real cd/second commit)" 0 "$(cat "$P12.rc")" "$P12.out"
+git -C "$WORKTREE" reset -q mcp-server/src/tools/newentity.ts
+
+echo
+echo "### Pole 13 — rag-deny-test, message MENTIONS 'cd'/'git commit' in quotes on a CONFORMING tree -> exit 0"
+cat > "$WORKTREE/convex/__tests__/rag-namespace-deny.test.ts" <<'EOF'
+it("AUTH_NAMESPACE_DENIED — rejects cross-tenant deny query", async () => {});
+EOF
+git -C "$WORKTREE" add convex/__tests__/rag-namespace-deny.test.ts
+P13="$TMP_ROOT/p13.json"
+python3 - "$WORKTREE" > "$P13" <<'PYEOF'
+import json, sys
+cwd = sys.argv[1]
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": 'git commit -m "fix: cd into the dir and git commit"'},
+    "cwd": cwd,
+}))
+PYEOF
+run_hook "$RAG_HOOK" "$P13"
+check_exit "Pole 13 (rag-deny-test, quoted mention is NOT mistaken for a real cd/second commit)" 0 "$(cat "$P13.rc")" "$P13.out"
+git -C "$WORKTREE" reset -q convex/__tests__/rag-namespace-deny.test.ts
+
 echo
 echo "================================================================"
 echo "RESULT: $PASSES pass, $FAILURES fail"
