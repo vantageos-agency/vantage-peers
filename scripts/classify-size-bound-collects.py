@@ -58,15 +58,41 @@ A rename or reorder that breaks an anchor shows up as exactly the failure
 mode this script exists to catch: the site becomes "missing from triage"
 and the check fails loud, rather than silently keeping a stale verdict
 attached to the wrong line.
+
+--- Parameterisation (task k17e952wjt6fdxzjktzh8r9tws8ezv39) ---
+
+The DETECTION is Convex knowledge and belongs to every product built on
+Convex; the TRIAGE is product knowledge and belongs to exactly one. This
+script is published once, as a catalogue artifact, and pulled — never
+copied — by each consumer, which supplies its OWN `--root`/`--scan`/
+`--triage` and keeps its OWN triage file. Nothing about the detection
+logic below changed for this: `--root`, `--scan`, `--triage` are lifted
+out of what were previously hardcoded `REPO_ROOT`/`CONVEX_DIR`/
+`TRIAGE_PATH` module constants, with IDENTICAL defaults, so a caller that
+passes none of them gets byte-identical behaviour to the pre-parameterised
+script: this repo's own default invocation (`python3
+scripts/classify-size-bound-collects.py`, no flags) must keep producing
+the tally pinned against `scripts/collect-triage.json` as of this task:
+IN=8, OUT=11, UNJUDGED=155 of 174 survivors. A parameterisation that
+changes that count here has changed the detector, not its plumbing.
+
+  --root    Repository root. Default: this file's own repo (two parents
+            up from this script, as before). An unreadable/nonexistent
+            --root (or a --scan that does not resolve under it) is a hard
+            FATAL (exit 2), never a silent empty scan — a clean run over
+            nothing is exactly the false-negative shape this whole class
+            exists to catch.
+  --scan    Directory to sweep, relative to --root. Default: "convex".
+  --triage  Path to the triage JSON. Relative paths are resolved against
+            --root. Default: "scripts/collect-triage.json" under --root.
 """
+import argparse
 import json
 import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CONVEX_DIR = REPO_ROOT / "convex"
-TRIAGE_PATH = REPO_ROOT / "scripts" / "collect-triage.json"
+THIS_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 EXCLUDE_DIR_PARTS = {"__tests__", "_generated"}
 # Migrations are operator-invoked, one-shot batch jobs (already the "fixed
@@ -94,11 +120,56 @@ SYMBOL_RE = re.compile(
 VALID_VERDICTS = {"IN", "OUT", "UNJUDGED"}
 
 
-def iter_source_files():
-    for path in sorted(CONVEX_DIR.rglob("*.ts")):
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description="Sweep for functions whose per-execution work grows "
+        "with the corpus (unbounded .collect()/.take()), gated by a "
+        "committed per-product triage file.",
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=THIS_REPO_ROOT,
+        help="Repository root. Default: this script's own repo.",
+    )
+    parser.add_argument(
+        "--scan",
+        default="convex",
+        help="Directory to sweep, relative to --root. Default: convex",
+    )
+    parser.add_argument(
+        "--triage",
+        default=None,
+        help="Path to the triage JSON. Relative paths resolve against "
+        "--root. Default: scripts/collect-triage.json under --root.",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_scan_dir(root: Path, scan: str) -> Path:
+    root = root.resolve() if root.exists() else root
+    if not root.exists() or not root.is_dir():
+        print(f"FATAL: --root {root} is not a readable directory", file=sys.stderr)
+        sys.exit(2)
+    scan_dir = (root / scan).resolve()
+    if not scan_dir.exists() or not scan_dir.is_dir():
+        print(f"FATAL: --scan resolved to {scan_dir}, which is not a readable directory", file=sys.stderr)
+        sys.exit(2)
+    return scan_dir
+
+
+def resolve_triage_path(root: Path, triage: str | None) -> Path:
+    if triage is None:
+        return root / "scripts" / "collect-triage.json"
+    triage_path = Path(triage)
+    return triage_path if triage_path.is_absolute() else (root / triage_path)
+
+
+def iter_source_files(root: Path, scan_dir: Path):
+    for path in sorted(scan_dir.rglob("*.ts")):
         if any(part in EXCLUDE_DIR_PARTS for part in path.parts):
             continue
-        rel_parts = path.relative_to(CONVEX_DIR).parts
+        rel_parts = path.relative_to(scan_dir).parts
         if rel_parts and rel_parts[0] in EXCLUDE_TOP_LEVEL_DIRS:
             continue
         if path.name.endswith(".test.ts"):
@@ -106,14 +177,14 @@ def iter_source_files():
         yield path
 
 
-def find_hits(path: Path):
+def find_hits(root: Path, path: Path):
     """Returns a list of (key, lineno, kind, has_index, line) tuples."""
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     hits = []
     current_symbol = "<module-top>"
     symbol_ordinal: dict[str, int] = {}
-    rel = path.relative_to(REPO_ROOT)
+    rel = path.relative_to(root)
     for lineno, line in enumerate(lines, start=1):
         m = SYMBOL_RE.match(line)
         if m:
@@ -138,32 +209,37 @@ def find_hits(path: Path):
     return hits
 
 
-def load_triage():
-    if not TRIAGE_PATH.exists():
-        print(f"FATAL: triage file not found at {TRIAGE_PATH}", file=sys.stderr)
+def load_triage(triage_path: Path):
+    if not triage_path.exists():
+        print(f"FATAL: triage file not found at {triage_path}", file=sys.stderr)
         sys.exit(2)
-    data = json.loads(TRIAGE_PATH.read_text(encoding="utf-8"))
+    data = json.loads(triage_path.read_text(encoding="utf-8"))
     for key, entry in data.items():
         if entry.get("verdict") not in VALID_VERDICTS:
             print(
-                f"FATAL: {TRIAGE_PATH} entry {key!r} has invalid verdict {entry.get('verdict')!r}"
+                f"FATAL: {triage_path} entry {key!r} has invalid verdict {entry.get('verdict')!r}"
                 f" (must be one of {sorted(VALID_VERDICTS)})",
                 file=sys.stderr,
             )
             sys.exit(2)
         if not entry.get("reason"):
-            print(f"FATAL: {TRIAGE_PATH} entry {key!r} has no reason", file=sys.stderr)
+            print(f"FATAL: {triage_path} entry {key!r} has no reason", file=sys.stderr)
             sys.exit(2)
     return data
 
 
-def main():
+def main(argv=None):
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+    root = args.root.resolve() if args.root.exists() else args.root
+    scan_dir = resolve_scan_dir(args.root, args.scan)
+    triage_path = resolve_triage_path(root, args.triage)
+
     unindexed = []
     indexed = []
     all_hits = []
-    for path in iter_source_files():
-        for key, lineno, kind, has_index, line in find_hits(path):
-            rel = path.relative_to(REPO_ROOT)
+    for path in iter_source_files(root, scan_dir):
+        for key, lineno, kind, has_index, line in find_hits(root, path):
+            rel = path.relative_to(root)
             entry = f"{rel}:{lineno}: [{kind}] {line}"
             all_hits.append((key, entry))
             if has_index:
@@ -188,7 +264,7 @@ def main():
     print(f"TOTAL SURVIVORS: {len(unindexed) + len(indexed)} (unindexed={len(unindexed)}, indexed={len(indexed)})")
 
     # --- Triage coverage gate ---
-    triage = load_triage()
+    triage = load_triage(triage_path)
     missing = [key for key, _entry in all_hits if key not in triage]
     counts = {"IN": 0, "OUT": 0, "UNJUDGED": 0}
     for key, _entry in all_hits:
@@ -204,7 +280,7 @@ def main():
 
     if missing:
         print()
-        print(f"FAIL: {len(missing)} survivor(s) have NO triage entry in {TRIAGE_PATH}:")
+        print(f"FAIL: {len(missing)} survivor(s) have NO triage entry in {triage_path}:")
         for key in missing:
             print(f"  {key}")
         return 2
