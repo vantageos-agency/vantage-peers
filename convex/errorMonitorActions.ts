@@ -72,36 +72,55 @@ async function checkLinkedIssueOpen(
 	}
 }
 
+// Returns true only when the comment demonstrably landed (2xx response).
+// A non-2xx response AND a thrown/rejected fetch (network failure, same
+// class checkLinkedIssueOpen guards against) both resolve to false — the
+// caller MUST treat false as "the occurrence was not reported" and fall
+// through to filing a new issue. A duplicate issue is the cheap failure; a
+// recurrence nobody hears about because a comment silently failed to land
+// is the expensive one — this is the exact property this whole delivery
+// exists to close, so this path gets the SAME fail-safe-toward-noise
+// treatment as the open/closed check above it.
 async function commentOnExistingIssue(
 	owner: string,
 	repo: string,
 	issueNumber: number,
 	token: string,
 	occurrenceCount: number,
-): Promise<void> {
+): Promise<boolean> {
 	const body = [
 		`**New occurrence:** ${new Date().toISOString()}`,
 		`**Total occurrences (this error group):** ${occurrenceCount}`,
 	].join("\n");
 
-	const resp = await fetch(
-		`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
-		{
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${token}`,
-				"Content-Type": "application/json",
-				Accept: "application/vnd.github.v3+json",
-				"User-Agent": "vantagepeers-bot/1.0",
+	try {
+		const resp = await fetch(
+			`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/json",
+					Accept: "application/vnd.github.v3+json",
+					"User-Agent": "vantagepeers-bot/1.0",
+				},
+				body: JSON.stringify({ body }),
 			},
-			body: JSON.stringify({ body }),
-		},
-	);
-	if (!resp.ok) {
-		const text = await resp.text();
-		console.error(
-			`[ErrorMonitor] Failed to comment on existing issue #${issueNumber}: ${resp.status} — ${text}`,
 		);
+		if (!resp.ok) {
+			const text = await resp.text();
+			console.error(
+				`[ErrorMonitor] Failed to comment on existing issue #${issueNumber}: ${resp.status} — ${text}`,
+			);
+			return false;
+		}
+		return true;
+	} catch (err) {
+		console.error(
+			`[ErrorMonitor] Exception commenting on existing issue #${issueNumber}:`,
+			err,
+		);
+		return false;
 	}
 }
 
@@ -193,17 +212,25 @@ export const createGitHubIssue = internalAction({
 				token,
 			);
 			if (state === "open") {
-				await commentOnExistingIssue(
+				const commented = await commentOnExistingIssue(
 					owner,
 					repo,
 					errorLog.issueNumber,
 					token,
 					errorLog.count,
 				);
-				return null;
+				if (commented) {
+					return null;
+				}
+				// The comment did not demonstrably land (rate limit, 403 on a
+				// locked issue, transient 5xx, or a thrown fetch) — fall
+				// through and file a new issue rather than let the
+				// occurrence go unreported. Same fail-safe-toward-noise
+				// treatment as "closed"/"error" below.
 			}
-			// state === "closed" or "error" — fall through and file a new
-			// issue, same as the distinct-new-error path below.
+			// state === "closed" or "error", or the comment above failed to
+			// land — fall through and file a new issue, same as the
+			// distinct-new-error path below.
 		}
 
 		const body = [

@@ -47,6 +47,11 @@ type IssueState = "open" | "closed" | "error";
 function mockGitHubFetch(opts: {
 	issueState?: Record<number, IssueState>;
 	createReturnsNumber?: number;
+	// Pole 5 — the comment POST itself fails (rate limit, 403 on a locked
+	// issue, transient 5xx). Distinct from `issueState`'s "error" (the
+	// open/closed CHECK failing) — this is the comment ATTEMPT failing on
+	// an issue confirmed open.
+	commentFails?: boolean;
 }) {
 	const calls: Array<{ url: string; method: string }> = [];
 	const mockFn = vi
@@ -74,6 +79,14 @@ function mockGitHubFetch(opts: {
 			// POST .../issues/{number}/comments — comment on an open issue
 			const commentMatch = url.match(/\/issues\/(\d+)\/comments$/);
 			if (method === "POST" && commentMatch) {
+				if (opts.commentFails) {
+					return {
+						ok: false,
+						status: 403,
+						json: async () => ({}),
+						text: async () => "simulated comment rejection",
+					};
+				}
 				return {
 					ok: true,
 					status: 201,
@@ -254,5 +267,46 @@ describe("createGitHubIssue — repeat re-raise must not duplicate an open issue
 
 		const row = await t.run(async (ctx) => ctx.db.get(errorId));
 		expect(row?.issueNumber).toBe(1301);
+	});
+
+	test("repeat occurrence + linked issue OPEN + comment POST fails -> falls through and creates a new issue", async () => {
+		// The open/closed CHECK succeeds (issue #1275 confirmed open) — but
+		// the comment ATTEMPT itself fails (rate limit / 403 / transient 5xx).
+		// A duplicate issue is the cheap failure; a recurrence nobody hears
+		// about (comment silently dropped, nothing filed) is the expensive
+		// one — this is the path that must NOT degrade to silence.
+		const { calls } = mockGitHubFetch({
+			issueState: { 1275: "open" },
+			commentFails: true,
+			createReturnsNumber: 1302,
+		});
+		const t = createTestConvex();
+		const errorId = await insertErrorLog(t, { issueNumber: 1275, count: 19 });
+
+		await t.action(internal.errorMonitorActions.createGitHubIssue, {
+			errorId,
+			githubRepo: "elpiarthera/vantage-memory",
+			functionName: "recurringTasks:processDueTasks",
+			errorMessage: "boom",
+			stackTrace: "at x",
+			deployment: "prod",
+			orchestrator: "sigma",
+		});
+
+		// The comment WAS attempted...
+		const commentCalls = calls.filter(
+			(c) => c.method === "POST" && c.url.endsWith("/issues/1275/comments"),
+		);
+		expect(commentCalls.length).toBe(1);
+
+		// ...but since it did not land, a new issue MUST have been filed —
+		// the occurrence must not vanish silently.
+		const createCalls = calls.filter(
+			(c) => c.method === "POST" && c.url.endsWith("/issues"),
+		);
+		expect(createCalls.length).toBe(1);
+
+		const row = await t.run(async (ctx) => ctx.db.get(errorId));
+		expect(row?.issueNumber).toBe(1302);
 	});
 });
