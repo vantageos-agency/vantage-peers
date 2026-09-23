@@ -191,10 +191,22 @@ export const linkIssue = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// Issue dedup fix — APPEND to issueHistory rather than only
+		// overwriting `issueNumber`. Before this, each re-link erased the
+		// previous pointer, so a row that had spawned four issues (#1121,
+		// #1167, #1237, #1262 for hash `detbs8`) could only ever name the
+		// last one. `issueNumber` still tracks the current/most-recent
+		// issue — nothing downstream that reads it changes.
+		const existing = await ctx.db.get(args.errorId);
+		const priorHistory = existing?.issueHistory ?? [];
 		await ctx.db.patch(args.errorId, {
 			issueNumber: args.issueNumber,
 			githubRepo: args.githubRepo,
 			issueCreated: true,
+			issueHistory: [
+				...priorHistory,
+				{ issueNumber: args.issueNumber, linkedAt: Date.now() },
+			],
 		});
 		return null;
 	},
@@ -282,6 +294,49 @@ export const listActiveDeployments = internalQuery({
 });
 
 /**
+ * Issue dedup fix — reads a single errorLog row by ID so `createGitHubIssue`
+ * (a node-runtime action, `errorMonitorActions.ts`) can check whether the
+ * row already carries a linked GH issue number before deciding to POST a
+ * new one. Internal (not a client-facing tool) — server-to-server only.
+ */
+export const getErrorLogById = internalQuery({
+	args: { errorId: v.id("errorLogs") },
+	returns: v.union(
+		v.object({
+			_id: v.id("errorLogs"),
+			_creationTime: v.number(),
+			hash: v.string(),
+			deployment: v.string(),
+			functionName: v.string(),
+			errorMessage: v.string(),
+			stackTrace: v.optional(v.string()),
+			firstSeen: v.number(),
+			lastSeen: v.number(),
+			count: v.number(),
+			issueNumber: v.optional(v.number()),
+			githubRepo: v.optional(v.string()),
+			issueCreated: v.optional(v.boolean()),
+			irpMissionId: v.optional(v.id("missions")),
+			autoResolved: v.optional(v.boolean()),
+			recurrenceThreshold: v.optional(v.number()),
+			reRaiseBaselineCount: v.optional(v.number()),
+			issueHistory: v.optional(
+				v.array(
+					v.object({
+						issueNumber: v.number(),
+						linkedAt: v.number(),
+					}),
+				),
+			),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		return await ctx.db.get(args.errorId);
+	},
+});
+
+/**
  * Returns errorLog rows that have had a GH issue + IRP mission created but
  * whose error has gone quiet (lastSeen older than quietWindowMs) and whose
  * mission has NOT yet been auto-resolved. The auto-resolver cron iterates
@@ -313,6 +368,14 @@ export const listStaleAutoIrp = internalQuery({
 			recurrenceThreshold: v.optional(v.number()),
 			stackTrace: v.optional(v.string()),
 			reRaiseBaselineCount: v.optional(v.number()),
+			issueHistory: v.optional(
+				v.array(
+					v.object({
+						issueNumber: v.number(),
+						linkedAt: v.number(),
+					}),
+				),
+			),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -533,6 +596,14 @@ export const listErrors = query({
 			autoResolved: v.optional(v.boolean()),
 			recurrenceThreshold: v.optional(v.number()),
 			reRaiseBaselineCount: v.optional(v.number()),
+			issueHistory: v.optional(
+				v.array(
+					v.object({
+						issueNumber: v.number(),
+						linkedAt: v.number(),
+					}),
+				),
+			),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -581,6 +652,14 @@ export const getError = query({
 			autoResolved: v.optional(v.boolean()),
 			recurrenceThreshold: v.optional(v.number()),
 			reRaiseBaselineCount: v.optional(v.number()),
+			issueHistory: v.optional(
+				v.array(
+					v.object({
+						issueNumber: v.number(),
+						linkedAt: v.number(),
+					}),
+				),
+			),
 		}),
 		v.null(),
 	),
