@@ -33,17 +33,22 @@
  *
  * 3. Measure #1294 (briefingNotes:list) — this is a public `query` gated by
  *    `withOrgScope`, so it must be called AS an org-scoped identity. Two
- *    ways to do that against DEV:
- *
- *    (a) Convex CLI identity impersonation (if your installed `convex` CLI
- *        version supports `--identity`; check `npx convex run --help`):
- *          npx convex run briefingNotes:list '{"fields":"full"}' \
- *            --identity '{"subject":"dev-probe-acme-hr","organizationId":"size-bound-probe-acme-hr"}'
- *
- *    (b) Through the MCP server's authenticated session for a real dev org
- *        user whose Clerk org slug is "size-bound-probe-acme-hr" (this
- *        script seeds ZERO briefingNotes rows for that org on purpose — the
- *        whole point is that org owns none of the seeded data).
+ *    CONFIRMED UNREACHABLE via the Convex CLI against a real hosted DEV
+ *    deployment: `npx convex run --help` DOES list `--identity <identity>`,
+ *    but it is honored only by Convex's LOCAL backend / test harness — a
+ *    real hosted deployment's `ctx.auth.getUserIdentity()` verifies an
+ *    actual Clerk-signed JWT and ignores/rejects a client-supplied plain
+ *    JSON identity. Empirically confirmed independently: `npx convex run
+ *    orgMembership:getMembership` against hosted DEV returns
+ *    "RBAC_DENIED: getMembership requires an authenticated caller" with no
+ *    identity presented at all, --identity flag or not. So there is NO
+ *    single command either of us can run for this half — the only reachable
+ *    path is a genuine authenticated caller (the MCP server, or any real
+ *    client holding an actual Clerk JWT) for a dev org whose slug is
+ *    "size-bound-probe-acme-hr" (this script seeds ZERO briefingNotes rows
+ *    for that org on purpose — the whole point is that org owns none of the
+ *    seeded data). That is a different KIND of step (drive a real client
+ *    through a real login), not a command line to paste here.
  *
  *    BEFORE the fix (convex/briefingNotes.ts, convex/schema.ts reverted):
  *      throws "Uncaught Error: Too many bytes read in a single function
@@ -154,11 +159,17 @@ async function main(): Promise<void> {
 			`(briefingNotes.create derives orgId SOLELY from the caller's own ` +
 			`verified scope — see convex/briefingNotes.ts). This HTTP client has no ` +
 			`Clerk JWT to present, so this script cannot perform that half of the ` +
-			`seed on its own. Seed those ${OTHER_ORG_NOTE_ROW_COUNT} rows via ` +
-			`\`npx convex run briefingNotes:create '{...}' --identity ` +
-			`'{"subject":"dev-probe-other-org","organizationId":"${OTHER_ORG_SLUG}"}'\` ` +
-			`(one call per row, content = ${LARGE_CONTENT.length} chars of filler), ` +
-			`then measure per the header comment's step 3.`,
+			`seed on its own. CONFIRMED: \`npx convex run ... --identity '{...}'\` ` +
+			`does NOT work against a real hosted DEV deployment either -- that flag ` +
+			`is honored only by Convex's local backend/test harness, not by hosted ` +
+			`Convex's real ctx.auth.getUserIdentity(), which verifies an actual ` +
+			`Clerk JWT. There is no command-line path for this half. Seed those ` +
+			`${OTHER_ORG_NOTE_ROW_COUNT} rows (content = ${LARGE_CONTENT.length} ` +
+			`chars of filler each) through a REAL authenticated client (the MCP ` +
+			`server, or any client holding a genuine Clerk JWT) for a dev org user ` +
+			`whose Clerk org slug is "${OTHER_ORG_SLUG}", then measure per the ` +
+			`header comment's step 3 -- also through a real authenticated client, ` +
+			`never the CLI.`,
 	);
 	console.log("\nSeed step complete. See this file's header comment for the measurement commands.");
 }
