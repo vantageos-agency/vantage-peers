@@ -45,7 +45,11 @@ import re
 import subprocess
 import sys
 
-WORKSPACE = "/root/coding/vantage-memory"
+# No hardcoded repository path remains. The one that used to live here was
+# the fallback for a payload with no `cwd`, and that fallback WAS the
+# original defect through a second door — a real repository judged, just
+# not the one being committed to. The repo is derived per call in
+# `_resolve_repo`, or the call REFUSES.
 
 # Files that trigger the RAG/auth deny test requirement
 TRIGGER_PATTERNS = [
@@ -65,6 +69,13 @@ OVERRIDE_RE = re.compile(
     r"//\s*allow-no-rag-deny-test\s*:\s*\S+",
     re.IGNORECASE,
 )
+
+
+class RepoResolutionError(Exception):
+    """Raised when the PreToolUse payload's cwd cannot be resolved to a git
+    repository. The caller MUST turn this into exit 2 — never a silent
+    pass. See .claude/rules/railway-mcp-redeploy.md's sibling doctrine:
+    an unreadable subject is a refusal, not conformance."""
 
 STDERR_MSG = """\
 BLOCKED: RAG cross-tenant deny test required (Day 108 — VantagePeers Cloud).
@@ -106,20 +117,68 @@ def _has_override(command: str) -> bool:
     return bool(OVERRIDE_RE.search(command))
 
 
-def _get_staged_files() -> list[str]:
+def _resolve_repo(payload: dict) -> str:
+    """Resolve the repository this commit is actually being made in, FROM
+    THE PAYLOAD'S OWN cwd — never the hardcoded WORKSPACE — so a commit
+    staged inside a git worktree is judged against ITS OWN index. See the
+    identical rationale in enforce-mcp-tool-coverage-schema-mirror.py's
+    `_resolve_repo` — both hooks shared this defect.
+
+    There is NO fallback. An ABSENT cwd key is an unreadable subject exactly
+    as a present-but-unresolvable one is, and both REFUSE. Falling back to
+    the hardcoded WORKSPACE reinstated the original defect through a second
+    door: it judges a real repository, just not the one being committed to.
+    The objection that the runtime always sends `cwd` is precisely the
+    assumption that kept the first door open unnoticed — this gate does not
+    rest on what a caller is expected to send.
+    """
+    payload_cwd = (payload.get("cwd") or "").strip()
+    if not payload_cwd:
+        raise RepoResolutionError(
+            "the tool payload carried no 'cwd' — the repository being "
+            "committed to cannot be identified, and a hardcoded default "
+            "would judge a different repository's index"
+        )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=payload_cwd,
+            timeout=10,
+        )
+    except Exception as exc:
+        raise RepoResolutionError(
+            f"cwd={payload_cwd!r} — git rev-parse --show-toplevel raised: {exc}"
+        ) from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RepoResolutionError(
+            f"cwd={payload_cwd!r} is not inside a git repository "
+            f"(git rev-parse --show-toplevel exit={result.returncode}: "
+            f"{result.stderr.strip()!r})"
+        )
+    return result.stdout.strip()
+
+
+def _get_staged_files(repo: str) -> list[str]:
     try:
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             capture_output=True,
             text=True,
-            cwd=WORKSPACE,
+            cwd=repo,
             timeout=10,
         )
-        if result.returncode == 0:
-            return [f.strip() for f in result.stdout.splitlines() if f.strip()]
-    except Exception:
-        pass
-    return []
+    except Exception as exc:
+        raise RepoResolutionError(
+            f"repo={repo!r} — git diff --cached raised: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        raise RepoResolutionError(
+            f"repo={repo!r} — git diff --cached exit={result.returncode}: "
+            f"{result.stderr.strip()!r}"
+        )
+    return [f.strip() for f in result.stdout.splitlines() if f.strip()]
 
 
 def _file_triggers(path: str) -> bool:
@@ -130,8 +189,8 @@ def _file_is_test(path: str) -> bool:
     return bool(TEST_DIR_RE.match(path))
 
 
-def _test_file_has_denial(path: str) -> bool:
-    full_path = os.path.join(WORKSPACE, path)
+def _test_file_has_denial(repo: str, path: str) -> bool:
+    full_path = os.path.join(repo, path)
     try:
         with open(full_path, encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -169,7 +228,18 @@ def main() -> int:
         if _has_override(command):
             return 0
 
-        staged = _get_staged_files()
+        try:
+            repo = _resolve_repo(payload)
+            staged = _get_staged_files(repo)
+        except RepoResolutionError as exc:
+            sys.stderr.write(
+                "BLOCKED: enforce-rag-namespace-deny-test could not resolve "
+                f"the repository being committed to: {exc}\n"
+                "This is a REFUSAL, not a pass — an unreadable commit "
+                "subject must never be treated as conformance.\n"
+            )
+            return 2
+
         trigger_files = [f for f in staged if _file_triggers(f)]
 
         if not trigger_files:
@@ -178,19 +248,20 @@ def main() -> int:
         # Check if any staged test file has the required denial assertion
         staged_tests = [f for f in staged if _file_is_test(f)]
         for test_file in staged_tests:
-            if _test_file_has_denial(test_file):
+            if _test_file_has_denial(repo, test_file):
                 return 0
 
         # Also check ALL existing test files in convex/__tests__/ (not just staged)
         # to handle the case where the test already exists and wasn't modified
-        tests_dir = os.path.join(WORKSPACE, "convex", "__tests__")
+        tests_dir = os.path.join(repo, "convex", "__tests__")
         if os.path.isdir(tests_dir):
             for fname in os.listdir(tests_dir):
                 fpath = os.path.join("convex", "__tests__", fname)
-                if _test_file_has_denial(fpath):
+                if _test_file_has_denial(repo, fpath):
                     return 0
 
         sys.stderr.write(STDERR_MSG)
+        sys.stderr.write(f"Repo judged: {repo}\n")
         sys.stderr.write("Triggering staged files:\n")
         for f in trigger_files:
             sys.stderr.write(f"  {f}\n")

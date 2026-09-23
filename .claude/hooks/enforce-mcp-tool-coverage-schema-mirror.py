@@ -43,7 +43,11 @@ import re
 import subprocess
 import sys
 
-WORKSPACE = "/root/coding/vantage-memory"
+# No hardcoded repository path remains. The one that used to live here was
+# the fallback for a payload with no `cwd`, and that fallback WAS the
+# original defect through a second door — a real repository judged, just
+# not the one being committed to. The repo is derived per call in
+# `_resolve_repo`, or the call REFUSES.
 
 # Schema file that triggers the MCP tool coverage check
 SCHEMA_FILE = "convex/schema.ts"
@@ -56,6 +60,13 @@ OVERRIDE_RE = re.compile(
     r"//\s*allow-schema-mirror-skip\s*:\s*\S+",
     re.IGNORECASE,
 )
+
+
+class RepoResolutionError(Exception):
+    """Raised when the PreToolUse payload's cwd cannot be resolved to a git
+    repository. The caller MUST turn this into exit 2 — never a silent
+    pass. See .claude/rules/railway-mcp-redeploy.md's sibling doctrine:
+    an unreadable subject is a refusal, not conformance."""
 
 STDERR_MSG = """\
 BLOCKED: RULE #24 — MCP tool coverage must mirror Convex schema changes (Day 108).
@@ -102,20 +113,72 @@ def _has_override_in_command(command: str) -> bool:
     return bool(OVERRIDE_RE.search(command))
 
 
-def _get_staged_files() -> list[str]:
+def _resolve_repo(payload: dict) -> str:
+    """Resolve the repository this commit is actually being made in, FROM
+    THE PAYLOAD'S OWN cwd — never the hardcoded WORKSPACE — so a commit
+    staged inside a git worktree is judged against ITS OWN index. A
+    worktree's HEAD lives under a different git-dir than the main
+    checkout; reading WORKSPACE's index for a worktree commit sees an
+    empty diff and returns a pass on an unreviewed subject.
+
+    `git rev-parse --show-toplevel` run FROM the payload cwd resolves a
+    worktree to its own root (not the main checkout's).
+
+    There is NO fallback. An ABSENT cwd key is an unreadable subject exactly
+    as a present-but-unresolvable one is, and both REFUSE. Falling back to
+    the hardcoded WORKSPACE reinstated the original defect through a second
+    door: it judges a real repository, just not the one being committed to.
+    The objection that the runtime always sends `cwd` is precisely the
+    assumption that kept the first door open unnoticed — this gate does not
+    rest on what a caller is expected to send.
+    """
+    payload_cwd = (payload.get("cwd") or "").strip()
+    if not payload_cwd:
+        raise RepoResolutionError(
+            "the tool payload carried no 'cwd' — the repository being "
+            "committed to cannot be identified, and a hardcoded default "
+            "would judge a different repository's index"
+        )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=payload_cwd,
+            timeout=10,
+        )
+    except Exception as exc:
+        raise RepoResolutionError(
+            f"cwd={payload_cwd!r} — git rev-parse --show-toplevel raised: {exc}"
+        ) from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RepoResolutionError(
+            f"cwd={payload_cwd!r} is not inside a git repository "
+            f"(git rev-parse --show-toplevel exit={result.returncode}: "
+            f"{result.stderr.strip()!r})"
+        )
+    return result.stdout.strip()
+
+
+def _get_staged_files(repo: str) -> list[str]:
     try:
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             capture_output=True,
             text=True,
-            cwd=WORKSPACE,
+            cwd=repo,
             timeout=10,
         )
-        if result.returncode == 0:
-            return [f.strip() for f in result.stdout.splitlines() if f.strip()]
-    except Exception:
-        pass
-    return []
+    except Exception as exc:
+        raise RepoResolutionError(
+            f"repo={repo!r} — git diff --cached raised: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        raise RepoResolutionError(
+            f"repo={repo!r} — git diff --cached exit={result.returncode}: "
+            f"{result.stderr.strip()!r}"
+        )
+    return [f.strip() for f in result.stdout.splitlines() if f.strip()]
 
 
 def _schema_is_staged(staged: list[str]) -> bool:
@@ -155,7 +218,17 @@ def main() -> int:
         if _has_override_in_command(command):
             return 0
 
-        staged = _get_staged_files()
+        try:
+            repo = _resolve_repo(payload)
+            staged = _get_staged_files(repo)
+        except RepoResolutionError as exc:
+            sys.stderr.write(
+                "BLOCKED: enforce-mcp-tool-coverage-schema-mirror could not "
+                f"resolve the repository being committed to: {exc}\n"
+                "This is a REFUSAL, not a pass — an unreadable commit "
+                "subject must never be treated as conformance.\n"
+            )
+            return 2
 
         if not _schema_is_staged(staged):
             return 0
@@ -164,6 +237,7 @@ def main() -> int:
             return 0
 
         sys.stderr.write(STDERR_MSG)
+        sys.stderr.write(f"Repo judged: {repo}\n")
         sys.stderr.write(f"Schema file staged: {SCHEMA_FILE}\n")
         sys.stderr.write(
             f"MCP tool files staged (mcp-server/src/tools/*): none\n"
