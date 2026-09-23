@@ -46,8 +46,19 @@
 // ArgumentValidationError refusals recognised.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import * as briefingNotes from "./briefingNotes";
+import * as businessUnits from "./businessUnits";
+import * as diary from "./diary";
 import * as errorMonitor from "./errorMonitor";
 import * as errorMonitorFilters from "./errorMonitorFilters";
+import * as fixPatterns from "./fixPatterns";
+import * as mandates from "./mandates";
+import * as memories from "./memories";
+import * as messages from "./messages";
+import * as missions from "./missions";
+import * as oauth from "./oauth";
+import * as profiles from "./profiles";
+import * as recurringTasks from "./recurringTasks";
 import type { FunctionVisibility } from "./errorMonitorRefusalClassifier";
 import * as tasks from "./tasks";
 
@@ -60,10 +71,42 @@ type ConvexModuleNamespace = Record<string, unknown>;
 
 // module identifier (as it appears before the ":" in a Convex log
 // `identifier` field) -> the statically-imported source module namespace.
+//
+// COVERAGE, MEASURED (task k17a2hpeffm3hdfcym8z0h9tas8ezre2, correcting PR
+// #1326's own body): `gh issue list --state closed --search
+// 'ArgumentValidationError in:title' --limit 500` returns 408 closed issues
+// naming 38 distinct functions across 14 distinct modules. Of those 14:
+//   - `components` names no file in this repo at all (`convex/components.ts`
+//     does not exist) -- correctly stays "unknown" by construction, nothing
+//     to register.
+//   - `search` (`convex/search.ts`) carries a `"use node"` directive. This
+//     file does NOT -- statically importing a node-runtime module from a
+//     non-"use node" file changes which Convex runtime bundles it, and that
+//     can only be verified against the real Convex bundler on a deploy. This
+//     task is DEV-only (no `npx convex deploy`), so `search` is left OUT
+//     pending that verification rather than registered on an unmeasured
+//     bundling assumption -- it resolves "unknown" and keeps escalating,
+//     which is the safe (if noisier) default.
+//   - The remaining 12 modules (including the pre-existing `tasks`) are
+//     plain modules with no `"use node"` directive and no node-only
+//     imports; each is registered below and its corpus-named exports were
+//     probed via `resolveFunctionVisibility` to confirm they resolve
+//     `"public"`/`"internal"` rather than silently staying `"unknown"`.
 const REGISTRY: Record<string, ConvexModuleNamespace> = {
 	tasks,
 	errorMonitor,
 	errorMonitorFilters,
+	briefingNotes,
+	businessUnits,
+	diary,
+	fixPatterns,
+	mandates,
+	memories,
+	messages,
+	missions,
+	oauth,
+	profiles,
+	recurringTasks,
 };
 
 /**
