@@ -3068,78 +3068,141 @@ export const createDeployTaskWithDedup = internalMutation({
 // spawning when a deploy already covered the PR. (c2) catches the residual
 // ones already created before the orchestrator called recordDeployment.
 //
-// Recurring production timeout (GitHub issue #1276): `by_status` narrows the
-// per-status collect() to that status's rows, it does not bound the COUNT —
-// four unbounded collects over the whole open-task population, run every 6
-// hours, grew past the request's operation budget as the table grew.
+// Issue #1276 (original): four unbounded `by_status` collects over the whole
+// open-task population, run every 6 hours, grew past the request's
+// operation budget as the table grew. Issue #1276 recurrence: a SEPARATE
+// unbounded upfront `githubRepoMapping.collect()` in the same function did
+// the same thing (see the comment on `resolveGithubRepoMappingForProject`
+// above and on the `githubRepoMapping` index in convex/schema.ts) — fixed by
+// reading that table only per-project, on demand, via `by_project`.
 //
-// Fix chosen: CAP the scan, not a new index. `tasks` has no index on `title`
-// and DEPLOY_TITLE_RE's anchored prefix is the only thing that would make a
-// title-keyed index a genuine narrowing — but that index would be maintained
-// on EVERY task write (title varies per row on effectively every insert),
-// for a benefit confined to the handful of rows that happen to be Deploy
-// tasks. A per-status cap costs nothing on write and reuses the fetch/detect
-// idiom already established at RECURRING_TASKS_LIST_SCAN_CAP
-// (convex/recurringTasks.ts:133): fetch CAP+1 so an extra row PROVES
-// truncation happened rather than silently swallowing it.
+// Issue #1294 (this task, k17ajx58pqr5bjq68e5sq7y8es8ezphf) — a THIRD defect
+// in the same function, found after both of the above were already fixed. A
+// `.take(CAP + 1)` window over `by_status`, taken BEFORE `parseDeployTitle`
+// ever ran, capped the RAW ROW COUNT of the window, not the count of Deploy
+// tasks inside it. On a status holding more than CAP open non-Deploy tasks,
+// every Deploy task in that status — regardless of its own age — was
+// crowded out of the window entirely: the job reported
+// `scanned: 0, truncated: true` having examined none of its actual subject.
+// Measured directly against hosted DEV, before and after the #1276 fix,
+// with the identical `{closed: 0, scanned: 0, truncated: true}` result both
+// times — proof the live seeded task never entered the window, not that it
+// was too new to close.
 //
-// Issue #1276 RECURRENCE fix (this task) — the per-status `by_status` reads
-// above WERE already capped and stayed bounded (at most
-// (RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1) * 4 documents, regardless of
-// corpus size); the timeout kept recurring anyway because the ORIGINAL fix
-// left one read in this same function with NO bound at all: an upfront
-// `ctx.db.query("githubRepoMapping").collect()` of the WHOLE table, on every
-// single tick, before any per-status work even starts. `githubRepoMapping`
-// is admin-config data (one row per onboarded repo, upserted-by-repo via
-// recordDeployment — never bulk-inserted per event) — but it accumulates
-// over the fleet's entire lifetime and is never pruned, so it is the one
-// genuinely UNBOUNDED-by-corpus read in this function, unlike the task-row
-// scans above (already capped) or #1275's config-bounded `.collect()`
-// (bounded by deliberate, admin-managed configuration size, not corpus
-// growth). Fix: drop the upfront whole-table snapshot entirely. Resolve each
-// DISTINCT project referenced by THIS TICK's already-capped Deploy-task
-// batch on demand, via the `by_project` index (convex/schema.ts) — reads now
-// grow with the number of distinct projects seen in a single tick's ≤(CAP+1)
-// * 4 task batch (in practice a handful), never with the total onboarded-
-// repo corpus. The Bug-5 "most-recent-wins" tiebreaker is preserved exactly,
-// scoped to the (typically single-row) `by_project` result for that project
-// alone — never truncated: a project's own row count is unrelated to the
-// total fleet-wide repo count this fix removes the dependency on. If a
-// single project's own row count somehow exceeds its cap (structurally
-// unlikely — see REPO_MAPPING_PER_PROJECT_SCAN_CAP, defined next to
-// resolveGithubRepoMappingForProject above, shared with `complete`'s
-// issue-auto-link and createDeployTaskWithDedup's bundled-deploy dedup —
-// both carried the SAME unbounded-`.collect()` shape and are fixed the
-// same way in this commit), the tiebreak is refused as inconclusive
-// (skipped, never guessed) and `truncated` is set — same "measure or
-// refuse, never guess" doctrine as the per-status cap.
+// `by_status` stays ascending (oldest-first) — that direction was never the
+// defect and MUST NOT be reversed: stale means old, and oldest-first is the
+// direction that reaches the rows this job exists to close.
+//
+// FIRST fix attempt for #1294 (reverted in this same task, see git history)
+// streamed every row of a status via `for await` before applying any cap,
+// bounding the cap on MATCHED Deploy tasks instead of raw rows. That closed
+// the crowding defect but reopened the ORIGINAL #1276 class one level up:
+// the READ footprint of a single execution once again tracked the size of
+// the whole open-task population in a status, unbounded by anything but the
+// corpus itself — on a large enough backlog this is exactly
+// "Your request timed out performing too many system operations" again,
+// just moved from "raw rows" to "rows glanced at looking for a match".
+//
+// ACTUAL fix: bounded pages + self-scheduling — the SAME idiom this table
+// already uses for `backfillReviewPrLinkFields` (convex/migrations.ts),
+// which is itself modeled on `backfillBriefingNoteParticipants`'s documented
+// justification against Convex's 16 MiB per-execution read-byte budget, and
+// the pattern convex/_generated/ai/guidelines.md itself prescribes: "If a
+// mutation needs to process more documents than fit in a single
+// transaction... process a batch with `.take(n)` and then call
+// `ctx.scheduler.runAfter(0, ...)` to schedule itself to continue." Each
+// execution reads at most ONE bounded page (`RESOLVE_STALE_DEPLOY_TASKS_
+// BATCH_SIZE` rows) of ONE status via `.paginate()`, resolves + patches
+// within that SAME transaction, then reschedules itself with the
+// continuation cursor — or advances to the next status once the current one
+// is drained — until every open status is exhausted. No single execution's
+// read footprint depends on corpus size, matched or not: crowding can no
+// longer hide a Deploy task (every row of every status is visited,
+// eventually, across the chain), and no single execution can blow its
+// budget doing so (each is bounded by BATCH_SIZE alone).
+//
+// Cost, honestly: reaching a Deploy task sitting behind a very large
+// same-status backlog now costs several CHAINED bounded executions instead
+// of one unbounded one — proportional to (backlog size / BATCH_SIZE), same
+// as `backfillReviewPrLinkFields` draining this identical table. Each
+// scheduled continuation fires immediately (`runAfter(0, ...)`), so the
+// chain runs back-to-back rather than waiting for the next 6-hour cron
+// tick; a backlog many times BATCH_SIZE still finishes in seconds, not
+// hours. One accepted, undefended gap shared with every other self-
+// scheduling drain on this table (`backfillReviewPrLinkFields` included):
+// if a drain chain from one cron tick is still in flight when the NEXT
+// 6-hour tick fires, two chains could interleave over the same status. Each
+// page's `.patch` is idempotent (closing an already-closed task is a no-op
+// status-wise), so this cannot corrupt data — at worst a page's `closed`
+// count could double-report the same task across the two chains' logs. Not
+// engineered around here, same as its precedent.
+//
+// `RESOLVE_STALE_DEPLOY_TASKS_BATCH_SIZE = 200` reuses the value already
+// vetted for THIS EXACT table by `backfillReviewPrLinkFields`
+// (`BACKFILL_REVIEW_LINK_BATCH_SIZE`, convex/migrations.ts) — same table,
+// same `by_status` index, same typical row size, so the same page-size
+// justification against the 16 MiB per-execution read-byte budget applies
+// without re-deriving it.
+//
+// The return value is a PER-PAGE count, not a corpus-wide total — the drain
+// spans multiple scheduled executions, same discipline as
+// `backfillBriefingNoteParticipants`'s and `backfillReviewPrLinkFields`'s
+// own NOTE comments. `isDone` is the only field that means "the whole sweep
+// finished", not "this page found nothing". The Bug-5 "most-recent-wins"
+// tiebreaker inside `resolveGithubRepoMappingForProject` is unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
-export const RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP = 500;
+const RESOLVE_DEPLOY_OPEN_STATUSES = [
+	"todo",
+	"in_progress",
+	"review",
+	"blocked",
+] as const;
+
+export const RESOLVE_STALE_DEPLOY_TASKS_BATCH_SIZE = 200;
 
 export const resolveStaleDeployTasks = internalMutation({
-	args: {},
+	args: {
+		// Resume state threaded across self-reschedules. Both omitted (the
+		// cron's own kickoff call, and every direct test call below) means
+		// "start the drain from status 0, page 1".
+		statusIndex: v.optional(v.number()),
+		cursor: v.optional(v.union(v.string(), v.null())),
+	},
 	returns: v.object({
 		scanned: v.number(),
 		closed: v.number(),
 		skipped: v.number(),
-		// A run that silently processed only part of the open-task population
-		// is the exact disease this bound exists to close — the outcome log
-		// (and this return) must say so, not just report smaller numbers.
-		truncated: v.boolean(),
+		isDone: v.boolean(),
 	}),
-	handler: async (ctx) => {
-		const OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
+	handler: async (ctx, args) => {
+		const statusIndex = args.statusIndex ?? 0;
+		if (statusIndex >= RESOLVE_DEPLOY_OPEN_STATUSES.length) {
+			console.log("[Mechanism c2] resolveStaleDeployTasks: drain complete.");
+			return { scanned: 0, closed: 0, skipped: 0, isDone: true };
+		}
+		const status = RESOLVE_DEPLOY_OPEN_STATUSES[statusIndex];
+
+		const page = await ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", status))
+			.paginate({
+				cursor: args.cursor ?? null,
+				numItems: RESOLVE_STALE_DEPLOY_TASKS_BATCH_SIZE,
+			});
+
 		let scanned = 0;
 		let closed = 0;
 		let skipped = 0;
-		let truncated = false;
 
-		// Cache repoMapping lookups within a single cron tick — keyed by the
-		// parsed project slug (DEPLOY_TITLE_RE's capture). Uses the SHARED
+		// Cache repoMapping lookups within this ONE page — keyed by the parsed
+		// project slug (DEPLOY_TITLE_RE's capture). Uses the SHARED
 		// resolveGithubRepoMappingForProject (issue #1276 recurrence fix — no
-		// upfront whole-table snapshot, and the same helper `complete` and
-		// createDeployTaskWithDedup now use below — one corpus-independent
-		// lookup instead of three duplicated unbounded `.collect()`s).
+		// upfront whole-table snapshot; the same helper `complete` and
+		// createDeployTaskWithDedup use). The cache does not persist across
+		// pages (each page is its own transaction) — that costs at most one
+		// extra `by_project` lookup per distinct project per page, still
+		// bounded by that page's own distinct-project count, never the
+		// fleet-wide repo corpus.
 		const repoCache = new Map<string, Doc<"githubRepoMapping"> | null>();
 
 		async function resolveMappingForProject(
@@ -3148,69 +3211,76 @@ export const resolveStaleDeployTasks = internalMutation({
 			const cached = repoCache.get(project);
 			if (cached !== undefined) return cached;
 
-			const { row, truncated: projectTruncated } =
-				await resolveGithubRepoMappingForProject(ctx, project);
-			if (projectTruncated) {
-				// A single project's own row set overflowed its cap — refuse to
-				// guess a tiebreak winner from a partial set; report and move on.
-				truncated = true;
-			}
+			// A single project's own mapping-row set overflowing its cap is
+			// structurally near-impossible (see REPO_MAPPING_PER_PROJECT_SCAN_CAP)
+			// — when it happens, refuse to guess a tiebreak winner from a
+			// partial set (`row` is null) rather than silently treating an
+			// unresolved mapping as "no bundled deploy happened".
+			const { row } = await resolveGithubRepoMappingForProject(ctx, project);
 			repoCache.set(project, row);
 			return row;
 		}
 
-		for (const status of OPEN_STATUSES) {
-			const fetched = await ctx.db
-				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.take(RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1);
-			if (fetched.length > RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP) {
-				truncated = true;
+		for (const t of page.page) {
+			const parsed = parseDeployTitle(t.title);
+			if (!parsed) continue;
+			scanned++;
+
+			const mapping = await resolveMappingForProject(parsed.repo);
+
+			if (
+				!mapping ||
+				mapping.lastDeployedAt === undefined ||
+				mapping.lastDeployedAt <= t.createdAt
+			) {
+				skipped++;
+				continue;
 			}
-			const batch = fetched.slice(0, RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP);
-			for (const t of batch) {
-				const parsed = parseDeployTitle(t.title);
-				if (!parsed) continue;
-				scanned++;
 
-				const mapping = await resolveMappingForProject(parsed.repo);
+			const sha = mapping.lastDeployedSHA ?? "unknown-sha";
+			const at = new Date(mapping.lastDeployedAt).toISOString();
+			const now = Date.now();
+			const closedSegmentsOnAutoResolve = closeTrailingSegmentOnExit(
+				t,
+				t.status,
+				"done",
+				now,
+			);
+			await ctx.db.patch(t._id, {
+				status: "done" as const,
+				completionOutcome: "succeeded" as const,
+				completedAt: now,
+				updatedAt: now,
+				completionNote: `Auto-resolved by Day 98 Mechanism (c2) — repo ${parsed.repo} deployed at ${sha} on ${at} (after task createdAt ${new Date(t.createdAt).toISOString()}). PR #${parsed.prNumber} shipped via bundled deploy chain.\nfriction_observed: per-PR Deploy task accumulated before Mechanism (a) was live — cron sweep closes residue.`,
+				...(closedSegmentsOnAutoResolve !== undefined
+					? { workSegments: closedSegmentsOnAutoResolve }
+					: {}),
+			});
+			closed++;
+		}
 
-				if (
-					!mapping ||
-					mapping.lastDeployedAt === undefined ||
-					mapping.lastDeployedAt <= t.createdAt
-				) {
-					skipped++;
-					continue;
-				}
-
-				const sha = mapping.lastDeployedSHA ?? "unknown-sha";
-				const at = new Date(mapping.lastDeployedAt).toISOString();
-				const now = Date.now();
-				const closedSegmentsOnAutoResolve = closeTrailingSegmentOnExit(
-					t,
-					t.status,
-					"done",
-					now,
-				);
-				await ctx.db.patch(t._id, {
-					status: "done" as const,
-					completionOutcome: "succeeded" as const,
-					completedAt: now,
-					updatedAt: now,
-					completionNote: `Auto-resolved by Day 98 Mechanism (c2) — repo ${parsed.repo} deployed at ${sha} on ${at} (after task createdAt ${new Date(t.createdAt).toISOString()}). PR #${parsed.prNumber} shipped via bundled deploy chain.\nfriction_observed: per-PR Deploy task accumulated before Mechanism (a) was live — cron sweep closes residue.`,
-					...(closedSegmentsOnAutoResolve !== undefined
-						? { workSegments: closedSegmentsOnAutoResolve }
-						: {}),
-				});
-				closed++;
-			}
+		let isDone = false;
+		if (!page.isDone) {
+			await ctx.scheduler.runAfter(0, internal.tasks.resolveStaleDeployTasks, {
+				statusIndex,
+				cursor: page.continueCursor,
+			});
+		} else if (statusIndex + 1 < RESOLVE_DEPLOY_OPEN_STATUSES.length) {
+			await ctx.scheduler.runAfter(0, internal.tasks.resolveStaleDeployTasks, {
+				statusIndex: statusIndex + 1,
+				cursor: null,
+			});
+		} else {
+			isDone = true;
 		}
 
 		console.log(
-			`[Mechanism c2] resolveStaleDeployTasks scanned=${scanned} closed=${closed} skipped=${skipped} truncated=${truncated}`,
+			`[Mechanism c2] resolveStaleDeployTasks page: status=${status} scanned=${scanned} closed=${closed} skipped=${skipped} isDone=${isDone}`,
 		);
-		return { scanned, closed, skipped, truncated };
+		// NOTE (same discipline as backfillBriefingNoteParticipants /
+		// backfillReviewPrLinkFields): this is a per-page count, not a
+		// corpus-wide total — the drain spans multiple scheduled executions.
+		return { scanned, closed, skipped, isDone };
 	},
 });
 
