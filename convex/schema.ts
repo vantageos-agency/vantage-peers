@@ -1177,6 +1177,23 @@ export default defineSchema({
 		// this baseline reach the effective threshold — never from group
 		// identity + a stale timestamp alone.
 		reRaiseBaselineCount: v.optional(v.number()),
+		// Issue dedup fix — every GitHub issue number this row has ever been
+		// linked to (chronological), so the row can name every issue it
+		// spawned instead of only the most recent (each re-link used to
+		// overwrite `issueNumber`, erasing the previous one — measured on
+		// hash `detbs8`: 18 occurrences spawned #1121, #1167, #1237, #1262,
+		// #1275, of which the row could only ever point at the last).
+		// `issueNumber` remains the current/most-recent pointer — nothing
+		// downstream that reads it (by_issue_number index,
+		// linkIrpMissionByIssueNumber) changes.
+		issueHistory: v.optional(
+			v.array(
+				v.object({
+					issueNumber: v.number(),
+					linkedAt: v.number(),
+				}),
+			),
+		),
 	})
 		.index("by_hash", ["hash"])
 		.index("by_deployment", ["deployment"])

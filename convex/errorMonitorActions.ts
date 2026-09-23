@@ -32,6 +32,98 @@ function simpleHash(str: string): string {
 	return Math.abs(hash).toString(36);
 }
 
+// Issue dedup fix — result of checking whether the issue already linked to
+// an errorLogs row is still open. "error" covers a non-2xx response OR a
+// thrown/rejected fetch (network failure) — both collapse to the SAME
+// fail-safe outcome as "closed": the caller files a new issue. Degradation
+// here must be toward noise (a possible duplicate issue), never toward
+// silence (a real recurrence going unreported because a transient GitHub
+// API blip was misread as "still open").
+type IssueOpenCheckResult = "open" | "closed" | "error";
+
+async function checkLinkedIssueOpen(
+	owner: string,
+	repo: string,
+	issueNumber: number,
+	token: string,
+): Promise<IssueOpenCheckResult> {
+	try {
+		const resp = await fetch(
+			`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`,
+			{
+				headers: {
+					Authorization: `Bearer ${token}`,
+					Accept: "application/vnd.github.v3+json",
+					"User-Agent": "vantagepeers-bot/1.0",
+				},
+			},
+		);
+		if (!resp.ok) return "error";
+		const data = (await resp.json()) as { state?: string };
+		if (data.state === "open") return "open";
+		if (data.state === "closed") return "closed";
+		return "error";
+	} catch (err) {
+		console.error(
+			`[ErrorMonitor] Exception checking issue #${issueNumber} open state:`,
+			err,
+		);
+		return "error";
+	}
+}
+
+// Returns true only when the comment demonstrably landed (2xx response).
+// A non-2xx response AND a thrown/rejected fetch (network failure, same
+// class checkLinkedIssueOpen guards against) both resolve to false — the
+// caller MUST treat false as "the occurrence was not reported" and fall
+// through to filing a new issue. A duplicate issue is the cheap failure; a
+// recurrence nobody hears about because a comment silently failed to land
+// is the expensive one — this is the exact property this whole delivery
+// exists to close, so this path gets the SAME fail-safe-toward-noise
+// treatment as the open/closed check above it.
+async function commentOnExistingIssue(
+	owner: string,
+	repo: string,
+	issueNumber: number,
+	token: string,
+	occurrenceCount: number,
+): Promise<boolean> {
+	const body = [
+		`**New occurrence:** ${new Date().toISOString()}`,
+		`**Total occurrences (this error group):** ${occurrenceCount}`,
+	].join("\n");
+
+	try {
+		const resp = await fetch(
+			`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/json",
+					Accept: "application/vnd.github.v3+json",
+					"User-Agent": "vantagepeers-bot/1.0",
+				},
+				body: JSON.stringify({ body }),
+			},
+		);
+		if (!resp.ok) {
+			const text = await resp.text();
+			console.error(
+				`[ErrorMonitor] Failed to comment on existing issue #${issueNumber}: ${resp.status} — ${text}`,
+			);
+			return false;
+		}
+		return true;
+	} catch (err) {
+		console.error(
+			`[ErrorMonitor] Exception commenting on existing issue #${issueNumber}:`,
+			err,
+		);
+		return false;
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // createGitHubIssue — scheduled from upsertError when a new error is detected
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,6 +192,45 @@ export const createGitHubIssue = internalAction({
 				`[ErrorMonitor] Invalid githubRepo format "${args.githubRepo}" — expected "owner/repo"`,
 			);
 			return null;
+		}
+
+		// Issue dedup fix — a re-raise that matches a row already carrying a
+		// linked issue number must not blindly file a duplicate. Measured on
+		// live data: hash `detbs8` (recurringTasks:processDueTasks) spawned
+		// FOUR issues (#1121, #1167, #1237, #1262) across 18 occurrences
+		// because this check did not exist. Comment on the existing issue
+		// instead — but ONLY when it is confirmed still open; a closed issue
+		// or a failed check both fall through to filing a new one below.
+		const errorLog = await ctx.runQuery(internal.errorMonitor.getErrorLogById, {
+			errorId: args.errorId,
+		});
+		if (errorLog?.issueNumber != null) {
+			const state = await checkLinkedIssueOpen(
+				owner,
+				repo,
+				errorLog.issueNumber,
+				token,
+			);
+			if (state === "open") {
+				const commented = await commentOnExistingIssue(
+					owner,
+					repo,
+					errorLog.issueNumber,
+					token,
+					errorLog.count,
+				);
+				if (commented) {
+					return null;
+				}
+				// The comment did not demonstrably land (rate limit, 403 on a
+				// locked issue, transient 5xx, or a thrown fetch) — fall
+				// through and file a new issue rather than let the
+				// occurrence go unreported. Same fail-safe-toward-noise
+				// treatment as "closed"/"error" below.
+			}
+			// state === "closed" or "error", or the comment above failed to
+			// land — fall through and file a new issue, same as the
+			// distinct-new-error path below.
 		}
 
 		const body = [
