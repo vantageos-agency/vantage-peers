@@ -1307,6 +1307,94 @@ export const retrofitSeatRefreshToken = internalMutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SEAT_CLIENT_LISTING (k175v95qkm274bw2nm996kq3wd8ey1v5) — the missing input
+// to retrofitSeatRefreshToken above. That mutation is keyed on a seat's
+// `clientId`, and nothing exported a list of those clientIds: `npx convex
+// data` is refused by the deploy hook's read-only marker (that marker
+// covers `convex run` only), no internalQuery listed `oauth_clients`, and
+// every client-reading query (`listClients`, `oauth:countClientGlobalUsage`,
+// …) is master-or-service-account gated since #1317/#1318/#1321 — the admin
+// deploy key does not satisfy that gate. This closes the gap with exactly
+// the four properties the retrofit's own operator step needs, no more:
+//
+//   1. INTERNAL, NEVER EXPOSED. `internalQuery`, not `query` — absent from
+//      the generated `api.*` namespace and never registered on the MCP tool
+//      surface, same reachability class as `retrofitSeatRefreshToken`
+//      itself.
+//   2. IDENTIFIERS ONLY. Returns `v.array(v.string())` — bare clientIds.
+//      Nothing else earns a place here: `retrofitSeatRefreshToken`'s own
+//      args are `{ clientId: v.string() }`, so a clientId is the entire
+//      input surface an operator needs. A `createdAt` per row was
+//      considered (the #1317 audit found provisioning batches sharing one
+//      `createdAt`) and DROPPED: the retrofit is idempotent-safe to run
+//      against a seat that already has a live refresh token (it REFUSES
+//      with SEAT_ALREADY_HAS_LIVE_REFRESH_TOKEN, never double-mints), so an
+//      operator can run every returned id unconditionally — there is no
+//      batching/ordering decision this query needs to inform, and every
+//      field beyond the identifier is one more thing that could leak
+//      (organisation membership, provisioning order) for no operational
+//      gain.
+//   3. SCOPED TO SEATS. A clientId qualifies only if it has BOTH an
+//      `oauth_clients` row AND at least one `oauth_access_tokens` row for
+//      that clientId — exactly the distinction the production probe
+//      measured: a DCR self-registered client holds an `oauth_clients` row
+//      and NO `oauth_access_tokens` row, while `provisionOrganization`
+//      always inserts both in the same transaction. The access-token
+//      existence check reuses `by_clientId`, the same index
+//      `retrofitSeatRefreshToken` itself already joins through — an O(1)
+//      indexed existence probe (`.first()`) per client, not a scan.
+//   4. NO SILENT TRUNCATION. The `oauth_clients` scan is `.take()`-bounded
+//      at `SEAT_CLIENT_LISTING_LIMIT` and refuses with
+//      `SEAT_CLIENT_LISTING_INCOMPLETE` if the bound is hit — mirroring
+//      `findSeatNameCollision`'s `SEAT_NAME_COLLISION_SCAN_LIMIT` and
+//      `orgMembership.ts`'s `MEMBERSHIP_QUERY_LIMIT` discipline in this
+//      codebase. A silently short list here is a retrofit that silently
+//      skips seats, and skipping a seat means a customer loses access on a
+//      date nobody chose (the same stake #1323's CHANGELOG entry names).
+//
+// Revocation is deliberately NOT filtered here: the join condition above is
+// exactly "has both rows", nothing more — a revoked client that still has
+// an access-token row (deleteClient patches `revokedAt` on tokens, it does
+// not delete the rows) will appear, and `retrofitSeatRefreshToken` already
+// refuses it with `SEAT_CLIENT_NOT_FOUND` (it checks `client.revokedAt !==
+// undefined`). That refusal is safe — a no-op, not a wrong write — so
+// filtering revocation state here would be scope this query does not need
+// to own.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Exported so the test suite seeds exactly this many rows to prove the
+// SEAT_CLIENT_LISTING_INCOMPLETE refusal fires, rather than hard-coding the
+// bound in two places that could silently drift apart.
+export const SEAT_CLIENT_LISTING_LIMIT = 2000;
+
+export const listSeatClientIds = internalQuery({
+	args: {},
+	returns: v.array(v.string()),
+	handler: async (ctx) => {
+		const clients = await ctx.db
+			.query("oauth_clients")
+			.take(SEAT_CLIENT_LISTING_LIMIT);
+		if (clients.length === SEAT_CLIENT_LISTING_LIMIT) {
+			throw new Error(
+				`SEAT_CLIENT_LISTING_INCOMPLETE: oauth_clients scan hit its ${SEAT_CLIENT_LISTING_LIMIT}-row bound before finishing — refusing to return a truncated seat clientId list`,
+			);
+		}
+
+		const seatClientIds: string[] = [];
+		for (const client of clients) {
+			const accessRow = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_clientId", (q) => q.eq("clientId", client.clientId))
+				.first();
+			if (accessRow) {
+				seatClientIds.push(client.clientId);
+			}
+		}
+		return seatClientIds;
+	},
+});
+
 // returns-projection: security — clientSecretHash is never returned to any caller (secret hash, not for display); tokenEndpointAuthMethod is admin-console metadata omitted from this public listing shape
 export const listClients = query({
 	args: { callerToken: v.string() },
