@@ -6,7 +6,7 @@
 // the segment's minutes. One test per exit path pins the fix.
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -196,8 +196,15 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 			});
 		});
 
-		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
-		expect(result.closed).toBeGreaterThanOrEqual(1);
+		// resolveStaleDeployTasks now self-schedules its continuation across
+		// statuses (bounded pages, see convex/tasks.ts) — the fixture task is
+		// "in_progress", the SECOND status paged through, so the kickoff
+		// call's own per-page return (still "todo", empty) is not where the
+		// close happens; drain the chain and assert on DB state instead.
+		vi.useFakeTimers();
+		await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+		vi.useRealTimers();
 
 		const task = await t.query(api.tasks.get, { taskId });
 		expect(task?.status).toBe("done");

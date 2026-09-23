@@ -44,7 +44,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -67,6 +67,13 @@ const IRRELEVANT_MAPPING_ROW_COUNT = 60;
 const SCALED_DOCUMENTS_READ_LIMIT = 50;
 
 describe("resolveStaleDeployTasks — githubRepoMapping read is project-bound, not fleet-corpus-bound (issue #1276 recurrence)", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	test("many onboarded repos for OTHER projects must not be read when only ONE project is referenced by this tick's Deploy tasks", async () => {
 		const t = convexTest({
 			schema,
@@ -119,8 +126,13 @@ describe("resolveStaleDeployTasks — githubRepoMapping read is project-bound, n
 		// `.collect()` alone reads 61 documents and throws before this
 		// mutation ever gets to the per-status task loop.
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-		expect(result.truncated).toBe(false);
+		// This project's mapping is resolved and the task closed within the
+		// FIRST page (the whole "todo" status fits in one page) — `isDone`
+		// only becomes true once the remaining (empty) statuses have also
+		// been paged through by the self-scheduled continuation chain, so it
+		// is not asserted here; the work itself is already done.
 		expect(result.closed).toBe(1);
 
 		const closed = await t.run((ctx) => ctx.db.get(deployTaskId));
@@ -170,6 +182,7 @@ describe("resolveStaleDeployTasks — githubRepoMapping read is project-bound, n
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.closed).toBe(1);
 
 		const closed = await t.run((ctx) => ctx.db.get(deployTaskId));

@@ -15,7 +15,7 @@
 // dedup (they're independent deploys).
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -293,6 +293,13 @@ describe("D98.a bundled-deploy dedup: prMergedAt vs lastDeployedAt", () => {
 
 // ─── Day 98 k173yr5n1 Mechanism (c2) — resolveStaleDeployTasks cron sweep ───
 describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	test("closes Deploy tasks whose repo deployed after task createdAt", async () => {
 		const t = createTestConvex();
 		// Seed repo mapping with a recent deploy.
@@ -338,6 +345,7 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.scanned).toBe(2);
 		expect(result.closed).toBe(2);
 		expect(result.skipped).toBe(0);
@@ -377,6 +385,7 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.scanned).toBe(1);
 		expect(result.closed).toBe(0);
 		expect(result.skipped).toBe(1);
@@ -410,6 +419,7 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.scanned).toBe(0);
 		expect(result.closed).toBe(0);
 
@@ -448,6 +458,7 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.scanned).toBe(1);
 		expect(result.closed).toBe(1);
 		expect(result.skipped).toBe(0);
@@ -475,6 +486,7 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.scanned).toBe(1);
 		expect(result.closed).toBe(0);
 		expect(result.skipped).toBe(1);
@@ -490,6 +502,13 @@ describe("D98.c2 resolveStaleDeployTasks: auto-close residue Deploy tasks", () =
 // Fallback: most-recent `_creationTime`. Both createDeployTaskWithDedup (Mech a)
 // and resolveStaleDeployTasks (Mech c2) must use the tiebreaker logic.
 describe("Bug5 multiple-mappings-same-project tiebreaker", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	test("createDeployTaskWithDedup — picks mapping with lastDeployedAt when 2 rows share project", async () => {
 		const t = createTestConvex();
 		// Row A: stale, lacks lastDeployedAt
@@ -591,6 +610,7 @@ describe("Bug5 multiple-mappings-same-project tiebreaker", () => {
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.closed).toBe(1);
 
 		const task = await t.run(async (ctx) => ctx.db.get(staleId));
@@ -634,6 +654,7 @@ describe("Bug5 multiple-mappings-same-project tiebreaker", () => {
 		);
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect(result.closed).toBe(0);
 		expect(result.skipped).toBe(1);
 

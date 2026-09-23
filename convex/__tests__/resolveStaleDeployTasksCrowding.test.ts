@@ -23,19 +23,28 @@
 // the defect is CROWDING (irrelevant open tasks occupying the window), not
 // staleness or sort direction.
 //
+// The final fix is bounded pages + self-scheduling (see the header comment
+// above `resolveStaleDeployTasks` in convex/tasks.ts): an earlier version of
+// this fix streamed the whole status via `for await` in one execution,
+// which closed the crowding defect but reopened the ORIGINAL #1276 class —
+// an execution's read footprint that once again tracked corpus size. This
+// fixture's filler count (well over one page) exercises that: the Deploy
+// task is reached only after `finishAllScheduledFunctions` drains the
+// self-scheduled continuation chain, never in the single kickoff call.
+//
 // RED-before / GREEN-after: run with `git stash` on convex/tasks.ts to see
-// this fail against the pre-fix `.take(CAP + 1)` window; GREEN on HEAD (the
-// `for await` fix streams the whole status and caps on MATCHED Deploy tasks,
-// never on unrelated rows ahead of them).
+// this fail against the pre-#1294 `.take(CAP + 1)` window (scanned=0,
+// closed=0 even after draining, since the pre-fix handler never
+// self-schedules at all); GREEN on HEAD.
 //
 // Fictitious identifiers only — no real client/repo names.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";
-import { RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP } from "../tasks";
+import { RESOLVE_STALE_DEPLOY_TASKS_BATCH_SIZE } from "../tasks";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -52,16 +61,24 @@ const TITLE = (pr: number, repo: string) =>
 	`[Deploy] PR #${pr} merged — deploy ${repo} to prod`;
 
 describe("resolveStaleDeployTasks — crowding by non-Deploy tasks (GitHub issue #1294)", () => {
-	test("a single stale Deploy task sitting behind more than CAP open NON-Deploy tasks in the same status is still scanned and closed", async () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	test("a single stale Deploy task sitting behind more than one page of open NON-Deploy tasks in the same status is still reached and closed once the drain completes", async () => {
 		const t = createTestConvex();
-		const CAP = RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP;
+		const BATCH = RESOLVE_STALE_DEPLOY_TASKS_BATCH_SIZE;
+		const FILLER_COUNT = BATCH + 20;
 
 		// One command seeds the whole fixture — nothing left to a human.
 		await t.run(async (ctx) => {
 			// A stale-task backlog UNRELATED to Deploy tasks, all older
-			// (smaller createdAt) than the Deploy task below, and larger in
-			// count than CAP — this is the crowding population.
-			for (let i = 0; i < CAP + 20; i++) {
+			// (smaller createdAt) than the Deploy task below, and larger than
+			// one page — this is the crowding population.
+			for (let i = 0; i < FILLER_COUNT; i++) {
 				await ctx.db.insert("tasks", {
 					title: `[VR BACKFILL] unrelated open task ${i}`,
 					assignedTo: "sigma",
@@ -85,8 +102,8 @@ describe("resolveStaleDeployTasks — crowding by non-Deploy tasks (GitHub issue
 			});
 		});
 
-		// The ONE Deploy task in this status — created after all CAP+20
-		// filler rows, so it sits behind them in `by_status` order.
+		// The ONE Deploy task in this status — created after all filler
+		// rows, so it sits behind them (past page 1) in `by_status` order.
 		const deployTaskId = await t.run((ctx) =>
 			ctx.db.insert("tasks", {
 				title: TITLE(960, "vantage-memory"),
@@ -96,21 +113,23 @@ describe("resolveStaleDeployTasks — crowding by non-Deploy tasks (GitHub issue
 				project: "vantage-memory",
 				tags: ["github", "deploy", "pr-merged"],
 				status: "todo",
-				createdAt: CAP + 20,
-				updatedAt: CAP + 20,
+				createdAt: FILLER_COUNT,
+				updatedAt: FILLER_COUNT,
 			}),
 		);
 
-		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		// Kickoff call — page 1 reads only BATCH filler rows; the Deploy
+		// task sits on a later page and is not reached synchronously.
+		const first = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect(first.scanned).toBe(0);
+		expect(first.closed).toBe(0);
+		expect(first.isDone).toBe(false);
 
-		// Unfixed: the CAP+1 raw-row window never reaches past the filler
-		// backlog, so this Deploy task is never even looked at.
-		// Fixed: the scan streams to the end of the status and caps only on
-		// MATCHED Deploy tasks (of which there is exactly one, far under
-		// CAP), so it is reached and closed.
-		expect(result.scanned).toBe(1);
-		expect(result.closed).toBe(1);
-		expect(result.truncated).toBe(false);
+		const notYetClosed = await t.run((ctx) => ctx.db.get(deployTaskId));
+		expect(notYetClosed?.status).toBe("todo");
+
+		// Drain the self-scheduled continuation chain to exhaustion.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 
 		const closed = await t.run((ctx) => ctx.db.get(deployTaskId));
 		expect(closed?.status).toBe("done");
