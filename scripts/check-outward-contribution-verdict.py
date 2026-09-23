@@ -27,6 +27,56 @@ WHAT COUNTS AS AN ANSWER
 A verdict — APPROVED, REVISE, CHANGES REQUESTED, REJECTED — is an answer whatever it
 says. Only silence is the defect (property 2 of the brief).
 
+A VERDICT IS RECOGNISED BY ITS SHAPE, NEVER BY A WORD APPEARING SOMEWHERE. The first
+version of this file searched for a bare verdict word anywhere in a comment body,
+case-insensitively — and so it produced the very failure it exists to close. Two real
+sentences, both from the review of this script, rendered it CLEAN:
+
+    "I will revise the wording of our contributing guide... No decision on your change yet"
+    "I have NOT approved this yet"
+
+Ordinary English. A fleet member who has decided NOTHING, and says so plainly, turned
+the detector green. The first is the worse of the two: "revise" there is about a GUIDE,
+not about the contribution.
+
+Why the probe could not see it, and this generalises: every MUST_PASS body was a
+well-formed verdict written by the matcher's own author. Not one put a verdict WORD
+inside a non-verdict SENTENCE. A probe built only from cases its author imagined tests
+the author's imagination, not the matcher.
+
+The fix was already half-present here: `VERDICT_REVIEW_STATES` is STRUCTURAL — a GitHub
+review state cannot occur by accident in prose. The comment path now has the same
+discipline. Three anchors, all three read off real posted verdicts:
+
+  1. THE HEADER. A posted verdict opens a LINE with the decision in a header slot —
+     `### Eta — APPROVED — vantageos-agency/vantage-peers #1306 at `cc6dc91``,
+     `CHANGES_REQUESTED: the test is missing its red pole`. Markdown furniture, an
+     optional actor of at most three words, a DASH-OR-COLON SEPARATOR, the decision,
+     then another separator or the end of the line. Prose does not have that shape:
+     "I will revise..." and "I have NOT approved this yet" put no separator before the
+     word, so neither can reach the header slot.
+  2. THE MARKER STANDING ALONE. `[MERGE-APPROVED]` as the utterance of its line (a short
+     citation may follow). Quoted inside a sentence — "[MERGE-APPROVED] is the marker a
+     coordinator posts, not the contributor" — it is not the utterance and does not count.
+  3. THE TRAILER. `ETA_REVIEWED_COMMIT_SHA: <sha>` at line start with a real hex sha
+     after it. A named trailer carrying a commit id cannot occur in prose by accident,
+     and naming the trailer without a sha ("the trailer is missing") does not match.
+
+BOTH the header and the trailer were kept, because they fail in different directions: a
+`[MERGE-APPROVED]` from the coordinator carries no `### Eta —` header, and a review
+posted as a GitHub review body sometimes carries the header with the trailer stripped.
+Either alone would have been a new blind spot.
+
+A word-anywhere path is GONE. What remains is word-based only INSIDE a structural slot,
+and the slot is what it cannot be fooled by: to be read as a verdict, the word must be
+the decision a line is making, not a noun the line happens to contain.
+
+The residual error is deliberately one-directional. A verdict posted in some shape none
+of the three anchors knows is read as SILENCE, and the run goes RED on a contribution
+that was in fact answered — a false alarm a human closes in a minute. The opposite
+error, prose read as a decision, is SILENT, and silence is this detector's whole
+subject. When the matcher must be wrong, it is wrong out loud.
+
 A GATE BOUNCE IS NOT A VERDICT. On #1306 a `NO GATE — SELF-GATE block not filled`
 comment landed at 11:20:33Z, five minutes in, and was RETRACTED four minutes later
 ("you do not need to fill in the SELF-GATE block. That paperwork is ours to carry for
@@ -71,20 +121,66 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
-# A verdict is a terminal answer on the contribution itself. A gate bounce
-# ("NO GATE", "SELF-GATE block not filled") is paperwork, not an answer — see the
-# module docstring for the #1306 measurement that settles this.
-VERDICT_PATTERNS = [
-    r"\bAPPROVED\b",
-    r"\bREVISE\b",
-    r"\bCHANGES[ _-]REQUESTED\b",
-    r"\bREJECTED\b",
-    r"\bMERGE-APPROVED\b",
+# The decision vocabulary. A gate bounce ("NO GATE", "SELF-GATE block not filled") is
+# paperwork and is deliberately absent — see the module docstring for the #1306
+# measurement that settles this.
+#
+# These words are NEVER searched for on their own. They are only ever read inside one
+# of the three structural anchors below; a bare word in a sentence does not count.
+VERDICT_WORDS = [
+    "APPROVED",
+    "REVISE",
+    "CHANGES[ _-]REQUESTED",
+    "REJECTED",
+    "MERGE-APPROVED",
 ]
-VERDICT_RE = re.compile("|".join(VERDICT_PATTERNS), re.IGNORECASE)
+_WORDS = "|".join(VERDICT_WORDS)
+
+# ANCHOR 1 — the header slot. `### Eta — APPROVED — …`, `Eta - REVISE - …`,
+# `CHANGES_REQUESTED: …`. Markdown furniture, an optional actor of at most three
+# words, a DASH-OR-COLON separator, the decision, then a separator or end of line.
+# The separator before the decision is what prose lacks: "I will revise the wording"
+# and "I have NOT approved this yet" have only a space there.
+VERDICT_HEADER_RE = re.compile(
+    r"^[ \t>#*_]*"
+    r"(?:[A-Za-z][A-Za-z.'-]{0,20}(?:[ \t]+[A-Za-z][A-Za-z.'-]{0,20}){0,2}"
+    r"[ \t]*[—–:|-]+[ \t]*)?"
+    rf"(?:{_WORDS})\b"
+    r"[ \t]*(?:[—–:|*_.-]|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# ANCHOR 2 — the doctrine marker standing as the utterance of its line. A short
+# citation (a sha, a task id) may follow it; a sentence may not.
+VERDICT_MARKER_RE = re.compile(
+    r"^[ \t>*_]*\[MERGE-APPROVED\][ \t]*[—–:|-]*[ \t]*\S{0,64}[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# ANCHOR 3 — the trailer every posted verdict carries, WITH its commit id. Naming
+# the trailer in prose without a sha after it does not match.
+VERDICT_TRAILER_RE = re.compile(
+    r"^[ \t>*_]*[A-Z][A-Z0-9]*_REVIEWED_COMMIT_SHA\**[ \t]*:?[ \t]*`?[0-9a-f]{7,40}`?",
+    re.MULTILINE,
+)
 
 # GitHub review states that are themselves a verdict, independent of body text.
+# Structural in the same sense: a review state cannot occur by accident in prose.
 VERDICT_REVIEW_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+
+
+def is_verdict_text(body: str) -> bool:
+    """Does this body MAKE a decision, or merely contain a word for one?
+
+    Shape only. There is no word-anywhere path; removing one of these anchors must
+    make `--self-test` go red (see `MUST_REPORT`'s prose comments)."""
+    if not body:
+        return False
+    return bool(
+        VERDICT_HEADER_RE.search(body)
+        or VERDICT_MARKER_RE.search(body)
+        or VERDICT_TRAILER_RE.search(body)
+    )
 
 MAX_PAGES = 5  # bounded read; see `fetch_pulls` — truncation is a refusal, never a pass
 
@@ -117,7 +213,7 @@ def is_verdict_comment(comment: dict, members: set[str], author: str) -> bool:
     who = (comment.get("author") or "").lower()
     if who not in members or who == author.lower():
         return False  # a contribution is never answered by its own author
-    return bool(VERDICT_RE.search(comment.get("body") or ""))
+    return is_verdict_text(comment.get("body") or "")
 
 
 def is_verdict_review(review: dict, members: set[str], author: str) -> bool:
@@ -126,7 +222,7 @@ def is_verdict_review(review: dict, members: set[str], author: str) -> bool:
         return False
     if (review.get("state") or "").upper() in VERDICT_REVIEW_STATES:
         return True
-    return bool(VERDICT_RE.search(review.get("body") or ""))
+    return is_verdict_text(review.get("body") or "")
 
 
 def events_before(items: list[dict], as_of: datetime) -> list[dict]:
@@ -374,7 +470,9 @@ MEMBERS_FIXTURE = {"elpiarthera", "eta-vantageteam"}
 AS_OF_FIXTURE = parse_ts("2026-09-23T12:00:00Z")
 
 # MUST_REPORT — the #1306 shape: an outside author, open, and the only fleet comments
-# are a gate bounce and its retraction. Bodies are paraphrased, not quoted.
+# are a gate bounce, its retraction, and PROSE THAT DECIDES NOTHING. The prose bodies
+# are the point: they each contain a verdict WORD, and the pre-fix bare-word matcher
+# rendered this fixture green on every one of them.
 MUST_REPORT = [
     {
         "number": 1306,
@@ -400,13 +498,36 @@ MUST_REPORT = [
                 "createdAt": "2026-09-21T12:01:47Z",
                 "body": "Understood, this is APPROVED on my side.",
             },
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-21T13:00:00Z",
+                "body": (
+                    "I will revise the wording of our contributing guide... "
+                    "No decision on your change yet"
+                ),
+            },
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-21T13:30:00Z",
+                "body": "I have NOT approved this yet",
+            },
+            {
+                "author": "elpiarthera",
+                "createdAt": "2026-09-21T14:00:00Z",
+                "body": (
+                    "[MERGE-APPROVED] is the marker a coordinator posts, never the "
+                    "contributor. Please do not add it yourself."
+                ),
+            },
         ],
         "reviews": [],
     }
 ]
 
-# MUST_PASS — same contribution, answered. Whatever the verdict says.
+# MUST_PASS — same contribution, answered. Whatever the verdict says. One entry per
+# anchor, so deleting any single anchor turns this pole red.
 MUST_PASS = [
+    # the HEADER anchor
     {
         **MUST_REPORT[0],
         "comments": MUST_REPORT[0]["comments"]
@@ -414,7 +535,34 @@ MUST_PASS = [
             {
                 "author": "elpiarthera",
                 "createdAt": "2026-09-22T09:00:00Z",
-                "body": "Eta - REVISE - please split the change in two.",
+                "body": "### Eta - REVISE - vantage-peers #1306\n\nSplit this in two.",
+            }
+        ],
+    },
+    # the TRAILER anchor, with the header stripped
+    {
+        **MUST_REPORT[0],
+        "number": 1307,
+        "comments": MUST_REPORT[0]["comments"]
+        + [
+            {
+                "author": "eta-vantageteam",
+                "createdAt": "2026-09-22T09:00:00Z",
+                "body": "Measured it myself, the poles hold.\n\n"
+                "ETA_REVIEWED_COMMIT_SHA: cc6dc91a88455573796aa3fb37ceeee2eacf85ca",
+            }
+        ],
+    },
+    # the MARKER anchor, standing as the utterance of its line
+    {
+        **MUST_REPORT[0],
+        "number": 1308,
+        "comments": MUST_REPORT[0]["comments"]
+        + [
+            {
+                "author": "elpiarthera",
+                "createdAt": "2026-09-22T09:00:00Z",
+                "body": "[MERGE-APPROVED]",
             }
         ],
     },
@@ -457,8 +605,9 @@ def self_test() -> int:
         return 1
     print("SELF-TEST PASS (both poles)")
     print(f"  MUST_REPORT: #1306 by bertux, age {red['unanswered'][0]['age']} -> 1 failure")
-    print(f"  MUST_PASS:   answered outside PR + fleet PR -> {len(green['unanswered'])} failures")
+    print(f"  MUST_PASS:   header + trailer + marker + fleet PR -> {len(green['unanswered'])} failures")
     print("  a gate bounce is not a verdict; a verdict by the author is not a verdict")
+    print("  a verdict WORD inside a sentence that decides nothing is not a verdict")
     return 0
 
 

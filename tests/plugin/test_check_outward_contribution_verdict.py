@@ -281,17 +281,119 @@ def test_self_test_passes_both_poles():
 def test_self_test_is_red_provable(tmp_path):
     """Blunt the verdict vocabulary and the probe must FAIL. A self-test that cannot
     fail is a green light wired to nothing."""
-    source = CHECK.read_text(encoding="utf-8")
-    blunted = source.replace(
-        'VERDICT_PATTERNS = [\n    r"\\bAPPROVED\\b",',
-        'VERDICT_PATTERNS = [\n    r"\\bNO GATE\\b",',
-        1,
+    _mutate_and_expect_self_test_red(
+        tmp_path,
+        'VERDICT_WORDS = [\n    "APPROVED",',
+        'VERDICT_WORDS = [\n    "NO GATE",',
     )
-    assert blunted != source, "the mutation did not apply — fix this test, not the script"
+
+
+def _mutate_and_expect_self_test_red(tmp_path, old, new):
+    source = CHECK.read_text(encoding="utf-8")
+    mutated = source.replace(old, new, 1)
+    assert mutated != source, "the mutation did not apply — fix this test, not the script"
     mutant = tmp_path / "mutant.py"
-    mutant.write_text(blunted, encoding="utf-8")
+    mutant.write_text(mutated, encoding="utf-8")
     result = subprocess.run(
         [sys.executable, str(mutant), "--self-test"], capture_output=True, text=True
     )
-    assert result.returncode == 1
+    assert result.returncode == 1, result.stdout + result.stderr
     assert "SELF-TEST FAIL" in result.stderr
+
+
+def test_self_test_catches_a_relapse_to_the_bare_word_matcher(tmp_path):
+    """Put the OLD matcher back — a verdict word searched for anywhere in the body —
+    and the probe must go red. This is the regression the review found, wired so it
+    cannot return quietly: MUST_REPORT now carries prose that decides nothing, and a
+    bare-word search reads all three of those sentences as answers."""
+    _mutate_and_expect_self_test_red(
+        tmp_path,
+        "        VERDICT_HEADER_RE.search(body)",
+        '        re.search("|".join(VERDICT_WORDS), body, re.IGNORECASE)',
+    )
+
+
+@pytest.mark.parametrize(
+    ("anchor", "disabled"),
+    [
+        ("        VERDICT_HEADER_RE.search(body)", "        False"),
+        ("        or VERDICT_MARKER_RE.search(body)", "        or False"),
+        ("        or VERDICT_TRAILER_RE.search(body)", "        or False"),
+    ],
+    ids=["header", "marker", "trailer"],
+)
+def test_every_anchor_is_load_bearing(tmp_path, anchor, disabled):
+    """Each of the three anchors answers a verdict shape the other two miss. Disable
+    any one and MUST_PASS loses an entry — an anchor nothing depends on is dead code
+    pretending to be a control."""
+    _mutate_and_expect_self_test_red(tmp_path, anchor, disabled)
+
+
+# ── the hole the probe could not see: a verdict WORD in a non-verdict SENTENCE ──
+
+# Every MUST_PASS body above is a well-formed verdict written by the matcher's own
+# author. Not one puts a verdict WORD inside a non-verdict SENTENCE — so the probe
+# tested the author's imagination, not the matcher. These are that shape. The first
+# two are the reviewer's own snapshots on #1330, verbatim:
+#   https://github.com/vantageos-agency/vantage-peers/pull/1330#issuecomment-5798324659
+DECIDES_NOTHING = [
+    pytest.param(
+        "I will revise the wording of our contributing guide... No decision on "
+        "your change yet",
+        id="reviewer-revise-belongs-to-a-guide",
+    ),
+    pytest.param(
+        "I have NOT approved this yet",
+        id="reviewer-not-approved",
+    ),
+    # Mine, a third shape neither of the reviewer's covers: the verdict word is a
+    # true report about a DIFFERENT pull request, and this one is left undecided.
+    pytest.param(
+        "Heads up: #1290 was rejected for the same reason, so you may want to read "
+        "that thread first. I have not formed a view on this one.",
+        id="verdict-word-about-a-different-pull-request",
+    ),
+    # Mine: the doctrine marker itself, quoted inside an instruction. A bracketed
+    # literal is structural, but only when it stands as the utterance.
+    pytest.param(
+        "[MERGE-APPROVED] is the marker a coordinator posts, never the contributor. "
+        "Please do not add it yourself; someone will get to this next week.",
+        id="the-marker-quoted-inside-an-instruction",
+    ),
+]
+
+
+@pytest.mark.parametrize("body", DECIDES_NOTHING)
+def test_a_verdict_word_in_a_sentence_that_decides_nothing_is_not_a_verdict(
+    tmp_path, body
+):
+    """THE hole, and it was on the green side. A fleet member who has decided NOTHING,
+    and says so plainly, must not render this detector CLEAN — that silence is exactly
+    what it exists to find."""
+    prose = {
+        **OUTSIDE_PR,
+        "comments": OUTSIDE_PR["comments"]
+        + [{"author": "elpiarthera", "createdAt": "2026-09-22T09:00:00Z", "body": body}],
+    }
+    result = run_snapshot(snapshot(tmp_path, [prose]))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "#1306" in result.stdout
+
+
+@pytest.mark.parametrize("body", DECIDES_NOTHING)
+def test_prose_in_a_review_body_is_not_a_verdict_either(tmp_path, body):
+    """The review path reads bodies through the same matcher. A COMMENTED review
+    carrying prose is the same silence; only a structural review STATE answers
+    without shape."""
+    prose = {
+        **OUTSIDE_PR,
+        "reviews": [
+            {
+                "author": "eta-vantageteam",
+                "submittedAt": "2026-09-22T09:00:00Z",
+                "state": "COMMENTED",
+                "body": body,
+            }
+        ],
+    }
+    assert run_snapshot(snapshot(tmp_path, [prose])).returncode == 1
