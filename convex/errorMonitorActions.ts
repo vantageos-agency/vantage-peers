@@ -4,18 +4,20 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import { RECURRING_ESCALATION_TITLE_PREFIX } from "./errorMonitor";
+import { isDeployWindowActive } from "./errorMonitorDeployWindow";
 import {
 	deserializeRule,
 	evaluateFilter,
 	type FilterRule,
 	isTransientErrorMessage,
 } from "./errorMonitorFilters";
-import { isDeployWindowActive } from "./errorMonitorDeployWindow";
+import { resolveFunctionVisibility } from "./errorMonitorFunctionVisibility";
 import { computeGroupKey } from "./errorMonitorGroupKey";
 import {
 	assertKillSwitchHealth,
 	isKillSwitchActive,
 } from "./errorMonitorKillSwitch";
+import { classifyRefusal } from "./errorMonitorRefusalClassifier";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -318,6 +320,40 @@ export const pollDeploymentLogs = internalAction({
 				if (decision.severity === "log-only") {
 					console.log(
 						`[ErrorMonitor] log-only filter (${decision.matchedRule?.reason ?? "n/a"}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
+					);
+					continue;
+				}
+
+				// Issue #1297 (closed NOT A DEFECT, task
+				// k17dthw4ky2w0bhevzy3dawz9h8ezd3e) — no `errorMonitorFilters`
+				// rule matched (severity is "create-issue"), so this is a
+				// candidate for escalation under the OLD predicate. Before
+				// that, check whether every function in this group is a
+				// WORKING REFUSAL: an ArgumentValidationError on a function
+				// this repo registers PUBLIC. This is a separate gate from the
+				// rule table above by design — a (functionName, regex) rule
+				// cannot express "public vs internal" (see
+				// errorMonitorRefusalClassifier.ts's module doc for why), so it
+				// cannot be folded into `filterRules` without also silencing
+				// the same error shape on an INTERNAL function, which must
+				// keep escalating. `resolveFunctionVisibility` reads each
+				// function's own registered visibility from THIS repo's
+				// source (never from the log entry, which carries no caller
+				// identity at all — see errorMonitorDeployWindow.ts's HONEST
+				// LIMITATION for that same fact independently established).
+				if (
+					decision.severity === "create-issue" &&
+					group.functionNames.length > 0 &&
+					group.functionNames.every(
+						(single) =>
+							classifyRefusal(
+								{ functionName: single, errorMessage },
+								resolveFunctionVisibility(single),
+							).isWorkingRefusal,
+					)
+				) {
+					console.log(
+						`[ErrorMonitor] working refusal (validator caught a malformed caller argument on a public function, #1297) — ${functionName}: ${errorMessage.slice(0, 120)}`,
 					);
 					continue;
 				}
