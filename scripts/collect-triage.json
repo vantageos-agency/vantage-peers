@@ -1,0 +1,698 @@
+{
+  "convex/agentCredentials.ts::mintAgentCredential::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/agentRelations.ts::childrenOf::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/agentRelations.ts::graphByOrg::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/agentRelations.ts::parentsOf::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/agents.ts::listAgentsByOrg::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/briefingNotes.ts::list::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/briefingNotes.ts::list::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/briefingNotes.ts::list::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/briefingNotes.ts::list::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/briefingNotes.ts::searchBriefingNotesByKeyword::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/briefingNotes.ts::syncParticipantIndex::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/businessUnits.ts::list::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/businessUnits.ts::list::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/businessUnits.ts::list::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/businessUnits.ts::list::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getDashboardSummary::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getDashboardSummary::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getDashboardSummary::3": {
+    "reason": "profiles.collect() with no cap and no withIndex, on the dashboard hot path. Comment claims 'small table' but nothing enforces that \u2014 same unbounded-collect-on-growing-table shape #1325 closed at briefingNotes/tasks. Not fixed here per brief instruction; to be filed as its own task.",
+    "verdict": "IN"
+  },
+  "convex/dashboard.ts::getDashboardSummary::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getDashboardSummary::5": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getDashboardSummary::6": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getDashboardSummary::7": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getProjectSummary::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/dashboard.ts::getProjectSummary::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/diary.ts::list::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/diary.ts::list::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/diary.ts::listByDateRange::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/diary.ts::listByDateRange::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/episodes.ts::getCriticalInsights::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/episodes.ts::listEpisodes::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::linkIrpMissionByIssueNumber::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::listActiveDeployments::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::listDeployments::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::listErrors::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::listErrors::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::listStaleAutoIrp::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::resolveStaleIrpMission::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitor.ts::resolveStaleIrpMission::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitorFilters.ts::addFilterRule::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitorFilters.ts::listFilterRules::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitorFilters.ts::loadActiveRules::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/errorMonitorFilters.ts::seedDefaultRules::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/fixPatterns.ts::get::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/fixPatterns.ts::listAll::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/fixPatterns.ts::listByProject::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/githubRepoMapping.ts::list::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/improvisationDigest.ts::scanWindow::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/improvisationDigest.ts::scanWindow::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/improvisationDigest.ts::scanWindow::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issueClosedSweepDb.ts::cascadeCloseMission::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issueClosedSweepDb.ts::listActiveMissionsForSweep::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issueStatsQueries.ts::getLatest::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issueStatsQueries.ts::getLatest::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issueStatsQueries.ts::listActiveRepos::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issues.ts::getStats::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issues.ts::getStats::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issues.ts::listByOrchestrator::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issues.ts::listByOrchestrator::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issues.ts::listByProject::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/issues.ts::listByStatus::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/kbMutations.ts::listChunkIdsForDoc::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/kbMutations.ts::markDocSoftDeleted::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/mandates.ts::list::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/mandates.ts::list::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/mandates.ts::list::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/mandates.ts::list::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/mandates.ts::list::5": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/mandates.ts::list::6": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memories.ts::expireMemoriesByTtl::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memories.ts::listMemories::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memories.ts::listMemories::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memories.ts::listMemories::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memories.ts::listMemories::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memoriesScoped.ts::listMemoriesScoped::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/memoriesScoped.ts::listMemoriesScoped::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessages::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessages::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessages::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessages::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessages::5": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessages::6": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessagesEnvelope::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessagesEnvelope::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessagesEnvelope::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessagesEnvelope::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessagesEnvelope::5": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::checkNewMessagesEnvelope::6": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::deleteMessage::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::getUnreadCount::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listBroadcastStatus::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listByChannel::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listByChannel::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listByChannel::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listMessages::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listMessages::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listMessages::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::listMessages::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::searchMessagesByKeyword::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/messages.ts::sendMessageCore::1": {
+    "reason": "profiles.collect() with no cap and no withIndex, on the message-send hot path (every broadcast/channel send calls this). Same unbounded-collect shape #1325 closed elsewhere. Not fixed here; to be filed.",
+    "verdict": "IN"
+  },
+  "convex/messages.ts::sendMessageCore::2": {
+    "reason": "client_org_mapping.collect() with no cap and no withIndex, on the broadcast-send hot path. client_org_mapping grows via self-service org provisioning (provisionOrganization) \u2014 corpus-sized, not caller-scoped. Not fixed here; to be filed.",
+    "verdict": "IN"
+  },
+  "convex/messages.ts::sendMessageCore::3": {
+    "reason": "Second profiles.collect() in the same handler (non-broadcast channel-resolution branch) \u2014 same defect as ::1, same table, same hot path. Not fixed here; to be filed.",
+    "verdict": "IN"
+  },
+  "convex/migrations.ts::backfillTaskTimes::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::deleteTestBriefings::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::deleteTestMemories::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::deleteTestMessages::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::deleteTestMessages::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::deleteTestMissions::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::deleteTestTasks::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::migrateDiaryOrchestrator::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/migrations.ts::migrateMemoriesNamespace::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missionTemplates.ts::listNames::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::5": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::6": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/missions.ts::runMissionsList::7": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/oauth.ts::deleteClient::1": {
+    "reason": "by_clientId indexed, bounded by one client's own access-token count.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::deleteClient::2": {
+    "reason": "by_clientId indexed, bounded by one client's own refresh-token count.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::findSeatNameCollision::1": {
+    "reason": "Fixed-cap-with-refusal shape (SEAT_NAME_COLLISION_SCAN_LIMIT): throws SEAT_NAME_CHECK_INCOMPLETE if the scan hits the cap instead of silently reporting no collision. This IS the fix pattern, not the defect (client_org_mapping).",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::findSeatNameCollision::2": {
+    "reason": "Same fixed-cap-with-refusal shape as ::1, over oauth_scope_profiles: throws on truncation rather than resolving false.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::listClients::1": {
+    "reason": "Unbounded oauth_clients.order(desc).collect() with no cap and no withIndex. oauth_clients grows via self-service DCR registration (registerPublicClient) \u2014 corpus-sized, not caller-scoped. Filed under task k172mpagbvww90jsv7vjs0e0fn8eza24.",
+    "verdict": "IN"
+  },
+  "convex/oauth.ts::listScopeProfiles::1": {
+    "reason": "oauth_scope_profiles is an admin-defined catalogue (seeded/edited by operators via seedDefaultProfiles/upsertScopeProfile), not a self-service-growing table \u2014 catalogue-scale, not corpus-scale.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::listSeatClientIds::1": {
+    "reason": "Fixed-cap-with-refusal shape (SEAT_CLIENT_LISTING_LIMIT): throws SEAT_CLIENT_LISTING_INCOMPLETE on truncation instead of returning a partial list. Internal query, not on a self-service hot path.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::patchClientScopeAndRefreshTokens::1": {
+    "reason": "by_clientId indexed, bounded by one client's own access-token count.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::patchClientScopeAndRefreshTokens::2": {
+    "reason": "by_clientId indexed, bounded by one client's own refresh-token count.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::patchScopeProfileEmergency::1": {
+    "reason": "by_scopeProfile.collect() cascade-retarget on profile rename \u2014 grows with the number of clients on a profile, no cap, no refusal-on-truncation. Filed under task k172mpagbvww90jsv7vjs0e0fn8eza24.",
+    "verdict": "IN"
+  },
+  "convex/oauth.ts::patchScopeProfileEmergency::2": {
+    "reason": "Cascade-revoke over oauth_access_tokens via .filter() with NO .withIndex() at all \u2014 worse than the unindexed-but-collect() shape, this is the banned .filter()-scan pattern independently of size. Filed under task k172mpagbvww90jsv7vjs0e0fn8eza24.",
+    "verdict": "IN"
+  },
+  "convex/oauth.ts::patchScopeProfileEmergency::3": {
+    "reason": "Cascade-revoke over oauth_refresh_tokens via .filter() with NO .withIndex() at all \u2014 same banned .filter()-scan pattern as ::2. Filed under task k172mpagbvww90jsv7vjs0e0fn8eza24.",
+    "verdict": "IN"
+  },
+  "convex/oauth.ts::retrofitSeatRefreshToken::1": {
+    "reason": "by_clientId indexed, bounded by one client's own refresh-token count \u2014 not corpus-sized.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::revokeAccessTokensOnly::1": {
+    "reason": "by_clientId indexed, bounded by one client's own access-token count.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::revokeAccessTokensOnly::2": {
+    "reason": "by_clientId indexed, bounded by one client's own refresh-token count.",
+    "verdict": "OUT"
+  },
+  "convex/oauthMigrations.ts::backfillTokenEndpointAuthMethod::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/orgMembership.ts::getMembership::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/orgMembership.ts::getMembership::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/profiles.ts::getProfileWithMemories::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/profiles.ts::listProfiles::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/profiles.ts::listProfiles::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/receiptTenantAudit.ts::_allClientOrgSlugs::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/receiptTenantBackfill.ts::_receiptsForCaller::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/receiptTenantBackfill.ts::_receiptsForCaller::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/receiptTenantBackfill.ts::loadRealClientOrgs::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/recurringTasks.ts::list::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/recurringTasks.ts::list::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/recurringTasks.ts::list::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/recurringTasks.ts::processDueTasks::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/stats.ts::orchestratorStats::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::assertNoConcurrentInProgress::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::complete::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::complete::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::createDeployTaskWithDedup::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::createDeployTaskWithDedup::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::findOpenReviewTasks::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::listByMission::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::listByMission::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::listOverdue::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::listReviewBacklogByLineage::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::listUnlinkedBlocked::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::10": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::11": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::12": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::13": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::2": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::3": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::4": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::5": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::6": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::7": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::8": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::runTasksList::9": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::searchTasksByKeyword::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  },
+  "convex/tasks.ts::unblockWaitersOn::1": {
+    "reason": "not yet examined",
+    "verdict": "UNJUDGED"
+  }
+}
