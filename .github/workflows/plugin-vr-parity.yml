@@ -77,6 +77,15 @@ jobs:
       - name: "Offline mechanism suite (fictive vocabulary — real on forks)"
         run: pytest tests/plugin/test_source_prose_identity_guard.py -v
 
+      # OFFLINE — the outward-contribution detector's bipolar probe. Network-free
+      # (snapshot fixtures + `--self-test`), so it is real on forks too, which is
+      # the population this detector exists for. The LIVE poles against GitHub are
+      # run by command and recorded on the task; what CI guards here is the
+      # classifier (a gate bounce is not a verdict; the author cannot answer
+      # themselves) and the empty-vs-unreadable gap.
+      - name: "Outward contribution verdict — bipolar probe (offline)"
+        run: pytest tests/plugin/test_check_outward_contribution_verdict.py -v
+
       # SECRET HALF — the three checks that resolve the REAL client vocabulary
       # (VANTAGE_CLIENT_HASHES) or reach VantageRegistry (VANTAGE_REGISTRY_TOKEN),
       # both withheld from fork PRs by GitHub. On a same-repo push/PR the secrets
