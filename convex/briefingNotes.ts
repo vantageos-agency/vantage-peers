@@ -411,6 +411,10 @@ export const list = query({
 		// Set to true below if EITHER half of the updatedSince union hit its
 		// own cap — the trigger for the "scan may be incomplete" refusal.
 		let updatedSinceBranchOverflowed = false;
+		// Set to true below (non-updatedSince path only) when the org-bound,
+		// topic-bound, or full-table scan hit its cap OR the platform's own
+		// byte-ceiling error — see fetchCappedOrOverflow, issue #1294.
+		let plainScanOverflowed = false;
 
 		if (args.updatedSince !== undefined) {
 			const since = args.updatedSince;
@@ -484,14 +488,60 @@ export const list = query({
 			rows = [...branchAResult.rows, ...branchBResult.rows].sort(
 				(a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
 			);
+		} else if (!scope.isMaster) {
+			// Issue #1294 fix -- a non-master (org-scoped) caller ALWAYS has
+			// needsVisibilityFilter=true (see above), so it ALWAYS reached this
+			// widened fetchCap. The pre-fix code below (still used for the master
+			// path) scanned `by_topic` or the full unindexed table -- bounded by
+			// the GLOBAL cross-tenant corpus -- and only filtered to this caller's
+			// own orgId AFTER the fetch (further below in this handler).
+			// Reproduced: 90 rows of ~220KB content belonging to a DIFFERENT org
+			// alone trip "Read too much data ... (limit: 16777216 bytes)" for an
+			// org-scoped caller that owns ZERO of those rows. Bound the read to
+			// THIS caller's own org via the orgId-prefixed index instead -- growth
+			// now tracks this org's own row count, never the platform-wide corpus.
+			const orgSlug = scope.orgSlug as string;
+			const capped =
+				args.topic !== undefined
+					? await fetchCappedOrOverflow(() =>
+							ctx.db
+								.query("briefingNotes")
+								.withIndex("by_orgId_topic", (q) =>
+									q.eq("orgId", orgSlug).eq("topic", args.topic as string),
+								)
+								.order("desc")
+								.take(fetchCap),
+						)
+					: await fetchCappedOrOverflow(() =>
+							ctx.db
+								.query("briefingNotes")
+								.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
+								.order("desc")
+								.take(fetchCap),
+						);
+			rows = capped.rows;
+			plainScanOverflowed = capped.overflowed;
 		} else if (args.topic !== undefined) {
-			rows = await ctx.db
-				.query("briefingNotes")
-				.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
-				.order("desc")
-				.take(fetchCap);
+			// Master path -- unchanged scan shape, now wrapped in
+			// fetchCappedOrOverflow (same helper already used by the updatedSince
+			// branches above) so a genuine cross-tenant byte-ceiling trip degrades
+			// to our own SCAN_CAP_EXCEEDED refusal instead of the raw,
+			// unactionable platform error.
+			const capped = await fetchCappedOrOverflow(() =>
+				ctx.db
+					.query("briefingNotes")
+					.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
+					.order("desc")
+					.take(fetchCap),
+			);
+			rows = capped.rows;
+			plainScanOverflowed = capped.overflowed;
 		} else {
-			rows = await ctx.db.query("briefingNotes").order("desc").take(fetchCap);
+			const capped = await fetchCappedOrOverflow(() =>
+				ctx.db.query("briefingNotes").order("desc").take(fetchCap),
+			);
+			rows = capped.rows;
+			plainScanOverflowed = capped.overflowed;
 		}
 
 		// Refuse to return a silently-incomplete page: if the widened scan
@@ -508,9 +558,14 @@ export const list = query({
 		// exceed BRIEFING_NOTES_LIST_SCAN_CAP even when neither half is
 		// actually saturated (e.g. 1500 + 1500 on a cap of 2000), which would
 		// be a false refusal of a genuinely complete result.
+		// Non-updatedSince branch: `plainScanOverflowed` comes straight from
+		// fetchCappedOrOverflow, which already folds in BOTH the row-count cap
+		// AND the platform's own byte-ceiling error (issue #1294) -- never
+		// re-derive it from `rows.length` alone, that would miss a byte trip
+		// that returned zero rows.
 		const scanOverflowed = usedIndexedUpdatedSinceBound
 			? updatedSinceBranchOverflowed
-			: rows.length > BRIEFING_NOTES_LIST_SCAN_CAP;
+			: plainScanOverflowed;
 		if (needsWideScan && scanOverflowed) {
 			const windowAdvice = usedIndexedUpdatedSinceBound
 				? " or shrink the updatedSince window"

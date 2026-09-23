@@ -620,6 +620,18 @@ export default defineSchema({
 		// bytes through this branch).
 		.index("by_updatedAt_createdAt", ["updatedAt", "createdAt"])
 		.index("by_topic_updatedAt_createdAt", ["topic", "updatedAt", "createdAt"])
+		// Issue #1294 fix — `list`'s topic-filtered branch used `by_topic`
+		// alone for EVERY caller, including a non-master (org-scoped) one.
+		// `by_topic` has no orgId prefix, so a topic shared across tenants let
+		// the widened `.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1)` read every
+		// OTHER org's full-content rows before the orgId filter (in the
+		// `list` handler, after the fetch) ever ran — growth tracked the
+		// GLOBAL cross-tenant corpus, not the caller's own org, and could trip
+		// the platform's 16MB read ceiling on data the caller could never see
+		// anyway. This index puts orgId as the leading equality prefix so a
+		// non-master caller's topic-filtered scan is bounded by ITS OWN org's
+		// row count from the index itself, never the platform-wide corpus.
+		.index("by_orgId_topic", ["orgId", "topic"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on briefing body, with filterFields for the
 		// common narrowing axes (topic, createdBy).
@@ -747,7 +759,22 @@ export default defineSchema({
 		active: v.boolean(),
 		lastDeployedSHA: v.optional(v.string()), // Day 98 — most recent prod-deployed commit OID
 		lastDeployedAt: v.optional(v.number()), // Day 98 — Unix ms timestamp of that deploy
-	}).index("by_repo", ["repo"]),
+	})
+		.index("by_repo", ["repo"])
+		// Issue #1276 fix — `resolveStaleDeployTasks` (convex/tasks.ts) used to
+		// open with an unbounded `ctx.db.query("githubRepoMapping").collect()`
+		// of the WHOLE table every single cron tick (every 6 hours), the one
+		// read in that function with no cap and no index bound at all — every
+		// OTHER read in the same function was already capped by
+		// RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP, yet the timeout kept recurring.
+		// This is the corpus that actually grows unboundedly over the fleet's
+		// lifetime (every repo ever onboarded, never pruned). The fix replaces
+		// the upfront whole-table `.collect()` with a per-project, on-demand,
+		// index-bound lookup (`by_project`) reached only for the handful of
+		// DISTINCT projects referenced by this tick's already-capped Deploy-
+		// task batch — bounded by that batch's distinct-project count, never
+		// by the total onboarded-repo corpus.
+		.index("by_project", ["project"]),
 
 	// ── businessUnits ─────────────────────────────────────────────────────────
 	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.

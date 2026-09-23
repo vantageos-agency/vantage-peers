@@ -3024,8 +3024,42 @@ export const createDeployTaskWithDedup = internalMutation({
 // idiom already established at RECURRING_TASKS_LIST_SCAN_CAP
 // (convex/recurringTasks.ts:133): fetch CAP+1 so an extra row PROVES
 // truncation happened rather than silently swallowing it.
+//
+// Issue #1276 RECURRENCE fix (this task) — the per-status `by_status` reads
+// above WERE already capped and stayed bounded (at most
+// (RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1) * 4 documents, regardless of
+// corpus size); the timeout kept recurring anyway because the ORIGINAL fix
+// left one read in this same function with NO bound at all: an upfront
+// `ctx.db.query("githubRepoMapping").collect()` of the WHOLE table, on every
+// single tick, before any per-status work even starts. `githubRepoMapping`
+// is admin-config data (one row per onboarded repo, upserted-by-repo via
+// recordDeployment — never bulk-inserted per event) — but it accumulates
+// over the fleet's entire lifetime and is never pruned, so it is the one
+// genuinely UNBOUNDED-by-corpus read in this function, unlike the task-row
+// scans above (already capped) or #1275's config-bounded `.collect()`
+// (bounded by deliberate, admin-managed configuration size, not corpus
+// growth). Fix: drop the upfront whole-table snapshot entirely. Resolve each
+// DISTINCT project referenced by THIS TICK's already-capped Deploy-task
+// batch on demand, via the `by_project` index (convex/schema.ts) — reads now
+// grow with the number of distinct projects seen in a single tick's ≤(CAP+1)
+// * 4 task batch (in practice a handful), never with the total onboarded-
+// repo corpus. The Bug-5 "most-recent-wins" tiebreaker is preserved exactly,
+// scoped to the (typically single-row) `by_project` result for that project
+// alone — never truncated: a project's own row count is unrelated to the
+// total fleet-wide repo count this fix removes the dependency on. If a
+// single project's own row count somehow exceeds its cap (structurally
+// unlikely — see REPO_MAPPING_PER_PROJECT_SCAN_CAP below), the tiebreak is
+// refused as inconclusive (skipped, never guessed) and `truncated` is set —
+// same "measure or refuse, never guess" doctrine as the per-status cap.
 // ─────────────────────────────────────────────────────────────────────────────
 export const RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP = 500;
+
+// A project's own githubRepoMapping row count (distinct repos mapped to one
+// project slug, e.g. a monorepo split across a few repos) — structurally a
+// handful, never fleet-wide. 200 is generous headroom; CAP+1 proves
+// truncation rather than silently guessing a tiebreak winner from a partial
+// set.
+export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
 
 export const resolveStaleDeployTasks = internalMutation({
 	args: {},
@@ -3045,31 +3079,38 @@ export const resolveStaleDeployTasks = internalMutation({
 		let skipped = 0;
 		let truncated = false;
 
-		// Cache repoMapping lookups within a single cron tick.
+		// Cache repoMapping lookups within a single cron tick — keyed by the
+		// parsed project slug (DEPLOY_TITLE_RE's capture), populated on demand
+		// below (issue #1276 recurrence fix — no upfront whole-table snapshot).
 		const repoCache = new Map<
 			string,
 			{ lastDeployedAt: number | undefined; lastDeployedSHA: string | undefined } | null
 		>();
 
-		// Day 98 F1 — fleet-wide mapping snapshot indexed by project. Same key-
-		// mismatch root cause as (a): DEPLOY_TITLE_RE captures project slug, but
-		// githubRepoMapping rows key on full repo path. Single snapshot per tick
-		// is O(N) where N is mapping count (≲ 50 fleet-wide); per-task lookup
-		// becomes a Map.get.
-		const allMappings = await ctx.db.query("githubRepoMapping").collect();
-		// Bug 5 tiebreaker: group all rows by project, then pick the best one per project.
-		// Preference: row with lastDeployedAt > 0 (most-recent wins); fallback: newest _creationTime.
-		const projectGroups = new Map<string, (typeof allMappings)[number][]>();
-		for (const m of allMappings) {
-			const group = projectGroups.get(m.project);
-			if (group) {
-				group.push(m);
-			} else {
-				projectGroups.set(m.project, [m]);
+		async function resolveMappingForProject(
+			project: string,
+		): Promise<{ lastDeployedAt: number | undefined; lastDeployedSHA: string | undefined } | null> {
+			const cached = repoCache.get(project);
+			if (cached !== undefined) return cached;
+
+			const group = await ctx.db
+				.query("githubRepoMapping")
+				.withIndex("by_project", (q) => q.eq("project", project))
+				.take(REPO_MAPPING_PER_PROJECT_SCAN_CAP + 1);
+			if (group.length > REPO_MAPPING_PER_PROJECT_SCAN_CAP) {
+				// A single project's own row set overflowed its cap — refuse to
+				// guess a tiebreak winner from a partial set; report and move on.
+				truncated = true;
+				repoCache.set(project, null);
+				return null;
 			}
-		}
-		const mappingsByProject = new Map<string, (typeof allMappings)[number]>();
-		for (const [project, group] of projectGroups) {
+			if (group.length === 0) {
+				repoCache.set(project, null);
+				return null;
+			}
+
+			// Bug 5 tiebreaker (unchanged): prefer the row with the most-recent
+			// lastDeployedAt > 0; fall back to the newest _creationTime.
 			const withDeploy = group.filter(
 				(m) => m.lastDeployedAt !== undefined && m.lastDeployedAt > 0,
 			);
@@ -3081,7 +3122,12 @@ export const resolveStaleDeployTasks = internalMutation({
 					: group.reduce((a, b) =>
 							a._creationTime >= b._creationTime ? a : b,
 						);
-			mappingsByProject.set(project, winner);
+			const resolved = {
+				lastDeployedAt: winner.lastDeployedAt,
+				lastDeployedSHA: winner.lastDeployedSHA,
+			};
+			repoCache.set(project, resolved);
+			return resolved;
 		}
 
 		for (const status of OPEN_STATUSES) {
@@ -3098,17 +3144,7 @@ export const resolveStaleDeployTasks = internalMutation({
 				if (!parsed) continue;
 				scanned++;
 
-				let mapping = repoCache.get(parsed.repo);
-				if (mapping === undefined) {
-					const row = mappingsByProject.get(parsed.repo) ?? null;
-					mapping = row
-						? {
-								lastDeployedAt: row.lastDeployedAt,
-								lastDeployedSHA: row.lastDeployedSHA,
-							}
-						: null;
-					repoCache.set(parsed.repo, mapping);
-				}
+				const mapping = await resolveMappingForProject(parsed.repo);
 
 				if (
 					!mapping ||
