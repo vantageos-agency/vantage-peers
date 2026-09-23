@@ -3159,18 +3159,72 @@ export const resolveStaleDeployTasks = internalMutation({
 			return row;
 		}
 
+		// Issue #1294-recurrence fix (this task, k17ajx58pqr5bjq68e5sq7y8es8ezphf)
+		// — the per-status CAP above was capping the WRONG population. `.take
+		// (CAP + 1)` fetched the first CAP+1 rows of `by_status` (ANY open
+		// task, Deploy or not) and only ran `parseDeployTitle` on that
+		// pre-filtered slice. On a status holding more than CAP open
+		// NON-Deploy tasks, every Deploy task in that status — regardless of
+		// its own age — was crowded out of the window entirely: the job
+		// reported `scanned: 0, truncated: true` having examined none of its
+		// actual subject. This was measured directly against hosted DEV
+		// before and after the #1276 fix with the identical
+		// `{closed: 0, scanned: 0, truncated: true}` result both times — proof
+		// the live seeded task never entered the window, not that it was too
+		// new to close.
+		//
+		// The sort itself (`by_status` = ["status", "createdAt"], default
+		// ascending = oldest-first) was never the defect and MUST NOT be
+		// reversed: stale means old, and oldest-first is the direction that
+		// reaches the genuinely-old rows this job exists to close. Flipping
+		// it to newest-first would hide the old stale tasks permanently
+		// instead of the crowding bug hiding them intermittently.
+		//
+		// Fix chosen: STREAM to exhaustion via `for await` (the idiom
+		// `fleetStats` in convex/stats.ts already established for this exact
+		// constraint — see that file's comment: Convex permits only ONE
+		// `.paginate()` cursor per function execution, so a `.paginate()`
+		// loop across these 4 statuses would throw "ran multiple paginated
+		// queries"; `for await` has no such restriction and can run any
+		// number of times in one execution). `for await` does not buffer or
+		// pre-slice — every row of the status is visited in index order
+		// (oldest-first) and tested with `parseDeployTitle` BEFORE any cap is
+		// applied, so a Deploy task can no longer be crowded out by
+		// unrelated open tasks ahead of it in the same status.
+		//
+		// What this costs: the stream still reads every row of that status
+		// from the index, Deploy or not (same class of cost `fleetStats`
+		// already pays for the SAME table, every 6 hours here vs. on-demand
+		// there) — there is no per-title index to narrow the READ population
+		// further without maintaining a new column on every task write for a
+		// benefit confined to the handful of rows that are Deploy tasks
+		// (the tradeoff explicitly rejected two comments above, unchanged by
+		// this fix). What changes is WHERE the cap is applied: the CAP now
+		// bounds the number of MATCHED Deploy tasks actually processed
+		// (mapping lookup + possible patch) per status, not the number of
+		// rows glanced at to find them. `truncated` now means "this status
+		// holds more than CAP open Deploy tasks (a structurally
+		// near-impossible corpus per the doctrine below); the oldest CAP of
+		// them were processed this tick in order, the remainder will be
+		// picked up next tick" — a bound tied to the job's own subject, not
+		// to incidental crowding by unrelated tasks.
 		for (const status of OPEN_STATUSES) {
-			const fetched = await ctx.db
+			let matchedInStatus = 0;
+			for await (const t of ctx.db
 				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.take(RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1);
-			if (fetched.length > RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP) {
-				truncated = true;
-			}
-			const batch = fetched.slice(0, RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP);
-			for (const t of batch) {
+				.withIndex("by_status", (q) => q.eq("status", status))) {
 				const parsed = parseDeployTitle(t.title);
 				if (!parsed) continue;
+
+				if (matchedInStatus >= RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP) {
+					// Oldest-first order means the CAP oldest Deploy tasks in
+					// this status — exactly the ones this job exists to close —
+					// were already processed above; stop and report truncated
+					// rather than guess at, or silently skip, the remainder.
+					truncated = true;
+					break;
+				}
+				matchedInStatus++;
 				scanned++;
 
 				const mapping = await resolveMappingForProject(parsed.repo);

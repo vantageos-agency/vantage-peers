@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 //
-// resolveStaleDeployTasksScanCap.test.ts — GitHub issue #1276 RED-first.
+// resolveStaleDeployTasksScanCap.test.ts — GitHub issue #1276 RED-first,
+// updated for issue #1294 (this task, k17ajx58pqr5bjq68e5sq7y8es8ezphf).
 //
 // `resolveStaleDeployTasks` (convex/tasks.ts) looped over the four open
 // statuses and, for EACH, did an unbounded `.collect()` over the whole
@@ -9,6 +10,18 @@
 // As the `tasks` table grew, the cron (every 6 hours) started timing out —
 // "Your request timed out performing too many system operations" —
 // recurring for 24h+ in production.
+//
+// Issue #1294 update — the #1276 fix (`.take(CAP + 1)` before the
+// `parseDeployTitle` filter) capped the wrong population: the RAW ROW
+// COUNT of the window, not the count of Deploy tasks inside it. A status
+// holding more than CAP open NON-Deploy tasks crowded every Deploy task in
+// that status out of the window regardless of the Deploy task's own age
+// (see resolveStaleDeployTasksCrowding.test.ts for the dedicated crowding
+// fixture). The fix now streams the WHOLE status via `for await` — see the
+// comment above the loop in convex/tasks.ts — and caps on the number of
+// MATCHED Deploy tasks actually processed, not on rows glanced at to find
+// them. These tests are updated to seed enough Deploy tasks (not filler
+// rows) to cross that boundary; the MUST_PASS pole is unchanged.
 //
 // Both poles required:
 //   1. MUST_BLOCK — above the bound, the handler must not silently drop
@@ -63,6 +76,33 @@ async function seedFiller(
 	});
 }
 
+// Issue #1294 — the cap now bounds MATCHED Deploy tasks, not raw rows, so
+// the CONTROL fixture must seed Deploy tasks themselves to move the
+// boundary, not unrelated filler.
+async function seedDeploy(
+	t: ReturnType<typeof createTestConvex>,
+	count: number,
+	startCreatedAt: number,
+	startPr: number,
+): Promise<void> {
+	await t.run(async (ctx) => {
+		for (let i = 0; i < count; i++) {
+			const createdAt = startCreatedAt + i;
+			await ctx.db.insert("tasks", {
+				title: TITLE(startPr + i, "vantage-memory"),
+				assignedTo: "sigma",
+				priority: "urgent" as const,
+				createdBy: "system",
+				project: "vantage-memory",
+				tags: ["github", "deploy", "pr-merged"],
+				status: "todo",
+				createdAt,
+				updatedAt: createdAt,
+			});
+		}
+	});
+}
+
 describe("resolveStaleDeployTasks — scan cap (GitHub issue #1276)", () => {
 	test("MUST_BLOCK: above the cap, the handler still closes the Deploy task it reaches within the cap, and reports truncation for the ones beyond it — neither pole alone would catch a cap that silently stops closing everything", async () => {
 		const t = createTestConvex();
@@ -83,13 +123,16 @@ describe("resolveStaleDeployTasks — scan cap (GitHub issue #1276)", () => {
 			});
 		});
 
-		// by_status orders (status, createdAt) ascending, so createdAt controls
-		// exactly which rows land inside vs. outside a CAP-sized fetch:
-		//   [0, CAP-10)         -> plain filler                    (indices 0..CAP-11)
-		//   CAP-10              -> a Deploy task INSIDE the cap    (index CAP-10)
-		//   (CAP-10, CAP)       -> plain filler                    (indices CAP-9..CAP-1)
-		//   [CAP, CAP+3)        -> 3 Deploy tasks OUTSIDE the cap  (indices CAP..CAP+2)
-		await seedFiller(t, CAP - 10, 0);
+		// Issue #1294 fix — the cap now bounds the number of MATCHED Deploy
+		// tasks processed, never the raw row count of the status. A handful
+		// of interspersed filler rows (proving they do NOT consume the cap
+		// budget) plus exactly CAP reachable Deploy tasks plus 3 overflow
+		// Deploy tasks — all oldest-first via `by_status`'s ascending
+		// (status, createdAt) order:
+		//   [0, 5)            -> plain filler, older than every Deploy task
+		//   [5, 5+CAP)        -> CAP Deploy tasks, ALL inside the cap
+		//   [5+CAP, 5+CAP+3)  -> 3 Deploy tasks OUTSIDE the cap
+		await seedFiller(t, 5, 0);
 
 		async function insertDeploy(pr: number, createdAt: number) {
 			return t.run(async (ctx) =>
@@ -107,25 +150,30 @@ describe("resolveStaleDeployTasks — scan cap (GitHub issue #1276)", () => {
 			);
 		}
 
-		const reachableDeployId = await insertDeploy(700, CAP - 10);
-		await seedFiller(t, 9, CAP - 9); // fills indices CAP-9..CAP-1
+		const reachableDeployIds: Awaited<ReturnType<typeof insertDeploy>>[] = [];
+		for (let i = 0; i < CAP; i++) {
+			reachableDeployIds.push(await insertDeploy(700 + i, 5 + i));
+		}
 
-		const overflowIds = [] as Awaited<ReturnType<typeof insertDeploy>>[];
-		for (const pr of [800, 801, 802]) {
-			overflowIds.push(await insertDeploy(pr, CAP + (pr - 800)));
+		const overflowIds: Awaited<ReturnType<typeof insertDeploy>>[] = [];
+		for (const pr of [1800, 1801, 1802]) {
+			overflowIds.push(await insertDeploy(pr, 5 + CAP + (pr - 1800)));
 		}
 
 		const result = await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
 
-		// The pole that decides: truncation is reported AND the reachable
-		// Deploy task is still closed. A cap that reports truncated=true but
-		// stops closing everything (or one that keeps closing everything and
-		// never reports truncation) would fail one of the next two lines.
+		// The pole that decides: truncation is reported AND every reachable
+		// (in-cap) Deploy task is still closed. A cap that reports
+		// truncated=true but stops closing everything (or one that keeps
+		// closing everything and never reports truncation) would fail one of
+		// the next two lines.
 		expect(result.truncated).toBe(true);
-		expect(result.closed).toBe(1);
+		expect(result.closed).toBe(CAP);
 
-		const reached = await t.run((ctx) => ctx.db.get(reachableDeployId));
-		expect(reached?.status).toBe("done");
+		for (const id of reachableDeployIds) {
+			const row = await t.run((ctx) => ctx.db.get(id));
+			expect(row?.status).toBe("done");
+		}
 
 		for (const id of overflowIds) {
 			const row = await t.run((ctx) => ctx.db.get(id));
@@ -191,23 +239,38 @@ describe("resolveStaleDeployTasks — scan cap (GitHub issue #1276)", () => {
 	});
 
 	test("CONTROL: the exact-cap boundary is derived from RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP, not a duplicated literal", async () => {
-		// Exactly CAP rows in one status → fetch returns CAP (not CAP+1) rows,
-		// never hitting the truncation sentinel.
+		// A pile of filler rows, well over the cap, present in BOTH fixtures
+		// below — proves filler no longer moves the boundary at all (issue
+		// #1294's exact fix: the cap counts MATCHED Deploy tasks, not rows).
+		const FILLER_COUNT = RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 50;
+
+		// Exactly CAP Deploy tasks in one status → all matched, never hitting
+		// the truncation sentinel.
 		const tAtCap = createTestConvex();
-		await seedFiller(tAtCap, RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP, 0);
+		await seedFiller(tAtCap, FILLER_COUNT, 0);
+		await seedDeploy(tAtCap, RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP, FILLER_COUNT, 500);
 		const atCap = await tAtCap.mutation(
 			internal.tasks.resolveStaleDeployTasks,
 			{},
 		);
 		expect(atCap.truncated).toBe(false);
+		expect(atCap.scanned).toBe(RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP);
 
-		// One row over the cap → the CAP+1 fetch idiom proves truncation.
+		// One Deploy task over the cap → the (matched > CAP) break proves
+		// truncation.
 		const tOverCap = createTestConvex();
-		await seedFiller(tOverCap, RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1, 0);
+		await seedFiller(tOverCap, FILLER_COUNT, 0);
+		await seedDeploy(
+			tOverCap,
+			RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP + 1,
+			FILLER_COUNT,
+			500,
+		);
 		const overCap = await tOverCap.mutation(
 			internal.tasks.resolveStaleDeployTasks,
 			{},
 		);
 		expect(overCap.truncated).toBe(true);
+		expect(overCap.scanned).toBe(RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP);
 	});
 });
