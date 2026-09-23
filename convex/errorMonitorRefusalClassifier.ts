@@ -109,6 +109,36 @@ export interface RefusalDecision {
  * The caller resolves `visibility` via errorMonitorFunctionVisibility.ts's
  * `resolveFunctionVisibility` (the I/O / runtime-import layer); this
  * function never resolves it itself.
+ *
+ * ── THE TRADE THIS PREDICATE MAKES, and what it costs ────────────────────
+ * Accepted by the coordinator on 2026-09-23, recorded HERE and not only in
+ * the pull request body, because a body is read once and this file is read
+ * every time.
+ *
+ * The rule this closes says the same error is a defect on an INTERNAL
+ * function OR on a call OUR OWN CODE makes. This predicate covers the first
+ * half only. If our own code calls a PUBLIC function with a malformed
+ * argument, it is classified `working-refusal` and goes quiet —
+ * indistinguishable from a stranger sending the same thing, because the
+ * platform's log entry carries no requester field (verified against the
+ * Convex client source and against this repository's own limitation note in
+ * errorMonitorDeployWindow.ts).
+ *
+ * That is a REAL LOSS OF SIGNAL: a bug in our own code that happens to call
+ * a public function with a bad id will not be reported. It is acceptable
+ * today only because the alternative — treating every public-function
+ * ArgumentValidationError as suspect — is the noise that opened this whole
+ * class, and because no third option exists while the caller is unknowable.
+ *
+ * THE EXIT, so this is a decision with a way out rather than a permanent
+ * blind spot. Either becomes sufficient on its own:
+ *   (a) the log entry gains a requester field — then classify on the caller
+ *       and delete this trade entirely;
+ *   (b) our own call paths carry a marker of their own into the argument or
+ *       the call, so a self-originated refusal is recognisable without the
+ *       platform's help.
+ * Until one of the two lands, this comment is the record of what is not
+ * being reported.
  */
 export function classifyRefusal(
 	candidate: RefusalCandidate,
