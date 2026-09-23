@@ -337,17 +337,19 @@ def report(repo: str, source: str, members: set[str], result: dict, as_of: datet
     print("")
     for item in result["unanswered"]:
         print(
-            f"UNANSWERED #{item['number']} by {item['author']} — open {item['age']}, "
-            f"no verdict from a fleet member"
+            f"OPEN, NO TERMINAL VERDICT — #{item['number']} by {item['author']}, "
+            f"open {item['age']}"
         )
         print(f"  opened: {item['createdAt']}   {item['title'][:80]}")
         if item["url"]:
             print(f"  {item['url']}")
     print("")
     print(
-        f"{len(result['unanswered'])} outside contribution(s) waiting with no answer. "
-        "A verdict — APPROVED or REVISE — is an answer; silence is what a contributor "
-        "reads as the project not caring."
+        f"{len(result['unanswered'])} outside contribution(s) open with no terminal "
+        "verdict. THIS IS NOT THE SAME AS UNANSWERED: the thread may hold courtesy, "
+        "questions, or a bounce that was retracted — what is missing is a DECISION. "
+        "A terminal verdict (APPROVED or REVISE) ends the wait; anything else leaves "
+        "the contributor holding an open question."
     )
     return 1
 
