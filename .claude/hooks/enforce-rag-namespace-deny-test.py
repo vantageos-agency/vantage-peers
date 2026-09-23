@@ -45,7 +45,11 @@ import re
 import subprocess
 import sys
 
-WORKSPACE = "/root/coding/vantage-memory"
+# No hardcoded repository path remains. The one that used to live here was
+# the fallback for a payload with no `cwd`, and that fallback WAS the
+# original defect through a second door — a real repository judged, just
+# not the one being committed to. The repo is derived per call in
+# `_resolve_repo`, or the call REFUSES.
 
 # Files that trigger the RAG/auth deny test requirement
 TRIGGER_PATTERNS = [
@@ -120,13 +124,21 @@ def _resolve_repo(payload: dict) -> str:
     identical rationale in enforce-mcp-tool-coverage-schema-mirror.py's
     `_resolve_repo` — both hooks shared this defect.
 
-    Falls back to the hardcoded WORKSPACE only when the payload carries no
-    cwd at all — never when cwd is present but unresolvable; that case is
-    a refusal.
+    There is NO fallback. An ABSENT cwd key is an unreadable subject exactly
+    as a present-but-unresolvable one is, and both REFUSE. Falling back to
+    the hardcoded WORKSPACE reinstated the original defect through a second
+    door: it judges a real repository, just not the one being committed to.
+    The objection that the runtime always sends `cwd` is precisely the
+    assumption that kept the first door open unnoticed — this gate does not
+    rest on what a caller is expected to send.
     """
     payload_cwd = (payload.get("cwd") or "").strip()
     if not payload_cwd:
-        return WORKSPACE
+        raise RepoResolutionError(
+            "the tool payload carried no 'cwd' — the repository being "
+            "committed to cannot be identified, and a hardcoded default "
+            "would judge a different repository's index"
+        )
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],

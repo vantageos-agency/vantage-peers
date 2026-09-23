@@ -232,6 +232,41 @@ else
   pass "Pole 5d output names the offending path"
 fi
 
+# =======================================================================
+# Poles 6 and 7 — the payload carries NO `cwd` KEY AT ALL.
+#
+# Found by the reviewer, not by the author of the fix. The first version of
+# this repair fell back to a hardcoded repository path in exactly this case,
+# which is the ORIGINAL defect through a second door: a real repository is
+# judged, just not the one being committed to. Every one of the eight payload
+# builders above writes the key, so nothing here watched this path — the
+# omission could not be seen by a probe that never omits it.
+#
+# The objection that the runtime always sends `cwd` is precisely the
+# assumption that left the first door open for months. An absent key is an
+# unreadable subject, and an unreadable subject is a refusal.
+#
+# The SUBJECT is a real violating tree, so a pass here would be a pass on a
+# genuine violation and not on an empty diff.
+# =======================================================================
+echo
+echo "### Poles 6 and 7 — payload with NO cwd key -> exit 2 on both hooks"
+P6="$TMP_ROOT/p6.json"
+python3 - > "$P6" <<'PYEOF'
+import json
+# Deliberately NO "cwd" key. Not empty — absent.
+print(json.dumps({
+    "tool_name": "Bash",
+    "tool_input": {"command": 'git commit -m "feat: add table"'},
+}))
+PYEOF
+
+run_hook "$SCHEMA_HOOK" "$P6"
+check_exit "Pole 6 (schema-mirror, payload has no cwd key)" 2 "$(cat "$P6.rc")" "$P6.out"
+
+run_hook "$RAG_HOOK" "$P6"
+check_exit "Pole 7 (rag-deny-test, payload has no cwd key)" 2 "$(cat "$P6.rc")" "$P6.out"
+
 echo
 echo "================================================================"
 echo "RESULT: $PASSES pass, $FAILURES fail"
