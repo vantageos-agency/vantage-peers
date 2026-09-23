@@ -139,6 +139,23 @@ export interface RefusalDecision {
  *       platform's help.
  * Until one of the two lands, this comment is the record of what is not
  * being reported.
+ *
+ * ── WHICH DIRECTION THIS FAILS IN, and do not guard it the wrong way ─────
+ * Raised by the reviewer before this was written, and it belongs here for
+ * the reason the trade above does. `isInternal` / `isPublic` are runtime
+ * properties of the object Convex's registration helpers return. They are
+ * NOT a published contract, and nothing in this repository pins them.
+ *
+ * So if a future Convex release stops setting `isInternal`, every internal
+ * function resolves to `"unknown"` — and `"unknown"` KEEPS ESCALATING by
+ * design. The predicate degrades to "report everything", which is the noisy
+ * old behaviour, never the silent one. IT FAILS IN THE SAFE DIRECTION.
+ *
+ * That matters to whoever reads this next: the flag is not load-bearing for
+ * SAFETY, only for precision. Do not add a guard that throws, refuses, or
+ * falls back to `working-refusal` when the flag is missing — that would
+ * convert a safe degradation into a silent one, which is the exact failure
+ * this whole class was opened to close.
  */
 export function classifyRefusal(
 	candidate: RefusalCandidate,
