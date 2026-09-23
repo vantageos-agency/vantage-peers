@@ -28,6 +28,7 @@ import type * as errorMonitorFilters from "../errorMonitorFilters.js";
 import type * as errorMonitorFunctionVisibility from "../errorMonitorFunctionVisibility.js";
 import type * as errorMonitorGroupKey from "../errorMonitorGroupKey.js";
 import type * as errorMonitorKillSwitch from "../errorMonitorKillSwitch.js";
+import type * as errorMonitorPollDecision from "../errorMonitorPollDecision.js";
 import type * as errorMonitorRecurrence from "../errorMonitorRecurrence.js";
 import type * as errorMonitorRefusalClassifier from "../errorMonitorRefusalClassifier.js";
 import type * as fixPatterns from "../fixPatterns.js";
@@ -119,6 +120,7 @@ declare const fullApi: ApiFromModules<{
   errorMonitorFunctionVisibility: typeof errorMonitorFunctionVisibility;
   errorMonitorGroupKey: typeof errorMonitorGroupKey;
   errorMonitorKillSwitch: typeof errorMonitorKillSwitch;
+  errorMonitorPollDecision: typeof errorMonitorPollDecision;
   errorMonitorRecurrence: typeof errorMonitorRecurrence;
   errorMonitorRefusalClassifier: typeof errorMonitorRefusalClassifier;
   fixPatterns: typeof fixPatterns;

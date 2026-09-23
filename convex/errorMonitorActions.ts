@@ -7,7 +7,6 @@ import { RECURRING_ESCALATION_TITLE_PREFIX } from "./errorMonitor";
 import { isDeployWindowActive } from "./errorMonitorDeployWindow";
 import {
 	deserializeRule,
-	evaluateFilter,
 	type FilterRule,
 	isTransientErrorMessage,
 } from "./errorMonitorFilters";
@@ -17,7 +16,7 @@ import {
 	assertKillSwitchHealth,
 	isKillSwitchActive,
 } from "./errorMonitorKillSwitch";
-import { classifyRefusal } from "./errorMonitorRefusalClassifier";
+import { decideGroupAction } from "./errorMonitorPollDecision";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -278,82 +277,61 @@ export const pollDeploymentLogs = internalAction({
 				const logLines = group.logLines;
 				const hash = simpleHash(groupKey);
 
-				// Evaluate against each individual function name in the group —
-				// the joined string would never match a single-function rule.
-				let decision = evaluateFilter(
-					{ functionName, errorMessage },
+				// The actual decision -- what should happen to this group -- is
+				// a pure function (errorMonitorPollDecision.ts's
+				// `decideGroupAction`), not inline logic here. This action is a
+				// thin shell around it: build the group, get back an action,
+				// perform the I/O the action calls for. See that module's doc
+				// for why this extraction exists (coordinator feedback, task
+				// k17dthw4ky2w0bhevzy3dawz9h8ezd3e) -- a decision buried in an
+				// action doing live HTTP + scheduler calls cannot be
+				// mutation-tested; this can.
+				const action = decideGroupAction(
+					{ functionNames: group.functionNames, errorMessage },
 					filterRules,
+					resolveFunctionVisibility,
 				);
-				if (!decision.matchedRule) {
-					for (const single of group.functionNames) {
-						const d = evaluateFilter(
-							{ functionName: single, errorMessage },
-							filterRules,
-						);
-						if (d.matchedRule) {
-							decision = d;
-							break;
-						}
-					}
-				}
 
 				// v1.0.1 — observability bump for filter hits. The pure
-				// `evaluateFilter` returns the matched rule's `ruleId` (when the
-				// rule originated from the runtime table; in-process defaults
-				// have no ruleId). Schedule a fire-and-forget mutation so we
-				// don't block the poll loop on the patch.
-				const ruleId = decision.matchedRule?.ruleId;
+				// `evaluateFilter` (inside `decideGroupAction`) returns the
+				// matched rule's `ruleId` (when the rule originated from the
+				// runtime table; in-process defaults have no ruleId).
+				// Schedule a fire-and-forget mutation so we don't block the
+				// poll loop on the patch.
 				if (
-					ruleId &&
-					(decision.severity === "skip" || decision.severity === "log-only")
+					(action.kind === "skip" || action.kind === "log-only") &&
+					action.ruleId
 				) {
 					await ctx.runMutation(
 						internal.errorMonitorFilters.incrementRuleMatch,
-						{ ruleId: ruleId as Id<"errorMonitorFilterRules"> },
+						{ ruleId: action.ruleId as Id<"errorMonitorFilterRules"> },
 					);
 				}
 
-				if (decision.severity === "skip") {
+				if (action.kind === "skip") {
 					// Drop silently — false-positive class.
 					continue;
 				}
-				if (decision.severity === "log-only") {
+				if (action.kind === "log-only") {
 					console.log(
-						`[ErrorMonitor] log-only filter (${decision.matchedRule?.reason ?? "n/a"}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
+						`[ErrorMonitor] log-only filter (${action.reason}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
 					);
 					continue;
 				}
-
-				// Issue #1297 (closed NOT A DEFECT, task
-				// k17dthw4ky2w0bhevzy3dawz9h8ezd3e) — no `errorMonitorFilters`
-				// rule matched (severity is "create-issue"), so this is a
-				// candidate for escalation under the OLD predicate. Before
-				// that, check whether every function in this group is a
-				// WORKING REFUSAL: an ArgumentValidationError on a function
-				// this repo registers PUBLIC. This is a separate gate from the
-				// rule table above by design — a (functionName, regex) rule
-				// cannot express "public vs internal" (see
-				// errorMonitorRefusalClassifier.ts's module doc for why), so it
-				// cannot be folded into `filterRules` without also silencing
-				// the same error shape on an INTERNAL function, which must
-				// keep escalating. `resolveFunctionVisibility` reads each
-				// function's own registered visibility from THIS repo's
-				// source (never from the log entry, which carries no caller
-				// identity at all — see errorMonitorDeployWindow.ts's HONEST
-				// LIMITATION for that same fact independently established).
-				if (
-					decision.severity === "create-issue" &&
-					group.functionNames.length > 0 &&
-					group.functionNames.every(
-						(single) =>
-							classifyRefusal(
-								{ functionName: single, errorMessage },
-								resolveFunctionVisibility(single),
-							).isWorkingRefusal,
-					)
-				) {
+				if (action.kind === "working-refusal") {
+					// Issue #1297 (closed NOT A DEFECT, task
+					// k17dthw4ky2w0bhevzy3dawz9h8ezd3e) — a validator caught a
+					// malformed caller argument on a function this repo
+					// registers PUBLIC. This is the protection working, not a
+					// defect. See errorMonitorRefusalClassifier.ts and
+					// errorMonitorPollDecision.ts for the full rationale,
+					// including the honest limitation: a bad argument our OWN
+					// code sends to a public function is indistinguishable
+					// from an external caller's and is ALSO silenced here,
+					// because Convex's log payload carries no caller-identity
+					// field to tell the two apart.
 					console.log(
-						`[ErrorMonitor] working refusal (validator caught a malformed caller argument on a public function, #1297) — ${functionName}: ${errorMessage.slice(0, 120)}`,
+						`[ErrorMonitor] working refusal (${action.reason}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
 					);
 					continue;
 				}
