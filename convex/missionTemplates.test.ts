@@ -25,12 +25,18 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 // Helper: create a mission and return its ID
 async function seedMission(
 	t: ReturnType<typeof createTestConvex>,
 	overrides: { pilot?: string; project?: string } = {},
 ) {
-	return await t.mutation(api.missions.create, {
+	return await asMaster(t).mutation(api.missions.create, {
 		name: "Test Mission",
 		project: overrides.project ?? "test-project",
 		status: "execute",
@@ -54,7 +60,7 @@ async function seedTemplate(
 		dependsOn?: number[];
 	}>,
 ) {
-	await t.mutation(api.missionTemplates.upsert, {
+	await asMaster(t).mutation(api.missionTemplates.upsert, {
 		name,
 		steps,
 		createdBy: "pi",
@@ -77,7 +83,7 @@ describe("instantiateTemplateIntoMission", () => {
 			{ title: "Step B", description: "Do B", assignedTo: "verify" },
 		]);
 
-		const { taskIds, count } = await t.mutation(
+		const { taskIds, count } = await asMaster(t).mutation(
 			api.missionTemplates.instantiateTemplateIntoMission,
 			{ templateName: "all-assigned", missionId },
 		);
@@ -102,7 +108,7 @@ describe("instantiateTemplateIntoMission", () => {
 			{ title: "Step B", description: "Do B" }, // no assignedTo
 		]);
 
-		const { taskIds } = await t.mutation(
+		const { taskIds } = await asMaster(t).mutation(
 			api.missionTemplates.instantiateTemplateIntoMission,
 			{ templateName: "no-assigned", missionId },
 		);
@@ -134,7 +140,7 @@ describe("instantiateTemplateIntoMission", () => {
 			{ title: "T2 Fix", description: "Apply fix", tags: ["implementation"] },
 		]);
 
-		const { taskIds, count } = await t.mutation(
+		const { taskIds, count } = await asMaster(t).mutation(
 			api.missionTemplates.instantiateTemplateIntoMission,
 			{ templateName: "legacy-template", missionId },
 		);
@@ -157,7 +163,7 @@ describe("instantiateTemplateIntoMission", () => {
 			{ title: "Step 2", description: "Third", dependsOn: [0, 1] },
 		]);
 
-		const { taskIds } = await t.mutation(
+		const { taskIds } = await asMaster(t).mutation(
 			api.missionTemplates.instantiateTemplateIntoMission,
 			{ templateName: "with-deps", missionId },
 		);
@@ -177,7 +183,7 @@ describe("instantiateTemplateIntoMission", () => {
 		]);
 
 		await expect(
-			t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+			asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 				templateName: "bad-deps",
 				missionId,
 			}),

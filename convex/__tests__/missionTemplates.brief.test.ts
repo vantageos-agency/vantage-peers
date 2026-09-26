@@ -26,12 +26,18 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 // Helper: create a mission and return its ID
 async function seedMission(
 	t: ReturnType<typeof createTestConvex>,
 	overrides: { pilot?: string; project?: string; brief?: string } = {},
 ) {
-	return await t.mutation(api.missions.create, {
+	return await asMaster(t).mutation(api.missions.create, {
 		name: "Test Mission",
 		project: overrides.project ?? "test-project",
 		status: "execute",
@@ -48,7 +54,7 @@ async function seedDailyPassationTemplate(
 	t: ReturnType<typeof createTestConvex>,
 	brief: string,
 ) {
-	await t.mutation(api.missionTemplates.upsert, {
+	await asMaster(t).mutation(api.missionTemplates.upsert, {
 		name: "daily-passation-v1",
 		description: "Daily passation between orchestrators",
 		brief,
@@ -73,7 +79,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			"Daily passation cadrage: hand off open threads, blockers, and state.",
 		);
 
-		await t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+		await asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 			templateName,
 			missionId,
 		});
@@ -100,7 +106,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			"Template brief — should not affect pilot/project.",
 		);
 
-		await t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+		await asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 			templateName,
 			missionId,
 		});
@@ -128,7 +134,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			"Template brief that must be ignored here.",
 		);
 
-		await t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+		await asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 			templateName,
 			missionId,
 		});
@@ -146,13 +152,13 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 		const t = createTestConvex();
 		const missionId = await seedMission(t); // no brief
 
-		await t.mutation(api.missionTemplates.upsert, {
+		await asMaster(t).mutation(api.missionTemplates.upsert, {
 			name: "no-brief-template",
 			steps: [{ title: "Step A", description: "Do A" }],
 			createdBy: "pi",
 		});
 
-		await t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+		await asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 			templateName: "no-brief-template",
 			missionId,
 		});

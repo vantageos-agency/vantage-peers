@@ -26,6 +26,12 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // get_mission_template (the 19th tool)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +39,7 @@ const createTestConvex = () => convexTest(schema, modules);
 describe("GAP-T1 get_mission_template — missionTemplates.getByName query", () => {
 	test("happy path — returns the seeded template by name", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.missionTemplates.upsert, {
+		await asMaster(t).mutation(api.missionTemplates.upsert, {
 			name: "gap-t1-test-template",
 			description: "fixture",
 			steps: [
@@ -68,7 +74,7 @@ describe("GAP-T1 instantiate_template_into_mission — missionTemplates.instanti
 	test("happy path — creates one task per step + resolves dependsOn task ids", async () => {
 		const t = createTestConvex();
 
-		await t.mutation(api.missionTemplates.upsert, {
+		await asMaster(t).mutation(api.missionTemplates.upsert, {
 			name: "gap-t1-three-step",
 			steps: [
 				{ title: "Plan", description: "plan {{topic}}" },
@@ -92,7 +98,7 @@ describe("GAP-T1 instantiate_template_into_mission — missionTemplates.instanti
 			});
 		});
 
-		const result = await t.mutation(
+		const result = await asMaster(t).mutation(
 			api.missionTemplates.instantiateTemplateIntoMission,
 			{
 				templateName: "gap-t1-three-step",
@@ -132,7 +138,7 @@ describe("GAP-T1 instantiate_template_into_mission — missionTemplates.instanti
 		});
 
 		await expect(
-			t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+			asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 				templateName: "ghost-template",
 				missionId,
 			}),

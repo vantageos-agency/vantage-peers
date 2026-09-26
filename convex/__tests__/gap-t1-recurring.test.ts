@@ -23,11 +23,17 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 async function seedRecurringTask(
 	t: ReturnType<typeof createTestConvex>,
 	overrides: Partial<{ title: string; cronExpression: string }> = {},
 ) {
-	return await t.mutation(api.recurringTasks.create, {
+	return await asMaster(t).mutation(api.recurringTasks.create, {
 		title: overrides.title ?? "GAP-T1 nightly KB compaction",
 		description: "Auto-spawned by recurring template for regression test",
 		assignedTo: "sigma",
@@ -46,7 +52,7 @@ describe("GAP-T1 pause_recurring_task — recurringTasks.pause mutation", () => 
 		const t = createTestConvex();
 		const taskId = await seedRecurringTask(t);
 
-		const res = await t.mutation(api.recurringTasks.pause, { taskId });
+		const res = await asMaster(t).mutation(api.recurringTasks.pause, { taskId });
 		expect(res.active).toBe(false);
 
 		await t.run(async (ctx) => {
@@ -58,8 +64,8 @@ describe("GAP-T1 pause_recurring_task — recurringTasks.pause mutation", () => 
 	test("edge case — pause is idempotent (already-paused row remains active=false)", async () => {
 		const t = createTestConvex();
 		const taskId = await seedRecurringTask(t);
-		await t.mutation(api.recurringTasks.pause, { taskId });
-		const res = await t.mutation(api.recurringTasks.pause, { taskId });
+		await asMaster(t).mutation(api.recurringTasks.pause, { taskId });
+		const res = await asMaster(t).mutation(api.recurringTasks.pause, { taskId });
 		expect(res.active).toBe(false);
 	});
 });
@@ -72,10 +78,10 @@ describe("GAP-T1 resume_recurring_task — recurringTasks.resume mutation", () =
 	test("happy path — flips active=true and recomputes nextRunAt", async () => {
 		const t = createTestConvex();
 		const taskId = await seedRecurringTask(t);
-		await t.mutation(api.recurringTasks.pause, { taskId });
+		await asMaster(t).mutation(api.recurringTasks.pause, { taskId });
 
 		const before = Date.now();
-		const res = await t.mutation(api.recurringTasks.resume, { taskId });
+		const res = await asMaster(t).mutation(api.recurringTasks.resume, { taskId });
 		expect(res.active).toBe(true);
 		expect(res.nextRunAt).toBeGreaterThan(before);
 	});
@@ -83,10 +89,10 @@ describe("GAP-T1 resume_recurring_task — recurringTasks.resume mutation", () =
 	test("edge case — resume on missing id throws 'not found'", async () => {
 		const t = createTestConvex();
 		const taskId = await seedRecurringTask(t);
-		await t.mutation(api.recurringTasks.remove, { taskId });
+		await asMaster(t).mutation(api.recurringTasks.remove, { taskId });
 
 		await expect(
-			t.mutation(api.recurringTasks.resume, { taskId }),
+			asMaster(t).mutation(api.recurringTasks.resume, { taskId }),
 		).rejects.toThrow(/not found/i);
 	});
 });
@@ -100,7 +106,7 @@ describe("GAP-T1 update_recurring_task — recurringTasks.update mutation", () =
 		const t = createTestConvex();
 		const recurringTaskId = await seedRecurringTask(t);
 
-		await t.mutation(api.recurringTasks.update, {
+		await asMaster(t).mutation(api.recurringTasks.update, {
 			recurringTaskId,
 			title: "GAP-T1 patched title",
 			priority: "high",
@@ -119,7 +125,7 @@ describe("GAP-T1 update_recurring_task — recurringTasks.update mutation", () =
 		const recurringTaskId = await seedRecurringTask(t);
 
 		await expect(
-			t.mutation(api.recurringTasks.update, {
+			asMaster(t).mutation(api.recurringTasks.update, {
 				recurringTaskId,
 				cronExpression: "not a cron",
 			}),
@@ -136,7 +142,7 @@ describe("GAP-T1 delete_recurring_task — recurringTasks.remove mutation", () =
 		const t = createTestConvex();
 		const taskId = await seedRecurringTask(t);
 
-		const res = await t.mutation(api.recurringTasks.remove, { taskId });
+		const res = await asMaster(t).mutation(api.recurringTasks.remove, { taskId });
 		expect(res.deleted).toBe(true);
 
 		await t.run(async (ctx) => {
@@ -148,10 +154,10 @@ describe("GAP-T1 delete_recurring_task — recurringTasks.remove mutation", () =
 	test("edge case — remove with no matching row is a no-op (Convex delete tolerates dangling id)", async () => {
 		const t = createTestConvex();
 		const taskId = await seedRecurringTask(t);
-		await t.mutation(api.recurringTasks.remove, { taskId });
+		await asMaster(t).mutation(api.recurringTasks.remove, { taskId });
 		// Second delete on the same id should throw (row already gone).
 		await expect(
-			t.mutation(api.recurringTasks.remove, { taskId }),
+			asMaster(t).mutation(api.recurringTasks.remove, { taskId }),
 		).rejects.toThrow();
 	});
 });
