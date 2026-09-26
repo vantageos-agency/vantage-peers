@@ -448,10 +448,39 @@ function clerkJwks(): ReturnType<typeof createRemoteJWKSet> {
 type ClerkPayload = { sub: string; org_id: string; exp: number };
 
 /**
+ * Discriminated result of {@link tryVerifyClerkJwt}. Three outcomes, not two:
+ * the prior shape (`ClerkPayload | null`) collapsed "this is not a Clerk JWT
+ * at all" (bad signature / wrong issuer / wrong audience / expired) and
+ * "this IS a JWKS-verified Clerk JWT but carries no org_id claim" into the
+ * SAME `null` — a genuinely-authenticated, pre-organisation human became
+ * indistinguishable from an attacker presenting noise, and both fell through
+ * to the exact same generic terminal 401. Property 4 (public-write-boundary
+ * delivery): a caller with no organisation gets a TYPED refusal, never a
+ * throw and never folded into that generic 401.
+ *   - `{ ok: true, ... }`        — verified AND carries an org_id claim.
+ *   - `{ ok: false, reason: "not-clerk" }` — signature/issuer/audience/exp
+ *     failed verification, OR `sub`/`exp` themselves are absent from an
+ *     otherwise-verified payload (session-token shape violation) — genuinely
+ *     "try the next auth layer", never a Clerk-authenticated caller.
+ *   - `{ ok: false, reason: "no-org" }` — JWKS verification SUCCEEDED (this
+ *     IS the caller's own Clerk identity) but the session carries no org_id
+ *     (a personal-session token, not an org-session token).
+ */
+export type ClerkJwtResult =
+	| ({ ok: true } & ClerkPayload)
+	| { ok: false; reason: "not-clerk" }
+	| { ok: false; reason: "no-org" };
+
+/**
  * Attempts to verify `token` as a Clerk JWT.
- * Returns the relevant claims on success, or null if the token is not a Clerk
- * JWT (wrong issuer, bad signature, expired, missing org_id).
- * Never throws — failures are treated as "not a Clerk token, try next layer".
+ * Returns the relevant claims on success, a typed `no-org` result when the
+ * signature verifies but no org_id claim is present, or a typed `not-clerk`
+ * result when the token fails Clerk JWKS verification outright (wrong
+ * issuer, bad signature, expired) or lacks the base session-token shape
+ * (`sub`/`exp`).
+ * Never throws — failures are treated as "not a Clerk token, try next layer"
+ * (`not-clerk`) or "typed refusal" (`no-org`), the caller (bearerAuthMiddleware)
+ * decides what each means.
  *
  * CASING CLASSIFICATION (enumeration item, symmetric-casing sweep, PR #1230):
  * `payload.org_id` here is read from the RAW `jwtVerify()` output — Clerk's
@@ -475,27 +504,31 @@ type ClerkPayload = { sub: string; org_id: string; exp: number };
  * otherwise closes (see `convex/lib/auth.ts` §withOrgScope for the class
  * that DOES require the fallback).
  */
-async function tryVerifyClerkJwt(token: string): Promise<ClerkPayload | null> {
+async function tryVerifyClerkJwt(token: string): Promise<ClerkJwtResult> {
 	try {
 		const { payload } = await jwtVerify(token, clerkJwks(), {
 			issuer: CLERK_DOMAIN,
 			audience: CLERK_JWT_AUDIENCE,
 		});
+		// Verification succeeded — this IS the caller's own Clerk identity.
+		// `sub`/`exp` absence here would be a session-token shape violation
+		// (not the org concern this function types), so it is still
+		// "not-clerk" (try next layer) rather than "no-org".
+		const sub = payload.sub;
+		const exp = payload.exp;
+		if (!sub || !exp) return { ok: false, reason: "not-clerk" };
 		// Org-session JWTs carry org_id; personal-session JWTs do not. See the
 		// CASING CLASSIFICATION doc comment above this function — no
 		// camelCase fallback: this raw Clerk-JWKS-verified payload is not the
 		// Convex OIDC identity mapping the sibling withOrgScope fallback
 		// exists for.
 		const orgId = payload.org_id as string | undefined;
-		if (!orgId) return null;
-		const sub = payload.sub;
-		if (!sub) return null;
-		const exp = payload.exp;
-		if (!exp) return null;
-		return { sub, org_id: orgId, exp };
+		if (!orgId) return { ok: false, reason: "no-org" };
+		return { ok: true, sub, org_id: orgId, exp };
 	} catch {
-		// Not a valid Clerk JWT — fall through to next auth layer
-		return null;
+		// Not a valid Clerk JWT (bad signature / wrong issuer / wrong
+		// audience / expired) — fall through to next auth layer.
+		return { ok: false, reason: "not-clerk" };
 	}
 }
 
@@ -651,8 +684,34 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		// below makes `client_org_mapping` the ONLY source of authority: no
 		// mapping row, or an inactive one, REFUSES outright rather than falling
 		// back to a populated default.
-		const clerkResult = await tryVerifyClerkJwt(token);
-		if (clerkResult !== null) {
+		const clerkVerification = await tryVerifyClerkJwt(token);
+
+		// Property 4 (public-write-boundary delivery) — TYPED refusal for a
+		// verified-but-org-less Clerk identity. This is NOT the same case as
+		// "not a Clerk JWT at all" below: the signature/issuer/audience
+		// verified successfully, so this genuinely IS the caller's own
+		// identity — it just has no organisation yet (a personal-session
+		// token). Folding this into the generic terminal 401 would make a
+		// correctly-authenticated, pre-organisation human indistinguishable
+		// from an attacker presenting a garbage bearer value. REFUSE here,
+		// distinctly, rather than falling through — there is no "next auth
+		// layer" that accepts a Clerk JWT, so falling through would only
+		// reach the same terminal 401 anyway, but with the wrong error code.
+		if (!clerkVerification.ok && clerkVerification.reason === "no-org") {
+			c.header("WWW-Authenticate", wwwAuthHeader);
+			return c.json(
+				{
+					error:
+						"NO_ORGANIZATION: Clerk session has no active organization " +
+						"(org_id claim absent) — select or create an organization " +
+						"before using this client.",
+				},
+				403,
+			);
+		}
+
+		if (clerkVerification.ok) {
+			const clerkResult = clerkVerification;
 			const internalUrl = process.env.CONVEX_URL_INTERNAL;
 			if (!internalUrl) {
 				console.error(
