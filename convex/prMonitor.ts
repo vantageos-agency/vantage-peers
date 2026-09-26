@@ -81,7 +81,7 @@ export const pollOpenPRs = internalAction({
 
 				if (newStatus && newStatus !== issue.prStatus) {
 					// Update PR status
-					await ctx.runMutation(api.issues.updatePrStatus, {
+					await ctx.runMutation(internal.issues.updatePrStatus, {
 						repo: issue.repo,
 						issueNumber: issue.issueNumber,
 						prUrl: issue.prUrl!,

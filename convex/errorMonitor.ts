@@ -1,16 +1,46 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
+import { withOrgScope } from "./lib/auth";
 import {
 	internalMutation,
 	internalQuery,
 	mutation,
 	query,
 } from "./_generated/server";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth — fleet-internal surface, no per-org owner field
+// (.claude/rules/authority-attached-to-anonymous-object.md)
+//
+// `monitoredDeployments` configures which Convex deployment the error-
+// monitor cron polls fleet-wide — it has no `orgId`/owner field, and no
+// client_org_mapping `scopes` entry exists for "manage error-monitor
+// deployments". `addDeployment`/`removeDeployment` used to take NO
+// identity check at all. Same closure as convex/issues.ts's
+// `requireMasterScope` / convex/githubRepoMapping.ts's `requireMasterScope`
+// (mirrors convex/orgRoster.ts's `getForAccessToken` idiom) — master-only,
+// no org-scope fallback. Not re-exported/shared across files (each of the
+// three sites in this fix defines its own file-local copy, same as the
+// landed briefingNotes.ts/messages.ts pattern of file-local helpers) —
+// avoids introducing a second cross-file resolver per the brief's "write no
+// second resolver" instruction; this IS still the one identity layer
+// (withOrgScope), just called from a small per-file wrapper.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
+	const scope = await withOrgScope(ctx);
+	if (!scope.isMaster) {
+		throw new ConvexError(
+			"RBAC_DENIED: this mutation requires master or service-account scope " +
+				"— fleet error-monitor deployment config has no org-scoped write authority.",
+		);
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -497,6 +527,7 @@ export const addDeployment = mutation({
 	},
 	returns: v.id("monitoredDeployments"),
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("monitoredDeployments")
 			.withIndex("by_name", (q) => q.eq("name", args.name))
@@ -523,6 +554,7 @@ export const removeDeployment = mutation({
 	args: { name: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		const dep = await ctx.db
 			.query("monitoredDeployments")
 			.withIndex("by_name", (q) => q.eq("name", args.name))

@@ -1,6 +1,29 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
+import { withOrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth — fleet-internal surface, no per-org owner field
+// (.claude/rules/authority-attached-to-anonymous-object.md)
+//
+// `githubRepoMapping` routes webhook events to an orchestrator fleet-wide —
+// it has no `orgId`/owner field, and no client_org_mapping `scopes` entry
+// exists for "manage webhook routing". `add`/`remove` used to take NO
+// identity check at all. Same closure as convex/issues.ts's
+// `requireMasterScope` (mirrors convex/orgRoster.ts's
+// `getForAccessToken` idiom) — master-only, no org-scope fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
+	const scope = await withOrgScope(ctx);
+	if (!scope.isMaster) {
+		throw new ConvexError(
+			"RBAC_DENIED: this mutation requires master or service-account scope " +
+				"— fleet webhook-routing config has no org-scoped write authority.",
+		);
+	}
+}
 
 export const getByRepo = query({
 	args: { repo: v.string() },
@@ -168,6 +191,7 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 	},
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		// Upsert by repo
 		const existing = await ctx.db
 			.query("githubRepoMapping")
@@ -193,6 +217,7 @@ export const add = mutation({
 export const remove = mutation({
 	args: { repo: v.string() },
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("githubRepoMapping")
 			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
@@ -244,11 +269,14 @@ export const recordDeployment = internalMutation({
 });
 
 // Seed initial data — accepts an array of repo mappings so callers supply their own repos.
-// Example usage:
-//   convex.mutation("githubRepoMapping:seed", {
-//     mappings: [{ repo: "your-org/your-repo", orchestrator: "sigma", project: "my-project" }]
-//   })
-export const seed = mutation({
+//
+// INTERNAL — zero callers enumerated anywhere in mcp-server/ or
+// vantage-peers-dashboard (grepped both; only referenced from this file's
+// own former doc-comment example). Converted to internalMutation — no
+// external caller needs public reachability today. Invoke via
+// `npx convex run githubRepoMapping:seed '{"mappings": [...]}'` (CLI-
+// authenticated deploy key) or from another Convex function.
+export const seed = internalMutation({
 	args: {
 		mappings: v.array(
 			v.object({

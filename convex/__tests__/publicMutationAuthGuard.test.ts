@@ -407,6 +407,24 @@ function runScan(): Classified[] {
 //     callerOrchestrator argument kept as a narrowing-only layer on top
 //     (never a substitute), class (a). See
 //     convex/__tests__/briefingNotesWriteScope.test.ts.
+//   - convex/issues.ts:updateStatus, convex/issues.ts:linkCommit,
+//     convex/issues.ts:verify, convex/githubRepoMapping.ts:add,
+//     convex/githubRepoMapping.ts:remove, convex/errorMonitor.ts:addDeployment
+//     and convex/errorMonitor.ts:removeDeployment are NOT in this list —
+//     guarded via a file-local requireMasterScope() (withOrgScope +
+//     scope.isMaster required, no org-scope fallback: these tables are
+//     fleet-internal GitHub-issue/webhook-routing/error-monitor config with
+//     no per-org owner field, mirroring convex/orgRoster.ts's
+//     getForAccessToken idiom), class (a). convex/issues.ts:upsertFromGitHub,
+//     convex/issues.ts:linkTask, convex/issues.ts:close,
+//     convex/issues.ts:createExternal, convex/issues.ts:updatePrStatus and
+//     convex/githubRepoMapping.ts:seed are ALSO not in this list — converted
+//     to internalMutation (zero external callers enumerated in mcp-server/
+//     or vantage-peers-dashboard; upsertFromGitHub/updatePrStatus's only
+//     real callers, http.ts's HMAC-verified webhook and prMonitor.ts's cron
+//     internalAction, present no ctx.auth identity and now call the
+//     `internal.*` reference directly). See
+//     convex/__tests__/issuesGithubRepoMappingErrorMonitorWriteScope.test.ts.
 const KNOWN_OFFENDERS = new Set<string>([
 	// callerOrchestrator-asserted-only (class c) — no verified identity:
 	"convex/mandates.ts:create",
@@ -417,26 +435,13 @@ const KNOWN_OFFENDERS = new Set<string>([
 	"convex/businessUnits.ts:create",
 	"convex/businessUnits.ts:update",
 	"convex/businessUnits.ts:remove",
-	"convex/errorMonitor.ts:addDeployment",
-	"convex/errorMonitor.ts:removeDeployment",
 	"convex/fixPatterns.ts:create",
 	"convex/fixPatterns.ts:addAttempt",
 	"convex/fixPatterns.ts:validate",
 	"convex/fixPatterns.ts:linkIssue",
-	"convex/githubRepoMapping.ts:add",
-	"convex/githubRepoMapping.ts:remove",
-	"convex/githubRepoMapping.ts:seed",
 	"convex/iframeEmbedSessions.ts:createSession",
 	"convex/iframeEmbedSessions.ts:touchSession",
 	"convex/iframeEmbedSessions.ts:revokeSession",
-	"convex/issues.ts:upsertFromGitHub",
-	"convex/issues.ts:updateStatus",
-	"convex/issues.ts:linkCommit",
-	"convex/issues.ts:linkTask",
-	"convex/issues.ts:verify",
-	"convex/issues.ts:close",
-	"convex/issues.ts:createExternal",
-	"convex/issues.ts:updatePrStatus",
 	"convex/kbMutations.ts:generateUploadUrl",
 	"convex/missionTemplates.ts:upsert",
 	"convex/missionTemplates.ts:softDelete",
