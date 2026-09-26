@@ -1,9 +1,57 @@
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
+import { requireAuthenticatedCaller } from "./tasks";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fail-closed multi-tenant fix (defect class: authority attached to an
+// anonymously-registered object — see
+// .claude/rules/authority-attached-to-anonymous-object.md). create, update,
+// pause, resume and remove used to take NO caller-identity check of any
+// kind: any caller holding the deployment URL could create, reassign, pause,
+// resume or hard-delete ANY recurring-task template. `recurringTasks` carries
+// no `orgId` column (it is a cron-config table, not a per-org data table),
+// so the fix reuses `requireAuthenticatedCaller` — the SAME resolver
+// convex/tasks.ts's nine public mutations already use — rather than writing
+// a second one ("write no second resolver", brief). Called with
+// `callerOrchestrator=undefined` here: it still (a) refuses an
+// unauthenticated caller (AUTH_REQUIRED), and (b) resolves the caller's
+// verified OrgScope (isMaster / allowedOrchestrators), without asserting
+// that the caller itself IS any particular named orchestrator.
+//
+// pause/resume/remove are cron-infrastructure operations the MCP server
+// already restricts to its master-only tool guard (`guardMasterOnly` —
+// mcp-server/src/tools.ts's pause_recurring_task/resume_recurring_task/
+// delete_recurring_task all use `{ kind: "master" }`). Per
+// .claude/rules/http-boundary-derives-from-principal.md's sibling doctrine
+// ("a guard in the MCP server is NOT a defence"), Convex re-derives and
+// re-enforces the SAME master-only rule independently here — the sole
+// legitimate caller (the MCP server's dedicated service-account identity)
+// always resolves to `scope.isMaster === true` via withOrgScope's
+// CLERK_SERVICE_ACCOUNT_USER_ID carve-out, so this is byte-behavior-
+// unchanged for that live path and closes the door for anyone else holding
+// the deployment URL directly.
+//
+// create/update are reachable by ordinary (non-master) org clients too
+// (MCP's `guardDelegation`/`scopeFilterGet` gates are "filtered", not
+// master-only) — for those, ownership/scope is derived from the row's
+// STORED `assignedTo` field against the caller's verified
+// `scope.allowedOrchestrators` (reusing the exact membership test
+// `filterByOrgScope` already applies at read time), never from a
+// caller-supplied argument standing in for that proof.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isAssigneeAllowedForScope(
+	scope: { isMaster: boolean; allowedOrchestrators: string[] },
+	assignedTo: string,
+): boolean {
+	if (scope.isMaster) return true;
+	return scope.allowedOrchestrators.includes(assignedTo);
+}
 
 // Issue #1064 slice-6 (FINAL) — same hint for all five single-id handlers
 // below, all reads/writes on the recurringTasks table.
@@ -100,6 +148,13 @@ export const create = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
+		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		if (!isAssigneeAllowedForScope(scope, args.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not create a recurring task assigned to "${args.assignedTo}" — outside the authenticated org's allowed-orchestrator list — ${JSON.stringify({ assignedTo: args.assignedTo, orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
+			);
+		}
+
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
 
@@ -194,6 +249,14 @@ export const update = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
+		// Resolved BEFORE ctx.db.get (mirrors convex/tasks.ts's
+		// requireAuthenticatedCaller call sites and convex/briefingNotes.ts's
+		// update/deleteBriefingNote): an unauthenticated caller must get
+		// AUTH_REQUIRED, never "Recurring task not found" — a get-then-scope
+		// order lets recurringTaskId existence act as an unauthenticated
+		// existence oracle.
+		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+
 		const recurringTaskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -203,6 +266,24 @@ export const update = mutation({
 		);
 		const existing = await ctx.db.get(recurringTaskId);
 		if (!existing) throw new Error("Recurring task not found");
+
+		if (!isAssigneeAllowedForScope(scope, existing.assignedTo)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
+			);
+		}
+		// The row's STORED assignedTo passed the check above; a caller
+		// REASSIGNING the row to a new orchestrator outside its own scope is
+		// refused the same way — the patch can never move a row to an owner
+		// the caller could not itself have created it under.
+		if (
+			args.assignedTo !== undefined &&
+			!isAssigneeAllowedForScope(scope, args.assignedTo)
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not reassign recurring task ${recurringTaskId} to "${args.assignedTo}" — outside the authenticated org's allowed-orchestrator list — ${JSON.stringify({ assignedTo: args.assignedTo, orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
+			);
+		}
 
 		const patch: Record<string, any> = { updatedAt: Date.now() };
 		if (args.title !== undefined) patch.title = args.title;
@@ -227,7 +308,19 @@ export const update = mutation({
 
 export const pause = mutation({
 	args: { taskId: v.string() },
+	returns: v.object({ taskId: v.id("recurringTasks"), active: v.boolean() }),
 	handler: async (ctx, args) => {
+		// Master-only, mirroring the MCP server's own `guardMasterOnly` gate
+		// on pause_recurring_task (mcp-server/src/tools.ts, `{ kind: "master" }`)
+		// — re-enforced independently here, never trusting that MCP gate alone
+		// (.claude/rules/http-boundary-derives-from-principal.md: "a guard in
+		// the MCP server is NOT a defence").
+		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: pause_recurring_task is a master-only cron-infrastructure operation",
+			);
+		}
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -246,7 +339,19 @@ export const pause = mutation({
 
 export const resume = mutation({
 	args: { taskId: v.string() },
+	returns: v.object({
+		taskId: v.id("recurringTasks"),
+		active: v.boolean(),
+		nextRunAt: v.number(),
+	}),
 	handler: async (ctx, args) => {
+		// Master-only — see pause's identical rationale above.
+		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: resume_recurring_task is a master-only cron-infrastructure operation",
+			);
+		}
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -273,7 +378,15 @@ export const resume = mutation({
 
 export const remove = mutation({
 	args: { taskId: v.string() },
+	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// Master-only — see pause's identical rationale above.
+		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: delete_recurring_task is a master-only cron-infrastructure operation",
+			);
+		}
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",

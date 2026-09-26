@@ -26,8 +26,14 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 async function seedTemplate(t: ReturnType<typeof createTestConvex>, name: string) {
-	return await t.mutation(api.missionTemplates.upsert, {
+	return await asMaster(t).mutation(api.missionTemplates.upsert, {
 		name,
 		steps: [{ title: "Step 1", description: "Do the thing" }],
 		createdBy: "pi",
@@ -44,7 +50,7 @@ describe("missionTemplates.softDelete", () => {
 		const before = await t.query(api.missionTemplates.getByName, { name });
 		expect(before).not.toBeNull();
 
-		await t.mutation(api.missionTemplates.softDelete, { name });
+		await asMaster(t).mutation(api.missionTemplates.softDelete, { name });
 
 		const after = await t.query(api.missionTemplates.getByName, { name });
 		expect(after).toBeNull();
@@ -55,7 +61,7 @@ describe("missionTemplates.softDelete", () => {
 		await seedTemplate(t, "_probe-deleted");
 		await seedTemplate(t, "issue-resolution-kept");
 
-		await t.mutation(api.missionTemplates.softDelete, {
+		await asMaster(t).mutation(api.missionTemplates.softDelete, {
 			name: "_probe-deleted",
 		});
 
@@ -74,7 +80,7 @@ describe("missionTemplates.softDelete", () => {
 	test("softDelete throws when template not found", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.mutation(api.missionTemplates.softDelete, {
+			asMaster(t).mutation(api.missionTemplates.softDelete, {
 				name: "does-not-exist",
 			}),
 		).rejects.toThrow(/not found/i);
@@ -87,7 +93,7 @@ describe("missionTemplates.softDelete", () => {
 		const template = await t.query(api.missionTemplates.getByName, { name });
 		expect(template).not.toBeNull();
 
-		await t.mutation(api.missionTemplates.softDelete, {
+		await asMaster(t).mutation(api.missionTemplates.softDelete, {
 			templateId: template!._id,
 		});
 
@@ -99,9 +105,9 @@ describe("missionTemplates.softDelete", () => {
 		const t = createTestConvex();
 		const name = "_probe-instantiate";
 		await seedTemplate(t, name);
-		await t.mutation(api.missionTemplates.softDelete, { name });
+		await asMaster(t).mutation(api.missionTemplates.softDelete, { name });
 
-		const missionId = await t.mutation(api.missions.create, {
+		const missionId = await asMaster(t).mutation(api.missions.create, {
 			name: "Test Mission",
 			project: "test-project",
 			status: "execute",
@@ -112,7 +118,7 @@ describe("missionTemplates.softDelete", () => {
 		});
 
 		await expect(
-			t.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+			asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 				templateName: name,
 				missionId,
 			}),

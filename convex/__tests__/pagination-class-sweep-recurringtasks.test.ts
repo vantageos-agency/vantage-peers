@@ -34,8 +34,15 @@ describe("recurringTasks.list pagination — createdBefore applied after unbound
 		const assignedTo = "sweep-assignee";
 		const seededIds: string[] = [];
 
+		// Fail-closed multi-tenant fix (recurringTasks.ts, same class as
+		// missions.ts/missionTemplates.ts above): recurringTasks.create now
+		// requires a verified identity — seed as the service-account/master
+		// identity for the same reason as the sibling test files.
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
 		for (let i = 0; i < TOTAL; i++) {
-			const id: string = await t.mutation(api.recurringTasks.create, {
+			const id: string = await tMaster.mutation(api.recurringTasks.create, {
 				title: `sweep recurring ${i}`,
 				assignedTo,
 				priority: "medium",

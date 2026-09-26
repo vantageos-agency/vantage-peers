@@ -142,7 +142,14 @@ export function deriveTerminalStatus(
 //                  stands alone (membership check skipped; CORE-A above
 //                  still required an identity to exist at all).
 // ─────────────────────────────────────────────────────────────────────────────
-async function requireAuthenticatedCaller(
+// Exported (Day 203 slice, task class: authority attached to an
+// anonymously-registered object — .claude/rules/authority-attached-to-anonymous-object.md)
+// so convex/recurringTasks.ts, convex/missions.ts and convex/missionTemplates.ts
+// can derive caller identity through this SAME resolver instead of hand-rolling
+// a second one. "Write no second resolver — one identity layer, and a second
+// is itself the defect" (brief). Behaviour is byte-unchanged for every
+// existing tasks.ts call site; only the export keyword is new.
+export async function requireAuthenticatedCaller(
 	ctx: MutationCtx,
 	callerOrchestrator: string | undefined,
 	agentCredentialSecret?: string,

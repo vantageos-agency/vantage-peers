@@ -434,6 +434,36 @@ function runScan(): Classified[] {
 //     internalAction, present no ctx.auth identity and now call the
 //     `internal.*` reference directly). See
 //     convex/__tests__/issuesGithubRepoMappingErrorMonitorWriteScope.test.ts.
+//   - convex/missions.ts:create, convex/missions.ts:update,
+//     convex/missions.ts:updateStatus and convex/missions.ts:updateProgress
+//     are NOT in this list — guarded via withOrgScope + isOrgAllowedForScope
+//     (org-scope owner check on the mission's STORED orgId), same shape as
+//     briefingNotes.ts, class (a). See
+//     convex/__tests__/missionsWriteScope.test.ts.
+//   - convex/missionTemplates.ts:upsert and
+//     convex/missionTemplates.ts:softDelete are NOT in this list — guarded
+//     via withOrgScope + a master-only check: the mission-template catalog
+//     is a single FLEET-WIDE shared resource (no orgId column — see
+//     convex/schema.ts's missionTemplates doc comment), so only the
+//     verified master scope may write it, mirroring the MCP server's own
+//     pre-existing master-only guard on soft_delete_mission_template,
+//     class (a). convex/missionTemplates.ts:instantiateTemplateIntoMission
+//     is NOT in this list either — guarded via withOrgScope +
+//     isMissionAllowedForScope (org-scope owner check on the TARGET
+//     mission's STORED orgId, since the shared template it reads carries no
+//     orgId of its own), class (a). See
+//     convex/__tests__/missionTemplatesWriteScope.test.ts.
+//   - convex/recurringTasks.ts:create, convex/recurringTasks.ts:update,
+//     convex/recurringTasks.ts:pause, convex/recurringTasks.ts:resume and
+//     convex/recurringTasks.ts:remove are NOT in this list — guarded via
+//     convex/tasks.ts's exported requireAuthenticatedCaller (reused, not
+//     duplicated — "write no second resolver"). create/update additionally
+//     check the row's STORED `assignedTo` against the caller's verified
+//     `allowedOrchestrators` (recurringTasks carries no orgId column);
+//     pause/resume/remove require the verified master scope, mirroring the
+//     MCP server's own pre-existing master-only guards on
+//     pause_recurring_task/resume_recurring_task/delete_recurring_task,
+//     class (a). See convex/__tests__/recurringTasksWriteScope.test.ts.
 const KNOWN_OFFENDERS = new Set<string>([
 	// callerOrchestrator-asserted-only (class c) — no verified identity:
 	"convex/mandates.ts:create",
@@ -449,21 +479,9 @@ const KNOWN_OFFENDERS = new Set<string>([
 	"convex/iframeEmbedSessions.ts:touchSession",
 	"convex/iframeEmbedSessions.ts:revokeSession",
 	"convex/kbMutations.ts:generateUploadUrl",
-	"convex/missionTemplates.ts:upsert",
-	"convex/missionTemplates.ts:softDelete",
-	"convex/missionTemplates.ts:instantiateTemplateIntoMission",
-	"convex/missions.ts:create",
-	"convex/missions.ts:update",
-	"convex/missions.ts:updateStatus",
-	"convex/missions.ts:updateProgress",
 	"convex/okfBundleDurable.ts:cancelOkfBundleExportDurable",
 	"convex/profiles.ts:upsertProfile",
 	"convex/profiles.ts:updateDynamic",
-	"convex/recurringTasks.ts:create",
-	"convex/recurringTasks.ts:update",
-	"convex/recurringTasks.ts:pause",
-	"convex/recurringTasks.ts:resume",
-	"convex/recurringTasks.ts:remove",
 ]);
 
 describe("public mutation auth guard (source-tree-derived, ratchet)", () => {

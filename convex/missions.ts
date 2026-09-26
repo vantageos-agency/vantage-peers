@@ -113,6 +113,32 @@ const priorityValidator = v.union(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Org-scope owner enforcement (same defect class as convex/messages.ts's
+// isOrchestratorAllowedForScope / convex/briefingNotes.ts's
+// isOrgAllowedForScope — see
+// .claude/rules/authority-attached-to-anonymous-object.md). create, update,
+// updateStatus and updateProgress used to take NO caller-identity check at
+// all: any caller holding the deployment URL could create a mission under
+// any org, or reach into and mutate ANY org's mission.
+//
+// A mission's owner is its STORED `orgId` (Beta multi-tenant scope field —
+// null/undefined = master/internal Alpha). Master scope (no identity with
+// legacy opt-in, or the recognized service-account identity) retains
+// unrestricted access. A Clerk-org-scoped caller may only act on a mission
+// whose `orgId` equals its OWN resolved org slug; a mission with no `orgId`
+// (master-created, legacy) is never visible/writable to an org caller.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isOrgAllowedForScope(
+	scope: OrgScope,
+	orgId: string | undefined,
+): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return orgId === scope.orgSlug;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // create — insert a new mission
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,11 +159,27 @@ export const create = mutation({
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix — create used to insert with NO
+		// identity/scope check at all (the `orgId` field simply was not set,
+		// leaving every created mission unscoped). withOrgScope is called
+		// WITHOUT allowNoIdentityMaster — the MCP server always presents a
+		// real Clerk identity (its caller's own org JWT or its
+		// service-account token). `orgId` is derived SOLELY from the
+		// resolved scope, never a client-supplied argument (there is no
+		// `orgId` in this mutation's args) — an org caller may create only
+		// for an owner (org) inside its own scope, by construction.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not create a mission — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
 		const now = Date.now();
 		return await ctx.db.insert("missions", {
 			...args,
 			createdAt: now,
 			updatedAt: now,
+			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 		});
 	},
 });
@@ -434,9 +476,41 @@ export const update = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missions:update", …) at mcp-server/src/tools.ts:5509 (imperative), never a subscribing pre-org client shell; the RBAC/org-keyed throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		const { missionId, callerOrchestrator, cancelReason, ...fields } = args;
+
+		// Fail-closed multi-tenant fix (same defect class as create above) —
+		// update used to authorize on NOTHING outside the cancel branch (and
+		// the cancel branch itself authorized solely on the client-supplied
+		// callerOrchestrator argument): an anonymous caller (or a caller from
+		// a DIFFERENT org) could patch any org's mission. withOrgScope is
+		// called WITHOUT allowNoIdentityMaster for the same reason as
+		// create: the MCP server always presents a real Clerk identity on
+		// this path.
+		//
+		// Resolved BEFORE ctx.db.get(missionId) (mirrors convex/briefingNotes.ts
+		// update/deleteBriefingNote, convex/messages.ts deleteMessage): an
+		// anonymous caller must get RBAC_DENIED, never "Mission ... not
+		// found" — a get-then-scope order lets missionId existence act as an
+		// unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update mission ${missionId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) {
 			throw new Error(`Mission ${missionId} not found`);
+		}
+
+		// `fields` never includes `orgId` (not part of this mutation's args
+		// validator) — an org caller can never move a mission into another
+		// org's scope via the patch; the org-scope check below binds ONLY to
+		// the mission's STORED orgId, never anything caller-supplied.
+		if (!isOrgAllowedForScope(scope, mission.orgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update mission ${missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
 		}
 
 		// Build patch object with only provided fields
@@ -497,9 +571,26 @@ export const updateStatus = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class and same fix as
+		// `update` above) — updateStatus used to take NO caller-identity
+		// check of any kind. Resolved BEFORE ctx.db.get for the same
+		// existence-oracle reason documented on `update`.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update mission ${args.missionId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const mission = await ctx.db.get(args.missionId);
 		if (mission === null) {
 			throw new Error(`Mission ${args.missionId} not found`);
+		}
+
+		if (!isOrgAllowedForScope(scope, mission.orgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
 		}
 
 		await ctx.db.patch(args.missionId, {
@@ -521,9 +612,26 @@ export const updateProgress = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (same defect class and same fix as
+		// `update`/`updateStatus` above) — updateProgress used to take NO
+		// caller-identity check of any kind. Resolved BEFORE ctx.db.get for
+		// the same existence-oracle reason documented on `update`.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update mission ${args.missionId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const mission = await ctx.db.get(args.missionId);
 		if (mission === null) {
 			throw new Error(`Mission ${args.missionId} not found`);
+		}
+
+		if (!isOrgAllowedForScope(scope, mission.orgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
 		}
 
 		await ctx.db.patch(args.missionId, {
