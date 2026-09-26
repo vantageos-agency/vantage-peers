@@ -23,6 +23,17 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+// fixPatterns.create/linkIssue now require the verified fleet master
+// (convex/lib/auth.ts's withOrgScope isMaster grant — see
+// convex/__tests__/fixPatternsWriteScope.test.ts) — this fixture
+// authenticates as the recognized service-account carve-out configured in
+// vitest.config.ts.
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 beforeEach(() => {
 	vi.useFakeTimers();
 });
@@ -186,7 +197,7 @@ describe("GAP-T1 issue_stats — issues.getStats query", () => {
 describe("GAP-T1 link_issue_to_pattern — fixPatterns.linkIssue mutation", () => {
 	test("happy path — appends issueId to pattern.linkedIssueIds", async () => {
 		const t = createTestConvex();
-		const patternId = await t.mutation(api.fixPatterns.create, {
+		const patternId = await asMaster(t).mutation(api.fixPatterns.create, {
 			symptom: "deploy fails on schema drift",
 			rootCause: "stale generated types",
 			tags: ["convex", "schema"],
@@ -196,7 +207,7 @@ describe("GAP-T1 link_issue_to_pattern — fixPatterns.linkIssue mutation", () =
 			severity: "major",
 		});
 
-		await t.mutation(api.fixPatterns.linkIssue, {
+		await asMaster(t).mutation(api.fixPatterns.linkIssue, {
 			patternId,
 			issueId: "issue#777",
 		});
@@ -211,7 +222,7 @@ describe("GAP-T1 link_issue_to_pattern — fixPatterns.linkIssue mutation", () =
 
 	test("edge case — linking same issueId twice is idempotent (no duplicate)", async () => {
 		const t = createTestConvex();
-		const patternId = await t.mutation(api.fixPatterns.create, {
+		const patternId = await asMaster(t).mutation(api.fixPatterns.create, {
 			symptom: "x",
 			rootCause: "y",
 			tags: [],
@@ -221,11 +232,11 @@ describe("GAP-T1 link_issue_to_pattern — fixPatterns.linkIssue mutation", () =
 			severity: "minor",
 		});
 
-		await t.mutation(api.fixPatterns.linkIssue, {
+		await asMaster(t).mutation(api.fixPatterns.linkIssue, {
 			patternId,
 			issueId: "issue#42",
 		});
-		await t.mutation(api.fixPatterns.linkIssue, {
+		await asMaster(t).mutation(api.fixPatterns.linkIssue, {
 			patternId,
 			issueId: "issue#42",
 		});

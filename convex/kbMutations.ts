@@ -17,9 +17,10 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-27
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
+import { withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
@@ -152,6 +153,23 @@ export const supersedePriorChunks = internalMutation({
 // bindOrAssertStorageOwnership (this file). Gating URL generation behind
 // org-auth prevents anonymous upload-URL minting (unauthenticated storage
 // fill attacks).
+//
+// Fail-closed multi-tenant fix (defect class:
+// .claude/rules/authority-attached-to-anonymous-object.md /
+// .claude/rules/http-boundary-derives-from-principal.md) — the ONLY check
+// this mutation used to run was `assertOrgArgs`, which validates the
+// CLIENT-SUPPLIED `args.orgId` string is non-empty and namespace-consistent
+// — never that it belongs to the caller. A direct call to this public
+// Convex deployment (bypassing the MCP tool layer entirely — "a guard in
+// the MCP server is NOT a defence") could mint an upload URL for ANY orgId.
+// Fix: derive the caller's own org via `withOrgScope` (the SAME resolver
+// `convex/lib/auth.ts` exposes to every other write surface — the MCP
+// server's kb ingest tools already forward the caller's OWN verified Clerk
+// JWT via `selectConvexClientForRequest`'s clerkJwt branch, so
+// `ctx.auth.getUserIdentity()` resolves the real caller here in production,
+// not just in tests). `args.orgId` is kept ONLY as a narrowing check against
+// the verified scope — it can never widen access beyond the caller's own
+// org, and a mismatch is refused rather than silently corrected.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const generateUploadUrl = mutation({
@@ -161,6 +179,17 @@ export const generateUploadUrl = mutation({
 	},
 	returns: v.string(),
 	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not mint a KB upload URL — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+		if (!scope.isMaster && args.orgId !== scope.orgSlug) {
+			throw new ConvexError(
+				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 		return await ctx.storage.generateUploadUrl();
 	},

@@ -27,12 +27,18 @@ const modules = Object.fromEntries(
 describe("mandates.list pagination — createdBefore applied after unbounded take", () => {
 	test("RED/GREEN: paginating to the end must return every seeded mandate", async () => {
 		const t = convexTest(schema, modules);
+		// mandates.create now requires the verified fleet master
+		// (convex/lib/auth.ts's withOrgScope isMaster grant — see
+		// convex/__tests__/mandatesWriteScope.test.ts).
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
 		const TOTAL = 12;
 		const PAGE_LIMIT = 5;
 		const seededIds: string[] = [];
 
 		for (let i = 0; i < TOTAL; i++) {
-			const id: string = await t.mutation(api.mandates.create, {
+			const id: string = await tMaster.mutation(api.mandates.create, {
 				requestedBy: "sigma",
 				fulfilledBy: "eta",
 				service: `sweep-service-${i}`,

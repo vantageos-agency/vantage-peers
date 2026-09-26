@@ -599,21 +599,27 @@ describe("Messages", () => {
 
 	test("send broadcast creates receipts for all other orchestrators", async () => {
 		const t = await createMessagingTestConvex();
+		// profiles.upsertProfile now requires the verified fleet master
+		// (convex/lib/auth.ts's withOrgScope isMaster grant — see
+		// convex/__tests__/profilesWriteScope.test.ts).
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
 
 		// Create profiles so broadcast can resolve recipients dynamically
-		await t.mutation(api.profiles.upsertProfile, {
+		await tMaster.mutation(api.profiles.upsertProfile, {
 			orchestratorId: "pi",
 			name: "Pi",
 			static: { role: "lead", workspace: "/test", capabilities: [] },
 			dynamic: { currentTask: undefined, lastSeen: Date.now(), sessionCount: 1 },
 		});
-		await t.mutation(api.profiles.upsertProfile, {
+		await tMaster.mutation(api.profiles.upsertProfile, {
 			orchestratorId: "tau",
 			name: "Tau",
 			static: { role: "frontend", workspace: "/test", capabilities: [] },
 			dynamic: { currentTask: undefined, lastSeen: Date.now(), sessionCount: 1 },
 		});
-		await t.mutation(api.profiles.upsertProfile, {
+		await tMaster.mutation(api.profiles.upsertProfile, {
 			orchestratorId: "phi",
 			name: "Phi",
 			static: { role: "backend", workspace: "/test", capabilities: [] },
