@@ -74,9 +74,9 @@ On success, the pattern is marked validated; surface the validation id and the n
 
 **Step 5 — Mode `link` (mcp__vantage-peers__link_issue_to_pattern)**
 
-Required inputs: `patternId` AND `issueId` (VantagePeers issue id, not a GitHub `#NNN`). If the caller supplies a GitHub reference, first resolve it via `mcp__vantage-peers__list_issues` and use the returned id. Both ids are mandatory. <!-- tool-exposure-allow: list_issues --> `list_issues` is part of the separate issue-tracking surface and is deliberately still hidden — this ruling reverses exposure for the seven fix-pattern names only, not for issue tracking.
+Required inputs: `patternId` AND `issueId` (VantagePeers issue id, not a GitHub `#NNN`). Resolving a GitHub `#NNN` reference to a VantagePeers `issueId` is NOT available through this skill's tool surface — if the caller only has a GitHub reference, ask them for the VantagePeers `issueId` directly; do not attempt a lookup this skill has no tool for. Both ids are mandatory.
 
-After link succeeds, run `mcp__vantage-peers__get_issue` on the issue id to confirm the linkage appears in `linkedPatterns`, and display the joined view. <!-- tool-exposure-allow: get_issue --> `get_issue` is likewise deliberately hidden (same issue-tracking surface, out of scope of this reversal).
+Call `mcp__vantage-peers__link_issue_to_pattern`. On success, display that call's own returned result as confirmation. Reading the linkage back via the issue (confirming it appears in `linkedPatterns`) is NOT available through this skill's tool surface — do not promise or attempt that read-back; the `link_issue_to_pattern` response is the only confirmation this skill can give.
 
 **Step 6 — Mode `search` (mcp__vantage-peers__search_fix_patterns)**
 
