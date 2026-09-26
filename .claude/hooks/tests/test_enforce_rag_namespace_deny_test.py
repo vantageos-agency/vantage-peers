@@ -6,6 +6,15 @@ Covers:
   1. block_on_violation  — commit touches convex/auth.ts, no deny test → exit 2
   2. pass_on_valid       — commit touches convex/rag.ts, deny test exists → exit 0
   3. pass_on_override    — commit with override marker → exit 0
+
+Every payload's `cwd` points at a THROWAWAY git repository this suite
+creates and destroys — never at the real checkout. This hook reads and
+WRITES/scans `<repo>/convex/__tests__/` on disk (see
+`_test_file_has_denial` / the "existing test files" scan in the hook's
+`main()`): pointing `cwd` at the real checkout means a fixture that
+creates/removes a deny-test file there operates on the REAL tracked
+tree. That was measured to delete `convex/__tests__/auth-namespace-deny.test.ts`
+from the real checkout on every run of this suite before this fix.
 """
 import json
 import os
@@ -13,35 +22,43 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 HOOK = os.path.join(
     os.path.dirname(__file__), "..", "enforce-rag-namespace-deny-test.py"
 )
 HOOK = os.path.abspath(HOOK)
 
-WORKSPACE = "/root/coding/vantage-memory"
+
+def _new_temp_repo() -> str:
+    """A THROWAWAY git repository, never the real checkout — see module
+    docstring. Caller is responsible for `rm -rf` cleanup."""
+    tmpdir = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q"], cwd=tmpdir, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmpdir, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmpdir, check=True)
+    return tmpdir
 
 
-def _run_hook(command: str, env_override: dict | None = None) -> tuple[int, str]:
+def _run_hook(command: str, repo: str) -> tuple[int, str]:
     payload = json.dumps(
-        {"tool_name": "Bash", "tool_input": {"command": command}}
+        {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": repo}
     )
-    env = os.environ.copy()
-    if env_override:
-        env.update(env_override)
     result = subprocess.run(
         [sys.executable, HOOK],
         input=payload,
         capture_output=True,
         text=True,
-        env=env,
     )
     return result.returncode, result.stderr
 
 
-def _run_hook_with_mock_git(command: str, staged_files: list[str]) -> tuple[int, str]:
-    """Run hook with a mock git binary that returns specified staged files."""
+def _run_hook_with_mock_git(
+    command: str, staged_files: list[str], repo: str
+) -> tuple[int, str]:
+    """Run hook with a mock git binary that returns specified staged files,
+    resolved against `repo` (a throwaway repo the CALLER created via
+    `_new_temp_repo()` — so a test that needs a file present on disk can
+    write it into the SAME repo the hook will scan)."""
     with tempfile.TemporaryDirectory() as tmpdir:
         mock_git = os.path.join(tmpdir, "git")
         # Build a script that returns our staged files for diff --cached --name-only
@@ -68,14 +85,13 @@ exec /usr/bin/git "$@"
         # `data.get("cwd")` off the payload itself, never nested under
         # `tool_input`). `_resolve_repo` in the hook under test reads it the
         # same way and has NO fallback by design: an absent `cwd` is an
-        # unreadable subject, refused rather than defaulted. This fixture
-        # omitted `cwd` entirely, which the hook now correctly treats as
-        # unreadable — the fixture was stale, not the hook.
+        # unreadable subject, refused rather than defaulted. It MUST be a
+        # throwaway repo — see module docstring.
         payload = json.dumps(
             {
                 "tool_name": "Bash",
                 "tool_input": {"command": command},
-                "cwd": WORKSPACE,
+                "cwd": repo,
             }
         )
         result = subprocess.run(
@@ -93,58 +109,61 @@ class TestRagNamespaceDenyTest(unittest.TestCase):
     # ── Case 1: block when trigger file staged, no deny test ─────────────────
     def test_block_on_violation_auth_ts_no_deny_test(self):
         """git commit touching convex/auth.ts with no deny test → block."""
-        # Mock git to report convex/auth.ts as staged
-        # The hook also scans convex/__tests__/ on disk; we need to ensure
-        # no test file there has the required string (or skip that check).
-        # For a clean test, we use mock git and a non-existent tests dir
-        # by temporarily patching. Since test dir may exist on disk with
-        # the denial string already, we use a command that would trigger
-        # if no test file on disk satisfies it.
-
-        # Use mock git returning only auth.ts as staged — no test files
-        code, stderr = _run_hook_with_mock_git(
-            "git commit -m 'fix: update auth'",
-            staged_files=["convex/auth.ts"],
-        )
-        # Should block because convex/__tests__/ likely doesn't have
-        # AUTH_NAMESPACE_DENIED or "cross-tenant deny" string on a clean repo
-        # We accept either outcome but validate the structure
-        if code == 2:
+        repo = _new_temp_repo()
+        try:
+            # A fresh throwaway repo has no convex/__tests__/ at all, so the
+            # "existing test files on disk" scan is guaranteed empty — this
+            # is a hard exit=2 now, not an "either outcome" tolerance.
+            code, stderr = _run_hook_with_mock_git(
+                "git commit -m 'fix: update auth'",
+                staged_files=["convex/auth.ts"],
+                repo=repo,
+            )
+            self.assertEqual(code, 2, f"got {code}. stderr={stderr}")
             self.assertIn("AUTH_NAMESPACE_DENIED", stderr)
             self.assertIn("allow-no-rag-deny-test", stderr)
-        # If the workspace already has a passing test file, exit 0 is valid
-        # We verify the hook ran cleanly (0 or 2)
-        self.assertIn(code, [0, 2])
+        finally:
+            subprocess.run(["rm", "-rf", repo])
 
     def test_block_on_violation_ragbundle_no_deny_test(self):
-        """git commit touching convex/ragBundle.ts with no deny test → block or pass."""
-        code, stderr = _run_hook_with_mock_git(
-            "git commit -m 'feat: add rag bundle'",
-            staged_files=["convex/ragBundle.ts"],
-        )
-        # Valid outcomes: 2 (block, no test) or 0 (test already exists on disk)
-        self.assertIn(code, [0, 2])
-        if code == 2:
+        """git commit touching convex/ragBundle.ts with no deny test → block."""
+        repo = _new_temp_repo()
+        try:
+            code, stderr = _run_hook_with_mock_git(
+                "git commit -m 'feat: add rag bundle'",
+                staged_files=["convex/ragBundle.ts"],
+                repo=repo,
+            )
+            self.assertEqual(code, 2, f"got {code}. stderr={stderr}")
             self.assertIn("BLOCKED", stderr)
             self.assertIn("AUTH_NAMESPACE_DENIED", stderr)
+        finally:
+            subprocess.run(["rm", "-rf", repo])
 
     def test_block_non_trigger_files_not_blocked(self):
         """git commit touching only convex/schema.ts → NOT blocked by this hook."""
-        code, _ = _run_hook_with_mock_git(
-            "git commit -m 'feat: add table'",
-            staged_files=["convex/schema.ts"],
-        )
-        self.assertEqual(code, 0, "Non-trigger files should not be blocked by this hook")
+        repo = _new_temp_repo()
+        try:
+            code, _ = _run_hook_with_mock_git(
+                "git commit -m 'feat: add table'",
+                staged_files=["convex/schema.ts"],
+                repo=repo,
+            )
+            self.assertEqual(code, 0, "Non-trigger files should not be blocked by this hook")
+        finally:
+            subprocess.run(["rm", "-rf", repo])
 
     # ── Case 2: pass when deny test is staged alongside trigger file ──────────
     def test_pass_on_valid_deny_test_staged(self):
         """Commit touches convex/auth.ts AND stages a deny test file → pass."""
-        tests_dir = os.path.join(WORKSPACE, "convex", "__tests__")
-        os.makedirs(tests_dir, exist_ok=True)
+        repo = _new_temp_repo()
+        try:
+            tests_dir = os.path.join(repo, "convex", "__tests__")
+            os.makedirs(tests_dir, exist_ok=True)
 
-        test_file_rel = "convex/__tests__/auth-namespace-deny.test.ts"
-        test_file_abs = os.path.join(WORKSPACE, test_file_rel)
-        test_content = """
+            test_file_rel = "convex/__tests__/auth-namespace-deny.test.ts"
+            test_file_abs = os.path.join(repo, test_file_rel)
+            test_content = """
 import { describe, it, expect } from 'vitest';
 describe('auth namespace isolation', () => {
   it('AUTH_NAMESPACE_DENIED — rejects cross-tenant query', async () => {
@@ -153,7 +172,6 @@ describe('auth namespace isolation', () => {
   });
 });
 """
-        try:
             with open(test_file_abs, "w") as f:
                 f.write(test_content)
 
@@ -161,22 +179,23 @@ describe('auth namespace isolation', () => {
             code, stderr = _run_hook_with_mock_git(
                 "git commit -m 'fix: auth namespace guard'",
                 staged_files=["convex/auth.ts", test_file_rel],
+                repo=repo,
             )
             self.assertEqual(
                 code, 0,
                 f"Expected pass when deny test is staged. got {code}. stderr={stderr}",
             )
         finally:
-            if os.path.exists(test_file_abs):
-                os.remove(test_file_abs)
+            subprocess.run(["rm", "-rf", repo])
 
     def test_pass_on_valid_existing_deny_test_on_disk(self):
         """Deny test already exists in convex/__tests__/ (not staged) → pass."""
-        tests_dir = os.path.join(WORKSPACE, "convex", "__tests__")
-        os.makedirs(tests_dir, exist_ok=True)
-
-        test_file_abs = os.path.join(tests_dir, "_deny_smoke.test.ts")
+        repo = _new_temp_repo()
         try:
+            tests_dir = os.path.join(repo, "convex", "__tests__")
+            os.makedirs(tests_dir, exist_ok=True)
+
+            test_file_abs = os.path.join(tests_dir, "_deny_smoke.test.ts")
             with open(test_file_abs, "w") as f:
                 f.write("// cross-tenant deny assertion exists\n")
 
@@ -184,40 +203,54 @@ describe('auth namespace isolation', () => {
             code, stderr = _run_hook_with_mock_git(
                 "git commit -m 'fix: rag query'",
                 staged_files=["convex/rag.ts"],
+                repo=repo,
             )
             self.assertEqual(
                 code, 0,
                 f"Expected pass: existing deny test on disk. got {code}. stderr={stderr}",
             )
         finally:
-            if os.path.exists(test_file_abs):
-                os.remove(test_file_abs)
+            subprocess.run(["rm", "-rf", repo])
 
     # ── Case 3: pass when override marker is present ──────────────────────────
     def test_pass_on_override_marker(self):
         """git commit with override marker → pass even without deny test."""
-        code, stderr = _run_hook_with_mock_git(
-            "git commit -m 'refactor: rag internals' # // allow-no-rag-deny-test: refactor-no-new-surface",
-            staged_files=["convex/ragBundle.ts"],
-        )
-        self.assertEqual(
-            code, 0,
-            f"Expected exit 0 (override), got {code}. stderr={stderr}",
-        )
+        repo = _new_temp_repo()
+        try:
+            code, stderr = _run_hook_with_mock_git(
+                "git commit -m 'refactor: rag internals' # // allow-no-rag-deny-test: refactor-no-new-surface",
+                staged_files=["convex/ragBundle.ts"],
+                repo=repo,
+            )
+            self.assertEqual(
+                code, 0,
+                f"Expected exit 0 (override), got {code}. stderr={stderr}",
+            )
+        finally:
+            subprocess.run(["rm", "-rf", repo])
 
     def test_pass_on_override_marker_auth(self):
         """Override on auth.ts commit → pass."""
-        code, _ = _run_hook_with_mock_git(
-            "git commit -m 'chore: update comment // allow-no-rag-deny-test: comment-only'",
-            staged_files=["convex/auth.ts"],
-        )
-        self.assertEqual(code, 0)
+        repo = _new_temp_repo()
+        try:
+            code, _ = _run_hook_with_mock_git(
+                "git commit -m 'chore: update comment // allow-no-rag-deny-test: comment-only'",
+                staged_files=["convex/auth.ts"],
+                repo=repo,
+            )
+            self.assertEqual(code, 0)
+        finally:
+            subprocess.run(["rm", "-rf", repo])
 
     # ── Non-commit commands always pass ──────────────────────────────────────
     def test_pass_on_non_commit_command(self):
         """Non-git-commit command is not blocked."""
-        code, _ = _run_hook("git push origin main")
-        self.assertEqual(code, 0)
+        repo = _new_temp_repo()
+        try:
+            code, _ = _run_hook("git push origin main", repo=repo)
+            self.assertEqual(code, 0)
+        finally:
+            subprocess.run(["rm", "-rf", repo])
 
     def test_pass_on_non_bash_tool(self):
         """Non-Bash tool calls are not affected."""

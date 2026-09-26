@@ -19,53 +19,73 @@ HOOK = os.path.join(
 )
 HOOK = os.path.abspath(HOOK)
 
-WORKSPACE = "/root/coding/vantage-memory"
+
+def _new_temp_repo() -> str:
+    """A THROWAWAY git repository, never the real checkout. The hook under
+    test resolves its repo from the payload's own `cwd` via `git rev-parse
+    --show-toplevel`, then runs real `git` subprocess calls (`diff --cached`
+    intercepted by the mock below, but `rev-parse` is NOT — it falls
+    through to the real binary). Pointing that `cwd` at the real repo
+    checkout would make the hook operate — reads, and for the sibling rag
+    hook, writes/removes — on the REAL tracked tree the moment a fixture
+    needs a staged file to exist on disk. Every test gets its own repo,
+    destroyed after."""
+    tmpdir = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q"], cwd=tmpdir, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmpdir, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmpdir, check=True)
+    return tmpdir
 
 
 def _run_hook_with_mock_git(command: str, staged_files: list[str]) -> tuple[int, str]:
-    """Run hook with a mock git binary returning specified staged files."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        mock_git = os.path.join(tmpdir, "git")
-        staged_output = "\n".join(staged_files)
-        mock_script = f"""#!/bin/sh
+    """Run hook with a mock git binary returning specified staged files, in
+    a throwaway repo (never the real checkout — see _new_temp_repo)."""
+    repo = _new_temp_repo()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_git = os.path.join(tmpdir, "git")
+            staged_output = "\n".join(staged_files)
+            mock_script = f"""#!/bin/sh
 if echo "$*" | grep -q "diff --cached --name-only"; then
     printf '{staged_output}\\n'
     exit 0
 fi
 exec /usr/bin/git "$@"
 """
-        with open(mock_git, "w") as f:
-            f.write(mock_script)
-        os.chmod(mock_git, 0o755)
+            with open(mock_git, "w") as f:
+                f.write(mock_script)
+            os.chmod(mock_git, 0o755)
 
-        env = os.environ.copy()
-        env["PATH"] = tmpdir + ":" + env.get("PATH", "")
+            env = os.environ.copy()
+            env["PATH"] = tmpdir + ":" + env.get("PATH", "")
 
-        # `cwd` is a TOP-LEVEL key on the real PreToolUse envelope (verified
-        # against every other hook in this repo that resolves it — e.g.
-        # block-deploy-without-qa.py, enforce-brief-grep-verify.py,
-        # enforce-eta-approval-before-npm-publish.py — all read
-        # `data.get("cwd")` off the payload itself, never nested under
-        # `tool_input`). `_resolve_repo` in the hook under test reads it the
-        # same way and has NO fallback by design: an absent `cwd` is an
-        # unreadable subject, refused rather than defaulted. This fixture
-        # omitted `cwd` entirely, which the hook now correctly treats as
-        # unreadable — the fixture was stale, not the hook.
-        payload = json.dumps(
-            {
-                "tool_name": "Bash",
-                "tool_input": {"command": command},
-                "cwd": WORKSPACE,
-            }
-        )
-        result = subprocess.run(
-            [sys.executable, HOOK],
-            input=payload,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        return result.returncode, result.stderr
+            # `cwd` is a TOP-LEVEL key on the real PreToolUse envelope
+            # (verified against every other hook in this repo that resolves
+            # it — e.g. block-deploy-without-qa.py,
+            # enforce-brief-grep-verify.py,
+            # enforce-eta-approval-before-npm-publish.py — all read
+            # `data.get("cwd")` off the payload itself, never nested under
+            # `tool_input`). `_resolve_repo` in the hook under test reads it
+            # the same way and has NO fallback by design: an absent `cwd`
+            # is an unreadable subject, refused rather than defaulted. It
+            # MUST be a throwaway repo, never the real checkout.
+            payload = json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                    "cwd": repo,
+                }
+            )
+            result = subprocess.run(
+                [sys.executable, HOOK],
+                input=payload,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            return result.returncode, result.stderr
+    finally:
+        subprocess.run(["rm", "-rf", repo])
 
 
 def _run_hook(command: str) -> tuple[int, str]:
