@@ -352,7 +352,17 @@ def main() -> int:
         return 0
 
     if verdict == "refuse":
-        print(f"BLOCKED by block-deploy-without-qa: {detail}", file=sys.stderr)
+        print(
+            f"BLOCKED by block-deploy-without-qa: {detail}\n"
+            "  Pour DEV : utilise `npx convex dev --once` (aucun garde prod ne s'applique). "
+            "Le jeton Pi / la preuve QA ne sont requis QUE pour la PROD.\n"
+            "  Passez la QA (T6) — tests + verification SUR CE COMMIT — puis relancez le "
+            "deploiement.\n"
+            "\n"
+            "  Override documente (hotfix client-impacting uniquement) :\n"
+            "    npx convex deploy --yes  # allow-no-qa: <raison >= 6 caracteres>",
+            file=sys.stderr,
+        )
         return 2
 
     print(

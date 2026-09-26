@@ -71,8 +71,25 @@ def test_bypass_sudo_avec_commentaire():
 # ---------------------------------------------------------------------------
 
 def test_vrai_dev_passe():
-    """Un VRAI `--dev` (pas dans un commentaire) reste autorise."""
-    assert rc("npx convex deploy --dev") == 0
+    """Le VRAI dev door reste autorise sans token.
+
+    `npx convex deploy --dev` n'a jamais ete un vrai dev door : `deploy`
+    n'a pas de flag `--dev` dans le CLI Convex (voir
+    _lib/command_predicate.py::_classify_convex_invocation — `deploy`
+    cible TOUJOURS prod, sauf `--dry-run`/`--preview` ou une
+    CONVEX_DEPLOY_KEY dev-keyee). L'ancienne fixture testait le lookahead
+    substring pre-Day130/131 — exactement la classe de bypass (SURVIVOR C)
+    que la migration tokenizer a fermee. Les VRAIES portes dev sont
+    `npx convex dev --once` et un `CONVEX_DEPLOY_KEY=dev:...` inline."""
+    assert rc("npx convex dev --once") == 0
+    assert rc("CONVEX_DEPLOY_KEY=dev:abc123 npx convex deploy") == 0
+
+
+def test_deploy_dev_flag_sans_dev_key_reste_bloque():
+    """`convex deploy --dev` n'existe pas dans le CLI Convex — un flag
+    invente sur `deploy` ne doit JAMAIS de-escalader vers dev (ce serait
+    rouvrir SURVIVOR C par un autre nom de flag)."""
+    assert rc("npx convex deploy --dev") == 2
 
 
 def test_grep_lecture_seule_passe():

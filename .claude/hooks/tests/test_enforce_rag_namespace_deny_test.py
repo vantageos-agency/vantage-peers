@@ -61,8 +61,22 @@ exec /usr/bin/git "$@"
         env = os.environ.copy()
         env["PATH"] = tmpdir + ":" + env.get("PATH", "")
 
+        # `cwd` is a TOP-LEVEL key on the real PreToolUse envelope (verified
+        # against every other hook in this repo that resolves it — e.g.
+        # block-deploy-without-qa.py, enforce-brief-grep-verify.py,
+        # enforce-eta-approval-before-npm-publish.py — all read
+        # `data.get("cwd")` off the payload itself, never nested under
+        # `tool_input`). `_resolve_repo` in the hook under test reads it the
+        # same way and has NO fallback by design: an absent `cwd` is an
+        # unreadable subject, refused rather than defaulted. This fixture
+        # omitted `cwd` entirely, which the hook now correctly treats as
+        # unreadable — the fixture was stale, not the hook.
         payload = json.dumps(
-            {"tool_name": "Bash", "tool_input": {"command": command}}
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                "cwd": WORKSPACE,
+            }
         )
         result = subprocess.run(
             [sys.executable, HOOK],

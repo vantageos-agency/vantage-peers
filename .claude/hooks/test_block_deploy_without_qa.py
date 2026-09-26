@@ -17,10 +17,29 @@ HOOK = pathlib.Path(__file__).with_name("block-deploy-without-qa.py")
 BREADCRUMB = "/tmp/.qa-passed"
 
 
+def _current_head_sha() -> str:
+    """The hook (v4.0.0) pins QA evidence to the SHA it resolves via
+    `git rev-parse HEAD` in the deploy cwd. With no `cwd` in the test
+    payload and no leading `cd`, the hook falls back to its own process
+    cwd — which subprocess.run inherits from THIS test process. So the
+    breadcrumb must name the SAME HEAD this test process sees, not an
+    arbitrary placeholder."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5,
+    )
+    return result.stdout.strip()
+
+
 def run(cmd, qa_ok=False):
     """Retourne le code de sortie du hook pour une commande Bash donnée."""
     if qa_ok:
-        pathlib.Path(BREADCRUMB).touch()
+        # v4.0.0 requires a JSON breadcrumb {"sha": ..., "writer": ...} that
+        # NAMES the commit being shipped — an empty touch() is the pre-v4.0.0
+        # age-window shape (`qa_is_fresh`) and is now read as MALFORMED JSON,
+        # which the hook correctly REFUSES rather than passes.
+        pathlib.Path(BREADCRUMB).write_text(
+            json.dumps({"sha": _current_head_sha(), "writer": "test-fixture"})
+        )
     else:
         try:
             os.remove(BREADCRUMB)
