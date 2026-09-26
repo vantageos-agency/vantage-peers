@@ -25,6 +25,18 @@ function createT() {
 	return convexTest(schema, modules);
 }
 
+// This suite exercises the LEGITIMATE (master/service-account) path — the
+// fleet's own recognized carve-out (convex/lib/auth.ts's
+// CLERK_SERVICE_ACCOUNT_USER_ID allowlist, set in vitest.config.ts as
+// "test-service-account-user-id"), never the anonymous default. The
+// cross-tenant / anonymous-refusal poles live in
+// convex/__tests__/iframeEmbedSessionsWriteScope.test.ts.
+function asMaster(t: ReturnType<typeof createT>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 const NOW = 1_748_390_400_000; // 2026-05-28T00:00:00.000Z (deterministic)
 const ONE_HOUR = 60 * 60 * 1000;
 
@@ -36,8 +48,9 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 	test("createSession stores a new session and getSession returns it", async () => {
 		const t = createT();
 		vi.setSystemTime(NOW);
+		const tMaster = asMaster(t);
 
-		await t.mutation(api.iframeEmbedSessions.createSession, {
+		await tMaster.mutation(api.iframeEmbedSessions.createSession, {
 			sessionId: "sess-001",
 			origin: "https://app.example.com",
 			expiresAt: NOW + ONE_HOUR,
@@ -58,8 +71,9 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 	test("createSession stores optional tenantId and userId", async () => {
 		const t = createT();
 		vi.setSystemTime(NOW);
+		const tMaster = asMaster(t);
 
-		await t.mutation(api.iframeEmbedSessions.createSession, {
+		await tMaster.mutation(api.iframeEmbedSessions.createSession, {
 			sessionId: "sess-002",
 			origin: "https://acme-hr.vantagepeers.com",
 			tenantId: "acme-hr",
@@ -86,8 +100,9 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 	test("getSession returns null for expired session", async () => {
 		const t = createT();
 		vi.setSystemTime(NOW);
+		const tMaster = asMaster(t);
 
-		await t.mutation(api.iframeEmbedSessions.createSession, {
+		await tMaster.mutation(api.iframeEmbedSessions.createSession, {
 			sessionId: "sess-expired",
 			origin: "https://app.example.com",
 			expiresAt: NOW - 1, // already expired
@@ -108,8 +123,9 @@ describe("iframeEmbedSessions: touchSession", () => {
 	test("touchSession updates lastSeenAt and returns true", async () => {
 		const t = createT();
 		vi.setSystemTime(NOW);
+		const tMaster = asMaster(t);
 
-		await t.mutation(api.iframeEmbedSessions.createSession, {
+		await tMaster.mutation(api.iframeEmbedSessions.createSession, {
 			sessionId: "sess-touch",
 			origin: "https://app.example.com",
 			expiresAt: NOW + ONE_HOUR,
@@ -118,7 +134,7 @@ describe("iframeEmbedSessions: touchSession", () => {
 		const LATER = NOW + 5 * 60 * 1000; // +5 min
 		vi.setSystemTime(LATER);
 
-		const result = await t.mutation(api.iframeEmbedSessions.touchSession, {
+		const result = await tMaster.mutation(api.iframeEmbedSessions.touchSession, {
 			sessionId: "sess-touch",
 		});
 		expect(result).toBe(true);
@@ -129,9 +145,10 @@ describe("iframeEmbedSessions: touchSession", () => {
 		expect(session?.lastSeenAt).toBe(LATER);
 	});
 
-	test("touchSession returns false for unknown sessionId", async () => {
+	test("touchSession returns false for unknown sessionId (master caller)", async () => {
 		const t = createT();
-		const result = await t.mutation(api.iframeEmbedSessions.touchSession, {
+		const tMaster = asMaster(t);
+		const result = await tMaster.mutation(api.iframeEmbedSessions.touchSession, {
 			sessionId: "nonexistent",
 		});
 		expect(result).toBe(false);
@@ -146,14 +163,15 @@ describe("iframeEmbedSessions: revokeSession", () => {
 	test("revokeSession marks session as revoked and getSession returns null", async () => {
 		const t = createT();
 		vi.setSystemTime(NOW);
+		const tMaster = asMaster(t);
 
-		await t.mutation(api.iframeEmbedSessions.createSession, {
+		await tMaster.mutation(api.iframeEmbedSessions.createSession, {
 			sessionId: "sess-revoke",
 			origin: "https://app.example.com",
 			expiresAt: NOW + ONE_HOUR,
 		});
 
-		const revoked = await t.mutation(api.iframeEmbedSessions.revokeSession, {
+		const revoked = await tMaster.mutation(api.iframeEmbedSessions.revokeSession, {
 			sessionId: "sess-revoke",
 		});
 		expect(revoked).toBe(true);
@@ -165,9 +183,10 @@ describe("iframeEmbedSessions: revokeSession", () => {
 		expect(session).toBeNull();
 	});
 
-	test("revokeSession returns false for unknown sessionId", async () => {
+	test("revokeSession returns false for unknown sessionId (master caller)", async () => {
 		const t = createT();
-		const result = await t.mutation(api.iframeEmbedSessions.revokeSession, {
+		const tMaster = asMaster(t);
+		const result = await tMaster.mutation(api.iframeEmbedSessions.revokeSession, {
 			sessionId: "nonexistent",
 		});
 		expect(result).toBe(false);

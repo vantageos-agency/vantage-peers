@@ -32,8 +32,20 @@ import * as kbMutations from "../kbMutations";
 
 const STUB_URL = "https://fake-storage.convex.cloud/upload/abc123";
 
+// generateUploadUrl now derives authority from withOrgScope
+// (convex/lib/auth.ts), which calls `ctx.auth.getUserIdentity()` — this shim
+// resolves to the recognized CLERK_SERVICE_ACCOUNT_USER_ID master carve-out
+// (set in vitest.config.ts) so the pre-existing assertOrgArgs behaviour
+// this suite pins stays reachable. Cross-tenant / anonymous-refusal poles
+// live in convex/__tests__/kbMutationsWriteScope.test.ts (driven via real
+// t.mutation, not this handler shim).
 function makeFakeCtx() {
 	return {
+		auth: {
+			getUserIdentity: async () => ({
+				subject: "test-service-account-user-id",
+			}),
+		},
 		storage: {
 			getUrl: async () => null,
 			generateUploadUrl: async () => STUB_URL,

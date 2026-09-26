@@ -41,7 +41,10 @@ describe("messages.listMessages pagination — createdBefore applied after unbou
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// A known recipient role so the channel resolves without a bounce.
-		await t.mutation(api.profiles.upsertProfile, {
+		// profiles.upsertProfile now requires the verified fleet master too
+		// (convex/__tests__/profilesWriteScope.test.ts) — reuse the same
+		// service-account identity already set up above.
+		await tInternal.mutation(api.profiles.upsertProfile, {
 			orchestratorId: "sweep-listener",
 			instanceId: "sweep-listener-vps",
 			name: "Sweep Listener",

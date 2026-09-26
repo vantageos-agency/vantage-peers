@@ -66,6 +66,12 @@ const modules = Object.fromEntries(
 describe("defect 2 — list_peers pagination drops rows older than the cursor", () => {
 	test("RED: paginating to the end must return every seeded peer, none dropped", async () => {
 		const t = convexTest(schema, modules);
+		// profiles.upsertProfile now requires the verified fleet master
+		// (convex/lib/auth.ts's withOrgScope isMaster grant — see
+		// convex/__tests__/profilesWriteScope.test.ts).
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
 
 		const TOTAL = 12;
 		const PAGE_LIMIT = 5; // strictly less than TOTAL so >1 page is required
@@ -78,7 +84,7 @@ describe("defect 2 — list_peers pagination drops rows older than the cursor", 
 		for (let i = 0; i < TOTAL; i++) {
 			const orchestratorId = `test-peer-gap-${i}`;
 			seededIds.push(orchestratorId);
-			await t.mutation(api.profiles.upsertProfile, {
+			await tMaster.mutation(api.profiles.upsertProfile, {
 				orchestratorId,
 				instanceId: `${orchestratorId}-vps`,
 				name: `Test Peer ${i}`,

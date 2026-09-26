@@ -1,7 +1,37 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
+import { withOrgScope, type OrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
+// / convex/messages.ts's isOrchestratorAllowedForScope — see
+// .claude/rules/authority-attached-to-anonymous-object.md). `create` used to
+// insert whatever `orchestratorId` the caller supplied with NO identity/scope
+// check at all; `update` authorized solely on a client-supplied
+// `callerOrchestrator` STRING ARGUMENT (an assertion, never a verified
+// identity) — a caller could claim the literal string "system" and rewrite
+// or reassign ANY organisation's business unit; `remove` performed no check
+// whatsoever. A direct call to the public Convex deployment (bypassing the
+// MCP server's guardFrom/guardMasterOnly layer, which is not a defence for
+// this class) could create a BU under any org, reassign one across orgs, or
+// delete any org's BU. Master scope (the recognized service-account
+// identity the MCP server always presents, or the legacy no-identity opt-in)
+// retains unrestricted access — preserves existing MCP-server behaviour
+// unchanged. A Clerk-org-scoped caller may only write a BU whose
+// `orchestratorId` is in its own client_org_mapping row's
+// allowedOrchestrators.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isOrchestratorAllowedForScope(
+	scope: OrgScope,
+	orchestratorId: string,
+): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return scope.allowedOrchestrators.includes(orchestratorId);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -76,6 +106,20 @@ export const create = mutation({
 	},
 	returns: v.id("businessUnits"),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix (defect class: authority attached to
+		// an anonymously-registered object — see
+		// .claude/rules/authority-attached-to-anonymous-object.md). withOrgScope
+		// is called WITHOUT allowNoIdentityMaster — the MCP server always
+		// presents a real Clerk identity (the caller's own org JWT or its
+		// service-account token), so the fail-closed default here never
+		// breaks that live path.
+		const scope = await withOrgScope(ctx);
+		if (!isOrchestratorAllowedForScope(scope, args.orchestratorId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not create a business unit for orchestrator "${args.orchestratorId}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		const now = Date.now();
 		return await ctx.db.insert("businessUnits", {
 			name: args.name,
@@ -138,10 +182,54 @@ export const update = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("businessUnits:update", …) at mcp-server/src/tools.ts:7746 (imperative), never a subscribing pre-org client shell; the RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
+		//
+		// Fail-closed multi-tenant fix (same defect class as `create` above,
+		// and the sibling fix in convex/diary.ts): `callerOrchestrator` used
+		// to be trusted as a bare STRING ASSERTION with no identity behind
+		// it — any caller could type the literal "system" (or the target
+		// row's own orchestratorId) and rewrite, or cross-tenant-reassign,
+		// any organisation's business unit. withOrgScope resolves the
+		// VERIFIED identity BEFORE ctx.db.get (mirrors convex-reviewer
+		// REVISE on the diary/messages siblings) so a non-existent buId
+		// cannot be distinguished from an existing-but-foreign one by an
+		// unauthenticated caller.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		const bu = await ctx.db.get(args.buId);
 		if (bu === null) {
 			throw new Error(`Business unit ${args.buId} not found`);
 		}
+
+		// The TARGET ROW's current owner must be within the caller's scope —
+		// authorization is derived from bu.orchestratorId (what is actually
+		// being written to), never from the caller-supplied
+		// `callerOrchestrator` claim alone.
+		if (!isOrchestratorAllowedForScope(scope, bu.orchestratorId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update business unit ${args.buId} (orchestrator "${bu.orchestratorId}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
+		// A reassignment (new `orchestratorId` in the patch) must ALSO land
+		// within the caller's own scope — otherwise an org-scoped caller
+		// could hand its own BU off to an orchestrator it does not own.
+		if (
+			args.orchestratorId !== undefined &&
+			!isOrchestratorAllowedForScope(scope, args.orchestratorId)
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not reassign business unit ${args.buId} to orchestrator "${args.orchestratorId}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
+		// Legacy ownership-string check, kept for backward behaviour — now
+		// harmless as a standalone bypass since the scope gate above already
+		// proved the caller's org covers bu.orchestratorId.
 		if (
 			args.callerOrchestrator !== "system" &&
 			bu.orchestratorId !== args.callerOrchestrator
@@ -174,6 +262,25 @@ export const remove = mutation({
 	args: { buId: v.id("businessUnits") },
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix — `remove` used to perform NO
+		// identity/scope check whatsoever: any caller holding the deployment
+		// URL could permanently delete any organisation's business unit.
+		// The MCP server's own `delete_bu` tool already restricts this
+		// action to master (guardMasterOnly, mcp-server/src/tools.ts) — that
+		// transport-layer gate is not a defence for this class (see
+		// .claude/rules/authority-attached-to-anonymous-object.md), so the
+		// SAME restriction is now enforced at the Convex boundary via the
+		// caller's verified identity. withOrgScope is called WITHOUT
+		// allowNoIdentityMaster — the MCP server always presents its
+		// service-account identity on this path (isMaster=true), so this
+		// never breaks the live "delete_bu" caller.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				`RBAC_DENIED: business unit deletion is master-scope only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
 		const bu = await ctx.db.get(args.buId);
 		if (!bu) throw new Error("Business unit not found");
 		await ctx.db.delete(args.buId);

@@ -1,8 +1,36 @@
-import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { api } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
+import { withOrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth — fleet-internal surface, no per-org owner field
+// (.claude/rules/authority-attached-to-anonymous-object.md)
+//
+// The `issues` table tracks GitHub issues across the WHOLE fleet — it has no
+// `orgId`/owner field, and no client_org_mapping `scopes` entry exists for
+// "manage fleet github issues". The mutations below used to take NO
+// identity check at all; any caller holding the deployment URL could mutate
+// fleet issue-tracking state. There is no legitimate non-master authority
+// for this data, so the closure is MASTER-ONLY: resolve the verified caller
+// via `withOrgScope` (same join every other fixed site in this repo uses),
+// then refuse anyone who is not the verified master / recognised
+// service-account identity — mirrors `convex/orgRoster.ts`'s
+// `getForAccessToken` (the same "master-only, no org-scope fallback"
+// idiom for a fleet-internal, non-multi-tenant surface).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
+	const scope = await withOrgScope(ctx);
+	if (!scope.isMaster) {
+		throw new ConvexError(
+			"RBAC_DENIED: this mutation requires master or service-account scope " +
+				"— fleet github-issue tracking has no org-scoped write authority.",
+		);
+	}
+}
 
 // getStats aggregates counts across the whole issues table (or a project
 // slice of it); 1000 is a bounded scan ceiling for that small, fleet-wide
@@ -48,9 +76,19 @@ function derivePriority(labels: string[]): "urgent" | "high" | "medium" | "low" 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // upsertFromGitHub — upsert by repo+issueNumber
+//
+// INTERNAL — the only enumerated caller is convex/http.ts's `/github/webhook`
+// httpAction, which verifies the GitHub HMAC signature itself
+// (GITHUB_WEBHOOK_SECRET) and then calls this via `ctx.runMutation`; that
+// httpAction presents no Clerk identity to Convex, so a `ctx.auth`-based
+// guard would refuse the ONLY legitimate caller. Converting to
+// internalMutation (never internalMutation has no ctx.auth check to write:
+// it is unreachable from the public Convex API at all) closes the
+// "any anonymous caller with the deployment URL" hole without touching the
+// webhook's own HMAC verification.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const upsertFromGitHub = mutation({
+export const upsertFromGitHub = internalMutation({
 	args: {
 		repo: v.string(),
 		issueNumber: v.number(),
@@ -127,6 +165,7 @@ export const updateStatus = mutation({
 		status: issueStatusValidator,
 	},
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -151,6 +190,7 @@ export const linkCommit = mutation({
 		fixedBy: v.string(),
 	},
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -170,9 +210,16 @@ export const linkCommit = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // linkTask — append a taskId to linkedTaskIds
+//
+// INTERNAL — zero callers enumerated anywhere in mcp-server/ or
+// vantage-peers-dashboard (grepped both; no `link_task`-shaped MCP tool
+// exists and no other convex/ function calls it). No external caller needs
+// this surface today, so it is converted to internalMutation rather than
+// guarded — the safer closure when nothing is proven to depend on public
+// reachability.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const linkTask = mutation({
+export const linkTask = internalMutation({
 	args: {
 		repo: v.string(),
 		issueNumber: v.number(),
@@ -203,6 +250,7 @@ export const verify = mutation({
 		verifiedBy: v.string(),
 	},
 	handler: async (ctx, args) => {
+		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -221,9 +269,13 @@ export const verify = mutation({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // close — set status to "closed"
+//
+// INTERNAL — zero callers enumerated anywhere in mcp-server/ or
+// vantage-peers-dashboard (grepped both; no MCP tool wraps `issues:close`).
+// Converted to internalMutation for the same reason as linkTask above.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const close = mutation({
+export const close = internalMutation({
 	args: {
 		repo: v.string(),
 		issueNumber: v.number(),
@@ -419,9 +471,14 @@ export const getStats = query({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // External issue tracking (for Zeta contributions to third-party repos)
+//
+// INTERNAL — zero callers enumerated anywhere in mcp-server/ or
+// vantage-peers-dashboard (grepped both; no MCP tool wraps
+// `issues:createExternal`). Converted to internalMutation for the same
+// reason as linkTask/close above.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const createExternal = mutation({
+export const createExternal = internalMutation({
 	args: {
 		externalRepo: v.string(),
 		externalIssueNumber: v.number(),
@@ -457,7 +514,11 @@ export const createExternal = mutation({
 	},
 });
 
-export const updatePrStatus = mutation({
+// INTERNAL — the only enumerated caller is convex/prMonitor.ts's
+// `pollOpenPRs` internalAction (fired by the "pr monitor" cron), which has
+// no ctx.auth identity to present. Converted to internalMutation — zero
+// external callers enumerated in mcp-server/ or vantage-peers-dashboard.
+export const updatePrStatus = internalMutation({
 	args: {
 		repo: v.string(),
 		issueNumber: v.number(),

@@ -407,52 +407,97 @@ function runScan(): Classified[] {
 //     callerOrchestrator argument kept as a narrowing-only layer on top
 //     (never a substitute), class (a). See
 //     convex/__tests__/briefingNotesWriteScope.test.ts.
+//   - convex/businessUnits.ts:create, convex/businessUnits.ts:update and
+//     convex/businessUnits.ts:remove are NOT in this list — guarded via
+//     withOrgScope + isOrchestratorAllowedForScope (org-scope owner check
+//     on args.orchestratorId at create, on the row's STORED orchestratorId
+//     — and on any reassignment target — at update, and a master-only
+//     check mirroring the MCP server's own guardMasterOnly at remove),
+//     with the pre-existing callerOrchestrator argument kept as a
+//     narrowing-only layer on top (never a substitute), class (a). See
+//     convex/publicWriteBoundary.test.ts.
+//   - convex/issues.ts:updateStatus, convex/issues.ts:linkCommit,
+//     convex/issues.ts:verify, convex/githubRepoMapping.ts:add,
+//     convex/githubRepoMapping.ts:remove, convex/errorMonitor.ts:addDeployment
+//     and convex/errorMonitor.ts:removeDeployment are NOT in this list —
+//     guarded via a file-local requireMasterScope() (withOrgScope +
+//     scope.isMaster required, no org-scope fallback: these tables are
+//     fleet-internal GitHub-issue/webhook-routing/error-monitor config with
+//     no per-org owner field, mirroring convex/orgRoster.ts's
+//     getForAccessToken idiom), class (a). convex/issues.ts:upsertFromGitHub,
+//     convex/issues.ts:linkTask, convex/issues.ts:close,
+//     convex/issues.ts:createExternal, convex/issues.ts:updatePrStatus and
+//     convex/githubRepoMapping.ts:seed are ALSO not in this list — converted
+//     to internalMutation (zero external callers enumerated in mcp-server/
+//     or vantage-peers-dashboard; upsertFromGitHub/updatePrStatus's only
+//     real callers, http.ts's HMAC-verified webhook and prMonitor.ts's cron
+//     internalAction, present no ctx.auth identity and now call the
+//     `internal.*` reference directly). See
+//     convex/__tests__/issuesGithubRepoMappingErrorMonitorWriteScope.test.ts.
+//   - convex/missions.ts:create, convex/missions.ts:update,
+//     convex/missions.ts:updateStatus and convex/missions.ts:updateProgress
+//     are NOT in this list — guarded via withOrgScope + isOrgAllowedForScope
+//     (org-scope owner check on the mission's STORED orgId), same shape as
+//     briefingNotes.ts, class (a). See
+//     convex/__tests__/missionsWriteScope.test.ts.
+//   - convex/missionTemplates.ts:upsert and
+//     convex/missionTemplates.ts:softDelete are NOT in this list — guarded
+//     via withOrgScope + a master-only check: the mission-template catalog
+//     is a single FLEET-WIDE shared resource (no orgId column — see
+//     convex/schema.ts's missionTemplates doc comment), so only the
+//     verified master scope may write it, mirroring the MCP server's own
+//     pre-existing master-only guard on soft_delete_mission_template,
+//     class (a). convex/missionTemplates.ts:instantiateTemplateIntoMission
+//     is NOT in this list either — guarded via withOrgScope +
+//     isMissionAllowedForScope (org-scope owner check on the TARGET
+//     mission's STORED orgId, since the shared template it reads carries no
+//     orgId of its own), class (a). See
+//     convex/__tests__/missionTemplatesWriteScope.test.ts.
+//   - convex/recurringTasks.ts:create, convex/recurringTasks.ts:update,
+//     convex/recurringTasks.ts:pause, convex/recurringTasks.ts:resume and
+//     convex/recurringTasks.ts:remove are NOT in this list — guarded via
+//     convex/tasks.ts's exported requireAuthenticatedCaller (reused, not
+//     duplicated — "write no second resolver"). create/update additionally
+//     check the row's STORED `assignedTo` against the caller's verified
+//     `allowedOrchestrators` (recurringTasks carries no orgId column);
+//     pause/resume/remove require the verified master scope, mirroring the
+//     MCP server's own pre-existing master-only guards on
+//     pause_recurring_task/resume_recurring_task/delete_recurring_task,
+//     class (a). See convex/__tests__/recurringTasksWriteScope.test.ts.
+//   - convex/mandates.ts:create/accept/update/settle are NOT in this list —
+//     `mandates` carries no orgId/tenant field (fleet-internal commercial
+//     object between orchestrators); guarded via withOrgScope's `isMaster`
+//     grant (master-only — a verified Clerk-org/tenant caller is refused
+//     too, there is no per-tenant row to narrow against), with the
+//     pre-existing callerOrchestrator argument kept as a narrowing-only
+//     layer on top, class (a). See convex/__tests__/mandatesWriteScope.test.ts.
+//   - convex/fixPatterns.ts:create/addAttempt/validate/linkIssue are NOT in
+//     this list — `fixPatterns` carries no orgId/tenant field (fleet-shared
+//     cross-project bug-fix KB); guarded via withOrgScope's `isMaster` grant
+//     (master-only), class (a). See
+//     convex/__tests__/fixPatternsWriteScope.test.ts.
+//   - convex/profiles.ts:upsertProfile/updateDynamic are NOT in this list —
+//     `profiles` carries no orgId/tenant field (fleet orchestrator-instance
+//     registry); guarded via withOrgScope's `isMaster` grant (master-only),
+//     class (a). See convex/__tests__/profilesWriteScope.test.ts.
+//   - convex/kbMutations.ts:generateUploadUrl is NOT in this list — guarded
+//     via withOrgScope, deriving the caller's own org and refusing any
+//     `args.orgId` that disagrees with it (narrowing-only, never trusted
+//     alone), class (a). See convex/__tests__/kbMutationsWriteScope.test.ts.
+//   - convex/iframeEmbedSessions.ts:createSession/touchSession/revokeSession
+//     are NOT in this list — guarded via withOrgScope + a tenantId owner
+//     check against the session's STORED `tenantId` (create forces tenantId
+//     to the caller's own resolved org, ignoring/refusing any caller-
+//     supplied mismatch), class (a). See
+//     convex/__tests__/iframeEmbedSessionsWriteScope.test.ts.
+//   - convex/okfBundleDurable.ts:cancelOkfBundleExportDurable is NOT in this
+//     list — guarded by reusing this file's own pre-existing
+//     assertCanExportNamespaceV8 (the SAME check startOkfBundleExportDurable
+//     already enforces — one identity layer, never a second resolver)
+//     against the progress row's STORED `orgId`, class (a). See
+//     convex/__tests__/okfBundleDurableCancelWriteScope.test.ts.
 const KNOWN_OFFENDERS = new Set<string>([
-	// callerOrchestrator-asserted-only (class c) — no verified identity:
-	"convex/mandates.ts:create",
-	"convex/mandates.ts:accept",
-	"convex/mandates.ts:update",
-	"convex/mandates.ts:settle",
 	// no caller-identity argument or check of any kind (class c):
-	"convex/businessUnits.ts:create",
-	"convex/businessUnits.ts:update",
-	"convex/businessUnits.ts:remove",
-	"convex/errorMonitor.ts:addDeployment",
-	"convex/errorMonitor.ts:removeDeployment",
-	"convex/fixPatterns.ts:create",
-	"convex/fixPatterns.ts:addAttempt",
-	"convex/fixPatterns.ts:validate",
-	"convex/fixPatterns.ts:linkIssue",
-	"convex/githubRepoMapping.ts:add",
-	"convex/githubRepoMapping.ts:remove",
-	"convex/githubRepoMapping.ts:seed",
-	"convex/iframeEmbedSessions.ts:createSession",
-	"convex/iframeEmbedSessions.ts:touchSession",
-	"convex/iframeEmbedSessions.ts:revokeSession",
-	"convex/issues.ts:upsertFromGitHub",
-	"convex/issues.ts:updateStatus",
-	"convex/issues.ts:linkCommit",
-	"convex/issues.ts:linkTask",
-	"convex/issues.ts:verify",
-	"convex/issues.ts:close",
-	"convex/issues.ts:createExternal",
-	"convex/issues.ts:updatePrStatus",
-	"convex/kbMutations.ts:generateUploadUrl",
-	"convex/missionTemplates.ts:upsert",
-	"convex/missionTemplates.ts:softDelete",
-	"convex/missionTemplates.ts:instantiateTemplateIntoMission",
-	"convex/missions.ts:create",
-	"convex/missions.ts:update",
-	"convex/missions.ts:updateStatus",
-	"convex/missions.ts:updateProgress",
-	"convex/okfBundleDurable.ts:cancelOkfBundleExportDurable",
-	"convex/profiles.ts:upsertProfile",
-	"convex/profiles.ts:updateDynamic",
-	"convex/recurringTasks.ts:create",
-	"convex/recurringTasks.ts:update",
-	"convex/recurringTasks.ts:pause",
-	"convex/recurringTasks.ts:resume",
-	"convex/recurringTasks.ts:remove",
 ]);
 
 describe("public mutation auth guard (source-tree-derived, ratchet)", () => {

@@ -1,8 +1,33 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
+import { withOrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// requireFleetMaster — fixPatterns.ts's own single authority gate.
+//
+// `fixPatterns` carries NO orgId/tenant field (see schema.ts:851) — it is the
+// fleet's shared cross-project bug-fix knowledge base (sourceProject is a
+// repo name, createdBy is a fleet orchestrator). There is no per-tenant row
+// to scope against, so the only sound authority boundary is: the caller must
+// be the verified fleet master (the real master secret / recognised
+// service-account carve-out — convex/lib/auth.ts's withOrgScope). These
+// mutations previously took NO identity check at all (defect class:
+// .claude/rules/authority-attached-to-anonymous-object.md).
+// ─────────────────────────────────────────────────────────────────────────────
+async function requireFleetMaster(
+	ctx: Parameters<typeof withOrgScope>[0],
+	action: string,
+): Promise<void> {
+	const scope = await withOrgScope(ctx);
+	if (!scope.isMaster) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller may not ${action} — fixPatterns are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+		);
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // create — create a new fix pattern, schedule RAG embedding
@@ -23,6 +48,7 @@ export const create = mutation({
 	},
 	returns: v.id("fixPatterns"),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, "create a fix pattern");
 		const now = Date.now();
 
 		const patternId = await ctx.db.insert("fixPatterns", {
@@ -67,6 +93,7 @@ export const addAttempt = mutation({
 	},
 	returns: v.id("fixAttempts"),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, `add an attempt to fix pattern ${args.patternId}`);
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
 			throw new Error(`Fix pattern ${args.patternId} not found`);
@@ -113,6 +140,7 @@ export const validate = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, `validate fix pattern ${args.patternId}`);
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
 			throw new Error(`Fix pattern ${args.patternId} not found`);
@@ -146,6 +174,7 @@ export const linkIssue = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, `link an issue to fix pattern ${args.patternId}`);
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
 			throw new Error(`Fix pattern ${args.patternId} not found`);

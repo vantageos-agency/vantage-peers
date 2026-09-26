@@ -79,16 +79,24 @@ const newMemory = (t: ReturnType<typeof createT>) =>
 			createdBy: "sigma",
 		});
 
+// Fail-closed multi-tenant fix (missions.ts, same class as memories.ts
+// above): missions.create now derives the caller's scope via withOrgScope
+// and refuses an anonymous (no-identity) caller — seed as the
+// service-account/master identity for the same reason as newMemory above.
 const newMission = (t: ReturnType<typeof createT>) =>
-	t.mutation(api.missions.create, {
-		name: "Probe mission",
-		project: "vantage-peers",
-		status: "plan",
-		priority: "medium",
-		pilot: "sigma",
-		agents: ["sigma"],
-		createdBy: "sigma",
-	});
+	t
+		.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+			typeof t.withIdentity
+		>[0])
+		.mutation(api.missions.create, {
+			name: "Probe mission",
+			project: "vantage-peers",
+			status: "plan",
+			priority: "medium",
+			pilot: "sigma",
+			agents: ["sigma"],
+			createdBy: "sigma",
+		});
 
 describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 	test("a missions-table ID yields an actionable ConvexError naming memoryId", async () => {

@@ -1,6 +1,55 @@
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
+import { withOrgScope } from "./lib/auth";
+import type { OrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fail-closed multi-tenant fix (defect class: authority attached to an
+// anonymously-registered object — see
+// .claude/rules/authority-attached-to-anonymous-object.md). upsert,
+// softDelete and instantiateTemplateIntoMission used to take NO
+// caller-identity check of any kind: any caller holding the deployment URL
+// could rewrite or delete the FLEET-WIDE shared template catalog (the
+// `missionTemplates` table carries no `orgId` — it is a single global set
+// of reusable blueprints, e.g. "issue-resolution-v2", keyed by fleet
+// orchestrator name — see convex/schema.ts's missionTemplates doc comment),
+// or fan out tasks into ANY org's mission.
+//
+// upsert/softDelete manage the SHARED catalog itself: a write here changes
+// behaviour for every org that later instantiates the template, so — same
+// as the MCP server's own pre-existing `soft_delete_mission_template`
+// tool-guard (`{ kind: "master" }`, mcp-server/src/tools.ts) — both are
+// restricted to the verified MASTER scope only. Per
+// .claude/rules/http-boundary-derives-from-principal.md's sibling doctrine
+// ("a guard in the MCP server is NOT a defence"), Convex re-derives and
+// re-enforces this independently: the fleet's own orchestrators (alpha,
+// proxima, ...) all authenticate to Convex through the MCP server's ONE
+// shared service-account identity, which always resolves to
+// `scope.isMaster === true` (convex/lib/auth.ts's
+// CLERK_SERVICE_ACCOUNT_USER_ID carve-out) — so this is byte-behaviour-
+// unchanged for that live path and closes the door for anyone else holding
+// the deployment URL directly.
+//
+// instantiateTemplateIntoMission READS the shared (unscoped) template
+// catalog but WRITES tasks into a caller-supplied, org-scoped `missionId` —
+// so unlike upsert/softDelete it is not master-restricted (Beta org
+// clients legitimately use it against their OWN missions, mirroring the
+// MCP tool's "filtered", not master-only, guard kind). Authority is
+// derived from the TARGET MISSION's stored `orgId` against the caller's
+// verified scope (same isOrgAllowedForScope shape as convex/missions.ts
+// and convex/briefingNotes.ts), never from a caller-supplied argument.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isMissionAllowedForScope(
+	scope: OrgScope,
+	orgId: string | undefined,
+): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	return orgId === scope.orgSlug;
+}
 
 // missionTemplates is a small, curated table (one row per named template);
 // 1000 is a generous ceiling well above any realistic template count.
@@ -97,6 +146,15 @@ export const upsert = mutation({
 	},
 	returns: v.id("missionTemplates"),
 	handler: async (ctx, args) => {
+		// Master-only fail-closed fix — see the file-header comment block
+		// above for the full rationale (shared, unscoped catalog write).
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: update_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
+			);
+		}
+
 		const now = Date.now();
 		const existing = await ctx.db
 			.query("missionTemplates")
@@ -141,6 +199,17 @@ export const softDelete = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// Master-only fail-closed fix — see the file-header comment block
+		// above for the full rationale (shared, unscoped catalog write).
+		// Mirrors the MCP server's own pre-existing `guardMasterOnly` gate on
+		// this same tool (soft_delete_mission_template).
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: soft_delete_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
+			);
+		}
+
 		if (args.templateId === undefined && args.name === undefined) {
 			throw new Error("Provide either templateId or name");
 		}
@@ -288,6 +357,19 @@ export const instantiateTemplateIntoMission = mutation({
 		count: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// Fail-closed multi-tenant fix — see the file-header comment block
+		// above for the full rationale. Resolved BEFORE either fetch below
+		// (mirrors convex/missions.ts update / convex/briefingNotes.ts
+		// update): an anonymous caller must get RBAC_DENIED, never "Mission
+		// not found" — a get-then-scope order lets missionId existence act
+		// as an unauthenticated existence oracle.
+		const scope = await withOrgScope(ctx);
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not instantiate a mission template — ${JSON.stringify({ orgSlug: null })}`,
+			);
+		}
+
 		// 1. Fetch template
 		const template = await ctx.db
 			.query("missionTemplates")
@@ -302,6 +384,16 @@ export const instantiateTemplateIntoMission = mutation({
 		const mission = await ctx.db.get(args.missionId);
 		if (!mission) {
 			throw new Error(`Mission not found: ${args.missionId}`);
+		}
+
+		// The template catalog is shared/global (no orgId to check), but the
+		// TARGET MISSION is org-scoped — a caller may only fan tasks out
+		// into its OWN org's mission, never a foreign org's, regardless of
+		// which (shared) template name it names.
+		if (!isMissionAllowedForScope(scope, mission.orgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not instantiate a template into mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
 		}
 
 		const now = Date.now();

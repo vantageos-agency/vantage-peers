@@ -30,13 +30,20 @@ describe("githubRepoMapping.list cursor pagination — fixed-buffer fetchLimit u
 		const TOTAL = 130;
 		const seededRepos: string[] = [];
 
+		// Seeds directly via ctx.db — githubRepoMapping.add now requires a
+		// verified master/service-account caller (see
+		// convex/__tests__/issuesGithubRepoMappingErrorMonitorWriteScope.test.ts).
+		// This suite tests pagination class behaviour, not auth.
 		for (let i = 0; i < TOTAL; i++) {
 			const repo = `sweep-org/repo-${i}`;
 			seededRepos.push(repo);
-			await t.mutation(api.githubRepoMapping.add, {
-				repo,
-				orchestrator: "sigma",
-				project: "sweep-project",
+			await t.run(async (ctx) => {
+				await ctx.db.insert("githubRepoMapping", {
+					repo,
+					orchestrator: "sigma",
+					project: "sweep-project",
+					active: true,
+				});
 			});
 		}
 
@@ -71,10 +78,13 @@ describe("githubRepoMapping.list cursor pagination — fixed-buffer fetchLimit u
 		for (let i = 0; i < TOTAL; i++) {
 			const repo = `sweep-org/repo-legacy-${i}`;
 			seededRepos.push(repo);
-			await t.mutation(api.githubRepoMapping.add, {
-				repo,
-				orchestrator: "sigma",
-				project: "sweep-project",
+			await t.run(async (ctx) => {
+				await ctx.db.insert("githubRepoMapping", {
+					repo,
+					orchestrator: "sigma",
+					project: "sweep-project",
+					active: true,
+				});
 			});
 		}
 

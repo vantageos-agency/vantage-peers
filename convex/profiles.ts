@@ -1,8 +1,33 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
+import { withOrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// requireFleetMaster — profiles.ts's own single authority gate.
+//
+// `profiles` carries NO orgId/tenant field (see schema.ts:137) — it is the
+// fleet's own orchestrator-instance registry (orchestratorId is a fleet role
+// like "pi"/"tau"/"sigma", instanceId a running copy). There is no per-tenant
+// row to scope against, so the only sound authority boundary is: the caller
+// must be the verified fleet master (the real master secret / recognised
+// service-account carve-out — convex/lib/auth.ts's withOrgScope). These
+// mutations previously took NO identity check at all (defect class:
+// .claude/rules/authority-attached-to-anonymous-object.md).
+// ─────────────────────────────────────────────────────────────────────────────
+async function requireFleetMaster(
+  ctx: Parameters<typeof withOrgScope>[0],
+  action: string,
+): Promise<void> {
+  const scope = await withOrgScope(ctx);
+  if (!scope.isMaster) {
+    throw new ConvexError(
+      `RBAC_DENIED: caller may not ${action} — profiles are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+    );
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared return validators
@@ -91,6 +116,7 @@ export const upsertProfile = mutation({
   },
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
+    await requireFleetMaster(ctx, `upsert profile for orchestrator ${args.orchestratorId}`);
     // Try to find by instanceId first, then by orchestratorId
     let existing = null;
     if (args.instanceId !== undefined) {
@@ -151,6 +177,7 @@ export const updateDynamic = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await requireFleetMaster(ctx, `update dynamic profile for orchestrator ${args.orchestratorId}`);
     const lastSeen = args.lastSeen ?? Date.now();
 
     // Try instanceId first

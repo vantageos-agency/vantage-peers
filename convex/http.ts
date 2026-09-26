@@ -112,7 +112,7 @@ http.route({
 			const issue = payload.issue as Record<string, unknown>;
 
 			// 1. Upsert issue record
-			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
+			await ctx.runMutation(internal.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
 
 			// 2. Determine priority from labels
 			const isUrgent = (issue.labels as Array<Record<string, unknown>>)?.some(
@@ -298,7 +298,7 @@ http.route({
 		if (eventType === "issues" && action === "edited") {
 			const issue = payload.issue as Record<string, unknown>;
 			const status = issue.state === "closed" ? "closed" : "open";
-			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status));
+			await ctx.runMutation(internal.issues.upsertFromGitHub, extractIssueFields(issue, status));
 		}
 
 		// --- Issue labeled ---
@@ -306,7 +306,7 @@ http.route({
 			const issue = payload.issue as Record<string, unknown>;
 			const label = payload.label as Record<string, unknown> | undefined;
 			const status = issue.state === "closed" ? "closed" : "open";
-			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status));
+			await ctx.runMutation(internal.issues.upsertFromGitHub, extractIssueFields(issue, status));
 
 			// Existing behavior: notify on urgent/p0 labels
 			if (
@@ -324,13 +324,13 @@ http.route({
 		// --- Issue closed ---
 		if (eventType === "issues" && action === "closed") {
 			const issue = payload.issue as Record<string, unknown>;
-			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "closed"));
+			await ctx.runMutation(internal.issues.upsertFromGitHub, extractIssueFields(issue, "closed"));
 		}
 
 		// --- Issue reopened ---
 		if (eventType === "issues" && action === "reopened") {
 			const issue = payload.issue as Record<string, unknown>;
-			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
+			await ctx.runMutation(internal.issues.upsertFromGitHub, extractIssueFields(issue, "open"));
 		}
 
 		// --- Issue comment created ---
@@ -355,7 +355,7 @@ http.route({
 
 			// Update githubUpdatedAt on the issue
 			const status = issue.state === "closed" ? "closed" : "open";
-			await ctx.runMutation(api.issues.upsertFromGitHub, extractIssueFields(issue, status));
+			await ctx.runMutation(internal.issues.upsertFromGitHub, extractIssueFields(issue, status));
 
 			// Ignore our own bot comments (prevent loops)
 			const isOwnBot =

@@ -25,6 +25,13 @@ const modules = Object.fromEntries(
 	),
 );
 
+// Seeds directly via ctx.db (never via the public `api.*` mutations): both
+// githubRepoMapping.add and issues.upsertFromGitHub now require a verified
+// master/service-account caller (see
+// convex/__tests__/issuesGithubRepoMappingErrorMonitorWriteScope.test.ts) —
+// upsertFromGitHub is internalMutation entirely. This suite tests pagination
+// class behaviour, not auth, so it seeds the exact row shape those
+// mutations would have written without depending on either.
 async function seedIssues(
 	t: TestConvexT,
 	repo: string,
@@ -32,24 +39,32 @@ async function seedIssues(
 	total: number,
 ) {
 	const numbers: number[] = [];
-	for (let i = 0; i < total; i++) {
-		const issueNumber = i + 1;
-		numbers.push(issueNumber);
-		await t.mutation(api.githubRepoMapping.add, {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("githubRepoMapping", {
 			repo,
 			orchestrator,
 			project: repo,
+			active: true,
 		});
-		await t.mutation(api.issues.upsertFromGitHub, {
-			repo,
-			issueNumber,
-			title: `issue ${issueNumber}`,
-			body: "body",
-			htmlUrl: `https://example.invalid/${repo}/issues/${issueNumber}`,
-			labels: [],
-			status: "open",
-			githubCreatedAt: Date.now(),
-			githubUpdatedAt: Date.now(),
+	});
+	for (let i = 0; i < total; i++) {
+		const issueNumber = i + 1;
+		numbers.push(issueNumber);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("issues", {
+				repo,
+				issueNumber,
+				title: `issue ${issueNumber}`,
+				body: "body",
+				htmlUrl: `https://example.invalid/${repo}/issues/${issueNumber}`,
+				labels: [],
+				status: "open",
+				priority: "medium",
+				assignedOrchestrator: orchestrator,
+				project: repo,
+				githubCreatedAt: Date.now(),
+				githubUpdatedAt: Date.now(),
+			});
 		});
 	}
 	return numbers;
