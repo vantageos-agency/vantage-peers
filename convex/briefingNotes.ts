@@ -239,11 +239,14 @@ export const get = query({
 		// #1313's deleteMessage — the RBAC_DENIED throw happens BEFORE
 		// ctx.db.get, so a non-existent noteId can never be distinguished
 		// from an existing-but-foreign one by an unauthenticated caller).
-		const scope = await withOrgScope(ctx);
+		// R-50: this is a reactively-subscribed public query — a signed-in
+		// caller with NO organisation yet (not hostile, just not onboarded)
+		// must receive a typed empty result, never an uncaught throw into the
+		// subscription. `refuseWithoutThrow` narrows exactly that one branch
+		// of withOrgScope; every other refusal path is unchanged.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not read briefing notes — ${JSON.stringify({ orgSlug: null })}`,
-			);
+			return null;
 		}
 
 		const noteId = requireId(
@@ -372,11 +375,11 @@ export const list = query({
 		// VERIFIED caller scope FIRST. Anonymous (no identity, no recognized
 		// service-account carve-out) is REFUSED with RBAC_DENIED — there is
 		// no legacy unscoped `list` any more.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — see `get` above for the
+		// typed-empty-not-throw rationale.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not list briefing notes — ${JSON.stringify({ orgSlug: null })}`,
-			);
+			return [];
 		}
 
 		const lite = args.fields === "lite";
@@ -785,7 +788,14 @@ export const searchBriefingNotesByKeyword = query({
 		callerIdentities: v.optional(v.array(v.string())),
 	},
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query. The no-org branch must
+		// resolve to a typed-empty result BEFORE requireScope (which would
+		// otherwise throw "Missing scope" for that same signed-in-no-org
+		// caller) ever runs.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return [];
+		}
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

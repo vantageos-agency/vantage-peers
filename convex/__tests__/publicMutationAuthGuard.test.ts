@@ -559,6 +559,26 @@ describe("public mutation auth guard (source-tree-derived, ratchet)", () => {
 			resolvedOffenders,
 			`Known offender(s) no longer unguarded — remove from KNOWN_OFFENDERS (the ratchet tightens): ${JSON.stringify(resolvedOffenders)}`,
 		).toEqual([]);
+
+		// HARD GATE (no exemption list may produce a green): the ratchet's job
+		// is to catch DRIFT (newOffenders/resolvedOffenders above), never to let
+		// a standing exemption list itself stay green. KNOWN_OFFENDERS is
+		// asserted EMPTY here, unconditionally — the drift checks above are
+		// necessary but not sufficient, because they only compare the CURRENT
+		// entries against the CURRENT scan; they say nothing about whether any
+		// entries remain at all. A future author appending a name to
+		// KNOWN_OFFENDERS (and leaving it there, matching the live scan) would
+		// pass both drift checks unchanged while re-opening an unguarded public
+		// mutation — this assertion is the one that catches that specific
+		// re-addition and reddens the build, printing the count and the
+		// offending names so the failure is actionable, not silent.
+		console.log(
+			`KNOWN_OFFENDERS count: ${KNOWN_OFFENDERS.size}${KNOWN_OFFENDERS.size > 0 ? ` -> ${JSON.stringify([...KNOWN_OFFENDERS])}` : ""}`,
+		);
+		expect(
+			[...KNOWN_OFFENDERS],
+			`KNOWN_OFFENDERS must be empty — no exemption list may convert an unguarded public mutation into a passing test. Found ${KNOWN_OFFENDERS.size} entr${KNOWN_OFFENDERS.size === 1 ? "y" : "ies"}: ${JSON.stringify([...KNOWN_OFFENDERS])}. Guard each one (helper/allow-marker) and remove it — do not leave it listed.`,
+		).toEqual([]);
 	});
 });
 

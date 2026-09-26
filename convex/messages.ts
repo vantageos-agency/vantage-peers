@@ -441,7 +441,9 @@ export const checkNewMessages = query({
 	// (!isMaster && orgSlug===null) sees nothing, mirroring the sibling
 	// reads' `!isMaster && orgSlug===null → []` guard.
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed-empty result instead of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
 		if (!scope.isMaster && scope.orgSlug === null) return [];
 
@@ -635,8 +637,10 @@ export const checkNewMessagesEnvelope = query({
 
 		// Read-half tenant identity (task sigma/read-half-tenant-identity) —
 		// see the identical derivation + comment on checkNewMessages above,
-		// which this envelope variant mirrors exactly.
-		const scope = await withOrgScope(ctx);
+		// which this envelope variant mirrors exactly. R-50: reactively-
+		// subscribed public query — refuseWithoutThrow narrows the
+		// signed-in-no-org branch to a typed-empty result instead of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
 		if (!scope.isMaster && scope.orgSlug === null) {
 			return {
@@ -1039,7 +1043,12 @@ export const listMessages = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.list.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed-empty result. The no-org check
+		// MUST run before requireScope, which would otherwise throw for that
+		// same caller (empty scopes) instead of returning the typed empty below.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster && scope.orgSlug === null) return [];
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -1048,10 +1057,6 @@ export const listMessages = query({
 		const fetchCap = needsWideScan ? MESSAGES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"messages">[];
-
-		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null
-		// is unreachable per withOrgScope invariant but explicit guard prevents regression.
-		if (!scope.isMaster && scope.orgSlug === null) return [];
 
 		if (!scope.isMaster && scope.orgSlug !== null) {
 			// ── Clerk (non-master) path — tenant-scoped index ─────────────────────
@@ -1212,7 +1217,10 @@ export const listByChannel = query({
 	),
 	handler: async (ctx, { channel, limit }) => {
 		const take = limit ?? 100;
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed-empty scope (isChannelAllowed
+		// below already renders that scope as "broadcast only", never a throw).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
 		// Fail-closed channel scoping: messages carry no orgId/tenantId column
 		// (schema.ts), so channel-name proximity to the caller's own scope is the
@@ -1298,12 +1306,12 @@ export const searchMessagesByKeyword = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
-		const scope = await withOrgScope(ctx);
-		requireScope(scope, "view-own-tasks");
-
-		// Defense-in-depth (#776 Eta follow-up): degenerate !isMaster && orgSlug===null
-		// is unreachable per withOrgScope invariant but explicit guard prevents regression.
+		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed-empty result. The check runs
+		// before requireScope, which would otherwise throw for that caller.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (!scope.isMaster && scope.orgSlug === null) return [];
+		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";

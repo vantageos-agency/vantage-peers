@@ -60,7 +60,20 @@ export const getDashboardSummary = query({
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// Master scope (no org): full dashboard, all orchestrators.
 		// Client org: filtered to their allowedOrchestrators.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed-empty result instead of a
+		// throw (the pre-existing requireScope below would otherwise throw
+		// "Missing scope" for that same caller).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return {
+				tasksInProgress: 0,
+				activeOrchestrators: [],
+				unreadMessages: 0,
+				openMandates: 0,
+				recentActivity: [],
+			};
+		}
 		// getDashboardSummary requires either master or aggregated stats scope.
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
@@ -164,7 +177,12 @@ export const getProjectSummary = query({
 	),
 	handler: async (ctx) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — see getDashboardSummary
+		// above for the typed-empty-not-throw rationale.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return [];
+		}
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}

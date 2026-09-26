@@ -203,7 +203,10 @@ export const getMemory = query({
     );
     const doc = await ctx.db.get(memoryId);
     if (doc === null) return null;
-    const scope = await withOrgScope(ctx);
+    // R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+    // the signed-in-no-org branch to a typed refused scope; isNamespaceAllowedForScope
+    // already renders that as "not allowed" -> null, never a throw.
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
     if (!isNamespaceAllowedForScope(scope, doc.namespace)) return null;
     return doc;
   },
@@ -271,7 +274,11 @@ export const listMemories = query({
   },
   returns: listMemoriesResultValidator,
   handler: async (ctx, args) => {
-    const scope = await withOrgScope(ctx);
+    // R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+    // the signed-in-no-org branch to a typed refused scope; the pre-existing
+    // isNamespaceAllowedForScope guard below already renders that as the
+    // typed-empty page, never a throw.
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
     if (!isNamespaceAllowedForScope(scope, args.namespace)) {
       return { value: [], continueCursor: null, isDone: true };
     }

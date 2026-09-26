@@ -22,7 +22,11 @@ export const getMyOrgRoster = query({
 	args: {},
 	returns: v.array(v.string()),
 	handler: async (ctx) => {
-		const scope = await withOrgScope(ctx);
+		// R-50: this is a PUBLIC query (reachable from any client, including a
+		// reactively-subscribed one) — refuseWithoutThrow narrows the
+		// signed-in-no-org branch to a typed-empty roster instead of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster && scope.orgSlug === null) return [];
 		return scope.allowedOrchestrators;
 	},
 });
