@@ -133,7 +133,8 @@ def test_refuse_message_is_structured():
         p = subprocess.run(
             [sys.executable, str(HOOK)],
             input=json.dumps({"tool_name": "Bash",
-                              "tool_input": {"command": DEPLOY, "cwd": str(repo)}}),
+                              "tool_input": {"command": DEPLOY},
+                              "cwd": str(repo)}),
             capture_output=True, text=True, cwd=str(repo),
         )
         assert p.returncode == 2
