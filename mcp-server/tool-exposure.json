@@ -1,5 +1,6 @@
 {
 	"core": [
+		"add_fix_attempt",
 		"add_task_dependency",
 		"billing_summary_by_project",
 		"block_task",
@@ -9,6 +10,7 @@
 		"complete_task",
 		"correct_task_segment",
 		"create_briefing_note",
+		"create_fix_pattern",
 		"create_mission",
 		"create_recurring_task",
 		"create_task",
@@ -20,6 +22,7 @@
 		"get_briefing_note",
 		"get_diary",
 		"get_episode",
+		"get_fix_pattern",
 		"get_memory",
 		"get_message",
 		"get_mission",
@@ -31,10 +34,12 @@
 		"import_okf_bundle",
 		"improvisation_digest",
 		"instantiate_template_into_mission",
+		"link_issue_to_pattern",
 		"list_briefing_notes",
 		"list_broadcast_status",
 		"list_diaries",
 		"list_episodes",
+		"list_fix_patterns",
 		"list_memories",
 		"list_messages",
 		"list_missions",
@@ -51,6 +56,7 @@
 		"search_briefing_notes_by_keyword",
 		"search_episodes_by_keyword",
 		"search_episodes_by_semantic",
+		"search_fix_patterns",
 		"search_messages_by_keyword",
 		"search_tasks_by_keyword",
 		"send_message",
@@ -69,6 +75,7 @@
 		"update_profile",
 		"update_recurring_task",
 		"update_task",
+		"validate_fix",
 		"write_diary"
 	]
 }
