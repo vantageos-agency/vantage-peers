@@ -119,6 +119,11 @@
           },
           {
             "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-hooks-suite-green-before-push.py",
+            "timeout": 180
+          },
+          {
+            "type": "command",
             "command": "python3 /root/coding/vantage-memory/.claude/hooks/auto-inject-signature.py",
             "timeout": 5
           },
