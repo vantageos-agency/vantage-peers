@@ -245,8 +245,18 @@ export const get = query({
 		// subscription. `refuseWithoutThrow` narrows exactly that one branch
 		// of withOrgScope; every other refusal path is unchanged.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		// `scope.refused` is set ONLY for a signed-in caller with no org (the
+		// R-50 target case) — a typed null, never a throw. A truly anonymous
+		// caller (no identity at all) is UNCHANGED and still throws below
+		// (convex/__tests__/briefingNotesReadScope.test.ts's "anonymous get is
+		// refused" contract, out of this fix's scope).
+		if (scope.refused) {
 			return null;
+		}
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not read briefing notes — ${JSON.stringify({ orgSlug: null })}`,
+			);
 		}
 
 		const noteId = requireId(
@@ -378,8 +388,17 @@ export const list = query({
 		// R-50: reactively-subscribed public query — see `get` above for the
 		// typed-empty-not-throw rationale.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		// `scope.refused` is set ONLY for a signed-in caller with no org (the
+		// R-50 target case) -- a typed empty array, never a throw. A truly
+		// anonymous caller (no identity at all) is UNCHANGED and still throws
+		// below ("anonymous list is refused", out of this fix's scope).
+		if (scope.refused) {
 			return [];
+		}
+		if (!scope.isMaster && scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not list briefing notes — ${JSON.stringify({ orgSlug: null })}`,
+			);
 		}
 
 		const lite = args.fields === "lite";
@@ -793,7 +812,7 @@ export const searchBriefingNotesByKeyword = query({
 		// otherwise throw "Missing scope" for that same signed-in-no-org
 		// caller) ever runs.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return [];
 		}
 		requireScope(scope, "view-own-tasks");

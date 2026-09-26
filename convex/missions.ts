@@ -424,7 +424,7 @@ export const list = query({
 		// pre-existing requireScope inside runMissionsList would otherwise
 		// throw for that same caller).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		return await runMissionsList(ctx, args, scope);
 	},
 });

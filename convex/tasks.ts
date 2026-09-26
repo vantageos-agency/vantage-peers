@@ -1168,7 +1168,7 @@ export const list = query({
 		// pre-existing requireScope inside runTasksList would otherwise throw
 		// for that same caller).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		return await runTasksList(ctx, args, scope);
 	},
 });
@@ -1234,7 +1234,7 @@ export const listPaginated = query({
 		// the signed-in-no-org branch to a typed-empty page instead of a
 		// throw, which would otherwise crash the board's render.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return { page: [], isDone: true, continueCursor: "" };
 		}
 		requireScope(scope, "view-own-tasks");
@@ -3626,7 +3626,7 @@ export const billingSummaryByProject = query({
 		// narrows the signed-in-no-org branch to a typed-empty summary
 		// instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return {
 				byProject: [],
 				unattributedTaskCount: 0,
@@ -3771,7 +3771,7 @@ export const taskDurationDistribution = query({
 		// narrows the signed-in-no-org branch to a typed "no data" result
 		// instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return {
 				count: 0,
 				percentiles: {
@@ -3902,7 +3902,7 @@ export const searchTasksByKeyword = query({
 		// narrows the signed-in-no-org branch to a typed-empty result instead
 		// of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

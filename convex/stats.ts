@@ -86,7 +86,7 @@ export const orchestratorStats = query({
 		// of a throw (the requireScope call below would otherwise throw for
 		// that same caller).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		if (!scope.scopes.includes("view-stats-aggregated") && !scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
@@ -363,7 +363,7 @@ export const openTaskCountsByOrchestrator = query({
 		// narrows the signed-in-no-org branch to a typed-empty result instead
 		// of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
@@ -481,7 +481,7 @@ export const fleetStats = query({
 		// narrows the signed-in-no-org branch to a typed-empty (all-zero)
 		// result instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return {
 				bus: { total: 0 },
 				missions: {

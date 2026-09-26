@@ -1048,7 +1048,7 @@ export const listMessages = query({
 		// MUST run before requireScope, which would otherwise throw for that
 		// same caller (empty scopes) instead of returning the typed empty below.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -1310,7 +1310,7 @@ export const searchMessagesByKeyword = query({
 		// the signed-in-no-org branch to a typed-empty result. The check runs
 		// before requireScope, which would otherwise throw for that caller.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (scope.refused) return [];
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

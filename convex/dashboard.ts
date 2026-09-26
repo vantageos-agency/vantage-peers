@@ -65,7 +65,7 @@ export const getDashboardSummary = query({
 		// throw (the pre-existing requireScope below would otherwise throw
 		// "Missing scope" for that same caller).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return {
 				tasksInProgress: 0,
 				activeOrchestrators: [],
@@ -180,7 +180,7 @@ export const getProjectSummary = query({
 		// R-50: reactively-subscribed public query — see getDashboardSummary
 		// above for the typed-empty-not-throw rationale.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (scope.refused) {
 			return [];
 		}
 		if (!scope.isMaster) {
