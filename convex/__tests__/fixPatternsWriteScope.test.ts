@@ -12,7 +12,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -21,6 +21,23 @@ const modules = Object.fromEntries(
 		([path]) => !path.includes("ragSync") && !path.includes("backfill"),
 	),
 );
+
+// fixPatterns.create/validate schedule a RAG-sync internal action
+// (`internal.ragSync.addFixPatternRagEntry`) via `ctx.scheduler.runAfter`.
+// Left unresolved, convex-test's fake scheduler runs (and patches
+// `_scheduled_functions`) AFTER this test's own transaction/run has already
+// closed, surfacing as an unhandled "Write outside of transaction" rejection
+// (measured: 2 occurrences, both from this file, on the pre-fix version of
+// this suite). Fake timers + `t.finishAllScheduledFunctions(vi.runAllTimers)`
+// drive every scheduled call to a terminal state INSIDE the test, mirroring
+// the same pattern already used in convex/__tests__/gap-t1-github.test.ts
+// for this exact scheduler (fixPatterns.ts's RAG-sync scheduling).
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 const createT = () => convexTest(schema, modules);
 
@@ -118,6 +135,8 @@ describe("fixPatterns.create — write-scope enforcement", () => {
 		});
 		const pattern = await t.run((ctx) => ctx.db.get(patternId));
 		expect(pattern?.symptom).toBe("x");
+
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 });
 
@@ -159,6 +178,8 @@ describe("fixPatterns.addAttempt — write-scope enforcement", () => {
 				.collect(),
 		);
 		expect(attemptsAfter).toHaveLength(1);
+
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 });
 
@@ -184,6 +205,8 @@ describe("fixPatterns.validate — write-scope enforcement", () => {
 		});
 		const validated = await t.run((ctx) => ctx.db.get(patternId));
 		expect(validated?.validatedFix).toBe("use suppressHydrationWarning");
+
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 	});
 });
 
