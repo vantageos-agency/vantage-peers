@@ -152,10 +152,16 @@ def head_sha(cwd: str | None = None) -> str | None:
         return None
 
 
-def _resolve_deploy_cwd(command: str, data: dict) -> str | None:
+def _resolve_deploy_cwd(command: str, data: dict) -> str:
     """The directory the deploy runs in, same shape as the sibling gates: a
-    leading `cd <abspath>` wins, else the PreToolUse payload cwd, else the hook
-    process cwd. Needed so `git rev-parse HEAD` names the deployed commit."""
+    leading `cd <abspath>` wins, else the PreToolUse payload cwd. Needed so
+    `git rev-parse HEAD` names the deployed commit.
+
+    NO fallback to the hook process's own `os.getcwd()`. That directory is
+    the HOOK's repository, not necessarily the DEPLOY's -- falling back to it
+    silently validates a DIFFERENT repository than the one being deployed
+    (the exact defect `_resolve_repo` closes; see its docstring). An absent
+    or unresolvable cwd raises RepoResolutionError instead of guessing."""
     first_line = command.split("\n", 1)[0]
     m = re.match(r"""^\s*cd\s+(['"]?)([^\s&;|'"]+)\1""", first_line)
     if m:
@@ -163,9 +169,14 @@ def _resolve_deploy_cwd(command: str, data: dict) -> str | None:
         if os.path.isabs(candidate) and os.path.isdir(candidate):
             return candidate
     payload_cwd = (data.get("cwd") or "").strip()
-    if payload_cwd and os.path.isdir(payload_cwd):
+    if payload_cwd:
         return payload_cwd
-    return os.getcwd()
+    raise RepoResolutionError(
+        "no leading `cd <abspath>` in the command and the PreToolUse "
+        "payload carried no 'cwd' -- the directory this deploy runs in "
+        "cannot be identified, and falling back to the hook's OWN process "
+        "cwd would silently validate a different repository."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +186,76 @@ def _resolve_deploy_cwd(command: str, data: dict) -> str | None:
 def _sha_matches(evidence_sha: str, ship_sha: str) -> bool:
     a, b = evidence_sha.lower(), ship_sha.lower()
     return a == b or a.startswith(b) or b.startswith(a)
+
+
+class RepoResolutionError(Exception):
+    """Raised when the deploy's own cwd cannot be resolved to a git
+    repository. The caller MUST turn this into a REFUSE (exit 2) -- never a
+    silent pass. Same doctrine as `.claude/rules/railway-mcp-redeploy.md`'s
+    sibling: an unreadable subject refuses, it does not fall back to a guess.
+    Shape matches `_resolve_repo`/`RepoResolutionError` in
+    enforce-mcp-tool-coverage-schema-mirror.py -- this repository already
+    settled on it."""
+
+
+def _resolve_repo(cwd: str) -> str:
+    """Resolve `cwd` to its git top-level, or raise RepoResolutionError.
+
+    NO fallback to the hook process's own `os.getcwd()`: that directory is
+    the HOOK's repository, not necessarily the DEPLOY's, and validating it
+    would silently pass a deploy whose real cwd could not be identified --
+    the gate would judge a real repository, just not the one being deployed.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, cwd=cwd, timeout=10,
+        )
+    except Exception as exc:
+        raise RepoResolutionError(
+            f"cwd={cwd!r} -- git rev-parse --show-toplevel raised: {exc}"
+        ) from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RepoResolutionError(
+            f"cwd={cwd!r} is not inside a git repository "
+            f"(git rev-parse --show-toplevel exit={result.returncode}: "
+            f"{result.stderr.strip()!r})"
+        )
+    return result.stdout.strip()
+
+
+def _is_ancestor(candidate_sha: str, ship_sha: str, cwd: str) -> bool:
+    """True iff `candidate_sha` is an ancestor of (or equal to) `ship_sha`."""
+    try:
+        r = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", candidate_sha, ship_sha],
+            capture_output=True, text=True, timeout=10, cwd=cwd,
+        )
+    except Exception:
+        return False
+    return r.returncode == 0
+
+
+def _convex_changed_between(candidate_sha: str, ship_sha: str, cwd: str) -> list[str]:
+    """Paths under convex/ that differ between `candidate_sha` and
+    `ship_sha`. An EMPTY list means the deployed tree's convex/ subtree is
+    byte-identical to what the evidence judged -- the only condition under
+    which ancestor evidence may stand in for HEAD evidence.
+
+    Raises on a git failure: a diff we cannot compute must never be read as
+    "nothing changed" (fail-closed, same discipline as the rest of this
+    gate)."""
+    r = subprocess.run(
+        ["git", "diff", "--name-only", f"{candidate_sha}..{ship_sha}",
+         "--", "convex/"],
+        capture_output=True, text=True, timeout=10, cwd=cwd,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"git diff {candidate_sha}..{ship_sha} -- convex/ failed "
+            f"(exit {r.returncode}): {r.stderr.strip()}"
+        )
+    return [line for line in r.stdout.splitlines() if line.strip()]
 
 
 def _load_reports(repo_root: str) -> list[dict]:
@@ -256,7 +337,20 @@ def _clean_verdict(report: dict) -> tuple[bool, str | None]:
 
 def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
     """(verdict, message). verdict in {"pass", "absent", "stale", "red",
-    "incomplete", "refuse"}. Only "pass" allows; every other verdict refuses."""
+    "incomplete", "diverged", "refuse"}. Only "pass" allows; every other
+    verdict refuses.
+
+    ANCESTOR-EVIDENCE RELAXATION: evidence for a commit cannot be committed
+    AT that commit (writing qa/backend-doctor-<sha>.json either dirties the
+    tree or advances HEAD past the commit it names) while deploy authorization
+    separately requires a clean checkout with zero local commits. Evidence
+    pinned to an ANCESTOR of HEAD therefore stands in for HEAD evidence, but
+    ONLY when nothing under convex/ changed between that ancestor and HEAD
+    (`git merge-base --is-ancestor` AND an empty `git diff --name-only
+    <ancestor>..HEAD -- convex/`). Either check failing is a REFUSE naming
+    which one -- this widens WHICH TREE may stand in for HEAD's tree, never
+    what a report is allowed to say (mechanical_violations is still the sole
+    refusal driver once a report is accepted as covering HEAD)."""
     ship = head_sha(cwd=cwd)
     if not ship:
         return "refuse", (
@@ -272,36 +366,65 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
             "backend-doctor@main."
         )
 
+    diverged = []  # (report, changed_files): ancestor evidence, convex/ moved
     for r in reports:
-        if _sha_matches(r["_sha"], ship):
-            clean, incomplete = _clean_verdict(r)
-            if incomplete is not None:
-                return "incomplete", (
-                    f"backend-doctor evidence {os.path.basename(r['_path'])} pins "
-                    f"HEAD {ship[:12]} but records NO usable verdict: {incomplete}. "
-                    "A report that omits (or non-integer-types) a verdict field "
-                    "certifies nothing -- it is a could-not-judge, never a pass."
-                )
-            if clean:
-                return "pass", (
-                    f"backend-doctor evidence {os.path.basename(r['_path'])} pins "
-                    f"HEAD {ship[:12]} and is mechanically clean "
-                    f"({r.get('checked')}/{r.get('total')} checked, "
-                    f"{r.get('mechanical_violations', 0)} mechanical violations)."
-                )
-            return "red", (
-                f"backend-doctor evidence {os.path.basename(r['_path'])} pins HEAD "
-                f"{ship[:12]} but is MECHANICALLY RED: exit_code="
-                f"{r.get('exit_code')}, mechanical_violations="
-                f"{r.get('mechanical_violations')}."
+        exact = _sha_matches(r["_sha"], ship)
+        pin_note = f"pins HEAD {ship[:12]}"
+        if exact:
+            covers_head = True
+        elif _is_ancestor(r["_sha"], ship, cwd):
+            changed = _convex_changed_between(r["_sha"], ship, cwd)
+            if changed:
+                diverged.append((r, changed))
+                continue
+            covers_head = True
+            pin_note = (
+                f"pins ancestor {r['_sha'][:12]} of HEAD {ship[:12]} "
+                "with no convex/ change since"
             )
+        else:
+            continue
 
-    # Evidence exists, none for HEAD -> stale-green (report(s) pin other shas).
+        clean, incomplete = _clean_verdict(r)
+        if incomplete is not None:
+            return "incomplete", (
+                f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+                f"but records NO usable verdict: {incomplete}. "
+                "A report that omits (or non-integer-types) a verdict field "
+                "certifies nothing -- it is a could-not-judge, never a pass."
+            )
+        if clean:
+            return "pass", (
+                f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+                f"and is mechanically clean "
+                f"({r.get('checked')}/{r.get('total')} checked, "
+                f"{r.get('mechanical_violations', 0)} mechanical violations)."
+            )
+        return "red", (
+            f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+            f"but is MECHANICALLY RED: exit_code="
+            f"{r.get('exit_code')}, mechanical_violations="
+            f"{r.get('mechanical_violations')}."
+        )
+
+    if diverged:
+        r, changed = diverged[0]
+        listed = ", ".join(changed[:10])
+        return "diverged", (
+            f"backend-doctor evidence {os.path.basename(r['_path'])} pins ancestor "
+            f"{r['_sha'][:12]} of HEAD {ship[:12]}, but convex/ changed since: "
+            f"{listed}. The evidence describes a DIFFERENT tree than the one "
+            "being deployed -- an ancestor pin only stands in for HEAD when "
+            "convex/ is byte-identical between the two."
+        )
+
+    # Evidence exists, none for HEAD (nor a covering ancestor) -> stale-green.
     pinned = ", ".join(sorted({r["_sha"][:12] for r in reports}))
     return "stale", (
         f"backend-doctor evidence exists but pins other commit(s) [{pinned}], "
-        f"NOT the deployed HEAD {ship[:12]}. This is a STALE report -- it was "
-        "produced against an earlier version than the one being deployed."
+        f"NOT the deployed HEAD {ship[:12]} nor an ancestor of it with an "
+        "unchanged convex/ tree. This is a STALE report -- it was produced "
+        "against an earlier version than the one being deployed."
     )
 
 
@@ -382,10 +505,16 @@ def run_hook(command: str, cwd: str | None = None, data: dict | None = None) -> 
     # From here the command IS a backend deploy. Any error while evaluating the
     # evidence -> REFUSE (exit 2), never fall through to allow.
     try:
-        deploy_cwd = _resolve_deploy_cwd(command, data or {})
-        if cwd is not None:
-            deploy_cwd = cwd
-        repo_root = deploy_cwd or os.getcwd()
+        # `cwd` is a direct test-harness override that bypasses command/payload
+        # parsing entirely; only fall through to `_resolve_deploy_cwd` (which
+        # reads the `cd`-prefix / PreToolUse payload) when no override is given.
+        deploy_cwd = cwd if cwd is not None else _resolve_deploy_cwd(command, data or {})
+        # No fallback to os.getcwd(): `_resolve_repo` raises RepoResolutionError
+        # if `deploy_cwd` is not itself inside a git repository, and that
+        # exception is deliberately let through to the outer handler below,
+        # which REFUSES naming the path -- never silently validates a
+        # different (the hook's own) repository.
+        repo_root = _resolve_repo(deploy_cwd)
 
         verdict, detail = evaluate(repo_root, deploy_cwd)
         if verdict == "pass":
