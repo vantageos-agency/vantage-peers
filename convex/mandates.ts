@@ -1,8 +1,37 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
+import { withOrgScope } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// requireFleetMaster — mandates.ts's own single authority gate.
+//
+// `mandates` carries NO orgId/tenant field (see schema.ts:660) — requestedBy/
+// fulfilledBy are fleet ORCHESTRATOR names (pi/tau/sigma/alpha…), not client
+// organisations. There is no per-tenant row to scope against, so the only
+// sound authority boundary is: the caller must be the verified fleet master
+// (the real master secret / recognised service-account carve-out —
+// convex/lib/auth.ts's withOrgScope). A Clerk-org (tenant client) identity is
+// REFUSED here just like an anonymous one — a mandate is a fleet-internal
+// commercial object between orchestrators, never a client-facing write
+// surface, regardless of what callerOrchestrator string is presented
+// (defect class: .claude/rules/authority-attached-to-anonymous-object.md —
+// callerOrchestrator is a caller-supplied ASSERTION, never a verified
+// identity, and was previously the ONLY check these mutations performed).
+// ─────────────────────────────────────────────────────────────────────────────
+async function requireFleetMaster(
+	ctx: Parameters<typeof withOrgScope>[0],
+	action: string,
+): Promise<void> {
+	const scope = await withOrgScope(ctx);
+	if (!scope.isMaster) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller may not ${action} — mandates are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+		);
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -59,6 +88,7 @@ export const create = mutation({
 	},
 	returns: v.id("mandates"),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, "create a mandate");
 		const now = Date.now();
 		return await ctx.db.insert("mandates", {
 			requestedBy: args.requestedBy,
@@ -86,6 +116,7 @@ export const accept = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, `accept mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
@@ -117,6 +148,7 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, `update mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
@@ -154,6 +186,7 @@ export const settle = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		await requireFleetMaster(ctx, `settle mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);

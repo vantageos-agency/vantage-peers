@@ -61,11 +61,17 @@ const modules = Object.fromEntries(
 describe("defect 1 — end-of-day index vs live summary share one field", () => {
 	test("RED: close-day index must survive the next daily-start live-status write", async () => {
 		const t = convexTest(schema, modules);
+		// profiles.upsertProfile/updateDynamic now require the verified fleet
+		// master (convex/lib/auth.ts's withOrgScope isMaster grant — see
+		// convex/__tests__/profilesWriteScope.test.ts).
+		const tMaster = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
 		const orchestratorId = "test-orch-defect1";
 		const instanceId = "test-orch-defect1-vps";
 
 		// Seed the profile so updateDynamic patches an existing row.
-		await t.mutation(api.profiles.upsertProfile, {
+		await tMaster.mutation(api.profiles.upsertProfile, {
 			orchestratorId,
 			instanceId,
 			name: "Test Orchestrator",
@@ -79,7 +85,7 @@ describe("defect 1 — end-of-day index vs live summary share one field", () => 
 		// Step 1 — close-day writes the end-of-day index via the explicit
 		// `endOfDayIndex` arg on the SAME mutation set_summary calls
 		// (profiles:updateDynamic). It does NOT pass `currentTask`.
-		await t.mutation(api.profiles.updateDynamic, {
+		await tMaster.mutation(api.profiles.updateDynamic, {
 			orchestratorId,
 			instanceId,
 			endOfDayIndex: CLOSE_DAY_INDEX,
@@ -89,7 +95,7 @@ describe("defect 1 — end-of-day index vs live summary share one field", () => 
 		// the startup sequence writes its own live-status summary into the
 		// same call path.
 		const DAILY_START_LIVE_SUMMARY = "Booting session, reading messages";
-		await t.mutation(api.profiles.updateDynamic, {
+		await tMaster.mutation(api.profiles.updateDynamic, {
 			orchestratorId,
 			instanceId,
 			currentTask: DAILY_START_LIVE_SUMMARY,

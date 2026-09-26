@@ -26,6 +26,17 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+// mandates.create/accept/settle now require the verified fleet master
+// (convex/lib/auth.ts's withOrgScope isMaster grant — see
+// convex/__tests__/mandatesWriteScope.test.ts) — this fixture exercises the
+// pre-existing state-machine/auth behaviour, so it authenticates as the
+// recognized service-account carve-out configured in vitest.config.ts.
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 async function seedMandate(
 	t: ReturnType<typeof createTestConvex>,
 	opts: {
@@ -38,7 +49,7 @@ async function seedMandate(
 ) {
 	const requestedBy = opts.requestedBy ?? "sigma";
 	const fulfilledBy = opts.fulfilledBy ?? "tau";
-	return await t.mutation(api.mandates.create, {
+	return await asMaster(t).mutation(api.mandates.create, {
 		requestedBy,
 		fulfilledBy,
 		service: "behavioral-test-service",
@@ -65,7 +76,7 @@ describe("GAP-T1 accept_mandate — mandates.accept mutation", () => {
 			fulfilledBy: "tau",
 		});
 
-		await t.mutation(api.mandates.accept, {
+		await asMaster(t).mutation(api.mandates.accept, {
 			mandateId,
 			callerOrchestrator: "tau",
 		});
@@ -82,7 +93,7 @@ describe("GAP-T1 accept_mandate — mandates.accept mutation", () => {
 		});
 
 		await expect(
-			t.mutation(api.mandates.accept, {
+			asMaster(t).mutation(api.mandates.accept, {
 				mandateId,
 				callerOrchestrator: "phi", // not fulfilledBy, not system → refused
 			}),
@@ -102,7 +113,7 @@ describe("GAP-T1 settle_mandate — mandates.settle mutation", () => {
 			fulfilledBy: "tau",
 		});
 
-		await t.mutation(api.mandates.settle, {
+		await asMaster(t).mutation(api.mandates.settle, {
 			mandateId,
 			callerOrchestrator: "sigma",
 			finalCost: 250,
@@ -122,7 +133,7 @@ describe("GAP-T1 settle_mandate — mandates.settle mutation", () => {
 		});
 
 		await expect(
-			t.mutation(api.mandates.settle, {
+			asMaster(t).mutation(api.mandates.settle, {
 				mandateId,
 				callerOrchestrator: "tau", // fulfilledBy cannot settle — only requestedBy
 				finalCost: 100,

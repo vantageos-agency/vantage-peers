@@ -464,24 +464,40 @@ function runScan(): Classified[] {
 //     MCP server's own pre-existing master-only guards on
 //     pause_recurring_task/resume_recurring_task/delete_recurring_task,
 //     class (a). See convex/__tests__/recurringTasksWriteScope.test.ts.
+//   - convex/mandates.ts:create/accept/update/settle are NOT in this list —
+//     `mandates` carries no orgId/tenant field (fleet-internal commercial
+//     object between orchestrators); guarded via withOrgScope's `isMaster`
+//     grant (master-only — a verified Clerk-org/tenant caller is refused
+//     too, there is no per-tenant row to narrow against), with the
+//     pre-existing callerOrchestrator argument kept as a narrowing-only
+//     layer on top, class (a). See convex/__tests__/mandatesWriteScope.test.ts.
+//   - convex/fixPatterns.ts:create/addAttempt/validate/linkIssue are NOT in
+//     this list — `fixPatterns` carries no orgId/tenant field (fleet-shared
+//     cross-project bug-fix KB); guarded via withOrgScope's `isMaster` grant
+//     (master-only), class (a). See
+//     convex/__tests__/fixPatternsWriteScope.test.ts.
+//   - convex/profiles.ts:upsertProfile/updateDynamic are NOT in this list —
+//     `profiles` carries no orgId/tenant field (fleet orchestrator-instance
+//     registry); guarded via withOrgScope's `isMaster` grant (master-only),
+//     class (a). See convex/__tests__/profilesWriteScope.test.ts.
+//   - convex/kbMutations.ts:generateUploadUrl is NOT in this list — guarded
+//     via withOrgScope, deriving the caller's own org and refusing any
+//     `args.orgId` that disagrees with it (narrowing-only, never trusted
+//     alone), class (a). See convex/__tests__/kbMutationsWriteScope.test.ts.
+//   - convex/iframeEmbedSessions.ts:createSession/touchSession/revokeSession
+//     are NOT in this list — guarded via withOrgScope + a tenantId owner
+//     check against the session's STORED `tenantId` (create forces tenantId
+//     to the caller's own resolved org, ignoring/refusing any caller-
+//     supplied mismatch), class (a). See
+//     convex/__tests__/iframeEmbedSessionsWriteScope.test.ts.
+//   - convex/okfBundleDurable.ts:cancelOkfBundleExportDurable is NOT in this
+//     list — guarded by reusing this file's own pre-existing
+//     assertCanExportNamespaceV8 (the SAME check startOkfBundleExportDurable
+//     already enforces — one identity layer, never a second resolver)
+//     against the progress row's STORED `orgId`, class (a). See
+//     convex/__tests__/okfBundleDurableCancelWriteScope.test.ts.
 const KNOWN_OFFENDERS = new Set<string>([
-	// callerOrchestrator-asserted-only (class c) — no verified identity:
-	"convex/mandates.ts:create",
-	"convex/mandates.ts:accept",
-	"convex/mandates.ts:update",
-	"convex/mandates.ts:settle",
 	// no caller-identity argument or check of any kind (class c):
-	"convex/fixPatterns.ts:create",
-	"convex/fixPatterns.ts:addAttempt",
-	"convex/fixPatterns.ts:validate",
-	"convex/fixPatterns.ts:linkIssue",
-	"convex/iframeEmbedSessions.ts:createSession",
-	"convex/iframeEmbedSessions.ts:touchSession",
-	"convex/iframeEmbedSessions.ts:revokeSession",
-	"convex/kbMutations.ts:generateUploadUrl",
-	"convex/okfBundleDurable.ts:cancelOkfBundleExportDurable",
-	"convex/profiles.ts:upsertProfile",
-	"convex/profiles.ts:updateDynamic",
 ]);
 
 describe("public mutation auth guard (source-tree-derived, ratchet)", () => {

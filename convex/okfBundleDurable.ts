@@ -435,10 +435,46 @@ export const getOkfBundleExportDurableStatus = query({
 	},
 });
 
+// Fail-closed multi-tenant fix (defect class:
+// .claude/rules/authority-attached-to-anonymous-object.md) — this mutation
+// previously took NO identity check at all: any caller holding a `jobId`
+// (fleet-internal, guessed, or another tenant's) could cancel any tenant's
+// durable OKF export. Fixed by reusing `assertCanExportNamespaceV8` — the
+// SAME identity/tenant-membership check `startOkfBundleExportDurable`
+// already enforces above (one identity layer, never a second resolver) —
+// against the progress row's OWN STORED `orgId` (which IS the export
+// namespace, see the `okfDurableExportProgress` schema comment), never a
+// caller-supplied argument (this mutation takes no orgId/namespace arg at
+// all). The anonymous-identity check happens BEFORE the `ctx.db.get` below
+// so an unauthenticated caller gets AUTH_NO_IDENTITY, never an
+// unauthenticated existence oracle on `jobId` (mirrors
+// convex/briefingNotes.ts's deleteBriefingNote/update ordering).
 export const cancelOkfBundleExportDurable = mutation({
 	args: { jobId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null || identity === undefined) {
+			throw new Error(
+				`AUTH_NO_IDENTITY: anonymous caller cannot cancel OKF durable export job "${args.jobId}".`,
+			);
+		}
+
+		const progress = await ctx.db
+			.query("okfDurableExportProgress")
+			.withIndex("by_jobId", (q) => q.eq("jobId", args.jobId))
+			.unique();
+		if (progress === null) {
+			throw new Error(
+				`OKF_DURABLE_JOB_NOT_FOUND: no progress row for jobId="${args.jobId}".`,
+			);
+		}
+
+		// progress.orgId IS the export namespace string — reuse the exact
+		// tenant-membership check startOkfBundleExportDurable already
+		// enforces, never a second resolver.
+		await assertCanExportNamespaceV8(ctx, progress.orgId);
+
 		await ctx.runMutation(
 			agentEngineComponents.agentEngine.engine.durableJob.cancel,
 			{ jobId: args.jobId },
