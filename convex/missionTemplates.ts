@@ -206,7 +206,7 @@ export const softDelete = mutation({
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
 			throw new ConvexError(
-				"RBAC_DENIED: soft_delete_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
+				"RBAC_DENIED: soft-deleting a mission template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
 			);
 		}
 
