@@ -30,7 +30,13 @@ const modules = Object.fromEntries(
 
 describe("businessUnits.list cursor pagination — fixed-buffer fetchLimit undershoots deep pages", () => {
 	test("RED/GREEN: paginating to the end must return every seeded business unit", async () => {
-		const t = convexTest(schema, modules);
+		// businessUnits.create now requires a verified identity (write-scope
+		// enforcement fix, convex/publicWriteBoundary.test.ts) — authenticate
+		// as the recognized service-account identity, exactly as the MCP
+		// server does, so this pagination sweep is unaffected.
+		const t = convexTest(schema, modules).withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<ReturnType<typeof convexTest>["withIdentity"]>[0]);
 		// Default page limit is 20, fetchLimit with cursor = limit*4+10 = 90.
 		// Seed well beyond that so a deep-enough cursor's true position
 		// exceeds the fixed re-fetch window.
@@ -83,7 +89,10 @@ describe("businessUnits.list cursor pagination — fixed-buffer fetchLimit under
 	// client paginating by `createdBefore` re-reads only the top page each
 	// time and silently drops everything older than page 1.
 	test("RED/GREEN: legacy createdBefore pagination must return every seeded business unit", async () => {
-		const t = convexTest(schema, modules);
+		// See note above — businessUnits.create now requires identity.
+		const t = convexTest(schema, modules).withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<ReturnType<typeof convexTest>["withIdentity"]>[0]);
 		const TOTAL = 130;
 		const seededIds: string[] = [];
 

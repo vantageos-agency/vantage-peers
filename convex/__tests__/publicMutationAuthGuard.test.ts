@@ -407,6 +407,15 @@ function runScan(): Classified[] {
 //     callerOrchestrator argument kept as a narrowing-only layer on top
 //     (never a substitute), class (a). See
 //     convex/__tests__/briefingNotesWriteScope.test.ts.
+//   - convex/businessUnits.ts:create, convex/businessUnits.ts:update and
+//     convex/businessUnits.ts:remove are NOT in this list — guarded via
+//     withOrgScope + isOrchestratorAllowedForScope (org-scope owner check
+//     on args.orchestratorId at create, on the row's STORED orchestratorId
+//     — and on any reassignment target — at update, and a master-only
+//     check mirroring the MCP server's own guardMasterOnly at remove),
+//     with the pre-existing callerOrchestrator argument kept as a
+//     narrowing-only layer on top (never a substitute), class (a). See
+//     convex/publicWriteBoundary.test.ts.
 const KNOWN_OFFENDERS = new Set<string>([
 	// callerOrchestrator-asserted-only (class c) — no verified identity:
 	"convex/mandates.ts:create",
@@ -414,9 +423,6 @@ const KNOWN_OFFENDERS = new Set<string>([
 	"convex/mandates.ts:update",
 	"convex/mandates.ts:settle",
 	// no caller-identity argument or check of any kind (class c):
-	"convex/businessUnits.ts:create",
-	"convex/businessUnits.ts:update",
-	"convex/businessUnits.ts:remove",
 	"convex/errorMonitor.ts:addDeployment",
 	"convex/errorMonitor.ts:removeDeployment",
 	"convex/fixPatterns.ts:create",
