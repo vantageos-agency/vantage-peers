@@ -37,6 +37,7 @@
 import { spawnSync } from "node:child_process";
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
@@ -307,6 +308,88 @@ function scanRefusalToolNames(registered: Set<string>): RefusalHit[] {
 	);
 }
 
+// ─── Skill-body tool-name scan ──────────────────────────────────────────────
+// A skill file (`.claude/skills/<name>/SKILL.md`) is the same broken promise
+// as a refusal text: it names a tool a client is told to call, and if that
+// name is masked (registered but non-core), the client following the skill
+// hits a wall. Scope is every `SKILL.md` under `.claude/skills/` (the skill
+// BODY — the file a client actually loads — not `evals/`/`references/`
+// sidecar files, which are examples, not instructions).
+//
+// Extraction form: `mcp__vantage-peers__<name>` fully-qualified references.
+// This is the ONLY form present across every skill file in this tree today
+// (verified by grepping every SKILL.md: allowed-tools frontmatter, backticked
+// prose mentions, and bare command lines all spell the name fully-qualified;
+// no bare-backtick-only or table-cell form exists anywhere in
+// `.claude/skills/`). A narrow pattern that provably matches the real corpus
+// beats a broad one invented for forms that don't occur.
+//
+// Escape hatch: a skill may legitimately document a tool that is
+// deliberately hidden. An inline marker on the SAME LINE as the reference —
+// `<!-- tool-exposure-allow: <name> -->` — excuses that one occurrence. The
+// marker names the excused tool explicitly so it can't accidentally shadow a
+// different hidden name mentioned elsewhere on the same line.
+const SKILL_TOOL_REF_PATTERN = /mcp__vantage-peers__([a-z][a-z0-9_]*)/g;
+const SKILL_ESCAPE_MARKER_PATTERN =
+	/<!--\s*tool-exposure-allow:\s*([a-z][a-z0-9_]*)\s*-->/g;
+
+type SkillHit = { file: string; line: number; tool: string; marked: boolean };
+
+// Lists every `<skillDir>/SKILL.md` directly under `dir`. Throws (refuses)
+// if `dir` itself cannot be read — a scan that cannot see the skills
+// directory must fail loudly, never report "0 offenders" as if it looked.
+function listSkillFiles(dir: string): string[] {
+	const entries = readdirSync(dir, { withFileTypes: true }); // throws if unreadable
+	const out: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const skillFile = join(dir, entry.name, "SKILL.md");
+		if (existsSync(skillFile)) out.push(skillFile);
+	}
+	return out.sort();
+}
+
+// Registered-set gated: only a name the server actually registers (core or
+// masked) counts as a tool reference. This keeps the scan from flagging an
+// unrelated lowercase word that happens to follow the `mcp__vantage-peers__`
+// prefix by typo, mirroring the registered-set gate the refusal scan above
+// already applies.
+function scanSkillFile(
+	path: string,
+	rel: string,
+	registered: Set<string>,
+): SkillHit[] {
+	const lines = readFileSync(path, "utf-8").split("\n");
+	const hits: SkillHit[] = [];
+	lines.forEach((lineText, idx) => {
+		const markedNames = new Set<string>();
+		for (const m of lineText.matchAll(SKILL_ESCAPE_MARKER_PATTERN)) {
+			markedNames.add(m[1]);
+		}
+		for (const m of lineText.matchAll(SKILL_TOOL_REF_PATTERN)) {
+			const tool = m[1];
+			if (!registered.has(tool)) continue;
+			hits.push({
+				file: rel,
+				line: idx + 1,
+				tool,
+				marked: markedNames.has(tool),
+			});
+		}
+	});
+	return hits;
+}
+
+function scanSkillsDir(skillsDir: string, registered: Set<string>) {
+	const files = listSkillFiles(skillsDir); // throws (refuses) if skillsDir is unreadable
+	const hits: SkillHit[] = [];
+	for (const file of files) {
+		hits.push(...scanSkillFile(file, relative(skillsDir, file), registered));
+	}
+	const namesExtracted = new Set(hits.map((h) => h.tool));
+	return { files, hits, namesExtracted };
+}
+
 describe("tool-exposure filter (data-driven allowlist, registration-point)", () => {
 	it("advertises only tool-exposure.json's core names, hides every other registered tool", () => {
 		const result = runDumpToolNames();
@@ -367,6 +450,98 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		);
 		expect(offenders, `refusal text names non-core tools`).toEqual([]);
 	}, 60_000);
+
+	it("advertises every tool named in a skill body (.claude/skills/*/SKILL.md), so a skill never points a caller at a masked verb", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+
+		const skillsDir = join(REPO_ROOT, ".claude", "skills");
+		const { files, hits, namesExtracted } = scanSkillsDir(
+			skillsDir,
+			registered,
+		);
+
+		const core = new Set(CORE_NAMES);
+		const nonCore = [...namesExtracted].filter((n) => !core.has(n));
+		const offenders = hits
+			.filter((h) => !core.has(h.tool) && !h.marked)
+			.map((h) => `${h.file}:${h.line} -> ${h.tool}`);
+
+		// Scope line — printed on every run, never silent.
+		console.log(
+			`skill-body scan: ${files.length} skill files read, ` +
+				`${namesExtracted.size} distinct tool names extracted, ` +
+				`${nonCore.length} non-core names found`,
+		);
+
+		// Positive control: the scan reaches the known defect site.
+		expect(
+			hits.some(
+				(h) =>
+					h.file === "fix-pattern-cycle/SKILL.md" &&
+					h.tool === "create_fix_pattern",
+			),
+			"scan did not reach fix-pattern-cycle/SKILL.md's create_fix_pattern reference",
+		).toBe(true);
+
+		expect(offenders, "skill body names non-core (masked) tools").toEqual([]);
+	}, 60_000);
+
+	it("refuses (fails) rather than passing silently when the skills directory cannot be read", () => {
+		const registered = new Set<string>(["whatever"]);
+		expect(() =>
+			scanSkillsDir(join(tmpdir(), "vp-tool-exposure-nonexistent-dir"), registered),
+		).toThrow();
+	});
+
+	it("escape hatch: a skill naming a hidden tool WITHOUT the marker fails the scan", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+		const core = new Set(CORE_NAMES);
+		const hiddenTool = [...registered].find((t) => !core.has(t));
+		expect(hiddenTool, "no masked tool available to build the fixture").toBeTruthy();
+
+		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
+		tempPaths.push(dir);
+		const skillSubdir = join(dir, "fixture-skill");
+		mkdirSync(skillSubdir, { recursive: true });
+		writeFileSync(
+			join(skillSubdir, "SKILL.md"),
+			`Call \`mcp__vantage-peers__${hiddenTool}\` to do the thing.\n`,
+		);
+
+		const { hits } = scanSkillsDir(dir, registered);
+		const offenders = hits.filter((h) => !core.has(h.tool) && !h.marked);
+		expect(offenders.length).toBe(1);
+		expect(offenders[0].tool).toBe(hiddenTool);
+	});
+
+	it("escape hatch: the SAME skill WITH the marker on the same line passes the scan", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+		const core = new Set(CORE_NAMES);
+		const hiddenTool = [...registered].find((t) => !core.has(t));
+		expect(hiddenTool, "no masked tool available to build the fixture").toBeTruthy();
+
+		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
+		tempPaths.push(dir);
+		const skillSubdir = join(dir, "fixture-skill");
+		mkdirSync(skillSubdir, { recursive: true });
+		writeFileSync(
+			join(skillSubdir, "SKILL.md"),
+			`Call \`mcp__vantage-peers__${hiddenTool}\` to do the thing. <!-- tool-exposure-allow: ${hiddenTool} -->\n`,
+		);
+
+		const { hits, namesExtracted } = scanSkillsDir(dir, registered);
+		const offenders = hits.filter((h) => !core.has(h.tool) && !h.marked);
+		expect(offenders).toEqual([]);
+		// The marker excuses the OFFENSE, not the SIGHTING — the name is still
+		// extracted (visible for the scope line), just not an offender.
+		expect(namesExtracted.has(hiddenTool as string)).toBe(true);
+	});
 
 	it("throws at startup naming an unknown core name, refusing to start", () => {
 		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-"));
