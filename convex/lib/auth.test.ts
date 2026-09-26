@@ -181,11 +181,16 @@ describe("withOrgScope — no org, ARBITRARY identity (not service account) → 
 
 		// An arbitrary valid Clerk identity with no org attached, and NOT matching
 		// CLERK_SERVICE_ACCOUNT_USER_ID. Pre-fix this fell through the
-		// "no org → full access" branch and got master scope + all rows.
+		// "no org → full access" branch and got master scope + all rows. The
+		// security property this test protects is UNCHANGED by the R-50 fix
+		// (backend-standard-4bcd605.md) below: zero rows, never "full access".
+		// What changed is the SHAPE of that refusal — `tasks.list` is a
+		// reactively-subscribed public query, so it now returns a typed empty
+		// array instead of throwing (convex/preOrgTypedRefusal.test.ts pins
+		// the non-throwing pole; this test keeps pinning the NO-DATA-LEAK
+		// pole — the two are complementary, not in conflict).
 		const tWithAuth = t.withIdentity({ subject: "user-arbitrary-attacker" });
-		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
-			/No active organization/,
-		);
+		await expect(tWithAuth.query(api.tasks.list, {})).resolves.toEqual([]);
 	});
 });
 

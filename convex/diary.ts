@@ -181,7 +181,11 @@ export const list = query({
 		// applied here inline since diary rows expose `orchestrator` rather than
 		// `pilot`/`assignedTo`. No org-specific literal is hardcoded: the allow
 		// list comes entirely from the caller's resolved OrgScope.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed refused scope (empty
+		// allowedOrchestrators); the filtering below already renders that as a
+		// typed-empty result, never a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (!scope.isMaster && args.orchestrator !== undefined) {
 			if (!scope.allowedOrchestrators.includes(args.orchestrator)) {
 				return [];

@@ -125,7 +125,11 @@ export const getMembership = query({
 	args: { clerkOrgSlug: v.optional(v.string()) },
 	returns: v.array(membershipShape),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed refused scope
+		// instead of a throw. The pre-existing anonymous-caller throw below
+		// is UNCHANGED (out of this brief's scope, a distinct caller class).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
 		// withOrgScope's fail-closed default for "no identity at all" is
 		// userId="anonymous", isMaster=false, scopes=[] — refuse here, before
@@ -135,6 +139,13 @@ export const getMembership = query({
 			throw new ConvexError(
 				"RBAC_DENIED: getMembership requires an authenticated caller",
 			);
+		}
+
+		// A signed-in caller with no organisation yet (scope.refused) has no
+		// "own org" to compare against — a typed empty result, not a throw,
+		// regardless of which org (if any) was requested.
+		if (scope.refused) {
+			return [];
 		}
 
 		if (args.clerkOrgSlug !== undefined) {

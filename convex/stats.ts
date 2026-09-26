@@ -81,7 +81,12 @@ export const orchestratorStats = query({
 		// Master scope (Laurent / Alpha) returns all orchestrators unchanged.
 		// Client orgs with "view-stats-aggregated" see their own orchestrators.
 		// Client orgs with "cross-tenant-read" bypass orchestrator filtering.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty result instead
+		// of a throw (the requireScope call below would otherwise throw for
+		// that same caller).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
 		if (!scope.scopes.includes("view-stats-aggregated") && !scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
@@ -354,7 +359,11 @@ export const openTaskCountsByOrchestrator = query({
 	),
 	handler: async (ctx) => {
 		// Fleet-operations surface — same gate as fleetStats.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty result instead
+		// of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
@@ -468,7 +477,43 @@ export const fleetStats = query({
 	}),
 	handler: async (ctx) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty (all-zero)
+		// result instead of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) {
+			return {
+				bus: { total: 0 },
+				missions: {
+					total: 0,
+					byStatus: {
+						brainstorm: 0,
+						plan: 0,
+						execute: 0,
+						validate: 0,
+						complete: 0,
+					},
+				},
+				tasks: {
+					total: 0,
+					byStatus: {
+						todo: 0,
+						in_progress: 0,
+						review: 0,
+						blocked: 0,
+						done: 0,
+						cancelled: 0,
+						failed: 0,
+					},
+				},
+				missionTemplates: { total: 0 },
+				messages: {
+					total: 0,
+					byReadStatus: { read: 0, unread: 0 },
+				},
+				generatedAt: Date.now(),
+			};
+		}
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}

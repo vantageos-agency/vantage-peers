@@ -27,6 +27,21 @@ export interface OrgScope {
 	allowedOrchestrators: string[]; // ["*"] = full access
 	scopes: string[];
 	isMaster: boolean;
+	/**
+	 * Set ONLY when `opts.refuseWithoutThrow` was passed AND the caller has a
+	 * verified identity with NO organisation attached (and is not the
+	 * service-account carve-out) — the exact branch that otherwise throws
+	 * `RBAC_DENIED`. Every other returned scope (anonymous, master, active
+	 * org) never sets this field; callers MUST check it before trusting any
+	 * other field on a `refuseWithoutThrow`-resolved scope; the accompanying
+	 * fields (orgSlug=null, allowedOrchestrators=[], scopes=[], isMaster=
+	 * false) are the SAME shape the anonymous no-identity branch already
+	 * returns, so a caller that already special-cases "no org" (the
+	 * pre-existing `!scope.isMaster && scope.orgSlug === null` idiom several
+	 * queries use for the anonymous case) needs no second branch — it
+	 * already renders the identical typed-empty result for this case too.
+	 */
+	refused?: boolean;
 }
 
 /**
@@ -38,9 +53,24 @@ export interface OrgScope {
  * Convex CLI, existing Alpha handlers migrated pre-Beta). It is a deliberate,
  * per-call-site marker — not a blanket default — so that new/unaudited call
  * sites fail closed by default (Day 108 fail-closed multi-tenant doctrine).
+ *
+ * `refuseWithoutThrow` governs the SEPARATE "identity present, no org
+ * attached" branch (R-50/R-51: a caller who is signed in but has not yet
+ * joined/created an organisation). That branch otherwise throws
+ * `ConvexError("RBAC_DENIED: ...")` unconditionally — correct for an
+ * imperative caller (a chosen mutation) but wrong for a reactively-subscribed
+ * public query, which has no call site to catch it and instead crashes the
+ * subscribing client's render. A call site opts in with
+ * `refuseWithoutThrow: true` to receive a typed, non-throwing refused scope
+ * (`refused: true`, the same empty shape the anonymous branch already
+ * returns) on that ONE branch instead — every other throwing branch
+ * (org-mapping miss/inactive, requireOrgAdmin, requireScope, etc.) is
+ * UNCHANGED and keeps throwing; this option narrows exactly one branch, it
+ * does not blanket-disable refusal.
  */
 export interface WithOrgScopeOptions {
 	allowNoIdentityMaster?: boolean;
+	refuseWithoutThrow?: boolean;
 }
 
 /**
@@ -166,7 +196,30 @@ export async function withOrgScope(
 	// isMaster/org check. requireTenantId throws when identity.orgId is
 	// missing/empty; we translate that throw into the same RBAC_DENIED
 	// ConvexError shape used by the rest of this module.
+	//
+	// `opts.refuseWithoutThrow` (R-50/R-51): a signed-in caller with no org
+	// yet is a REAL, ordinary state (freshly onboarded, has not
+	// created/joined an org) — not a hostile caller. A reactively-subscribed
+	// public query has no call site to catch the throw below, so it would
+	// crash the subscribing client's render instead of refusing cleanly.
+	// Call sites that opted in receive the SAME typed-empty shape the
+	// anonymous (no-identity) branch above already returns, tagged
+	// `refused: true` so the caller can distinguish "no identity at all" from
+	// "identity present, no org" if it ever needs to — every OTHER refusal
+	// in this function (org-mapping miss/inactive, requireOrgAdmin,
+	// requireScope) is unchanged and still throws; this narrows one branch
+	// only.
 	if (!orgSlug) {
+		if (opts?.refuseWithoutThrow) {
+			return {
+				userId: identity.subject,
+				orgSlug: null,
+				allowedOrchestrators: [],
+				scopes: [],
+				isMaster: false,
+				refused: true,
+			};
+		}
 		try {
 			requireTenantId({ kind: "session", identity: { orgId: orgSlug } });
 		} catch (err: unknown) {

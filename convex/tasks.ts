@@ -1163,7 +1163,12 @@ export const list = query({
 		// 156): no Clerk identity is no longer master. The only legitimate
 		// no-identity caller (GitHub webhook, HMAC-verified) uses
 		// listForWebhook (internalQuery) below instead.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty result (the
+		// pre-existing requireScope inside runTasksList would otherwise throw
+		// for that same caller).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
 		return await runTasksList(ctx, args, scope);
 	},
 });
@@ -1224,7 +1229,14 @@ export const listPaginated = query({
 		continueCursor: v.string(),
 	}),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		// R-50: this is the dashboard TaskBoard's own reactively-subscribed
+		// paginated query (usePaginatedQuery) — refuseWithoutThrow narrows
+		// the signed-in-no-org branch to a typed-empty page instead of a
+		// throw, which would otherwise crash the board's render.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) {
+			return { page: [], isDone: true, continueCursor: "" };
+		}
 		requireScope(scope, "view-own-tasks");
 
 		type TaskRow = Doc<"tasks">;
@@ -3610,7 +3622,18 @@ export const billingSummaryByProject = query({
 			);
 		}
 
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty summary
+		// instead of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) {
+			return {
+				byProject: [],
+				unattributedTaskCount: 0,
+				invalidDurationTaskCount: 0,
+				truncated: false,
+			};
+		}
 		requireScope(scope, "view-own-tasks");
 
 		const project = args.project;
@@ -3744,7 +3767,27 @@ export const taskDurationDistribution = query({
 			);
 		}
 
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed "no data" result
+		// instead of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) {
+			return {
+				count: 0,
+				percentiles: {
+					p50: NO_DATA_SENTINEL,
+					p75: NO_DATA_SENTINEL,
+					p90: NO_DATA_SENTINEL,
+					p95: NO_DATA_SENTINEL,
+					p99: NO_DATA_SENTINEL,
+					max: NO_DATA_SENTINEL,
+				},
+				negativeCount: 0,
+				withProjectCount: 0,
+				withoutProjectCount: 0,
+				truncated: false,
+			};
+		}
 		requireScope(scope, "view-own-tasks");
 
 		const project = args.project;
@@ -3855,7 +3898,11 @@ export const searchTasksByKeyword = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
 	},
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty result instead
+		// of a throw.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

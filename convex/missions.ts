@@ -419,7 +419,12 @@ export const list = query({
 		// 156): no Clerk identity is no longer master. The only legitimate
 		// no-identity caller (GitHub webhook, HMAC-verified) uses
 		// listForWebhook (internalQuery) below instead.
-		const scope = await withOrgScope(ctx);
+		// R-50: reactively-subscribed public query — refuseWithoutThrow
+		// narrows the signed-in-no-org branch to a typed-empty result (the
+		// pre-existing requireScope inside runMissionsList would otherwise
+		// throw for that same caller).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
 		return await runMissionsList(ctx, args, scope);
 	},
 });
