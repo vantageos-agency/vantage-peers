@@ -26,6 +26,17 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+// errorMonitor.addDeployment / removeDeployment now require a verified
+// master/service-account caller (see
+// convex/__tests__/issuesGithubRepoMappingErrorMonitorWriteScope.test.ts —
+// fleet error-monitor deployment config has no org-scoped write authority).
+// Vitest config sets CLERK_SERVICE_ACCOUNT_USER_ID to this exact subject.
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<typeof t.withIdentity>[0]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // get_mission_template (the 19th tool)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,7 +159,7 @@ describe("GAP-T1 add_deployment — errorMonitor.addDeployment mutation", () => 
 	test("happy path — inserts a new deployment with active=true", async () => {
 		const t = createTestConvex();
 
-		const depId = await t.mutation(api.errorMonitor.addDeployment, {
+		const depId = await asMaster(t).mutation(api.errorMonitor.addDeployment, {
 			name: "vantage-memory-prod",
 			deploymentUrl: "https://example.convex.cloud",
 			deployKeyEnvVar: "CONVEX_DEPLOY_KEY_PROD",
@@ -167,7 +178,7 @@ describe("GAP-T1 add_deployment — errorMonitor.addDeployment mutation", () => 
 	test("edge case — re-adding same name upserts (no duplicate row, re-activates)", async () => {
 		const t = createTestConvex();
 
-		const first = await t.mutation(api.errorMonitor.addDeployment, {
+		const first = await asMaster(t).mutation(api.errorMonitor.addDeployment, {
 			name: "duplicate-name",
 			deploymentUrl: "https://a.convex.cloud",
 			deployKeyEnvVar: "KEY_A",
@@ -176,11 +187,11 @@ describe("GAP-T1 add_deployment — errorMonitor.addDeployment mutation", () => 
 		});
 
 		// Deactivate it first to verify re-add re-activates.
-		await t.mutation(api.errorMonitor.removeDeployment, {
+		await asMaster(t).mutation(api.errorMonitor.removeDeployment, {
 			name: "duplicate-name",
 		});
 
-		const second = await t.mutation(api.errorMonitor.addDeployment, {
+		const second = await asMaster(t).mutation(api.errorMonitor.addDeployment, {
 			name: "duplicate-name",
 			deploymentUrl: "https://b.convex.cloud",
 			deployKeyEnvVar: "KEY_B",
@@ -205,7 +216,7 @@ describe("GAP-T1 add_deployment — errorMonitor.addDeployment mutation", () => 
 describe("GAP-T1 remove_deployment — errorMonitor.removeDeployment mutation", () => {
 	test("happy path — sets active=false on a known deployment", async () => {
 		const t = createTestConvex();
-		const depId = await t.mutation(api.errorMonitor.addDeployment, {
+		const depId = await asMaster(t).mutation(api.errorMonitor.addDeployment, {
 			name: "to-remove",
 			deploymentUrl: "https://x.convex.cloud",
 			deployKeyEnvVar: "KEY_X",
@@ -213,7 +224,7 @@ describe("GAP-T1 remove_deployment — errorMonitor.removeDeployment mutation", 
 			orchestrator: "sigma",
 		});
 
-		await t.mutation(api.errorMonitor.removeDeployment, {
+		await asMaster(t).mutation(api.errorMonitor.removeDeployment, {
 			name: "to-remove",
 		});
 
@@ -225,7 +236,7 @@ describe("GAP-T1 remove_deployment — errorMonitor.removeDeployment mutation", 
 
 	test("edge case — removing an unknown name is a silent no-op (returns null)", async () => {
 		const t = createTestConvex();
-		const res = await t.mutation(api.errorMonitor.removeDeployment, {
+		const res = await asMaster(t).mutation(api.errorMonitor.removeDeployment, {
 			name: "never-existed",
 		});
 		expect(res).toBeNull();
