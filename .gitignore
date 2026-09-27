@@ -48,3 +48,6 @@ __pycache__/
 
 # local tooling scratch (grok agents/rules)
 .grok/
+
+# Harness-created agent worktrees — never part of the repository
+.claude/worktrees/

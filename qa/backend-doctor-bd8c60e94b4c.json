@@ -1,0 +1,15 @@
+{
+  "sha": "bd8c60e94b4cd9ffd579c9e4f84e670280ddebb4",
+  "cli_commit": "96bdb01",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 22,
+  "note": "Recorded honestly, NOT tuned to pass. Scored at the deploy head with the CLI the ruling pins (96bdb01), from a detached worktree so the newer tip a8e7201 is not silently substituted. By-rule tally: present=13 non-conforming=22 could-not-judge=15 absent=0, sum=50. Critical violations: R-10 R-12 R-7 R-37 R-40 R-50 R-51 R-6 -- the SAME EIGHT as the d0f45a4 baseline and as the two prior deploy heads, no new id. Critical abstentions (human verdict owed): R-5 R-34 R-29 R-26 R-48. mechanical_violations is recorded as the 22 non-conforming rules because the report exposes no mechanical-versus-judgement split; every candidate reading is greater than zero, so the gate's decision does not depend on resolving that ambiguity. coverage 49 CHECKED + 1 NOT_MECHANICALLY_CHECKABLE (R-48, task k17chpr4kzp399j3s7r7edpm4s8cscbz) = 50 of 50, no silent gap. Five of the eight criticals are scored against a frozen per-tool CSV and not against this tree at all -- established by running the same CLI against a tree containing one file declaring nothing and obtaining identical counts -- so they would survive a perfect repository. That is why the gate is overridden on the counter-never-rises property rather than on a green.",
+  "introduced_by_this_change": "none -- the counter did not rise across the two merges in scope. 22 non-conforming and the same eight critical ids were measured at 6ec0c8c4 (the previously deployed head), at d3b9c54a (the base the reviewer scored independently) and again here at bd8c60e9. Measured on both sides by two stations.",
+  "cli_ref": "96bdb01 on backend-doctor's default branch.",
+  "convex_tree_sha_at_run": "bd8c60e94b4cd9ffd579c9e4f84e670280ddebb4",
+  "convex_tree_attestation": "git -C /root/coding/vantage-memory rev-parse HEAD in the same session as the doctor returned the sha above. install verified first: bun install --frozen-lockfile exit 0, so the ratios beside it are not measured on an incomplete tree.",
+  "suite_at_this_head": "bun install --frozen-lockfile exit 0; npx tsc --noEmit -p convex exit 0, 0 lines; npx vitest run --dir convex exit 0, 207 files / 1854 tests passed. Each exit code captured from a variable on its own line."
+}

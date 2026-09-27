@@ -1,0 +1,14 @@
+{
+  "sha": "6ec0c8c4c91d6f8d712fcf4e35452d69d91ca5db",
+  "cli_commit": "96bdb01",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 22,
+  "note": "Recorded honestly, NOT tuned to pass. Re-scored at the deploy head because main moved off the floor c63edb9f712dca8f0a3c7c8043e0aa621e855fc5 to this tip (#1339 then #1340 merged after the floor was pinned). By-rule tally at this head: present=13 non-conforming=22 could-not-judge=15 absent=0, sum=50. Critical violations: R-10 R-12 R-7 R-37 R-40 R-50 R-51 R-6 -- the SAME EIGHT as the d0f45a4 baseline, no new id. Critical abstentions (human verdict owed): R-5 R-34 R-29 R-26 R-48. Handler-surface tally reported apart: R-50 non-conforming, R-51 non-conforming, 7 sites abstaining. mechanical_violations is recorded as the 22 non-conforming rules because the report exposes no mechanical-versus-judgement split; every candidate reading of the number is greater than zero, so the gate's decision does not depend on resolving that ambiguity. coverage 49 CHECKED + 1 NOT_MECHANICALLY_CHECKABLE (R-48, owned by task k17chpr4kzp399j3s7r7edpm4s8cscbz) = 50 of 50 derived rules, no silent gap.",
+  "introduced_by_this_change": "none -- the counter did not rise across the two merges in scope: 22 non-conforming and the same eight critical ids were measured at the floor c63edb9f and again here at 6ec0c8c4. That counter-never-rises property, measured on both sides, is the sole basis on which the deploy gate is overridden.",
+  "cli_ref": "96bdb01 on backend-doctor default branch; scored from a detached worktree pinned to it so the CLI is the one the ruling names, not the newer a8e7201 tip.",
+  "convex_tree_sha_at_run": "6ec0c8c4c91d6f8d712fcf4e35452d69d91ca5db",
+  "convex_tree_attestation": "git -C /root/coding/vantage-memory rev-parse HEAD, run in the same session as the doctor, returned the sha above. The path is outside the doctor's repository, so the sha is what ties the scored tree to the recorded commit."
+}
