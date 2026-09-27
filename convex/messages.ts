@@ -1222,6 +1222,32 @@ export const listByChannel = query({
 		// below already renders that scope as "broadcast only", never a throw).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
+		// THE FAIL-OPEN POLE, CLOSED. This registration is the ONE of the fourteen
+		// measured leaks that was NOT unguarded — it resolves a scope on the line
+		// above and then DISCARDS it for one channel. `isChannelAllowed` below
+		// returns true for `ch === "broadcast"` unconditionally, so at commit
+		// bd8c60e9 a caller presenting NO CREDENTIAL AT ALL was served broadcast
+		// message content straight off the public deployment URL (1 row, measured).
+		// A HARDCODED LITERAL IS NOT AN AUTHORISATION — the same defect class as a
+		// constant namespace standing in for a resolved one
+		// (.claude/rules/authority-attached-to-anonymous-object.md).
+		//
+		// This is also why an instrument that only asks "does it resolve an
+		// identity" cannot see this site, and why R-50/R-51 could not either: the
+		// refusal SHAPE here was already correct, there simply was no refusal on
+		// the anonymous pole at all.
+		//
+		// withOrgScope returns the IDENTICAL empty shape (orgSlug null, not master)
+		// for both the anonymous branch and the signed-in-no-org `refused` branch,
+		// so this ONE check closes both. Everything below is unchanged: an ordinary
+		// member of an ACTIVE org still reads broadcast and still reads its own
+		// roster's channels (both pinned as ALLOW poles in
+		// publicRegistrationResolvesCaller.test.ts — a withheld grant here would be
+		// as much a defect as the leak).
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ (R-50/R-51).
+		if (!scope.isMaster && scope.orgSlug === null) return [];
+
 		// Fail-closed channel scoping: messages carry no orgId/tenantId column
 		// (schema.ts), so channel-name proximity to the caller's own scope is the
 		// only generic (non-hardcoded) signal available. A non-master, org-scoped

@@ -5,6 +5,7 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
+import { filterByOrgScope, withOrgScope } from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,6 +198,25 @@ export const list = query({
 		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
+		// Fail-closed READ counterpart of this file's own WRITE gate. Measured
+		// against LIVE production at commit bd8c60e9: 4 rows served to a caller
+		// presenting NO CREDENTIAL AT ALL, while create/update/pause/resume/remove
+		// beside it already went through `requireAuthenticatedCaller`.
+		//
+		// Every `recurringTasks` row names an `assignedTo` orchestrator, which is
+		// exactly what `filterByOrgScope` judges against the caller's own
+		// `client_org_mapping.allowedOrchestrators` — the SAME roster helper
+		// `runTasksList`/`runMissionsList` use for the collection reads of those
+		// tables. Mechanism reused, not invented: no second identity layer.
+		// Master passes through unfiltered. A caller with no verified organisation
+		// has an EMPTY roster, so the one filter refuses it too — no second branch.
+		// The ALLOW pole in publicRegistrationResolvesCaller.test.ts pins that an
+		// ordinary org member still sees rows on its own roster (a WITHHELD GRANT
+		// is as much a defect as the leak).
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ, unlike the mutations' `requireAuthenticatedCaller` throw (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan
@@ -222,6 +242,10 @@ export const list = query({
 		} else {
 			rows = await ctx.db.query("recurringTasks").order("desc").take(fetchCap);
 		}
+
+		// The roster control. Applied BEFORE the cursor filter so a row the caller
+		// may not see can never occupy a slot in its page.
+		rows = filterByOrgScope(rows, scope);
 
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
 		if (args.createdBefore !== undefined) {

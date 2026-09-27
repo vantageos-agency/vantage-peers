@@ -19,6 +19,28 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLEET_IDENTITY — task k173wwv743mkvrn4qr7ap0qrps8f6d6k.
+//
+// The read(s) this suite drives were measured against LIVE production at commit
+// bd8c60e9 serving real rows to a caller presenting NO CREDENTIAL AT ALL, and are
+// now refused for any caller that is not the verified fleet master (these tables
+// carry no orgId column) or, where the rows name an orchestrator, any caller
+// outside its own roster. This suite asserts PAGINATION/ENVELOPE behaviour, not
+// authorisation: nothing it checks has changed, so it now presents the identity
+// its subject is actually for — the MCP server's own Clerk service-account
+// subject, which withOrgScope resolves to master by id
+// (CLERK_SERVICE_ACCOUNT_USER_ID, set in vitest.config.ts).
+//
+// This is NOT a weakened assertion: the DENY poles for these same reads — an
+// anonymous caller, a signed-in caller with no organisation, and an ORDINARY
+// member of an active organisation — are pinned in
+// convex/__tests__/publicRegistrationResolvesCaller.test.ts, where deleting any
+// guard turns them red.
+// ─────────────────────────────────────────────────────────────────────────────
+const FLEET_IDENTITY = { subject: "test-service-account-user-id" };
+
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
 		([path]) =>
@@ -79,7 +101,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 		});
 		// T-GREEN must change returns shape to { items: buObject[], nextCursor: string | null }
 		// and default limit to 20. Current impl returns a flat array with limit=50 → this fails.
-		const result = await t.query(api.businessUnits.list, {});
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, {});
 		expect(result).toHaveProperty("items");
 		expect(result).toHaveProperty("nextCursor");
 		const { items, nextCursor } = result as { items: unknown[]; nextCursor: string | null };
@@ -95,7 +117,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 				await ctx.db.insert("businessUnits", makeBU({ name: `BU-${i}` }));
 			}
 		});
-		const result = await t.query(api.businessUnits.list, { limit: 5 });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { limit: 5 });
 		expect(result).toHaveProperty("items");
 		expect(result).toHaveProperty("nextCursor");
 		const { items, nextCursor } = result as { items: unknown[]; nextCursor: string | null };
@@ -113,7 +135,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 		let threw = false;
 		let result: unknown;
 		try {
-			result = await t.query(api.businessUnits.list, { limit: 250 });
+			result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { limit: 250 });
 		} catch {
 			threw = true;
 		}
@@ -135,7 +157,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 				await ctx.db.insert("businessUnits", makeBU({ name: `BU-${i}` }));
 			}
 		});
-		const result = await t.query(api.businessUnits.list, { fields: "lite" });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { fields: "lite" });
 		expect(result).toHaveProperty("items");
 		const { items } = result as { items: Record<string, unknown>[] };
 		expect(items.length).toBeGreaterThan(0);
@@ -157,7 +179,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("businessUnits", makeBU({ name: "Full BU" }));
 		});
-		const result = await t.query(api.businessUnits.list, { fields: "full" });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { fields: "full" });
 		expect(result).toHaveProperty("items");
 		const { items } = result as { items: Record<string, unknown>[] };
 		expect(items.length).toBe(1);
@@ -192,7 +214,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 			}
 		});
 		// First page
-		const page1 = await t.query(api.businessUnits.list, { limit: 5 });
+		const page1 = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { limit: 5 });
 		expect(page1).toHaveProperty("items");
 		expect(page1).toHaveProperty("nextCursor");
 		const { items: items1, nextCursor: cursor1 } = page1 as {
@@ -203,7 +225,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 		expect(cursor1).not.toBeNull();
 
 		// Second page using cursor from first page
-		const page2 = await t.query(api.businessUnits.list, { limit: 5, cursor: cursor1! });
+		const page2 = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { limit: 5, cursor: cursor1! });
 		expect(page2).toHaveProperty("items");
 		const { items: items2 } = page2 as { items: Record<string, unknown>[] };
 		expect(items2.length).toBe(5);
@@ -228,7 +250,7 @@ describe("list_bus envelope safety (PR-A RED)", () => {
 		});
 		// Current impl: returns flat array, no fields projection, limit defaults to 50 not 100.
 		// T-GREEN must support limit=100 + fields=lite in envelope shape.
-		const result = await t.query(api.businessUnits.list, { limit: 100, fields: "lite" });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.businessUnits.list, { limit: 100, fields: "lite" });
 		expect(result).toHaveProperty("items");
 		const { items } = result as { items: unknown[] };
 		expect(items.length).toBe(100);

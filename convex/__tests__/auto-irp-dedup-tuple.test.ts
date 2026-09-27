@@ -34,6 +34,28 @@ import {
 } from "../errorMonitorGroupKey";
 import schema from "../schema";
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLEET_IDENTITY — task k173wwv743mkvrn4qr7ap0qrps8f6d6k.
+//
+// The read(s) this suite drives were measured against LIVE production at commit
+// bd8c60e9 serving real rows to a caller presenting NO CREDENTIAL AT ALL, and are
+// now refused for any caller that is not the verified fleet master (these tables
+// carry no orgId column) or, where the rows name an orchestrator, any caller
+// outside its own roster. This suite asserts PAGINATION/ENVELOPE behaviour, not
+// authorisation: nothing it checks has changed, so it now presents the identity
+// its subject is actually for — the MCP server's own Clerk service-account
+// subject, which withOrgScope resolves to master by id
+// (CLERK_SERVICE_ACCOUNT_USER_ID, set in vitest.config.ts).
+//
+// This is NOT a weakened assertion: the DENY poles for these same reads — an
+// anonymous caller, a signed-in caller with no organisation, and an ORDINARY
+// member of an active organisation — are pinned in
+// convex/__tests__/publicRegistrationResolvesCaller.test.ts, where deleting any
+// guard turns them red.
+// ─────────────────────────────────────────────────────────────────────────────
+const FLEET_IDENTITY = { subject: "test-service-account-user-id" };
+
 // Exclude "use node" action files + auto-resolver from the convex-test
 // sandbox — same pattern as errorMonitorThreshold.test.ts. Scheduled
 // actions are queued but never executed, which is exactly what we want
@@ -182,7 +204,7 @@ describe("auto-irp dedup — 24h cross-tick window + RECURRING escalation", () =
 		await upsertError(t, { hash: "win-24h", recurrenceThreshold: 3 });
 
 		// Simulate linkIssue (createGitHubIssue would have called it on success).
-		const initial = await t.query(api.errorMonitor.listErrors, {});
+		const initial = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitor.listErrors, {});
 		const row = initial.find((e) => e.hash === "win-24h");
 		if (!row) throw new Error("row not found");
 		await t.mutation(internal.errorMonitor.linkIssue, {
@@ -196,7 +218,7 @@ describe("auto-irp dedup — 24h cross-tick window + RECURRING escalation", () =
 		await upsertError(t, { hash: "win-24h", recurrenceThreshold: 3 });
 		await upsertError(t, { hash: "win-24h", recurrenceThreshold: 3 });
 
-		const after = await t.query(api.errorMonitor.listErrors, {});
+		const after = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitor.listErrors, {});
 		const rowAfter = after.find((e) => e.hash === "win-24h");
 		// Count bumps, but issueCreated stays true, issueNumber unchanged.
 		expect(rowAfter?.count).toBe(5);
@@ -210,7 +232,7 @@ describe("auto-irp dedup — 24h cross-tick window + RECURRING escalation", () =
 
 		// Reach threshold then mark issueCreated.
 		await upsertError(t, { hash: "reraise-24h", recurrenceThreshold: 1 });
-		const initial = await t.query(api.errorMonitor.listErrors, {});
+		const initial = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitor.listErrors, {});
 		const row = initial.find((e) => e.hash === "reraise-24h");
 		if (!row) throw new Error("row not found");
 		await t.mutation(internal.errorMonitor.linkIssue, {
@@ -223,7 +245,7 @@ describe("auto-irp dedup — 24h cross-tick window + RECURRING escalation", () =
 		vi.setSystemTime(new Date(Date.now() + TWENTY_FOUR_HOURS_MS + 60_000));
 		await upsertError(t, { hash: "reraise-24h", recurrenceThreshold: 1 });
 
-		const after = await t.query(api.errorMonitor.listErrors, {});
+		const after = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitor.listErrors, {});
 		const rowAfter = after.find((e) => e.hash === "reraise-24h");
 		expect(rowAfter?.count).toBe(2);
 		// Gate re-armed: issueCreated dropped back to false so the scheduled
@@ -277,7 +299,7 @@ describe("auto-irp dedup — 24h cross-tick window + RECURRING escalation", () =
 			recurrenceThreshold: 99,
 		});
 
-		const rows = await t.query(api.errorMonitor.listErrors, {});
+		const rows = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitor.listErrors, {});
 		const ourRows = rows.filter(
 			(r) =>
 				r.hash === computeGroupKey("missions", variants[0]) ||

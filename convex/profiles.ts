@@ -343,6 +343,22 @@ export const listProfiles = query({
   },
   returns: v.array(profileDocValidator),
   handler: async (ctx, args) => {
+    // Fail-closed READ counterpart of this file's own master-only WRITE gate
+    // (`requireFleetMaster` above). Measured against LIVE production at commit
+    // bd8c60e9: this query returned 50 rows to a caller presenting NO
+    // CREDENTIAL AT ALL, straight off the public deployment URL — it consulted
+    // no identity whatsoever. `profiles` carries no orgId/tenant column (see
+    // requireFleetMaster's rationale), so there is no tenant to scope to and
+    // the read must admit exactly what the write admits: master, nobody else.
+    // An ORDINARY member of an active org is refused here too, deliberately —
+    // pinned by publicRegistrationResolvesCaller.test.ts's third deny pole, so
+    // "is anyone signed in" can never pass for authority.
+    // REFUSAL SHAPE — typed empty, never a throw: this is a reactively-
+    // subscribed public READ and a throw crashes the subscriber's render
+    // (R-50/R-51), which is exactly what `refuseWithoutThrow` exists for.
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    if (!scope.isMaster) return [];
+
     const take = args.limit ?? 50;
     // Widen the fetch whenever a cursor is present, so the post-take
     // `createdBefore` filter has candidate rows older than the anchor to

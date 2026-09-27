@@ -19,9 +19,23 @@ export const pollOpenPRs = internalAction({
 
 		// Fetch only open/draft PRs in one go — relies on wired-up prStatus filter.
 		// Two separate calls because prStatus takes a single literal.
+		//
+		// Reads the INTERNAL door, not `api.issues.listExternalOpen`. This action
+		// runs on a cron with NO Clerk identity by construction, so once the public
+		// query became master-only (it was serving rows to anonymous callers in
+		// production at bd8c60e9) it would have returned an empty page here and
+		// silently killed fleet-wide PR monitoring. `listExternalOpenForMonitor` is
+		// an internalQuery over the SAME shared body — same split, same reason, as
+		// `tasks.listForWebhook`.
 		const [openResult, draftResult] = await Promise.all([
-			ctx.runQuery(api.issues.listExternalOpen, { limit: 50, prStatus: "open" }),
-			ctx.runQuery(api.issues.listExternalOpen, { limit: 50, prStatus: "draft" }),
+			ctx.runQuery(internal.issues.listExternalOpenForMonitor, {
+				limit: 50,
+				prStatus: "open",
+			}),
+			ctx.runQuery(internal.issues.listExternalOpenForMonitor, {
+				limit: 50,
+				prStatus: "draft",
+			}),
 		]);
 
 		const openPRs = [...openResult.issues, ...draftResult.issues].filter(

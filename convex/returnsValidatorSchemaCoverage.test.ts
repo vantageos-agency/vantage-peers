@@ -429,6 +429,27 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 		reason:
 			"External PR/issue tracker listing deliberately returns a display-only subset (repo/issueNumber/title/status/externalRepo/externalIssueUrl/prUrl/prStatus/assignedOrchestrator). Handler maps explicitly, never spreads the raw row.",
 	},
+	"issues.listExternalOpenForMonitor": {
+		fields: [
+			"body",
+			"htmlUrl",
+			"labels",
+			"priority",
+			"project",
+			"fixCommits",
+			"fixedBy",
+			"fixedAt",
+			"verifiedBy",
+			"verifiedAt",
+			"linkedTaskIds",
+			"githubCreatedAt",
+			"githubUpdatedAt",
+			"externalIssueNumber",
+			"forkRepo",
+		],
+		reason:
+			"The internalQuery half of the `listExternalOpen` split (task k173wwv743mkvrn4qr7ap0qrps8f6d6k): the public query became master-only after it was measured serving rows to a caller with no credential, and convex/prMonitor.ts's cron has no Clerk identity by construction, so it reads this internal door instead. SAME shared body (`readExternalOpen`) and the SAME `externalOpenReturns` validator as `issues.listExternalOpen` above — the identical display-only projection, so it carries the identical, already-accepted omission set rather than a new one.",
+	},
 	"oauth.listClients#clientPublicShape": {
 		fields: ["clientSecretHash", "tokenEndpointAuthMethod"],
 		reason:

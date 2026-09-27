@@ -442,17 +442,51 @@ export const searchFixPatterns = action({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// A CONSTANT NAMESPACE IS NOT AN AUTHORISATION.
+		//
+		// This action was the one search surface `resolveSearchNamespace` did not
+		// gate, and it looked safe for the wrong reason: unlike its three siblings
+		// above it takes NO `namespace` argument at all, so there was no
+		// caller-supplied string to distrust — it hardcoded `"fixpatterns"` and
+		// resolved no identity of any kind. A hardcoded literal in place of a
+		// resolved value is exactly the defect class
+		// `.claude/rules/authority-attached-to-anonymous-object.md` names: the
+		// authority is attached to a constant rather than to the verified
+		// principal, so /api/action on the open internet reached the fleet's whole
+		// fix-pattern embedding index with no Authorization header.
+		//
+		// MECHANISM REUSED, NOT INVENTED — this calls the SAME
+		// `resolveSearchNamespace` gate the three siblings call, with the constant
+		// as the requested namespace, and the semantics fall out of the existing
+		// rule with no new branch anywhere:
+		//   - master (withOrgScope's named by-id service-account carve-out)
+		//     -> "fixpatterns", unchanged. The fleet's own callers keep working.
+		//   - a verified org -> REFUSED, because "fixpatterns" does not lie inside
+		//     that org's `team/<slug>` subtree. This matches the decision already
+		//     taken for the fleet-common `global` namespace in the same gate ("not
+		//     this tenant's data to read") and the master-only read this repo now
+		//     applies to the `fixPatterns` table itself.
+		//   - no verified organisation (anonymous OR signed-in-without-org)
+		//     -> REFUSED.
+		// REFUSAL SHAPE — the typed empty array, never a throw: these actions back
+		// reactively-subscribed read surfaces (R-50/R-51), identical to the
+		// siblings' `if (ns === null) return [] as never`.
+		const ns = await resolveSearchNamespace(ctx, "fixpatterns");
+		if (ns === null) return [] as never;
+
 		const limit = args.limit ?? 10;
 		const scoreThreshold = args.scoreThreshold ?? 0.15;
 
+		// `ns` (the RESOLVED namespace), never the literal, is what is searched —
+		// the same discipline the siblings follow.
 		const { results, entries } = await ragSearch(ctx, {
-			namespace: "fixpatterns",
+			namespace: ns,
 			query: args.query,
 			searchType: "vector",
 			limit,
 			vectorScoreThreshold: scoreThreshold,
 			filters: [
-				{ name: "namespace", value: "fixpatterns" },
+				{ name: "namespace", value: ns },
 				{ name: "isLatest", value: "true" },
 			],
 		});

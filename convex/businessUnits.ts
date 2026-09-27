@@ -379,6 +379,38 @@ export const list = query({
 		nextCursor: v.union(v.string(), v.null()),
 	}),
 	handler: async (ctx, args) => {
+		// Fail-closed READ counterpart of this file's own WRITE gate. Measured
+		// against LIVE production at commit bd8c60e9: this query served a business
+		// unit to a caller presenting NO CREDENTIAL AT ALL — it consulted no
+		// identity whatsoever, while `create`/`update`/`remove` beside it already
+		// went through `isOrchestratorAllowedForScope`.
+		//
+		// This table is ORG-SCOPED, not fleet-internal: each row names a lead
+		// `orchestratorId`, which is exactly what `client_org_mapping`'s
+		// `allowedOrchestrators` roster judges. So the correct control is NOT
+		// master-only — it is the SAME roster check the writes use, applied per
+		// row, so an ordinary org member keeps seeing its own units. The failure
+		// mode of adding a guard is a WITHHELD GRANT, and the ALLOW pole in
+		// publicRegistrationResolvesCaller.test.ts pins that it did not happen.
+		// A caller with no verified organisation has an EMPTY roster, so the same
+		// per-row filter refuses it without a second code path.
+		// REFUSAL SHAPE — the typed empty ENVELOPE, never a throw: reactively-
+		// subscribed public READ (R-50/R-51).
+		// ONE control, not two. An earlier draft of this fix also opened with
+		// `if (!scope.isMaster && scope.orgSlug === null) return { items: [],
+		// nextCursor: null }`. Mutation testing reported that line as a SURVIVOR:
+		// deleting it left the whole suite green, including all three deny poles.
+		// It was not an unobserved guard, it was a genuinely SUBSUMED one —
+		// `isOrchestratorAllowedForScope` below already returns false for every
+		// row when `scope.orgSlug === null`, so no assertion could ever
+		// distinguish its presence from its absence. It was removed rather than
+		// kept, because a second authority line that no test can observe is worse
+		// than no second line: a reviewer cannot tell which of the two is actually
+		// holding the door, and either could later be deleted as "redundant". The
+		// authority for this read is the single per-row roster filter below, and
+		// the mutation table pins exactly that line.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;
 		const fields = args.fields ?? "full";
@@ -435,6 +467,14 @@ export const list = query({
 				.order("desc")
 				.take(fetchLimit);
 		}
+
+		// The roster control, applied per ROW — the same
+		// `isOrchestratorAllowedForScope` the writes above use. Master passes
+		// through unchanged; a non-master caller sees only units led by an
+		// orchestrator on its own `client_org_mapping.allowedOrchestrators`.
+		// Placed BEFORE the cursor/createdBefore filters so a row the caller may
+		// not see can never occupy a slot in its page.
+		rows = rows.filter((r) => isOrchestratorAllowedForScope(scope, r.orchestratorId));
 
 		// Apply cursor filter: exclude rows at or before the cursor anchor.
 		// Cursor encodes { time, id } — exclude rows strictly "before" in desc order:

@@ -109,6 +109,21 @@ export const list = query({
 		nextCursor: v.union(v.string(), v.null()),
 	}),
 	handler: async (ctx, args) => {
+		// Fail-closed READ counterpart of this file's own master-only WRITE gate
+		// (`requireMasterScope`, used by `add`/`remove`). Measured against LIVE
+		// production at commit bd8c60e9: this query served a row to a caller
+		// presenting NO CREDENTIAL AT ALL. `githubRepoMapping` carries no orgId
+		// column — it maps the FLEET's own repositories to orchestrators, and it
+		// discloses the private repository inventory plus each repo's most recent
+		// production-deployed SHA. Master only, exactly as the writes already are.
+		// REFUSAL SHAPE — the typed empty ENVELOPE (`items: []`, `nextCursor:
+		// null`), never a throw: reactively-subscribed public READ, and a throw
+		// crashes the subscriber's render (R-50/R-51). The envelope shape is
+		// returned rather than a bare `[]` so the refusal still satisfies the
+		// declared `returns` validator.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return { items: [], nextCursor: null };
+
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;
 		const fields = args.fields ?? "full";

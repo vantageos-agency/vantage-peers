@@ -12,6 +12,28 @@ import {
 } from "./errorMonitorFilters";
 import schema from "./schema";
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLEET_IDENTITY — task k173wwv743mkvrn4qr7ap0qrps8f6d6k.
+//
+// The read(s) this suite drives were measured against LIVE production at commit
+// bd8c60e9 serving real rows to a caller presenting NO CREDENTIAL AT ALL, and are
+// now refused for any caller that is not the verified fleet master (these tables
+// carry no orgId column) or, where the rows name an orchestrator, any caller
+// outside its own roster. This suite asserts PAGINATION/ENVELOPE behaviour, not
+// authorisation: nothing it checks has changed, so it now presents the identity
+// its subject is actually for — the MCP server's own Clerk service-account
+// subject, which withOrgScope resolves to master by id
+// (CLERK_SERVICE_ACCOUNT_USER_ID, set in vitest.config.ts).
+//
+// This is NOT a weakened assertion: the DENY poles for these same reads — an
+// anonymous caller, a signed-in caller with no organisation, and an ORDINARY
+// member of an active organisation — are pinned in
+// convex/__tests__/publicRegistrationResolvesCaller.test.ts, where deleting any
+// guard turns them red.
+// ─────────────────────────────────────────────────────────────────────────────
+const FLEET_IDENTITY = { subject: "test-service-account-user-id" };
+
 // =============================================================================
 // Auto-IRP false-positive filter — sigma-D50-cleanup
 // Linked: memory j573cwcs3znp0xsvtg34x435jh84b0eg, pattern m978zeg4b2e9nx67z2hg5rwgfs85hf7f,
@@ -690,7 +712,7 @@ describe("addFilterRule — idempotency", () => {
 		const id2 = await t.mutation(internal.errorMonitorFilters.addFilterRule, dupArgs);
 		expect(id2).toBe(id1);
 
-		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		const rows = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.listFilterRules, {});
 		const matching = rows.filter(
 			(r) =>
 				r.active &&
@@ -710,7 +732,7 @@ describe("addFilterRule — idempotency", () => {
 		});
 		expect(id2).not.toBe(id1);
 
-		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		const rows = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.listFilterRules, {});
 		expect(rows.filter((r) => r.active)).toHaveLength(2);
 	});
 
@@ -763,7 +785,7 @@ describe("dedupeFilterRules", () => {
 		);
 		expect(disabledCount).toBe(10);
 
-		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		const rows = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.listFilterRules, {});
 		const active = rows.filter((r) => r.active);
 		expect(active).toHaveLength(1);
 		// Oldest row (createdAt: 1000, seed index 0) must be the survivor.
@@ -803,7 +825,7 @@ describe("dedupeFilterRules", () => {
 		);
 		expect(disabledCount).toBe(0);
 
-		const rows = await t.query(api.errorMonitorFilters.listFilterRules, {});
+		const rows = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.listFilterRules, {});
 		expect(rows.filter((r) => r.active)).toHaveLength(2);
 	});
 });

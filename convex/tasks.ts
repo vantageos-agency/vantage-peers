@@ -1865,11 +1865,26 @@ export const listUnlinkedBlocked = query({
 		}),
 	),
 	handler: async (ctx) => {
+		// SMALLEST POSSIBLE EDIT — convex/tasks.ts is owned by another specialist
+		// on a different branch, so this touches only this handler and nothing
+		// else in this file or convex/missions.ts.
+		//
+		// Measured against LIVE production at commit bd8c60e9: 159 task rows — the
+		// largest of the fourteen — served to a caller presenting NO CREDENTIAL AT
+		// ALL. Every other collection read of this table (`runTasksList`) already
+		// applies `filterByOrgScope`; this one applied nothing. Reuses that SAME
+		// roster helper, so the single-purpose read admits exactly what `list`
+		// admits: no new grant, and no lost one. Master unfiltered; a caller with
+		// no verified organisation has an empty roster and so is refused by the
+		// same filter.
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const blocked = await ctx.db
 			.query("tasks")
 			.withIndex("by_status", (q) => q.eq("status", "blocked"))
 			.collect();
-		return blocked
+		return filterByOrgScope(blocked, scope)
 			.filter((t) => t.blockedOnTaskId === undefined && t.blockedOnNobodyReason === undefined)
 			.map((t) => ({
 				taskId: t._id,

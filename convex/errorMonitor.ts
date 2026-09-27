@@ -639,6 +639,36 @@ export const listErrors = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// THE DECISION, WRITTEN DOWN — this one needed a named caller, not a
+		// reflex guard, because error payloads leak the SHAPE of everything else.
+		//
+		// WHAT WAS MEASURED. Against LIVE production at commit bd8c60e9 this query
+		// returned 50 `errorLogs` rows to a caller presenting NO CREDENTIAL AT
+		// ALL. Each row carries `functionName`, `errorMessage` and `stackTrace`
+		// from the fleet's own deployments — an index of internal function names
+		// and failure modes, i.e. a map of every other surface worth probing.
+		//
+		// THE FLEET MONITORING CALLER, NAMED. The only real consumer is the
+		// `error_monitor_list` MCP tool at mcp-server/src/tools.ts:9372
+		// (`convex.query("errorMonitor:listErrors")`). It is NOT broken by this
+		// guard and needs no internal rewire: every /mcp request attaches an
+		// identity via `selectConvexClientForRequest`
+		// (mcp-server/src/authenticatedConvexClient.ts) — the MCP server's own
+		// Clerk SERVICE-ACCOUNT identity for master/OAuth paths, which
+		// withOrgScope's by-id carve-out resolves to isMaster=true. The
+		// error-monitor cron itself never comes through here; it reads
+		// `internal.errorMonitor.*`. A Clerk-ORG tenant calling that same MCP tool
+		// with its own JWT now gets an empty list, which is the correct outcome:
+		// `errorLogs` has no orgId column and the deployments it describes are the
+		// fleet's, never a tenant's.
+		//
+		// So, as with `addDeployment`/`removeDeployment` above
+		// (`requireMasterScope`), the read admits exactly what the write admits.
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ, and a throw crashes the subscriber's render (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return [];
+
 		const limit = args.limit ?? 50;
 		const deployment = args.deployment;
 		const needsWideScan = args.createdBefore !== undefined;

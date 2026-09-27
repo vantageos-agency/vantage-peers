@@ -122,6 +122,17 @@ export const listNames = query({
 	args: {},
 	returns: v.array(v.string()),
 	handler: async (ctx) => {
+		// Fail-closed READ counterpart of this file's own master-only WRITE gate
+		// (`upsert`/`softDelete` below: "the mission-template catalog is shared
+		// fleet-wide, never per-org"). Measured against LIVE production at commit
+		// bd8c60e9: 33 template names served to a caller presenting NO CREDENTIAL
+		// AT ALL. A catalog shared fleet-wide has no tenant to scope to, so the
+		// read admits exactly what the write admits: master, nobody else.
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ, and a throw crashes the subscriber's render (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return [];
+
 		const templates = await ctx.db
 			.query("missionTemplates")
 			.take(MISSION_TEMPLATES_SCAN_CAP);

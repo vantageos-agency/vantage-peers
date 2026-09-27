@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
+import { withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Store stats (internal mutation — called from the action)
@@ -125,6 +126,20 @@ export const getLatest = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// Fail-closed READ. Measured against LIVE production at commit bd8c60e9:
+		// 30 `issueStats` rows served to a caller presenting NO CREDENTIAL AT ALL —
+		// no identity was consulted. The WRITE side of this table is
+		// `upsertStats`, an `internalMutation` (structurally unreachable from
+		// `api.*`), so this READ was the only public door and it had no lock.
+		// `issueStats` carries no orgId column: it aggregates the FLEET's own
+		// GitHub repositories' throughput — commercially meaningful metrics that
+		// are the fleet's, never a tenant's. Master only, matching the internal-
+		// only write.
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ, and a throw crashes the subscriber's render (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return [];
+
 		const limit = args.limit ?? 30;
 		let results;
 		if (args.repo) {

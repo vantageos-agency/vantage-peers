@@ -230,6 +230,39 @@ export const list = query({
 	},
 	returns: v.array(mandateObject),
 	handler: async (ctx, args) => {
+		// THE DECISION, WRITTEN DOWN BEFORE THE CODE — this is the most sensitive
+		// of the fourteen and it must not be closed by reflex.
+		//
+		// WHAT WAS MEASURED. Against LIVE production at commit bd8c60e9, this
+		// query returned 9 mandate rows to a caller with NO CREDENTIAL AT ALL.
+		// Each row carries `budget`, `spendingLimits`, `approvedCategories` and
+		// `mandateDocument` — SPENDING AUTHORITY between orchestrators. The
+		// handler resolved no identity of any kind; its only `throw` (below) is
+		// about INDEX COVERAGE for the requestedBy+fulfilledBy combination, not
+		// about authorisation, and a refusal about index coverage is not a
+		// refusal about authority however loudly it fires.
+		//
+		// WHO MAY READ IT, AND WHY THAT IS MASTER ONLY. `mandates` carries no
+		// orgId/tenant column at all (schema.ts:660) — `requestedBy`/`fulfilledBy`
+		// are fleet ORCHESTRATOR names (pi/tau/sigma/alpha…), never client
+		// organisations. There is therefore no per-tenant row to scope against,
+		// so a roster filter would be a fiction: any org whose roster happened to
+		// contain "sigma" would read every mandate sigma ever fulfilled, across
+		// every other tenant's commercial relationships. The only sound boundary
+		// is the one this file's own WRITES already enforce through
+		// `requireFleetMaster` above: the verified fleet master (the real master
+		// secret / the recognised by-id service-account carve-out). A Clerk-org
+		// tenant identity is refused here exactly as an anonymous one is. That
+		// makes the read admit precisely what the write admits — no more, and
+		// notably no less, so the fleet's own callers are untouched.
+		//
+		// REFUSAL SHAPE — typed empty, NOT the throw `requireFleetMaster` uses.
+		// This is a reactively-subscribed public READ: a throw crashes the
+		// subscribing client's render (R-50/R-51), which is the whole reason
+		// `refuseWithoutThrow` exists. The WRITES keep throwing, unchanged.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return [];
+
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan ? MANDATES_LIST_SCAN_CAP + 1 : limit;

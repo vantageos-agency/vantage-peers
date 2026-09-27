@@ -1,5 +1,11 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
+	type QueryCtx,
+} from "./_generated/server";
 import { api } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
@@ -450,6 +456,19 @@ export const getStats = query({
 	handler: async (ctx, args) => {
 		const stats = { open: 0, in_progress: 0, fixed: 0, verified: 0, closed: 0, total: 0 };
 
+		// Fail-closed READ counterpart of this file's own master-only WRITE gate
+		// (`requireMasterScope`, used by updateStatus/linkCommit/verify). Measured
+		// against LIVE production at commit bd8c60e9: this query served real counts
+		// to a caller presenting NO CREDENTIAL AT ALL. `issues` carries no orgId
+		// column — it is the fleet's own GitHub-issue tracking. Master only,
+		// exactly as the writes already are.
+		// REFUSAL SHAPE — the ZEROED counts object, never a throw: reactively-
+		// subscribed public READ (a throw crashes the subscriber's render,
+		// R-50/R-51). Returning the zeroed aggregate rather than `{}` keeps the
+		// refusal the same SHAPE as a real answer, so no consumer has to branch.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return stats;
+
 		let issues;
 		if (args.project) {
 			issues = await ctx.db
@@ -549,63 +568,124 @@ export const updatePrStatus = internalMutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// listExternalOpen — the ONE site of the fourteen that needed a SPLIT, because
+// closing it naively would have broken a real caller.
+//
+// WHAT WAS MEASURED. Against LIVE production at commit bd8c60e9 this query
+// served an external-PR row to a caller presenting NO CREDENTIAL AT ALL.
+//
+// THE REAL CALLER, NAMED. `convex/prMonitor.ts::pollOpenPRs` is an
+// `internalAction` driven by a cron. It runs with NO Clerk identity BY
+// CONSTRUCTION — there is no `ctx.auth` identity for `withOrgScope` to resolve —
+// so a master-only guard on the PUBLIC query would have silently returned an
+// empty page and killed fleet-wide PR monitoring. Not breaking that caller and
+// not leaving the door open are both required, so the read is SPLIT exactly the
+// way `tasks.listForWebhook` / `tasks.createForWebhook` are split:
+//
+//   * `readExternalOpen` below — the shared body. One implementation, so the two
+//     doors can never drift apart.
+//   * `listExternalOpenForMonitor` — an `internalQuery`. Registered ONLY under
+//     the `internal` tree (see convex/_generated/api.d.ts), therefore
+//     structurally unreachable from `api.*` and from the open internet; it
+//     cannot become a second public door. This is what the cron calls.
+//   * `listExternalOpen` — the PUBLIC query, now master-only, matching this
+//     file's own `requireMasterScope` write gate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const externalOpenArgs = {
+	prStatus: v.optional(v.union(
+		v.literal("draft"),
+		v.literal("open"),
+		v.literal("merged"),
+		v.literal("closed"),
+	)),
+	limit: v.optional(v.number()),
+	paginationToken: v.optional(v.union(v.string(), v.null())),
+};
+
 // returns-projection: external-PR tracking dashboard summary row — full issue fetched via issues.get when a row is opened
-export const listExternalOpen = query({
+const externalOpenReturns = v.object({
+	issues: v.array(v.object({
+		_id: v.id("issues"),
+		_creationTime: v.number(),
+		repo: v.string(),
+		issueNumber: v.number(),
+		title: v.string(),
+		status: v.string(),
+		externalRepo: v.optional(v.string()),
+		externalIssueUrl: v.optional(v.string()),
+		prUrl: v.optional(v.string()),
+		prStatus: v.optional(v.string()),
+		assignedOrchestrator: v.string(),
+	})),
+	nextPageToken: v.union(v.string(), v.null()),
+});
+
+/** The shared body behind both doors. Contains NO authority of its own. */
+async function readExternalOpen(
+	ctx: QueryCtx,
 	args: {
-		prStatus: v.optional(v.union(
-			v.literal("draft"),
-			v.literal("open"),
-			v.literal("merged"),
-			v.literal("closed"),
-		)),
-		limit: v.optional(v.number()),
-		paginationToken: v.optional(v.union(v.string(), v.null())),
+		prStatus?: "draft" | "open" | "merged" | "closed";
+		limit?: number;
+		paginationToken?: string | null;
 	},
-	returns: v.object({
-		issues: v.array(v.object({
-			_id: v.id("issues"),
-			_creationTime: v.number(),
-			repo: v.string(),
-			issueNumber: v.number(),
-			title: v.string(),
-			status: v.string(),
-			externalRepo: v.optional(v.string()),
-			externalIssueUrl: v.optional(v.string()),
-			prUrl: v.optional(v.string()),
-			prStatus: v.optional(v.string()),
-			assignedOrchestrator: v.string(),
+) {
+	const numItems = args.limit ?? 50;
+
+	const result = await ctx.db
+		.query("issues")
+		.filter((q) => {
+			let expr = q.neq(q.field("externalRepo"), undefined);
+			if (args.prStatus !== undefined) {
+				expr = q.and(expr, q.eq(q.field("prStatus"), args.prStatus));
+			}
+			return expr;
+		})
+		.paginate({ numItems, cursor: args.paginationToken ?? null });
+
+	return {
+		issues: result.page.map((i) => ({
+			_id: i._id,
+			_creationTime: i._creationTime,
+			repo: i.repo,
+			issueNumber: i.issueNumber,
+			title: i.title,
+			status: i.status,
+			externalRepo: i.externalRepo,
+			externalIssueUrl: i.externalIssueUrl,
+			prUrl: i.prUrl,
+			prStatus: i.prStatus as string | undefined,
+			assignedOrchestrator: i.assignedOrchestrator,
 		})),
-		nextPageToken: v.union(v.string(), v.null()),
-	}),
+		nextPageToken: result.isDone ? null : result.continueCursor,
+	};
+}
+
+// PUBLIC-NO-IDENTITY: internalQuery — registered only under the `internal` tree
+// (convex/_generated/api.d.ts), structurally unreachable from api.* and from the
+// open internet. Its sole caller is the identity-less prMonitor cron; the public
+// door beside it carries the master-only guard.
+export const listExternalOpenForMonitor = internalQuery({
+	args: externalOpenArgs,
+	returns: externalOpenReturns,
+	handler: async (ctx, args) => await readExternalOpen(ctx, args),
+});
+
+export const listExternalOpen = query({
+	args: externalOpenArgs,
+	returns: externalOpenReturns,
 	handler: async (ctx, args) => {
-		const numItems = args.limit ?? 50;
+		// Fail-closed READ counterpart of this file's own master-only WRITE gate
+		// (`requireMasterScope`). See the block comment above for the split that
+		// keeps the prMonitor cron working.
+		// REFUSAL SHAPE — the typed empty ENVELOPE, never a throw: reactively-
+		// subscribed public READ (a throw crashes the subscriber's render,
+		// R-50/R-51). The envelope shape keeps the refusal valid against the
+		// declared `returns`.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return { issues: [], nextPageToken: null };
 
-		const result = await ctx.db
-			.query("issues")
-			.filter((q) => {
-				let expr = q.neq(q.field("externalRepo"), undefined);
-				if (args.prStatus !== undefined) {
-					expr = q.and(expr, q.eq(q.field("prStatus"), args.prStatus));
-				}
-				return expr;
-			})
-			.paginate({ numItems, cursor: args.paginationToken ?? null });
-
-		return {
-			issues: result.page.map((i) => ({
-				_id: i._id,
-				_creationTime: i._creationTime,
-				repo: i.repo,
-				issueNumber: i.issueNumber,
-				title: i.title,
-				status: i.status,
-				externalRepo: i.externalRepo,
-				externalIssueUrl: i.externalIssueUrl,
-				prUrl: i.prUrl,
-				prStatus: i.prStatus as string | undefined,
-				assignedOrchestrator: i.assignedOrchestrator,
-			})),
-			nextPageToken: result.isDone ? null : result.continueCursor,
-		};
+		return await readExternalOpen(ctx, args);
 	},
 });

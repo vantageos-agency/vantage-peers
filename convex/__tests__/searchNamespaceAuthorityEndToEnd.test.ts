@@ -317,3 +317,107 @@ for (const { name, ref } of SEARCH_ACTIONS) {
 		});
 	});
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// search:searchFixPatterns — the FOURTH search action, and the one this suite
+// did not cover, because it is the only one that takes NO `namespace` argument.
+//
+// THAT ABSENCE IS WHY IT WAS MISSED, and it is the finding worth keeping: the
+// three actions above were fixed because they accepted a caller-supplied
+// namespace, an obvious thing to distrust. This one hardcoded
+// `namespace: "fixpatterns"` and resolved no identity at all, so there was
+// nothing caller-supplied to look suspicious — and a constant in place of a
+// resolved value is not an authorisation. Any control whose population is
+// "registrations taking a tenant-shaped argument" is blind to this shape by
+// construction.
+//
+// It now calls the SAME `resolveSearchNamespace` gate with the constant as the
+// requested namespace, so the existing rule decides it with no new branch:
+// master gets "fixpatterns"; a verified org is refused because "fixpatterns" is
+// not inside its own `team/<slug>` subtree (the same decision already taken for
+// the fleet-common `global`); no verified organisation is refused.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A real fixPatterns row, so the hydration step returns a genuine document. */
+async function seedFixPatternKey(
+	t: ReturnType<typeof createT>,
+): Promise<string> {
+	return await t.run(async (ctx) => {
+		const id = await ctx.db.insert("fixPatterns", {
+			symptom: "a fleet fix pattern",
+			rootCause: "root cause",
+			tags: [],
+			stack: [],
+			sourceProject: "vantage-peers",
+			createdBy: "sigma",
+			severity: "major",
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		});
+		return id as string;
+	});
+}
+
+describe("search:searchFixPatterns — a CONSTANT namespace is not an authorisation", () => {
+	// DENY POLE 1 — anonymous, no credential at all. No searcher is installed:
+	// were the guard absent, the real keyless RAG client would be built and this
+	// would throw rather than return [], which is itself a failed assertion.
+	test("an anonymous caller (no credential at all) gets an empty result, never rows", async () => {
+		const t = createT();
+
+		const rows = await t.action(api.search.searchFixPatterns, {
+			query: "anything",
+		});
+
+		expect(rows).toEqual([]);
+		expect(searchedNamespaces).toEqual([]);
+	});
+
+	test("a signed-in caller with NO verified organisation gets an empty result, never rows", async () => {
+		const t = createT();
+
+		const rows = await asNoOrg(t).action(api.search.searchFixPatterns, {
+			query: "anything",
+		});
+
+		expect(rows).toEqual([]);
+		expect(searchedNamespaces).toEqual([]);
+	});
+
+	// DENY POLE 2 — the pole that matters most here, and the one an
+	// "is-anyone-signed-in" guard would fail: an ORDINARY member of an ACTIVE
+	// organisation. The RAG backend must never even be ASKED for "fixpatterns",
+	// which is asserted on searchedNamespaces rather than only on the rows.
+	test("an ORDINARY member of an ACTIVE organisation never reaches the fleet-wide `fixpatterns` namespace", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-a");
+		installObservingSearcher(await seedFixPatternKey(t));
+
+		const rows = await asOrgMember(t, ORDINARY_A, "org-a").action(
+			api.search.searchFixPatterns,
+			{ query: "anything" },
+		);
+
+		expect(searchedNamespaces).not.toContain("fixpatterns");
+		expect(searchedNamespaces).toEqual([]);
+		expect(rows).toEqual([]);
+	});
+
+	// MASTER REGRESSION POLE — the WITHHELD GRANT direction. The fleet's own
+	// caller must still search "fixpatterns" and still receive the hydrated row;
+	// a guard that refuses everyone is not a fix, it only looks like one.
+	test("ALLOW pole — master (the by-id service-account carve-out) still searches `fixpatterns` and receives the hydrated row", async () => {
+		const t = createT();
+		installObservingSearcher(await seedFixPatternKey(t));
+
+		const rows = await asMaster(t).action(api.search.searchFixPatterns, {
+			query: "anything",
+		});
+
+		expect(searchedNamespaces).toEqual(["fixpatterns"]);
+		expect(rows).toHaveLength(1);
+		expect((rows as Array<{ symptom: string }>)[0].symptom).toBe(
+			"a fleet fix pattern",
+		);
+	});
+});

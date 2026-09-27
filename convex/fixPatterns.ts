@@ -348,6 +348,17 @@ export const listAll = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// Fail-closed READ counterpart of this file's own master-only WRITE gate
+		// (`requireFleetMaster` above). Measured against LIVE production at commit
+		// bd8c60e9: 50 rows served to a caller presenting NO CREDENTIAL AT ALL —
+		// no identity was consulted at any point. `fixPatterns` carries no
+		// orgId/tenant column, so the read admits exactly what the write admits:
+		// master, nobody else (an ordinary member of an active org included).
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ, and a throw crashes the subscriber's render (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return [];
+
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan ? FIX_PATTERNS_LIST_ALL_SCAN_CAP + 1 : limit;

@@ -39,6 +39,7 @@ import {
 	internalQuery,
 	query,
 } from "./_generated/server";
+import { withOrgScope } from "./lib/auth";
 
 // Admin-config table (filter rules), not tenant data — 500 active rows is a
 // generous bound for the idempotency dedup scan below; the authoritative
@@ -647,6 +648,20 @@ export const listFilterRules = query({
 		}),
 	),
 	handler: async (ctx) => {
+		// Fail-closed READ. Measured against LIVE production at commit bd8c60e9:
+		// 15 rows served to a caller presenting NO CREDENTIAL AT ALL — no identity
+		// was consulted. Every WRITE on this table is already an
+		// `internalMutation` (addFilterRule/disableFilterRule/dedupeFilterRules
+		// above), i.e. structurally unreachable from `api.*`; this READ was the
+		// only public door and it had no lock. `errorMonitorFilterRules` carries
+		// no orgId column — it configures the fleet's own noise filtering, which
+		// also discloses which internal functions fail often enough to need
+		// silencing. Master only, exactly as the writes are internal only.
+		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
+		// READ, and a throw crashes the subscriber's render (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!scope.isMaster) return [];
+
 		return await ctx.db
 			.query("errorMonitorFilterRules")
 			.order("desc")

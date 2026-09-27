@@ -28,6 +28,28 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLEET_IDENTITY — task k173wwv743mkvrn4qr7ap0qrps8f6d6k.
+//
+// The read(s) this suite drives were measured against LIVE production at commit
+// bd8c60e9 serving real rows to a caller presenting NO CREDENTIAL AT ALL, and are
+// now refused for any caller that is not the verified fleet master (these tables
+// carry no orgId column) or, where the rows name an orchestrator, any caller
+// outside its own roster. This suite asserts PAGINATION/ENVELOPE behaviour, not
+// authorisation: nothing it checks has changed, so it now presents the identity
+// its subject is actually for — the MCP server's own Clerk service-account
+// subject, which withOrgScope resolves to master by id
+// (CLERK_SERVICE_ACCOUNT_USER_ID, set in vitest.config.ts).
+//
+// This is NOT a weakened assertion: the DENY poles for these same reads — an
+// anonymous caller, a signed-in caller with no organisation, and an ORDINARY
+// member of an active organisation — are pinned in
+// convex/__tests__/publicRegistrationResolvesCaller.test.ts, where deleting any
+// guard turns them red.
+// ─────────────────────────────────────────────────────────────────────────────
+const FLEET_IDENTITY = { subject: "test-service-account-user-id" };
+
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
 		([path]) =>
@@ -72,7 +94,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 		});
 		// T-GREEN must change returns shape to { items: row[], nextCursor: string | null }
 		// and default limit to 20. Current impl returns a flat array with limit=50 → FAIL.
-		const result = await t.query(api.githubRepoMapping.list, {});
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, {});
 		expect(result).toHaveProperty("items");
 		expect(result).toHaveProperty("nextCursor");
 		const { items, nextCursor } = result as {
@@ -94,7 +116,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 				);
 			}
 		});
-		const result = await t.query(api.githubRepoMapping.list, { limit: 5 });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, { limit: 5 });
 		expect(result).toHaveProperty("items");
 		expect(result).toHaveProperty("nextCursor");
 		const { items, nextCursor } = result as {
@@ -112,7 +134,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 		let threw = false;
 		let result: unknown;
 		try {
-			result = await t.query(api.githubRepoMapping.list, { limit: 250 });
+			result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, { limit: 250 });
 		} catch {
 			threw = true;
 		}
@@ -143,7 +165,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 				);
 			}
 		});
-		const result = await t.query(api.githubRepoMapping.list, { fields: "lite" });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, { fields: "lite" });
 		expect(result).toHaveProperty("items");
 		const { items } = result as { items: Record<string, unknown>[] };
 		expect(items.length).toBeGreaterThan(0);
@@ -172,7 +194,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 				}),
 			);
 		});
-		const result = await t.query(api.githubRepoMapping.list, { fields: "full" });
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, { fields: "full" });
 		expect(result).toHaveProperty("items");
 		const { items } = result as { items: Record<string, unknown>[] };
 		expect(items.length).toBe(1);
@@ -199,7 +221,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 			}
 		});
 		// First page
-		const page1 = await t.query(api.githubRepoMapping.list, { limit: 5 });
+		const page1 = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, { limit: 5 });
 		expect(page1).toHaveProperty("items");
 		expect(page1).toHaveProperty("nextCursor");
 		const { items: items1, nextCursor: cursor1 } = page1 as {
@@ -211,7 +233,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 		if (cursor1 === null) throw new Error("cursor1 must not be null");
 
 		// Second page using opaque cursor from first page
-		const page2 = await t.query(api.githubRepoMapping.list, {
+		const page2 = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, {
 			limit: 5,
 			cursor: cursor1,
 		});
@@ -234,7 +256,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 		const t = convexTest(schema, modules);
 		// No rows — empty table test.
 		// T-GREEN must return envelope shape even for empty results.
-		const result = await t.query(api.githubRepoMapping.list, {
+		const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.githubRepoMapping.list, {
 			limit: 10,
 			fields: "lite",
 		});
@@ -258,7 +280,7 @@ describe("list_repo_mappings envelope safety (PR-C RED)", () => {
 				);
 			}
 		});
-		const result2 = await t2.query(api.githubRepoMapping.list, {
+		const result2 = await t2.withIdentity(FLEET_IDENTITY as Parameters<typeof t2.withIdentity>[0]).query(api.githubRepoMapping.list, {
 			limit: 3,
 			fields: "lite",
 		});
