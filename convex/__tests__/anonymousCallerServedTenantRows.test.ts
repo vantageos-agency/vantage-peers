@@ -456,13 +456,19 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 			type: "reference",
 		});
 
+		// The MESSAGE is asserted, not merely "it threw". Both refusal branches in
+		// assertScopeAuthorizesOrg deny this call (an anonymous caller has
+		// orgSlug === null, which also fails the cross-org compare), so asserting
+		// only `.rejects.toThrow()` leaves the no-organisation branch unpinned —
+		// deleting it still went GREEN under mutation until this assertion named
+		// the branch it is actually testing.
 		await expect(
 			t.action(api.kb.softDeleteDocument, {
 				docId: "doc-1",
 				orgId: "org-a",
 				namespace: "team/org-a",
 			}),
-		).rejects.toThrow();
+		).rejects.toThrow("caller has no verified organisation");
 
 		// The chunk is untouched — still isLatest.
 		const rows = await t.run(async (ctx) =>
@@ -485,7 +491,9 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 				orgId: "org-b",
 				namespace: "team/org-b",
 			}),
-		).rejects.toThrow();
+		).rejects.toThrow(
+			'verified organisation "org-a" may not act on claimed org "org-b"',
+		);
 
 		const rows = await t.run(async (ctx) =>
 			ctx.db.query("memories").collect(),
