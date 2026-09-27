@@ -91,8 +91,8 @@ describe("instantiateTemplateIntoMission", () => {
 		expect(count).toBe(2);
 		expect(taskIds).toHaveLength(2);
 
-		const taskA = await t.query(api.tasks.get, { taskId: taskIds[0] });
-		const taskB = await t.query(api.tasks.get, { taskId: taskIds[1] });
+		const taskA = await asMaster(t).query(api.tasks.get, { taskId: taskIds[0] });
+		const taskB = await asMaster(t).query(api.tasks.get, { taskId: taskIds[1] });
 
 		expect(taskA?.assignedTo).toBe("proxima");
 		expect(taskB?.assignedTo).toBe("verify");
@@ -113,8 +113,8 @@ describe("instantiateTemplateIntoMission", () => {
 			{ templateName: "no-assigned", missionId },
 		);
 
-		const taskA = await t.query(api.tasks.get, { taskId: taskIds[0] });
-		const taskB = await t.query(api.tasks.get, { taskId: taskIds[1] });
+		const taskA = await asMaster(t).query(api.tasks.get, { taskId: taskIds[0] });
+		const taskB = await asMaster(t).query(api.tasks.get, { taskId: taskIds[1] });
 
 		expect(taskA?.assignedTo).toBe("proxima");
 		expect(taskB?.assignedTo).toBe("sigma"); // fallback to pilot
@@ -147,7 +147,7 @@ describe("instantiateTemplateIntoMission", () => {
 
 		expect(count).toBe(3);
 		for (const taskId of taskIds) {
-			const task = await t.query(api.tasks.get, { taskId });
+			const task = await asMaster(t).query(api.tasks.get, { taskId });
 			expect(task?.assignedTo).toBe("tau");
 		}
 	});
@@ -168,7 +168,7 @@ describe("instantiateTemplateIntoMission", () => {
 			{ templateName: "with-deps", missionId },
 		);
 
-		const task2 = await t.query(api.tasks.get, { taskId: taskIds[2] });
+		const task2 = await asMaster(t).query(api.tasks.get, { taskId: taskIds[2] });
 		expect(task2?.dependsOn).toEqual([taskIds[0], taskIds[1]]);
 	});
 

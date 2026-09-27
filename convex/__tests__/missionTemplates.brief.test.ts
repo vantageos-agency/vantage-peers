@@ -84,7 +84,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			missionId,
 		});
 
-		const mission = await t.query(api.missions.get, {
+		const mission = await asMaster(t).query(api.missions.get, {
 			missionId: missionId as unknown as string,
 		});
 		expect(mission?.brief).toBe(
@@ -111,7 +111,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			missionId,
 		});
 
-		const mission = await t.query(api.missions.get, {
+		const mission = await asMaster(t).query(api.missions.get, {
 			missionId: missionId as unknown as string,
 		});
 		expect(mission?.pilot).toBe("sigma");
@@ -139,7 +139,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			missionId,
 		});
 
-		const mission = await t.query(api.missions.get, {
+		const mission = await asMaster(t).query(api.missions.get, {
 			missionId: missionId as unknown as string,
 		});
 		expect(mission?.brief).toBe(
@@ -163,7 +163,7 @@ describe("missionTemplates.brief — instantiation carries the template brief", 
 			missionId,
 		});
 
-		const mission = await t.query(api.missions.get, {
+		const mission = await asMaster(t).query(api.missions.get, {
 			missionId: missionId as unknown as string,
 		});
 		expect(mission?.brief).toBeUndefined();

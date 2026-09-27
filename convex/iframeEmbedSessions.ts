@@ -130,6 +130,33 @@ export const getSession = query({
 			return null;
 		}
 
+		// RESOURCE-ID class (the remaining hole in this module): `sessionId` is an
+		// OPAQUE TOKEN indexing exactly one row, and this READ returned that row to
+		// anyone holding or guessing the token — including another tenant's session,
+		// with its `tenantId`, `origin` and `userId`. touchSession/revokeSession
+		// below already check the STORED `tenantId` against the caller's own
+		// resolved scope through `isTenantAllowedForScope`; a READ more permissive
+		// than the WRITE beside it, on the identical row, is the hole. The read now
+		// joins that SAME helper — no second authority is introduced.
+		//
+		// A row with NO `tenantId` is therefore MASTER-ONLY here, which is
+		// deliberate and is exactly what the two writes already decide for it: this
+		// table's rows are stamped with the caller's own org at create
+		// (createSession forces `tenantId = scope.orgSlug` for a non-master caller),
+		// so an unstamped row is a master-created one and has no tenant to match.
+		// That differs from tasks/missions, whose create path stamps no org at all —
+		// see isRowVisibleToScope in convex/lib/auth.ts for why absence falls back
+		// to the roster THERE and denies HERE.
+		//
+		// refuseWithoutThrow: this is a reactively-subscribed public read, so a
+		// signed-in caller with no organisation yet receives the same typed null as
+		// a denied one rather than a throw that crashes the subscriber's render
+		// (R-50/R-51). The two WRITES keep throwing — unchanged.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!isTenantAllowedForScope(scope, session.tenantId)) {
+			return null;
+		}
+
 		return session;
 	},
 });

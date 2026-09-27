@@ -30,7 +30,17 @@ function createT() {
 // CLERK_SERVICE_ACCOUNT_USER_ID allowlist, set in vitest.config.ts as
 // "test-service-account-user-id"), never the anonymous default. The
 // cross-tenant / anonymous-refusal poles live in
-// convex/__tests__/iframeEmbedSessionsWriteScope.test.ts.
+// convex/__tests__/iframeEmbedSessionsWriteScope.test.ts and
+// convex/__tests__/resourceIdOrgScopeRead.test.ts.
+//
+// Every `getSession` read below now goes through `tMaster` rather than the bare
+// `t`. That is NOT a weakening of this suite — it is the correction of an
+// oversight the suite's own header already contradicted: `createSession`/
+// `touchSession`/`revokeSession` were always called as master while the READS
+// beside them were left anonymous, which only "worked" because `getSession` had
+// no authorisation at all. Now that it derives authority from the target row's
+// own tenant (RESOURCE-ID class), an anonymous read returns null, and the two
+// `toBeNull()` cases here would have started passing for the WRONG reason.
 function asMaster(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "test-service-account-user-id",
@@ -56,7 +66,7 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 			expiresAt: NOW + ONE_HOUR,
 		});
 
-		const session = await t.query(api.iframeEmbedSessions.getSession, {
+		const session = await tMaster.query(api.iframeEmbedSessions.getSession, {
 			sessionId: "sess-001",
 		});
 
@@ -81,7 +91,7 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 			expiresAt: NOW + ONE_HOUR,
 		});
 
-		const session = await t.query(api.iframeEmbedSessions.getSession, {
+		const session = await tMaster.query(api.iframeEmbedSessions.getSession, {
 			sessionId: "sess-002",
 		});
 
@@ -91,7 +101,8 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 
 	test("getSession returns null for unknown sessionId", async () => {
 		const t = createT();
-		const session = await t.query(api.iframeEmbedSessions.getSession, {
+		const tMaster = asMaster(t);
+		const session = await tMaster.query(api.iframeEmbedSessions.getSession, {
 			sessionId: "nonexistent",
 		});
 		expect(session).toBeNull();
@@ -108,7 +119,7 @@ describe("iframeEmbedSessions: createSession + getSession", () => {
 			expiresAt: NOW - 1, // already expired
 		});
 
-		const session = await t.query(api.iframeEmbedSessions.getSession, {
+		const session = await tMaster.query(api.iframeEmbedSessions.getSession, {
 			sessionId: "sess-expired",
 		});
 		expect(session).toBeNull();
@@ -139,7 +150,7 @@ describe("iframeEmbedSessions: touchSession", () => {
 		});
 		expect(result).toBe(true);
 
-		const session = await t.query(api.iframeEmbedSessions.getSession, {
+		const session = await tMaster.query(api.iframeEmbedSessions.getSession, {
 			sessionId: "sess-touch",
 		});
 		expect(session?.lastSeenAt).toBe(LATER);
@@ -177,7 +188,7 @@ describe("iframeEmbedSessions: revokeSession", () => {
 		expect(revoked).toBe(true);
 
 		// getSession must return null for revoked sessions
-		const session = await t.query(api.iframeEmbedSessions.getSession, {
+		const session = await tMaster.query(api.iframeEmbedSessions.getSession, {
 			sessionId: "sess-revoke",
 		});
 		expect(session).toBeNull();

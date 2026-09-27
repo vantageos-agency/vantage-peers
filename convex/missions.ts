@@ -4,7 +4,12 @@ import { mutation, query, internalQuery } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
-import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import {
+	withOrgScope,
+	filterByOrgScope,
+	isRowVisibleToScope,
+	requireScope,
+} from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
 
@@ -224,7 +229,18 @@ export const get = query({
 			"missionId",
 			"Use the full 32-char missionId returned by list_missions or create_mission.",
 		);
-		return await ctx.db.get(missionId);
+		const mission = await ctx.db.get(missionId);
+		if (mission === null) return null;
+		// RESOURCE-ID class — the authorisation is derived from the TARGET ROW's
+		// own organisation (its `orgId`, falling back to the `pilot`-roster control
+		// `runMissionsList` above already applies for rows that state none), never
+		// from an argument and never from the mere existence of a caller
+		// organisation. See isRowVisibleToScope in convex/lib/auth.ts.
+		// refuseWithoutThrow: a reactively-subscribed public read refuses with a
+		// typed null rather than a throw (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!isRowVisibleToScope(scope, mission)) return null;
+		return mission;
 	},
 });
 

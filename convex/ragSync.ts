@@ -1,7 +1,7 @@
 "use node";
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
-import { rag } from "./search";
+import { getRag } from "./search";
 import { memoryTypeValidator } from "./schema";
 
 // RAG namespace for fix patterns — keeps them separate from memories
@@ -29,7 +29,7 @@ export const addRagEntry = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await rag.add(ctx, {
+    await getRag().add(ctx, {
       namespace: args.namespace,
       key: args.memoryId,
       text: args.content,
@@ -63,7 +63,7 @@ export const addFixPatternRagEntry = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await rag.add(ctx, {
+    await getRag().add(ctx, {
       namespace: FIX_PATTERNS_NAMESPACE,
       key: args.patternId,
       text: args.content,
@@ -95,7 +95,7 @@ export const markRagEntrySuperseded = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await rag.add(ctx, {
+    await getRag().add(ctx, {
       namespace: args.namespace,
       key: args.memoryId,
       text: args.content,

@@ -317,6 +317,86 @@ export function filterByOrgScope<
 	});
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// isRowVisibleToScope — the RESOURCE-ID class of read.
+//
+// THE CLASS THIS CLOSES. `filterByOrgScope` above governs COLLECTION reads: the
+// handler already holds many rows and drops the ones outside the caller's
+// roster. A different shape had no control at all — a public read that takes an
+// OPAQUE HANDLE (a `v.id(...)`, or a token that indexes to exactly one row) and
+// returns that row. There is no org argument in the request to distrust, so the
+// question is not "does this caller have an organisation" but "does THIS ROW
+// belong to the caller's organisation". Sites: convex/tasks.ts::get,
+// convex/tasks.ts::getById, convex/missions.ts::get. (convex/iframeEmbedSessions
+// .ts::getSession is the same class but keeps its own module-local
+// `isTenantAllowedForScope`, because that module's rows carry `tenantId` rather
+// than `orgId`/`pilot`/`assignedTo` and its WRITES already enforce exactly that
+// helper — the read joins the existing authority there rather than adding one.)
+//
+// THE ORDER OF THE THREE LEGS, and why each is what it is:
+//
+//  1. master -> visible. The fleet's own callers (withOrgScope's named by-id
+//     service-account carve-out / the explicit internal opt-in) are unchanged.
+//
+//  2. no verified organisation -> NOT visible. Covers both the anonymous
+//     (no-credential) scope and the `refuseWithoutThrow` refused scope, which
+//     withOrgScope returns in the identical `orgSlug === null` shape.
+//
+//  3. the row STATES an `orgId` that differs from the caller's own resolved org
+//     -> NOT visible. This is the cross-tenant pole and it is a hard deny; it
+//     mirrors the `qb.eq("orgId", scope.orgSlug)` filter convex/tasks.ts's
+//     search path already applies.
+//
+//  4. the row states NO `orgId` -> it is NOT granted by that absence. It must
+//     still pass `filterByOrgScope`, the orchestrator-roster control that IS the
+//     authority the COLLECTION reads of these same tables apply today
+//     (`runTasksList`, `runMissionsList`).
+//
+// WHY LEG 4 DEFERS TO THE ROSTER RATHER THAN DENYING FLATLY — decided
+// explicitly, because "a row with no organisation field" is its own case and a
+// silent fall-through either way would be the defect. `tasks.create` accepts no
+// `orgId` argument and `insertTask` stamps none, so EVERY task created through
+// the public path has `orgId === undefined`. Denying on absence would make the
+// whole table unreadable through `get` for every ordinary org-scoped caller
+// while it stayed visible through `list` — a WITHHELD GRANT across the table,
+// which is as much a defect as a leak. Deferring to the roster makes the
+// single-row read admit EXACTLY what the collection read admits: no new grant,
+// and no lost one.
+//
+// NOT CLOSED BY THIS HELPER, and named rather than implied: because neither
+// `tasks.create` nor `missions.create` stamps `orgId`, leg 3 is inert for
+// newly-created rows and leg 4 carries them. Two orgs whose
+// `client_org_mapping.allowedOrchestrators` rosters overlap on the same
+// orchestrator name can still reach each other's orgId-less rows through leg 4 —
+// exactly as they already can through `list`. That is a WRITE-PATH gap (the row
+// is never stamped with its tenant at all), pre-existing and untouched here.
+// Closing it means deriving `orgId` from the verified scope at create time on
+// both tables plus a backfill.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Is a SINGLE row, fetched by an opaque handle, visible to this scope?
+ *
+ * See the block comment above for the four legs and for the explicit decision
+ * on a row that carries no `orgId`. Returns a boolean rather than throwing: the
+ * call sites are reactively-subscribed public READS, which refuse with a typed
+ * `null` because a throw crashes the subscriber's render (R-50/R-51). A chosen
+ * imperative WRITE still throws — see `iframeEmbedSessions.touchSession`.
+ */
+export function isRowVisibleToScope(
+	scope: OrgScope,
+	row: { orgId?: string; pilot?: string; assignedTo?: string },
+): boolean {
+	// Leg 1 — master, unchanged.
+	if (scope.isMaster) return true;
+	// Leg 2 — no verified organisation (anonymous OR refused).
+	if (scope.orgSlug === null) return false;
+	// Leg 3 — the row names a DIFFERENT organisation. Hard deny.
+	if (row.orgId !== undefined && row.orgId !== scope.orgSlug) return false;
+	// Leg 4 — no stated organisation: the roster still has to admit it.
+	return filterByOrgScope([row], scope).length === 1;
+}
+
 /**
  * requireOrgAdmin — D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr).
  *

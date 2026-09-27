@@ -744,7 +744,13 @@ http.route({
 			return Response.json({ valid: false, reason: "missing-fields" });
 		}
 
-		const task = await ctx.runQuery(api.tasks.getById, {
+		// internal.tasks.getByIdForWebhook, not api.tasks.getById: this endpoint
+		// authenticates against BEARER_SECRET_MASTER above and has no Clerk
+		// identity, so the public read's org gate (which derives authorisation from
+		// the target row's own organisation) resolves the anonymous fail-closed
+		// scope and returns null for every task. Same split as
+		// tasks.listForWebhook / missions.listForWebhook.
+		const task = await ctx.runQuery(internal.tasks.getByIdForWebhook, {
 			taskId: taskId as Id<"tasks">,
 		});
 		if (!task) {

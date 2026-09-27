@@ -125,7 +125,15 @@ describe("tasks.complete issue-auto-link -- githubRepoMapping read is project-bo
 				completionNote: "Fixed via PR #9999 -- fictitious fixture",
 			});
 
-		const done = await t.query(api.tasks.get, { taskId });
+		// The read-back goes through the SAME master identity the mutation above
+		// used. `tasks.get` now derives its authorisation from the target row's own
+		// organisation (RESOURCE-ID class, convex/lib/auth.ts's
+		// isRowVisibleToScope), so a bare anonymous read-back would return null and
+		// this assertion would be measuring the guard rather than the document-read
+		// bound it exists to measure.
+		const done = await t
+			.withIdentity({ subject: "test-service-account-user-id" })
+			.query(api.tasks.get, { taskId });
 		expect(done?.status).toBe("done");
 	});
 });

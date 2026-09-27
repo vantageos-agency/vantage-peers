@@ -9,6 +9,7 @@ import { creatorValidator, taskOriginValidator } from "./schema";
 import {
 	withOrgScope,
 	filterByOrgScope,
+	isRowVisibleToScope,
 	requireScope,
 	requireAgentCredentialMatch,
 } from "./lib/auth";
@@ -601,7 +602,19 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		return await ctx.db.get(args.taskId);
+		const task = await ctx.db.get(args.taskId);
+		if (task === null) return null;
+		// RESOURCE-ID class — the authorisation is derived from the TARGET ROW's
+		// own organisation, not from any argument (there is none to distrust here)
+		// and not from the mere existence of a caller organisation. See
+		// isRowVisibleToScope in convex/lib/auth.ts for the four legs and for the
+		// explicit decision on a row carrying no orgId. refuseWithoutThrow: this
+		// is a reactively-subscribed public read, so a signed-in caller with no
+		// organisation yet gets the same typed null as a denied one rather than a
+		// throw that would crash the subscriber's render (R-50/R-51).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!isRowVisibleToScope(scope, task)) return null;
+		return task;
 	},
 });
 
@@ -706,6 +719,44 @@ export const getById = query({
 			"Use the full 32-char taskId returned by list_tasks or create_task.",
 		);
 		// A well-formed tasks ID pointing at a deleted doc stays a null return.
+		const task = await ctx.db.get(taskId);
+		if (task === null) return null;
+		// RESOURCE-ID class — same control as `get` above, same helper, same
+		// single identity layer. This site is also the one the inventory script
+		// used to DROP: its args window was cut at the word "handler" inside the
+		// comment above `args`, so it matched no org-shaped field and never
+		// appeared in the count (scripts/check-public-fn-org-arg-identity.py).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (!isRowVisibleToScope(scope, task)) return null;
+		return task;
+	},
+});
+
+// Internal-only mirror of `getById`, used exclusively by convex/http.ts's
+// `/api/eta/verify-publish-token` endpoint — the SAME split as
+// `list`/`listForWebhook` and `create`/`createForWebhook` above, for the same
+// reason. That endpoint authenticates with a timing-safe comparison against
+// `BEARER_SECRET_MASTER` and runs as an `httpAction`, so it has NO Clerk
+// identity for `withOrgScope` to resolve: routing it through the public
+// `getById` (now gated on the target row's own organisation) resolved the
+// anonymous fail-closed scope and turned every legitimate verification into
+// `task-not-found`. `internal.*` functions are never exposed under `api.*` — no
+// MCP tool, dashboard route or direct Convex client call can reach this, which
+// is the STRUCTURAL (not disciplinary) guard this repo requires for a
+// genuinely fleet-internal surface. Callers enumerated by command, not assumed:
+//   grep -rn "tasks.getByIdForWebhook" convex/ mcp-server/src/
+// returns this definition and the single convex/http.ts call site.
+export const getByIdForWebhook = internalQuery({
+	args: { taskId: v.string() },
+	returns: v.union(taskFullValidator, v.null()),
+	handler: async (ctx, args) => {
+		const taskId = requireId(
+			ctx,
+			"tasks",
+			args.taskId,
+			"taskId",
+			"Use the full 32-char taskId returned by list_tasks or create_task.",
+		);
 		return await ctx.db.get(taskId);
 	},
 });

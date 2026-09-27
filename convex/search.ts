@@ -30,13 +30,99 @@ import { memoryTypeValidator } from "./schema";
 //            is superseded via storeMemory with an "updates" relation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const gateway = getAITextEmbeddingProvider();
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THE CLIENT IS BUILT LAZILY, AND WHAT THE TEST SEAM CANNOT DO.
+//
+// This module used to build its RAG client at MODULE LOAD:
+//   const gateway = getAITextEmbeddingProvider();   // reads AI_GATEWAY_API_KEY
+//   export const rag = new RAG(components.rag, {...});
+// which THROWS without a live embedding key. Every convex-test suite in this
+// repo therefore excluded `search` from its `import.meta.glob` (see the
+// identical exclusion comments in anonymousCallerServedTenantRows.test.ts,
+// client-scope-global-namespace.test.ts, kb-ingest.test.ts) — so the authority
+// gate below (`resolveSearchNamespace`) had NO end-to-end assertion at all: its
+// only gate was `tsc` and a careful read. That is what
+// convex/__tests__/searchNamespaceAuthorityEndToEnd.test.ts now closes.
+//
+// Building the client on FIRST USE instead makes the module importable with no
+// key present. Production behaviour is unchanged: the first `rag.add`/
+// `rag.search` still constructs exactly the same client from exactly the same
+// env vars, and still throws exactly the same clear error when no key is set —
+// one call later than before, never never.
+//
+// THE SEAM CANNOT BYPASS THE GUARD, for three independent reasons:
+//   1. `ragSearch` is reached ONLY AFTER `resolveSearchNamespace` has already
+//      returned a non-null namespace, and the namespace handed to it is the
+//      RESOLVED one. A substituted searcher receives a namespace the guard
+//      already authorised; it is downstream of the decision and cannot revisit
+//      it. It can observe what was searched — which is precisely what the test
+//      asserts — it cannot widen what may be searched.
+//   2. `__setRagSearcherForTests` is a plain module-local variable setter. It is
+//      NOT a Convex registration (not `query`/`mutation`/`action`, not exported
+//      through `api.*` or `internal.*`), so it is unreachable from the
+//      deployment's /api/query, /api/mutation and /api/action endpoints — the
+//      surface every leak in this class was measured on. No network caller can
+//      call it.
+//   3. It is never called from non-test code: `grep -rn
+//      "__setRagSearcherForTests" convex/ mcp-server/src/` returns only the
+//      definition here and the test file.
+// ─────────────────────────────────────────────────────────────────────────────
 
-export const rag = new RAG(components.rag, {
-	textEmbeddingModel: gateway.textEmbeddingModel(getEmbeddingModelName()),
-	embeddingDimension: 1536,
-	filterNames: ["namespace", "type", "isLatest"],
-});
+function buildRag() {
+	const gateway = getAITextEmbeddingProvider();
+	return new RAG(components.rag, {
+		textEmbeddingModel: gateway.textEmbeddingModel(getEmbeddingModelName()),
+		embeddingDimension: 1536,
+		filterNames: ["namespace", "type", "isLatest"],
+	});
+}
+
+type RagClient = ReturnType<typeof buildRag>;
+
+let ragInstance: RagClient | null = null;
+
+/**
+ * The RAG client, built on first use. Replaces the former module-load
+ * `export const rag` (see the block comment above); `convex/ragSync.ts` calls
+ * `getRag().add(...)` through this same accessor so there is one client, not
+ * two.
+ */
+export function getRag(): RagClient {
+	if (ragInstance === null) {
+		ragInstance = buildRag();
+	}
+	return ragInstance;
+}
+
+type RagSearchArgs = Parameters<RagClient["search"]>[1];
+type RagSearchResult = Awaited<ReturnType<RagClient["search"]>>;
+type RagSearcher = (
+	ctx: ActionCtx,
+	args: RagSearchArgs,
+) => Promise<RagSearchResult>;
+
+let ragSearcherOverride: RagSearcher | null = null;
+
+/**
+ * TEST SEAM — substitutes the search backend ONLY. See the block comment above
+ * for why this cannot bypass `resolveSearchNamespace`: it sits strictly
+ * downstream of the guard, it is not a Convex registration, and it is called
+ * from no non-test code. Pass `null` to restore the real client.
+ */
+export function __setRagSearcherForTests(searcher: RagSearcher | null): void {
+	ragSearcherOverride = searcher;
+}
+
+/** Every `rag.search` in this module goes through here. */
+function ragSearch(
+	ctx: ActionCtx,
+	args: RagSearchArgs,
+): Promise<RagSearchResult> {
+	if (ragSearcherOverride !== null) {
+		return ragSearcherOverride(ctx, args);
+	}
+	return getRag().search(ctx, args);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helper: build filter list for a recall/search call
@@ -153,7 +239,7 @@ export const recall = action({
 		const limit = args.limit ?? 10;
 		const scoreThreshold = args.scoreThreshold ?? 0.15;
 
-		const { results, entries } = await rag.search(ctx, {
+		const { results, entries } = await ragSearch(ctx, {
 			namespace: ns,
 			query: args.query,
 			searchType: "vector",
@@ -224,7 +310,7 @@ export const textSearch = action({
 
 		const limit = args.limit ?? 10;
 
-		const { results, entries } = await rag.search(ctx, {
+		const { results, entries } = await ragSearch(ctx, {
 			namespace: ns,
 			query: args.query,
 			searchType: "text",
@@ -288,7 +374,7 @@ export const hybridSearch = action({
 
 		const limit = args.limit ?? 10;
 
-		const searchArgs: Parameters<typeof rag.search>[1] = {
+		const searchArgs: RagSearchArgs = {
 			namespace: ns,
 			query: args.query,
 			searchType: "hybrid",
@@ -302,7 +388,7 @@ export const hybridSearch = action({
 			(searchArgs as Record<string, unknown>).textWeight = args.textWeight;
 		}
 
-		const { results, entries } = await rag.search(ctx, searchArgs);
+		const { results, entries } = await ragSearch(ctx, searchArgs);
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
 
@@ -359,7 +445,7 @@ export const searchFixPatterns = action({
 		const limit = args.limit ?? 10;
 		const scoreThreshold = args.scoreThreshold ?? 0.15;
 
-		const { results, entries } = await rag.search(ctx, {
+		const { results, entries } = await ragSearch(ctx, {
 			namespace: "fixpatterns",
 			query: args.query,
 			searchType: "vector",
