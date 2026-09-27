@@ -70,6 +70,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { type OrgScope, isRowVisibleToScope } from "../lib/auth";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -594,5 +595,81 @@ describe("iframeEmbedSessions:getSession — authorisation derived from the TARG
 				{ sessionId: "sess-expired" },
 			),
 		).toBeNull();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isRowVisibleToScope — the LEGS, observed one at a time.
+//
+// WHY THIS BLOCK EXISTS, stated plainly because it was added in response to a
+// SURVIVING MUTANT. Deleting leg 2 ("no verified organisation -> not visible")
+// left every end-to-end pole above GREEN. The reason is that no scope reachable
+// through the public surface has `orgSlug === null` together with a NON-EMPTY
+// `allowedOrchestrators`: withOrgScope's anonymous branch and its
+// `refuseWithoutThrow` refused branch both return an EMPTY roster, so leg 4
+// (`filterByOrgScope`) denied the row anyway and leg 2 was unobservable from
+// outside. Leg 2 is therefore genuine defence-in-depth rather than dead code —
+// a future synthesised non-master scope carrying a roster and no org (the exact
+// shape `listForWebhook` builds, saved there only by `isMaster: true`) would
+// otherwise be granted — and it is kept, with a pole that observes IT and
+// nothing else. Reported as survived before being tightened; it no longer
+// survives.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const scopeOf = (over: Partial<OrgScope>): OrgScope => ({
+	userId: "u",
+	orgSlug: "org-a",
+	allowedOrchestrators: ["sigma"],
+	scopes: [],
+	isMaster: false,
+	...over,
+});
+
+describe("isRowVisibleToScope — each leg observed alone", () => {
+	test("leg 2 alone — no verified organisation is refused even with a POPULATED roster", () => {
+		const scope = scopeOf({ orgSlug: null, allowedOrchestrators: ["sigma"] });
+		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(false);
+		expect(
+			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "sigma" }),
+		).toBe(false);
+	});
+
+	test("leg 3 alone — a row stating a DIFFERENT org is refused even when the roster admits it", () => {
+		const scope = scopeOf({});
+		expect(
+			isRowVisibleToScope(scope, { orgId: "org-b", assignedTo: "sigma" }),
+		).toBe(false);
+	});
+
+	test("leg 4 alone — a row stating the caller's OWN org is refused when the roster does not admit it", () => {
+		const scope = scopeOf({});
+		expect(
+			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "eta" }),
+		).toBe(false);
+	});
+
+	test("leg 4 alone — a row stating NO org is admitted only by the roster", () => {
+		const scope = scopeOf({});
+		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(true);
+		expect(isRowVisibleToScope(scope, { assignedTo: "eta" })).toBe(false);
+		// No orchestrator at all: filterByOrgScope's own pre-existing decision.
+		expect(isRowVisibleToScope(scope, {})).toBe(false);
+	});
+
+	test("leg 1 alone — master is admitted regardless of every other leg", () => {
+		const scope = scopeOf({
+			isMaster: true,
+			orgSlug: null,
+			allowedOrchestrators: [],
+		});
+		expect(
+			isRowVisibleToScope(scope, { orgId: "org-b", assignedTo: "eta" }),
+		).toBe(true);
+	});
+
+	test("ALLOW — the ordinary case: own org, own roster", () => {
+		expect(
+			isRowVisibleToScope(scopeOf({}), { orgId: "org-a", assignedTo: "sigma" }),
+		).toBe(true);
 	});
 });
