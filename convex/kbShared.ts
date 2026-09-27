@@ -54,3 +54,70 @@ export function assertOrgArgs(orgId: string, namespace: string): void {
 	}
 	void expectedPrefix; // consumed above
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORRECTION TO THE MODULE HEADER ABOVE (which is left in place as the record
+// of what this module used to believe).
+//
+// The header says: "ConvexHttpClient (server-http.ts:1437) never calls
+// setAuth, so ctx.auth.getUserIdentity() is always null over HTTP. Using
+// ctx.auth here produces a green-in-test / dead-in-prod bug."
+//
+// THAT PREMISE IS STALE and it is what made `assertOrgArgs` the ONLY gate on
+// the two public KB actions. It was true when written; it stopped being true
+// with the P0 fix of 2026-08-07 (see mcp-server/src/authenticatedConvexClient.ts,
+// `selectConvexClientForRequest`), after which the MCP server ALWAYS attaches
+// an identity — either the caller's own verified Clerk JWT, or its Clerk
+// service-account token. `convex/memories.ts` and `convex/episodes.ts` already
+// rely on that fact via a fail-closed `withOrgScope(ctx)`.
+//
+// WHY assertOrgArgs ALONE IS NOT AUTHORITY: it compares `orgId` against
+// `namespace` — TWO CALLER-SUPPLIED ARGUMENTS. A caller who sends
+// { orgId: "victim", namespace: "team/victim" } satisfies it perfectly. It
+// proves the request is internally consistent, never that the caller is who
+// it claims. `.claude/rules/authority-attached-to-anonymous-object.md`: the
+// authenticated principal's own claims are the ONLY permitted key. So
+// assertOrgArgs is kept as a SHAPE validator (it still usefully rejects
+// malformed namespaces and path confusion) and the function below adds the
+// missing authority join on top of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The verified-principal gate for the KB actions.
+ *
+ * `scope` MUST come from `internal.authScope.resolveOrgScopeForAction` (which
+ * is a thin adapter over `convex/lib/auth.ts`'s `withOrgScope`) — never from
+ * anything the caller sent. `claimedOrgId` is the caller-supplied `args.orgId`.
+ *
+ * NARROW ONLY, NEVER WIDEN (the "narrowing ceiling" language in
+ * authority-attached-to-anonymous-object.md): the caller may only ever confirm
+ * the org the principal already resolves to. A mismatch is a refusal, not a
+ * re-scope.
+ *
+ * Refuses BY THROW in every branch — both KB call sites are imperative WRITES
+ * (an ingest and a soft-delete), and a write refusal must never be softened
+ * into a typed empty value.
+ */
+export function assertScopeAuthorizesOrg(
+	scope: { isMaster: boolean; orgSlug: string | null; refused: boolean },
+	claimedOrgId: string,
+): void {
+	// Master (the fleet's own callers, via withOrgScope's named by-id
+	// service-account carve-out) keeps acting on any org — unchanged.
+	if (scope.isMaster) return;
+
+	if (scope.refused || scope.orgSlug === null) {
+		throw new Error(
+			"AUTH_NAMESPACE_DENIED: caller has no verified organisation — " +
+				"orgId is a caller-supplied argument and is never, by itself, " +
+				"authority to act on an organisation.",
+		);
+	}
+
+	if (scope.orgSlug !== claimedOrgId) {
+		throw new Error(
+			`AUTH_NAMESPACE_DENIED: caller's verified organisation "${scope.orgSlug}" ` +
+				`may not act on claimed org "${claimedOrgId}".`,
+		);
+	}
+}

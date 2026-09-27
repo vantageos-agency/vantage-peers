@@ -9,7 +9,13 @@
  *
  * Design:
  *   - A Clerk caller with organizationId = "org_A" may only access team/org_A/*.
- *   - No-identity callers (MCP/CLI deploy key) retain master access (isMaster=true).
+ *   - A caller with NO VERIFIED ORGANISATION is REFUSED. This line previously
+ *     read "No-identity callers (MCP/CLI deploy key) retain master access
+ *     (isMaster=true)" and that sentence WAS the production leak: an
+ *     unauthenticated POST to the deployment URL was served real tenant rows.
+ *     Master is now reachable only as withOrgScope defines it — the named
+ *     by-id CLERK_SERVICE_ACCOUNT_USER_ID carve-out, never inferred from the
+ *     mere ABSENCE of a credential. See resolveCallerOrgId below.
  *   - Unknown or unregistered orgs are FAIL-CLOSED (throw AUTH_NAMESPACE_DENIED).
  *
  * storeMemoryScoped  — enforced write: org_A cannot write to team/org_B.
@@ -17,8 +23,9 @@
  */
 
 import { v } from "convex/values";
-import type { DatabaseReader, MutationCtx, QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { type OrgScope, withOrgScope } from "./lib/auth";
 import {
 	creatorValidator,
 	memoryTypeValidator,
@@ -31,47 +38,69 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Resolves the Clerk identity's org_id. Returns null for no-identity callers
- * (MCP/CLI deploy key → master). Throws AUTH_NAMESPACE_DENIED for Clerk callers
- * whose org is unknown or inactive.
+ * Resolves the caller into an org id, or a REFUSAL. Fail-closed.
  *
- * Returns the caller's orgId string (for team/<orgId> prefix check) or null
- * (master: all namespaces allowed).
+ * THE DEFECT THIS REPLACES (measured against LIVE production): the previous
+ * `resolveOrgId` consulted `ctx.auth.getUserIdentity()` and then, on
+ * `!identity`, did `return null` -- and `null` is this module's MASTER
+ * sentinel ("all namespaces allowed", see assertNamespaceAllowed below). So a
+ * caller presenting NO CREDENTIAL AT ALL was promoted to master:
+ *
+ *   POST https://<deployment>.convex.cloud/api/query
+ *     {"path":"memoriesScoped:listMemoriesScoped","args":{"namespace":"global","limit":3}}
+ *       -> {"status":"success", 3 rows of real memory content}
+ *
+ * That is precisely the shape `.claude/rules/authority-attached-to-anonymous-
+ * object.md` names: the verified principal is computed and then DISCARDED in
+ * favour of a populated default. A signed-in caller with no org attached fell
+ * into the same `return null` master branch one line later. Note this site was
+ * NOT "no identity check" -- it HAD one and failed OPEN, which is why a
+ * scanner that only looks for the absence of a getUserIdentity call misses it.
+ *
+ * THE FIX -- reuse, do not invent. `withOrgScope` (convex/lib/auth.ts) already
+ * resolves the principal fail-closed, and already owns the ONLY legitimate
+ * master grants: the named by-id `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out and
+ * the explicit `allowNoIdentityMaster` opt-in (deliberately NOT passed here).
+ * A second identity layer in this module would itself be the defect, so this
+ * function is a thin adapter over withOrgScope, not a reimplementation.
+ *
+ * The live fleet path is unaffected: the MCP server ALWAYS attaches an
+ * identity now -- the caller's own verified Clerk JWT, or its Clerk
+ * service-account token which withOrgScope maps to master by id (see
+ * mcp-server/src/authenticatedConvexClient.ts, `selectConvexClientForRequest`,
+ * and the P0 fix of 2026-08-07 that made setAuth unconditional). Master
+ * callers keep byte-identical behaviour.
+ *
+ * `refuseWithoutThrow` is passed so the signed-in-no-org branch comes back as
+ * a typed refused scope rather than a throw; each call site below then chooses
+ * its OWN refusal shape (typed empty for the reactive read, throw for the
+ * imperative write). Every OTHER refusal withOrgScope makes -- unknown or
+ * inactive org -- still THROWS, and is re-labelled AUTH_NAMESPACE_DENIED here
+ * because that is this module's public error contract (pinned by
+ * convex/__tests__/auth-namespace-deny.test.ts). Re-labelling never downgrades
+ * a throw into a value.
  */
-async function resolveOrgId(ctx: QueryCtx | MutationCtx): Promise<string | null> {
-	const identity = await ctx.auth.getUserIdentity();
-
-	// No Clerk identity → master scope (MCP server / CLI / internal callers)
-	if (!identity) return null;
-
-	// Extract org_id across both claim casings — a Clerk-NATIVE session token
-	// (no custom JWT template) delivers snake_case `org_id`/`org_slug`, not
-	// camelCase `organizationId`/`organizationSlug` (IDENTITY-CLAIM CASING
-	// CLASS — mirrors withOrgScope in convex/lib/auth.ts).
-	const raw = identity as Record<string, unknown>;
-	const orgId =
-		(raw.organizationId as string | undefined) ??
-		(raw.org_id as string | undefined) ??
-		(raw.organizationSlug as string | undefined) ??
-		(raw.org_slug as string | undefined) ??
-		null;
-
-	// Clerk caller without an org → also master (Laurent / internal dev)
-	if (!orgId) return null;
-
-	// Verify the org is registered and active in client_org_mapping
-	const mapping = await (ctx.db as DatabaseReader)
-		.query("client_org_mapping")
-		.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgId))
-		.first();
-
-	if (!mapping?.isActive) {
+async function resolveCallerOrgId(
+	ctx: QueryCtx | MutationCtx,
+): Promise<{ orgId: string | null; refused: boolean }> {
+	let scope: OrgScope;
+	try {
+		scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+	} catch (err: unknown) {
 		throw new Error(
-			`AUTH_NAMESPACE_DENIED: org "${orgId}" is not registered or inactive`,
+			`AUTH_NAMESPACE_DENIED: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 
-	return orgId;
+	// Master keeps the null sentinel assertNamespaceAllowed reads as
+	// "unrestricted" -- unchanged for the fleet's own callers.
+	if (scope.isMaster) return { orgId: null, refused: false };
+
+	// No verified organisation: anonymous (no identity at all) OR signed in
+	// without an org. NEVER master. This is the branch that used to leak.
+	if (scope.orgSlug === null) return { orgId: null, refused: true };
+
+	return { orgId: scope.orgSlug, refused: false };
 }
 
 /**
@@ -127,8 +156,19 @@ export const storeMemoryScoped = mutation({
 	returns: v.id("memories"),
 	handler: async (ctx, args) => {
 		// ── Auth: resolve org and enforce team namespace boundary ──
-		const orgId = await resolveOrgId(ctx);
-		assertNamespaceAllowed(orgId, args.namespace);
+		// REFUSAL SHAPE -- THROW. This is a chosen, imperative WRITE: it has a
+		// call site to catch the refusal, and a write refusal must never be
+		// softened into a typed empty value (that would silently report success
+		// for a write that never happened).
+		const caller = await resolveCallerOrgId(ctx);
+		if (caller.refused) {
+			throw new Error(
+				"AUTH_NAMESPACE_DENIED: caller has no verified organisation — " +
+					"a write requires a verified org; an anonymous or org-less caller " +
+					"is never promoted to master.",
+			);
+		}
+		assertNamespaceAllowed(caller.orgId, args.namespace);
 
 		const now = Date.now();
 		const relations = args.relations ?? [];
@@ -201,8 +241,15 @@ export const listMemoriesScoped = query({
 	returns: v.array(memoryRowValidator),
 	handler: async (ctx, args) => {
 		// ── Auth: resolve org and enforce team namespace boundary ──
-		const orgId = await resolveOrgId(ctx);
-		assertNamespaceAllowed(orgId, args.namespace);
+		// REFUSAL SHAPE -- TYPED EMPTY for "no verified organisation": this is a
+		// reactively-subscribed public READ, and a query that throws crashes the
+		// subscribing client's render. Cross-tenant access by a caller who DOES
+		// have a verified org keeps THROWING AUTH_NAMESPACE_DENIED below -- that
+		// is an active boundary violation, not an ordinary unauthenticated state,
+		// and its contract is pinned by auth-namespace-deny.test.ts.
+		const caller = await resolveCallerOrgId(ctx);
+		if (caller.refused) return [];
+		assertNamespaceAllowed(caller.orgId, args.namespace);
 
 		const limit = args.limit ?? 50;
 		const { namespace, type } = args;

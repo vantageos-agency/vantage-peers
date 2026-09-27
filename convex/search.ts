@@ -1,7 +1,8 @@
 "use node";
 import { RAG } from "@convex-dev/rag";
 import { v } from "convex/values";
-import { api, components } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
+import type { ActionCtx } from "./_generated/server";
 import { action } from "./_generated/server";
 import {
 	getAITextEmbeddingProvider,
@@ -61,6 +62,62 @@ function buildFilters(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// resolveSearchNamespace — the authority gate for every RAG search below.
+//
+// THE DEFECT THIS CLOSES. These three actions took `namespace` from the CALLER
+// and passed it straight into `rag.search({ namespace, filters: buildFilters({
+// namespace, ... }) })`, with no identity resolved anywhere. That is a
+// cross-tenant read of the EMBEDDING INDEX: every tenant's vectors were one
+// string away, and the deployment's /api/action endpoint is reachable from the
+// open internet with no Authorization header at all.
+//
+// An action has no `ctx.db`, so it cannot call `withOrgScope` directly — that
+// is exactly how this surface came to derive its scope from an argument. The
+// bridge is `internal.lib.auth.resolveOrgScopeForAction` (see
+// convex/lib/auth.ts), which runs `withOrgScope` in a V8 query while Convex
+// propagates the caller's identity across `ctx.runQuery`, so the scope is
+// still derived from the VERIFIED principal.
+//
+// RESOLUTION, never acceptance. The returned namespace is the one actually
+// searched:
+//   - master (the fleet's own callers, via withOrgScope's named by-id
+//     service-account carve-out) -> the requested namespace, unchanged;
+//   - a verified org -> the requested namespace ONLY IF it lies inside that
+//     org's own `team/<slug>` subtree, otherwise REFUSED;
+//   - no verified organisation -> REFUSED.
+//
+// REFUSAL SHAPE — `null`, which every call site renders as the typed empty
+// array. These are READ surfaces (`recall`/`textSearch`/`hybridSearch` back
+// the MCP recall tools and are subscribed reactively through the dashboard),
+// so a refusal must not throw: an unauthenticated read returns nothing, it
+// does not crash the caller. Narrow only, never widen — a caller may confirm
+// its own subtree, never select another's.
+// ─────────────────────────────────────────────────────────────────────────────
+async function resolveSearchNamespace(
+	ctx: ActionCtx,
+	requestedNamespace: string | undefined,
+): Promise<string | null> {
+	const scope = await ctx.runQuery(
+		internal.lib.auth.resolveOrgScopeForAction,
+		{},
+	);
+
+	const requested = requestedNamespace ?? "global";
+
+	if (scope.isMaster) return requested;
+	if (scope.refused || scope.orgSlug === null) return null;
+
+	const ownPrefix = `team/${scope.orgSlug}`;
+	if (requested === ownPrefix || requested.startsWith(`${ownPrefix}/`)) {
+		return requested;
+	}
+	// AUTH_NAMESPACE_DENIED: a verified org asked for a namespace outside its
+	// own subtree (including the fleet-common `global`, which is not this
+	// tenant's data to read).
+	return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // recallResult shape — what all search functions return
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -87,16 +144,22 @@ export const recall = action({
 	},
 	returns: v.array(recallResultValidator),
 	handler: async (ctx, args) => {
+		// Authority gate — see resolveSearchNamespace above. A refused caller
+		// reads NOTHING; the namespace actually searched is the RESOLVED one,
+		// never the raw argument.
+		const ns = await resolveSearchNamespace(ctx, args.namespace);
+		if (ns === null) return [] as never;
+
 		const limit = args.limit ?? 10;
 		const scoreThreshold = args.scoreThreshold ?? 0.15;
 
 		const { results, entries } = await rag.search(ctx, {
-			namespace: args.namespace ?? "global",
+			namespace: ns,
 			query: args.query,
 			searchType: "vector",
 			limit,
 			vectorScoreThreshold: scoreThreshold,
-			filters: buildFilters({ namespace: args.namespace, type: args.type }),
+			filters: buildFilters({ namespace: ns, type: args.type }),
 		});
 
 		// Build an entry map for quick lookup of filterValues by entryId
@@ -115,7 +178,7 @@ export const recall = action({
 					// RAG key is the memoryId string we set in storeMemory
 					memoryId: (entry.key ?? "") as unknown as string,
 					score: r.score,
-					namespace: (nsFilter?.value as string) ?? args.namespace ?? "global",
+					namespace: (nsFilter?.value as string) ?? ns,
 					type: (typeFilter?.value as string) ?? "user",
 					content: text,
 				};
@@ -153,14 +216,20 @@ export const textSearch = action({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// Authority gate — see resolveSearchNamespace above. A refused caller
+		// reads NOTHING; the namespace actually searched is the RESOLVED one,
+		// never the raw argument.
+		const ns = await resolveSearchNamespace(ctx, args.namespace);
+		if (ns === null) return [] as never;
+
 		const limit = args.limit ?? 10;
 
 		const { results, entries } = await rag.search(ctx, {
-			namespace: args.namespace ?? "global",
+			namespace: ns,
 			query: args.query,
 			searchType: "text",
 			limit,
-			filters: buildFilters({ namespace: args.namespace, type: args.type }),
+			filters: buildFilters({ namespace: ns, type: args.type }),
 		});
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
@@ -176,7 +245,7 @@ export const textSearch = action({
 
 				return {
 					memoryId: (entry.key ?? "") as unknown as string,
-					namespace: (nsFilter?.value as string) ?? args.namespace ?? "global",
+					namespace: (nsFilter?.value as string) ?? ns,
 					type: (typeFilter?.value as string) ?? "user",
 					content: text,
 				};
@@ -211,14 +280,20 @@ export const hybridSearch = action({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// Authority gate — see resolveSearchNamespace above. A refused caller
+		// reads NOTHING; the namespace actually searched is the RESOLVED one,
+		// never the raw argument.
+		const ns = await resolveSearchNamespace(ctx, args.namespace);
+		if (ns === null) return [] as never;
+
 		const limit = args.limit ?? 10;
 
 		const searchArgs: Parameters<typeof rag.search>[1] = {
-			namespace: args.namespace ?? "global",
+			namespace: ns,
 			query: args.query,
 			searchType: "hybrid",
 			limit,
-			filters: buildFilters({ namespace: args.namespace, type: args.type }),
+			filters: buildFilters({ namespace: ns, type: args.type }),
 		};
 		if (args.vectorWeight !== undefined) {
 			(searchArgs as Record<string, unknown>).vectorWeight = args.vectorWeight;
@@ -243,7 +318,7 @@ export const hybridSearch = action({
 				return {
 					memoryId: (entry.key ?? "") as unknown as string,
 					rrfScore: r.score,
-					namespace: (nsFilter?.value as string) ?? args.namespace ?? "global",
+					namespace: (nsFilter?.value as string) ?? ns,
 					type: (typeFilter?.value as string) ?? "user",
 					content: text,
 				};

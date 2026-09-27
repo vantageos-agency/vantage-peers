@@ -43,7 +43,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action } from "./_generated/server";
-import { assertOrgArgs } from "./kbShared";
+import { assertOrgArgs, assertScopeAuthorizesOrg } from "./kbShared";
 
 // NOTE: the upload-URL-minting mutation lives in convex/kbMutations.ts
 // (V8 runtime), NOT here. Convex rejects public mutations defined in a
@@ -208,6 +208,30 @@ export const storeDocumentChunked = action({
 		//    The full doc namespace is assembled below as team/<orgId>/<docId>.
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 
+		// ORDER: argument SHAPE first (assertOrgArgs, immediately above), then the
+		// AUTHORITY JOIN. Shape-validating first preserves this surface's
+		// pre-existing AUTH_NO_ORG_ID contract for malformed input (pinned by
+		// convex/__tests__/kb-ingest.test.ts) and leaks nothing -- it only ever
+		// reports that the caller's OWN two arguments disagree with each other.
+		// The authority gate still runs before ANY data is read or written.
+		//
+		// WHY THE AUTHORITY JOIN IS NEEDED AT ALL: assertOrgArgs compares two
+		// CALLER-SUPPLIED arguments against each other. It proves the request is
+		// internally consistent, never that the caller owns the org it names -- a
+		// caller sending { orgId: "victim", namespace: "team/victim" } satisfied
+		// it perfectly. The scope resolved below comes from the VERIFIED principal
+		// (withOrgScope, reached from an action via the internal bridge in
+		// convex/lib/auth.ts, since an action has no ctx.db) and is the only thing
+		// permitted to authorise the org. Narrow only, never widen: args.orgId can
+		// CONFIRM the resolved org, it can never re-scope the call. Refuses BY
+		// THROW -- this is an imperative WRITE. See
+		// .claude/rules/authority-attached-to-anonymous-object.md.
+		const scope = await ctx.runQuery(
+			internal.lib.auth.resolveOrgScopeForAction,
+			{},
+		);
+		assertScopeAuthorizesOrg(scope, args.orgId);
+
 		// 2. Resolve docId and full namespace
 		const docId = args.docId ?? randomUUID();
 		const namespace = `${args.namespace}/${docId}`;
@@ -305,6 +329,31 @@ export const softDeleteDocument = action({
 		// Auth — same oauthCtx→args pattern as storeDocumentChunked (B4 #915).
 		// namespace is "team/<orgId>" prefix; full doc namespace is team/<orgId>/<docId>.
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
+
+		// ORDER: argument SHAPE first (assertOrgArgs, immediately above), then the
+		// AUTHORITY JOIN. Shape-validating first preserves this surface's
+		// pre-existing AUTH_NO_ORG_ID contract for malformed input (pinned by
+		// convex/__tests__/kb-ingest.test.ts) and leaks nothing -- it only ever
+		// reports that the caller's OWN two arguments disagree with each other.
+		// The authority gate still runs before ANY data is read or written.
+		//
+		// WHY THE AUTHORITY JOIN IS NEEDED AT ALL: assertOrgArgs compares two
+		// CALLER-SUPPLIED arguments against each other. It proves the request is
+		// internally consistent, never that the caller owns the org it names -- a
+		// caller sending { orgId: "victim", namespace: "team/victim" } satisfied
+		// it perfectly. The scope resolved below comes from the VERIFIED principal
+		// (withOrgScope, reached from an action via the internal bridge in
+		// convex/lib/auth.ts, since an action has no ctx.db) and is the only thing
+		// permitted to authorise the org. Narrow only, never widen: args.orgId can
+		// CONFIRM the resolved org, it can never re-scope the call. Refuses BY
+		// THROW -- this is an imperative WRITE. See
+		// .claude/rules/authority-attached-to-anonymous-object.md.
+		const scope = await ctx.runQuery(
+			internal.lib.auth.resolveOrgScopeForAction,
+			{},
+		);
+		assertScopeAuthorizesOrg(scope, args.orgId);
+
 		const namespace = `${args.namespace}/${args.docId}`;
 
 		const markedCount = (await ctx.runMutation(

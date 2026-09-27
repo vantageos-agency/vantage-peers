@@ -112,7 +112,26 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		expect(results[0].content).toBe("org-a own memory");
 	});
 
-	test("no-identity caller (master) reads any namespace — no AUTH_NAMESPACE_DENIED", async () => {
+	// INVERTED — this test USED TO ASSERT THE PRODUCTION LEAK AS THE CONTRACT.
+	//
+	// It was titled "no-identity caller (master) reads any namespace — no
+	// AUTH_NAMESPACE_DENIED" and asserted `results.length === 1`: i.e. that a
+	// caller with NO CREDENTIAL AT ALL is served another tenant's rows. That
+	// behaviour was then measured live against production:
+	//
+	//   POST https://compassionate-goldfinch-737.convex.cloud/api/query
+	//     {"path":"memoriesScoped:listMemoriesScoped","args":{"namespace":"global","limit":3}}
+	//       -> {"status":"success", 3 rows of real memory content}
+	//
+	// The premise was "no identity == the MCP server / Convex CLI == master".
+	// That premise is stale: since the P0 fix of 2026-08-07 the MCP server
+	// ALWAYS attaches an identity (mcp-server/src/authenticatedConvexClient.ts),
+	// and master is a NAMED by-id grant inside withOrgScope
+	// (CLERK_SERVICE_ACCOUNT_USER_ID), never inferred from the ABSENCE of a
+	// credential — see .claude/rules/authority-attached-to-anonymous-object.md.
+	// So the assertion is inverted rather than deleted: the same call, the same
+	// seeded row, the opposite expectation.
+	test("no-identity caller is NOT master and reads NOTHING — AUTH_NAMESPACE_DENIED class", async () => {
 		const t = createT();
 
 		await t.run(async (ctx) => {
@@ -128,12 +147,13 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 			});
 		});
 
-		// No identity → master scope
+		// No identity → NOT master → a typed empty array (this is a reactively
+		// subscribed read, so the refusal is a value, not a throw).
 		const results = await t.query(api.memoriesScoped.listMemoriesScoped, {
 			namespace: "team/org-x",
 		});
 
-		expect(results.length).toBe(1);
+		expect(results).toEqual([]);
 	});
 
 	test("org_A cannot read global/orchestrator namespace — AUTH_NAMESPACE_DENIED", async () => {
@@ -232,17 +252,26 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 		).rejects.toThrow("AUTH_NAMESPACE_DENIED");
 	});
 
-	test("no-identity caller writes any namespace — no AUTH_NAMESPACE_DENIED", async () => {
+	// INVERTED — same reasoning as the read-side inversion above. This test
+	// asserted that a caller with NO CREDENTIAL could WRITE into any tenant's
+	// namespace ("Master (no identity) can write anywhere"). A write refusal is
+	// a THROW, never a typed empty value: a chosen, imperative mutation has a
+	// call site to catch it, and silently returning success for a write that
+	// never happened would be worse than the leak.
+	test("no-identity caller cannot write any namespace — AUTH_NAMESPACE_DENIED", async () => {
 		const t = createT();
 
-		// Master (no identity) can write anywhere
-		const id = await t.mutation(api.memoriesScoped.storeMemoryScoped, {
-			namespace: "team/any-org",
-			type: "project",
-			content: "master write",
-			createdBy: "sigma",
-		});
+		await expect(
+			t.mutation(api.memoriesScoped.storeMemoryScoped, {
+				namespace: "team/any-org",
+				type: "project",
+				content: "master write",
+				createdBy: "sigma",
+			}),
+		).rejects.toThrow("AUTH_NAMESPACE_DENIED");
 
-		expect(typeof id).toBe("string");
+		// And nothing was written.
+		const rows = await t.run(async (ctx) => ctx.db.query("memories").collect());
+		expect(rows).toEqual([]);
 	});
 });

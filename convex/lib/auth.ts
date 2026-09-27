@@ -1,5 +1,5 @@
-import { QueryCtx, MutationCtx } from "../_generated/server";
-import { ConvexError } from "convex/values";
+import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
+import { ConvexError, v } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
 import { resolveAgentCredentialCore } from "./agentIdentity";
 
@@ -561,3 +561,84 @@ export function requireScope(scope: OrgScope, requiredScope: string): void {
 		);
 	}
 }
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveOrgScopeForAction — the ONE way a Convex ACTION resolves its caller's
+// organisation scope.
+//
+// WHY THIS EXISTS. `withOrgScope` above needs a QueryCtx/MutationCtx because it
+// joins `client_org_mapping` through `ctx.db`. An ACTION has no `ctx.db`, so a
+// public action cannot call it directly — which is exactly how the public
+// actions in convex/kb.ts and convex/search.ts came to derive "who am I" from a
+// CALLER-SUPPLIED argument (`args.orgId`, `args.namespace`) instead of from the
+// verified principal. `.claude/rules/authority-attached-to-anonymous-object.md`:
+// the principal's own claims are the ONLY permitted key into a mapping table,
+// and a client-supplied argument is not a claim.
+//
+// The bridge is an internalQuery: Convex propagates the caller's auth identity
+// across `ctx.runQuery`, so `ctx.auth.getUserIdentity()` inside this query sees
+// the SAME principal the action was invoked with. The scope stays derived from
+// the verified identity, one hop away.
+//
+// `internalQuery` is load-bearing, not incidental: this function is registered
+// ONLY under the `internal` tree (see convex/_generated/api.d.ts), so it is
+// structurally unreachable from the public `api.*` surface and cannot itself
+// become a new way to probe the mapping table from the open internet.
+//
+// It reimplements NO authority logic — it is a transport adapter over
+// withOrgScope, which remains the single identity layer. `refuseWithoutThrow`
+// is used so the "signed in, no organisation yet" branch comes back as a typed
+// refusal instead of a throw, letting each ACTION choose its own refusal shape
+// (typed empty for a read, throw for a write) — the same division the queries
+// in convex/memories.ts already make.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The action-visible projection of an OrgScope. Only the three fields an action
+ * needs to make a namespace decision are returned — deliberately NOT
+ * `allowedOrchestrators`/`scopes`, so this bridge can never become a way to
+ * WIDEN a grant: it reports who the caller is, it does not hand out rights.
+ */
+export const actionOrgScopeValidator = v.object({
+	/** True ONLY for withOrgScope's named master grants. */
+	isMaster: v.boolean(),
+	/** The verified org slug, or null when there is no verified organisation. */
+	orgSlug: v.union(v.string(), v.null()),
+	/**
+	 * True when the caller has NO verified organisation — anonymous (no
+	 * credential at all) or signed in without an org. The action MUST refuse when
+	 * this is true: typed-empty for a read, throw for a write.
+	 */
+	refused: v.boolean(),
+});
+
+/** The resolved shape actions receive from `resolveOrgScopeForAction`. */
+export interface ActionOrgScope {
+	isMaster: boolean;
+	orgSlug: string | null;
+	refused: boolean;
+}
+
+export const resolveOrgScopeForAction = internalQuery({
+	args: {},
+	returns: actionOrgScopeValidator,
+	handler: async (ctx): Promise<ActionOrgScope> => {
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+
+		// Master: the fleet's own callers (the by-id service-account carve-out /
+		// explicit internal opt-in inside withOrgScope). Unrestricted, unchanged.
+		if (scope.isMaster) {
+			return { isMaster: true, orgSlug: null, refused: false };
+		}
+
+		// No verified organisation -> REFUSED. Never master. withOrgScope returns
+		// this same empty shape for both the anonymous branch and the
+		// signed-in-no-org branch, so one check covers both.
+		if (scope.orgSlug === null) {
+			return { isMaster: false, orgSlug: null, refused: true };
+		}
+
+		return { isMaster: false, orgSlug: scope.orgSlug, refused: false };
+	},
+});

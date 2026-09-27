@@ -130,6 +130,26 @@ export const listEpisodes = query({
     }),
   ),
   handler: async (ctx, args) => {
+    // Fail-closed multi-tenant fix (defect class: authority attached to an
+    // anonymously-registered object — .claude/rules/authority-attached-to-
+    // anonymous-object.md). listEpisodes took NO identity check at all: a
+    // direct POST to the public Convex deployment URL returned any org's
+    // episode rows to a caller with no credential whatsoever. The MCP tool
+    // layer cannot defend this — a public Convex function is reachable at the
+    // deployment URL directly (standing precedent: oauth.getScopeProfile).
+    //
+    // REFUSAL SHAPE — typed empty, not a throw: this is a reactively
+    // subscribed public READ with no call site to catch a throw, so throwing
+    // would crash the subscriber's render. `refuseWithoutThrow` narrows the
+    // signed-in-with-no-org branch to a typed refused scope, and the
+    // isNamespaceAllowedForScope gate renders both that and the anonymous
+    // scope as the empty page. Reuses the EXACT mechanism its sibling
+    // memories.ts::listMemories already uses — no second identity layer.
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+      return [];
+    }
+
     const limit = args.limit ?? 20;
 
     const episodes = await ctx.db
@@ -184,6 +204,23 @@ export const getCriticalInsights = query({
     }),
   ),
   handler: async (ctx, args) => {
+    // Fail-closed multi-tenant fix — CONFIRMED OPEN in production: a POST to
+    // the public deployment URL with no Authorization header returned real
+    // rows. This query takes NO namespace argument at all: it is
+    // cross-namespace BY DESIGN (built for cross-orchestrator learning), so
+    // an unauthenticated caller drained EVERY tenant's critical insights in
+    // one call — the widest of the two measured leaks.
+    //
+    // There is no caller-supplied namespace to compare, so the scope is
+    // applied as a per-ROW filter: each candidate row's OWN namespace must be
+    // allowed for the resolved scope. Master (the fleet's own callers, via
+    // withOrgScope's by-id service-account carve-out) keeps reading every
+    // namespace, exactly as today. An anonymous or no-org caller resolves to
+    // orgSlug=null/isMaster=false, for which isNamespaceAllowedForScope is
+    // false for every row — the typed empty array, never a throw (reactive
+    // subscriber, same reasoning as listEpisodes above).
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+
     const limit = args.limit ?? 30;
 
     const episodes = await ctx.db
@@ -195,7 +232,11 @@ export const getCriticalInsights = query({
       .collect();
 
     return episodes
-      .filter((e) => e.episode?.severity === "critical")
+      .filter(
+        (e) =>
+          e.episode?.severity === "critical" &&
+          isNamespaceAllowedForScope(scope, e.namespace),
+      )
       .slice(0, limit)
       .map((e) => ({
         _id: e._id,

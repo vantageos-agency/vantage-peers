@@ -4,6 +4,7 @@ import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
 import { withOrgScope } from "./lib/auth";
+import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — profiles.ts's own single authority gate.
@@ -263,6 +264,26 @@ export const getProfileWithMemories = query({
     memories: v.array(memorySnippetValidator),
   }),
   handler: async (ctx, args) => {
+    // Fail-closed multi-tenant fix (defect class: authority attached to an
+    // anonymously-registered object — .claude/rules/authority-attached-to-
+    // anonymous-object.md). This query took NO identity check: it reads the
+    // `memories` table by a CALLER-SUPPLIED namespace, so a caller with no
+    // credential at all could read any tenant's memories straight off the
+    // public Convex deployment URL — the same hole measured on
+    // memoriesScoped:listMemoriesScoped, reached through a different door.
+    //
+    // REFUSAL SHAPE — typed empty, not a throw: reactively-subscribed public
+    // READ (see the note on episodes.ts::listEpisodes). The `profile` half is
+    // also withheld: `profiles` carries no tenant field (see
+    // requireFleetMaster above), so a refused caller gets `null` rather than a
+    // fleet-internal orchestrator row. Reuses withOrgScope +
+    // isNamespaceAllowedForScope — the SAME mechanism memories.ts::listMemories
+    // uses, never a second identity layer.
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+      return { profile: null, memories: [] };
+    }
+
     const limit = args.memoryLimit ?? 20;
 
     let profile = null;
