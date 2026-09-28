@@ -36,6 +36,13 @@ def run_hook(command: str, extra_env=None):
     env.pop("PI_AUTHORIZED_TASK_ID", None)
     env.pop("PI_AUTH_ORCHESTRATOR", None)
     env["VP_CONVEX_URL"] = DEAD_URL
+    # HERMETIC. The guard now mints a service identity from a dotenv when one
+    # is not in its environment; a test must never reach Clerk nor read this
+    # station's real `.env.local`. Poles that want an identity say so
+    # explicitly via STUB_IDENTITY_ENV.
+    env.pop("VP_GUARD_CONVEX_TOKEN", None)
+    env["VP_GUARD_ENV_FILE"] = "/nonexistent/hermetic/.env.local"
+    env["VP_GUARD_AUDIT_LOG"] = os.path.join(tempfile.gettempdir(), "pi-auth-test-audit.log")
     if extra_env:
         env.update(extra_env)
     proc = subprocess.run(
@@ -66,8 +73,24 @@ def stub_vp(tasks):
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802 - http.server API
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            value = tasks.get(body.get("args", {}).get("taskId"))
-            out = json.dumps({"status": "success", "value": value}).encode()
+            path = body.get("path")
+            if path != "tasks:get":
+                # The guard's POSITIVE CONTROL: a query this deployment can
+                # always answer, asked only to tell "the id names nothing"
+                # apart from "the store is down".
+                payload = {"status": "success", "value": []}
+            elif body.get("args", {}).get("taskId") in tasks:
+                payload = {"status": "success",
+                           "value": tasks[body["args"]["taskId"]]}
+            else:
+                # MEASURED against the real deployment: an id that names no
+                # row does NOT come back as success+null -- the `v.id("tasks")`
+                # validator throws and prod returns an opaque Server Error.
+                # The stub said success+null for years, which is why this suite
+                # could not see the outage.
+                payload = {"status": "error",
+                           "errorMessage": "[Request ID: stub] Server Error"}
+            out = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out)))
@@ -89,7 +112,12 @@ def stub_vp(tasks):
 
 def run_with_tasks(command, tasks, extra_env=None):
     with stub_vp(tasks) as url:
-        env = {"VP_CONVEX_URL": url}
+        # The guard reads its token as an IDENTIFIED caller now, so every pole
+        # that expects it to be SERVED must supply an identity. The permissive
+        # stub ignores the header; supplying it here keeps these poles testing
+        # what they were written to test (token VALIDITY) rather than silently
+        # turning them all into could-not-check.
+        env = {"VP_CONVEX_URL": url, "VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"}
         env.update(extra_env or {})
         return run_hook(command, env)
 
@@ -229,7 +257,12 @@ def test_invented_token_refused():
     """The defect this union closes: a well-SPELLED id that names no task."""
     rc, out = run_with_tasks(f"npx convex deploy --yes # pi-authorized: {_ID_A}", {})
     assert rc == 2, f"an invented id must be refused, rc={rc} out={out}"
-    assert "task-unreadable-or-absent" in out
+    # Was "task-unreadable-or-absent": the guard used to collapse "you may
+    # not see it" and "it is not there" into one word, which is exactly
+    # what froze the fleet. The token is now READ as an identified caller,
+    # so a well-spelled id naming nothing is a plain ABSENCE and says so.
+    assert "token-absent" in out
+    assert "COULD NOT CHECK" not in out, "an absence is not a could-not-check"
 
 
 def test_expired_token_refused():
@@ -277,13 +310,20 @@ def test_unreachable_vp_refused():
 
 
 def test_fetch_raising_refused():
-    """The fetch RAISES (an exception fetch_task does not swallow): the
-    entrypoint must refuse a prod deploy rather than fall open."""
+    """The read RAISES (a malformed URL). It must refuse rather than fall open.
+
+    This used to reach main()'s crash handler ("could not run"). It is now
+    classified where it belongs -- the read could not be completed, so it is
+    the THIRD state and says COULD NOT CHECK. Same exit code, honest text.
+    """
     rc, out = run_hook(
         f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {"VP_CONVEX_URL": "not-a-url"})
-    assert rc == 2, f"a fetch that raises must refuse, rc={rc} out={out}"
-    assert "could not run" in out
+        {"VP_CONVEX_URL": "not-a-url",
+         "VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"})
+    assert rc == 2, f"a read that raises must refuse, rc={rc} out={out}"
+    assert "COULD NOT CHECK" in out, f"a failed read is a could-not-check, out={out}"
+    assert "BLOCKED:" not in out, (
+        "a failed read must not be spelled as a refusal of the token")
 
 
 # --- CRASH POLE: the entrypoint fails CLOSED on a prod action --------------
@@ -461,6 +501,13 @@ def run_degraded_hook(guard_path, command, extra_env=None):
     env.pop("PI_AUTHORIZED_TASK_ID", None)
     env.pop("PI_AUTH_ORCHESTRATOR", None)
     env["VP_CONVEX_URL"] = DEAD_URL
+    # HERMETIC. The guard now mints a service identity from a dotenv when one
+    # is not in its environment; a test must never reach Clerk nor read this
+    # station's real `.env.local`. Poles that want an identity say so
+    # explicitly via STUB_IDENTITY_ENV.
+    env.pop("VP_GUARD_CONVEX_TOKEN", None)
+    env["VP_GUARD_ENV_FILE"] = "/nonexistent/hermetic/.env.local"
+    env["VP_GUARD_AUDIT_LOG"] = os.path.join(tempfile.gettempdir(), "pi-auth-test-audit.log")
     if extra_env:
         env.update(extra_env)
     proc = subprocess.run(
@@ -629,6 +676,183 @@ def test_strip_quoted_phrase_with_whitespace_stays_inert():
     unquoted, so a search string is never read as a command."""
     guard = load_hook_module()
     assert guard.strip_quoted_strings('grep -r "convex deploy" docs/') == 'grep -r "" docs/'
+
+
+
+# ---------------------------------------------------------------------------
+# THE DOOR (task k172pesxfj94bm3ed6q790fhnx8f628x).
+#
+# Every stub above answers `tasks:get` to ANY reader. The real deployment does
+# not: `convex/tasks.ts`'s `get` resolves `withOrgScope(ctx, {refuseWithoutThrow:
+# true})` and returns null through `isRowVisibleToScope` when the caller has no
+# scope. An unidentified reader therefore gets `{"status":"success","value":null}`
+# for EVERY task, including ones that exist. Because the permissive stub never
+# modelled that door, this suite stayed green while production could not deploy
+# at all -- the tests proved the guard's TEXT handling, never its ability to be
+# SERVED. `stub_vp_requiring_identity` closes that gap: it is the same stub with
+# the door in front of it.
+#
+# THE TRAP these three poles pin: `value: null` means BOTH "no such task" and
+# "you may not see it". A guard that collapses them into "absent" blocks every
+# honest caller today, and -- once it is taught to allow -- would ALLOW on a
+# refusal tomorrow. So the guard must end in THREE states, not two.
+#
+# On exit codes: ALLOW is 0. BLOCK and REFUSE-TO-JUDGE are BOTH 2, and
+# deliberately so -- under the Claude Code hook protocol only 2 actually stops
+# the tool call, so a refusal that exited anything else would let the deploy
+# run. The two are separated where the operator reads them: the stderr text and
+# the audit log's `reason` field. "I could not check" and "this is not
+# authorised" must never be the same sentence.
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def stub_vp_requiring_identity(tasks, *, status_code=200, force_error=False):
+    """`tasks:get` behind the SAME door the real deployment puts in front of it.
+
+    No `Authorization` header -> `{"status":"success","value":null}` whatever
+    the id, exactly as `isRowVisibleToScope` returns for a scope-less caller.
+    With a bearer -> the row, or null when the id truly names no task.
+    """
+
+    seen = {"authorized_reads": 0, "anonymous_reads": 0}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - http.server API
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if force_error:
+                out = json.dumps(
+                    {"status": "error", "errorMessage": "Server Error"}
+                ).encode()
+                self.send_response(status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+                return
+            bearer = self.headers.get("Authorization", "")
+            identified = bearer.startswith("Bearer ") and len(bearer) > len("Bearer ")
+            if body.get("path") != "tasks:get":
+                payload = {"status": "success", "value": []}  # positive control
+            elif not identified:
+                seen["anonymous_reads"] += 1
+                # The door: null for EVERY id, present or not.
+                payload = {"status": "success", "value": None}
+            else:
+                seen["authorized_reads"] += 1
+                if body.get("args", {}).get("taskId") in tasks:
+                    payload = {"status": "success",
+                               "value": tasks[body["args"]["taskId"]]}
+                else:
+                    payload = {"status": "error",
+                               "errorMessage": "[Request ID: stub] Server Error"}
+            out = json.dumps(payload).encode()
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", seen
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# A stub identity. The test never mints a real one and never reads a real
+# secret: it names the variable the guard reads and supplies a placeholder, so
+# the suite exercises the PRESENTING of an identity without any credential
+# leaving (or entering) this machine.
+STUB_IDENTITY_ENV = {"VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"}
+
+AUTHORIZED_DEPLOY = "npx convex deploy --yes # pi-authorized: k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+
+def _run_against_door(command, tasks, *, extra_env=None, **stub_kwargs):
+    with stub_vp_requiring_identity(tasks, **stub_kwargs) as (url, seen):
+        env = {"VP_CONVEX_URL": url}
+        env.update(STUB_IDENTITY_ENV)
+        env.update(extra_env or {})
+        rc, out = run_hook(command, env)
+    return rc, out, seen
+
+
+def test_valid_token_allows():
+    """POSITIVE POLE FIRST. A valid, unexpired, correctly-shaped token behind
+    the real door must ALLOW -- the guard has to present an identity to be
+    served the grant it legitimately holds."""
+    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
+    rc, out, seen = _run_against_door(AUTHORIZED_DEPLOY, tasks)
+    assert seen["authorized_reads"] >= 1, (
+        "the guard read the token WITHOUT presenting an identity, so the door "
+        f"served it null: anonymous_reads={seen['anonymous_reads']} out={out}"
+    )
+    assert rc == 0, f"a valid token must ALLOW, rc={rc} out={out}"
+
+
+def test_forged_token_blocks():
+    """A token READ SUCCESSFULLY that names no task is a BLOCK, and the text
+    must say so -- not 'I could not check'."""
+    rc, out, seen = _run_against_door(AUTHORIZED_DEPLOY, {})
+    assert rc == 2, f"a forged token must BLOCK, rc={rc} out={out}"
+    assert "BLOCKED" in out, f"a forged token must read as BLOCKED, out={out}"
+    assert "could not be completed" not in out, (
+        "a forged token was reported as unjudgeable; a refusal and an absence "
+        f"must stay distinguishable, out={out}"
+    )
+
+
+def test_unreadable_server_refuses_to_judge():
+    """The read itself could not be completed. Not a BLOCK, not an ALLOW: a
+    third, visibly distinct answer."""
+    rc, out, _ = _run_against_door(AUTHORIZED_DEPLOY, {}, force_error=True)
+    assert rc == 2, f"an unreadable store must refuse, rc={rc} out={out}"
+    assert "COULD NOT CHECK" in out, (
+        f"the third state must be visibly distinct in the text, out={out}"
+    )
+    assert "BLOCKED:" not in out, (
+        f"'I could not check' must not be spelled as 'this is not authorised', out={out}"
+    )
+
+
+def test_missing_credential_refuses_to_judge_rather_than_blocking():
+    """No credential reachable is the SAME third state: the guard cannot
+    identify itself, so it refuses to judge and names that -- it never invents
+    a bypass, and never silently reports the token as absent."""
+    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
+    with stub_vp_requiring_identity(tasks) as (url, _seen):
+        rc, out = run_hook(
+            AUTHORIZED_DEPLOY,
+            {"VP_CONVEX_URL": url, "VP_GUARD_CONVEX_TOKEN": "",
+             "VP_GUARD_ENV_FILE": "/nonexistent/.env.local"},
+        )
+    assert rc == 2, f"no credential must refuse, rc={rc} out={out}"
+    assert "COULD NOT CHECK" in out, f"must read as could-not-check, out={out}"
+    assert "VP_GUARD_CONVEX_TOKEN" in out, (
+        f"the refusal must NAME the variable it needs (never its value), out={out}"
+    )
+
+
+def test_three_states_are_distinct_in_the_audit_log():
+    """ALLOW / BLOCK / REFUSE-TO-JUDGE must be three different `reason` values
+    in /tmp/pi-auth-prod-deploy.log, not two."""
+    log = pathlib.Path(tempfile.mkdtemp()) / "audit.log"
+    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
+    env = {"VP_GUARD_AUDIT_LOG": str(log)}
+    _run_against_door(AUTHORIZED_DEPLOY, tasks, extra_env=env)
+    _run_against_door(AUTHORIZED_DEPLOY, {}, extra_env=env)
+    _run_against_door(AUTHORIZED_DEPLOY, {}, extra_env=env, force_error=True)
+    reasons = [json.loads(line)["reason"] for line in
+               log.read_text().splitlines() if line.strip()]
+    assert len(set(reasons)) == 3, (
+        f"three outcomes must leave three distinct reasons, got {reasons}"
+    )
 
 
 if __name__ == "__main__":
