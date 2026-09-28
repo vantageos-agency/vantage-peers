@@ -1,0 +1,16 @@
+{
+  "sha": "0726792411f9398da873b5c62d7cf936c4f799ab",
+  "cli_commit": "96bdb01",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 22,
+  "note": "Recorded honestly, NOT tuned to pass. Scored at the deploy head with the CLI the ruling pins (96bdb01), from a detached worktree so the newer tip is not silently substituted. By-rule tally: present=13 non-conforming=22 could-not-judge=15 absent=0, sum=50. Critical violations: R-10 R-12 R-7 R-37 R-40 R-50 R-51 R-6 -- the SAME EIGHT as the d0f45a4 baseline and as every deploy head this week, no new id. Critical abstentions: R-5 R-34 R-29 R-26 R-48.",
+  "introduced_by_this_change": "none -- the counter did not rise. 22 non-conforming and the same eight critical ids were measured at 6ec0c8c4, at d3b9c54a, at bd8c60e9 and again here at 0726792. This delivery touches only .claude/hooks and CHANGELOG.md, so zero convex handler files changed between beeb5d5c and this head.",
+  "override_basis_and_what_it_does_not_excuse": "The gate refuses on mechanical_violations > 0 and is overridden on the counter-never-rises property alone. Stated plainly rather than left implicit: five of the eight criticals (R-7 R-10 R-12 R-37 R-40) score a CSV frozen at a past audit and not this tree -- established by running the same CLI against a tree whose only file is `export const nothing = 1;` and obtaining identical counts, cause in src/oracle.ts resolving ORACLE_PATH from the tool's own install directory. Those five cannot fall by correct work. But R-6, R-50 and R-51 DO read the tree, and a single marker overrides all eight, which buries the three that are telling the truth. That is a defect of the override's shape, not a reason to skip it here: this head changes no convex handler at all. It is tracked with the backend-doctor rule work, and the marker must one day name the RULE it excuses rather than the instrument.",
+  "cli_ref": "96bdb01 on backend-doctor's default branch.",
+  "convex_tree_sha_at_run": "0726792411f9398da873b5c62d7cf936c4f799ab",
+  "convex_tree_attestation": "git -C /root/coding/vantage-memory rev-parse HEAD in the same session as the doctor returned the sha above, working tree clean. Install verified FIRST: bun install --frozen-lockfile exit 0, so the ratios beside it are not measured on an incomplete tree.",
+  "suite_at_this_head": "bun install --frozen-lockfile exit 0; npx tsc --noEmit -p convex exit 0, 0 lines; npx vitest run --dir convex exit 0, 208 files / 1916 tests passed. Each exit code captured from a variable on its own line, never through a pipe or from tail."
+}
