@@ -1,0 +1,393 @@
+{
+  "task": "k1781ttkpcy2mhhmp3qwz3zjcd8f9kd5",
+  "catalogueBodyBeforePublish": null,
+  "copiesEnumerated": 57,
+  "biteProbe": {
+    "red": {
+      "station": "/root/coding/elpi-corp",
+      "sha256": "4682e122cab919df",
+      "exit": 1,
+      "poles": "3 failed, all collapsed to task-unreadable-or-absent"
+    },
+    "green": {
+      "station": "/root/coding/vantage-registry",
+      "sha256": "044cf42435e730f6",
+      "exit": 0,
+      "poles": "3 passed, three states distinguishable"
+    }
+  },
+  "pytest": {
+    "command": "python3 -m pytest .claude/hooks",
+    "exit": 0,
+    "passed": 1847
+  },
+  "copies": [
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "UNREACHABLE:not-writable-by-uid-elpi",
+      "path": "/root/coding/cgt-alsachimie-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/argus-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/athena-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/delta-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/demeter-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/easyvibecoding/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/epsilon-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/eta-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/gaia-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/gamma-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/gptpowerups-backend/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/hermes-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/iris-rh-website/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/lambda-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/nu-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/perello-consulting/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/perfect-ai-agent/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/proxima-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/seo-doctor/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/theta-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/upsilon-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-immo/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-peers-example/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-radar/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-registry-site/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-taste-engine/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-video-studio/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantageos-team/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/victor-iris-rh/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/website-factory/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "00ee7b01ce0e6741",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/zeta-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "044cf42435e730f6",
+      "disposition": "PULL:station",
+      "result": "already-current",
+      "path": "/root/coding/vantage-registry/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "044cf42435e730f6",
+      "disposition": "SOURCE:authoring-station",
+      "result": "-",
+      "path": "/root/coding/vantage-memory/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "39e72001443615a1",
+      "disposition": "PULL:plugin-cache",
+      "result": "pulled-ok",
+      "path": "/home/elpi/.claude/plugins/cache/vantage-peers-plugin/vantage-peers/2.8.2/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "UNREACHABLE:not-writable-by-uid-elpi",
+      "path": "/root/coding/elpi-corp/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "UNREACHABLE:not-writable-by-uid-elpi",
+      "path": "/root/coding/victor-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/_wt-eta-vp/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/beta-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/gptpowerups-extension/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/gptpowerups-site/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/omicron-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/proximareg-extraction/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/proximareg-verify/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/scan-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-doc-forge/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-paperasse/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-peers/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-starter/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "4682e122cab919df",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/verify-workspace/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "6e727f51574decde",
+      "disposition": "SKIP:ci-checkout-regenerated-per-job",
+      "result": "-",
+      "path": "/home/elpi/actions-runner/_work/gptpowerups-extension/gptpowerups-extension/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "be27ac76be3fa4c6",
+      "disposition": "SKIP:clone-not-a-station",
+      "result": "-",
+      "path": "/root/coding/_omega-clones/vantage-registry/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "da4b1a47a5c1b45c",
+      "disposition": "PULL:station",
+      "result": "pulled-ok",
+      "path": "/root/coding/vantage-immo-market-intel/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "e1cd0f1d57eab8e7",
+      "disposition": "SKIP:ephemeral-worktree",
+      "result": "-",
+      "path": "/home/elpi/.grok/worktrees/coding-vantage-memory/subagent-01a02521-3a62-7d12-9330-54f5a7e2d3f4/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "e1cd0f1d57eab8e7",
+      "disposition": "SKIP:ephemeral-worktree",
+      "result": "-",
+      "path": "/root/coding/_worktrees/p-t3-parent-child-edges/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "e1cd0f1d57eab8e7",
+      "disposition": "SKIP:ephemeral-worktree",
+      "result": "-",
+      "path": "/root/coding/_worktrees/p-t4-per-agent-credential/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "e1cd0f1d57eab8e7",
+      "disposition": "SKIP:ephemeral-worktree",
+      "result": "-",
+      "path": "/root/coding/_worktrees/p-t5-label-becomes-lock/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    },
+    {
+      "hashBefore": "e1cd0f1d57eab8e7",
+      "disposition": "SKIP:ephemeral-worktree",
+      "result": "-",
+      "path": "/root/coding/_worktrees/sigma-secret-hold/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
+    }
+  ],
+  "catalogue": {
+    "MECHANISM": "the publish landed on the DEV deployment; the fleet reads PROD",
+    "dev": {
+      "deployment": "dev:acoustic-lemur-680",
+      "url": "https://acoustic-lemur-680.convex.cloud",
+      "sha256LocallyComputed": "044cf42435e730f6df4f6825c681969ab51cdedc451c8ca8269916beff4837ae",
+      "bytes": 66480,
+      "contentVersion": "1.0.0",
+      "guard_identity_present": true,
+      "note": "write persisted faithfully; local hash == reported hash. NOT a catalogue defect."
+    },
+    "prod": {
+      "deployment": "prod:vibrant-ibex-858",
+      "url": "https://vibrant-ibex-858.convex.cloud",
+      "sha256LocallyComputed": "00ee7b01ce0e674141f0da211d93cc4543dccb7f4b431f136dcadc08fecc04aa",
+      "bytes": 45460,
+      "contentVersion": "1.0.14",
+      "contentSyncedAt": 1789999579498,
+      "guard_identity_present": false,
+      "anonymousReadMarkerPresent": true,
+      "note": "STALE. This is what the fleet's get_hook_content serves. Publish to prod NOT performed."
+    }
+  },
+  "copiesStatus": "HAND-WRITTEN, NOT PULLED. The 47 copies at 044cf424 were written from a dev-deployment body. Until prod:vibrant-ibex-858 serves 044cf424, there is no source to pull from and these are transcriptions.",
+  "outageStillOpen": true
+}
