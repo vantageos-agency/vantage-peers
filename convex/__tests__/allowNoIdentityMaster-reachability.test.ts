@@ -125,7 +125,12 @@ describe("allowNoIdentityMaster — anonymous (no Clerk identity) direct caller 
 		);
 	});
 
-	test("messages.listByChannel — anonymous caller must not receive cross-tenant channel messages", async () => {
+	// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). This was
+	// the ONE messages read in this block that asserted a zero-length SUCCESS
+	// while its two neighbours above and below already required
+	// `rejects.toThrow(/RBAC_DENIED/)` for the same anonymous caller. It now
+	// matches them: a refusal and an absence must not be the same bytes.
+	test("messages.listByChannel — anonymous caller is RAISED at, like listMessages and searchMessagesByKeyword beside it", async () => {
 		const t = createT();
 		await t.run(async (ctx) => {
 			await ctx.db.insert("messages", {
@@ -136,10 +141,11 @@ describe("allowNoIdentityMaster — anonymous (no Clerk identity) direct caller 
 			});
 		});
 
-		const result = await t.query(api.messages.listByChannel, {
-			channel: "org-b-private-channel",
-		});
-		expect(result.length).toBe(0);
+		await expect(
+			t.query(api.messages.listByChannel, {
+				channel: "org-b-private-channel",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("messages.searchMessagesByKeyword — anonymous caller must be refused", async () => {

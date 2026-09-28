@@ -5,7 +5,12 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { filterByOrgScope, isRowVisibleToScope, withOrgScope } from "./lib/auth";
+import {
+	filterByOrgScope,
+	isRowVisibleToScope,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,7 +223,31 @@ export const list = query({
 		// is as much a defect as the leak).
 		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
 		// READ, unlike the mutations' `requireAuthenticatedCaller` throw (R-50/R-51).
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all has
+		// no mounted render for a throw to crash: the only subscribing consumer of
+		// this backend is the vantage-peers-dashboard Next.js app, every route of
+		// which sits behind `clerkMiddleware`, so no `useQuery` subscription is ever
+		// established without a Clerk session. Returning an empty SUCCESS to that
+		// caller is the defect — "you may not" and "there is nothing" come out as
+		// identical bytes, and a guard reading this door cannot tell a refusal from
+		// an absence. `missions:list` has raised RBAC_DENIED at this same pole in
+		// production all along while being reactively subscribed
+		// (components/missions/mission-board.tsx:25).
+		// The roster filter below is UNCHANGED: an ordinary org member's admission
+		// set is byte-identical to what it was, so no grant is withheld by this fix.
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+		// isolation-contract: no reactive subscriber. Enumerated by command against
+		// the only subscribing consumer (vantage-peers-dashboard):
+		//   grep -rn "api\.tasks\." --include=*.tsx app components hooks lib → no hit
+		// on this registration. So `alsoRefusePreOrg` is safe: no mounted render
+		// exists for that caller's throw to crash.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "recurringTasks:list", {
+			alsoRefusePreOrg: true,
+		});
 
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;

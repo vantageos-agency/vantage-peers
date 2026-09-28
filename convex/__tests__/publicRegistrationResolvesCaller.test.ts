@@ -75,6 +75,7 @@
  * `filterByOrgScope` / `isOrchestratorAllowedForScope` roster helpers.
  */
 
+import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
@@ -147,6 +148,56 @@ async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 			createdAt: Date.now(),
 		});
 	});
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa).
+//
+// The header above, and the DENY poles below, originally asserted the TYPED
+// EMPTY VALUE as the contract for a caller with no credential. That closed the
+// leak and left a second defect standing: "you may not" and "there is nothing"
+// came out as IDENTICAL BYTES. A guard built on top of these doors — exactly
+// like the prod-deploy guard that read an empty success on Day 158 and could
+// not tell a refusal from an absence — will one day ALLOW on a refusal.
+//
+// The assertions are INVERTED here, not deleted. Each keeps its real security
+// property (the unscoped caller is served NO ROWS) and gains the one it was
+// missing (the refusal is RECOGNISABLE BY CONTENT: a ConvexError whose data
+// carries RBAC_DENIED and names the registration). The ALLOW poles are
+// untouched, because no admission set changed.
+//
+// R-50 is NOT violated: an anonymous caller has no mounted render for the
+// throw to crash (the dashboard sits behind clerkMiddleware), and the
+// signed-in-but-not-yet-onboarded caller keeps its typed-empty result at every
+// site a dashboard `useQuery` actually subscribes to — the `preOrgAlsoRaises`
+// flag on each site below, enumerated by command, is that distinction.
+// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function expectRefusalCarryingItsCode(
+	read: () => Promise<unknown>,
+	registration: string,
+): Promise<void> {
+	let caught: unknown;
+	let returned: unknown;
+	let didThrow = false;
+	try {
+		returned = await read();
+	} catch (e) {
+		didThrow = true;
+		caught = e;
+	}
+	if (!didThrow) {
+		throw new Error(
+			`${registration} returned a SUCCESSFUL value to an unscoped caller instead of raising — ` +
+				`a refusal and an absence must not be the same bytes. Got: ${JSON.stringify(returned)}`,
+		);
+	}
+	expect(caught).toBeInstanceOf(ConvexError);
+	const data = String((caught as ConvexError<string>).data);
+	expect(data).toContain("RBAC_DENIED");
+	expect(data).toContain(registration);
 }
 
 const now = () => Date.now();
@@ -352,6 +403,14 @@ const seedMessage = (t: T, channel: string) =>
 
 const masterOnlyReads: Array<{
 	label: string;
+	/** `module:function`, the string the refusal must name. */
+	registration: string;
+	/**
+	 * True when NO dashboard `useQuery` subscribes to this read, so the
+	 * signed-in-but-not-yet-onboarded caller may be raised at too. Enumerated by
+	 * command against vantage-peers-dashboard, never guessed.
+	 */
+	preOrgAlsoRaises: boolean;
 	seed: (t: T) => Promise<void>;
 	read: (c: T | ReturnType<typeof asMaster>) => Promise<unknown>;
 	empty: unknown;
@@ -359,6 +418,8 @@ const masterOnlyReads: Array<{
 }> = [
 	{
 		label: "profiles:listProfiles (50 rows leaked)",
+		registration: "profiles:listProfiles",
+		preOrgAlsoRaises: false,
 		seed: seedProfile,
 		read: (c) => c.query(api.profiles.listProfiles, {}),
 		empty: [],
@@ -366,6 +427,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "mandates:list (9 rows of SPENDING AUTHORITY leaked)",
+		registration: "mandates:list",
+		preOrgAlsoRaises: false,
 		seed: seedMandate,
 		read: (c) => c.query(api.mandates.list, {}),
 		empty: [],
@@ -373,6 +436,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "fixPatterns:listAll (50 rows leaked)",
+		registration: "fixPatterns:listAll",
+		preOrgAlsoRaises: true,
 		seed: seedFixPattern,
 		read: (c) => c.query(api.fixPatterns.listAll, {}),
 		empty: [],
@@ -380,6 +445,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "missionTemplates:listNames (33 rows leaked)",
+		registration: "missionTemplates:listNames",
+		preOrgAlsoRaises: true,
 		seed: seedMissionTemplate,
 		read: (c) => c.query(api.missionTemplates.listNames, {}),
 		empty: [],
@@ -387,6 +454,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "errorMonitor:listErrors (50 error payloads leaked)",
+		registration: "errorMonitor:listErrors",
+		preOrgAlsoRaises: true,
 		seed: seedErrorLog,
 		read: (c) => c.query(api.errorMonitor.listErrors, {}),
 		empty: [],
@@ -394,6 +463,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "errorMonitorFilters:listFilterRules (15 rows leaked)",
+		registration: "errorMonitorFilters:listFilterRules",
+		preOrgAlsoRaises: true,
 		seed: seedFilterRule,
 		read: (c) => c.query(api.errorMonitorFilters.listFilterRules, {}),
 		empty: [],
@@ -401,6 +472,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "issueStatsQueries:getLatest (30 rows leaked)",
+		registration: "issueStatsQueries:getLatest",
+		preOrgAlsoRaises: true,
 		seed: seedIssueStats,
 		read: (c) => c.query(api.issueStatsQueries.getLatest, {}),
 		empty: [],
@@ -408,6 +481,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "githubRepoMapping:list (1 row leaked)",
+		registration: "githubRepoMapping:list",
+		preOrgAlsoRaises: true,
 		seed: seedRepoMapping,
 		read: (c) => c.query(api.githubRepoMapping.list, {}),
 		empty: { items: [], nextCursor: null },
@@ -418,6 +493,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "issues:getStats (aggregate counts leaked)",
+		registration: "issues:getStats",
+		preOrgAlsoRaises: true,
 		seed: (t) => seedIssue(t),
 		read: (c) => c.query(api.issues.getStats, {}),
 		empty: {
@@ -432,6 +509,8 @@ const masterOnlyReads: Array<{
 	},
 	{
 		label: "issues:listExternalOpen (1 row leaked)",
+		registration: "issues:listExternalOpen",
+		preOrgAlsoRaises: true,
 		seed: (t) =>
 			seedIssue(t, {
 				externalRepo: "third/party",
@@ -446,18 +525,32 @@ const masterOnlyReads: Array<{
 
 for (const site of masterOnlyReads) {
 	describe(`fleet-internal read resolves its caller — ${site.label}`, () => {
-		test("DENY — anonymous caller (no credential at all) is served the typed EMPTY value", async () => {
+		test("DENY — an anonymous caller (no credential at all) is RAISED at, carrying RBAC_DENIED — never a typed empty value a reader would mistake for an absence", async () => {
 			const t = createT();
 			await site.seed(t);
 
-			expect(await site.read(t)).toEqual(site.empty);
+			await expectRefusalCarryingItsCode(
+				() => site.read(t),
+				site.registration,
+			);
 		});
 
-		test("DENY — signed-in caller with NO verified organisation is served the typed EMPTY value", async () => {
+		test("DENY — a signed-in caller with NO verified organisation is refused in the shape its consumers can survive", async () => {
 			const t = createT();
 			await site.seed(t);
 
-			expect(await site.read(asNoOrg(t))).toEqual(site.empty);
+			if (site.preOrgAlsoRaises) {
+				// No dashboard useQuery subscribes here, so there is no render for
+				// the throw to crash and no reason to hand this caller a silence.
+				await expectRefusalCarryingItsCode(
+					() => site.read(asNoOrg(t)),
+					site.registration,
+				);
+			} else {
+				// R-50, UNCHANGED: a dashboard useQuery does subscribe to this
+				// read, and this caller's shell IS mounted.
+				expect(await site.read(asNoOrg(t))).toEqual(site.empty);
+			}
 		});
 
 		test("DENY — an ORDINARY member of an ACTIVE organisation is served the typed EMPTY value (the guard is not merely 'is anyone signed in')", async () => {
@@ -485,14 +578,14 @@ for (const site of masterOnlyReads) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("org-scoped read resolves its caller — businessUnits:list (1 row leaked)", () => {
-	test("DENY — anonymous caller gets the typed empty envelope", async () => {
+	test("DENY — an anonymous caller is RAISED at, carrying RBAC_DENIED (an empty envelope and an empty table were the same bytes)", async () => {
 		const t = createT();
 		await seedBusinessUnit(t, "sigma");
 
-		expect(await t.query(api.businessUnits.list, {})).toEqual({
-			items: [],
-			nextCursor: null,
-		});
+		await expectRefusalCarryingItsCode(
+			() => t.query(api.businessUnits.list, {}),
+			"businessUnits:list",
+		);
 	});
 
 	test("DENY — signed-in caller with NO verified organisation gets the typed empty envelope", async () => {
@@ -525,18 +618,24 @@ describe("org-scoped read resolves its caller — businessUnits:list (1 row leak
 });
 
 describe("org-scoped read resolves its caller — recurringTasks:list (4 rows leaked)", () => {
-	test("DENY — anonymous caller is served no rows", async () => {
+	test("DENY — an anonymous caller is RAISED at, carrying RBAC_DENIED", async () => {
 		const t = createT();
 		await seedRecurringTask(t, "sigma");
 
-		expect(await t.query(api.recurringTasks.list, {})).toEqual([]);
+		await expectRefusalCarryingItsCode(
+			() => t.query(api.recurringTasks.list, {}),
+			"recurringTasks:list",
+		);
 	});
 
-	test("DENY — signed-in caller with NO verified organisation is served no rows", async () => {
+	test("DENY — a signed-in caller with NO verified organisation is RAISED at too (no dashboard useQuery subscribes to this read)", async () => {
 		const t = createT();
 		await seedRecurringTask(t, "sigma");
 
-		expect(await asNoOrg(t).query(api.recurringTasks.list, {})).toEqual([]);
+		await expectRefusalCarryingItsCode(
+			() => asNoOrg(t).query(api.recurringTasks.list, {}),
+			"recurringTasks:list",
+		);
 	});
 
 	test("DENY — an ordinary org member is NOT served a recurring task assigned outside its roster", async () => {
@@ -563,19 +662,23 @@ describe("org-scoped read resolves its caller — recurringTasks:list (4 rows le
 });
 
 describe("org-scoped read resolves its caller — tasks:listUnlinkedBlocked (159 rows leaked, the largest)", () => {
-	test("DENY — anonymous caller is served no rows", async () => {
+	test("DENY — an anonymous caller is RAISED at, carrying RBAC_DENIED", async () => {
 		const t = createT();
 		await seedUnlinkedBlockedTask(t, "sigma");
 
-		expect(await t.query(api.tasks.listUnlinkedBlocked, {})).toEqual([]);
+		await expectRefusalCarryingItsCode(
+			() => t.query(api.tasks.listUnlinkedBlocked, {}),
+			"tasks:listUnlinkedBlocked",
+		);
 	});
 
-	test("DENY — signed-in caller with NO verified organisation is served no rows", async () => {
+	test("DENY — a signed-in caller with NO verified organisation is RAISED at too (no dashboard useQuery subscribes to this read)", async () => {
 		const t = createT();
 		await seedUnlinkedBlockedTask(t, "sigma");
 
-		expect(await asNoOrg(t).query(api.tasks.listUnlinkedBlocked, {})).toEqual(
-			[],
+		await expectRefusalCarryingItsCode(
+			() => asNoOrg(t).query(api.tasks.listUnlinkedBlocked, {}),
+			"tasks:listUnlinkedBlocked",
 		);
 	});
 
@@ -607,20 +710,24 @@ describe("org-scoped read resolves its caller — tasks:listUnlinkedBlocked (159
 // authorisation. That is the FAIL-OPEN class, and it is why an instrument that
 // only asks "does it resolve an identity" is insufficient.
 describe("FAIL-OPEN closed — messages:listByChannel (1 row leaked via the hardcoded 'broadcast' literal)", () => {
-	test("DENY — anonymous caller is served no broadcast rows", async () => {
+	test("DENY — an anonymous caller is RAISED at on the broadcast channel, carrying RBAC_DENIED", async () => {
 		const t = createT();
 		await seedMessage(t, "broadcast");
 
-		expect(
-			await t.query(api.messages.listByChannel, { channel: "broadcast" }),
-		).toEqual([]);
+		await expectRefusalCarryingItsCode(
+			() => t.query(api.messages.listByChannel, { channel: "broadcast" }),
+			"messages:listByChannel",
+		);
 	});
 
-	test("DENY — anonymous caller with NO channel argument is served no rows either", async () => {
+	test("DENY — an anonymous caller with NO channel argument is RAISED at too", async () => {
 		const t = createT();
 		await seedMessage(t, "broadcast");
 
-		expect(await t.query(api.messages.listByChannel, {})).toEqual([]);
+		await expectRefusalCarryingItsCode(
+			() => t.query(api.messages.listByChannel, {}),
+			"messages:listByChannel",
+		);
 	});
 
 	test("DENY — signed-in caller with NO verified organisation is served no broadcast rows", async () => {

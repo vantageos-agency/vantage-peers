@@ -6,9 +6,10 @@ import type { MutationCtx } from "./_generated/server";
 import {
 	lookupOrgMapping,
 	requireAgentCredentialMatch,
+	requireResolvedCaller,
 	requireScope,
-	withOrgScope,
 	type OrgScope,
+	withOrgScope,
 } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
@@ -1246,6 +1247,29 @@ export const listByChannel = query({
 		// as much a defect as the leak).
 		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
 		// READ (R-50/R-51).
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The two
+		// lines above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all has
+		// no mounted render for a throw to crash: the only subscribing consumer of
+		// this backend is the vantage-peers-dashboard Next.js app, every route of
+		// which sits behind `clerkMiddleware`, so no `useQuery` subscription is ever
+		// established without a Clerk session. Returning an empty SUCCESS to that
+		// caller is the defect — "you may not" and "there is nothing" come out as
+		// identical bytes. `missions:list` has raised RBAC_DENIED at this same pole
+		// in production all along while being reactively subscribed
+		// (components/missions/mission-board.tsx:25).
+		//
+		// A dashboard `useQuery` DOES subscribe to this read
+		// (components/messages/message-timeline.tsx:51,
+		// components/messages/message-history-table.tsx:85,
+		// components/activity/unified-activity-feed.tsx:153), so the
+		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its R-50
+		// typed-empty result untouched — `alsoRefusePreOrg` is NOT passed. The line
+		// below is left in place for exactly that caller; only the anonymous pole
+		// changes shape.
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+		requireResolvedCaller(scope, "messages:listByChannel");
 		if (!scope.isMaster && scope.orgSlug === null) return [];
 
 		// Fail-closed channel scoping: messages carry no orgId/tenantId column

@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
-import { withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,7 +356,26 @@ export const listProfiles = query({
     // REFUSAL SHAPE — typed empty, never a throw: this is a reactively-
     // subscribed public READ and a throw crashes the subscriber's render
     // (R-50/R-51), which is exactly what `refuseWithoutThrow` exists for.
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all
+		// has no mounted render for a throw to crash: the only subscribing
+		// consumer of this backend is the vantage-peers-dashboard Next.js app,
+		// every route of which sits behind `clerkMiddleware`, so no `useQuery`
+		// subscription is ever established without a Clerk session. Returning an
+		// empty SUCCESS to that caller is the defect — "you may not" and "there is
+		// nothing" come out as identical bytes, and a guard reading this door
+		// cannot tell a refusal from an absence. `missions:list` has raised
+		// RBAC_DENIED at this same pole in production all along while being
+		// reactively subscribed (components/missions/mission-board.tsx:25).
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+    // A dashboard `useQuery` DOES subscribe to this read, so the
+    // signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its
+    // R-50 typed-empty result untouched — `alsoRefusePreOrg` is NOT passed.
+    // Only the anonymous pole changes shape.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    requireResolvedCaller(scope, "profiles:listProfiles");
     if (!scope.isMaster) return [];
 
     const take = args.limit ?? 50;

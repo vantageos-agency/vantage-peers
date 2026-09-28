@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
-import { withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,7 +130,30 @@ export const listNames = query({
 		// read admits exactly what the write admits: master, nobody else.
 		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
 		// READ, and a throw crashes the subscriber's render (R-50/R-51).
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all
+		// has no mounted render for a throw to crash: the only subscribing
+		// consumer of this backend is the vantage-peers-dashboard Next.js app,
+		// every route of which sits behind `clerkMiddleware`, so no `useQuery`
+		// subscription is ever established without a Clerk session. Returning an
+		// empty SUCCESS to that caller is the defect — "you may not" and "there is
+		// nothing" come out as identical bytes, and a guard reading this door
+		// cannot tell a refusal from an absence. `missions:list` has raised
+		// RBAC_DENIED at this same pole in production all along while being
+		// reactively subscribed (components/missions/mission-board.tsx:25).
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+		// isolation-contract: no reactive subscriber. Enumerated by command against
+		// the only subscribing consumer (vantage-peers-dashboard):
+		//   grep -rn "api\.missionTemplates\." --include=*.tsx app components hooks lib → 0 hits.
+		// So `alsoRefusePreOrg` is safe: there is no mounted render for the
+		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
+		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "missionTemplates:listNames", {
+			alsoRefusePreOrg: true,
+		});
 		if (!scope.isMaster) return [];
 
 		const templates = await ctx.db
