@@ -560,20 +560,72 @@ def guard_identity() -> tuple[str | None, str]:
         return None, f"minting the service identity failed ({type(exc).__name__}: {exc})."
 
 
-# The positive control. `tasks:listUnlinkedBlocked` is an existing, read-only
-# query on this same deployment; nothing about it is specific to the token
-# being judged, which is the point -- it answers the question "is this store
-# answering me at all?" and nothing else. Overridable so a station can name a
-# cheaper control without editing the guard.
-LIVENESS_PATH = os.environ.get("VP_GUARD_LIVENESS_PATH", "tasks:listUnlinkedBlocked")
+# ---------------------------------------------------------------------------
+# THE POSITIVE CONTROL -- and the property it must have.
+#
+# The BLOCK-versus-REFUSE decision rests on one fact: "was I, THIS caller with
+# THIS credential, served?" A control that can succeed WITHOUT the credential
+# cannot establish that fact, however healthy it looks.
+#
+# The first control here was `tasks:listUnlinkedBlocked`, accepted on
+# `status == "success"`. MEASURED on the real deployment:
+#
+#   tasks:listUnlinkedBlocked   anonymous -> success value=list[159]
+#                               identified -> success value=list[159]
+#
+# Identical. It separated "store up" from "store down" -- real, but not the
+# question. And it was about to get worse in the direction that matters: that
+# query is one of the fifteen doors closed by #1349 (beeb5d5c, merged, NOT yet
+# deployed), after which an unidentified caller receives a TYPED EMPTY
+# (`status:"success", value:[]`) -- the refusal shape chosen for reactively
+# subscribed reads. A control keyed on "did it answer" reads that refusal as
+# health. A broken credential would then look healthy, the token read would
+# fail, and the guard would conclude "the id names nothing" and BLOCK when the
+# truth is "I could not identify myself" and the honest answer is REFUSE TO
+# JUDGE. That is this task's own collapse, relocated a second time.
+#
+# `missions:list` is chosen against three requirements:
+#
+#  1. IT CANNOT SUCCEED WITHOUT THE CREDENTIAL. It resolves the caller and
+#     calls `requireScope(scope, "view-own-missions")` (convex/missions.ts),
+#     which THROWS for a scope-less caller. Measured:
+#       anonymous  -> error, errorData "RBAC_DENIED: Missing scope ..."
+#       identified -> success value=list[30]
+#  2. ITS REFUSAL IS RECOGNISABLE BY CONTENT. The throw is a `ConvexError`, so
+#     its payload survives to the wire as `errorData` even in prod, where an
+#     ordinary fault is an opaque "[Request ID: ...] Server Error" with no
+#     data. `RBAC_DENIED` in `errorData` is therefore a POSITIVE identification
+#     of "reached, not identified" -- it is never inferred from an absence.
+#  3. ITS MEANING DOES NOT CHANGE UNDER THE DEPLOY IT GATES. `convex/missions.ts`
+#     is NOT among the fifteen files #1349 touches (`convex/tasks.ts` IS). A
+#     control whose behaviour changes under the very deploy it gates silently
+#     changes meaning at the moment it matters.
+#
+# It also lives in a DIFFERENT module from the token read (`tasks:get`), so it
+# cannot fail for the same cause; and when it does fail ambiguously the guard
+# moves towards REFUSE, never towards BLOCK.
+#
+# Overridable, because a station may need to name a different control -- but
+# any replacement must satisfy the three requirements above.
+LIVENESS_PATH = os.environ.get("VP_GUARD_LIVENESS_PATH", "missions:list")
+
+# The three wire-level states the control distinguishes.
+CONTROL_SERVED = "identified-and-served"
+CONTROL_NOT_IDENTIFIED = "reached-but-not-identified"
+CONTROL_NOT_REACHED = "not-reached"
+
+# The refusal marker `convex/lib/auth.ts` puts in every deny branch's
+# ConvexError. Matched against the error PAYLOAD only, never the message of an
+# opaque fault.
+RBAC_DENIED_MARKER = "RBAC_DENIED"
 
 
-def store_is_answering(token: str) -> tuple[bool, str]:
-    """Is the token store reachable and serving THIS reader, right now?
+def store_is_answering(token: str) -> tuple[str, str]:
+    """Was THIS caller, with THIS credential, served by the store just now?
 
-    Returns (True, "") when a known-answerable query answers. Used only to
-    separate "the id names nothing" from "the store is down" -- two facts the
-    deployment reports with the same opaque bytes.
+    Returns one of CONTROL_SERVED / CONTROL_NOT_IDENTIFIED / CONTROL_NOT_REACHED
+    plus a human detail. Only CONTROL_SERVED licenses reading a failed token
+    read as "the id names nothing"; both other states are REFUSE TO JUDGE.
     """
     try:
         body = _post_json(
@@ -582,10 +634,29 @@ def store_is_answering(token: str) -> tuple[bool, str]:
             {"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         )
     except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
-    if body.get("status") != "success":
-        return False, f"the control query {LIVENESS_PATH} also errored"
-    return True, ""
+        return CONTROL_NOT_REACHED, f"{type(exc).__name__}: {exc}"
+
+    if body.get("status") == "success":
+        # An identified caller may legitimately have ZERO missions, so the
+        # verdict is deliberately "was I served at all", never "did I get
+        # rows" -- an unidentified caller does not reach a success here, it
+        # is thrown out by requireScope.
+        return CONTROL_SERVED, ""
+
+    # A ConvexError's payload reaches the wire as `errorData`. An ordinary
+    # server fault carries none. So this is a POSITIVE identification of a
+    # refusal, not a guess from an absence.
+    payload = json.dumps(body.get("errorData"))
+    if RBAC_DENIED_MARKER in payload:
+        return CONTROL_NOT_IDENTIFIED, (
+            f"the control {LIVENESS_PATH} refused this caller "
+            f"({RBAC_DENIED_MARKER}) -- the credential presented was not "
+            "accepted by the deployment"
+        )
+    return CONTROL_NOT_REACHED, (
+        f"the control {LIVENESS_PATH} failed without a recognisable refusal "
+        f"({str(body.get('errorMessage'))[:120]})"
+    )
 
 
 def read_task(task_id: str) -> tuple[str, dict | None, str]:
@@ -636,12 +707,21 @@ def read_task(task_id: str) -> tuple[str, dict | None, str]:
         # the ID we asked about -- the token is absent or malformed, and that
         # is a BLOCK. If it cannot answer either, the read genuinely could not
         # be completed, and that is REFUSE TO JUDGE.
-        alive, probe_why = store_is_answering(token)
-        if alive:
+        state, probe_why = store_is_answering(token)
+        if state == CONTROL_SERVED:
+            # The deployment served THIS caller a query that no unidentified
+            # caller can reach. So the credential works and the fault is in
+            # the ID we asked about: the token is absent or malformed. BLOCK.
             return ReadOutcome.READ, None, ""
+        if state == CONTROL_NOT_IDENTIFIED:
+            return ReadOutcome.UNREADABLE, None, (
+                f"the credential was NOT accepted by the deployment ({probe_why}). "
+                "Nothing has been judged about the token -- it may be perfectly "
+                "valid. Renew or repair the identity named below."
+            )
         return ReadOutcome.UNREADABLE, None, (
-            "VantagePeers errored on tasks:get, and the positive control shows "
-            f"the deployment is not answering either ({probe_why}). The token "
+            "VantagePeers errored on tasks:get, and the positive control cannot "
+            f"confirm this caller was served either ({probe_why}). The token "
             "itself was never read, so nothing about it has been judged."
         )
     value = body.get("value")

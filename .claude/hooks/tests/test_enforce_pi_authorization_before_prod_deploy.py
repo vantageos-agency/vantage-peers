@@ -706,7 +706,8 @@ def test_strip_quoted_phrase_with_whitespace_stays_inert():
 # ---------------------------------------------------------------------------
 
 @contextlib.contextmanager
-def stub_vp_requiring_identity(tasks, *, status_code=200, force_error=False):
+def stub_vp_requiring_identity(tasks, *, status_code=200, force_error=False,
+                               credential_accepted=True):
     """`tasks:get` behind the SAME door the real deployment puts in front of it.
 
     No `Authorization` header -> `{"status":"success","value":null}` whatever
@@ -730,9 +731,25 @@ def stub_vp_requiring_identity(tasks, *, status_code=200, force_error=False):
                 self.wfile.write(out)
                 return
             bearer = self.headers.get("Authorization", "")
-            identified = bearer.startswith("Bearer ") and len(bearer) > len("Bearer ")
+            identified = (
+                bearer.startswith("Bearer ")
+                and len(bearer) > len("Bearer ")
+                and credential_accepted
+            )
             if body.get("path") != "tasks:get":
-                payload = {"status": "success", "value": []}  # positive control
+                # THE POSITIVE CONTROL. It cannot succeed without an accepted
+                # credential: `missions:list` calls requireScope, which THROWS
+                # for a scope-less caller, and the throw is a ConvexError whose
+                # payload reaches the wire as `errorData`. Measured on the real
+                # deployment (anonymous -> RBAC_DENIED, identified -> rows).
+                if identified:
+                    payload = {"status": "success", "value": []}
+                else:
+                    payload = {
+                        "status": "error",
+                        "errorMessage": "[Request ID: stub] Server Error",
+                        "errorData": 'RBAC_DENIED: Missing scope "view-own-missions" for org "null"',
+                    }
             elif not identified:
                 seen["anonymous_reads"] += 1
                 # The door: null for EVERY id, present or not.
@@ -836,6 +853,59 @@ def test_missing_credential_refuses_to_judge_rather_than_blocking():
     assert "COULD NOT CHECK" in out, f"must read as could-not-check, out={out}"
     assert "VP_GUARD_CONVEX_TOKEN" in out, (
         f"the refusal must NAME the variable it needs (never its value), out={out}"
+    )
+
+
+def test_control_refuses_an_unidentified_caller():
+    """THE CONTROL'S OWN NEGATIVE POLE, in the suite.
+
+    The first control here (`tasks:listUnlinkedBlocked`) answered an anonymous
+    caller with 159 rows -- identical to an identified one -- so it could
+    succeed WITHOUT the credential and proved nothing about identity. A control
+    never run on its own negative pole is an instrument nobody has checked.
+    """
+    guard = load_hook_module()
+    assert guard.LIVENESS_PATH == "missions:list", (
+        "the control must be a path that REFUSES an unidentified caller"
+    )
+    with stub_vp_requiring_identity({}, credential_accepted=False) as (url, _):
+        os.environ["VP_CONVEX_URL"] = url
+        try:
+            guard.VP_CONVEX_URL = url
+            state, why = guard.store_is_answering("a-credential-the-store-rejects")
+        finally:
+            os.environ.pop("VP_CONVEX_URL", None)
+    assert state == guard.CONTROL_NOT_IDENTIFIED, (
+        f"a rejected credential must read as not-identified, got {state} ({why})"
+    )
+
+
+def test_control_serves_an_identified_caller():
+    """POSITIVE POLE of the same instrument -- both poles, never one."""
+    guard = load_hook_module()
+    with stub_vp_requiring_identity({}) as (url, _):
+        guard.VP_CONVEX_URL = url
+        state, _ = guard.store_is_answering("a-credential-the-store-accepts")
+    assert state == guard.CONTROL_SERVED, f"an accepted credential must be served, got {state}"
+
+
+def test_broken_credential_refuses_to_judge_rather_than_blocking():
+    """THE REGRESSION THIS CONTROL EXISTS FOR.
+
+    The credential is rejected by the deployment, so the token read fails. A
+    guard whose control could pass without the credential would read that as
+    "the id names nothing" and BLOCK a perfectly valid token. The truth is
+    "I could not identify myself", and the honest answer is REFUSE TO JUDGE.
+    """
+    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
+    rc, out, _ = _run_against_door(AUTHORIZED_DEPLOY, tasks, credential_accepted=False)
+    assert rc == 2, f"a rejected credential must refuse, rc={rc} out={out}"
+    assert "COULD NOT CHECK" in out, (
+        f"a rejected credential is a could-not-check, never a BLOCK, out={out}"
+    )
+    assert "token-absent" not in out, (
+        "a valid token was reported as absent because the credential failed -- "
+        f"this is the collapse the control exists to prevent, out={out}"
     )
 
 
