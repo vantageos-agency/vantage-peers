@@ -838,6 +838,15 @@ export default defineSchema({
 		nextRunAt: v.number(),
 		active: v.boolean(),
 		createdBy: creatorValidator,
+		// TENANT of the SCHEDULE, stamped from the verified scope at creation.
+		// This column exists so that `processDueTasks` — a cron with no caller
+		// and therefore no scope of its own — can stamp the tasks it generates
+		// with the tenant that actually owns the schedule. Without it the cron
+		// could only ever emit untenanted rows, which (now that absence grants
+		// nothing) would be invisible to the very org that registered the
+		// schedule: a withheld grant manufactured by a missing column.
+		// `undefined` = fleet/master-owned schedule.
+		orgId: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number(),
 	})

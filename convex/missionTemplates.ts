@@ -450,6 +450,16 @@ export const instantiateTemplateIntoMission = mutation({
 				status: "todo",
 				priority: mission.priority,
 				createdBy,
+				// TENANT: INHERITED from the target mission, not re-derived from
+				// the caller. This is genuinely derivable rather than inferred —
+				// the task is a child of exactly one mission, and
+				// `isMissionAllowedForScope` above has already refused any caller
+				// whose scope does not own that mission. Inheriting keeps parent
+				// and children in one tenant; re-deriving from the caller could
+				// split them if a master caller instantiated into a client's
+				// mission (the children would become fleet rows inside a client
+				// mission, invisible to the client that owns the parent).
+				orgId: mission.orgId,
 				createdAt: now,
 				updatedAt: now,
 			});

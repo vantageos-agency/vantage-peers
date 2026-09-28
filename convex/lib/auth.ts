@@ -347,31 +347,42 @@ export function filterByOrgScope<
 //     mirrors the `qb.eq("orgId", scope.orgSlug)` filter convex/tasks.ts's
 //     search path already applies.
 //
-//  4. the row states NO `orgId` -> it is NOT granted by that absence. It must
-//     still pass `filterByOrgScope`, the orchestrator-roster control that IS the
-//     authority the COLLECTION reads of these same tables apply today
-//     (`runTasksList`, `runMissionsList`).
+//  4. the row states NO `orgId` -> NOT visible to an org-scoped caller. The
+//     absence of a tenant stamp asserts nothing and therefore grants nothing.
 //
-// WHY LEG 4 DEFERS TO THE ROSTER RATHER THAN DENYING FLATLY — decided
-// explicitly, because "a row with no organisation field" is its own case and a
-// silent fall-through either way would be the defect. `tasks.create` accepts no
-// `orgId` argument and `insertTask` stamps none, so EVERY task created through
-// the public path has `orgId === undefined`. Denying on absence would make the
-// whole table unreadable through `get` for every ordinary org-scoped caller
-// while it stayed visible through `list` — a WITHHELD GRANT across the table,
-// which is as much a defect as a leak. Deferring to the roster makes the
-// single-row read admit EXACTLY what the collection read admits: no new grant,
-// and no lost one.
+// WHY LEG 4 DENIES, AND WHY THE ROSTER IS NO LONGER CONSULTED HERE.
+// Leg 4 used to defer to `filterByOrgScope` — the orchestrator-roster control.
+// That deferral was the multi-tenant isolation hole, and it was load-bearing
+// rather than theoretical: `allowedOrchestrators.includes(pilot ?? assignedTo)`
+// is a STRING MEMBERSHIP, not a tenant boundary. Two organisations whose
+// rosters both carry an orchestrator named "eta" reached each other's rows
+// through this leg — through `get` exactly as through `list`. A product cannot
+// onboard a second client onto a boundary made of name overlap.
 //
-// NOT CLOSED BY THIS HELPER, and named rather than implied: because neither
-// `tasks.create` nor `missions.create` stamps `orgId`, leg 3 is inert for
-// newly-created rows and leg 4 carries them. Two orgs whose
-// `client_org_mapping.allowedOrchestrators` rosters overlap on the same
-// orchestrator name can still reach each other's orgId-less rows through leg 4 —
-// exactly as they already can through `list`. That is a WRITE-PATH gap (the row
-// is never stamped with its tenant at all), pre-existing and untouched here.
-// Closing it means deriving `orgId` from the verified scope at create time on
-// both tables plus a backfill.
+// The deferral was justified at the time by the fact that leg 3 was INERT:
+// `insertTask` stamped no `orgId`, so every task the product created had
+// `orgId === undefined` and denying on absence would have withheld the whole
+// table from its legitimate owners. That justification is now spent — the write
+// paths stamp the tenant (see `convex/tasks.ts`'s `insertTask`, which now takes
+// an explicit `orgId` derived from the verified scope, alongside
+// `missions.create` and `briefingNotes.create` which already did). With leg 3
+// live, leg 4 governs only rows written BEFORE the stamp, plus fleet/master
+// rows — and neither of those belongs to a client org.
+//
+// ABSENCE NO LONGER MEANS MASTER. This is the doctrine inversion, and it is the
+// point: an unstamped row used to READ AS a master row, which is the same
+// fail-open shape as a resolver returning a master sentinel on a null identity.
+// Master access is now derived ENTIRELY from leg 1 — the CALLER's own verified
+// master scope (the by-id service-account carve-out or the explicit internal
+// opt-in) — never inferred from a property the ROW happens to lack. A row's
+// missing `orgId` is "no tenant asserted", not "owned by the fleet".
+//
+// THE COST, NAMED RATHER THAN IMPLIED: a legacy row created by an org caller
+// before the stamp landed is now invisible to that org until it is backfilled.
+// That is a WITHHELD GRANT and it is deliberate — the alternative is keeping a
+// cross-tenant read open. `convex/migrations/backfillOrgIds.ts` is the
+// audit-first instrument for closing it; rows whose owner cannot be derived are
+// reported, never guessed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -387,14 +398,16 @@ export function isRowVisibleToScope(
 	scope: OrgScope,
 	row: { orgId?: string; pilot?: string; assignedTo?: string },
 ): boolean {
-	// Leg 1 — master, unchanged.
+	// Leg 1 — master, unchanged. Master-ness comes from the CALLER's verified
+	// scope, never from anything the row does or does not state.
 	if (scope.isMaster) return true;
 	// Leg 2 — no verified organisation (anonymous OR refused).
 	if (scope.orgSlug === null) return false;
-	// Leg 3 — the row names a DIFFERENT organisation. Hard deny.
-	if (row.orgId !== undefined && row.orgId !== scope.orgSlug) return false;
-	// Leg 4 — no stated organisation: the roster still has to admit it.
-	return filterByOrgScope([row], scope).length === 1;
+	// Leg 3 — the row must STATE this caller's organisation. An absent `orgId`
+	// (leg 4) falls through this same comparison and denies: `undefined` is
+	// never equal to a resolved org slug. The roster is deliberately NOT
+	// consulted — a shared orchestrator NAME is not a shared tenant.
+	return row.orgId === scope.orgSlug;
 }
 
 /**

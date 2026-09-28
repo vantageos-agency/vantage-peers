@@ -456,6 +456,14 @@ interface CreateTaskArgs {
 async function insertTask(
 	ctx: MutationCtx,
 	args: CreateTaskArgs,
+	// THE TENANT STAMP. Required — not optional, and deliberately NOT defaulted:
+	// a task row's tenancy must be a decision every caller makes explicitly at
+	// the call site, because an omitted stamp is exactly the defect this closes.
+	// `undefined` means "fleet/master-owned" and is reachable ONLY from a
+	// verified master scope or an internal automation path that has no client
+	// org by construction — see each call site's own justification. It is never
+	// the result of forgetting.
+	orgId: string | undefined,
 ): Promise<import("./_generated/dataModel").Id<"tasks">> {
 	// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
 	// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
@@ -479,9 +487,37 @@ async function insertTask(
 		// `update` cannot patch (Eta REVISE #1254) — the reviewer-reclaim authorization
 		// reads this, never the mutable title/tags.
 		isReviewTask: computeIsReviewTask(args.title, args.tags),
+		// Stamp the TENANT once at create, from the caller's verified scope.
+		// `isRowVisibleToScope` leg 3 reads this and nothing else; a row that
+		// reaches the database unstamped is readable by no org caller at all.
+		orgId,
 		createdAt: now,
 		updatedAt: now,
 	});
+}
+
+/**
+ * Derives the `orgId` to stamp on a row from an already-resolved, verified
+ * scope — the ONLY permitted source. There is no argument to distrust here:
+ * `tasks.create` accepts no `orgId` and never will, so an org caller can
+ * create only inside its own tenant, by construction.
+ *
+ * REFUSES rather than softening. A caller that is neither master nor resolved
+ * to an organisation has no tenant to stamp, and a row with no tenant is a row
+ * no org can ever read — so writing it would manufacture an orphan instead of
+ * reporting the problem. `withOrgScope` already throws for a signed-in caller
+ * with no org, which makes this branch defence-in-depth rather than the primary
+ * gate; it is here so that a future change to that upstream behaviour surfaces
+ * as a refusal at the write, not as silent data loss.
+ */
+function orgIdForWrite(scope: OrgScope, what: string): string | undefined {
+	if (scope.isMaster) return undefined;
+	if (scope.orgSlug === null) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller has no organisation to own the ${what} it is creating — refusing to write an untenanted row — ${JSON.stringify({ orgSlug: null })}`,
+		);
+	}
+	return scope.orgSlug;
 }
 
 export const create = mutation({
@@ -492,12 +528,14 @@ export const create = mutation({
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
-		await requireAuthenticatedCaller(
+		const scope = await requireAuthenticatedCaller(
 			ctx,
 			args.createdBy,
 			agentCredentialSecret,
 		);
-		return await insertTask(ctx, taskArgs);
+		// The tenant is derived from the SCOPE just resolved above, never from
+		// anything the client sent.
+		return await insertTask(ctx, taskArgs, orgIdForWrite(scope, "task"));
 	},
 });
 
@@ -510,7 +548,15 @@ export const createForWebhook = internalMutation({
 	args: createTaskArgsValidator,
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
-		return await insertTask(ctx, args);
+		// TENANT: fleet/master (`undefined`), decided explicitly. This path is
+		// the GitHub webhook — it is authenticated by HMAC over the delivery
+		// body, not by a Clerk identity, so there is no org principal to derive
+		// a tenant from and no client org that could own the row. The tasks it
+		// creates are fleet automation records (deploy/review chores against
+		// this repo's own PRs). They are readable by master via
+		// `isRowVisibleToScope` leg 1 — the CALLER's verified master scope —
+		// and by no client org, which is correct: no client owns them.
+		return await insertTask(ctx, args, undefined);
 	},
 });
 
@@ -3015,6 +3061,11 @@ export const createDeployTaskWithDedup = internalMutation({
 			return await ctx.db.insert("tasks", {
 				...taskArgs,
 				status: "todo" as const,
+				// TENANT: fleet/master, decided explicitly. This internalMutation
+				// is the deploy-task automation driven by this repo's own GitHub
+				// events; it has no Clerk principal and no client org could own a
+				// deploy chore for the fleet's own PRs. Master reads it via leg 1.
+				orgId: undefined,
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -3095,6 +3146,9 @@ export const createDeployTaskWithDedup = internalMutation({
 		const newId = await ctx.db.insert("tasks", {
 			...taskArgs,
 			status: "todo" as const,
+			// TENANT: fleet/master — same deploy-automation justification as the
+			// early-return insert above in this same mutation.
+			orgId: undefined,
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -4175,6 +4229,10 @@ export const createOrUpdateReviewTask = internalMutation({
 			// task in a reviewer's real queue — its "[Review] <repo> PR #<n>: …" title makes
 			// computeIsReviewTask true, so the reviewer-reclaim branch fires for them.
 			isReviewTask: computeIsReviewTask(title, args.tags),
+			// TENANT: fleet/master, decided explicitly. The PR-sync path is
+			// webhook-driven automation over this repo's own pull requests —
+			// no Clerk principal, no client org to own a review chore.
+			orgId: undefined,
 			createdAt: now,
 			updatedAt: now,
 			// Day 130 follow-up #2 — the inforgeable automation signal. This

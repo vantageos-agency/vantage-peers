@@ -171,6 +171,9 @@ export const create = mutation({
 			nextRunAt,
 			active: true,
 			createdBy: args.createdBy,
+			// TENANT of the schedule, from the scope resolved above — never an
+			// argument. Every task this schedule later generates inherits it.
+			orgId: scope.isMaster ? undefined : (scope.orgSlug ?? undefined),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -475,6 +478,14 @@ export const processDueTasks = internalMutation({
 					tags: recurring.tags,
 					status: "todo",
 					createdBy: recurring.createdBy,
+					// TENANT: INHERITED from the schedule that generated it. This
+					// cron has no caller and therefore no scope of its own, so the
+					// tenant cannot be derived here — it is carried on the
+					// `recurringTasks` row, stamped when the schedule was created
+					// by a verified caller. Inheriting is derivation, not
+					// inference: the generated task belongs to whoever owns the
+					// schedule, by definition.
+					orgId: recurring.orgId,
 					createdAt: now,
 					updatedAt: now,
 				});
