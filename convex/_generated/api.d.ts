@@ -67,7 +67,7 @@ import type * as migrations_diary_backfill_createdBy from "../migrations/diary_b
 import type * as migrations_drop_client_scope_global_prefix from "../migrations/drop_client_scope_global_prefix.js";
 import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_patch_marie_iris_rh_scope from "../migrations/patch_marie_iris_rh_scope.js";
-import type * as migrations_populateOrgIds from "../migrations/populateOrgIds.js";
+import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as missionTemplates from "../missionTemplates.js";
@@ -159,7 +159,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/drop_client_scope_global_prefix": typeof migrations_drop_client_scope_global_prefix;
   "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/patch_marie_iris_rh_scope": typeof migrations_patch_marie_iris_rh_scope;
-  "migrations/populateOrgIds": typeof migrations_populateOrgIds;
+  "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   missionTemplates: typeof missionTemplates;
