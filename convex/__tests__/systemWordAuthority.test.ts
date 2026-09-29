@@ -25,10 +25,13 @@
  * pre-fix tree too — there is nothing to turn RED at the member level).
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { analyse as analyseSystemWord } from "./lib/systemWordAst";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -491,24 +494,200 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 // ── the CLASS, structurally ─────────────────────────────────────────────────
 // The mandates.* sites are reachable only by the verified master, for whom the
 // typed-word compare and `isFleetSystemCaller` are observationally identical —
-// no behavioural pole can tell them apart. This scan pins the CLASS instead:
-// outside the shared predicate, no convex module may compare a caller name to
-// the literal "system". A per-file variant is how a boundary drifts.
-describe("the word 'system' is compared in exactly one place", () => {
-	test("no convex source compares a caller to the literal outside lib/systemCaller.ts", () => {
-		const sources = import.meta.glob(["../*.ts", "../lib/*.ts"], {
-			query: "?raw",
-			import: "default",
-			eager: true,
-		}) as Record<string, string>;
-		const typedWord =
-			/(callerOrchestrator|caller)[A-Za-z.]*\s*(===|!==)\s*["']system["']/;
-		const offenders = Object.entries(sources)
-			.filter(([path]) => !path.endsWith("lib/systemCaller.ts"))
-			.filter(([path]) => !/\.test\.ts$/.test(path))
-			.filter(([, src]) => typedWord.test(src))
-			.map(([path]) => path);
-		expect(Object.keys(sources).length).toBeGreaterThan(20);
-		expect(offenders).toEqual([]);
+// no behavioural pole can tell them apart. This control is the ONLY proof for
+// those three sites, so it reads the syntax tree (convex/__tests__/lib/
+// systemWordAst.ts), never a text pattern, and it reads EVERY convex module.
+// The declared limits (a value built at runtime has no literal node) are in the
+// header of that file; the LIMIT fixtures below pin them as limits.
+const walk = (dir: string): string[] =>
+	readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+		e.name === "node_modules"
+			? []
+			: e.isDirectory()
+				? walk(`${dir}/${e.name}`)
+				: /\.(ts|tsx|js|mjs|cjs|mts|cts)$/.test(e.name)
+					? [`${dir}/${e.name}`]
+					: [],
+	);
+
+const CONVEX_DIR = fileURLToPath(new URL("..", import.meta.url));
+
+const allSources = (): Record<string, string> => {
+	const raw = import.meta.glob("../**/*.{ts,tsx,js,mjs,cjs,mts,cts}", {
+		query: "?raw",
+		import: "default",
+		eager: true,
+	}) as Record<string, string>;
+	// Vite rewrites a key inside this file's own directory to "./x", so the key
+	// is resolved against this file rather than sliced.
+	const out = Object.fromEntries(
+		Object.entries(raw).map(([p, src]) => [
+			`convex/${fileURLToPath(new URL(p, import.meta.url)).slice(CONVEX_DIR.length)}`,
+			src,
+		]),
+	);
+	// A module's own glob never lists the module itself. This file is in the
+	// tree it scans, so it is read from disk and added: no blind spot at home.
+	const self = fileURLToPath(import.meta.url);
+	out[`convex/${self.slice(CONVEX_DIR.length)}`] = readFileSync(self, "utf8");
+	return out;
+};
+
+describe("the word 'system' is compared in exactly one place — on the AST", () => {
+	test("the scan reads every convex module, migrations/ included (glob === filesystem walk)", () => {
+		const fromGlob = Object.keys(allSources()).sort();
+		const base = CONVEX_DIR.replace(/\/$/, "");
+		const fromFs = walk(base)
+			.map((p) => `convex/${p.slice(base.length + 1)}`)
+			.sort();
+		expect(fromGlob).toEqual(fromFs);
+		expect(
+			fromGlob.filter((p) => p.startsWith("convex/migrations/")).length,
+		).toBeGreaterThanOrEqual(10);
+		expect(fromGlob.length).toBeGreaterThan(300);
+	});
+
+	test("no convex module compares a value to the word outside the shared predicate", () => {
+		const sites = analyseSystemWord(allSources());
+		const blocked = sites.filter((s) => s.cls === null);
+		expect(
+			blocked.map(
+				(s) => `${s.file}:${s.line}:${s.column} [${s.form}] ${s.reason} :: ${s.text}`,
+			),
+		).toEqual([]);
+		const predicate = sites.filter((s) => s.cls === "predicate");
+		expect(predicate.map((s) => s.file)).toEqual(["convex/lib/systemCaller.ts"]);
+	}, 120_000);
+
+	// ── BLOCK fixtures: every hostile spelling must be seen ─────────────────
+	const HOSTILE: Record<string, string> = {
+		"P0 direct": `export const f = (callerOrchestrator: string) => callerOrchestrator !== "system";`,
+		"M1 Yoda order": `export const f = (callerOrchestrator: string) => "system" === callerOrchestrator;`,
+		"M2 template literal":
+			"export const f = (callerOrchestrator: string) => callerOrchestrator === `system`;",
+		"M3 alias": `const WHO = "system"; export const f = (callerOrchestrator: string) => callerOrchestrator === WHO;`,
+		"alias, chain": `const A = "system"; const B = A; export const f = (c: string) => c === B;`,
+		"alias, let": `let A = "system"; export const f = (c: string) => c === A;`,
+		"alias, parameter default": `export const f = (c: string, w = "system") => c === w;`,
+		"alias, as const property": `const K = { who: "system" } as const; export const f = (c: string) => c === K.who;`,
+		"loose equality": `export const f = (c: string) => c == "system";`,
+		"loose inequality, Yoda": `export const f = (c: string) => "system" != c;`,
+		"case variant": `export const f = (c: string) => c === "System";`,
+		padded: `export const f = (c: string) => c === " system ";`,
+		"parenthesised + cast": `export const f = (c: string) => c === (("system" as string));`,
+		"angle-bracket cast": `export const f = (c: string) => c === (<string>"system");`,
+		satisfies: `export const f = (c: string) => c === ("system" satisfies string);`,
+		"String.raw": "export const f = (c: string) => c === String.raw`system`;",
+		"switch case": `export const f = (c: string) => { switch (c) { case "system": return 1; default: return 0; } };`,
+		"switch on the literal": `export const f = (c: string) => { switch ("system") { case c: return 1; default: return 0; } };`,
+		"array includes": `export const f = (c: string) => ["system", "x"].includes(c);`,
+		"array indexOf": `export const f = (c: string) => ["system"].indexOf(c) !== -1;`,
+		"Set membership": `export const f = (c: string) => new Set(["system"]).has(c);`,
+		"receiver includes": `export const f = (c: string) => "system".includes(c);`,
+		startsWith: `export const f = (c: string) => c.startsWith("system");`,
+		localeCompare: `export const f = (c: string) => c.localeCompare("system") === 0;`,
+		"Object.is": `export const f = (c: string) => Object.is(c, "system");`,
+		"regex literal": `export const f = (c: string) => /^system$/.test(c);`,
+		"new RegExp": `export const f = (c: string) => new RegExp("^system$").test(c);`,
+	};
+
+	test.each(Object.entries(HOSTILE))("BLOCK: %s", (_name, src) => {
+		const sites = analyseSystemWord({ "convex/x.ts": src });
+		expect(sites.filter((s) => s.cls === null).length).toBeGreaterThanOrEqual(1);
+	});
+
+	test("BLOCK: an alias imported from another convex module", () => {
+		const sites = analyseSystemWord({
+			"convex/lib/word.ts": `export const WHO = "system";`,
+			"convex/x.ts": `import { WHO } from "./lib/word"; export const f = (c: string) => c === WHO;`,
+		});
+		expect(sites.filter((s) => s.cls === null).map((s) => s.file)).toEqual([
+			"convex/x.ts",
+		]);
+	});
+
+	test("BLOCK: an enum member holding the word", () => {
+		const sites = analyseSystemWord({
+			"convex/x.ts": `enum W { S = "system" } export const f = (c: string) => c === W.S;`,
+		});
+		expect(sites.filter((s) => s.cls === null).length).toBe(1);
+	});
+
+	test("BLOCK: the same comparison inside convex/migrations/", () => {
+		const sites = analyseSystemWord({
+			"convex/migrations/m.ts": `export const f = (c: string) => "system" === c;`,
+		});
+		expect(sites.map((s) => `${s.file}:${s.line}`)).toEqual([
+			"convex/migrations/m.ts:1",
+		]);
+	});
+
+	test("BLOCK: the predicate's own shape, moved to another file, another function or another shape", () => {
+		const blocked = (file: string, fn: string, expr: string) =>
+			analyseSystemWord({
+				[file]: `export function ${fn}(callerScope: { isMaster: boolean }, c: string | undefined): boolean { return ${expr}; }`,
+			}).filter((s) => s.cls === null).length;
+		const shape = `callerScope.isMaster && c === "system"`;
+		expect(blocked("convex/lib/systemCaller.ts", "isFleetSystemCaller", shape)).toBe(0);
+		expect(blocked("convex/other.ts", "isFleetSystemCaller", shape)).toBe(1);
+		expect(blocked("convex/lib/systemCaller.ts", "isSomethingElse", shape)).toBe(1);
+		expect(blocked("convex/lib/systemCaller.ts", "isFleetSystemCaller", `c === "system"`)).toBe(1);
+		expect(
+			blocked("convex/lib/systemCaller.ts", "isFleetSystemCaller", `callerScope.isMaster || c === "system"`),
+		).toBe(1);
+		expect(
+			blocked("convex/lib/systemCaller.ts", "isFleetSystemCaller", `c === "system" && callerScope.isMaster`),
+		).toBe(1);
+		expect(
+			blocked("convex/lib/systemCaller.ts", "isFleetSystemCaller", `callerScope.isMaster && "system" === c`),
+		).toBe(1);
+	});
+
+	test("BLOCK: mutants of the REAL convex/mandates.ts source", () => {
+		const real = allSources()["convex/mandates.ts"] as string;
+		const needle = "!isFleetSystemCaller(scope, args.callerOrchestrator) &&";
+		expect(real.split(needle).length - 1).toBe(3);
+		const blockedFiles = (repl: string, pre = "") =>
+			analyseSystemWord({ "convex/mandates.ts": pre + real.replace(needle, repl) })
+				.filter((s) => s.cls === null)
+				.map((s) => s.file);
+		expect(blockedFiles(`args.callerOrchestrator !== "system" &&`)).toEqual(["convex/mandates.ts"]);
+		expect(blockedFiles(`"system" !== args.callerOrchestrator &&`)).toEqual(["convex/mandates.ts"]);
+		expect(blockedFiles("args.callerOrchestrator !== `system` &&")).toEqual(["convex/mandates.ts"]);
+		expect(blockedFiles(`args.callerOrchestrator !== SYS &&`, `const SYS = "system";\n`)).toEqual([
+			"convex/mandates.ts",
+		]);
+		// and the pristine source is clean
+		expect(blockedFiles(needle)).toEqual([]);
+	});
+
+	// ── PASS fixtures: the word may exist; only a COMPARISON is a site ──────
+	const BENIGN: Record<string, string> = {
+		"writes the word": `export const r = { createdBy: "system", from: "system" };`,
+		"defaults to the word": `export const f = (a?: string) => a ?? "system";`,
+		"type position": `export type Who = "system" | "user";`,
+		prose: `export const doc = "the system decides";`,
+		"a longer word": `export const f = (c: string) => c === "systematic";`,
+		"a database filter (not a caller compare)": `declare const q: { eq: (a: unknown, b: unknown) => unknown; field: (n: string) => unknown }; export const f = () => q.eq(q.field("createdBy"), "system");`,
+		"another literal": `export const f = (c: string) => c === "master";`,
+		comment: `// c === "system"\nexport const f = 1;`,
+	};
+	test.each(Object.entries(BENIGN))("PASS: %s", (_n, src) => {
+		expect(analyseSystemWord({ "convex/x.ts": src })).toEqual([]);
+	});
+
+	// ── DECLARED LIMITS: pinned as limits so nobody reads them as coverage ───
+	const LIMIT: Record<string, string> = {
+		"M4 computed string": `export const f = (c: string) => c === "sys" + "tem";`,
+		"template with substitution":
+			'const a = "sys"; export const f = (c: string) => c === `${a}tem`;',
+		"array join": `export const f = (c: string) => c === ["sys", "tem"].join("");`,
+		fromCharCode: `export const f = (c: string) => c === String.fromCharCode(115, 121, 115, 116, 101, 109);`,
+		"value in a container": `const cfg = { who: "system" }; export const f = (c: string) => c === cfg.who;`,
+		"compare hidden in a helper": `const eq = (a: string, b: string) => a === b; export const f = (c: string) => eq(c, "system");`,
+		"key membership": `export const f = (c: string) => c in { system: 1 };`,
+	};
+	test.each(Object.entries(LIMIT))("DECLARED LIMIT (not seen): %s", (_n, src) => {
+		expect(analyseSystemWord({ "convex/x.ts": src })).toEqual([]);
 	});
 });
