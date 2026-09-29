@@ -570,6 +570,17 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"alias, let": `let A = "system"; export const f = (c: string) => c === A;`,
 		"alias, parameter default": `export const f = (c: string, w = "system") => c === w;`,
 		"alias, as const property": `const K = { who: "system" } as const; export const f = (c: string) => c === K.who;`,
+		"N1 ternary": `export const f = (c: string, k: boolean) => c === (k ? "system" : "");`,
+		"N1 ternary, word in the false branch": `export const f = (c: string, k: boolean) => c === (k ? "" : "system");`,
+		"N2 destructuring default": `export const f = (c: string, o: { w?: string }) => { const { w = "system" } = o; return c === w; };`,
+		"N3 nullish coalescing": `export const f = (c: string) => c === (undefined ?? "system");`,
+		"nullish, word on the left": `export const f = (c: string, a?: string) => c === ("system" ?? a);`,
+		"logical or": `export const f = (c: string, a?: string) => c === (a || "system");`,
+		"logical and": `export const f = (c: string, a: boolean) => c === (a && "system");`,
+		"comma tail": `export const f = (c: string) => c === (0, "system");`,
+		"ternary through an alias": `const W = "system"; export const f = (c: string, k: boolean) => c === (k ? W : "");`,
+		"ternary in a switch case": `export const f = (c: string, k: boolean) => { switch (c) { case k ? "system" : "": return 1; default: return 0; } };`,
+		"ternary in .includes": `export const f = (c: string, k: boolean) => ["a"].includes(k ? "system" : c);`,
 		"loose equality": `export const f = (c: string) => c == "system";`,
 		"loose inequality, Yoda": `export const f = (c: string) => "system" != c;`,
 		"case variant": `export const f = (c: string) => c === "System";`,
@@ -657,6 +668,16 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		expect(blockedFiles(`args.callerOrchestrator !== SYS &&`, `const SYS = "system";\n`)).toEqual([
 			"convex/mandates.ts",
 		]);
+		// the reviewer's N1..N3, on the REAL source
+		expect(blockedFiles(`args.callerOrchestrator !== (args.callerOrchestrator ? "system" : "") &&`)).toEqual([
+			"convex/mandates.ts",
+		]);
+		expect(blockedFiles(`args.callerOrchestrator !== W &&`, `const { w: W = "system" } = { w: undefined as string | undefined };\n`)).toEqual([
+			"convex/mandates.ts",
+		]);
+		expect(blockedFiles(`args.callerOrchestrator !== (undefined ?? "system") &&`)).toEqual([
+			"convex/mandates.ts",
+		]);
 		// and the pristine source is clean
 		expect(blockedFiles(needle)).toEqual([]);
 	});
@@ -683,8 +704,9 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 			'const a = "sys"; export const f = (c: string) => c === `${a}tem`;',
 		"array join": `export const f = (c: string) => c === ["sys", "tem"].join("");`,
 		fromCharCode: `export const f = (c: string) => c === String.fromCharCode(115, 121, 115, 116, 101, 109);`,
-		"value in a container": `const cfg = { who: "system" }; export const f = (c: string) => c === cfg.who;`,
 		"compare hidden in a helper": `const eq = (a: string, b: string) => a === b; export const f = (c: string) => eq(c, "system");`,
+		"value in a container": `const cfg = { who: "system" }; export const f = (c: string) => c === cfg.who;`,
+		"value derived from a call that was passed the word": `declare const run: (o: { who: string }) => { ids: string[] }; const r = run({ who: "system" }); const id = r.ids[0]; export const f = () => id !== undefined;`,
 		"key membership": `export const f = (c: string) => c in { system: 1 };`,
 	};
 	test.each(Object.entries(LIMIT))("DECLARED LIMIT (not seen): %s", (_n, src) => {

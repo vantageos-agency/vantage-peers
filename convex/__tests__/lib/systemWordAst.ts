@@ -24,9 +24,10 @@
  *   (`requireFleetMaster`) and the shared predicate are what cover it.
  *
  *   Also not seen, for the same reason (no comparison node names the word):
- *   a value carried to the comparison inside a container or a call
- *   (`const cfg = { who: "system" }; x === cfg.who`, `eq(x, "system")` with
- *   the compare inside `eq`), and key-membership (`x in { system: 1 }`,
+ *   a compare hidden inside a helper (`eq(x, "system")` with the compare
+ *   inside `eq`; declared and accepted), a value carried in a container or
+ *   derived from a call that was handed the word (`const cfg = { who: "system" };
+ *   x === cfg.who` — value flow stops at an object literal or a call), and key-membership (`x in { system: 1 }`,
  *   `({ system: true })[x]`).
  *
  * WHAT IS SEEN. The literal operand, on EITHER side, resolved through the tree:
@@ -42,14 +43,24 @@
  *   pattern       a regular expression literal, or `new RegExp("...")`, whose
  *                 text is the word between optional anchors (`^system$`).
  *
- * "system-valued" means: a string / no-substitution-template / `String.raw`
- * literal whose text, trimmed and lower-cased, IS the word (so `"System"` and
- * `" system "` count); parentheses, `as`, `satisfies`, `!` and `<T>` around it
- * are transparent; an identifier (const, let, var, parameter default) whose
- * initializer is system-valued, including through an import in another convex
+ * "system-valued" means: MAY EVALUATE TO the word. The whole subtree of the
+ * operand is walked; any string / no-substitution-template / `String.raw`
+ * literal in it whose text, trimmed and lower-cased, IS the word (so `"System"`
+ * and `" system "` count) makes the operand system-valued, whatever wraps it:
+ * parentheses, `as`, `satisfies`, `!`, `<T>`, both branches of `?:`, both
+ * operands of `??` `||` `&&`, a comma expression, a destructuring default.
+ * An identifier in the operand is followed to its declaration by VALUE FLOW
+ * only (through casts, `?:` arms, `??` `||` `&&`, a comma tail), never into a
+ * call's arguments or an object literal: a value derived from a call that was
+ * merely passed the word is not the word. Followed this way: an identifier
+ * (const, let, var, parameter, destructuring default) whose initializer is
+ * system-valued, including through an import in another convex
  * module; an enum member or `as const` property whose literal type is the word.
- * A `let` that is later reassigned is still counted: over-approximate, never
- * under-approximate.
+ * A `let` that is later reassigned is still counted. The guarantee, stated
+ * exactly: a word literal ANYWHERE in a comparison operand, or reaching it by
+ * value flow, is seen (never under-approximated); what it over-approximates: an operand that merely CONTAINS
+ * the word without evaluating to it (`x === f("system")`, `x === m["system"]`)
+ * is flagged too; a reader has a false positive to explain, never a hidden site.
  *
  * There is no exemption list. Exactly one site is the definition of the
  * predicate itself — the classification `predicate` requires the whole shape:
@@ -193,15 +204,15 @@ export function analyse(files: Record<string, string>): Site[] {
 	}
 
 	const seenDecl = new Set<ts.Node>();
-	function systemValued(raw: ts.Node): boolean {
-		const e = unwrap(raw);
+
+	/**
+	 * A leaf that IS the word, or names something that is: a literal, a
+	 * `String.raw` template, an identifier whose declaration initializer
+	 * may-be the word, an enum member / `as const` property of that type.
+	 */
+	function leafIsWord(e: ts.Node): boolean {
 		if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
 			return isWord(e.text);
-		}
-		if (isStringRaw(e)) {
-			return ts.isNoSubstitutionTemplateLiteral(e.template)
-				? isWord(e.template.text)
-				: false;
 		}
 		if (ts.isIdentifier(e)) {
 			let sym = checker.getSymbolAtLocation(e);
@@ -213,13 +224,15 @@ export function analyse(files: Record<string, string>): Site[] {
 				seenDecl.add(d);
 				try {
 					if (
-						(ts.isVariableDeclaration(d) || ts.isParameter(d)) &&
+						(ts.isVariableDeclaration(d) ||
+							ts.isParameter(d) ||
+							ts.isBindingElement(d)) &&
 						d.initializer &&
-						systemValued(d.initializer)
+						flowValued(d.initializer)
 					) {
 						return true;
 					}
-					if (ts.isEnumMember(d) && d.initializer && systemValued(d.initializer)) {
+					if (ts.isEnumMember(d) && d.initializer && flowValued(d.initializer)) {
 						return true;
 					}
 				} finally {
@@ -235,12 +248,86 @@ export function analyse(files: Record<string, string>): Site[] {
 				ts.isPropertyAccessExpression(e) ? e.name : e.argumentExpression,
 			);
 			for (const d of sym?.declarations ?? []) {
-				if (ts.isEnumMember(d) && d.initializer && systemValued(d.initializer)) {
+				if (ts.isEnumMember(d) && d.initializer && flowValued(d.initializer)) {
 					return true;
 				}
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * "system-valued" means MAY EVALUATE TO the word, decided by walking the
+	 * WHOLE subtree of the operand: any leaf in it that is (or resolves to) the
+	 * word makes the operand system-valued. There is no list of transparent
+	 * nodes to fall out of, so `(c ? "system" : "")`, `(undefined ?? "system")`,
+	 * a comma tail, a destructuring default and every future wrapper are seen.
+	 *
+	 * OVER-APPROXIMATES, on purpose and declared: an operand that merely CONTAINS
+	 * the word without evaluating to it (`x === f("system")`,
+	 * `x === m["system"]`, `x === (y, z)` with the word in the discarded head)
+	 * is also flagged. It never under-approximates a literal that is present.
+	 */
+	function systemValued(raw: ts.Node): boolean {
+		let hit = false;
+		const walk = (n: ts.Node): void => {
+			if (hit) return;
+			if (leafIsWord(n)) {
+				hit = true;
+				return;
+			}
+			if (isStringRaw(n) && ts.isNoSubstitutionTemplateLiteral(n.template)) {
+				if (isWord(n.template.text)) hit = true;
+				return;
+			}
+			ts.forEachChild(n, walk);
+		};
+		walk(raw);
+		return hit;
+	}
+
+	/**
+	 * The same question asked of a DECLARATION's initializer, when an identifier
+	 * in the operand is followed back to where it was bound. Here the walk is
+	 * limited to the nodes a value can flow THROUGH — parentheses and casts, the
+	 * two arms of `?:`, the operands of `??` `||` `&&`, the tail of a comma — and
+	 * does not enter a call, a `new`, an `await`, an object or a property access.
+	 * Following an identifier into "any node under its initializer" would taint
+	 * every value derived from a call that was merely PASSED the word
+	 * (`const r = await run({ who: "system" }); const id = r.ids[0]; id !== undefined`
+	 * — a real false positive in convex/__tests__/tasks.bulk_complete.test.ts).
+	 */
+	function flowValued(raw: ts.Node): boolean {
+		const e = raw;
+		if (
+			ts.isParenthesizedExpression(e) ||
+			ts.isNonNullExpression(e) ||
+			ts.isAsExpression(e) ||
+			ts.isSatisfiesExpression(e) ||
+			ts.isTypeAssertionExpression(e) ||
+			ts.isPrefixUnaryExpression(e)
+		) {
+			return flowValued(ts.isPrefixUnaryExpression(e) ? e.operand : e.expression);
+		}
+		if (ts.isConditionalExpression(e)) {
+			return flowValued(e.whenTrue) || flowValued(e.whenFalse);
+		}
+		if (ts.isBinaryExpression(e)) {
+			const k = e.operatorToken.kind;
+			if (k === ts.SyntaxKind.CommaToken) return flowValued(e.right);
+			if (
+				k === ts.SyntaxKind.QuestionQuestionToken ||
+				k === ts.SyntaxKind.BarBarToken ||
+				k === ts.SyntaxKind.AmpersandAmpersandToken
+			) {
+				return flowValued(e.left) || flowValued(e.right);
+			}
+			return false;
+		}
+		if (isStringRaw(e)) {
+			return ts.isNoSubstitutionTemplateLiteral(e.template) && isWord(e.template.text);
+		}
+		return leafIsWord(e);
 	}
 
 	// ── one file at a time ─────────────────────────────────────────────────
