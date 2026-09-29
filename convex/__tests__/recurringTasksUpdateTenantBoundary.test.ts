@@ -177,3 +177,72 @@ describe("recurringTasks.update — tenant gate", () => {
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
+
+describe("recurringTasks.getById — the by-id read is gated too", () => {
+	test("LEAK pole: an ordinary org-b member is refused an org-a schedule, even though both rosters carry the same seat", async () => {
+		const t = createT();
+		await seedBothOrgsWithSameRoster(t);
+		const id = await seedSchedule(t, { orgId: "org-a" });
+
+		await expect(
+			asMember(t, "org-b").query(api.recurringTasks.getById, {
+				recurringTaskId: id,
+			}),
+		).rejects.toThrow(/RBAC_DENIED.*organisation/);
+	});
+
+	test("LEAK pole: an anonymous caller holding the id is refused with AUTH_REQUIRED, not served the row", async () => {
+		const t = createT();
+		await seedBothOrgsWithSameRoster(t);
+		const id = await seedSchedule(t, { orgId: "org-a" });
+
+		await expect(
+			t.query(api.recurringTasks.getById, { recurringTaskId: id }),
+		).rejects.toThrow(/AUTH_REQUIRED/);
+	});
+
+	test("WITHHELD pole: an ordinary org-a member is still served its OWN schedule", async () => {
+		const t = createT();
+		await seedBothOrgsWithSameRoster(t);
+		const id = await seedSchedule(t, { orgId: "org-a" });
+
+		const row = await asMember(t, "org-a").query(api.recurringTasks.getById, {
+			recurringTaskId: id,
+		});
+		expect(row?._id).toBe(id);
+		expect(row?.orgId).toBe("org-a");
+	});
+
+	test("the two zeros are distinguishable: a refusal raises, a genuinely absent row resolves null, and an anonymous caller learns nothing about which", async () => {
+		const t = createT();
+		await seedBothOrgsWithSameRoster(t);
+		const foreignId = await seedSchedule(t, { orgId: "org-a" });
+		const absentId = await seedSchedule(t, { orgId: "org-a" });
+		await t.run(async (ctx) => {
+			await ctx.db.delete(absentId);
+		});
+		const asB = asMember(t, "org-b");
+
+		const settle = (p: Promise<unknown>) =>
+			p.then(
+				(v) => ({ settled: "resolved" as const, v }),
+				(e: unknown) => ({ settled: "rejected" as const, e }),
+			);
+		const refused = await settle(
+			asB.query(api.recurringTasks.getById, { recurringTaskId: foreignId }),
+		);
+		const absent = await settle(
+			asB.query(api.recurringTasks.getById, { recurringTaskId: absentId }),
+		);
+		expect(refused.settled).toBe("rejected");
+		expect(absent).toEqual({ settled: "resolved", v: null });
+
+		// Identity is checked BEFORE the fetch: an anonymous caller gets the
+		// same AUTH_REQUIRED for a real id and an absent one (no existence oracle).
+		for (const id of [foreignId, absentId]) {
+			await expect(
+				t.query(api.recurringTasks.getById, { recurringTaskId: id }),
+			).rejects.toThrow(/AUTH_REQUIRED/);
+		}
+	});
+});

@@ -542,6 +542,28 @@ export const processDueTasks = internalMutation({
 export const getById = query({
 	args: { recurringTaskId: v.string() },
 	handler: async (ctx, args) => {
+		// REFUSAL SHAPE, chosen deliberately: a refusal RAISES; it is never
+		// `null`. `null` already means "no such row" on this query (a deleted id
+		// resolves null), so returning null for a refused caller would make two
+		// different facts indistinguishable. Raising is safe here because this
+		// query is NOT reactively subscribed anywhere: the MCP server calls it
+		// one-shot through a Convex HTTP client (`convex.query`, tools.ts) and
+		// no other repo caller exists, so there is no subscriber render to crash
+		// (contrast `missions.get`, which is subscribed and so refuses with null).
+		//
+		// ORDER: identity is resolved BEFORE the id is narrowed or the row is
+		// fetched (same as `update` above), so an anonymous caller gets the same
+		// AUTH_REQUIRED for a real id and an absent one — the id's existence is
+		// never an unauthenticated oracle. The MCP layer's `scopeFilterGet` is a
+		// control one layer up, not a control at this door.
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) {
+			throw new ConvexError(
+				"AUTH_REQUIRED: no verified identity on this call — an unauthenticated caller cannot read a recurring task",
+			);
+		}
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+
 		const recurringTaskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -549,6 +571,13 @@ export const getById = query({
 			"recurringTaskId",
 			RECURRING_TASK_ID_HINT,
 		);
-		return await ctx.db.get(recurringTaskId);
+		const row = await ctx.db.get(recurringTaskId);
+		if (row === null) return null;
+		if (!isRowVisibleToScope(scope, row)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not read recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
+			);
+		}
+		return row;
 	},
 });
