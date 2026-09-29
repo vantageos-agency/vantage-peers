@@ -2,7 +2,11 @@ import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
-import { withOrgScope, type OrgScope } from "./lib/auth";
+import {
+	requireResolvedCaller,
+	type OrgScope,
+	withOrgScope,
+} from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -409,7 +413,28 @@ export const list = query({
 		// holding the door, and either could later be deleted as "redundant". The
 		// authority for this read is the single per-row roster filter below, and
 		// the mutation table pins exactly that line.
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all has
+		// no mounted render for a throw to crash: the only subscribing consumer of
+		// this backend is the vantage-peers-dashboard Next.js app, every route of
+		// which sits behind `clerkMiddleware`, so no `useQuery` subscription is ever
+		// established without a Clerk session. Returning an empty SUCCESS to that
+		// caller is the defect — "you may not" and "there is nothing" come out as
+		// identical bytes, and a guard reading this door cannot tell a refusal from
+		// an absence. `missions:list` has raised RBAC_DENIED at this same pole in
+		// production all along while being reactively subscribed
+		// (components/missions/mission-board.tsx:25).
+		// The roster filter below is UNCHANGED: an ordinary org member's admission
+		// set is byte-identical to what it was, so no grant is withheld by this fix.
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+		// A dashboard `useQuery` DOES subscribe to this read, so the
+		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its R-50
+		// typed-empty result untouched — `alsoRefusePreOrg` is NOT passed. Only the
+		// anonymous pole changes shape.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "businessUnits:list");
 
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;

@@ -9,7 +9,7 @@ import {
 import { api } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
-import { withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -453,6 +453,14 @@ export const getStats = query({
 	args: {
 		project: v.optional(v.string()),
 	},
+	returns: v.object({
+		open: v.number(),
+		in_progress: v.number(),
+		fixed: v.number(),
+		verified: v.number(),
+		closed: v.number(),
+		total: v.number(),
+	}),
 	handler: async (ctx, args) => {
 		const stats = { open: 0, in_progress: 0, fixed: 0, verified: 0, closed: 0, total: 0 };
 
@@ -466,8 +474,34 @@ export const getStats = query({
 		// subscribed public READ (a throw crashes the subscriber's render,
 		// R-50/R-51). Returning the zeroed aggregate rather than `{}` keeps the
 		// refusal the same SHAPE as a real answer, so no consumer has to branch.
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above was wrong in the one way that matters, and this site was
+		// the worst instance of it. Measured against live production, a refused
+		// caller received `{closed:0, fixed:0, in_progress:0, open:0, total:0,
+		// verified:0}` — not an ABSENT figure but a FALSE one. A refused reader was
+		// told there are zero open issues. Keeping "the same SHAPE as a real
+		// answer" is exactly what makes a refusal unreadable: it is the defect,
+		// not the courtesy. An unresolvable caller is now RAISED at, carrying
+		// RBAC_DENIED, by the same helper every other site of this class uses.
+		//
+		// isolation-contract: no reactive subscriber exists for this read.
+		// Enumerated by command against the only subscribing consumer of this
+		// backend (vantage-peers-dashboard):
+		//   grep -rn "api\.issues\." --include=*.tsx app components hooks lib → 0 hits.
+		// So `alsoRefusePreOrg` is safe here: there is no mounted render for the
+		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
+		// must not be handed a fabricated zero either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!scope.isMaster) return stats;
+		// `masterOnly`: an ORDINARY member of an active org is resolved (so the
+		// anonymous / pre-org checks pass them) but is not the fleet master, and
+		// this table carries no orgId to scope a count to. They used to receive
+		// `stats` — six zeros, a FABRICATED MEASUREMENT that reads as "no open
+		// issues". They are now RAISED at, with the same RBAC_DENIED code.
+		requireResolvedCaller(scope, "issues:getStats", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 
 		let issues;
 		if (args.project) {
@@ -683,7 +717,30 @@ export const listExternalOpen = query({
 		// subscribed public READ (a throw crashes the subscriber's render,
 		// R-50/R-51). The envelope shape keeps the refusal valid against the
 		// declared `returns`.
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all
+		// has no mounted render for a throw to crash: the only subscribing
+		// consumer of this backend is the vantage-peers-dashboard Next.js app,
+		// every route of which sits behind `clerkMiddleware`, so no `useQuery`
+		// subscription is ever established without a Clerk session. Returning an
+		// empty SUCCESS to that caller is the defect — "you may not" and "there is
+		// nothing" come out as identical bytes, and a guard reading this door
+		// cannot tell a refusal from an absence. `missions:list` has raised
+		// RBAC_DENIED at this same pole in production all along while being
+		// reactively subscribed (components/missions/mission-board.tsx:25).
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+		// isolation-contract: no reactive subscriber. Enumerated by command against
+		// the only subscribing consumer (vantage-peers-dashboard):
+		//   grep -rn "api\.issues\." --include=*.tsx app components hooks lib → 0 hits.
+		// So `alsoRefusePreOrg` is safe: there is no mounted render for the
+		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
+		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "issues:listExternalOpen", {
+			alsoRefusePreOrg: true,
+		});
 		if (!scope.isMaster) return { issues: [], nextPageToken: null };
 
 		return await readExternalOpen(ctx, args);

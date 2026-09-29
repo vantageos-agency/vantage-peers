@@ -42,6 +42,29 @@ export interface OrgScope {
 	 * already renders the identical typed-empty result for this case too.
 	 */
 	refused?: boolean;
+	/**
+	 * Set ONLY by the fail-closed no-identity branch below — the caller
+	 * presented NO CREDENTIAL AT ALL (no Clerk JWT, no bearer, nothing).
+	 *
+	 * WHY THIS FIELD EXISTS. Before it, the anonymous branch and the
+	 * signed-in-no-org (`refused`) branch returned the IDENTICAL shape
+	 * (orgSlug=null, allowedOrchestrators=[], scopes=[], isMaster=false), so a
+	 * read could not tell "nobody is here" from "somebody is here but has no
+	 * organisation yet". Those two callers need OPPOSITE refusal shapes:
+	 *
+	 *   - anonymous  → RAISE (see `requireResolvedCaller` below). Nothing is
+	 *     subscribed: the dashboard shell is behind Clerk middleware, so an
+	 *     anonymous request is a direct API probe, never a render. An empty
+	 *     SUCCESS here is the defect — "you may not" and "there is nothing"
+	 *     come out as identical bytes, and a guard built on top of that will
+	 *     one day ALLOW on a refusal.
+	 *   - signed-in, no org (`refused`) → TYPED EMPTY (R-50, unchanged). This
+	 *     caller's shell IS mounted and IS subscribed; a throw crashes its
+	 *     render.
+	 *
+	 * Never set on the master, service-account, or active-org branches.
+	 */
+	anonymous?: boolean;
 }
 
 /**
@@ -121,12 +144,16 @@ export async function withOrgScope(
 		}
 
 		// Fail-closed default: no identity, no explicit opt-in → deny/empty scope.
+		// `anonymous: true` is the ONLY place this field is ever set — see the
+		// field's doc on OrgScope for why the anonymous and the signed-in-no-org
+		// caller need opposite refusal shapes.
 		return {
 			userId: "anonymous",
 			orgSlug: null,
 			allowedOrchestrators: [],
 			scopes: [],
 			isMaster: false,
+			anonymous: true,
 		};
 	}
 
@@ -703,6 +730,94 @@ export function requireScope(scope: OrgScope, requiredScope: string): void {
 	if (!scope.scopes.includes(requiredScope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: Missing scope "${requiredScope}" for org "${scope.orgSlug}" — ${JSON.stringify({ requiredScope, orgSlug: scope.orgSlug })}`,
+		);
+	}
+}
+
+/**
+ * requireResolvedCaller — the ONE way a published READ refuses a caller it
+ * could not resolve, in a shape the caller can tell apart from an absence.
+ *
+ * THE DEFECT IT CLOSES. PR #1349 closed fifteen public reads that served rows
+ * to a caller with no credential. They now serve nothing — but they serve that
+ * nothing as `{"status":"success","value":[]}`. "You may not" and "there is
+ * nothing" come out as IDENTICAL BYTES. That is the same failure that froze
+ * every fleet deployment on Day 158: the prod-deploy guard READ an empty
+ * success and could not tell a refusal from an absence. `issues:getStats` was
+ * the worst of them — it answered a refused reader with
+ * `{open:0,...,total:0}`, a FABRICATED MEASUREMENT rather than an absent one.
+ *
+ * THE MECHANISM IS NOT NEW. This raises the same `ConvexError` carrying the
+ * same `RBAC_DENIED:` prefix that `requireScope` above already raises, and
+ * that `missions:list` already returns to an unscoped caller in production
+ * (`errorData` carries the code while `errorMessage` stays the opaque
+ * "[Request ID: …] Server Error"). One helper, one code, no per-function
+ * variant.
+ *
+ * WHY THE ANONYMOUS POLE MAY RAISE WITHOUT VIOLATING R-50. R-50 says a
+ * reactively-subscribed read cannot refuse by throwing, because the throw
+ * surfaces as a crashed render. That is TRUE — and it is about a caller whose
+ * SHELL IS MOUNTED. An anonymous caller has no mounted shell: the only
+ * subscribing consumer of this backend is the vantage-peers-dashboard Next.js
+ * app, whose every route is behind `clerkMiddleware` (its `middleware.ts`), so
+ * no `useQuery` subscription is ever established without a Clerk session. An
+ * anonymous request is a direct API probe. `missions:list` — reactively
+ * subscribed at `components/missions/mission-board.tsx:25` — has raised
+ * `RBAC_DENIED` at that pole in production all along, and no render has
+ * crashed. See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+ *
+ * @param scope        the scope just resolved by `withOrgScope`
+ * @param registration `"module:function"`, echoed into the error payload so a
+ *                     reader can tell WHICH door refused it
+ * @param opts.alsoRefusePreOrg
+ *   Pass `true` ONLY for a registration with NO reactive subscriber, verified
+ *   by enumerating `useQuery`/`usePaginatedQuery` call sites in the dashboard
+ *   repo. Such a read may also raise for the signed-in-but-not-yet-onboarded
+ *   caller (`scope.refused`), because there is no render for the throw to
+ *   crash. Leave it unset for a subscribed read: that caller keeps the R-50
+ *   typed-empty result, unchanged. A site passing `true` MUST carry an
+ *   `isolation-contract:` marker naming its consumers, the same declared
+ *   divergence `convex/orgRoster.ts` already uses.
+ */
+export function requireResolvedCaller(
+	scope: OrgScope,
+	registration: string,
+	opts?: { alsoRefusePreOrg?: boolean; masterOnly?: boolean },
+): void {
+	// Master / service-account / active-org callers are resolved — never their
+	// business. This helper judges ONLY "could the caller be resolved at all".
+	if (scope.isMaster) return;
+
+	if (scope.anonymous) {
+		throw new ConvexError(
+			`RBAC_DENIED: no credential presented to "${registration}" — this read refuses an unidentified caller, and refuses it by RAISING: an empty success would be indistinguishable from an absence — ${JSON.stringify(
+				{ registration, orgSlug: null, reason: "no-credential" },
+			)}`,
+		);
+	}
+
+	if (opts?.alsoRefusePreOrg && scope.refused) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller has no verified organisation for "${registration}" — ${JSON.stringify(
+				{ registration, orgSlug: null, reason: "no-verified-organisation" },
+			)}`,
+		);
+	}
+
+	// A MEASUREMENT read (a count, a sum) that admits the fleet master only.
+	// An ORDINARY member of an ACTIVE organisation is resolved — they are
+	// somebody — and is still not the fleet master, so there is nothing to serve
+	// them. Answering with a zeroed aggregate would hand that member a FALSE
+	// NUMBER ("there are no open issues") that gets quoted into a report; a
+	// silence is noticed, a fabricated zero is not. Same `RBAC_DENIED` code, same
+	// helper, no per-function variant. Pass `masterOnly` ONLY on a read that has
+	// no reactive subscriber (a throw needs no render to crash) and that returns a
+	// figure rather than a list — a list read serves the typed envelope instead.
+	if (opts?.masterOnly) {
+		throw new ConvexError(
+			`RBAC_DENIED: "${registration}" is a fleet-master measurement — an organisation member is refused, and refused by RAISING: a zeroed aggregate would be a fabricated figure, not an absent one — ${JSON.stringify(
+				{ registration, orgSlug: scope.orgSlug, reason: "not-fleet-master" },
+			)}`,
 		);
 	}
 }

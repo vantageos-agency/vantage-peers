@@ -72,8 +72,12 @@ import schema from "../schema";
 // ─────────────────────────────────────────────────────────────────────────────
 const FLEET_IDENTITY = { subject: "test-service-account-user-id" };
 
-type ListProfilesRow = FunctionReturnType<
-	typeof api.profiles.listProfiles
+// The fleet master is served the bare-array arm; the refusal envelope
+// (`{ refused: true, items: [] }`) is what an ORDINARY member gets, so it is
+// excluded here and a master that received it fails the read below.
+type ListProfilesRow = Extract<
+	FunctionReturnType<typeof api.profiles.listProfiles>,
+	unknown[]
 >[number];
 
 const modules = Object.fromEntries(
@@ -126,12 +130,14 @@ describe("defect 2 — list_peers pagination drops rows older than the cursor", 
 
 		while (pages < MAX_PAGES) {
 			pages++;
-			const page: ListProfilesRow[] = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.profiles.listProfiles,
+			const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.profiles.listProfiles,
 				{
 					limit: PAGE_LIMIT,
 					createdBefore,
 				},
 			);
+			if (!Array.isArray(result)) throw new Error("fleet master was refused");
+			const page: ListProfilesRow[] = result;
 			// Only look at our seeded rows, ignore any other fixture noise.
 			const relevant = page.filter((p: ListProfilesRow) =>
 				seededIds.includes(p.orchestratorId),

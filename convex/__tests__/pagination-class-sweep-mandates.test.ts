@@ -35,7 +35,13 @@ import schema from "../schema";
 // ─────────────────────────────────────────────────────────────────────────────
 const FLEET_IDENTITY = { subject: "test-service-account-user-id" };
 
-type ListMandatesRow = FunctionReturnType<typeof api.mandates.list>[number];
+// The fleet master is served the bare-array arm; the refusal envelope
+// (`{ refused: true, items: [] }`) is what an ORDINARY member gets, so it is
+// excluded here and a master that received it fails the read below.
+type ListMandatesRow = Extract<
+	FunctionReturnType<typeof api.mandates.list>,
+	unknown[]
+>[number];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -74,11 +80,13 @@ describe("mandates.list pagination — createdBefore applied after unbounded tak
 		let pages = 0;
 		while (pages < 10) {
 			pages++;
-			const page: ListMandatesRow[] = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.mandates.list, {
+			const result = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.mandates.list, {
 				requestedBy: "sigma",
 				limit: PAGE_LIMIT,
 				createdBefore,
 			});
+			if (!Array.isArray(result)) throw new Error("fleet master was refused");
+			const page: ListMandatesRow[] = result;
 			collected.push(
 				...page.map((r) => ({ _id: r._id, _creationTime: r._creationTime })),
 			);

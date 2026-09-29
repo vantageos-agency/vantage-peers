@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
-import { withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,7 +341,13 @@ export const listProfiles = query({
     limit: v.optional(v.number()),
     createdBefore: v.optional(v.number()),
   },
-  returns: v.array(profileDocValidator),
+  // A bare array is what the fleet master is served (rows, or a genuine
+  // absence). An ORDINARY member of an active org is served the typed refusal
+  // envelope instead — see the REFUSAL SHAPE note below.
+  returns: v.union(
+    v.array(profileDocValidator),
+    v.object({ refused: v.literal(true), items: v.array(profileDocValidator) }),
+  ),
   handler: async (ctx, args) => {
     // Fail-closed READ counterpart of this file's own master-only WRITE gate
     // (`requireFleetMaster` above). Measured against LIVE production at commit
@@ -356,8 +362,40 @@ export const listProfiles = query({
     // REFUSAL SHAPE — typed empty, never a throw: this is a reactively-
     // subscribed public READ and a throw crashes the subscriber's render
     // (R-50/R-51), which is exactly what `refuseWithoutThrow` exists for.
+		//
+		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
+		// paragraph above reasoned correctly about R-50 and then drew the wrong
+		// conclusion for the ANONYMOUS pole. A caller with no credential at all
+		// has no mounted render for a throw to crash: the only subscribing
+		// consumer of this backend is the vantage-peers-dashboard Next.js app,
+		// every route of which sits behind `clerkMiddleware`, so no `useQuery`
+		// subscription is ever established without a Clerk session. Returning an
+		// empty SUCCESS to that caller is the defect — "you may not" and "there is
+		// nothing" come out as identical bytes, and a guard reading this door
+		// cannot tell a refusal from an absence. `missions:list` has raised
+		// RBAC_DENIED at this same pole in production all along while being
+		// reactively subscribed (components/missions/mission-board.tsx:25).
+		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
+    // A dashboard `useQuery` DOES subscribe to this read, so the
+    // signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its
+    // R-50 typed-empty result untouched — `alsoRefusePreOrg` is NOT passed.
+    //
+    // THREE refused populations, three shapes, each for a stated reason:
+    //   anonymous            → RAISES (no mounted render exists to crash).
+    //   signed-in, no org    → bare `[]`, UNCHANGED (R-50; a mounted render).
+    //   ordinary org member  → `{ refused: true, items: [] }`. This caller IS
+    //     resolved and IS subscribed, so a throw would crash a render — but a
+    //     bare `[]` is byte-identical to "no profiles exist" and silently
+    //     degrades. The dashboard already normalises
+    //     `Array.isArray(r) ? r : (r.items ?? [])`
+    //     (orchestrators-grid.tsx:56), so the envelope renders as empty AND
+    //     says it was refused.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    if (!scope.isMaster) return [];
+    requireResolvedCaller(scope, "profiles:listProfiles");
+    if (!scope.isMaster) {
+      if (scope.refused) return [];
+      return { refused: true as const, items: [] };
+    }
 
     const take = args.limit ?? 50;
     // Widen the fetch whenever a cursor is present, so the post-take
