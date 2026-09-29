@@ -540,18 +540,36 @@ const budgetOverrideArgs = {
 	writeBudget: v.optional(v.number()),
 };
 
+// Named validators + explicit handler return types. `run`, `resume` and `pass`
+// reach each other through `internal.migrations.backfillOrgIds.*`, so this
+// module's type is defined in terms of itself. An inferred handler return type
+// on that cycle collapses to `any` (TS7022/TS7023), which degrades the whole
+// generated `api` and, downstream, `Id<>` and every callback in the suite.
+// Annotated return types cut the cycle.
+const runResultValidator = v.object({
+	started: v.literal(true),
+	apply: v.boolean(),
+	jobId: v.id("_scheduled_functions"),
+});
+type RunResult = Infer<typeof runResultValidator>;
+
+const resumeResultValidator = v.object({
+	jobId: v.id("_scheduled_functions"),
+	resumedAt: v.object({
+		table: tableNameValidator,
+		cursor: v.union(v.string(), v.null()),
+	}),
+});
+type ResumeResult = Infer<typeof resumeResultValidator>;
+
 export const run = internalMutation({
 	args: {
 		// Dry run unless explicitly told otherwise. The default is the safe pole.
 		apply: v.optional(v.boolean()),
 		...budgetOverrideArgs,
 	},
-	returns: v.object({
-		started: v.literal(true),
-		apply: v.boolean(),
-		jobId: v.id("_scheduled_functions"),
-	}),
-	handler: async (ctx, args) => {
+	returns: runResultValidator,
+	handler: async (ctx, args): Promise<RunResult> => {
 		const budgets = resolveBudgets(DEFAULT_BUDGETS, args);
 		// Two chains at once would each count the same rows.
 		const { job } = await locateTip(ctx.db);
@@ -586,14 +604,8 @@ export const run = internalMutation({
 // repeats nor skips a page. Budgets may be shrunk to get past a read refusal.
 export const resume = internalMutation({
 	args: budgetOverrideArgs,
-	returns: v.object({
-		jobId: v.id("_scheduled_functions"),
-		resumedAt: v.object({
-			table: tableNameValidator,
-			cursor: v.union(v.string(), v.null()),
-		}),
-	}),
-	handler: async (ctx, args) => {
+	returns: resumeResultValidator,
+	handler: async (ctx, args): Promise<ResumeResult> => {
 		const { job } = await locateTip(ctx.db);
 		if (job === null) {
 			return refuse("BACKFILL_NOTHING_TO_RESUME", "no backfill job was found.");
