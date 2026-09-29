@@ -277,6 +277,15 @@
         ]
       },
       {
+        "matcher": "mcp__vantage-peers__complete_task|mcp__vantage-peers__update_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-claim-carries-its-command.py\""
+          }
+        ]
+      },
+      {
         "matcher": "mcp__vantage-peers__create_mission",
         "hooks": [
           {
