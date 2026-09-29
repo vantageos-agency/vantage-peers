@@ -42,6 +42,7 @@ const marieCtx: OAuthContext = {
 	scopes: ["vantage:read", "vantage:write"],
 	scopeProfile: "marie-iris-rh",
 	fromAllowList: ["marie"],
+	actor: { orgSlug: "marie-org", agentName: "marie" },
 	namespaceReadPrefixes: ["orchestrator/victor", "project/marie", "global"],
 	namespaceWritePrefixes: ["orchestrator/victor", "project/marie", "global"],
 	expiresAt: now + 3600_000,

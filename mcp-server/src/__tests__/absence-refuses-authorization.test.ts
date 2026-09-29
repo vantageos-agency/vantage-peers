@@ -31,6 +31,7 @@ const SCOPED: OAuthContext = {
 	scopes: ["vantage:read", "vantage:write"],
 	scopeProfile: "team-member",
 	fromAllowList: ["prometheus"],
+	actor: { orgSlug: "acme", agentName: "prometheus" },
 	namespaceReadPrefixes: ["team/acme"],
 	namespaceWritePrefixes: ["team/acme"],
 	expiresAt: Date.now() + 3_600_000,

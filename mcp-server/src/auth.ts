@@ -83,6 +83,23 @@ export type OAuthContext = {
 	 * query argument.
 	 */
 	clerkOrgSlug?: string;
+	/**
+	 * The ACTING AGENT, resolved ONCE at the bearer-auth boundary from the
+	 * per-agent credential presented in {@link AGENT_CREDENTIAL_HEADER}, via
+	 * `agentCredentials:resolveAgentCredential` (the Convex core in
+	 * convex/lib/agentIdentity.ts — the one hashing+lookup, not a second
+	 * identity layer). Its `orgSlug` is bound to the verified principal's own
+	 * org before this field is ever set, so an actor never names another
+	 * tenant.
+	 *
+	 * Absent means "no agent credential was presented" — an org-only caller.
+	 * Absence is NEVER defaulted into a name: every acting-name surface
+	 * (checkActorBinding) refuses a non-master caller that claims a name
+	 * without one. Only the master bearer / local-stdio trust context may act
+	 * on a declared name, and that is that identity's own all-authority, not a
+	 * widening.
+	 */
+	actor?: { orgSlug: string; agentName: string };
 };
 
 declare module "hono" {
@@ -149,6 +166,8 @@ type OAuthLookupResult = {
 	namespaceReadPrefixes: string[];
 	namespaceWritePrefixes: string[];
 	expiresAt: number;
+	/** Org slug snapshotted onto the token row at mint (see OAuthContext). */
+	clerkOrgSlug?: string;
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,8 +282,105 @@ export function isMasterScope(ctx: OAuthContext | undefined): boolean {
 }
 
 /**
+ * The header carrying the per-agent credential (the plaintext returned once by
+ * `agentCredentials:mintAgentCredential`). It is presented ALONGSIDE the
+ * org-level bearer: the bearer authenticates the ORGANISATION, this header
+ * authenticates the AGENT inside it.
+ */
+export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
+
+/**
+ * checkActorBinding — the ONE predicate that decides whether a name a caller
+ * TYPED into a tool call may be treated as the acting agent. A typed name is a
+ * CLAIM; it is never an authority. It is verified against the actor the
+ * bearer-auth boundary resolved from the presented credential.
+ *
+ *   - actor resolved          → the claim must EQUAL `actor.agentName` exactly.
+ *                               Another agent's name is AGENT_IDENTITY_MISMATCH.
+ *                               The argument can therefore only ever restate
+ *                               what the credential already grants (intersect,
+ *                               never widen).
+ *   - no actor, master scope  → passes. The master bearer / local-stdio trust
+ *                               context is an all-authority identity that is
+ *                               not an agent; it already reaches every row and
+ *                               every name, so a declared name here widens
+ *                               nothing. Named, not hidden.
+ *   - no actor, otherwise     → REFUSED (AGENT_CREDENTIAL_REQUIRED). An
+ *                               org-only bearer authenticates the organisation,
+ *                               not an agent; there is no name to derive and
+ *                               none is defaulted in.
+ *   - no ctx at all           → REFUSED (absence is never authority).
+ */
+export function checkActorBinding(
+	ctx: OAuthContext | undefined,
+	claimedName: string,
+): string | null {
+	if (!ctx) return NO_CONTEXT_REFUSAL;
+	if (ctx.actor) {
+		if (claimedName === ctx.actor.agentName) return null;
+		return (
+			`AGENT_IDENTITY_MISMATCH: the presented agent credential resolves to ` +
+			`"${ctx.actor.agentName}" (org "${ctx.actor.orgSlug}") but this call ` +
+			`names "${claimedName}" — a credential holder may only act under its ` +
+			"own resolved identity. Omit the name to act as the resolved agent."
+		);
+	}
+	if (isMasterScope(ctx)) return null;
+	return (
+		`AGENT_CREDENTIAL_REQUIRED: this call names "${claimedName}" but the ` +
+		`request carried no per-agent credential (header ${AGENT_CREDENTIAL_HEADER}) — ` +
+		"an org-level bearer authenticates the organisation, not an agent, so a " +
+		"typed name is not accepted as an identity."
+	);
+}
+
+/**
+ * Tenant gate for ONE row, keyed on the resolved actor's own org.
+ *
+ * A caller with a resolved actor reaches only rows that STATE its org
+ * (`row.orgId === actor.orgSlug`). A row that states a different org is
+ * another tenant's; a row that states NONE asserts nothing and therefore
+ * grants nothing — the same reading convex/lib/auth.ts's `isRowVisibleToScope`
+ * applies on the Convex side, so the two layers cannot disagree about who owns
+ * a row. Master passes (it is the identity that finds unstamped rows to
+ * backfill). A caller with no actor is unchanged here: this gate is keyed on
+ * the actor's org, and there is none to key on.
+ */
+export function rowVisibleToActorTenant(
+	ctx: OAuthContext | undefined,
+	row: { orgId?: unknown } | null | undefined,
+): boolean {
+	if (!ctx) return false;
+	if (isMasterScope(ctx)) return true;
+	if (!ctx.actor) return true;
+	return (
+		row != null &&
+		typeof row.orgId === "string" &&
+		row.orgId === ctx.actor.orgSlug
+	);
+}
+
+/**
+ * Tenant gate for a COLLECTION of rows — the same predicate as
+ * {@link rowVisibleToActorTenant}, applied per row, so the by-id read and the
+ * collection read can never disagree.
+ */
+export function filterRowsToActorTenant<T extends { orgId?: unknown }>(
+	ctx: OAuthContext | undefined,
+	rows: readonly T[],
+): T[] {
+	return rows.filter((r) => rowVisibleToActorTenant(ctx, r));
+}
+
+/**
  * Checks that `from` is allowed by the current OAuth context.
  * Returns null when allowed, an error message string otherwise.
+ *
+ * TWO gates, BOTH must hold (intersect, never widen):
+ *   1. {@link checkActorBinding} — `from` is the agent the credential resolved
+ *      (or the caller is master with no actor).
+ *   2. the org roster (`fromAllowList`) — a roster may narrow what the actor
+ *      may do; it is never a substitute for the actor.
  *
  * A missing `ctx` REFUSES (returns the refusal string), it never passes.
  * Every real auth path sets an oauthContext — the HTTP transport via
@@ -279,8 +395,10 @@ export function checkFromAllowed(
 	from: string,
 ): string | null {
 	if (!ctx) return NO_CONTEXT_REFUSAL;
-	if (isMasterScope(ctx)) return null;
-	if (ctx.fromAllowList.includes(from)) return null;
+	if (isMasterScope(ctx) || ctx.fromAllowList.includes(from)) {
+		// Roster gate satisfied (or master). The actor gate is still required.
+		return checkActorBinding(ctx, from);
+	}
 	// Day 88 friction capitalize: surface the allowed values so the LLM caller
 	// can self-correct on the next attempt instead of guessing identifiers.
 	// Nadia onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
@@ -536,6 +654,104 @@ async function tryVerifyClerkJwt(token: string): Promise<ClerkJwtResult> {
 // Auth middleware
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Actor resolution — the acting AGENT, resolved once, at this boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Shape returned by agentCredentials:resolveAgentCredential
+type ResolvedAgentLookup = { orgSlug: string; agentName: string } | null;
+
+type ActorResolution =
+	| { ok: true; actor: OAuthContext["actor"] }
+	| { ok: false; status: 401 | 403; error: string };
+
+/**
+ * resolveActorFromRequest — turns the per-agent credential presented in
+ * {@link AGENT_CREDENTIAL_HEADER} into the acting agent, or REFUSES.
+ *
+ * KEY INTO THE JOIN (http-boundary-derives-from-principal.md): the ONLY input
+ * is the presented secret. The (orgSlug, agentName) that comes back is derived
+ * by Convex from which `agent_credentials` row's hash matched
+ * (`resolveAgentCredentialCore`); no name a caller typed participates. The
+ * secret is never logged and never stored on the context.
+ *
+ * REFUSE, never default:
+ *   - header absent            → no actor (an org-only caller). Not a refusal
+ *                                here: every acting-name surface refuses a
+ *                                non-master claim without one (checkActorBinding).
+ *   - header present but empty → 401. A malformed credential is not absence.
+ *   - lookup throws            → 401. A failure is a DENY, never a fall-through
+ *                                to the org-only grant the caller already holds.
+ *   - lookup misses            → 401 (unknown / rotated-out / inactive agent —
+ *                                the Convex core returns null for all three).
+ *   - resolved org ≠ the verified principal's org → 403 ORG_MISMATCH. A
+ *     same-named agent of ANOTHER tenant never rides this caller's session.
+ *     A non-master caller whose principal org cannot be established cannot be
+ *     bound and is refused rather than trusted.
+ */
+async function resolveActorFromRequest(
+	c: Context,
+	principal: { isMaster: boolean; orgSlug: string | null },
+): Promise<ActorResolution> {
+	const presented = c.req.header(AGENT_CREDENTIAL_HEADER);
+	if (presented === undefined) return { ok: true, actor: undefined };
+	if (presented.trim() === "") {
+		return {
+			ok: false,
+			status: 401,
+			error: `AGENT_CREDENTIAL_INVALID: header ${AGENT_CREDENTIAL_HEADER} is present but empty`,
+		};
+	}
+
+	let resolved: ResolvedAgentLookup = null;
+	try {
+		resolved = (await internalClient().query(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"agentCredentials:resolveAgentCredential" as any,
+			{ presentedSecret: presented.trim() },
+		)) as ResolvedAgentLookup;
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error("[auth] agent credential lookup failed:", message);
+		return {
+			ok: false,
+			status: 401,
+			error:
+				"AGENT_CREDENTIAL_LOOKUP_FAILED: the presented agent credential " +
+				"could not be verified — refusing rather than proceeding as an org-only caller",
+		};
+	}
+
+	if (
+		!resolved ||
+		typeof resolved.orgSlug !== "string" ||
+		typeof resolved.agentName !== "string"
+	) {
+		return {
+			ok: false,
+			status: 401,
+			error:
+				"AGENT_CREDENTIAL_INVALID: the presented agent credential does not " +
+				"resolve to an active agent",
+		};
+	}
+
+	if (!principal.isMaster && resolved.orgSlug !== principal.orgSlug) {
+		return {
+			ok: false,
+			status: 403,
+			error:
+				`ORG_MISMATCH: the presented agent credential belongs to agent "${resolved.agentName}" ` +
+				"of a different organisation than the session it was presented with",
+		};
+	}
+
+	return {
+		ok: true,
+		actor: { orgSlug: resolved.orgSlug, agentName: resolved.agentName },
+	};
+}
+
 export function bearerAuthMiddleware(): MiddlewareHandler {
 	return async (c: Context, next: Next) => {
 		// MCP spec §"Protected Resource Metadata Discovery Requirements" + RFC 6750 §3 —
@@ -570,6 +786,30 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			);
 		}
 		const wwwAuthHeader = `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
+
+		// THE one place the acting agent is resolved. Every branch that attaches
+		// an oauthContext below ends here — no branch sets the context itself, and
+		// no tool resolves an identity of its own. Returns the refusal Response,
+		// or undefined after the request has been passed on.
+		const attachContextAndProceed = async (
+			base: OAuthContext,
+			principalOrgSlug: string | null,
+		): Promise<Response | undefined> => {
+			const resolution = await resolveActorFromRequest(c, {
+				isMaster: base.isMaster,
+				orgSlug: principalOrgSlug,
+			});
+			if (!resolution.ok) {
+				c.header("WWW-Authenticate", wwwAuthHeader);
+				return c.json({ error: resolution.error }, resolution.status);
+			}
+			c.set(
+				"oauthContext",
+				resolution.actor ? { ...base, actor: resolution.actor } : base,
+			);
+			await next();
+			return undefined;
+		};
 
 		const authHeader = c.req.header("Authorization");
 
@@ -612,19 +852,20 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				tenantName: "master",
 				convexUrl: internalUrl,
 			});
-			c.set("oauthContext", {
-				clientId: "master",
-				userId: "master",
-				scopes: ["vantage:read", "vantage:write"],
-				scopeProfile: "master",
-				fromAllowList: ["*"],
-				namespaceReadPrefixes: ["*"],
-				namespaceWritePrefixes: ["*"],
-				expiresAt: Date.now() + 3600 * 1000,
-				isMaster: true,
-			});
-			await next();
-			return;
+			return await attachContextAndProceed(
+				{
+					clientId: "master",
+					userId: "master",
+					scopes: ["vantage:read", "vantage:write"],
+					scopeProfile: "master",
+					fromAllowList: ["*"],
+					namespaceReadPrefixes: ["*"],
+					namespaceWritePrefixes: ["*"],
+					expiresAt: Date.now() + 3600 * 1000,
+					isMaster: true,
+				},
+				null,
+			);
 		}
 
 		// Hash client-side so raw token never hits Convex
@@ -660,13 +901,17 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				tenantName: `oauth:${oauth.clientId}`,
 				convexUrl: internalUrl,
 			});
-			c.set("oauthContext", {
-				...oauth,
-				isMaster: false,
-				accessTokenHash: tokenHash,
-			});
-			await next();
-			return;
+			// The token row's snapshotted org (`clerkOrgSlug`) is the principal's
+			// org for binding an agent credential; an unattached profile has none,
+			// so a credential presented with it cannot be bound and is refused.
+			return await attachContextAndProceed(
+				{
+					...oauth,
+					isMaster: false,
+					accessTokenHash: tokenHash,
+				},
+				oauth.clerkOrgSlug ?? null,
+			);
 		}
 
 		// ── (2.5) Clerk JWT — org-authority-from-mapping scoped access ──────────
@@ -791,25 +1036,28 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				tenantName: `clerk:${orgId}`,
 				convexUrl: internalUrl,
 			});
-			c.set("oauthContext", {
-				clientId: `dcr-clerk-${orgId}`,
-				userId: clerkResult.sub,
-				scopes: mapping.scopes,
-				scopeProfile: "team-member",
-				fromAllowList: mapping.allowedOrchestrators,
-				namespaceReadPrefixes: [`team/${orgId}`],
-				namespaceWritePrefixes: [`team/${orgId}`],
-				expiresAt: clerkResult.exp * 1000,
-				isMaster: false,
-				// Forward the caller's own verified Clerk JWT to Convex — see
-				// OAuthContext.clerkJwt doc comment. This is the P0 fix: without
-				// this, server-http.ts had no way to attach any identity to the
-				// per-request Convex client for this path.
-				clerkJwt: token,
-				clerkOrgSlug: orgId,
-			});
-			await next();
-			return;
+			return await attachContextAndProceed(
+				{
+					clientId: `dcr-clerk-${orgId}`,
+					userId: clerkResult.sub,
+					scopes: mapping.scopes,
+					scopeProfile: "team-member",
+					fromAllowList: mapping.allowedOrchestrators,
+					namespaceReadPrefixes: [`team/${orgId}`],
+					namespaceWritePrefixes: [`team/${orgId}`],
+					expiresAt: clerkResult.exp * 1000,
+					isMaster: false,
+					// Forward the caller's own verified Clerk JWT to Convex — see
+					// OAuthContext.clerkJwt doc comment. This is the P0 fix: without
+					// this, server-http.ts had no way to attach any identity to the
+					// per-request Convex client for this path.
+					clerkJwt: token,
+					clerkOrgSlug: orgId,
+				},
+				// The verified org_id claim — the key an agent credential's org is
+				// bound to.
+				orgId,
+			);
 		}
 
 		// ── (terminal) No matching auth path — REFUSE ───────────────────────────
