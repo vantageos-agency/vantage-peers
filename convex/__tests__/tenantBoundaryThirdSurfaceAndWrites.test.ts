@@ -200,6 +200,36 @@ describe("tasks.listOverdue — scoped by the verified organisation", () => {
 		expect(rows.map((r) => r.title)).toEqual(["org-a overdue"]);
 	});
 
+	test("LEAK — a row of the caller's OWN org assigned outside its roster is not served (roster narrows, as in tasks.list)", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedTask(t, {
+			orgId: "org-a",
+			assignedTo: "eta",
+			dueDate: PAST,
+			title: "own org, outside roster",
+		});
+		const rows = await asMember(t, MEMBER_A, "org-a").query(
+			api.tasks.listOverdue,
+			{},
+		);
+		expect(rows).toEqual([]);
+	});
+
+	test("WITHHELD — another tenant's overdue rows do not crowd the caller's own out of a limit-1 page", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedOrg(t, "org-b");
+		// org-b's row is written FIRST, so an unindexed scan reaches it first.
+		await seedTask(t, { orgId: "org-b", dueDate: PAST, title: "org-b overdue" });
+		await seedTask(t, { orgId: "org-a", dueDate: PAST, title: "org-a overdue" });
+		const rows = await asMember(t, MEMBER_A, "org-a").query(
+			api.tasks.listOverdue,
+			{ limit: 1 },
+		);
+		expect(rows.map((r) => r.title)).toEqual(["org-a overdue"]);
+	});
+
 	test("master regression — the fleet service account still reads every overdue row", async () => {
 		const t = createT();
 		await seedTask(t, { orgId: "org-a", dueDate: PAST, title: "one" });
@@ -359,6 +389,23 @@ describe("improvisationDigest.scanWindow — scoped by the verified organisation
 		);
 		expect(r.countsByCategory.complete_task).toBe(1);
 		expect(r.countsByCategory.send_message).toBe(1);
+	});
+
+	test("LEAK — an own-org done task assigned outside the caller's roster is not digested (roster narrows)", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedTask(t, {
+			orgId: "org-a",
+			assignedTo: "eta",
+			status: "done",
+			completionNote: NOTE,
+			title: "own org, outside roster",
+		});
+		const r = await asMember(t, MEMBER_A, "org-a").query(
+			api.improvisationDigest.scanWindow,
+			{ windowDays: 7 },
+		);
+		expect(r.countsByCategory.complete_task).toBe(0);
 	});
 
 	test("master regression — the fleet service account still digests every tenant", async () => {
