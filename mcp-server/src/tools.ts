@@ -21,8 +21,10 @@ import {
 	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
+	filterRowsToActorTenant,
 	isMasterScope,
 	type OAuthContext,
+	rowVisibleToActorTenant,
 } from "./auth.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
@@ -428,6 +430,7 @@ export const bulkCompleteTasksArgsSchema = z.object({
 	}),
 	dryRun: z.boolean().default(true),
 	completionNoteTemplate: z.string().optional(),
+	// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 	callerOrchestrator: z.string().optional(),
 });
 
@@ -563,6 +566,7 @@ export const updateBriefingNoteSchema = z.object({
 	noteId: noteIdSchema.describe(
 		"Convex document ID of the briefing note to update",
 	),
+	// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 	callerOrchestrator: creatorSchema.describe(
 		"Orchestrator role making the update — must match createdBy or be 'system' (RBAC deny-by-default)",
 	),
@@ -3315,6 +3319,7 @@ export function registerTools(
 			receiptIds: z
 				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
 				.describe("Receipt IDs to mark as read — array or single string"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe(
@@ -3377,6 +3382,7 @@ export function registerTools(
 			messageId: messageIdSchema.describe(
 				"Convex document ID of the message to delete",
 			),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be the sender or system"),
@@ -4155,11 +4161,16 @@ export function registerTools(
 				// `assignedTo` is a per-row grant (convex/tasks.ts L197-208 ORs
 				// createdBy===caller || assignedTo===caller), so a non-creator
 				// assignee must still see their own task in the list.
+				// TENANT GATE, collection surface — applied BEFORE the roster/owner
+				// filter, with the same predicate get_task applies to its one row.
 				const scopedTasks = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(rawTasks)
-						? (rawTasks as Array<Record<string, unknown>>)
-						: [],
+					filterRowsToActorTenant(
+						oauthCtx,
+						Array.isArray(rawTasks)
+							? (rawTasks as Array<Record<string, unknown>>)
+							: [],
+					),
 					["assignedTo"],
 				);
 				const tasks = wantsFull
@@ -4369,11 +4380,15 @@ export function registerTools(
 				// `assignedTo` is a per-row grant (convex/tasks.ts L88-89 ORs
 				// createdBy===caller || assignedTo===caller), so a non-creator
 				// assignee must still see their own task in search results.
+				// TENANT GATE, collection surface (same predicate as get_task).
 				const filteredFull = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(results)
-						? (results as Array<Record<string, unknown>>)
-						: [],
+					filterRowsToActorTenant(
+						oauthCtx,
+						Array.isArray(results)
+							? (results as Array<Record<string, unknown>>)
+							: [],
+					),
 					["assignedTo"],
 				);
 				const projected = wantsFull
@@ -4501,6 +4516,7 @@ export function registerTools(
 				.optional()
 				.describe("When work completed (Unix ms)"),
 			dueDate: z.number().optional().describe("New due date (Unix ms)"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4599,6 +4615,7 @@ export function registerTools(
 			completionNote: z
 				.string()
 				.describe("What was actually done — summary of work completed"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4658,6 +4675,7 @@ export function registerTools(
 			failureNote: z
 				.string()
 				.describe("How the work ended in failure — mandatory, non-empty"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4707,6 +4725,7 @@ export function registerTools(
 			"EXAMPLE: start_task taskId='k178d3ns...' callerOrchestrator='gamma'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to start"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4757,6 +4776,7 @@ export function registerTools(
 			"EXAMPLE: pause_task taskId='b2v9k4x7p1m6q0z3w8n5r2t4y7c1u9df' callerOrchestrator='gamma'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to pause"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4805,6 +4825,7 @@ export function registerTools(
 			"EXAMPLE: resume_task taskId='b2v9k4x7p1m6q0z3w8n5r2t4y7c1u9df' callerOrchestrator='gamma'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to resume"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4873,6 +4894,7 @@ export function registerTools(
 			reason: z
 				.string()
 				.describe("Why the correction is honest — at least 12 non-space characters"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — if provided, must be creator or assignee"),
@@ -4925,6 +4947,7 @@ export function registerTools(
 			"EXAMPLE: checkout_task taskId='k178d3ns...' callerOrchestrator='alpha' callerInstance='alpha-vps'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to claim"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema.describe(
 				"Orchestrator claiming the task (e.g. sigma, pi)",
 			),
@@ -4976,6 +4999,7 @@ export function registerTools(
 			"EXAMPLE: delete_task taskId='k178d3ns...' callerOrchestrator='alpha'.",
 		{
 			taskId: taskIdSchema.describe("Convex document ID of the task to delete"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or system"),
@@ -5046,6 +5070,7 @@ export function registerTools(
 					"Optional; omission defaults to 'other' server-side. This is the structured signal " +
 					"the waiting-on state is derived from — never pass a state string directly.",
 			),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
@@ -5130,6 +5155,7 @@ export function registerTools(
 			dependsOn: z
 				.array(taskIdSchema)
 				.describe("Task IDs that must complete first"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe("Optional RBAC — must be creator or assignee"),
@@ -5246,11 +5272,13 @@ export function registerTools(
 					limit === undefined ? undefined : clampLimit(limit);
 
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
+				const tenantGated =
+					oauthCtx?.actor !== undefined && !isMasterScope(oauthCtx);
 				const tasks = await convex.query("tasks:listByMission" as any, {
 					missionId: missionId as any,
 					status,
 					limit: effectiveLimit ?? 20,
-					fields: fields ?? "lite",
+					fields: tenantGated ? "full" : (fields ?? "lite"),
 					createdBy,
 					updatedSince,
 					createdBefore,
@@ -5258,11 +5286,34 @@ export function registerTools(
 
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task: `assignedTo`
 				// is a per-row grant (convex/tasks.ts L88-89 ORs createdBy||assignedTo).
-				const filteredTasks = scopeFilterList(
+				// TENANT GATE, collection surface (same predicate as get_task).
+				const scopedRows = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(tasks) ? tasks : [],
+					filterRowsToActorTenant(
+						oauthCtx,
+						Array.isArray(tasks)
+							? (tasks as Array<Record<string, unknown>>)
+							: [],
+					),
 					["assignedTo"],
 				);
+				// The gate needs `orgId`, which the lite projection strips, so a
+				// gated caller is served full rows internally and reprojected to the
+				// lite shape it asked for here — the public contract is unchanged.
+				const filteredTasks =
+					tenantGated && (fields ?? "lite") === "lite"
+						? scopedRows.map((t) => ({
+								_id: t._id,
+								_creationTime: t._creationTime,
+								title: t.title,
+								status: t.status,
+								priority: t.priority,
+								assignedTo: t.assignedTo,
+								...(t.missionId !== undefined
+									? { missionId: t.missionId }
+									: {}),
+							}))
+						: scopedRows;
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
@@ -5596,6 +5647,7 @@ export function registerTools(
 			startDate: z.number().optional().describe("New start date (Unix ms)"),
 			targetDate: z.number().optional().describe("New target date (Unix ms)"),
 			progress: z.number().optional().describe("New progress (0-100)"),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe(
@@ -6959,6 +7011,7 @@ export function registerTools(
 			mandateId: mandateIdSchema.describe(
 				"Convex document ID of the mandate to accept",
 			),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the fulfilledBy orchestrator or system",
 			),
@@ -7007,6 +7060,7 @@ export function registerTools(
 			mandateId: mandateIdSchema.describe(
 				"Convex document ID of the mandate to update",
 			),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the fulfilledBy orchestrator or system",
 			),
@@ -7070,6 +7124,7 @@ export function registerTools(
 			mandateId: mandateIdSchema.describe(
 				"Convex document ID of the mandate to settle",
 			),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema.describe(
 				"Must be the requestedBy orchestrator or system",
 			),
@@ -7395,6 +7450,7 @@ export function registerTools(
 			buId: buIdSchema.describe(
 				"Convex document ID of the business unit to update",
 			),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema.describe(
 				"Orchestrator identity making this call — must match the BU's owning orchestratorId or be 'system' (RBAC deny-by-default, checked against the target row, not the caller's claim alone)",
 			),
@@ -9038,6 +9094,7 @@ export function registerTools(
 				.describe(
 					"String prepended to every task title — e.g. '[p25]'. Optional.",
 				),
+			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: z
 				.string()
 				.optional()
@@ -9656,6 +9713,13 @@ export function registerTools(
 		async ({ taskId }) => {
 			try {
 				const row = await convex.query("tasks:getById" as any, { taskId });
+				// TENANT GATE, by-id surface: an agent of org A never reaches a row
+				// stamped org B (nor an unstamped one). Same predicate as the
+				// collection reads below (rowVisibleToActorTenant) — one boundary,
+				// two surfaces, never one without the other.
+				if (!rowVisibleToActorTenant(oauthCtx, row)) {
+					return mcpError(`Task not found: ${taskId}`);
+				}
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — tasks carry `assignedTo` as a
 				// per-row grant distinct from `createdBy` (convex/tasks.ts L88-89
 				// ORs createdBy===caller || assignedTo===caller for task-scoped

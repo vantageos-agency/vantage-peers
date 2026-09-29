@@ -62,6 +62,7 @@ const CALLER_A: OAuthContext = {
 	scopes: ["mcp:full"],
 	scopeProfile: "tenant",
 	fromAllowList: ["alpha-role"],
+	actor: { orgSlug: "org-fixture-alpha", agentName: "alpha-role" },
 	namespaceReadPrefixes: ["team/org-fixture-alpha"],
 	namespaceWritePrefixes: ["team/org-fixture-alpha"],
 	expiresAt: Date.now() + 3600_000,
@@ -94,10 +95,10 @@ describe("mark_as_read — callerOrchestrator identity guard (k179nrp3apj700pm0h
 		).toBe(0);
 	});
 
-	it("caller A omitting callerOrchestrator entirely is denied (no free pass)", async () => {
+	it("an org-only caller (no resolved agent) omitting callerOrchestrator entirely is denied (no free pass)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex, CALLER_A);
+		registerTools(server, convex, { ...CALLER_A, actor: undefined });
 
 		const handler = handlers.get("mark_as_read");
 		const result = await handler?.({ receiptIds: [RECEIPT_ID] });
@@ -106,6 +107,19 @@ describe("mark_as_read — callerOrchestrator identity guard (k179nrp3apj700pm0h
 		expect(
 			(convex.mutation as ReturnType<typeof vi.fn>).mock.calls.length,
 		).toBe(0);
+	});
+
+	it("a caller WITH a resolved agent omitting callerOrchestrator has it DERIVED from the actor, never defaulted", async () => {
+		const { server, handlers } = buildFakeServer();
+		const convex = buildMockConvex();
+		registerTools(server, convex, CALLER_A);
+
+		const handler = handlers.get("mark_as_read");
+		const result = await handler?.({ receiptIds: [RECEIPT_ID] });
+
+		expect(isErrorResult(result)).toBe(false);
+		const call = (convex.mutation as ReturnType<typeof vi.fn>).mock.calls[0];
+		expect(call?.[1]).toMatchObject({ callerOrchestrator: "alpha-role" });
 	});
 
 	it("positive control: caller A using its own identity is allowed through to the mutation", async () => {

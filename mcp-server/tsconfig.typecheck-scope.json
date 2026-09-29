@@ -6,7 +6,8 @@
   "include": [
     "src/registerTool.ts",
     "src/auth.ts",
-    "src/__tests__/registerTool-scope-enforcement.test.ts"
+    "src/__tests__/registerTool-scope-enforcement.test.ts",
+    "scripts/verify-actor-credentials.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

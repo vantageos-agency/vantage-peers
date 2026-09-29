@@ -67,5 +67,20 @@ export async function resolveAgentCredentialCore(
 		return null;
 	}
 
+	// The credential is only as live as the AGENT it was minted for. An agent
+	// deactivated (`agents.isActive === false`) or removed after minting must not
+	// keep authenticating through a credential row that is itself still active:
+	// nothing rotates that row when the agent is switched off. A missing `agents`
+	// row is the same refusal — a credential never outlives its entity.
+	const agent = await ctx.db
+		.query("agents")
+		.withIndex("by_org_name", (q) =>
+			q.eq("orgSlug", row.orgSlug).eq("name", row.agentName),
+		)
+		.unique();
+	if (!agent || !agent.isActive) {
+		return null;
+	}
+
 	return { orgSlug: row.orgSlug, agentName: row.agentName };
 }

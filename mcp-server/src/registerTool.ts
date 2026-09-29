@@ -31,11 +31,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+	checkActorBinding,
 	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	isMasterScope,
+	isUnattributedClaim,
 	type OAuthContext,
+	recordUnattributedClaim,
 } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,6 +158,72 @@ function enforceScope(
 }
 
 /**
+ * The acting-name arguments a tool declares: every parameter through which a
+ * caller TYPES who is acting. `callerOrchestrator` is one by name; the `from`
+ * kind's `fromArg` (createdBy / from / orchestratorId ...) is the same thing
+ * under another spelling. Derived from the tool's own declaration, so a tool
+ * added tomorrow that declares either is bound without anyone remembering to.
+ */
+function actingNameKeys(scope: ToolScope, schema: z.ZodRawShape): string[] {
+	const keys = new Set<string>();
+	if ("callerOrchestrator" in schema) keys.add("callerOrchestrator");
+	if (scope.kind === "from") keys.add(scope.fromArg);
+	return [...keys];
+}
+
+/**
+ * bindActingNames — an acting-name argument is a CLAIM the resolved actor
+ * verifies, never an authority (checkActorBinding). Runs BEFORE the tool's
+ * scope check and BEFORE the handler, once, for every tool.
+ *
+ *   - claimed and it disagrees with the actor → refused, nothing dispatched
+ *     (AGENT_IDENTITY_MISMATCH, in every mode: a typed name never overrides a
+ *     presented credential).
+ *   - claimed, no credential presented        → per the cutover switch
+ *     (actorCredentialMode): permissive serves it AND records it unattributed;
+ *     strict refuses it (AGENT_CREDENTIAL_REQUIRED).
+ *   - omitted and an actor is resolved        → DERIVED: the handler (and the
+ *     Convex mutation it forwards to) receives the actor's own name.
+ *   - omitted and no actor                    → left omitted. No claim was
+ *     made; nothing is granted and nothing is defaulted in.
+ *
+ * The argument therefore can only restate what the credential already grants:
+ * it may narrow, it can never widen.
+ */
+function bindActingNames(
+	oauthCtx: OAuthContext | undefined,
+	keys: readonly string[],
+	args: Record<string, unknown>,
+):
+	| { denied: McpTextResult }
+	| {
+			args: Record<string, unknown>;
+			unattributed: [key: string, name: string][];
+	  } {
+	const unattributed: [string, string][] = [];
+	let bound = args;
+	for (const key of keys) {
+		const claimed = args[key];
+		if (claimed === undefined || claimed === null) {
+			if (oauthCtx?.actor) {
+				bound = { ...bound, [key]: oauthCtx.actor.agentName };
+			}
+			continue;
+		}
+		const err = checkActorBinding(oauthCtx, String(claimed));
+		if (err) return { denied: mcpError(err) };
+		// A typed name with no credential behind it (permissive mode only — strict
+		// refused above). Collected here, RECORDED by the caller only once the
+		// scope check has also passed, so the count is calls actually served on a
+		// typed name: exactly what strict mode would start refusing.
+		if (isUnattributedClaim(oauthCtx, String(claimed))) {
+			unattributed.push([key, String(claimed)]);
+		}
+	}
+	return { args: bound, unattributed };
+}
+
+/**
  * Wraps a tool's raw zod shape in a STRICT object schema.
  *
  * Root cause fixed here (mission k17at41v7e6re4ht9wbf3cvdah8cepjc, restored
@@ -221,14 +290,23 @@ export function defineTool(
 	const annotations =
 		rest.length === 2 ? (rest[0] as ToolAnnotations) : undefined;
 
+	const actingKeys = actingNameKeys(scope, schema);
+
 	const guardedHandler: ToolHandler = async (args, extra) => {
-		const denied = enforceScope(
-			scope,
-			ctx,
+		const bound = bindActingNames(
+			ctx.oauthCtx,
+			actingKeys,
 			(args ?? {}) as Record<string, unknown>,
 		);
+		if ("denied" in bound) return bound.denied;
+		const denied = enforceScope(scope, ctx, bound.args);
 		if (denied) return denied;
-		return handler(args, extra);
+		if (ctx.oauthCtx) {
+			for (const [key, claimed] of bound.unattributed) {
+				recordUnattributedClaim(ctx.oauthCtx, name, key, claimed);
+			}
+		}
+		return handler(bound.args, extra);
 	};
 
 	// STRICT wrap: reject any arg key not in `schema` instead of silently

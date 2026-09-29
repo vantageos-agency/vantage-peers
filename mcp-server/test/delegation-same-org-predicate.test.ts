@@ -101,6 +101,8 @@ function buildClerkTeamCtx(
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
 		clerkJwt: "mock.clerk.jwt",
+		// The agent this caller presented a credential for (resolved at the boundary).
+		actor: { orgSlug: "org_prometheus", agentName: "prometheus" },
 		...overrides,
 	};
 }
@@ -149,6 +151,7 @@ function buildPrometheusOauthScopedCtx(
 		userId: "prometheus-user",
 		scopes: ["vantage:read", "vantage:write"],
 		scopeProfile: "prometheus-org",
+		actor: { orgSlug: "org_prometheus", agentName: "prometheus" },
 		fromAllowList: ["prometheus"],
 		namespaceReadPrefixes: ["orchestrator/prometheus"],
 		namespaceWritePrefixes: ["orchestrator/prometheus"],
@@ -183,6 +186,7 @@ function buildOrchAOauthCtx(
 		isMaster: false,
 		accessTokenHash: "hash-of-orch-a-token",
 		clerkOrgSlug: "plan-org-alpha",
+		actor: { orgSlug: "plan-org-alpha", agentName: "orch-a" },
 		...overrides,
 	};
 }
@@ -506,14 +510,14 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 			"create_task",
 			{
 				title: "Foreign createdBy",
-				createdBy: "not-prometheus", // NOT in fromAllowList
+				createdBy: "not-prometheus", // NOT the resolved actor ("prometheus")
 				assignedTo: "sigma-peer",
 			},
 			buildPrometheusOauthScopedCtx(),
 		);
 
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
+		expect(getText(result)).toMatch(/AGENT_IDENTITY_MISMATCH/);
 		expect(createdTaskRow).toBeNull();
 	});
 });

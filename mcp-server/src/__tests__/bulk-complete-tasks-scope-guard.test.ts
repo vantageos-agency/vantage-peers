@@ -67,6 +67,7 @@ const CALLER_A: OAuthContext = {
 	scopes: ["mcp:full"],
 	scopeProfile: "tenant",
 	fromAllowList: ["alpha-role"],
+	actor: { orgSlug: "org-fixture-alpha", agentName: "alpha-role" },
 	namespaceReadPrefixes: ["team/org-fixture-alpha"],
 	namespaceWritePrefixes: ["team/org-fixture-alpha"],
 	expiresAt: Date.now() + 3600_000,
