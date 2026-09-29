@@ -940,6 +940,26 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 		expect(unattributedClaimCounts()).toEqual([]);
 	});
 
+	it("PIN (not a pole — master is the maintenance identity, named in the header): a master bearer declaring a name is NOT counted as an unattributed agent", async () => {
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		const res = await app.request("http://localhost/tool/complete_task", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer test-master-token",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ ...COMPLETE, callerOrchestrator: "alice" }),
+		});
+		expect(res.status).toBe(200);
+		expect(calls.mutations).toHaveLength(1);
+		expect(unattributedClaimCounts()).toEqual([]);
+		expect(
+			stderrLines(spy).filter((l) => l.includes("actor.unattributed")),
+		).toEqual([]);
+	});
+
 	it("a `from`-kind key (store_memory createdBy) is recorded under ITS argument name when served on a typed name", async () => {
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const { convex, calls } = buildToolConvex({});
