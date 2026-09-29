@@ -116,7 +116,8 @@ async function seedCorpus(t: T) {
 			stamped.push({ id, org });
 		}
 		const unstampedMissions = [] as typeof missionIds;
-		for (let i = 0; i < 5; i++) unstampedMissions.push(await mission(undefined, 100 + i));
+		for (let i = 0; i < 5; i++)
+			unstampedMissions.push(await mission(undefined, 100 + i));
 
 		const derivable: { id: string; org: string }[] = [];
 		for (let i = 0; i < 25; i++) {
@@ -143,7 +144,10 @@ async function seedCorpus(t: T) {
 		for (let i = 0; i < 5; i++) {
 			// "sigma"/"eta" are orchestrator NAMES and are never evidence.
 			orphanTasks.push(
-				await ctx.db.insert("tasks", task({ assignedTo: i % 2 ? "eta" : "sigma" })),
+				await ctx.db.insert(
+					"tasks",
+					task({ assignedTo: i % 2 ? "eta" : "sigma" }),
+				),
 			);
 		}
 		const already: string[] = [];
@@ -239,8 +243,8 @@ const statusOf = (t: T) => t.query(backfill.status, {});
 const passJobs = (t: T) =>
 	t.run(
 		async (ctx) =>
-			(await ctx.db.system.query("_scheduled_functions").collect()).filter((j) =>
-				/backfillOrgIds(\.js)?:pass$/.test(j.name),
+			(await ctx.db.system.query("_scheduled_functions").collect()).filter(
+				(j) => /backfillOrgIds(\.js)?:pass$/.test(j.name),
 			).length,
 	);
 
@@ -308,7 +312,9 @@ describe("a corpus larger than one page completes across reschedules", () => {
 		// PROOF the fixture forced many pages, not one that happened to fit: the
 		// write budget alone caps a tasks page at 4 rows, so 47 tasks need >= 12
 		// passes; the number of pass jobs that actually ran equals `passes`.
-		expect(s.passes).toBeGreaterThanOrEqual(Math.ceil(47 / BUDGETS.writeBudget));
+		expect(s.passes).toBeGreaterThanOrEqual(
+			Math.ceil(47 / BUDGETS.writeBudget),
+		);
 		expect(s.passes).toBeGreaterThan(3);
 		expect(await passJobs(t)).toBe(s.passes);
 	});
@@ -444,16 +450,22 @@ describe("a partial result says it is partial", () => {
 		expect(done.finalCounts?.totals.examined).toBe(EXPECTED.examined);
 	});
 
-	test("a chain that stops without a finish record is FAILED, never complete", async () => {
+	// Cancelling is the reachable way to end a chain without a `finish`. (The
+	// other shape — a pass that SUCCEEDED with no successor and no finish — is
+	// unreachable by construction and is covered by the mutant that deletes the
+	// reschedule, not by this test.)
+	test("a chain cancelled part-way is FAILED, never complete", async () => {
 		const t = createT();
 		await seedCorpus(t);
 		await t.mutation(backfill.run, BUDGETS);
-		// Run ONE pass, then cancel everything still scheduled: the chain ends
-		// having succeeded once and never finished.
+		// Run ONE pass, then cancel everything still scheduled: the chain never
+		// finishes.
 		await vi.advanceTimersToNextTimerAsync();
 		await t.finishInProgressScheduledFunctions();
 		await t.run(async (ctx) => {
-			for (const job of await ctx.db.system.query("_scheduled_functions").collect()) {
+			for (const job of await ctx.db.system
+				.query("_scheduled_functions")
+				.collect()) {
 				if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
 			}
 		});
@@ -606,15 +618,15 @@ describe("a pass that cannot complete REFUSES instead of returning a number", ()
 
 	test("out-of-range budgets are refused, not clamped", async () => {
 		const t = createT();
-		await expect(
-			t.mutation(backfill.run, { readBytes: 10 }),
-		).rejects.toThrow(/BACKFILL_ARGS_INVALID/);
-		await expect(
-			t.mutation(backfill.run, { writeBudget: 0 }),
-		).rejects.toThrow(/BACKFILL_ARGS_INVALID/);
-		await expect(
-			t.mutation(backfill.run, { readRows: 1.5 }),
-		).rejects.toThrow(/BACKFILL_ARGS_INVALID/);
+		await expect(t.mutation(backfill.run, { readBytes: 10 })).rejects.toThrow(
+			/BACKFILL_ARGS_INVALID/,
+		);
+		await expect(t.mutation(backfill.run, { writeBudget: 0 })).rejects.toThrow(
+			/BACKFILL_ARGS_INVALID/,
+		);
+		await expect(t.mutation(backfill.run, { readRows: 1.5 })).rejects.toThrow(
+			/BACKFILL_ARGS_INVALID/,
+		);
 	});
 });
 
