@@ -446,6 +446,21 @@ export const checkNewMessages = query({
 		// the signed-in-no-org branch to a typed-empty result instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
+		// STOP-CLAUSE SITE (task k1749w7ecx2yffr1hbhjpk8v858fbrf1). This is the ONE
+		// of the six pre-organisation sites that keeps the bare `[]`, and it is a
+		// measured decision, not an inheritance. The refusal shape cannot be
+		// raised (a dashboard `useQuery` subscribes) and cannot be the envelope
+		// either: vantage-peers-dashboard
+		// `components/messages/message-timeline.tsx:69` subscribes to this read and
+		// casts the RAW result to an array and calls `.map()` on it (lines 78-83
+		// and 89-93, no `.items` normalisation). `{ refused: true, items: [] }` is
+		// truthy, so `.map` would throw "map is not a function" inside a render.
+		// The return is also a frozen bare-array contract for vp-mcp <2.12.0
+		// (convex/__tests__/staleInProgress.test.ts). To close this site the
+		// dashboard must first read `.items`; until then a pre-org caller here is
+		// answered with bytes identical to an absence, and that is REPORTED, not
+		// silent. The bare `[]` this line returns is pinned as an ARRAY by
+		// convex/__tests__/preOrgRefusalCarriesItsMarker.test.ts.
 		if (!scope.isMaster && scope.orgSlug === null) return [];
 
 		const effectiveTenantId =
@@ -1044,12 +1059,22 @@ export const listMessages = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.list.
-		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
-		// the signed-in-no-org branch to a typed-empty result. The no-org check
-		// MUST run before requireScope, which would otherwise throw for that
-		// same caller (empty scopes) instead of returning the typed empty below.
+		// isolation-contract: NO reactive subscriber. Re-decided (task
+		// k1749w7ecx2yffr1hbhjpk8v858fbrf1), not inherited from R-50. Measured by
+		// command: `grep -rn "api\.messages\.listMessages" --include=*.ts
+		// --include=*.tsx` in vantage-peers-dashboard (origin/main) finds ZERO
+		// call sites; the only consumers are one-shot reads — mcp-server
+		// `list_messages` (tools.ts, `convex.query`) and the `messages-feed` UI
+		// primitive (`fetchConvex`, which renders a thrown error as an error
+		// div). A signed-in caller with no organisation therefore has no render
+		// for a throw to crash, and a bare `[]` would be byte-identical to "no
+		// messages exist". So `alsoRefusePreOrg` raises `RBAC_DENIED` at it. The
+		// helper also runs BEFORE requireScope, which would otherwise raise for
+		// that caller with a different, un-coded message.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
+		requireResolvedCaller(scope, "messages:listMessages", {
+			alsoRefusePreOrg: true,
+		});
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -1198,23 +1223,28 @@ export const listBroadcastStatus = query({
 // listByChannel — list recent messages for a channel (or all if unspecified)
 // ─────────────────────────────────────────────────────────────────────────────
 
+const listByChannelRow = v.object({
+	_id: v.id("messages"),
+	_creationTime: v.number(),
+	from: creatorValidator,
+	fromInstanceId: v.optional(v.string()),
+	tenantId: v.optional(v.string()),
+	channel: v.string(),
+	content: v.string(),
+	sessionDay: v.optional(v.number()),
+	createdAt: v.number(),
+});
+
 export const listByChannel = query({
 	args: {
 		channel: v.optional(v.string()),
 		limit: v.optional(v.number()),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("messages"),
-			_creationTime: v.number(),
-			from: creatorValidator,
-			fromInstanceId: v.optional(v.string()),
-			tenantId: v.optional(v.string()),
-			channel: v.string(),
-			content: v.string(),
-			sessionDay: v.optional(v.number()),
-			createdAt: v.number(),
-		}),
+	// A bare array is a served result (rows, or a genuine absence). The
+	// envelope is the refusal, said to a caller whose render is subscribed.
+	returns: v.union(
+		v.array(listByChannelRow),
+		v.object({ refused: v.literal(true), items: v.array(listByChannelRow) }),
 	),
 	handler: async (ctx, { channel, limit }) => {
 		const take = limit ?? 100;
@@ -1263,14 +1293,22 @@ export const listByChannel = query({
 		// A dashboard `useQuery` DOES subscribe to this read
 		// (components/messages/message-timeline.tsx:51,
 		// components/messages/message-history-table.tsx:85,
-		// components/activity/unified-activity-feed.tsx:153), so the
-		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its R-50
-		// typed-empty result untouched — `alsoRefusePreOrg` is NOT passed. The line
-		// below is left in place for exactly that caller; only the anonymous pole
-		// changes shape.
+		// components/activity/unified-activity-feed.tsx:153 — measured by grep in
+		// vantage-peers-dashboard, origin/main), so `alsoRefusePreOrg` is NOT
+		// passed: a throw would crash the pre-organisation caller's mounted render.
+		//
+		// RE-DECIDED (task k1749w7ecx2yffr1hbhjpk8v858fbrf1), not inherited: R-50's
+		// reasoning (never throw at a mounted render) holds, but it justified a
+		// bare `[]`, which is byte-identical to "no messages exist". Both
+		// value-reading consumers already normalise the envelope
+		// (message-timeline.tsx:55-59, unified-activity-feed.tsx normaliseList:
+		// `Array.isArray(r) ? r : (r.items ?? [])`), so `{ refused: true, items: [] }`
+		// renders as empty AND says it was refused.
 		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
 		requireResolvedCaller(scope, "messages:listByChannel");
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return { refused: true as const, items: [] };
+		}
 
 		// Fail-closed channel scoping: messages carry no orgId/tenantId column
 		// (schema.ts), so channel-name proximity to the caller's own scope is the
@@ -1356,11 +1394,20 @@ export const searchMessagesByKeyword = query({
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
 		// m9748paff: Clerk callers are fail-CLOSED — scoped to their own tenantId.
 		// k179fk0c: same per-tool tenancy doctrine as tasks.searchTasksByKeyword.
-		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
-		// the signed-in-no-org branch to a typed-empty result. The check runs
-		// before requireScope, which would otherwise throw for that caller.
+		// isolation-contract: NO reactive subscriber. Re-decided (task
+		// k1749w7ecx2yffr1hbhjpk8v858fbrf1), not inherited from R-50. Measured by
+		// command: `grep -rn "searchMessagesByKeyword" --include=*.ts
+		// --include=*.tsx` in vantage-peers-dashboard (origin/main) finds ZERO
+		// call sites; the only consumer is mcp-server `search_messages_by_keyword`
+		// (tools.ts, one-shot `convex.query`). No render exists for a throw to
+		// crash, and a bare `[]` would say "no matches" to a caller that was
+		// refused. So `alsoRefusePreOrg` raises `RBAC_DENIED` at the pre-org
+		// caller; the helper runs before requireScope for the same reason as in
+		// listMessages.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
+		requireResolvedCaller(scope, "messages:searchMessagesByKeyword", {
+			alsoRefusePreOrg: true,
+		});
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
