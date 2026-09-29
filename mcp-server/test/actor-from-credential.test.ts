@@ -178,8 +178,22 @@ function buildToolConvex(rows: { getById?: unknown; list?: unknown[] }): {
 } {
 	const calls: ConvexCalls = { mutations: [] };
 	const convex = {
-		query: vi.fn(async (name: string) => {
+		query: vi.fn(async (name: string, args?: { fields?: string }) => {
 			if (name === "tasks:getById") return rows.getById ?? null;
+			// Faithful to convex/tasks.ts: the "lite" projection is
+			// {_id,_creationTime,title,status,priority,assignedTo,missionId} — it
+			// STRIPS orgId and createdBy. A caller that needs the tenant stamp must
+			// ask for "full".
+			if (args?.fields === "lite") {
+				return (rows.list ?? []).map((r) => {
+					const {
+						orgId: _o,
+						createdBy: _c,
+						...lite
+					} = r as Record<string, unknown>;
+					return lite;
+				});
+			}
 			return rows.list ?? [];
 		}),
 		mutation: vi.fn(async (name: string, args: unknown) => {
