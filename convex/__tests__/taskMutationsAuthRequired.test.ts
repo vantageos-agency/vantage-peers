@@ -72,10 +72,29 @@ async function seedOrgMapping(
 
 async function seedTask(
 	t: ReturnType<typeof createT>,
-	overrides: Partial<{ assignedTo: string; createdBy: string; status: string }> = {},
+	overrides: Partial<{
+		assignedTo: string;
+		createdBy: string;
+		status: string;
+		/**
+		 * TENANT of the seeded row. When set, the row is created UNDER an
+		 * identity of that org so it is stamped `orgId: <orgSlug>` by the write
+		 * path itself — never injected. Omitted, the row is seeded by the
+		 * SERVICE ACCOUNT, i.e. a master write, which stamps NO tenant and is
+		 * therefore readable by no org-scoped caller. Any test whose subject is
+		 * an org caller reading a row must pass `orgSlug`, or it will pass/fail
+		 * on the tenant gate rather than on the control it means to exercise.
+		 */
+		orgSlug: string;
+	}> = {},
 ) {
-	return await t
-		.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT })
+	const seeder = overrides.orgSlug
+		? t.withIdentity({
+				subject: `seed-user-${overrides.orgSlug}`,
+				organizationSlug: overrides.orgSlug,
+			} as Parameters<typeof t.withIdentity>[0])
+		: t.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT });
+	return await seeder
 		.mutation(api.tasks.create, {
 			title: "Seed task",
 			assignedTo: overrides.assignedTo ?? "sigma",
@@ -334,7 +353,14 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 			clerkOrgSlug: "acme-hr",
 			allowedOrchestrators: ["victor"],
 		});
-		const taskId = await seedTask(t, { assignedTo: "victor", createdBy: "victor" });
+		// Seeded AS acme-hr so the row carries that tenant: this test's subject is
+		// CALLER_IDENTITY_MISMATCH, and a service-account seed would stamp no
+		// tenant and make the org caller fail on the tenant gate instead.
+		const taskId = await seedTask(t, {
+			assignedTo: "victor",
+			createdBy: "victor",
+			orgSlug: "acme-hr",
+		});
 
 		const tVictorOrg = t.withIdentity({
 			subject: "user-nadia",
@@ -370,7 +396,12 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 			clerkOrgSlug: "acme-hr",
 			allowedOrchestrators: ["victor"],
 		});
-		const taskId = await seedTask(t, { assignedTo: "victor", createdBy: "victor" });
+		// Seeded AS acme-hr — same reasoning as the update test above.
+		const taskId = await seedTask(t, {
+			assignedTo: "victor",
+			createdBy: "victor",
+			orgSlug: "acme-hr",
+		});
 		await t.run(async (ctx) => {
 			await ctx.db.insert("taskClosureConfig", {
 				key: "billableProjects",

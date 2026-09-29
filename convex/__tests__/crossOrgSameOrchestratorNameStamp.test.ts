@@ -224,3 +224,60 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 		});
 	});
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE COLLECTION READ. `tasks.get` and `tasks.list` must agree about who owns
+// what. Inverting only the by-id read left the product HALF-INVERTED: `get`
+// refusing a row that `list` still served to the same caller — the leak intact
+// on the surface that returns rows in bulk. These poles hold `filterByOrgScope`
+// to the same tenant gate as `isRowVisibleToScope`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("collection reads carry the SAME tenant boundary as by-id reads", () => {
+	const makeTask = (t: ReturnType<typeof createT>, slug: string) =>
+		asOrg(t, slug).mutation(api.tasks.create, {
+			title: "org-a private task",
+			assignedTo: SHARED_ORCHESTRATOR,
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: SHARED_ORCHESTRATOR,
+		});
+
+	const listedIds = async (t: ReturnType<typeof createT>, slug: string) =>
+		((await asOrg(t, slug).query(api.tasks.list, {})) as Array<{ _id: string }>)
+			.map((r) => r._id);
+
+	test("LEAK POLE: org B's list does not contain org A's task", async () => {
+		const t = createT();
+		await seedBothOrgsSharingOrchestrator(t);
+		const taskId = await makeTask(t, "org-a");
+
+		expect(await listedIds(t, "org-b")).not.toContain(taskId);
+	});
+
+	test("WITHHELD-GRANT POLE: org A's list still contains its own task", async () => {
+		const t = createT();
+		await seedBothOrgsSharingOrchestrator(t);
+		const taskId = await makeTask(t, "org-a");
+
+		expect(await listedIds(t, "org-a")).toContain(taskId);
+	});
+
+	test("get and list AGREE for both orgs — neither surface is more permissive", async () => {
+		const t = createT();
+		await seedBothOrgsSharingOrchestrator(t);
+		const taskId = await makeTask(t, "org-a");
+
+		for (const [slug, expected] of [
+			["org-a", true],
+			["org-b", false],
+		] as const) {
+			const viaGet =
+				(await asOrg(t, slug).query(api.tasks.get, { taskId })) !== null;
+			const viaList = (await listedIds(t, slug)).includes(taskId);
+			expect(viaGet).toBe(expected);
+			expect(viaList).toBe(expected);
+		}
+	});
+});

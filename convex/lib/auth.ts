@@ -300,17 +300,44 @@ export async function lookupOrgMapping(
 }
 
 /**
- * Filters a list of records to those whose orchestrator (pilot or assignedTo)
- * is in the scope's allowedOrchestrators list.
+ * Filters a list of records to those the scope may see. TWO controls apply, and
+ * a record must clear BOTH:
+ *
+ *  1. THE TENANT GATE — `record.orgId === scope.orgSlug`. This is the
+ *     multi-tenant boundary and it is the one that makes two organisations
+ *     disjoint.
+ *  2. THE ROSTER — the record's orchestrator (pilot ?? assignedTo) is in the
+ *     scope's `allowedOrchestrators`. This is the INTRA-org delegation control.
+ *     It narrows what the tenant gate admits; it never widens it.
  *
  * Master scope (isMaster=true) returns all records unmodified.
- * Records with no pilot/assignedTo are excluded for non-master scopes.
+ *
+ * WHY THE TENANT GATE IS HERE AND NOT ONLY IN `isRowVisibleToScope`. This
+ * helper governs every COLLECTION read (`tasks.list`, `missions.list`, the
+ * dashboard and stats aggregates, `recurringTasks.list`). Inverting the
+ * by-id read alone would have left the product HALF-INVERTED: `tasks.get`
+ * refusing an unstamped row while `tasks.list` still served that same row to
+ * the same caller — the leak intact on the surface that returns rows in bulk,
+ * and the two surfaces disagreeing about who owns what. The roster alone was
+ * never a tenant boundary: `allowedOrchestrators.includes(...)` is a STRING
+ * MEMBERSHIP, so two orgs whose rosters both carry "eta" read each other's
+ * untenanted rows.
+ *
+ * THE COST, NAMED: a record with no `orgId` is now returned to NO org-scoped
+ * caller. Legacy rows written before the write-site stamp are withheld from
+ * their own org until `convex/migrations/backfillOrgIds.ts` stamps them. That
+ * is a deliberate withheld grant, chosen over keeping a cross-tenant read open;
+ * master still reads those rows, which is what lets the backfill find them.
  */
 export function filterByOrgScope<
-	T extends { pilot?: string; assignedTo?: string },
+	T extends { orgId?: string; pilot?: string; assignedTo?: string },
 >(records: T[], scope: OrgScope): T[] {
 	if (scope.isMaster) return records;
 	return records.filter((r) => {
+		// 1. Tenant gate. An absent `orgId` asserts nothing and so grants
+		// nothing: `undefined` never equals a resolved org slug.
+		if (r.orgId !== scope.orgSlug) return false;
+		// 2. Roster, as a narrowing intersect on top of the tenant gate.
 		const orchestrator = r.pilot ?? r.assignedTo;
 		if (!orchestrator) return false;
 		return scope.allowedOrchestrators.includes(orchestrator);
@@ -350,8 +377,12 @@ export function filterByOrgScope<
 //  4. the row states NO `orgId` -> NOT visible to an org-scoped caller. The
 //     absence of a tenant stamp asserts nothing and therefore grants nothing.
 //
-// WHY LEG 4 DENIES, AND WHY THE ROSTER IS NO LONGER CONSULTED HERE.
-// Leg 4 used to defer to `filterByOrgScope` — the orchestrator-roster control.
+// WHY ABSENCE NOW DENIES, AND WHY THE ROSTER IS STILL CONSULTED AFTER IT.
+// The tenant gate and the roster are now BOTH required, in that order. The
+// roster was never a tenant boundary and is not promoted to one here; it stays
+// exactly what it was — the intra-org delegation control — and it applies on
+// top of a tenant gate that did not previously exist.
+// Absence used to defer to `filterByOrgScope` — the orchestrator-roster control.
 // That deferral was the multi-tenant isolation hole, and it was load-bearing
 // rather than theoretical: `allowedOrchestrators.includes(pilot ?? assignedTo)`
 // is a STRING MEMBERSHIP, not a tenant boundary. Two organisations whose
@@ -403,11 +434,32 @@ export function isRowVisibleToScope(
 	if (scope.isMaster) return true;
 	// Leg 2 — no verified organisation (anonymous OR refused).
 	if (scope.orgSlug === null) return false;
-	// Leg 3 — the row must STATE this caller's organisation. An absent `orgId`
-	// (leg 4) falls through this same comparison and denies: `undefined` is
-	// never equal to a resolved org slug. The roster is deliberately NOT
-	// consulted — a shared orchestrator NAME is not a shared tenant.
-	return row.orgId === scope.orgSlug;
+	// Leg 3 — the TENANT GATE. The row must STATE this caller's organisation.
+	// An absent `orgId` (the old leg 4) falls through this same comparison and
+	// denies: `undefined` is never equal to a resolved org slug.
+	//
+	// THIS LINE IS DEFENCE-IN-DEPTH, NOT THE SOLE GATE, and that is deliberate.
+	// Mutation testing on this exact line records it as an EQUIVALENT MUTANT:
+	// replacing it with `if (false)` leaves all 1942 tests green, because leg 4
+	// delegates to `filterByOrgScope`, which applies the identical
+	// `orgId !== orgSlug` predicate one line below. The gate itself IS covered —
+	// removing the delegation too turns 18 tests red. Keep both: stating the
+	// tenant gate explicitly here is what makes the by-id read legible on its
+	// own, and it keeps this function correct if `filterByOrgScope` is ever
+	// narrowed to a pure roster helper again.
+	if (row.orgId !== scope.orgSlug) return false;
+	// Leg 4 — the ROSTER, kept as a NARROWING intersect and never as a grant.
+	// The tenant gate above is what makes two organisations disjoint; the roster
+	// is the INTRA-org delegation control and it still applies on top. Dropping
+	// it here would have widened `get`: a row of the caller's own org, assigned
+	// to an orchestrator the org's own `allowedOrchestrators` does NOT admit,
+	// would have become readable where it previously was not. That is the
+	// unearned-grant direction of the same defect the tenant gate closes, and
+	// the fleet standard is explicit — a roster may narrow what the mapping
+	// grants, intersect, never widen (.claude/rules/
+	// authority-attached-to-anonymous-object.md, rule 2). So both must hold:
+	// the row is in my tenant AND my roster admits it.
+	return filterByOrgScope([row], scope).length === 1;
 }
 
 /**

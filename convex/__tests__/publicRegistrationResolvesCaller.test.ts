@@ -270,11 +270,17 @@ const seedIssue = (t: T, extra: Record<string, unknown> = {}) =>
 		});
 	});
 
-const seedRecurringTask = (t: T, assignedTo = "sigma") =>
+/**
+ * `orgId` is the row's TENANT. Left undefined the row is untenanted and is
+ * served to NO org-scoped caller — so an ALLOW pole must always state it, or it
+ * would be measuring the tenant gate rather than the roster it names.
+ */
+const seedRecurringTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("recurringTasks", {
 			title: "daily scan",
 			assignedTo,
+			orgId,
 			priority: "medium",
 			cronExpression: "0 9 * * *",
 			nextRunAt: now(),
@@ -309,11 +315,12 @@ const seedBusinessUnit = (t: T, orchestratorId = "sigma") =>
 	});
 
 /** A blocked task with neither blockedOnTaskId nor blockedOnNobodyReason. */
-const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma") =>
+const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("tasks", {
 			title: "blocked with no link",
 			assignedTo,
+			orgId,
 			priority: "medium",
 			status: "blocked",
 			createdBy: "sigma",
@@ -545,7 +552,9 @@ describe("org-scoped read resolves its caller — recurringTasks:list (4 rows le
 	test("ALLOW — an ordinary org member IS served a recurring task assigned ON its roster", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a", ["sigma"]);
-		await seedRecurringTask(t, "sigma");
+		// Tenanted to org-a: the ALLOW pole has to clear the tenant gate AND the
+		// roster, and it is the roster this test is about.
+		await seedRecurringTask(t, "sigma", "org-a");
 
 		expect(
 			await asOrgMember(t, "org-a").query(api.recurringTasks.list, {}),
@@ -583,7 +592,8 @@ describe("org-scoped read resolves its caller — tasks:listUnlinkedBlocked (159
 	test("ALLOW — an ordinary org member IS served a blocked task assigned ON its roster", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a", ["sigma"]);
-		await seedUnlinkedBlockedTask(t, "sigma");
+		// Tenanted to org-a — see the recurringTasks ALLOW pole above.
+		await seedUnlinkedBlockedTask(t, "sigma", "org-a");
 
 		expect(
 			await asOrgMember(t, "org-a").query(api.tasks.listUnlinkedBlocked, {}),

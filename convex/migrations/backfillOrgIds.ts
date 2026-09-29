@@ -92,6 +92,7 @@ export const run = internalMutation({
 		tasks: tableReportValidator,
 		missions: tableReportValidator,
 		briefingNotes: tableReportValidator,
+		recurringTasks: tableReportValidator,
 	}),
 	handler: async (ctx, args) => {
 		const apply = args.apply ?? false;
@@ -159,8 +160,36 @@ export const run = internalMutation({
 			else notesNotDerivable++;
 		}
 
+		// ── recurringTasks ─────────────────────────────────────────────────────
+		// The fourth `orgId`-bearing table, and it MUST be reported even though
+		// nothing here is derivable: a recurring schedule has no parent row, and
+		// its `assignedTo`/`createdBy` are orchestrator names, which the header
+		// rules out as evidence. Omitting the table would have understated the
+		// gap — an operator reading three clean reports would conclude the
+		// backfill was complete while every unstamped schedule kept emitting
+		// unstamped tasks through `processDueTasks`, which inherits this column.
+		// Each such schedule is a recurring source of invisible rows, so it is
+		// counted and surfaced rather than silently skipped.
+		const recurring = await ctx.db.query("recurringTasks").take(SCAN_CAP + 1);
+		const recurringTruncated = recurring.length > SCAN_CAP;
+		const recurringRows = recurring.slice(0, SCAN_CAP);
+		let recurringAlready = 0;
+		let recurringNotDerivable = 0;
+		for (const row of recurringRows) {
+			if (row.orgId !== undefined) recurringAlready++;
+			else recurringNotDerivable++;
+		}
+
 		return {
 			applied: apply,
+			recurringTasks: {
+				examined: recurringRows.length,
+				alreadyStamped: recurringAlready,
+				stamped: 0,
+				wouldStamp: 0,
+				ownerNotDerivable: recurringNotDerivable,
+				truncated: recurringTruncated,
+			},
 			tasks: {
 				examined: taskRows.length,
 				alreadyStamped: tasksAlready,
