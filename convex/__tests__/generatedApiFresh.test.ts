@@ -31,6 +31,21 @@ function importedModules(source: string): string[] {
 	return [...source.matchAll(IMPORT_RE)].map((m) => m[1] as string);
 }
 
+// `api.d.ts` lists every module a SECOND time, as a key inside
+// `declare const fullApi: ApiFromModules<{ ... }>`. That block is what `api`
+// is actually built from; the import block only brings the symbols into scope.
+const FULL_API_OPEN = "declare const fullApi: ApiFromModules<{";
+const FULL_API_KEY_RE = /^\s+"?([^":\s]+)"?:\s*typeof \S+;$/gm;
+
+function fullApiKeys(source: string): string[] {
+	const start = source.indexOf(FULL_API_OPEN);
+	if (start === -1) return [];
+	const body = source.slice(start + FULL_API_OPEN.length);
+	const end = body.indexOf("\n}>;");
+	if (end === -1) return [];
+	return [...body.slice(0, end).matchAll(FULL_API_KEY_RE)].map((m) => m[1] as string);
+}
+
 // Every non-test, non-declaration .ts source under convex/ that Convex would
 // register as a module.
 function modulesOnDisk(dir: string, prefix = ""): string[] {
@@ -70,5 +85,46 @@ describe("convex/_generated/api.d.ts is not stale", () => {
 			(mod) => !NOT_FUNCTION_MODULES.has(mod) && !importedSet.has(mod),
 		);
 		expect(missing).toEqual([]);
+	});
+
+	// The import block and the `fullApi` key block must name the same modules.
+	//
+	// WHAT THIS CATCHES: a module imported but absent from `fullApi` (the symbol
+	// is in scope, `api` silently loses the module and every call into it
+	// degrades), and a `fullApi` key with no matching import (a dangling
+	// `typeof` that `skipLibCheck` hides). Neither block is read by the poles
+	// above, which parse the import lines only, so a hand edit that updated one
+	// block and not the other passed all of them.
+	//
+	// WHAT THIS DOES NOT CATCH: a type collapse INSIDE a correctly-listed
+	// module (a function whose own signature resolves to `any`), or a module
+	// listed in both blocks whose file is broken. That class is caught only by
+	// the deploy-time typecheck, which regenerates the bindings first.
+	describe("the import block and the fullApi block list the same modules", () => {
+		const keys = fullApiKeys(source);
+
+		test("the fullApi parser found keys (a vacuous pass would prove nothing)", () => {
+			// The bound is the file itself: the import block lists N modules, and
+			// fullApi must list the same N. Comparing two empty sets would pass
+			// while proving nothing, so a parser that matches zero keys is a failure
+			// of the detector, not a clean result.
+			expect(
+				keys.length,
+				`fullApiKeys() matched 0 keys against ${imported.length} imports: ` +
+					"the detector no longer reads api.d.ts and proves nothing",
+			).toBeGreaterThan(0);
+		});
+
+		test("no module is in one block and missing from the other", () => {
+			expect(keys.length, "detector reads nothing; proves nothing").toBeGreaterThan(0);
+			const importSet = new Set(imported);
+			const keySet = new Set(keys);
+			const inImportsNotFullApi = [...importSet].filter((m) => !keySet.has(m)).sort();
+			const inFullApiNotImports = [...keySet].filter((m) => !importSet.has(m)).sort();
+			expect(
+				{ inImportsNotFullApi, inFullApiNotImports },
+				"in block 1 (imports) but not block 2 (fullApi), and the reverse",
+			).toEqual({ inImportsNotFullApi: [], inFullApiNotImports: [] });
+		});
 	});
 });
