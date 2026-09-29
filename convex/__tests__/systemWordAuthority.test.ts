@@ -615,6 +615,22 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"object destructuring assignment": `export const f = (c: string) => { let w = "other"; ({ w } = { w: "system" }); return c === w; };`,
 		"for-of into an existing binding": `export const f = (c: string) => { let w = "other"; for (w of ["system"]) { break; } return c === w; };`,
 		"for-of declaration": `export const f = (c: string) => { for (const w of ["system"]) { return c === w; } return false; };`,
+		// ── container writes / reads, a bounded setter, destructuring from a binding ──
+		"container property write": `const o = { w: "other" }; o.w = "system"; export const f = (c: string) => c === o.w;`,
+		"container element write": `const a = ["other"]; a[0] = "system"; export const f = (c: string) => c === a[0];`,
+		"container bracket-string write": `const o: Record<string, string> = {}; o["w"] = "system"; export const f = (c: string) => c === o.w;`,
+		"container property compound write": `const o: { w?: string } = {}; o.w ||= "system"; export const f = (c: string) => c === o.w;`,
+		"container literal, read by property": `const cfg = { who: "system" }; export const f = (c: string) => c === cfg.who;`,
+		"container literal, read by element": `const cfg = ["system"]; export const f = (c: string) => c === cfg[0];`,
+		"container written through an alias": `const o = { w: "other" }; const p = o; p.w = "system"; export const f = (c: string) => c === o.w;`,
+		"container written, read through an alias": `const o = { w: "other" }; const p = o; o.w = "system"; export const f = (c: string) => c === p.w;`,
+		"setter reaching its binding through a second function": `let w = "other"; const inner = (v: string) => { w = v; }; const set = (v: string) => { inner(v); }; set("system"); export const f = (c: string) => c === w;`,
+		"setter arrow assigns its parameter": `let w = "other"; const set = (v: string) => { w = v; }; set("system"); export const f = (c: string) => c === w;`,
+		"setter declaration assigns its parameter": `let w = "other"; function set(v: string) { w = v; } set("system"); export const f = (c: string) => c === w;`,
+		"setter, the word in the SECOND parameter": `let w = "other"; const set = (k: number, v: string) => { w = v; }; set(1, "system"); export const f = (c: string) => c === w;`,
+		"destructure from a binding, object": `const cfg = { w: "system" }; const { w } = cfg; export const f = (c: string) => c === w;`,
+		"destructure from a binding, array": `const cfg = ["system"]; const [w] = cfg; export const f = (c: string) => c === w;`,
+		"destructure from a chain of bindings": `const a = { w: "system" }; const b = a; const { w } = b; export const f = (c: string) => c === w;`,
 		"destructuring declaration, object literal": `const { w } = { w: "system" }; export const f = (c: string) => c === w;`,
 		"destructuring declaration, array literal": `const [w] = ["system"]; export const f = (c: string) => c === w;`,
 		"destructuring declaration, renamed and nested": `const { a: { b: w } } = { a: { b: "system" } }; export const f = (c: string) => c === w;`,
@@ -744,6 +760,10 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"a counter": `export const f = (c: number) => { let n = 0; n += 1; n++; return c === n; };`,
 		"a destructure of a CALL's result is not the word": `declare const run: (o: { who: string }) => { id: string }; const { id } = run({ who: "system" }); export const f = (c: string) => c === id;`,
 		"a destructuring declaration of harmless literals": `const { w } = { w: "x" }; const [v] = ["y"]; export const f = (c: string) => c === w || c === v;`,
+		"a container written with a harmless value": `const o = { w: "other" }; o.w = "y"; export const f = (c: string) => c === o.w;`,
+		"a container written with a harmless value through an alias": `const o = { w: "other" }; const p = o; p.w = "y"; export const f = (c: string) => c === o.w;`,
+		"a setter called with a harmless value": `let w = "other"; const set = (v: string) => { w = v; }; set("y"); export const f = (c: string) => c === w;`,
+		"a destructure from a harmless binding": `const cfg = { w: "x" }; const { w } = cfg; export const f = (c: string) => c === w;`,
 		"assignments that only cycle": `export const f = (c: string) => { let a = "x"; let b = "y"; a = b; b = a; return c === a; };`,
 		"the word is written to a binding that is never compared": `export const f = () => { let w = "other"; w = "system"; return w; };`,
 	};
@@ -759,14 +779,19 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"array join": `export const f = (c: string) => c === ["sys", "tem"].join("");`,
 		fromCharCode: `export const f = (c: string) => c === String.fromCharCode(115, 121, 115, 116, 101, 109);`,
 		"compare hidden in a helper": `const eq = (a: string, b: string) => a === b; export const f = (c: string) => eq(c, "system");`,
-		"value in a container": `const cfg = { who: "system" }; export const f = (c: string) => c === cfg.who;`,
 		"value derived from a call that was passed the word": `declare const run: (o: { who: string }) => { ids: string[] }; const r = run({ who: "system" }); const id = r.ids[0]; export const f = () => id !== undefined;`,
 		"key membership": `export const f = (c: string) => c in { system: 1 };`,
-		"a write to a PROPERTY of a container (not a binding)": `const o = { w: "other" }; o.w = "system"; export const f = (c: string) => c === o.w;`,
-		"a write to an ELEMENT of a container": `const a = ["other"]; a[0] = "system"; export const f = (c: string) => c === a[0];`,
-		"a value passed to a setter that assigns it": `let w = "other"; const set = (v: string) => { w = v; }; set("system"); export const f = (c: string) => c === w;`,
+		"an alias of an alias (one hop only)": `const o = { w: "other" }; const p = o; const q = p; q.w = "system"; export const f = (c: string) => c === o.w;`,
 	};
 	test.each(Object.entries(LIMIT))("DECLARED LIMIT (not seen): %s", (_n, src) => {
 		expect(analyseSystemWord({ "convex/x.ts": src })).toEqual([]);
+	});
+
+	test("BLOCK: a setter defined in one module and called with the word from another", () => {
+		const sites = analyseSystemWord({
+			"convex/lib/word.ts": `let w = "other"; export const set = (v: string) => { w = v; }; export const f = (c: string) => c === w;`,
+			"convex/x.ts": `import { set } from "./lib/word"; set("system");`,
+		});
+		expect(sites.filter((s) => s.cls === null).map((s) => s.file)).toEqual(["convex/lib/word.ts"]);
 	});
 });

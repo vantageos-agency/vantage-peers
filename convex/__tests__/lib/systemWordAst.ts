@@ -11,24 +11,28 @@
  * module decides by SYNTAX and SYMBOL FLOW, on the model of
  * mcp-server/test/lib/actingNameAst.ts (PR #1355).
  *
- * KNOWN LIMITS, DECLARED — read these before you read the green.
+ * KNOWN LIMITS, DECLARED — read these before you read the green. They are of
+ * TWO KINDS, and the difference is the point of this list:
  *
- *   A value built at runtime has no literal node, so a syntactic instrument
- *   has nothing to see. Not seen here: `"sys" + "tem"`, a template with a
- *   substitution (`${a}${b}`), `["sys","tem"].join("")`, `.concat`, `.slice`,
- *   `.replace`, `String.fromCharCode(...)`, a string read from the database, an
- *   env var or another argument. The same limit is disclosed in
- *   mcp-server/test/lib/actingNameAst.ts ("a value built at runtime out of
- *   pieces has no such node and is not seen here"). That is the boundary of a
- *   syntactic instrument; for the mandates.* sites the verified-master gate
- *   (`requireFleetMaster`) and the shared predicate are what cover it.
+ *   UNDECIDABLE by a syntactic reader (no amount of work in this file closes
+ *   them): a value built at runtime has no literal node. Not seen: `"sys" +
+ *   "tem"`, a template with a substitution (`${a}${b}`), `["sys","tem"].join("")`,
+ *   `.concat`, `.slice`, `.replace`, `String.fromCharCode(...)`, a string read
+ *   from the database, an env var or another argument. Whether such an
+ *   expression evaluates to the word is a question about execution, not about
+ *   syntax; a control that answered it would have to be an interpreter. The
+ *   same limit is disclosed in mcp-server/test/lib/actingNameAst.ts ("a value
+ *   built at runtime out of pieces has no such node and is not seen here").
+ *   For the mandates.* sites the verified-master gate (`requireFleetMaster`)
+ *   and the shared predicate are what cover it. Also here: key-membership
+ *   (`x in { system: 1 }`, `({ system: true })[x]`), a compare that names no
+ *   comparison node, and a value read from a call's result (`const { id } =
+ *   run({ who: "system" })`, `const id = r.ids[0]`): a value derived from a
+ *   call that was merely handed the word is not the word, and following it
+ *   flags real code (a false positive in convex/__tests__/tasks.bulk_complete.test.ts).
  *
- *   Also not seen, for the same reason (no comparison node names the word):
- *   a compare hidden inside a helper (`eq(x, "system")` with the compare
- *   inside `eq`; declared and accepted), a value carried in a container or
- *   derived from a call that was handed the word (`const cfg = { who: "system" };
- *   x === cfg.who` — value flow stops at an object literal or a call), and key-membership (`x in { system: 1 }`,
- *   `({ system: true })[x]`).
+ *   NOT IMPLEMENTED, with a bounded follow that WAS measured: see "THE
+ *   GUARANTEE" below for the list and the reason for each.
  *
  * WHAT IS SEEN. The literal operand, on EITHER side, resolved through the tree:
  *
@@ -50,9 +54,10 @@
  * parentheses, `as`, `satisfies`, `!`, `<T>`, both branches of `?:`, both
  * operands of `??` `||` `&&`, a comma expression, a destructuring default.
  * An identifier in the operand is followed by VALUE FLOW only (through casts,
- * `?:` arms, `??` `||` `&&`, a comma tail), never into a call's arguments or an
- * object literal: a value derived from a call that was merely passed the word
- * is not the word. It is followed to its DECLARATION (const, let, var,
+ * `?:` arms, `??` `||` `&&`, a comma tail) and never into a call's RESULT: a
+ * value derived from a call that was merely passed the word is not the word.
+ * (A literal container and a setter's parameter are entered only through the
+ * dedicated forms listed below.) It is followed to its DECLARATION (const, let, var,
  * parameter default, destructuring default, an import from another convex
  * module, an enum member or `as const` property whose literal type is the word)
  * AND to every ASSIGNMENT to the binding, in any file of the program:
@@ -68,6 +73,17 @@
  *     on convex/: 0 new sites.
  *   a write inside a closure, a parameter that is reassigned, an `export let`
  *     assigned by its own module and compared in another
+ *   `o.w = "system"`, `a[0] = "system"`, `o["w"] = ...`, `o.w ||= ...`: a write
+ *     to a property/element of a NAMED container, then read from it (any key of
+ *     the container is asked, over-approximated)
+ *   `const cfg = { who: "system" }; x === cfg.who` / `cfg[0]`: a read out of a
+ *     binding declared as a literal container holding the word
+ *   `const set = (v) => { w = v }; set("system")`: a named local function
+ *     (declaration, arrow or function expression) whose body assigns its
+ *     PARAMETER to a binding, called (in any module of the program) with the
+ *     word at that parameter's position, also through a chain of such functions
+ *   `const { w } = cfg`, `const [w] = cfg`, through a chain of bindings: the
+ *     binding is declared as a literal container holding the word
  *
  * A `const` cannot be reassigned, so it needs nothing beyond its declaration.
  * An assignment is followed through the same value-flow nodes as an
@@ -76,27 +92,38 @@
  * (`a = b; b = a`) terminate and do not taint. This control chose to follow the
  * assignments rather than to flag every reassigned binding: measured on
  * convex/, "any binding with any assignment is possibly-system" flags 243
- * comparisons on the pristine tree (`x !== undefined` guards, `while (m !== null)` cursors, `p === "global"` checks),
- * following the assignments flags 0.
+ * comparisons on the pristine tree (`x !== undefined` guards, `while (m !== null)`
+ * cursors, `p === "global"` checks), following the assignments flags 0. Each of
+ * the container / setter / binding-destructuring follows above was measured on
+ * its own on that tree before it landed: 0 newly flagged sites each.
  *
  * THE GUARANTEE, stated exactly, and no wider than the code delivers: a word
  * literal ANYWHERE in a comparison operand, or reaching an operand identifier
  * by one of the flows listed above, is seen. It is NOT a guarantee that every
- * way of getting the word into a comparison is seen — that is not decidable by
- * syntax, and this header has twice claimed it ("never under-approximated")
- * and been wrong. What is NOT followed, and pinned as DECLARED LIMIT fixtures:
- *   - a write to a PROPERTY or ELEMENT of a container (`o.w = "system"`,
- *     `a[0] = "system"`): a write to a container, not to a binding;
- *   - a value that reaches a binding through a CALL's argument
- *     (`const set = (v) => { w = v }; set("system")`): no interprocedural flow;
- *   - a destructuring declaration out of anything but a LITERAL: a call's
- *     result (`const { id } = run({ who: "system" })`) or another binding
- *     (`const { w } = cfg`). A literal in the same statement IS followed;
- *   - everything under "value built at runtime" above.
+ * way of getting the word into a comparison is seen, and this header has
+ * claimed it before ("never under-approximated") and been wrong. What is NOT
+ * followed, in two kinds:
+ *
+ *   NOT IMPLEMENTED — decidable in principle, not followed here, pinned as
+ *   DECLARED LIMIT fixtures:
+ *   - an alias of an alias (`const p = o; const q = p; q.w = "system"`, read as
+ *     `o.w`): an alias is followed ONE hop, both ways;
+ *   - a destructure from a container reached by anything but a chain of
+ *     plain bindings (a property of another container, an array element).
+ *   The forms that DID land (alias, setter, container writes/reads, destructure
+ *   from a binding) were each measured on the
+ *   pristine convex/ tree: 0 newly flagged sites. The two above were not
+ *   implemented and no number is claimed for them.
+ *
+ *   UNDECIDABLE here — see "KNOWN LIMITS" at the top: strings assembled at
+ *   runtime, values read from a call's result, key-membership. These are not
+ *   gaps waiting for an implementation.
+ *
  * What it over-approximates: an operand that merely CONTAINS the word without
- * evaluating to it (`x === f("system")`, `x === m["system"]`) is flagged too; a
- * reader has a false positive to explain, never a hidden site of the kinds
- * listed as followed.
+ * evaluating to it (`x === f("system")`, `x === m["system"]`), or that reads
+ * ANY key of a container holding the word, is flagged too; a reader has a
+ * false positive to explain, never a hidden site of the kinds listed as
+ * followed.
  *
  * There is no exemption list. Exactly one site is the definition of the
  * predicate itself — the classification `predicate` requires the whole shape:
@@ -240,6 +267,7 @@ export function analyse(files: Record<string, string>): Site[] {
 	}
 
 	const seenDecl = new Set<ts.Node>();
+	let inWrite = 0;
 
 	// ── writes to a binding, after its declaration ─────────────────────────
 
@@ -252,6 +280,8 @@ export function analyse(files: Record<string, string>): Site[] {
 		deep: boolean;
 	};
 	let writeIndex: Map<ts.Symbol, Write[]> | undefined;
+	const callIndex = new Map<ts.Symbol, ts.CallExpression[]>();
+	const aliasIndex = new Map<ts.Symbol, ts.Symbol[]>();
 
 	const symbolOf = (id: ts.Identifier): ts.Symbol | undefined => {
 		const sym = checker.getSymbolAtLocation(id);
@@ -315,6 +345,49 @@ export function analyse(files: Record<string, string>): Site[] {
 						for (const t of targets) add(t, { node: n, value: n.right, deep: true });
 					}
 				}
+				// ONE: `o.w = V`, `a[0] = V` where the container is a named binding
+				if (
+					ts.isBinaryExpression(n) &&
+					n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+					n.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+				) {
+					const l = unwrap(n.left);
+					if (ts.isPropertyAccessExpression(l) || ts.isElementAccessExpression(l)) {
+						const base = unwrap(l.expression);
+						if (ts.isIdentifier(base)) {
+							const target = symbolOf(base);
+							if (target) add(target, { node: n, value: n.right, deep: false });
+						}
+					}
+				}
+				if (
+					ts.isVariableDeclaration(n) &&
+					ts.isIdentifier(n.name) &&
+					n.initializer &&
+					ts.isIdentifier(unwrap(n.initializer))
+				) {
+					const from = symbolOf(unwrap(n.initializer) as ts.Identifier);
+					const to = symbolOf(n.name);
+					if (from && to) {
+						for (const [k, v] of [
+							[from, to],
+							[to, from],
+						] as const) {
+							const list = aliasIndex.get(k);
+							if (list) list.push(v);
+							else aliasIndex.set(k, [v]);
+						}
+					}
+				}
+				// TWO: calls to a named local function, by callee symbol
+				if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
+					const target = symbolOf(n.expression);
+					if (target) {
+						const list = callIndex.get(target);
+						if (list) list.push(n);
+						else callIndex.set(target, [n]);
+					}
+				}
 				// `for (w of xs)` with an existing binding as the target
 				if (
 					(ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
@@ -342,6 +415,30 @@ export function analyse(files: Record<string, string>): Site[] {
 		return writeIndex.get(sym) ?? [];
 	}
 
+	const seenContainer = new Set<ts.Symbol>();
+	/** A binding whose declaration (or a chain of bindings) is a literal container holding the word. */
+	function containerHolds(id: ts.Identifier): boolean {
+		const sym = symbolOf(id);
+		if (!sym || seenContainer.has(sym)) return false;
+		seenContainer.add(sym);
+		try {
+			for (const d of sym.declarations ?? []) {
+				if (!ts.isVariableDeclaration(d) || !d.initializer) continue;
+				const init = unwrap(d.initializer);
+				if (
+					(ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init)) &&
+					systemValued(init)
+				) {
+					return true;
+				}
+				if (ts.isIdentifier(init) && containerHolds(init)) return true;
+			}
+			return false;
+		} finally {
+			seenContainer.delete(sym);
+		}
+	}
+
 	/**
 	 * A leaf that IS the word, or names something that is: a literal, a
 	 * `String.raw` template, an identifier whose declaration initializer
@@ -356,14 +453,20 @@ export function analyse(files: Record<string, string>): Site[] {
 			if (sym && sym.flags & ts.SymbolFlags.Alias) {
 				sym = checker.getAliasedSymbol(sym);
 			}
+			// (an alias `const p = o` shares its writes with `o`, one hop, both ways)
 			// every ASSIGNMENT to the binding is value flow too (`let w; w = "system"`,
 			// `let w = "x"; w = "system"`, `w ||= "system"`): the declaration is
 			// only the first write, not the last.
-			for (const w of sym ? writesOf(sym) : []) {
+			for (const w of sym ? [...writesOf(sym), ...(aliasIndex.get(sym) ?? []).flatMap((a) => writesOf(a))] : []) {
 				if (seenDecl.has(w.node)) continue;
 				seenDecl.add(w.node);
 				try {
-					if (w.deep ? systemValued(w.value) : flowValued(w.value)) return true;
+					inWrite++;
+					try {
+						if (w.deep ? systemValued(w.value) : flowValued(w.value)) return true;
+					} finally {
+						inWrite--;
+					}
 				} finally {
 					seenDecl.delete(w.node);
 				}
@@ -383,6 +486,28 @@ export function analyse(files: Record<string, string>): Site[] {
 					}
 					if (ts.isEnumMember(d) && d.initializer && flowValued(d.initializer)) {
 						return true;
+					}
+					// TWO: a PARAMETER of a named local function, reached through an
+					// assignment (`const set = (v) => { w = v }; set("system")`).
+					if (inWrite > 0 && ts.isParameter(d)) {
+						const fn = d.parent;
+						const idx = fn.parameters.indexOf(d);
+						let fsym: ts.Symbol | undefined;
+						if (ts.isFunctionDeclaration(fn) && fn.name) fsym = symbolOf(fn.name);
+						else if (
+							(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) &&
+							ts.isVariableDeclaration(fn.parent) &&
+							ts.isIdentifier(fn.parent.name)
+						) {
+							fsym = symbolOf(fn.parent.name);
+						}
+						if (fsym && idx >= 0) {
+							writesOf(fsym); // builds callIndex
+							for (const call of callIndex.get(fsym) ?? []) {
+								const arg = call.arguments[idx];
+								if (arg && flowValued(arg)) return true;
+							}
+						}
 					}
 					// `const { w } = { w: "system" }`, `const [w] = ["system"]`: a binding
 					// taken out of a LITERAL container in the same statement. Only a
@@ -407,6 +532,10 @@ export function analyse(files: Record<string, string>): Site[] {
 							) {
 								return true;
 							}
+							// THREE: `const { w } = cfg` where cfg is a binding declared as a literal container
+							if (init && ts.isIdentifier(init) && containerHolds(init)) {
+								return true;
+							}
 						}
 					}
 				} finally {
@@ -415,6 +544,10 @@ export function analyse(files: Record<string, string>): Site[] {
 			}
 		}
 		if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+			// `cfg.who` / `cfg["who"]` read out of a binding declared as a literal
+			// container holding the word (over-approximated: ANY key of it).
+			const base = unwrap(e.expression);
+			if (ts.isIdentifier(base) && containerHolds(base)) return true;
 			// enum member / `as const` property: the checker knows its literal type
 			const t = checker.getTypeAtLocation(e);
 			if (t.isStringLiteral() && isWord(t.value)) return true;
