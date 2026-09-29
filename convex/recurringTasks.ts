@@ -5,7 +5,7 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { filterByOrgScope, withOrgScope } from "./lib/auth";
+import { filterByOrgScope, isRowVisibleToScope, withOrgScope } from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +294,18 @@ export const update = mutation({
 		const existing = await ctx.db.get(recurringTaskId);
 		if (!existing) throw new Error("Recurring task not found");
 
+		// TENANT GATE first. The roster check below is a NAME membership test and
+		// is not a tenant boundary: two organisations whose rosters both carry
+		// the same orchestrator would otherwise reach each other's schedules, and
+		// `processDueTasks` stamps the tasks it generates with THIS row's orgId —
+		// so a cross-org write here is injection into the victim's task queue.
+		// Same mechanism as the by-id reads (`isRowVisibleToScope`); the roster
+		// check that follows stays as a narrowing intersect, never replaced.
+		if (!isRowVisibleToScope(scope, existing)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
+			);
+		}
 		if (!isAssigneeAllowedForScope(scope, existing.assignedTo)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
