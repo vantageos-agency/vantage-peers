@@ -81,6 +81,7 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 // generate — admin-only: create and return a new license key
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const generate = mutation({
 	args: {
 		callerToken: v.string(), // must match BEARER_SECRET_MASTER
@@ -135,6 +136,7 @@ export const generate = mutation({
 // matching customerEmail IS the authorization; there is no separate caller
 // identity to derive, license activation is public by design (RFC-style
 // bearer-key redemption).
+// @credential licenseKey license-key: the presented license key is hashed and looked up in `licenses`; an unknown key is refused
 export const activate = mutation({
 	args: {
 		licenseKey: v.string(),
@@ -184,6 +186,7 @@ export const activate = mutation({
 // validate — read-only license status check, never throws
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential licenseKey license-key: the presented license key is hashed and looked up in `licenses`; it answers only for a key it holds
 export const validate = query({
 	args: {
 		licenseKey: v.string(),

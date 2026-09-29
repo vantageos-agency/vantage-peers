@@ -140,6 +140,7 @@ export const mintAgentCredential = mutation({
  * identity on the same call would defeat the point of an agent
  * authenticating as itself.
  */
+// @credential presentedSecret agent-credential: the presented agent secret is hashed and resolved against stored agent credentials
 export const resolveAgentCredential = query({
 	args: { presentedSecret: v.string() },
 	returns: v.union(resolvedIdentityValidator, v.null()),
