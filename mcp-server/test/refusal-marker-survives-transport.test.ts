@@ -22,13 +22,14 @@
  */
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import { deriveDoors, type Src, sweepCallSites } from "./lib/refusalDoors.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -156,82 +157,246 @@ describe("END TWO — the MCP reader says it was refused (ordinary organisation 
 	}
 });
 
-// ── THE SWEEP, as a gate: the SHAPE, not the two named instances. ───────────────────────
+// ── THE SWEEP, as a gate: the CONTRACT, not the two named instances. ────────────────────
 //
-// The set of backend doors that can answer with the envelope is DERIVED from
-// convex/*.ts (every handler that returns `{ refused: true as const, ... }`),
-// never listed by hand. Every MCP call site of such a door must handle the
-// envelope in the same handler, or a future `Array.isArray(x) ? x : []` reader
-// swallows the marker again and this test names it.
+// The set of backend doors that can answer with the envelope is DERIVED from the
+// `returns` VALIDATOR of every builder in convex/ (test/lib/refusalDoors.ts): a
+// door is envelope-capable when its declared `returns` admits `refused:
+// v.literal(true)`, optional or not, in a union, hoisted, imported or extended.
+// It is never derived from how a handler happens to spell the value: the earlier
+// regex `refused: true as const` lost `refused: true as true` (tsc exit 0) and
+// the sweep reported 4/4 covered over a reader that discarded the marker.
+//
+// Every MCP call site of such a door must test the envelope in the ENCLOSING
+// FUNCTION of the call (any length: there is no line window), on the very
+// binding the result was assigned to. The limits that remain are named at the
+// top of test/lib/refusalDoors.ts.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONVEX_DIR = resolve(HERE, "../../convex");
 const SRC_DIR = resolve(HERE, "../src");
 
-function envelopeDoors(): string[] {
-	const doors: string[] = [];
-	for (const f of readdirSync(CONVEX_DIR)) {
-		if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
-		const src = readFileSync(join(CONVEX_DIR, f), "utf8");
-		for (const m of src.matchAll(/refused:\s*true\s+as\s+const/g)) {
-			const before = src.slice(0, m.index);
-			const names = [
-				...before.matchAll(/export const (\w+)\s*=\s*(?:query|internalQuery)\(/g),
-			];
-			const last = names[names.length - 1];
-			if (last) doors.push(`${f.slice(0, -3)}:${last[1]}`);
-		}
-	}
-	return [...new Set(doors)].sort();
-}
-
 function walk(dir: string): string[] {
 	const out: string[] = [];
 	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		if (e.name === "_generated" || e.name === "node_modules") continue;
 		const p = join(dir, e.name);
 		if (e.isDirectory()) out.push(...walk(p));
-		else if (p.endsWith(".ts") && !p.endsWith(".test.ts")) out.push(p);
+		else if (p.endsWith(".ts") && !p.endsWith(".test.ts") && !p.endsWith(".d.ts")) out.push(p);
 	}
 	return out;
 }
 
-describe("END TWO sweep — no MCP reader of an envelope-capable door may swallow the marker", () => {
-	const doors = envelopeDoors();
+function load(dir: string, root: string): Src[] {
+	return walk(dir).map((p) => ({ name: relative(root, p), text: readFileSync(p, "utf8") }));
+}
 
-	it("the derived set is the three known envelope doors (a new one must be reviewed here)", () => {
-		expect(doors).toEqual([
+const CONVEX_SRC = load(CONVEX_DIR, CONVEX_DIR);
+const MCP_SRC = load(SRC_DIR, SRC_DIR);
+
+describe("END TWO sweep — no MCP reader of an envelope-capable door may swallow the marker", () => {
+	const derived = deriveDoors(CONVEX_SRC);
+
+	it("S1a the derived set is the three known envelope doors (a new one must be reviewed here)", () => {
+		expect(derived.doors).toEqual([
 			"mandates:list",
 			"messages:listByChannel",
 			"profiles:listProfiles",
 		]);
 	});
 
-	it("every call site of every envelope door handles `refused` within its own handler", () => {
-		const offenders: string[] = [];
-		let callSites = 0;
-		for (const file of walk(SRC_DIR)) {
-			const lines = readFileSync(file, "utf8").split("\n");
-			lines.forEach((line, i) => {
-				for (const door of doors) {
-					if (!line.includes(`"${door}"`)) continue;
-					// A CALL site: the door name is the first argument of a
-					// query/action/fetchConvex call (on this line or the one above),
-					// not a mention inside a message string.
-					const callish = `${lines[i - 1] ?? ""}\n${line}`;
-					if (!/(?:query|action|fetchConvex)\(\s*(?:as any)?\s*"?/.test(callish))
-						continue;
-					if (line.includes("mcpRefused(")) continue;
-					callSites += 1;
-					const window = lines.slice(i, i + 40).join("\n");
-					if (!window.includes("isRefusedEnvelope(")) {
-						offenders.push(`${file}:${i + 1} reads ${door} without isRefusedEnvelope`);
-					}
-				}
-			});
-		}
+	it("S1d no handler emits `refused: true` from a builder whose `returns` does not declare it", () => {
+		// The validator is the contract. A handler that emits the envelope without
+		// declaring it is either a runtime validation failure or an undeclared door;
+		// either way it must not be able to hide from S1a by omitting the validator.
+		expect(derived.undeclaredEnvelopes).toEqual([]);
+	});
+
+	it("S1b every call site of every envelope door tests the envelope in its own function", () => {
+		const { sites } = sweepCallSites(MCP_SRC, derived.doors);
+		const offenders = sites.filter((s) => !s.ok).map((s) => `${s.file}:${s.line} ${s.why}`);
 		// list_peers and list_mandates are the two known readers: guard the guard
 		// against a vacuous pass.
-		expect(callSites).toBeGreaterThanOrEqual(2);
 		expect(offenders).toEqual([]);
+		expect(sites.length).toBeGreaterThanOrEqual(2);
+		expect(new Set(sites.map((s) => s.door))).toEqual(
+			new Set(["mandates:list", "profiles:listProfiles"]),
+		);
+	});
+});
+
+// ── FIXTURES: the spellings the derivation must survive, each in memory. ────────────────
+//
+// Every fixture is checked on BOTH sides. The sweep must find the door however it
+// is spelled; and a reader that swallows the marker must go RED.
+
+const doorSrc = (body: string): Src[] => [{ name: "fx.ts", text: body }];
+
+const BASE = `
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+const row = v.object({ a: v.string() });
+`;
+
+const SPELLINGS: Array<{ name: string; src: string }> = [
+	{
+		name: "the original spelling: refused: v.literal(true) with `as const` in the handler",
+		src: `${BASE}
+export const list = query({
+	args: {},
+	returns: v.union(v.array(row), v.object({ refused: v.literal(true), items: v.array(row) })),
+	handler: async () => ({ refused: true as const, items: [] }),
+});`,
+	},
+	{
+		name: "the reviewer's spelling: handler says `refused: true as true` (tsc exit 0)",
+		src: `${BASE}
+export const list = query({
+	args: {},
+	returns: v.union(v.array(row), v.object({ refused: v.literal(true), items: v.array(row) })),
+	handler: async () => ({ refused: true as true, items: [] }),
+});`,
+	},
+	{
+		name: "third spelling: hoisted validator, optional flag, handler never writes the word (helper builds it)",
+		src: `${BASE}
+const REFUSAL = v.object({ refused: v.optional(v.literal(true)), items: v.array(row) });
+function envelopeFor() { return { ["ref" + "used"]: true, items: [] }; }
+export const list = query({
+	args: {},
+	returns: v.union(v.array(row), REFUSAL),
+	handler: async () => envelopeFor(),
+});`,
+	},
+	{
+		name: "fourth spelling: the validator reached through .extend on an imported-style named const",
+		src: `${BASE}
+const withMarker = v.object({ items: v.array(row) });
+const returnsShape = withMarker.extend({ refused: v.literal(true) });
+export const list = query({ args: {}, returns: returnsShape, handler: async () => ({ items: [] }) });`,
+	},
+];
+
+const READER_SWALLOWS = (call: string) => `
+export function reader(convex: any) {
+	return async () => {
+		const r = ${call};
+		return Array.isArray(r) ? r : [];
+	};
+}`;
+
+const READER_TESTS = (call: string) => `
+export function reader(convex: any) {
+	return async () => {
+		const r = ${call};
+		if (isRefusedEnvelope(r)) return "refused";
+		return Array.isArray(r) ? r : [];
+	};
+}`;
+
+describe("S1c — the derivation reads the validator, whatever the spelling (fixtures)", () => {
+	for (const f of SPELLINGS) {
+		it(`finds the door: ${f.name}`, () => {
+			expect(deriveDoors(doorSrc(f.src)).doors).toEqual(["fx:list"]);
+		});
+		it(`goes RED on a reader that swallows it, GREEN on one that tests it: ${f.name}`, () => {
+			const { doors } = deriveDoors(doorSrc(f.src));
+			const bad = sweepCallSites(
+				[{ name: "r.ts", text: READER_SWALLOWS('await convex.query("fx:list" as any, {})') }],
+				doors,
+			);
+			const good = sweepCallSites(
+				[{ name: "r.ts", text: READER_TESTS('await convex.query("fx:list" as any, {})') }],
+				doors,
+			);
+			expect(bad.sites.map((s) => s.ok)).toEqual([false]);
+			expect(good.sites.map((s) => s.ok)).toEqual([true]);
+		});
+	}
+
+	it("an undeclared envelope (handler emits it, `returns` does not) is reported, not silently absent", () => {
+		const d = deriveDoors(
+			doorSrc(`${BASE}
+export const list = query({
+	args: {},
+	returns: v.object({ items: v.array(row) }),
+	handler: async () => ({ refused: true as true, items: [] }),
+});`),
+		);
+		expect(d.doors).toEqual([]);
+		expect(d.undeclaredEnvelopes).toEqual(["fx:list"]);
+	});
+
+	it("an ordinary query that never mentions a refusal is not a door (no over-reach)", () => {
+		const d = deriveDoors(
+			doorSrc(`${BASE}
+export const list = query({ args: {}, returns: v.array(row), handler: async () => [] });`),
+		);
+		expect(d).toEqual({ doors: [], undeclaredEnvelopes: [], doorsWithoutReturns: [] });
+	});
+
+	it("a builder with no `returns` is listed, not skipped", () => {
+		const d = deriveDoors(
+			doorSrc(`${BASE}
+export const list = query({ args: {}, handler: async () => [] });`),
+		);
+		expect(d.doorsWithoutReturns).toEqual(["fx:list"]);
+	});
+});
+
+describe("S1c — call-site forms the earlier check did not recognise", () => {
+	const doors = ["fx:list"];
+	const forms: Array<[string, string]> = [
+		["api.x.y reference", "await convex.query(api.fx.list, {})"],
+		["anyApi.x.y reference", "await convex.query(anyApi.fx.list, {})"],
+		["api[\"x\"][\"y\"] element access", "await convex.query(api[\"fx\"][\"list\"], {})"],
+		["makeFunctionReference", "await convex.query(makeFunctionReference(\"fx:list\"), {})"],
+		["a const string door name", "await convex.query(DOOR, {})"],
+		["a plain string with `as any`", "await convex.query(\"fx:list\" as any, {})"],
+		["fetchConvex helper", "await fetchConvex(\"fx:list\", {})"],
+	];
+	for (const [name, call] of forms) {
+		it(`${name}: a swallowing reader is RED, a testing reader GREEN`, () => {
+			const pre = 'const DOOR = "fx:list";\n';
+			const bad = sweepCallSites([{ name: "r.ts", text: pre + READER_SWALLOWS(call) }], doors);
+			const good = sweepCallSites([{ name: "r.ts", text: pre + READER_TESTS(call) }], doors);
+			expect(bad.sites.map((s) => s.ok)).toEqual([false]);
+			expect(good.sites.map((s) => s.ok)).toEqual([true]);
+		});
+	}
+
+	it("a test that sits FAR beyond 40 lines of the call is still found (no line window)", () => {
+		const filler = "\t\tvoid 0;\n".repeat(200);
+		const src = `export function reader(convex: any) {
+	return async () => {
+		const r = await convex.query("fx:list" as any, {});
+${filler}		if (isRefusedEnvelope(r)) return "refused";
+		return [];
+	};
+}`;
+		const res = sweepCallSites([{ name: "r.ts", text: src }], doors);
+		expect(res.sites.map((s) => s.ok)).toEqual([true]);
+	});
+
+	it("a swallowing reader is RED even with `isRefusedEnvelope` applied to some OTHER value", () => {
+		const src = `export function reader(convex: any) {
+	return async (other: unknown) => {
+		const r = await convex.query("fx:list" as any, {});
+		if (isRefusedEnvelope(other)) return "refused";
+		return Array.isArray(r) ? r : [];
+	};
+}`;
+		const res = sweepCallSites([{ name: "r.ts", text: src }], doors);
+		expect(res.sites.map((s) => s.ok)).toEqual([false]);
+	});
+
+	it("a door name mentioned only in a message string is not a call site", () => {
+		const src = `export const m = "reads fx:list somewhere"; export function f(convex: any) { return convex.query("other:door" as any, {}); }`;
+		expect(sweepCallSites([{ name: "r.ts", text: src }], doors).sites).toEqual([]);
+	});
+
+	it("a computed door name is COUNTED as unresolved, never silently dropped", () => {
+		const src = `export function f(convex: any, n: string) { return convex.query(n as any, {}); }`;
+		expect(sweepCallSites([{ name: "r.ts", text: src }], doors).unresolved).toBe(1);
 	});
 });
