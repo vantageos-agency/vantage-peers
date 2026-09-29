@@ -490,12 +490,42 @@ const MUST_BLOCK: MustBlock[] = [
 		reason: WRITTEN,
 	},
 	{
-		name: "write through a type assertion",
+		name: "write through an `as` wrapper",
 		origin:
-			"sweep: `(callerOrchestrator as any) = d` and `callerOrchestrator! = d` are legal TS targets; wrappers are transparent to the write check.",
+			"sweep, split after a surviving mutant: `(callerOrchestrator as any) = d` is a legal TS target. A wrapper on the target is transparent to the write check; one row per wrapper so removing ONE transparency cannot hide behind another line.",
 		source: withParams(
 			ARGS,
-			'(callerOrchestrator as any) = "system"; callerOrchestrator! = "system"; return callerOrchestrator;',
+			'(callerOrchestrator as any) = "system"; return callerOrchestrator;',
+		),
+		reason: WRITTEN,
+	},
+	{
+		name: "write through a non-null `!` wrapper",
+		origin:
+			"sweep, split after a surviving mutant: `callerOrchestrator! = d` is a legal TS target. A wrapper on the target is transparent to the write check; one row per wrapper so removing ONE transparency cannot hide behind another line.",
+		source: withParams(
+			ARGS,
+			'callerOrchestrator! = "system"; return callerOrchestrator;',
+		),
+		reason: WRITTEN,
+	},
+	{
+		name: "write through a `satisfies` wrapper",
+		origin:
+			"sweep, split after a surviving mutant: `(callerOrchestrator satisfies any) = d` is a legal TS target. A wrapper on the target is transparent to the write check; one row per wrapper so removing ONE transparency cannot hide behind another line.",
+		source: withParams(
+			ARGS,
+			'(callerOrchestrator satisfies any) = "system"; return callerOrchestrator;',
+		),
+		reason: WRITTEN,
+	},
+	{
+		name: "write through an angle-bracket assertion",
+		origin:
+			"sweep, split after a surviving mutant: `(<any>callerOrchestrator) = d` is a legal TS target in a .ts file. A wrapper on the target is transparent to the write check; one row per wrapper so removing ONE transparency cannot hide behind another line.",
+		source: withParams(
+			ARGS,
+			'(<any>callerOrchestrator) = "system"; return callerOrchestrator;',
 		),
 		reason: WRITTEN,
 	},
