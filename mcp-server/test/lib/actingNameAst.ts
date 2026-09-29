@@ -29,11 +29,31 @@
  * Anything else is `null` with a `reason` — the caller fails on it. The
  * MUST_BLOCK fixtures in the test file pin the shapes this must refuse.
  *
- * Known limit, stated: the token is found by its spelling as an identifier or
+ * What `use` does NOT include (PR #1355, second REVISE). A binding that is
+ * spelled like the args' key is a `use` only while its value can come from the
+ * bound args ALONE. Two families of position break that, and both are BLOCK:
+ *
+ *   default-initializer   a default anywhere the acting name is bound or
+ *                         assigned: `{ callerOrchestrator = d }` (parameter,
+ *                         `const {..} = args`, any nesting depth),
+ *                         `async ({..} = d)`, `async (args = d)`,
+ *                         `({ callerOrchestrator = d } = o)`. When the args
+ *                         omit the name (permissive mode does exactly that for
+ *                         an organisation-only caller) the default becomes the
+ *                         name. Literal or not: no exemption, no allow-list.
+ *   write-target          the binding or the args' property is written after
+ *                         the fact: `=`, any compound assignment, `++`/`--`,
+ *                         a for-in/of target, a destructuring-assignment
+ *                         target. The one write that stays a `use` is the plain
+ *                         `x.callerOrchestrator = <bound args' value>`.
+ *
+ * Known limits, stated. The token is found by its spelling as an identifier or
  * a whole-literal key. A value built at runtime out of pieces
- * (`"caller" + "Orchestrator"`) has no such node and is not seen here; that is
- * the boundary of a syntactic instrument, and the runtime bind in
- * registerTool.ts (`bindActingNames`) is what covers it.
+ * (`"caller" + "Orchestrator"`) has no such node and is not seen here. Neither
+ * is a value that arrives through a spread, `Object.assign(args, x)` or a
+ * JSON round trip: no acting-name token is spelled at the write. That is the
+ * boundary of a syntactic instrument, and the runtime bind in registerTool.ts
+ * (`bindActingNames`) is what covers it.
  */
 
 import ts from "typescript";
@@ -61,6 +81,18 @@ export type Site = {
 };
 
 const ZOD_ROOTS = new Set(["z", "creatorSchema"]);
+
+// Reasons for the positions where a value can reach an acting-name binding
+// WITHOUT flowing from the bound args. Each is a BLOCK (cls null); the
+// `default-initializer` / `write-target` prefixes are what MUST_BLOCK pins.
+const DEFAULT_INITIALIZER =
+	"default-initializer: a default on the acting-name binding supplies the value when the args omit it, " +
+	"so an omitted name becomes the default instead of staying omitted";
+const DEFAULT_INITIALIZER_PARAM =
+	"default-initializer: the handler's own parameter carries a default, so the whole args object can come from the default";
+const WRITE_TARGET =
+	"write-target: the acting-name binding is written (assignment, compound assignment, ++/--, " +
+	"for-in/of target or destructuring-assignment target), so its value can come from somewhere other than the bound args";
 
 function isDefineToolCall(n: ts.Node): n is ts.CallExpression {
 	return (
@@ -150,13 +182,120 @@ export function analyse(files: Record<string, string>): Site[] {
 		return sym?.declarations ?? [];
 	}
 
-	/** First parameter of a defineTool handler, when written as a plain identifier. */
-	function isArgsParam(d: ts.Declaration): boolean {
+	/** First parameter of a defineTool handler, whatever its pattern or default. */
+	function isHandlerFirstParam(d: ts.Node): d is ts.ParameterDeclaration {
 		return (
 			ts.isParameter(d) &&
-			ts.isIdentifier(d.name) &&
 			isHandlerFunction(d.parent) &&
 			d.parent.parameters[0] === d
+		);
+	}
+
+	/**
+	 * Is this node written to: the left of any assignment operator (`=`, `??=`,
+	 * `||=`, `+=` ...), an `++`/`--` operand, a `for (x of|in ...)` target, or a
+	 * target inside a destructuring ASSIGNMENT (`({ k: x } = o)`, `[x] = a`,
+	 * `[...x] = a`, `({ x = d } = o)`). Type assertions, `!` and parentheses
+	 * around the target are transparent. `plain` carries the assignment when the
+	 * node is the direct left of a bare `=` that is not itself inside a pattern.
+	 */
+	function writeContext(
+		n: ts.Node,
+	): { kind: "plain"; assign: ts.BinaryExpression } | { kind: "other" } | null {
+		let cur: ts.Node = n;
+		let direct = true;
+		for (;;) {
+			const p: ts.Node | undefined = cur.parent;
+			if (!p) return null;
+			if (
+				(ts.isParenthesizedExpression(p) ||
+					ts.isNonNullExpression(p) ||
+					ts.isAsExpression(p) ||
+					ts.isSatisfiesExpression(p) ||
+					ts.isTypeAssertionExpression(p)) &&
+				p.expression === cur
+			) {
+				cur = p;
+				continue;
+			}
+			if (
+				ts.isBinaryExpression(p) &&
+				p.left === cur &&
+				p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+				p.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+			) {
+				// `x = d` INSIDE a pattern is a default, not a plain assignment.
+				if (
+					direct &&
+					p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+					writeContext(p) === null
+				) {
+					return { kind: "plain", assign: p };
+				}
+				return { kind: "other" };
+			}
+			if (
+				(ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) &&
+				(p.operator === ts.SyntaxKind.PlusPlusToken ||
+					p.operator === ts.SyntaxKind.MinusMinusToken)
+			) {
+				return { kind: "other" };
+			}
+			if (
+				(ts.isForInStatement(p) || ts.isForOfStatement(p)) &&
+				p.initializer === cur
+			) {
+				return { kind: "other" };
+			}
+			if (
+				(ts.isPropertyAssignment(p) && p.initializer === cur) ||
+				(ts.isShorthandPropertyAssignment(p) && p.name === cur) ||
+				((ts.isSpreadAssignment(p) || ts.isSpreadElement(p)) &&
+					p.expression === cur) ||
+				ts.isObjectLiteralExpression(p) ||
+				ts.isArrayLiteralExpression(p)
+			) {
+				cur = p;
+				direct = false;
+				continue;
+			}
+			return null;
+		}
+	}
+
+	/** Parameters of a handler that something reassigns (memoised by declaration). */
+	const reassigned = new Map<ts.Node, boolean>();
+	function isReassigned(param: ts.ParameterDeclaration): boolean {
+		const hit = reassigned.get(param);
+		if (hit !== undefined) return hit;
+		let found = false;
+		const scan = (n: ts.Node): void => {
+			if (found) return;
+			if (
+				ts.isIdentifier(n) &&
+				ts.isIdentifier(param.name) &&
+				n.text === param.name.text &&
+				declsOf(n).includes(param) &&
+				writeContext(n) !== null
+			) {
+				found = true;
+				return;
+			}
+			ts.forEachChild(n, scan);
+		};
+		const owner = param.parent;
+		if (isHandlerFunction(owner) && owner.body) scan(owner.body);
+		reassigned.set(param, found);
+		return found;
+	}
+
+	/** First parameter of a defineTool handler, when a plain identifier that no default or write touches. */
+	function isArgsParam(d: ts.Declaration): boolean {
+		return (
+			isHandlerFirstParam(d) &&
+			ts.isIdentifier(d.name) &&
+			d.initializer === undefined &&
+			!isReassigned(d)
 		);
 	}
 
@@ -172,22 +311,32 @@ export function analyse(files: Record<string, string>): Site[] {
 	 * either the handler's own destructured first parameter, or
 	 * `const { callerOrchestrator } = args` inside a handler.
 	 */
-	function isArgsBinding(d: ts.Declaration): boolean {
-		if (!ts.isBindingElement(d)) return false;
+	function bindingDefect(d: ts.Declaration): string | null {
+		const notArgs =
+			"destructures the acting name from something other than a defineTool handler's args";
+		if (!ts.isBindingElement(d)) return notArgs;
 		const key = d.propertyName ?? d.name;
-		if (!ts.isIdentifier(key) || key.text !== ACTING_TOKEN) return false;
+		if (!ts.isIdentifier(key) || key.text !== ACTING_TOKEN) return notArgs;
+		// A default on the binding itself: when the args omit the name (which
+		// permissive mode allows for an organisation-only caller) the DEFAULT is
+		// the value, so the binding no longer flows from the bound args.
+		if (d.initializer !== undefined) return DEFAULT_INITIALIZER;
 		const pattern = d.parent;
-		if (!ts.isObjectBindingPattern(pattern)) return false;
+		if (!ts.isObjectBindingPattern(pattern)) return notArgs;
 		const owner = pattern.parent;
 		if (ts.isParameter(owner)) {
-			return (
-				isHandlerFunction(owner.parent) && owner.parent.parameters[0] === owner
-			);
+			if (!isHandlerFirstParam(owner)) return notArgs;
+			// `async ({ callerOrchestrator } = <default>) =>` supplies the WHOLE args object.
+			return owner.initializer === undefined ? null : DEFAULT_INITIALIZER_PARAM;
 		}
 		if (ts.isVariableDeclaration(owner) && owner.initializer) {
-			return isArgsObject(owner.initializer);
+			return isArgsObject(owner.initializer) ? null : notArgs;
 		}
-		return false;
+		return notArgs;
+	}
+
+	function isArgsBinding(d: ts.Declaration): boolean {
+		return bindingDefect(d) === null;
 	}
 
 	/** Does this expression provably carry the bound args' acting name? */
@@ -338,13 +487,10 @@ export function analyse(files: Record<string, string>): Site[] {
 			if (ts.isBindingElement(parent)) {
 				const key = parent.propertyName ?? parent.name;
 				if (key === id) {
-					return isArgsBinding(parent)
+					const defect = bindingDefect(parent);
+					return defect === null
 						? { cls: "use", reason: "destructured from the bound args" }
-						: {
-								cls: null,
-								reason:
-									"destructures the acting name from something other than a defineTool handler's args",
-							};
+						: { cls: null, reason: defect };
 				}
 				// alias side: `{ x: callerOrchestrator }` rebinds ANOTHER key to the token.
 				return {
@@ -380,6 +526,14 @@ export function analyse(files: Record<string, string>): Site[] {
 
 			// `{ callerOrchestrator }` shorthand.
 			if (ts.isShorthandPropertyAssignment(parent) && parent.name === id) {
+				// `({ callerOrchestrator = d } = o)` — a destructuring ASSIGNMENT with a default.
+				if (parent.objectAssignmentInitializer !== undefined) {
+					return { cls: null, reason: DEFAULT_INITIALIZER };
+				}
+				// `({ callerOrchestrator } = o)` — the same shorthand as a write target.
+				if (writeContext(id) !== null) {
+					return { cls: null, reason: WRITE_TARGET };
+				}
 				return flowsFromArgs(id)
 					? { cls: "use", reason: "shorthand forward of the bound args' value" }
 					: {
@@ -391,13 +545,9 @@ export function analyse(files: Record<string, string>): Site[] {
 
 			// `x.callerOrchestrator` (read or assignment target).
 			if (ts.isPropertyAccessExpression(parent) && parent.name === id) {
-				const gp = parent.parent;
-				if (
-					ts.isBinaryExpression(gp) &&
-					gp.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-					gp.left === parent
-				) {
-					return flowsFromArgs(gp.right)
+				const w = writeContext(parent);
+				if (w?.kind === "plain") {
+					return flowsFromArgs(w.assign.right)
 						? { cls: "use", reason: "assigns the bound args' value" }
 						: {
 								cls: null,
@@ -405,6 +555,9 @@ export function analyse(files: Record<string, string>): Site[] {
 									"assigns an acting name that does not flow from the bound args",
 							};
 				}
+				// compound assignment, ++/--, for-in/of target, destructuring target,
+				// or a default inside a destructuring assignment.
+				if (w !== null) return { cls: null, reason: WRITE_TARGET };
 				return isArgsObject(parent.expression)
 					? { cls: "use", reason: "read off the bound args" }
 					: {
@@ -437,6 +590,9 @@ export function analyse(files: Record<string, string>): Site[] {
 						"identifier spelled as the acting name that does NOT resolve to the bound args " +
 						"(a same-named variable is not the actor)",
 				};
+			}
+			if (writeContext(id) !== null) {
+				return { cls: null, reason: WRITE_TARGET };
 			}
 			if (
 				ts.isCallExpression(parent) &&
