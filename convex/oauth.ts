@@ -96,6 +96,7 @@ const scopeProfileShape = v.object({
 // Master preserves full-access semantics of the BEARER_SECRET_MASTER path.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const seedDefaultProfiles = mutation({
 	args: { callerToken: v.string() },
 	returns: v.object({
@@ -395,6 +396,7 @@ export const seedDefaultProfiles = mutation({
 //     capturing before/after state, mirroring seedDefaultProfiles' discipline.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const upsertScopeProfile = mutation({
 	args: { callerToken: v.string(), profile: scopeProfileShape },
 	returns: v.union(v.literal("inserted"), v.literal("updated")),
@@ -546,6 +548,7 @@ const clientPublicShape = v.object({
 	revokedAt: v.optional(v.number()),
 });
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createClient = mutation({
 	args: {
 		callerToken: v.string(),
@@ -1044,6 +1047,7 @@ export const provisionOrganization = mutation({
 // Defense-in-depth against privilege escalation lives in-handler (rejects
 // empty redirectUris, requires an existing scope_profiles row flagged
 // selfRegistrable=true).
+// @open RFC 7591 dynamic client registration is anonymous by design; it mints a client with only self-registrable profiles and no token
 export const registerPublicClient = mutation({
 	args: {
 		clientId: v.string(),
@@ -1396,6 +1400,7 @@ export const listSeatClientIds = internalQuery({
 });
 
 // returns-projection: security — clientSecretHash is never returned to any caller (secret hash, not for display); tokenEndpointAuthMethod is admin-console metadata omitted from this public listing shape
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const listClients = query({
 	args: { callerToken: v.string() },
 	returns: v.array(clientPublicShape),
@@ -1414,6 +1419,7 @@ export const listClients = query({
 	},
 });
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const deleteClient = mutation({
 	args: { callerToken: v.string(), clientId: v.string() },
 	returns: v.object({
@@ -1490,6 +1496,7 @@ export const deleteClient = mutation({
 //
 // Master-gated. Idempotent on identical profile.
 // ─────────────────────────────────────────────────────────────────────────────
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const patchClientScopeAndRefreshTokens = mutation({
 	args: {
 		callerToken: v.string(),
@@ -1630,6 +1637,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 //
 // Master-gated. Returns the number of access tokens revoked.
 // ─────────────────────────────────────────────────────────────────────────────
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const revokeAccessTokensOnly = mutation({
 	args: {
 		callerToken: v.string(),
@@ -1695,6 +1703,7 @@ export const revokeAccessTokensOnly = mutation({
 // Gated by master token — only the HTTP server (which knows BEARER_SECRET_MASTER)
 // may mint authorization codes. Closes the pre-Day-47 hole where any caller with
 // Convex HTTP access could forge a code row and chain it into a scoped token.
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createAuthorizationCode = mutation({
 	args: {
 		callerToken: v.string(),
@@ -1725,6 +1734,7 @@ export const createAuthorizationCode = mutation({
 // single-use `code` itself IS the credential (deleted on first consumption),
 // public by design per the OAuth 2.0 authorization-code grant; there is no
 // separate caller identity to derive at this step.
+// @credential code authorization-code: the single-use authorization code is the credential; it is looked up and deleted on first consumption (expiry is returned to the caller, not enforced here)
 export const consumeAuthorizationCode = mutation({
 	args: { code: v.string() },
 	returns: v.union(
@@ -1764,6 +1774,7 @@ export const consumeAuthorizationCode = mutation({
 // Gated by master token — only the HTTP server may issue access tokens. Without
 // this gate an attacker with Convex HTTP access could insert a row granting
 // master-scope access and present the raw bearer to the MCP server.
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createAccessToken = mutation({
 	args: {
 		callerToken: v.string(),
@@ -1838,6 +1849,7 @@ const oauthContextShape = v.object({
 // Row-level checks (revoked / expired) still apply below — a valid hash for
 // a dead token yields null, not the dead grant.
 // ─────────────────────────────────────────────────────────────────────────────
+// @credential tokenHash token-hash: the SHA-256 of a bearer token is the credential and the lookup key; only its holder can present it
 export const getAccessTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(oauthContextShape, v.null()),
@@ -1870,6 +1882,7 @@ export const getAccessTokenByHash = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Gated by master token — only the HTTP server may issue refresh tokens.
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createRefreshToken = mutation({
 	args: {
 		callerToken: v.string(),
@@ -1908,6 +1921,7 @@ export const createRefreshToken = mutation({
 // presents this hash before any Convex-side identity is established for the
 // refresh token being redeemed.
 // ─────────────────────────────────────────────────────────────────────────────
+// @credential tokenHash token-hash: the SHA-256 of a refresh token is the credential and the lookup key; only its holder can present it
 export const getRefreshTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(
@@ -1965,6 +1979,7 @@ async function sha256Hex(input: string): Promise<string> {
 // renamed per D9 workspace-level naming (see patch_marie_iris_rh_scope.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const patchScopeProfileEmergency = mutation({
 	args: {
 		callerToken: v.string(),
@@ -2158,6 +2173,7 @@ export const patchScopeProfileEmergency = mutation({
 // fromAllowList includes all case variants of Alpha, Beta, Gamma for robustness.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const seedTestTenantTrio = mutation({
 	args: { callerToken: v.string() },
 	returns: v.object({
@@ -2294,6 +2310,7 @@ export const seedTestTenantTrio = mutation({
 // Master-gated.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createTestTenantTrioClients = mutation({
 	args: { callerToken: v.string() },
 	returns: v.array(
@@ -2399,6 +2416,7 @@ export const createTestTenantTrioClients = mutation({
 // listScopeProfiles — admin query (master-gated) to enumerate all profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const listScopeProfiles = query({
 	args: { callerToken: v.string() },
 	returns: v.array(scopeProfileShape),

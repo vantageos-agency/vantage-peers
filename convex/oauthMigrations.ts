@@ -70,6 +70,7 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 // Mirror: Theta VCRM convex/oauthMigrations.ts backfillTokenEndpointAuthMethod
 // ─────────────────────────────────────────────────────────────────────────────
 
+// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const backfillTokenEndpointAuthMethod = mutation({
 	args: { callerToken: v.string() },
 	returns: v.object({ scanned: v.number(), backfilled: v.number() }),
