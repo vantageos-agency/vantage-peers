@@ -396,6 +396,16 @@ const asRosterAllow = async (t: T) => {
 	return asOrgMember(t, "org-a") as unknown as T;
 };
 
+// The subscribed sites whose pre-organisation caller is answered with the
+// `{ refused: true, items: [] }` envelope. `businessUnits:list` is the one
+// subscribed site NOT here: it answers with a paging envelope and was not among
+// the six sites of task k1749w7ecx2yffr1hbhjpk8v858fbrf1 (named, not closed).
+const PRE_ORG_ENVELOPE_SITES = new Set([
+	"mandates:list",
+	"profiles:listProfiles",
+	"messages:listByChannel",
+]);
+
 const SITES: Site[] = [
 	// FIRST, because it is the only one that fabricated a MEASUREMENT rather
 	// than withholding one.
@@ -604,7 +614,26 @@ for (const site of SITES) {
 		});
 
 		// ── The R-50 population, split by whether a render actually exists.
-		if (site.hasReactiveSubscriber) {
+		if (
+			site.hasReactiveSubscriber &&
+			PRE_ORG_ENVELOPE_SITES.has(site.registration)
+		) {
+			// RE-DECIDED (task k1749w7ecx2yffr1hbhjpk8v858fbrf1). R-50's reasoning
+			// (never THROW at a mounted render) is kept; its conclusion (a bare `[]`)
+			// is not: a bare `[]` is the same bytes as an absence. The envelope
+			// renders empty in every dashboard consumer AND says it was refused. The
+			// full three-pole proof is
+			// convex/__tests__/preOrgRefusalCarriesItsMarker.test.ts.
+			test("R-50 NARROWED — a signed-in caller with NO organisation is served the typed ENVELOPE, never a throw and never the bytes of an absence", async () => {
+				const t = createT();
+				await site.seed(t);
+
+				expect(await site.read(asNoOrg(t) as unknown as T)).toEqual({
+					refused: true,
+					items: [],
+				});
+			});
+		} else if (site.hasReactiveSubscriber) {
 			test("R-50 PRESERVED — a signed-in caller with NO organisation still gets the typed EMPTY value, because a dashboard useQuery subscribes to this read", async () => {
 				const t = createT();
 				await site.seed(t);

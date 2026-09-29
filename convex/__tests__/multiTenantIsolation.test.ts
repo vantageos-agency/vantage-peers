@@ -204,7 +204,10 @@ describe("messages.listByChannel cross-tenant isolation (RED — handler is unsc
 			channel: "org-b-private-channel",
 		});
 
-		expect(result.length).toBe(0);
+		// An org member is SERVED (an absence), so the result is the bare array;
+		// the `{ refused: true, items }` envelope is only the pre-org refusal.
+		expect(Array.isArray(result)).toBe(true);
+		expect(result).toEqual([]);
 	});
 });
 

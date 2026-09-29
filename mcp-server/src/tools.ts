@@ -807,6 +807,63 @@ function mcpError(message: string): {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper: a backend REFUSAL must not be flattened into an ABSENCE
+//
+// A Convex list read that declines to serve an ordinary organisation member (or
+// a pre-organisation caller) answers `{ refused: true, items: [] }` instead of a
+// bare `[]` (convex/mandates.ts, convex/profiles.ts; rule
+// .claude/rules/refusal-is-distinguishable-from-absence.md). A reader that does
+// `Array.isArray(x) ? x : []` sees "not an array" and substitutes an EMPTY
+// ARRAY: the marker the backend went out of its way to send is discarded at the
+// last hop, and a model reading "[]" concludes that nothing exists.
+//
+// An MCP tool result is read by a model AND a human, so the two outcomes must
+// differ in the TEXT, not in a field nobody renders. A refusal is therefore an
+// ERROR result (`isError: true`) whose text opens with `REFUSED (RBAC_DENIED)`,
+// names the tool and the backend door, and says in plain words that it is NOT
+// an empty result. An absence is unchanged: a plain `[]`. It is an error result
+// rather than a success with a note because the same class already surfaces
+// that way through `mcpConvexError` when a backend read RAISES `RBAC_DENIED`, so
+// a caller handles one refusal shape, not two.
+//
+// Every MCP reader of an envelope-capable door MUST test `isRefusedEnvelope`
+// BEFORE it coalesces; the sweep in test/refusal-marker-survives-transport.test.ts
+// derives the door set from convex/*.ts and fails on a reader that does not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function isRefusedEnvelope(
+	value: unknown,
+): value is { refused: true; items: unknown[] } {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		(value as { refused?: unknown }).refused === true
+	);
+}
+
+export function mcpRefused(
+	tool: string,
+	door: string,
+): {
+	content: Array<{ type: "text"; text: string }>;
+	isError: true;
+} {
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text:
+					`REFUSED (RBAC_DENIED): ${tool} was refused by the backend read "${door}". ` +
+					`This identity is not permitted to read this list. ` +
+					`This is NOT an empty result: rows may exist that you cannot see, so do not conclude that none exist.`,
+			},
+		],
+		isError: true,
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ConvexError parser + structured error propagation
 //
 // When a Convex mutation fails with ArgumentValidationError (e.g. passing a
@@ -3551,6 +3608,12 @@ export function registerTools(
 					fields: fields ?? "lite",
 					createdBefore,
 				});
+
+				// A refusal is not an absence: say so BEFORE the `Array.isArray`
+				// coalescing below turns the envelope into an empty array.
+				if (isRefusedEnvelope(profiles)) {
+					return mcpRefused("list_peers", "profiles:listProfiles");
+				}
 
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// profiles rows (schema.ts:118) carry `orchestratorId`, NOT
@@ -7284,6 +7347,11 @@ export function registerTools(
 					fields: fields ?? "lite",
 					createdBefore,
 				});
+				// A refusal is not an absence: say so BEFORE the `Array.isArray`
+				// coalescing below turns the envelope into an empty array.
+				if (isRefusedEnvelope(mandates)) {
+					return mcpRefused("list_mandates", "mandates:list");
+				}
 				// k177617dqg6z5c099p1rdp5rqn8b2rp0 / k174y9ra7pp8zed3bcczk6xaed8cpynp —
 				// mandates rows carry `requestedBy` AND `fulfilledBy` (schema.ts
 				// creatorValidator), NOT `createdBy`/`namespace`. cloud-identity

@@ -547,9 +547,23 @@ for (const site of masterOnlyReads) {
 					site.registration,
 				);
 			} else {
-				// R-50, UNCHANGED: a dashboard useQuery does subscribe to this
-				// read, and this caller's shell IS mounted.
-				expect(await site.read(asNoOrg(t))).toEqual(site.empty);
+				// A dashboard useQuery does subscribe to this read and this caller's
+				// shell IS mounted (R-50), so it is not RAISED at. mandates:list and
+				// profiles:listProfiles answer it with the envelope its consumers
+				// already read (task k1749w7ecx2yffr1hbhjpk8v858fbrf1: a bare `[]`
+				// is the bytes of an absence); businessUnits:list keeps its typed
+				// empty (not one of the six sites).
+				if (
+					site.registration === "mandates:list" ||
+					site.registration === "profiles:listProfiles"
+				) {
+					expect(await site.read(asNoOrg(t))).toEqual({
+						refused: true,
+						items: [],
+					});
+				} else {
+					expect(await site.read(asNoOrg(t))).toEqual(site.empty);
+				}
 			}
 		});
 
@@ -742,15 +756,17 @@ describe("FAIL-OPEN closed — messages:listByChannel (1 row leaked via the hard
 		);
 	});
 
-	test("DENY — signed-in caller with NO verified organisation is served no broadcast rows", async () => {
+	test("DENY — signed-in caller with NO verified organisation is served no broadcast rows, and is TOLD it was refused", async () => {
 		const t = createT();
 		await seedMessage(t, "broadcast");
 
+		// Envelope, not a bare `[]` (task k1749w7ecx2yffr1hbhjpk8v858fbrf1): no
+		// row is served, and the bytes are not those of an absence.
 		expect(
 			await asNoOrg(t).query(api.messages.listByChannel, {
 				channel: "broadcast",
 			}),
-		).toEqual([]);
+		).toEqual({ refused: true, items: [] });
 	});
 
 	test("ALLOW — an ordinary member of an ACTIVE org still reads broadcast (the shared channel is not withdrawn from legitimate callers)", async () => {

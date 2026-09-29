@@ -280,23 +280,27 @@ export const list = query({
 		// RBAC_DENIED at this same pole in production all along while being
 		// reactively subscribed (components/missions/mission-board.tsx:25).
 		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
-		// A dashboard `useQuery` DOES subscribe to this read, so the
-		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its
-		// R-50 typed-empty result untouched — `alsoRefusePreOrg` is NOT passed.
+		// A dashboard `useQuery` DOES subscribe to this read
+		// (mandate-board.tsx:39, measured by grep in vantage-peers-dashboard,
+		// origin/main), so NO refused caller may be RAISED at except the anonymous
+		// one: `alsoRefusePreOrg` is NOT passed.
 		//
-		// THREE refused populations, three shapes, each for a stated reason:
+		// THREE refused populations, and the third was RE-DECIDED (task
+		// k1749w7ecx2yffr1hbhjpk8v858fbrf1) rather than inherited from R-50:
 		//   anonymous            → RAISES (no mounted render exists to crash).
-		//   signed-in, no org    → bare `[]`, UNCHANGED (R-50; a mounted render).
-		//   ordinary org member  → `{ refused: true, items: [] }`. This caller IS
-		//     resolved and IS subscribed, so a throw would crash a render — but a
-		//     bare `[]` is byte-identical to "no mandates exist" and silently
-		//     degrades. The dashboard already normalises
-		//     `Array.isArray(r) ? r : (r.items ?? [])` (mandate-board.tsx:41), so
-		//     the envelope renders as empty AND says it was refused.
+		//   signed-in, no org    → `{ refused: true, items: [] }`. Its shell IS
+		//     mounted and IS subscribed, so a throw would crash the render — R-50's
+		//     reasoning holds. But R-50 justified a bare `[]`, and a bare `[]` is
+		//     byte-identical to "no mandates exist". The envelope is render-safe for
+		//     the same reason it is for a member: mandate-board.tsx:41 normalises
+		//     `Array.isArray(r) ? r : (r.items ?? [])`, so it renders empty AND says
+		//     it was refused.
+		//   ordinary org member  → `{ refused: true, items: [] }`, same shape.
+		// The fleet master alone is served the bare array (rows, or a genuine
+		// absence with NO `refused` key).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "mandates:list");
 		if (!scope.isMaster) {
-			if (scope.refused) return [];
 			return { refused: true as const, items: [] };
 		}
 

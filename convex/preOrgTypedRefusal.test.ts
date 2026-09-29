@@ -119,23 +119,31 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 			expect(result.truncated).toBe(false);
 		});
 
-		test("listMessages: typed empty array, not a throw", async () => {
+		// listMessages / searchMessagesByKeyword have NO reactive subscriber
+		// (measured in vantage-peers-dashboard), so R-50 has no render to protect
+		// and the pre-org caller is RAISED at with RBAC_DENIED rather than handed a
+		// bare `[]` that is byte-identical to an absence. Task
+		// k1749w7ecx2yffr1hbhjpk8v858fbrf1; three-pole proof in
+		// convex/__tests__/preOrgRefusalCarriesItsMarker.test.ts.
+		test("listMessages: RAISED at (no subscriber, so no render to crash)", async () => {
 			const t = asNoOrg(createT());
-			await expect(t.query(api.messages.listMessages, {})).resolves.toEqual([]);
+			await expect(t.query(api.messages.listMessages, {})).rejects.toThrow();
 		});
 
-		test("listByChannel: typed value (broadcast-only), not a throw", async () => {
+		// listByChannel IS subscribed (message-timeline.tsx:51), so R-50 holds: a
+		// typed value, never a throw — and the typed value is the envelope.
+		test("listByChannel: typed envelope { refused: true, items: [] }, not a throw", async () => {
 			const t = asNoOrg(createT());
 			await expect(
 				t.query(api.messages.listByChannel, {}),
-			).resolves.toEqual([]);
+			).resolves.toEqual({ refused: true, items: [] });
 		});
 
-		test("searchMessagesByKeyword: typed empty array, not a throw", async () => {
+		test("searchMessagesByKeyword: RAISED at (no subscriber, so no render to crash)", async () => {
 			const t = asNoOrg(createT());
 			await expect(
 				t.query(api.messages.searchMessagesByKeyword, { query: "hello" }),
-			).resolves.toEqual([]);
+			).rejects.toThrow();
 		});
 	});
 
