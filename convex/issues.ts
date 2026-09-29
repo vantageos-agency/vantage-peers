@@ -453,6 +453,14 @@ export const getStats = query({
 	args: {
 		project: v.optional(v.string()),
 	},
+	returns: v.object({
+		open: v.number(),
+		in_progress: v.number(),
+		fixed: v.number(),
+		verified: v.number(),
+		closed: v.number(),
+		total: v.number(),
+	}),
 	handler: async (ctx, args) => {
 		const stats = { open: 0, in_progress: 0, fixed: 0, verified: 0, closed: 0, total: 0 };
 
@@ -485,10 +493,15 @@ export const getStats = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated zero either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// `masterOnly`: an ORDINARY member of an active org is resolved (so the
+		// anonymous / pre-org checks pass them) but is not the fleet master, and
+		// this table carries no orgId to scope a count to. They used to receive
+		// `stats` — six zeros, a FABRICATED MEASUREMENT that reads as "no open
+		// issues". They are now RAISED at, with the same RBAC_DENIED code.
 		requireResolvedCaller(scope, "issues:getStats", {
 			alsoRefusePreOrg: true,
+			masterOnly: true,
 		});
-		if (!scope.isMaster) return stats;
 
 		let issues;
 		if (args.project) {

@@ -341,7 +341,13 @@ export const listProfiles = query({
     limit: v.optional(v.number()),
     createdBefore: v.optional(v.number()),
   },
-  returns: v.array(profileDocValidator),
+  // A bare array is what the fleet master is served (rows, or a genuine
+  // absence). An ORDINARY member of an active org is served the typed refusal
+  // envelope instead — see the REFUSAL SHAPE note below.
+  returns: v.union(
+    v.array(profileDocValidator),
+    v.object({ refused: v.literal(true), items: v.array(profileDocValidator) }),
+  ),
   handler: async (ctx, args) => {
     // Fail-closed READ counterpart of this file's own master-only WRITE gate
     // (`requireFleetMaster` above). Measured against LIVE production at commit
@@ -373,10 +379,23 @@ export const listProfiles = query({
     // A dashboard `useQuery` DOES subscribe to this read, so the
     // signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its
     // R-50 typed-empty result untouched — `alsoRefusePreOrg` is NOT passed.
-    // Only the anonymous pole changes shape.
+    //
+    // THREE refused populations, three shapes, each for a stated reason:
+    //   anonymous            → RAISES (no mounted render exists to crash).
+    //   signed-in, no org    → bare `[]`, UNCHANGED (R-50; a mounted render).
+    //   ordinary org member  → `{ refused: true, items: [] }`. This caller IS
+    //     resolved and IS subscribed, so a throw would crash a render — but a
+    //     bare `[]` is byte-identical to "no profiles exist" and silently
+    //     degrades. The dashboard already normalises
+    //     `Array.isArray(r) ? r : (r.items ?? [])`
+    //     (orchestrators-grid.tsx:56), so the envelope renders as empty AND
+    //     says it was refused.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
     requireResolvedCaller(scope, "profiles:listProfiles");
-    if (!scope.isMaster) return [];
+    if (!scope.isMaster) {
+      if (scope.refused) return [];
+      return { refused: true as const, items: [] };
+    }
 
     const take = args.limit ?? 50;
     // Widen the fetch whenever a cursor is present, so the post-take

@@ -314,11 +314,12 @@ const seedBusinessUnit = (t: T, orchestratorId: string) =>
 		});
 	});
 
-const seedRecurringTask = (t: T, assignedTo: string) =>
+const seedRecurringTask = (t: T, assignedTo: string, orgId?: string) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("recurringTasks", {
 			title: "daily scan",
 			assignedTo,
+			orgId,
 			priority: "medium",
 			cronExpression: "0 9 * * *",
 			nextRunAt: now(),
@@ -329,11 +330,12 @@ const seedRecurringTask = (t: T, assignedTo: string) =>
 		});
 	});
 
-const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma") =>
+const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("tasks", {
 			title: "blocked with no link",
 			assignedTo,
+			orgId,
 			priority: "medium",
 			status: "blocked",
 			createdBy: "sigma",
@@ -511,7 +513,10 @@ const SITES: Site[] = [
 	{
 		registration: "recurringTasks:list",
 		hasReactiveSubscriber: false,
-		seed: (t) => seedRecurringTask(t, "sigma"),
+		// Stamped with the reader's org: after the tenant partition (#1354) an
+		// UNSTAMPED row is served to no org member, so the PRESENT pole needs a row
+		// that belongs to "org-a" for the roster member to be served it.
+		seed: (t) => seedRecurringTask(t, "sigma", "org-a"),
 		read: (c) => c.query(api.recurringTasks.list, {}),
 		allow: asRosterAllow,
 		nonEmpty: (v) => Array.isArray(v) && v.length === 1,
@@ -520,7 +525,7 @@ const SITES: Site[] = [
 	{
 		registration: "tasks:listUnlinkedBlocked",
 		hasReactiveSubscriber: false,
-		seed: (t) => seedUnlinkedBlockedTask(t, "sigma"),
+		seed: (t) => seedUnlinkedBlockedTask(t, "sigma", "org-a"),
 		read: (c) => c.query(api.tasks.listUnlinkedBlocked, {}),
 		allow: asRosterAllow,
 		nonEmpty: (v) => Array.isArray(v) && v.length === 1,
@@ -716,6 +721,167 @@ describe("refusal vs absence, side by side on mandates:list", () => {
 
 		// The property the whole delivery exists for.
 		expect(refusedOutcome.kind).not.toBe(absentOutcome.kind);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ORDINARY MEMBER — REVISE of PR #1353 (reviewer verdict, two blockers).
+//
+// The three sites below are FLEET-MASTER-ONLY reads (their tables carry no orgId
+// column; the reads admit exactly what the writes admit). So the population an
+// ORDINARY ORGANISATION MEMBER falls into is REFUSED at every one of them — and
+// the anonymous pole above is not the only refusal that has to be legible.
+//
+//   issues:getStats       member → RAISES RBAC_DENIED (was: six FABRICATED zeros)
+//   mandates:list         member → { refused: true, items: [] }  (was: bare [])
+//   profiles:listProfiles member → { refused: true, items: [] }  (was: bare [])
+//
+// WHY THE TWO KINDS OF SITE DIFFER. getStats has NO subscriber and returns a
+// MEASUREMENT: a zero there is a false number, so it raises. mandates:list and
+// profiles:listProfiles ARE reactively subscribed (mandate-board.tsx:39,
+// orchestrators-grid.tsx:53) and their consumers already normalise
+// `Array.isArray(r) ? r : (r.items ?? [])`, so the refusal is a TYPED ENVELOPE
+// that renders as empty while still saying `refused: true`. A bare `[]` is the
+// exact shape that silently degrades.
+//
+// IDENTITIES, NAMED. REFUSED poles run as ORDINARY_A, an ordinary member of the
+// ACTIVE org "org-a" (mapping seeded) — never master. PRESENT and ABSENT can
+// only run as the fleet service account HERE, and that is not a shortcut: these
+// three reads admit NO ordinary member by design, so there is no ordinary
+// reader whose PRESENT/ABSENT could be observed. The REFUSED pole with a
+// SEEDED table is what pins that claim (an ordinary member sees nothing even
+// though rows exist).
+// ─────────────────────────────────────────────────────────────────────────────
+
+type MasterOnlySite = {
+	registration: string;
+	seed: (t: T) => Promise<void>;
+	read: (c: T) => Promise<unknown>;
+	/** How an ORDINARY MEMBER is refused. */
+	refusal: "raises" | "envelope";
+	/** True when the value carries the seeded row. */
+	nonEmpty: (v: unknown) => boolean;
+	/** What the fleet master sees over a genuinely EMPTY table. */
+	absent: unknown;
+};
+
+const REFUSAL_ENVELOPE = { refused: true, items: [] };
+
+const MASTER_ONLY_SITES: MasterOnlySite[] = [
+	{
+		registration: "issues:getStats",
+		seed: (t) => seedIssue(t),
+		read: (c) => c.query(api.issues.getStats, {}),
+		refusal: "raises",
+		nonEmpty: (v) => (v as { total: number }).total === 1,
+		absent: {
+			open: 0,
+			in_progress: 0,
+			fixed: 0,
+			verified: 0,
+			closed: 0,
+			total: 0,
+		},
+	},
+	{
+		registration: "mandates:list",
+		seed: seedMandate,
+		read: (c) => c.query(api.mandates.list, {}),
+		refusal: "envelope",
+		nonEmpty: (v) => Array.isArray(v) && v.length === 1,
+		absent: [],
+	},
+	{
+		registration: "profiles:listProfiles",
+		seed: seedProfile,
+		read: (c) => c.query(api.profiles.listProfiles, {}),
+		refusal: "envelope",
+		nonEmpty: (v) => Array.isArray(v) && v.length === 1,
+		absent: [],
+	},
+];
+
+for (const site of MASTER_ONLY_SITES) {
+	describe(`ordinary member — ${site.registration}`, () => {
+		// POLE 1 — REFUSED. Identity: ORDINARY_A, member of ACTIVE org-a. Table SEEDED.
+		test(`REFUSED — an ordinary org member ${site.refusal === "raises" ? "is RAISED at, carrying RBAC_DENIED" : "receives the typed envelope { refused: true, items: [] }"}`, async () => {
+			const t = createT();
+			await seedOrgMapping(t, "org-a");
+			await site.seed(t);
+			const member = asOrgMember(t, "org-a") as unknown as T;
+
+			if (site.refusal === "raises") {
+				await expectRefusalCarryingItsCode(
+					() => site.read(member),
+					site.registration,
+				);
+			} else {
+				expect(await site.read(member)).toEqual(REFUSAL_ENVELOPE);
+			}
+		});
+
+		// POLE 2 — PRESENT. Identity: the fleet service account (see block header).
+		test("PRESENT — the fleet master reads the seeded row (no WITHHELD GRANT)", async () => {
+			const t = createT();
+			await site.seed(t);
+
+			expect(site.nonEmpty(await site.read(asMaster(t) as unknown as T))).toBe(
+				true,
+			);
+		});
+
+		// POLE 3 — ABSENT. Empty table, still a SUCCESS, and carrying NO refusal.
+		test("ABSENT — the fleet master over a genuinely EMPTY table still gets a SUCCESS with no refusal marker", async () => {
+			const t = createT();
+
+			const v = await site.read(asMaster(t) as unknown as T);
+			expect(v).toEqual(site.absent);
+			expect(
+				(v as { refused?: unknown } | null)?.refused,
+				"an absence must carry no refusal marker",
+			).toBeUndefined();
+		});
+	});
+}
+
+describe("refusal vs absence, ADJACENT — an ordinary member and a reader of an empty table must NOT produce the same bytes", () => {
+	for (const site of MASTER_ONLY_SITES.filter((s) => s.refusal === "envelope")) {
+		test(`${site.registration}: ORDINARY_A (member of active org-a, table SEEDED) vs the fleet master (table EMPTY)`, async () => {
+			// (a) REFUSED — ordinary member, rows exist.
+			const refusedT = createT();
+			await seedOrgMapping(refusedT, "org-a");
+			await site.seed(refusedT);
+			const refused = await site.read(
+				asOrgMember(refusedT, "org-a") as unknown as T,
+			);
+
+			// (b) ABSENT — fleet master, nothing to show.
+			const absentT = createT();
+			const absent = await site.read(asMaster(absentT) as unknown as T);
+
+			expect(JSON.stringify(refused)).toBe('{"items":[],"refused":true}');
+			expect(JSON.stringify(absent)).toBe("[]");
+			expect(
+				JSON.stringify(refused),
+				"a refusal and an absence came out as IDENTICAL BYTES — the delivery has not done its job",
+			).not.toBe(JSON.stringify(absent));
+			expect((refused as { refused: boolean }).refused).toBe(true);
+			expect((absent as { refused?: boolean }).refused).toBeUndefined();
+		});
+	}
+
+	test("issues:getStats: ORDINARY_A is RAISED at while the fleet master over an empty table gets a REAL zero — a zero is only ever a measurement", async () => {
+		const refusedT = createT();
+		await seedOrgMapping(refusedT, "org-a");
+		await seedIssue(refusedT);
+		await expectRefusalCarryingItsCode(
+			() => asOrgMember(refusedT, "org-a").query(api.issues.getStats, {}),
+			"issues:getStats",
+		);
+
+		const absentT = createT();
+		const zero = await asMaster(absentT).query(api.issues.getStats, {});
+		expect(zero.total).toBe(0);
 	});
 });
 

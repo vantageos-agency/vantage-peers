@@ -84,7 +84,8 @@ describe("Cat A — issue #642 — profiles.listProfiles accepts `limit`", () =>
 			fields: "lite",
 			limit: 20,
 		});
-		expect(Array.isArray(rows)).toBe(true);
+		// The fleet master is served the bare-array arm, never the refusal envelope.
+		if (!Array.isArray(rows)) throw new Error("master was refused");
 		expect(rows.length).toBe(0);
 	});
 

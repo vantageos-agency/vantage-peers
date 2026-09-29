@@ -228,7 +228,13 @@ export const list = query({
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
 		createdBefore: v.optional(v.number()),
 	},
-	returns: v.array(mandateObject),
+	// A bare array is what the fleet master is served (rows, or a genuine
+	// absence). An ORDINARY member of an active org is served the typed refusal
+	// envelope instead — see the REFUSAL SHAPE note below.
+	returns: v.union(
+		v.array(mandateObject),
+		v.object({ refused: v.literal(true), items: v.array(mandateObject) }),
+	),
 	handler: async (ctx, args) => {
 		// THE DECISION, WRITTEN DOWN BEFORE THE CODE — this is the most sensitive
 		// of the fourteen and it must not be closed by reflex.
@@ -277,10 +283,22 @@ export const list = query({
 		// A dashboard `useQuery` DOES subscribe to this read, so the
 		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its
 		// R-50 typed-empty result untouched — `alsoRefusePreOrg` is NOT passed.
-		// Only the anonymous pole changes shape.
+		//
+		// THREE refused populations, three shapes, each for a stated reason:
+		//   anonymous            → RAISES (no mounted render exists to crash).
+		//   signed-in, no org    → bare `[]`, UNCHANGED (R-50; a mounted render).
+		//   ordinary org member  → `{ refused: true, items: [] }`. This caller IS
+		//     resolved and IS subscribed, so a throw would crash a render — but a
+		//     bare `[]` is byte-identical to "no mandates exist" and silently
+		//     degrades. The dashboard already normalises
+		//     `Array.isArray(r) ? r : (r.items ?? [])` (mandate-board.tsx:41), so
+		//     the envelope renders as empty AND says it was refused.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "mandates:list");
-		if (!scope.isMaster) return [];
+		if (!scope.isMaster) {
+			if (scope.refused) return [];
+			return { refused: true as const, items: [] };
+		}
 
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;

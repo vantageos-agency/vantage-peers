@@ -553,12 +553,24 @@ for (const site of masterOnlyReads) {
 			}
 		});
 
-		test("DENY — an ORDINARY member of an ACTIVE organisation is served the typed EMPTY value (the guard is not merely 'is anyone signed in')", async () => {
+		test("DENY — an ORDINARY member of an ACTIVE organisation is refused in the shape this site declares (the guard is not merely 'is anyone signed in')", async () => {
 			const t = createT();
 			await seedOrgMapping(t, "org-a");
 			await site.seed(t);
 
-			expect(await site.read(asOrgMember(t, "org-a"))).toEqual(site.empty);
+			const got = () => site.read(asOrgMember(t, "org-a"));
+			if (site.registration === "issues:getStats") {
+				// A zeroed aggregate is a FABRICATED MEASUREMENT, never a refusal.
+				await expectRefusalCarryingItsCode(got, site.registration);
+			} else if (
+				site.registration === "mandates:list" ||
+				site.registration === "profiles:listProfiles"
+			) {
+				// Reactively subscribed: a typed envelope its consumers already read.
+				expect(await got()).toEqual({ refused: true, items: [] });
+			} else {
+				expect(await got()).toEqual(site.empty);
+			}
 		});
 
 		test("ALLOW — the fleet's own master caller still reads the row (no WITHHELD GRANT)", async () => {

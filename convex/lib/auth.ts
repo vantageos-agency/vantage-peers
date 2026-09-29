@@ -782,7 +782,7 @@ export function requireScope(scope: OrgScope, requiredScope: string): void {
 export function requireResolvedCaller(
 	scope: OrgScope,
 	registration: string,
-	opts?: { alsoRefusePreOrg?: boolean },
+	opts?: { alsoRefusePreOrg?: boolean; masterOnly?: boolean },
 ): void {
 	// Master / service-account / active-org callers are resolved — never their
 	// business. This helper judges ONLY "could the caller be resolved at all".
@@ -800,6 +800,23 @@ export function requireResolvedCaller(
 		throw new ConvexError(
 			`RBAC_DENIED: caller has no verified organisation for "${registration}" — ${JSON.stringify(
 				{ registration, orgSlug: null, reason: "no-verified-organisation" },
+			)}`,
+		);
+	}
+
+	// A MEASUREMENT read (a count, a sum) that admits the fleet master only.
+	// An ORDINARY member of an ACTIVE organisation is resolved — they are
+	// somebody — and is still not the fleet master, so there is nothing to serve
+	// them. Answering with a zeroed aggregate would hand that member a FALSE
+	// NUMBER ("there are no open issues") that gets quoted into a report; a
+	// silence is noticed, a fabricated zero is not. Same `RBAC_DENIED` code, same
+	// helper, no per-function variant. Pass `masterOnly` ONLY on a read that has
+	// no reactive subscriber (a throw needs no render to crash) and that returns a
+	// figure rather than a list — a list read serves the typed envelope instead.
+	if (opts?.masterOnly) {
+		throw new ConvexError(
+			`RBAC_DENIED: "${registration}" is a fleet-master measurement — an organisation member is refused, and refused by RAISING: a zeroed aggregate would be a fabricated figure, not an absent one — ${JSON.stringify(
+				{ registration, orgSlug: scope.orgSlug, reason: "not-fleet-master" },
 			)}`,
 		);
 	}
