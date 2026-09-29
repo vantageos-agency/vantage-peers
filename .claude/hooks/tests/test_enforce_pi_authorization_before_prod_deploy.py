@@ -925,6 +925,182 @@ def test_three_states_are_distinct_in_the_audit_log():
     )
 
 
+# ---------------------------------------------------------------------------
+# GUARD IDENTITY: a mint failure names the STEP that failed, and still refuses.
+#
+# `guard_identity()` has four ways to end without a bearer. Before these poles
+# the behaviour existed and NOTHING pinned it: collapsing the four reasons into
+# one sentence, reclassifying a mint failure as `block`, dropping the
+# VP_GUARD_CONVEX_TOKEN escape, or turning could-not-judge into allow would each
+# have left every other pole green. A control that has never been shown to fail
+# is not a control.
+#
+# The Clerk round-trips are the ONLY thing faked. The driver below loads the
+# real hook, replaces its `_post_json` transport with a scripted sequence, and
+# runs the real `main()` -- so the text, the audit line and the exit code are
+# the hook's own, end to end. Nothing leaves this machine; the credentials are
+# placeholders and are asserted never to be echoed.
+# ---------------------------------------------------------------------------
+
+_FAKE_SECRET = "sk_test_placeholder_never_a_real_secret"
+_FAKE_USER = "user_placeholder_service_account"
+
+# What each scripted Clerk transport answers, in call order. A callable raises.
+# None of these carries a bearer, so the ONLY thing that differs between the
+# four scenarios is which step of the mint flow came back empty.
+_MINT_SCENARIOS = {
+    "credentials-absent": None,  # no Clerk call is ever made
+    "no-sign-in-ticket": [{}],
+    "no-session-from-exchange": [{"token": "t"}, {}],
+    "no-jwt-for-template": [{"token": "t"}, {"response": {"created_session_id": "s"}}, {}],
+}
+
+# The word(s) that place each failure at its step. Distinctness is the pole;
+# these keep a reworded reason from drifting away from the step it names.
+_STEP_MARKER = {
+    "credentials-absent": "no credential is reachable",
+    "no-sign-in-ticket": "no sign-in ticket",
+    "no-session-from-exchange": "returned no session",
+    "no-jwt-for-template": "no JWT",
+}
+
+_MINT_DRIVER = r"""
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("guard_under_mint_test", os.environ["MINT_TEST_HOOK"])
+guard = importlib.util.module_from_spec(spec)
+guard._TESTING = True
+spec.loader.exec_module(guard)
+script = json.loads(os.environ["MINT_TEST_SCRIPT"])
+calls = iter(script)
+def scripted_post_json(url, payload, headers, *, form=None):
+    step = next(calls)
+    if step == "raise":
+        raise OSError("HTTP 403")
+    return step
+guard._post_json = scripted_post_json
+sys.exit(guard.main(sys.stdin.read()))
+"""
+
+
+def _run_mint_failure(scenario, audit_log_path):
+    """Run the real hook to a mint failure; return (rc, operator_text)."""
+    script = _MINT_SCENARIOS[scenario]
+    env = dict(os.environ)
+    for name in ("PI_AUTHORIZED_TASK_ID", "PI_AUTH_ORCHESTRATOR", "VP_GUARD_CONVEX_TOKEN",
+                 "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID"):
+        env.pop(name, None)
+    env.update({
+        "VP_CONVEX_URL": DEAD_URL,
+        "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
+        "VP_GUARD_AUDIT_LOG": str(audit_log_path),
+        "MINT_TEST_HOOK": str(HOOK),
+        "MINT_TEST_SCRIPT": json.dumps(script or []),
+    })
+    if script is not None:
+        env["CLERK_SECRET_KEY"] = _FAKE_SECRET
+        env["CLERK_SERVICE_ACCOUNT_USER_ID"] = _FAKE_USER
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": AUTHORIZED_DEPLOY}})
+    proc = subprocess.run(
+        [sys.executable, "-c", _MINT_DRIVER], input=payload,
+        capture_output=True, text=True, timeout=15, env=env,
+    )
+    return proc.returncode, proc.stderr + proc.stdout
+
+
+def _what_happened(out):
+    match = re.search(r"What happened: (.*)\n", out)
+    assert match, f"the refusal must carry a 'What happened:' line, out={out}"
+    return match.group(1)
+
+
+def _mint_failures():
+    """Run all four scenarios; return {scenario: (rc, out, audit_entries)}."""
+    results = {}
+    for scenario in _MINT_SCENARIOS:
+        log = pathlib.Path(tempfile.mkdtemp()) / "audit.log"
+        rc, out = _run_mint_failure(scenario, log)
+        entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+        results[scenario] = (rc, out, entries)
+    return results
+
+
+def test_identity_failure_names_its_step():
+    """The four mint failures must produce FOUR DIFFERENT operator-facing texts.
+
+    Asserting that "a reason is printed" would pass against the version that
+    collapsed all four into one sentence -- that is the defect restated. So the
+    pole compares the four with each other, then checks each names its own step.
+    """
+    results = _mint_failures()
+    whys = {scenario: _what_happened(out) for scenario, (_, out, _) in results.items()}
+    assert len(set(whys.values())) == 4, (
+        f"four different failed steps collapsed into fewer distinct texts: {whys}"
+    )
+    for scenario, why in whys.items():
+        assert _STEP_MARKER[scenario] in why, (
+            f"{scenario!r} does not name its own step ({_STEP_MARKER[scenario]!r}): {why!r}"
+        )
+    for scenario, (_, out, entries) in results.items():
+        assert _FAKE_SECRET not in out and _FAKE_USER not in out, (
+            f"{scenario!r}: the refusal echoed a credential VALUE, out={out}"
+        )
+        assert entries and entries[-1]["detail"] == whys[scenario][:300], (
+            f"{scenario!r}: the audit line must carry the same reason the operator read, "
+            f"entries={entries}"
+        )
+
+
+def test_identity_failure_transport_error_names_its_exception():
+    """A fifth ending: the mint call itself RAISES. It must be told apart from
+    the four 'came back empty' steps, and must carry the exception, not hide it."""
+    log = pathlib.Path(tempfile.mkdtemp()) / "audit.log"
+    _MINT_SCENARIOS["transport-raised"] = ["raise"]
+    try:
+        rc, out = _run_mint_failure("transport-raised", log)
+    finally:
+        del _MINT_SCENARIOS["transport-raised"]
+    assert rc == 2, f"a raising mint must refuse, rc={rc} out={out}"
+    why = _what_happened(out)
+    assert "minting the service identity failed" in why and "OSError" in why, why
+    assert _FAKE_SECRET not in out, f"the refusal echoed a credential VALUE, out={out}"
+
+
+def test_identity_failure_is_refuse_to_judge_never_block():
+    """A guard that could not identify itself has judged NOTHING. It must say so
+    in the audit line, never as `block`: `block` means 'the token was read and
+    does not authorise', which is false here."""
+    for scenario, (_, out, entries) in _mint_failures().items():
+        assert len(entries) == 1, f"{scenario!r}: expected one audit line, got {entries}"
+        entry = entries[0]
+        assert entry["verdict"] == "refuse-to-judge", (
+            f"{scenario!r}: a mint failure must be refuse-to-judge, got {entry}"
+        )
+        assert entry["verdict"] != "block" and entry.get("reason") != "token-absent", entry
+        assert "COULD NOT CHECK" in out and "BLOCKED:" not in out, (
+            f"{scenario!r}: 'I could not check' must not read as 'not authorised', out={out}"
+        )
+
+
+def test_identity_failure_still_refuses():
+    """The opposite defect, and the dangerous one: turning could-not-judge into
+    allow. Every mint failure must exit 2 -- the only code that stops the tool."""
+    for scenario, (rc, out, _) in _mint_failures().items():
+        assert rc == 2, f"{scenario!r}: a mint failure must REFUSE (exit 2), rc={rc} out={out}"
+
+
+def test_identity_failure_names_the_preminted_token_escape():
+    """The refusal must tell the operator how to unblock a station whose Clerk
+    path fails. The sentence is checked OUTSIDE the 'What happened' line: the
+    credentials-absent reason names the variable in its own text, which would
+    otherwise satisfy this pole even after the escape sentence was deleted."""
+    for scenario, (_, out, _) in _mint_failures().items():
+        remainder = out.replace(_what_happened(out), "")
+        assert "VP_GUARD_CONVEX_TOKEN" in remainder, (
+            f"{scenario!r}: the refusal no longer names the VP_GUARD_CONVEX_TOKEN "
+            f"escape outside its reason line, out={out}"
+        )
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):
