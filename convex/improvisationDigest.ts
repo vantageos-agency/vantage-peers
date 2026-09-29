@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { filterByOrgScope, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // improvisationDigest — PR-I T-GREEN
@@ -59,6 +60,28 @@ export const scanWindow = query({
 		samples: v.array(v.any()),
 	}),
 	handler: async (ctx, args) => {
+		// THE TENANT BOUNDARY, through the same mechanism as every other scoped
+		// reader (withOrgScope + filterByOrgScope). This digest reads three tables
+		// fleet-wide; it is a fleet tool (the MCP tool is master-only), so:
+		//   - anonymous / no-organisation caller -> typed-empty digest;
+		//   - master (the service account)       -> every tenant, unchanged;
+		//   - an ordinary org member             -> its OWN tenant's tasks and
+		//     messages only. `memories` carries no tenant stamp at all, so an
+		//     org-scoped caller is served NONE of them: absence of a stamp
+		//     asserts nothing and grants nothing.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const callerOrg = scope.orgSlug;
+		if (scope.refused || (!scope.isMaster && callerOrg === null)) {
+			return {
+				countsByOrch: {},
+				countsByCategory: {
+					complete_task: 0,
+					send_message: 0,
+					store_memory: 0,
+				},
+				samples: [],
+			};
+		}
 		const cutoff = Date.now() - args.windowDays * 24 * 60 * 60 * 1000;
 		const orchFilter = args.orchestrators;
 
@@ -75,13 +98,25 @@ export const scanWindow = query({
 
 		// ── 1. Tasks (complete_task) ──────────────────────────────────────────
 		// Use by_status index to get done tasks, then filter by time
-		const doneTasks = await ctx.db
-			.query("tasks")
-			.withIndex("by_status", (q) =>
-				q.eq("status", "done"),
-			)
-			.order("desc")
-			.take(DIGEST_TASKS_SCAN_CAP);
+		// A non-master tenant is pushed into the `by_orgId` index BEFORE the cap,
+		// so another tenant's rows cannot crowd the caller's own out of the scan.
+		const doneTasks =
+			scope.isMaster || callerOrg === null
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_status", (q) => q.eq("status", "done"))
+						.order("desc")
+						.take(DIGEST_TASKS_SCAN_CAP)
+				: filterByOrgScope(
+						(
+							await ctx.db
+								.query("tasks")
+								.withIndex("by_orgId", (q) => q.eq("orgId", callerOrg))
+								.order("desc")
+								.take(DIGEST_TASKS_SCAN_CAP)
+						).filter((t) => t.status === "done"),
+						scope,
+					);
 
 		for (const task of doneTasks) {
 			if (task._creationTime < cutoff) continue;
@@ -108,10 +143,17 @@ export const scanWindow = query({
 		// Newest-first by _creationTime (the default index) so the cap selects the
 		// most-recent rows, not the alphabetically-last senders — by_from carries no
 		// time column, so ordering by it and take()-ing biases the selection (Eta #1252).
-		const recentMessages = await ctx.db
-			.query("messages")
-			.order("desc")
-			.take(DIGEST_MESSAGES_SCAN_CAP);
+		const recentMessages =
+			scope.isMaster || callerOrg === null
+				? await ctx.db
+						.query("messages")
+						.order("desc")
+						.take(DIGEST_MESSAGES_SCAN_CAP)
+				: await ctx.db
+						.query("messages")
+						.withIndex("by_tenant_created", (q) => q.eq("tenantId", callerOrg))
+						.order("desc")
+						.take(DIGEST_MESSAGES_SCAN_CAP);
 
 		for (const msg of recentMessages) {
 			if (msg._creationTime < cutoff) continue;
@@ -136,10 +178,12 @@ export const scanWindow = query({
 		// ── 3. Memories (store_memory) ────────────────────────────────────────
 		// Newest-first by _creationTime (default index) — by_creator has no time
 		// column, so ordering by it biases recency out of the selection (Eta #1252).
-		const recentMemories = await ctx.db
-			.query("memories")
-			.order("desc")
-			.take(DIGEST_MEMORIES_SCAN_CAP);
+		const recentMemories = scope.isMaster
+			? await ctx.db
+					.query("memories")
+					.order("desc")
+					.take(DIGEST_MEMORIES_SCAN_CAP)
+			: [];
 
 		for (const mem of recentMemories) {
 			if (mem._creationTime < cutoff) continue;

@@ -144,9 +144,12 @@ export const getSession = query({
 		// table's rows are stamped with the caller's own org at create
 		// (createSession forces `tenantId = scope.orgSlug` for a non-master caller),
 		// so an unstamped row is a master-created one and has no tenant to match.
-		// That differs from tasks/missions, whose create path stamps no org at all —
-		// see isRowVisibleToScope in convex/lib/auth.ts for why absence falls back
-		// to the roster THERE and denies HERE.
+		// tasks/missions now behave the SAME way: their write paths stamp the
+		// caller's verified org, and both `isRowVisibleToScope` (by-id reads) and
+		// `filterByOrgScope` (collection reads) in convex/lib/auth.ts deny on an
+		// absent stamp rather than falling back to the orchestrator roster. This
+		// table was already on the strict side of that inversion; it is now the
+		// rule everywhere rather than the exception here.
 		//
 		// refuseWithoutThrow: this is a reactively-subscribed public read, so a
 		// signed-in caller with no organisation yet receives the same typed null as

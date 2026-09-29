@@ -5,7 +5,7 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { filterByOrgScope, withOrgScope } from "./lib/auth";
+import { filterByOrgScope, isRowVisibleToScope, withOrgScope } from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,6 +171,9 @@ export const create = mutation({
 			nextRunAt,
 			active: true,
 			createdBy: args.createdBy,
+			// TENANT of the schedule, from the scope resolved above — never an
+			// argument. Every task this schedule later generates inherits it.
+			orgId: scope.isMaster ? undefined : (scope.orgSlug ?? undefined),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -291,6 +294,18 @@ export const update = mutation({
 		const existing = await ctx.db.get(recurringTaskId);
 		if (!existing) throw new Error("Recurring task not found");
 
+		// TENANT GATE first. The roster check below is a NAME membership test and
+		// is not a tenant boundary: two organisations whose rosters both carry
+		// the same orchestrator would otherwise reach each other's schedules, and
+		// `processDueTasks` stamps the tasks it generates with THIS row's orgId —
+		// so a cross-org write here is injection into the victim's task queue.
+		// Same mechanism as the by-id reads (`isRowVisibleToScope`); the roster
+		// check that follows stays as a narrowing intersect, never replaced.
+		if (!isRowVisibleToScope(scope, existing)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
+			);
+		}
 		if (!isAssigneeAllowedForScope(scope, existing.assignedTo)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
@@ -475,6 +490,14 @@ export const processDueTasks = internalMutation({
 					tags: recurring.tags,
 					status: "todo",
 					createdBy: recurring.createdBy,
+					// TENANT: INHERITED from the schedule that generated it. This
+					// cron has no caller and therefore no scope of its own, so the
+					// tenant cannot be derived here — it is carried on the
+					// `recurringTasks` row, stamped when the schedule was created
+					// by a verified caller. Inheriting is derivation, not
+					// inference: the generated task belongs to whoever owns the
+					// schedule, by definition.
+					orgId: recurring.orgId,
 					createdAt: now,
 					updatedAt: now,
 				});
@@ -519,6 +542,28 @@ export const processDueTasks = internalMutation({
 export const getById = query({
 	args: { recurringTaskId: v.string() },
 	handler: async (ctx, args) => {
+		// REFUSAL SHAPE, chosen deliberately: a refusal RAISES; it is never
+		// `null`. `null` already means "no such row" on this query (a deleted id
+		// resolves null), so returning null for a refused caller would make two
+		// different facts indistinguishable. Raising is safe here because this
+		// query is NOT reactively subscribed anywhere: the MCP server calls it
+		// one-shot through a Convex HTTP client (`convex.query`, tools.ts) and
+		// no other repo caller exists, so there is no subscriber render to crash
+		// (contrast `missions.get`, which is subscribed and so refuses with null).
+		//
+		// ORDER: identity is resolved BEFORE the id is narrowed or the row is
+		// fetched (same as `update` above), so an anonymous caller gets the same
+		// AUTH_REQUIRED for a real id and an absent one — the id's existence is
+		// never an unauthenticated oracle. The MCP layer's `scopeFilterGet` is a
+		// control one layer up, not a control at this door.
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) {
+			throw new ConvexError(
+				"AUTH_REQUIRED: no verified identity on this call — an unauthenticated caller cannot read a recurring task",
+			);
+		}
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+
 		const recurringTaskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -526,6 +571,13 @@ export const getById = query({
 			"recurringTaskId",
 			RECURRING_TASK_ID_HINT,
 		);
-		return await ctx.db.get(recurringTaskId);
+		const row = await ctx.db.get(recurringTaskId);
+		if (row === null) return null;
+		if (!isRowVisibleToScope(scope, row)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not read recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
+			);
+		}
+		return row;
 	},
 });

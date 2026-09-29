@@ -82,11 +82,13 @@ function asMaster(t: ReturnType<typeof createT>) {
 async function seedRecurringTask(
 	t: ReturnType<typeof createT>,
 	assignedTo: string,
+	orgId?: string,
 ) {
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert("recurringTasks", {
 			title: "seed recurring task",
 			assignedTo,
+			orgId,
 			priority: "medium",
 			cronExpression: "0 9 * * *",
 			nextRunAt: Date.now() + 60_000,
@@ -225,7 +227,9 @@ describe("recurringTasks.update — write-scope enforcement", () => {
 	test("org-a updating its own recurring task succeeds", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
-		const id = await seedRecurringTask(t, "seat-a");
+		// Stamped with the org it belongs to: an unstamped legacy row is withheld
+		// from org members by design (see recurringTasksUpdateTenantBoundary).
+		const id = await seedRecurringTask(t, "seat-a", "org-a");
 		const tA = asOrgA(t);
 
 		await tA.mutation(api.recurringTasks.update, {

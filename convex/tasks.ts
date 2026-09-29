@@ -101,8 +101,10 @@ export function deriveTerminalStatus(
 // shape wrapped the entire check in `if (callerOrchestrator !== undefined)`,
 // so omitting the argument skipped verification instead of failing it — the
 // omission deleted the control rather than degrading it. Omitting the caller
-// now REFUSES (RBAC_DENIED), it never bypasses. "system" and matching
-// creator/assignee still pass unconditionally (regression-proofed by tests).
+// now REFUSES (RBAC_DENIED), it never bypasses. A matching creator/assignee
+// passes INSIDE the caller's own organisation only (tenant gate first), and
+// "system" passes only for a caller whose VERIFIED scope is master — never for
+// a caller that merely typed the word (see isFleetSystemCaller).
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 // requireAuthenticatedCaller — SECURITY REMEDIATION (task
@@ -228,8 +230,44 @@ function isReviewTask(task: { isReviewTask?: boolean }): boolean {
 	return task.isReviewTask === true;
 }
 
+// isFleetSystemCaller — the ONLY way the word "system" carries authority.
+//
+// `callerOrchestrator` is an ARGUMENT on the public task mutations: a
+// caller-supplied string, exactly the forgery class convex/schema.ts documents
+// for `createdBy` ("can be forged (e.g. createdBy: \"system\")"). Typing the
+// seven letters used to authorise the caller on ANY task of ANY organisation.
+// A fleet-internal caller now proves itself through the VERIFIED scope
+// (master: the by-id service-account carve-out in withOrgScope), never by
+// typing its own name. A caller with an ordinary org scope who types "system"
+// is just a caller asserting a name it has not earned.
+function isFleetSystemCaller(
+	callerScope: OrgScope,
+	callerOrchestrator: string | undefined,
+): boolean {
+	return callerScope.isMaster && callerOrchestrator === "system";
+}
+
+// assertTaskVisibleToCaller — the TENANT compare, shared by every write site.
+// It is `isRowVisibleToScope`, the SAME predicate the readers apply, so the
+// compare a reader performs is the one a writer performs: an ordinary member
+// of org-B cannot change (or delete) a row stamped org-A, and a row that
+// states no `orgId` is not writable by an org-scoped caller either (absence
+// asserts nothing and grants nothing). Master is unchanged.
+function assertTaskVisibleToCaller(
+	task: { orgId?: string; assignedTo?: string; pilot?: string },
+	callerScope: OrgScope,
+	taskId: string,
+): void {
+	if (!isRowVisibleToScope(callerScope, task)) {
+		throw new ConvexError(
+			`RBAC_DENIED: task ${taskId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ taskId, callerOrg: callerScope.orgSlug })}`,
+		);
+	}
+}
+
 function assertTaskCallerAuthorized(
 	task: {
+		orgId?: string;
 		createdBy: string;
 		assignedTo?: string;
 		lastAssignedTo?: string;
@@ -237,12 +275,17 @@ function assertTaskCallerAuthorized(
 	},
 	callerOrchestrator: string | undefined,
 	taskId: string,
+	callerScope: OrgScope,
 ): void {
 	if (callerOrchestrator === undefined) {
 		throw new ConvexError(
 			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId })}`,
 		);
 	}
+	// TENANT GATE FIRST — a name match is only meaningful INSIDE the caller's
+	// own organisation. Two orgs whose rosters both carry "sigma" are
+	// separated by the row's stamp and by nothing else.
+	assertTaskVisibleToCaller(task, callerScope, taskId);
 	// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — narrowly scoped
 	// THIRD branch: the caller is neither creator nor current assignee, but
 	// IS the immediately PRIOR assignee of a REVIEW task (decided from the
@@ -256,7 +299,7 @@ function assertTaskCallerAuthorized(
 	const isAuthorized =
 		task.createdBy === callerOrchestrator ||
 		task.assignedTo === callerOrchestrator ||
-		callerOrchestrator === "system" ||
+		isFleetSystemCaller(callerScope, callerOrchestrator) ||
 		isReviewerReclaim;
 	if (!isAuthorized) {
 		throw new ConvexError(
@@ -456,6 +499,14 @@ interface CreateTaskArgs {
 async function insertTask(
 	ctx: MutationCtx,
 	args: CreateTaskArgs,
+	// THE TENANT STAMP. Required — not optional, and deliberately NOT defaulted:
+	// a task row's tenancy must be a decision every caller makes explicitly at
+	// the call site, because an omitted stamp is exactly the defect this closes.
+	// `undefined` means "fleet/master-owned" and is reachable ONLY from a
+	// verified master scope or an internal automation path that has no client
+	// org by construction — see each call site's own justification. It is never
+	// the result of forgetting.
+	orgId: string | undefined,
 ): Promise<import("./_generated/dataModel").Id<"tasks">> {
 	// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
 	// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
@@ -479,9 +530,37 @@ async function insertTask(
 		// `update` cannot patch (Eta REVISE #1254) — the reviewer-reclaim authorization
 		// reads this, never the mutable title/tags.
 		isReviewTask: computeIsReviewTask(args.title, args.tags),
+		// Stamp the TENANT once at create, from the caller's verified scope.
+		// `isRowVisibleToScope` leg 3 reads this and nothing else; a row that
+		// reaches the database unstamped is readable by no org caller at all.
+		orgId,
 		createdAt: now,
 		updatedAt: now,
 	});
+}
+
+/**
+ * Derives the `orgId` to stamp on a row from an already-resolved, verified
+ * scope — the ONLY permitted source. There is no argument to distrust here:
+ * `tasks.create` accepts no `orgId` and never will, so an org caller can
+ * create only inside its own tenant, by construction.
+ *
+ * REFUSES rather than softening. A caller that is neither master nor resolved
+ * to an organisation has no tenant to stamp, and a row with no tenant is a row
+ * no org can ever read — so writing it would manufacture an orphan instead of
+ * reporting the problem. `withOrgScope` already throws for a signed-in caller
+ * with no org, which makes this branch defence-in-depth rather than the primary
+ * gate; it is here so that a future change to that upstream behaviour surfaces
+ * as a refusal at the write, not as silent data loss.
+ */
+function orgIdForWrite(scope: OrgScope, what: string): string | undefined {
+	if (scope.isMaster) return undefined;
+	if (scope.orgSlug === null) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller has no organisation to own the ${what} it is creating — refusing to write an untenanted row — ${JSON.stringify({ orgSlug: null })}`,
+		);
+	}
+	return scope.orgSlug;
 }
 
 export const create = mutation({
@@ -492,12 +571,14 @@ export const create = mutation({
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
-		await requireAuthenticatedCaller(
+		const scope = await requireAuthenticatedCaller(
 			ctx,
 			args.createdBy,
 			agentCredentialSecret,
 		);
-		return await insertTask(ctx, taskArgs);
+		// The tenant is derived from the SCOPE just resolved above, never from
+		// anything the client sent.
+		return await insertTask(ctx, taskArgs, orgIdForWrite(scope, "task"));
 	},
 });
 
@@ -510,7 +591,15 @@ export const createForWebhook = internalMutation({
 	args: createTaskArgsValidator,
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
-		return await insertTask(ctx, args);
+		// TENANT: fleet/master (`undefined`), decided explicitly. This path is
+		// the GitHub webhook — it is authenticated by HMAC over the delivery
+		// body, not by a Clerk identity, so there is no org principal to derive
+		// a tenant from and no client org that could own the row. The tasks it
+		// creates are fleet automation records (deploy/review chores against
+		// this repo's own PRs). They are readable by master via
+		// `isRowVisibleToScope` leg 1 — the CALLER's verified master scope —
+		// and by no client org, which is correct: no client owns them.
+		return await insertTask(ctx, args, undefined);
 	},
 });
 
@@ -1374,7 +1463,7 @@ export const update = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:update", …) at mcp-server/src/tools.ts:4586,4950,5022 (imperative), never a subscribing pre-org client shell; the AUTH_REQUIRED/RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		const { taskId, callerOrchestrator, cancelReason, agentCredentialSecret, ...fields } = args;
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			callerOrchestrator,
 			agentCredentialSecret,
@@ -1385,7 +1474,7 @@ export const update = mutation({
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, callerOrchestrator, taskId);
+		assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope);
 
 		// Build patch object with only provided fields
 		const patch: Record<string, any> = { updatedAt: Date.now() };
@@ -1446,7 +1535,7 @@ export const update = mutation({
 				);
 			}
 			if (
-				callerOrchestrator !== "system" &&
+				!isFleetSystemCaller(callerScope, callerOrchestrator) &&
 				task.createdBy !== callerOrchestrator
 			) {
 				throw new ConvexError(
@@ -1574,7 +1663,7 @@ export const attachReviewArtifact = mutation({
 		// in convex/__tests__/. This repo has no subscribing pre-org client shell
 		// (no React render path); the RBAC_DENIED/AUTH_REQUIRED throw is reachable
 		// only via an imperative SDK/test call, never an ordinary render.
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -1595,6 +1684,10 @@ export const attachReviewArtifact = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+
+		// Tenant gate: "any orchestrator" means any orchestrator OF THE CALLER'S
+		// OWN ORGANISATION — never a member of another tenant.
+		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 
 		// Deliberately NOT assertTaskCallerAuthorized — this is the narrow
 		// permission the mutation exists to grant: ANY orchestrator may attach
@@ -1763,7 +1856,7 @@ export const blockTask = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -1774,7 +1867,7 @@ export const blockTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
 		// check: blockedCause="peer_task" literally means "waiting on a peer
@@ -1912,7 +2005,7 @@ export const complete = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -1923,7 +2016,7 @@ export const complete = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
 			throw new ConvexError(
@@ -2182,7 +2275,7 @@ export const failTask = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2193,7 +2286,7 @@ export const failTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
 			throw new ConvexError(
@@ -2268,8 +2361,13 @@ async function assertNoConcurrentInProgress(
 	callerOrchestrator: string | undefined,
 	taskId: Id<"tasks">,
 	project: string | undefined,
+	callerScope: OrgScope,
 ): Promise<void> {
-	if (!callerOrchestrator || callerOrchestrator === "system") return;
+	// The fleet skips the per-orchestrator concurrency gate ONLY on its verified
+	// (master) scope — a typed "system" from an ordinary caller is checked like
+	// any other name.
+	if (!callerOrchestrator || isFleetSystemCaller(callerScope, callerOrchestrator))
+		return;
 	const inProgressTasks = await ctx.db
 		.query("tasks")
 		.withIndex("by_assignee_project", (q) =>
@@ -2303,7 +2401,7 @@ export const start = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2314,7 +2412,7 @@ export const start = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 
 		// Block if any dependsOn tasks are not yet done.
 		if (task.dependsOn && task.dependsOn.length > 0) {
@@ -2339,6 +2437,7 @@ export const start = mutation({
 			args.callerOrchestrator,
 			args.taskId,
 			task.project,
+			callerScope,
 		);
 
 		const segments = task.workSegments ?? [];
@@ -2384,7 +2483,7 @@ export const pause = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2395,7 +2494,7 @@ export const pause = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 
 		const segments = task.workSegments ?? [];
 		const lastIndex = segments.length - 1;
@@ -2440,7 +2539,7 @@ export const resume = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2451,7 +2550,7 @@ export const resume = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 
 		if (task.pausedAt === undefined) {
 			throw new ConvexError(
@@ -2464,6 +2563,7 @@ export const resume = mutation({
 			args.callerOrchestrator,
 			args.taskId,
 			task.project,
+			callerScope,
 		);
 
 		const now = Date.now();
@@ -2505,7 +2605,7 @@ export const correctSegment = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2516,7 +2616,7 @@ export const correctSegment = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId);
+		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 		// assertTaskCallerAuthorized above already refuses an undefined
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
 		// `correction.by` write below, mirroring attachReviewArtifact's
@@ -2635,7 +2735,7 @@ export const checkout = mutation({
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2644,6 +2744,8 @@ export const checkout = mutation({
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
 		}
+		// Tenant gate — claiming a row is a write on it.
+		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 		if (task.status !== "todo") {
 			return {
 				claimed: false,
@@ -2701,7 +2803,7 @@ export const deleteTask = mutation({
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:deleteTask", …) at mcp-server/src/tools.ts:4861 (imperative), never a subscribing pre-org client shell; the AUTH_REQUIRED/RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -2711,6 +2813,9 @@ export const deleteTask = mutation({
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
+		// Tenant gate — a hard delete of another organisation's row is the
+		// worst case of the write surface.
+		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
@@ -2718,7 +2823,7 @@ export const deleteTask = mutation({
 			);
 		}
 		if (
-			args.callerOrchestrator !== "system" &&
+			!isFleetSystemCaller(callerScope, args.callerOrchestrator) &&
 			task.createdBy !== args.callerOrchestrator
 		) {
 			throw new ConvexError(
@@ -2755,6 +2860,12 @@ export const listByMission = query({
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"tasks"> optionality
 	handler: async (ctx, args) => {
+		// Same mechanism as `list`: the verified scope, fail-closed. Anonymous /
+		// no-organisation callers get a typed-empty result; an org member is
+		// served only rows its own tenant stamped (filterByOrgScope below).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
+		if (!scope.isMaster && scope.orgSlug === null) return [];
 		const statuses = expandTaskStatuses(args.status);
 		const lite = args.fields === "lite";
 		const missionId = args.missionId;
@@ -2844,7 +2955,8 @@ export const listByMission = query({
 		}
 
 		// v2.3.3 — apply createdBy + updatedSince in-memory
-		let filtered = allRows;
+		// Tenant gate + roster (see the scope resolved at the top).
+		let filtered = filterByOrgScope(allRows, scope);
 		if (createdBy !== undefined) {
 			filtered = filtered.filter((r) => r.createdBy === createdBy);
 		}
@@ -2883,11 +2995,29 @@ export const listOverdue = query({
 		limit: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
+		// Same mechanism as `list`: the verified scope, fail-closed. An
+		// anonymous caller, or one signed in with no organisation, is served a
+		// typed-empty result; an org member is served only its own tenant's
+		// rows (filterByOrgScope: tenant gate, then roster).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (scope.refused) return [];
+		const callerOrg = scope.orgSlug;
+		if (!scope.isMaster && callerOrg === null) return [];
 		const now = Date.now();
 		const limit = args.limit ?? 50;
 
-		let tasks = await ctx.db
-			.query("tasks")
+		// A non-master caller's tenant is pushed into the `by_orgId` index BEFORE
+		// `.take(limit)`, so another tenant's overdue rows can never crowd the
+		// caller's own out of the page (the under-fill direction). Master scans
+		// the table as before.
+		const candidates =
+			scope.isMaster || callerOrg === null
+				? ctx.db.query("tasks")
+				: ctx.db
+						.query("tasks")
+						.withIndex("by_orgId", (q) => q.eq("orgId", callerOrg));
+
+		let tasks = await candidates
 			.filter((q) =>
 				q.and(
 					q.neq(q.field("status"), "done"),
@@ -2899,6 +3029,10 @@ export const listOverdue = query({
 				),
 			)
 			.take(limit);
+
+		// Roster narrowing on top of the tenant gate — the exact predicate the
+		// six existing readers apply.
+		tasks = filterByOrgScope(tasks, scope);
 
 		if (args.assignedTo) {
 			tasks = tasks.filter((t) => t.assignedTo === args.assignedTo);
@@ -3015,6 +3149,11 @@ export const createDeployTaskWithDedup = internalMutation({
 			return await ctx.db.insert("tasks", {
 				...taskArgs,
 				status: "todo" as const,
+				// TENANT: fleet/master, decided explicitly. This internalMutation
+				// is the deploy-task automation driven by this repo's own GitHub
+				// events; it has no Clerk principal and no client org could own a
+				// deploy chore for the fleet's own PRs. Master reads it via leg 1.
+				orgId: undefined,
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -3095,6 +3234,9 @@ export const createDeployTaskWithDedup = internalMutation({
 		const newId = await ctx.db.insert("tasks", {
 			...taskArgs,
 			status: "todo" as const,
+			// TENANT: fleet/master — same deploy-automation justification as the
+			// early-return insert above in this same mutation.
+			orgId: undefined,
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -3381,8 +3523,10 @@ export const resolveStaleDeployTasks = internalMutation({
 //   1. createdBy matches /^cron-/i  (dash required)
 //   2. title    matches /^\/?check-messages$/i  (exact whole-string)
 //
-// RBAC: when callerOrchestrator is provided and is not "system", every matched
-// task must have createdBy === callerOrchestrator OR assignedTo === callerOrchestrator.
+// RBAC: rows outside the caller's organisation are never matched. When
+// callerOrchestrator is provided and the caller is not the verified fleet
+// (master scope typing "system"), every matched task must have
+// createdBy === callerOrchestrator OR assignedTo === callerOrchestrator.
 // If any matched task violates this, throws RBAC_DENIED.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3475,7 +3619,7 @@ export const bulkComplete = mutation({
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — required
 		// on the dry-run preview path too, not only the live write path: a
 		// dry-run still discloses task titles/ids/counts to whoever calls it.
-		await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
@@ -3535,7 +3679,10 @@ export const bulkComplete = mutation({
 					include = true;
 				}
 
-				if (include) {
+				// Tenant gate — the scan crosses every tenant's rows; a row outside
+				// the caller's organisation is never matched, counted, previewed or
+				// closed. (Master reads every tenant, unchanged.)
+				if (include && isRowVisibleToScope(callerScope, task)) {
 					matched.push(task);
 					// Collect cap+1 to detect overflow without scanning entire table.
 					if (matched.length > BULK_COMPLETE_HARD_CAP) {
@@ -3552,14 +3699,18 @@ export const bulkComplete = mutation({
 		// doc comment above the mutation for why repeated calls terminate).
 		const cappedResults = matched.slice(0, BULK_COMPLETE_HARD_CAP);
 
-		// RBAC check: when callerOrchestrator is provided and is not "system",
-		// every matched task must have createdBy or assignedTo equal to caller.
+		// RBAC check: when callerOrchestrator is provided and the caller is not
+		// the verified fleet (master scope typing "system"), every matched task
+		// must have createdBy or assignedTo equal to caller.
 		// NOT the same class as the update/complete/start/deleteTask bug: this
 		// `!== undefined` is only reachable on the READ-ONLY dryRun preview path
 		// (any write requires dryRun=false, and BULK_CALLER_REQUIRED above
 		// already makes callerOrchestrator mandatory before a write can happen —
 		// omission never bypasses a mutation here, class sweep 2026-07-23).
-		if (args.callerOrchestrator !== undefined && args.callerOrchestrator !== "system") {
+		if (
+			args.callerOrchestrator !== undefined &&
+			!isFleetSystemCaller(callerScope, args.callerOrchestrator)
+		) {
 			const caller = args.callerOrchestrator;
 			const denied = cappedResults.find(
 				(r) => r.createdBy !== caller && r.assignedTo !== caller,
@@ -4175,6 +4326,10 @@ export const createOrUpdateReviewTask = internalMutation({
 			// task in a reviewer's real queue — its "[Review] <repo> PR #<n>: …" title makes
 			// computeIsReviewTask true, so the reviewer-reclaim branch fires for them.
 			isReviewTask: computeIsReviewTask(title, args.tags),
+			// TENANT: fleet/master, decided explicitly. The PR-sync path is
+			// webhook-driven automation over this repo's own pull requests —
+			// no Clerk principal, no client org to own a review chore.
+			orgId: undefined,
 			createdAt: now,
 			updatedAt: now,
 			// Day 130 follow-up #2 — the inforgeable automation signal. This

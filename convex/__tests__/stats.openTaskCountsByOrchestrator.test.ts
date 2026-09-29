@@ -197,17 +197,22 @@ async function seedTwoOrchestratorTasks() {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		// Each row STATES its tenant. Without `orgId` both rows are untenanted
+		// and visible to no org caller at all, which would make the DENY below
+		// pass on an empty result — the isolation would be unmeasured.
 		await seedTask(ctx, {
 			title: "org-a open task",
 			assignedTo: "dummy-a",
 			status: "todo",
 			createdBy: "dummy-a",
+			orgId: "org-a",
 		});
 		await seedTask(ctx, {
 			title: "org-b open task",
 			assignedTo: "dummy-b",
 			status: "todo",
 			createdBy: "dummy-b",
+			orgId: "org-b",
 		});
 	});
 	return t;

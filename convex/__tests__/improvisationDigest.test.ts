@@ -74,6 +74,19 @@ const modules = Object.fromEntries(
 	),
 );
 
+// The MCP tool that reads this query is master-only: its real caller is the
+// fleet service account. scanWindow is tenant-scoped (withOrgScope), so an
+// UNAUTHENTICATED caller is served nothing — these fixtures assert the digest
+// LOGIC, so they read as the fleet identity. The tenant boundary itself (an
+// ordinary org member, an anonymous caller) is pinned in
+// tenantBoundaryThirdSurfaceAndWrites.test.ts.
+const asFleet = <T extends { withIdentity: (i: { subject: string }) => unknown }>(
+	t: T,
+) =>
+	t.withIdentity({ subject: "test-service-account-user-id" }) as ReturnType<
+		T["withIdentity"]
+	>;
+
 // ─── Seed helpers ─────────────────────────────────────────────────────────────
 
 // VP-Sources footer that satisfies the proxy "recall upstream" check
@@ -93,7 +106,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		const t = convexTest(schema, modules);
 
 		// RED: throws "Could not find public function for 'improvisationDigest:scanWindow'"
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 		});
 
@@ -136,7 +149,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		});
 
 		// RED: throws today
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 		});
 
@@ -175,7 +188,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		});
 
 		// RED: throws today
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 		});
 
@@ -207,7 +220,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		});
 
 		// RED: throws today
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 		});
 
@@ -236,7 +249,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		});
 
 		// RED: throws today
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 		});
 
@@ -333,7 +346,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		});
 
 		// RED: throws today
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 			orchestrators: ["sigma"],
 		});
@@ -377,7 +390,7 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		});
 
 		// RED: throws today
-		const result = await t.query(api.improvisationDigest.scanWindow, {
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
 			windowDays: 7,
 		});
 

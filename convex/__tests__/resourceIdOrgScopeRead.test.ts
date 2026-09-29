@@ -266,9 +266,17 @@ describe("tasks:get — authorisation derived from the TARGET ROW's organisation
 		expect(row?.title).toBe("org-a own task");
 	});
 
-	test("ALLOW — an orgId-less row inside the caller's roster stays readable (get is exactly as permissive as list)", async () => {
+	// DOCTRINE INVERSION — this test previously asserted the OPPOSITE (an
+	// orgId-less row inside the caller's roster "stays readable"). That
+	// assertion WAS the multi-tenant hole written down as an expectation: it
+	// made an unstamped row readable on the strength of a shared orchestrator
+	// NAME, so two orgs whose rosters both carry "sigma" reached each other's
+	// rows. The row's absent `orgId` now asserts nothing and grants nothing.
+	test("DENY — an orgId-less row is readable by NO org caller, however the roster reads (get and list agree)", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
+		// Seeded under the SERVICE ACCOUNT, i.e. a master write: stamps no
+		// tenant. This is the legacy/fleet row shape, reproduced exactly.
 		const taskId = await seedTask(t, {
 			assignedTo: "sigma",
 			title: "legacy unstamped task",
@@ -278,16 +286,33 @@ describe("tasks:get — authorisation derived from the TARGET ROW's organisation
 			taskId,
 		});
 
-		expect(row?.title).toBe("legacy unstamped task");
-		// The same row must also be reachable through the COLLECTION read — the
-		// two surfaces agreeing is the property, not `get` alone.
+		// "sigma" IS in org-a's roster — the old grant path. It no longer grants.
+		expect(row).toBeNull();
+		// The same row must also be absent from the COLLECTION read — the two
+		// surfaces agreeing is the property, not `get` alone.
 		const listed = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.tasks.list,
 			{},
 		);
 		expect(
 			(listed as Array<{ _id: string }>).map((r) => r._id),
-		).toContain(taskId);
+		).not.toContain(taskId);
+	});
+
+	// THE WITHHELD-GRANT DIRECTION, pinned deliberately. The row above is not
+	// lost — master still reads it, which is what makes the backfill in
+	// convex/migrations/backfillOrgIds.ts able to find and stamp it.
+	test("the unstamped row is withheld from orgs, NOT destroyed — master still reads it", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-a");
+		const taskId = await seedTask(t, {
+			assignedTo: "sigma",
+			title: "legacy unstamped task",
+		});
+
+		expect(
+			await asMaster(t).query(api.tasks.get, { taskId }),
+		).not.toBeNull();
 	});
 
 	test("identical inputs, identical outputs — two different subjects in org A read the same row identically", async () => {
@@ -459,7 +484,10 @@ describe("missions:get — authorisation derived from the TARGET ROW's organisat
 		expect(row?.name).toBe("org-a own mission");
 	});
 
-	test("ALLOW — an orgId-less mission inside the caller's roster stays readable", async () => {
+	// DOCTRINE INVERSION — see the tasks-side twin above. Previously asserted
+	// that an orgId-less mission inside the roster "stays readable"; that was
+	// the hole, and the roster's shared orchestrator name was the whole grant.
+	test("DENY — an orgId-less mission is readable by NO org caller, however the roster reads", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
 		const missionId = await seedMission(t, {
@@ -472,7 +500,8 @@ describe("missions:get — authorisation derived from the TARGET ROW's organisat
 			{ missionId },
 		);
 
-		expect(row?.name).toBe("legacy unstamped mission");
+		// "sigma" IS in org-a's roster. It no longer grants.
+		expect(row).toBeNull();
 	});
 
 	test("master regression — the fleet's own caller still reads any mission", async () => {
@@ -648,12 +677,36 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 		).toBe(false);
 	});
 
-	test("leg 4 alone — a row stating NO org is admitted only by the roster", () => {
+	// DOCTRINE INVERSION — previously "a row stating NO org is admitted only by
+	// the roster", asserting `{ assignedTo: "sigma" }` was VISIBLE. The absence
+	// of a tenant stamp is now a refusal on its own, and no roster entry can
+	// convert it into a grant. Both poles of the roster are exercised so the
+	// result is shown to be independent of it.
+	test("absence alone — a row stating NO org is refused whatever the roster says", () => {
 		const scope = scopeOf({});
-		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(true);
+		// "sigma" IS in the roster — the old grant path — and is still refused.
+		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(false);
+		// "eta" is NOT in the roster: refused for both reasons at once.
 		expect(isRowVisibleToScope(scope, { assignedTo: "eta" })).toBe(false);
-		// No orchestrator at all: filterByOrgScope's own pre-existing decision.
+		// No orchestrator at all.
 		expect(isRowVisibleToScope(scope, {})).toBe(false);
+	});
+
+	// THE ROSTER SURVIVES AS A NARROWING INTERSECT, never as a grant. A row
+	// that DOES state the caller's org still has to clear the intra-org
+	// delegation control; dropping it here would have widened `get` relative to
+	// the pre-change behaviour, which is the unearned-grant direction of the
+	// very defect this file pins.
+	test("tenant gate and roster are BOTH required — same org, roster refuses, row denied", () => {
+		const scope = scopeOf({});
+		// Same tenant + roster admits -> visible.
+		expect(
+			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "sigma" }),
+		).toBe(true);
+		// Same tenant + roster refuses -> denied. The roster still narrows.
+		expect(
+			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "eta" }),
+		).toBe(false);
 	});
 
 	test("leg 1 alone — master is admitted regardless of every other leg", () => {
