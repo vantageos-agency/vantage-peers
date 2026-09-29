@@ -342,6 +342,17 @@ Doctrine Day 92 Laurent (verbatim) : *"on le fait pour un MCP d'abord, ensuite o
 
 > Available in vantage-peers-mcp v2.5.0+ (Day 92 mission k57a36y8w5t085bqr23dsmvb2d882506). The `fromAllowList` + case-insensitive matching + NFC normalization described in this section are enforced as of v2.5.0.
 
+### §4.8 The acting agent comes from a credential, never from a typed name (VantagePeers Cloud)
+
+An org-level bearer (Clerk JWT or OAuth access token) authenticates the ORGANISATION. The AGENT inside it is authenticated by a second credential, presented in the `x-vantage-agent-credential` header (the plaintext returned once by `agentCredentials:mintAgentCredential`, org:admin only).
+
+- The MCP boundary (`bearerAuthMiddleware`) resolves the agent once, via `agentCredentials:resolveAgentCredential`, and binds its org to the verified principal's org. Unresolvable / rotated-out / inactive credential, lookup failure, empty header, org mismatch: refused (401/403).
+- Every acting-name argument (`callerOrchestrator`, and the `from`-kind argument such as `createdBy`/`from`/`orchestratorId`) is a CLAIM the resolved agent verifies: another agent's name is `AGENT_IDENTITY_MISMATCH`; an omitted name is derived from the agent; an org-only caller naming an agent is `AGENT_CREDENTIAL_REQUIRED`. The roster (`fromAllowList`) still applies as a narrowing intersect.
+- With a resolved agent, task reads apply the tenant predicate `row.orgId === agent.orgSlug` on BOTH the by-id read (`get_task`) and the collection reads (`list_tasks`, `search_tasks_by_keyword`, `list_tasks_by_mission`); an unstamped row is denied.
+- The master bearer and the local stdio context are all-authority identities, not agents, and are unchanged.
+
+Both-pole tests: `mcp-server/test/actor-from-credential.test.ts`, `convex/__tests__/agentCredentialInactiveAgent.test.ts`.
+
 ---
 
 ## 5. Cloud vs Self-host — non-negotiable separation
