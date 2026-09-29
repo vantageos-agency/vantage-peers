@@ -52,6 +52,7 @@ import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_ids from "../lib/ids.js";
 import type * as lib_license from "../lib/license.js";
+import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as licenses from "../licenses.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/ids": typeof lib_ids;
   "lib/license": typeof lib_license;
+  "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
   "lib/tenantSlug": typeof lib_tenantSlug;
   licenses: typeof licenses;
