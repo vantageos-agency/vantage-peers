@@ -33,12 +33,14 @@ import {
 	it,
 	vi,
 } from "vitest";
+import { z } from "zod";
 import {
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
 	type OAuthContext,
 	sha256Hex,
 } from "../src/auth.js";
+import { defineTool } from "../src/registerTool.js";
 import { registerTools } from "../src/tools.js";
 
 const CLERK_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
@@ -109,6 +111,8 @@ const CREDENTIALS: Record<
 const OAUTH_TOKEN_ORG_A = "oauth-token-attached-to-org-a";
 const OAUTH_TOKEN_UNATTACHED = "oauth-token-with-no-org";
 const OAUTH_ROWS: Record<string, Record<string, unknown>> = {};
+// Every secret the boundary asked Convex to resolve, in order.
+const lookupCalls: string[] = [];
 
 async function seedOauthRows(): Promise<void> {
 	const base = {
@@ -141,6 +145,7 @@ function installInternalClient(): void {
 			}
 			if (name === "agentCredentials:resolveAgentCredential") {
 				const { presentedSecret } = args as { presentedSecret: string };
+				lookupCalls.push(presentedSecret);
 				if (presentedSecret === SECRET_LOOKUP_THROWS) {
 					throw new Error("convex unavailable");
 				}
@@ -374,6 +379,17 @@ describe("S1 boundary — the actor is resolved once, from the presented credent
 			});
 			expect(status, `credential ${credential}`).toBe(401);
 		}
+	});
+
+	it("DENY: an EMPTY credential header is a malformed credential, refused without ever asking Convex to resolve it", async () => {
+		lookupCalls.length = 0;
+		const app = buildApp(() => buildToolConvex({}).convex);
+		const { status } = await send(app, "/echo", {
+			orgId: "org-a",
+			credential: "   ",
+		});
+		expect(status).toBe(401);
+		expect(lookupCalls).toEqual([]);
 	});
 
 	it("DENY: a lookup that THROWS is a refusal, never a fall-through to an org-only grant", async () => {
@@ -649,4 +665,68 @@ describe("S4 read set — the collection surface applies the SAME tenant boundar
 			expect(text).not.toContain("orgId");
 		});
 	}
+});
+
+describe("S2 acting — the wrapper itself derives a `from`-kind argument the caller omitted", () => {
+	// A synthetic tool whose acting-name argument is NOT called callerOrchestrator
+	// and is optional: the only thing that can fill it is the wrapper's own
+	// derivation for the `from` kind's fromArg.
+	const actorCtx: OAuthContext = {
+		clientId: "client-x",
+		userId: "user-x",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "team-member",
+		fromAllowList: ["alice", "bob"],
+		namespaceReadPrefixes: ["team/org-a"],
+		namespaceWritePrefixes: ["team/org-a"],
+		expiresAt: Date.now() + 3_600_000,
+		isMaster: false,
+		actor: { orgSlug: "org-a", agentName: "alice" },
+	};
+
+	function registerProbe(): {
+		call: (args: Record<string, unknown>) => Promise<unknown>;
+		seen: Array<Record<string, unknown>>;
+	} {
+		const seen: Array<Record<string, unknown>> = [];
+		let handler: ToolHandler | undefined;
+		const server = {
+			registerTool(...a: unknown[]) {
+				handler = a[a.length - 1] as ToolHandler;
+				return {};
+			},
+		} as unknown as McpServer;
+		defineTool(
+			server,
+			{ oauthCtx: actorCtx },
+			{ kind: "from", fromArg: "createdBy" },
+			"probe",
+			"probe",
+			{ createdBy: z.string().optional() },
+			async (args: Record<string, unknown>) => {
+				seen.push(args);
+				return { content: [{ type: "text", text: "ok" }] };
+			},
+		);
+		return {
+			call: async (args) => (handler as ToolHandler)(args),
+			seen,
+		};
+	}
+
+	it("DERIVED: an omitted createdBy reaches the handler as the resolved actor's name", async () => {
+		const probe = registerProbe();
+		await probe.call({});
+		expect(probe.seen).toHaveLength(1);
+		expect(probe.seen[0]?.createdBy).toBe("alice");
+	});
+
+	it("DENY: a different agent's name never reaches the handler", async () => {
+		const probe = registerProbe();
+		const result = (await probe.call({ createdBy: "bob" })) as {
+			isError?: boolean;
+		};
+		expect(result.isError).toBe(true);
+		expect(probe.seen).toHaveLength(0);
+	});
 });

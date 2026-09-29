@@ -353,11 +353,11 @@ export function rowVisibleToActorTenant(
 	if (!ctx) return false;
 	if (isMasterScope(ctx)) return true;
 	if (!ctx.actor) return true;
-	return (
-		row != null &&
-		typeof row.orgId === "string" &&
-		row.orgId === ctx.actor.orgSlug
-	);
+	// `row.orgId` absent is `undefined`, which never equals a resolved org slug:
+	// the comparison itself is what makes an unstamped row deny. (An explicit
+	// `typeof === "string"` leg here was measured as an EQUIVALENT mutant — its
+	// removal left every pole green — so it is not kept as a dead guard.)
+	return row != null && row.orgId === ctx.actor.orgSlug;
 }
 
 /**
