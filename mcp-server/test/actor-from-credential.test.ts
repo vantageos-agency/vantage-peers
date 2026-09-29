@@ -37,6 +37,7 @@ import {
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
 	type OAuthContext,
+	sha256Hex,
 } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
@@ -102,10 +103,38 @@ const CREDENTIALS: Record<
 	[SECRET_INACTIVE]: null,
 };
 
+// Opaque OAuth access tokens (auth.ts branch 2), keyed by sha256 of the token.
+// One is attached to org-a (its row snapshots clerkOrgSlug); one is an
+// unattached profile with no org at all.
+const OAUTH_TOKEN_ORG_A = "oauth-token-attached-to-org-a";
+const OAUTH_TOKEN_UNATTACHED = "oauth-token-with-no-org";
+const OAUTH_ROWS: Record<string, Record<string, unknown>> = {};
+
+async function seedOauthRows(): Promise<void> {
+	const base = {
+		clientId: "client-x",
+		userId: "user-x",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "team-member",
+		fromAllowList: ["alice", "bob"],
+		namespaceReadPrefixes: ["team/org-a"],
+		namespaceWritePrefixes: ["team/org-a"],
+		expiresAt: Date.now() + 3_600_000,
+	};
+	OAUTH_ROWS[await sha256Hex(OAUTH_TOKEN_ORG_A)] = {
+		...base,
+		clerkOrgSlug: "org-a",
+	};
+	OAUTH_ROWS[await sha256Hex(OAUTH_TOKEN_UNATTACHED)] = { ...base };
+}
+
 function installInternalClient(): void {
 	const fake = {
 		query: async (name: string, args: unknown) => {
-			if (name === "oauth:getAccessTokenByHash") return null;
+			if (name === "oauth:getAccessTokenByHash") {
+				const { tokenHash } = args as { tokenHash: string };
+				return OAUTH_ROWS[tokenHash] ?? null;
+			}
 			if (name === "clientOrgMapping:getByClerkSlug") {
 				const { orgSlug } = args as { orgSlug: string };
 				return MAPPINGS[orgSlug] ?? null;
@@ -244,13 +273,15 @@ async function send(
 	path: string,
 	opts: {
 		orgId: string;
+		/** Present an opaque OAuth access token instead of a Clerk JWT. */
+		oauthToken?: string;
 		credential?: string;
 		method?: "GET" | "POST";
 		body?: unknown;
 	},
 ): Promise<{ status: number; json: Wire }> {
 	const headers: Record<string, string> = {
-		Authorization: `Bearer ${await mintClerkJwt(opts.orgId)}`,
+		Authorization: `Bearer ${opts.oauthToken ?? (await mintClerkJwt(opts.orgId))}`,
 		"Content-Type": "application/json",
 	};
 	if (opts.credential !== undefined) headers[AGENT_HEADER] = opts.credential;
@@ -286,6 +317,7 @@ beforeAll(async () => {
 		alg: "RS256",
 		use: "sig",
 	};
+	await seedOauthRows();
 });
 
 beforeEach(() => {
@@ -361,6 +393,44 @@ describe("S1 boundary — the actor is resolved once, from the presented credent
 		});
 		expect(status).toBe(403);
 		expect(JSON.stringify(json)).toContain("ORG_MISMATCH");
+	});
+});
+
+describe("S1 boundary, OAuth access-token branch — the same binding, keyed on the token row's org", () => {
+	it("ALLOW: an agent credential of the token's own org attaches the resolved actor", async () => {
+		const app = buildApp(() => buildToolConvex({}).convex);
+		const { status, json } = await send(app, "/echo", {
+			orgId: "org-a",
+			oauthToken: OAUTH_TOKEN_ORG_A,
+			credential: SECRET_ALICE_A,
+		});
+		expect(status).toBe(200);
+		expect(json.oauthCtx?.actor).toEqual({
+			orgSlug: "org-a",
+			agentName: "alice",
+		});
+		expect(json.oauthCtx?.isMaster).toBe(false);
+	});
+
+	it("DENY: a same-named agent of ANOTHER org presented with org-a's token is ORG_MISMATCH", async () => {
+		const app = buildApp(() => buildToolConvex({}).convex);
+		const { status, json } = await send(app, "/echo", {
+			orgId: "org-a",
+			oauthToken: OAUTH_TOKEN_ORG_A,
+			credential: SECRET_ALICE_B,
+		});
+		expect(status).toBe(403);
+		expect(JSON.stringify(json)).toContain("ORG_MISMATCH");
+	});
+
+	it("DENY: a token with NO org cannot be bound, so an agent credential presented with it is refused, not trusted", async () => {
+		const app = buildApp(() => buildToolConvex({}).convex);
+		const { status } = await send(app, "/echo", {
+			orgId: "org-a",
+			oauthToken: OAUTH_TOKEN_UNATTACHED,
+			credential: SECRET_ALICE_A,
+		});
+		expect(status).toBe(403);
 	});
 });
 
@@ -574,6 +644,9 @@ describe("S4 read set — the collection surface applies the SAME tenant boundar
 			expect(text).toContain("t-a");
 			expect(text).not.toContain("t-b");
 			expect(text).not.toContain("t-n");
+			// The public contract is unchanged: a default (lite) call is served the
+			// lite shape, so the internal tenant stamp never leaks to the caller.
+			expect(text).not.toContain("orgId");
 		});
 	}
 });
