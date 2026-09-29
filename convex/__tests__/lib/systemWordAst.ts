@@ -49,18 +49,54 @@
  * and `" system "` count) makes the operand system-valued, whatever wraps it:
  * parentheses, `as`, `satisfies`, `!`, `<T>`, both branches of `?:`, both
  * operands of `??` `||` `&&`, a comma expression, a destructuring default.
- * An identifier in the operand is followed to its declaration by VALUE FLOW
- * only (through casts, `?:` arms, `??` `||` `&&`, a comma tail), never into a
- * call's arguments or an object literal: a value derived from a call that was
- * merely passed the word is not the word. Followed this way: an identifier
- * (const, let, var, parameter, destructuring default) whose initializer is
- * system-valued, including through an import in another convex
- * module; an enum member or `as const` property whose literal type is the word.
- * A `let` that is later reassigned is still counted. The guarantee, stated
- * exactly: a word literal ANYWHERE in a comparison operand, or reaching it by
- * value flow, is seen (never under-approximated); what it over-approximates: an operand that merely CONTAINS
- * the word without evaluating to it (`x === f("system")`, `x === m["system"]`)
- * is flagged too; a reader has a false positive to explain, never a hidden site.
+ * An identifier in the operand is followed by VALUE FLOW only (through casts,
+ * `?:` arms, `??` `||` `&&`, a comma tail), never into a call's arguments or an
+ * object literal: a value derived from a call that was merely passed the word
+ * is not the word. It is followed to its DECLARATION (const, let, var,
+ * parameter default, destructuring default, an import from another convex
+ * module, an enum member or `as const` property whose literal type is the word)
+ * AND to every ASSIGNMENT to the binding, in any file of the program:
+ *
+ *   `let w; w = "system"`            declaration without a value, value later
+ *   `let w = "x"; w = "system"`      harmless initializer, overwritten
+ *   `w ||= "system"` `??=` `&&=` `+=` (and every other compound form)
+ *   `[w] = ["system"]`, `({ w } = { w: "system" })`   destructuring assignment
+ *   `for (w of ["system"])`, `for (const w of ["system"])`
+ *   `const { w } = { w: "system" }`, `const [w] = ["system"]`, nested, renamed,
+ *     or in a parameter: a binding taken out of an object/array LITERAL in the
+ *     same statement (over-approximated: the whole literal is asked). Measured
+ *     on convex/: 0 new sites.
+ *   a write inside a closure, a parameter that is reassigned, an `export let`
+ *     assigned by its own module and compared in another
+ *
+ * A `const` cannot be reassigned, so it needs nothing beyond its declaration.
+ * An assignment is followed through the same value-flow nodes as an
+ * initializer; a destructuring or for-of target is asked over the WHOLE
+ * right-hand subtree (over-approximated). Assignments that only cycle
+ * (`a = b; b = a`) terminate and do not taint. This control chose to follow the
+ * assignments rather than to flag every reassigned binding: measured on
+ * convex/, "any binding with any assignment is possibly-system" flags 243
+ * comparisons on the pristine tree (`x !== undefined` guards, `while (m !== null)` cursors, `p === "global"` checks),
+ * following the assignments flags 0.
+ *
+ * THE GUARANTEE, stated exactly, and no wider than the code delivers: a word
+ * literal ANYWHERE in a comparison operand, or reaching an operand identifier
+ * by one of the flows listed above, is seen. It is NOT a guarantee that every
+ * way of getting the word into a comparison is seen — that is not decidable by
+ * syntax, and this header has twice claimed it ("never under-approximated")
+ * and been wrong. What is NOT followed, and pinned as DECLARED LIMIT fixtures:
+ *   - a write to a PROPERTY or ELEMENT of a container (`o.w = "system"`,
+ *     `a[0] = "system"`): a write to a container, not to a binding;
+ *   - a value that reaches a binding through a CALL's argument
+ *     (`const set = (v) => { w = v }; set("system")`): no interprocedural flow;
+ *   - a destructuring declaration out of anything but a LITERAL: a call's
+ *     result (`const { id } = run({ who: "system" })`) or another binding
+ *     (`const { w } = cfg`). A literal in the same statement IS followed;
+ *   - everything under "value built at runtime" above.
+ * What it over-approximates: an operand that merely CONTAINS the word without
+ * evaluating to it (`x === f("system")`, `x === m["system"]`) is flagged too; a
+ * reader has a false positive to explain, never a hidden site of the kinds
+ * listed as followed.
  *
  * There is no exemption list. Exactly one site is the definition of the
  * predicate itself — the classification `predicate` requires the whole shape:
@@ -205,6 +241,107 @@ export function analyse(files: Record<string, string>): Site[] {
 
 	const seenDecl = new Set<ts.Node>();
 
+	// ── writes to a binding, after its declaration ─────────────────────────
+
+	type Write = {
+		node: ts.Node;
+		value: ts.Node;
+		/** true: the value is a container (array/object) the target was
+		 *  DESTRUCTURED out of, so the whole subtree is asked, not only the
+		 *  value-flow nodes. */
+		deep: boolean;
+	};
+	let writeIndex: Map<ts.Symbol, Write[]> | undefined;
+
+	const symbolOf = (id: ts.Identifier): ts.Symbol | undefined => {
+		const sym = checker.getSymbolAtLocation(id);
+		return sym && sym.flags & ts.SymbolFlags.Alias
+			? checker.getAliasedSymbol(sym)
+			: sym;
+	};
+
+	/** Every binding a destructuring / for-of target writes to. Property and
+	 *  element accesses (`o.x = ...`) are writes to a CONTAINER, not to a
+	 *  binding: a declared limit, not collected. */
+	function collectTargets(n: ts.Node, out: ts.Symbol[]): void {
+		if (ts.isIdentifier(n)) {
+			const sym = symbolOf(n);
+			if (sym) out.push(sym);
+			return;
+		}
+		if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) return;
+		if (ts.isShorthandPropertyAssignment(n)) {
+			const sym = checker.getShorthandAssignmentValueSymbol(n);
+			if (sym) out.push(sym);
+			return;
+		}
+		if (ts.isPropertyAssignment(n)) {
+			collectTargets(n.initializer, out);
+			return;
+		}
+		if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+			collectTargets(n.left, out); // `[w = "x"] = ...`: the default is its own write
+			return;
+		}
+		ts.forEachChild(n, (c) => collectTargets(c, out));
+	}
+
+	/** The one place every assignment to a binding is found, in every file. */
+	function writesOf(sym: ts.Symbol): Write[] {
+		if (!writeIndex) {
+			const idx = new Map<ts.Symbol, Write[]>();
+			const add = (target: ts.Symbol, w: Write): void => {
+				const list = idx.get(target);
+				if (list) list.push(w);
+				else idx.set(target, [w]);
+			};
+			const scan = (n: ts.Node): void => {
+				if (
+					ts.isBinaryExpression(n) &&
+					n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+					n.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+				) {
+					const left = unwrap(n.left);
+					if (ts.isIdentifier(left)) {
+						// `=`, and every compound form: `||=` `??=` `&&=` `+=` ...
+						const target = symbolOf(left);
+						if (target) add(target, { node: n, value: n.right, deep: false });
+					} else if (
+						n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+						(ts.isArrayLiteralExpression(left) || ts.isObjectLiteralExpression(left))
+					) {
+						const targets: ts.Symbol[] = [];
+						collectTargets(left, targets);
+						for (const t of targets) add(t, { node: n, value: n.right, deep: true });
+					}
+				}
+				// `for (w of xs)` with an existing binding as the target
+				if (
+					(ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+					!ts.isVariableDeclarationList(n.initializer)
+				) {
+					const targets: ts.Symbol[] = [];
+					collectTargets(n.initializer, targets);
+					for (const t of targets) add(t, { node: n, value: n.expression, deep: true });
+				}
+				// `for (const w of ["system"])`: a declaration whose value arrives per iteration
+				if (ts.isForOfStatement(n) && ts.isVariableDeclarationList(n.initializer)) {
+					for (const d of n.initializer.declarations) {
+						const targets: ts.Symbol[] = [];
+						collectTargets(d.name, targets);
+						for (const t of targets) add(t, { node: n, value: n.expression, deep: true });
+					}
+				}
+				ts.forEachChild(n, scan);
+			};
+			for (const sf of program.getSourceFiles()) {
+				if (texts.has(sf.fileName)) scan(sf);
+			}
+			writeIndex = idx;
+		}
+		return writeIndex.get(sym) ?? [];
+	}
+
 	/**
 	 * A leaf that IS the word, or names something that is: a literal, a
 	 * `String.raw` template, an identifier whose declaration initializer
@@ -218,6 +355,18 @@ export function analyse(files: Record<string, string>): Site[] {
 			let sym = checker.getSymbolAtLocation(e);
 			if (sym && sym.flags & ts.SymbolFlags.Alias) {
 				sym = checker.getAliasedSymbol(sym);
+			}
+			// every ASSIGNMENT to the binding is value flow too (`let w; w = "system"`,
+			// `let w = "x"; w = "system"`, `w ||= "system"`): the declaration is
+			// only the first write, not the last.
+			for (const w of sym ? writesOf(sym) : []) {
+				if (seenDecl.has(w.node)) continue;
+				seenDecl.add(w.node);
+				try {
+					if (w.deep ? systemValued(w.value) : flowValued(w.value)) return true;
+				} finally {
+					seenDecl.delete(w.node);
+				}
 			}
 			for (const d of sym?.declarations ?? []) {
 				if (seenDecl.has(d)) continue;
@@ -234,6 +383,31 @@ export function analyse(files: Record<string, string>): Site[] {
 					}
 					if (ts.isEnumMember(d) && d.initializer && flowValued(d.initializer)) {
 						return true;
+					}
+					// `const { w } = { w: "system" }`, `const [w] = ["system"]`: a binding
+					// taken out of a LITERAL container in the same statement. Only a
+					// literal is asked (over-approximated, whole subtree): a destructure
+					// of a call's result (`const { id } = await run({ who: "system" })`)
+					// is a value derived from a call, not the word.
+					if (ts.isBindingElement(d)) {
+						let root: ts.Node = d.parent;
+						while (
+							ts.isObjectBindingPattern(root) ||
+							ts.isArrayBindingPattern(root) ||
+							ts.isBindingElement(root)
+						) {
+							root = root.parent;
+						}
+						if (ts.isVariableDeclaration(root) || ts.isParameter(root)) {
+							const init = root.initializer ? unwrap(root.initializer) : undefined;
+							if (
+								init &&
+								(ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init)) &&
+								systemValued(init)
+							) {
+								return true;
+							}
+						}
 					}
 				} finally {
 					seenDecl.delete(d);

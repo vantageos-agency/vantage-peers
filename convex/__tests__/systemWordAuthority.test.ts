@@ -600,6 +600,26 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"Object.is": `export const f = (c: string) => Object.is(c, "system");`,
 		"regex literal": `export const f = (c: string) => /^system$/.test(c);`,
 		"new RegExp": `export const f = (c: string) => new RegExp("^system$").test(c);`,
+		// ── a mutable binding's ASSIGNMENTS are value flow (REVISE 2 of #1357) ──
+		"assigned later: let w; w = word": `export const f = (c: string) => { let w: string; w = "system"; return c === w; };`,
+		"assigned later over a harmless initializer": `export const f = (c: string) => { let w = "other"; w = "system"; return c === w; };`,
+		"compound ||=": `export const f = (c: string) => { let w: string | undefined; w ||= "system"; return c === w; };`,
+		"compound ??=": `export const f = (c: string) => { let w: string | undefined; w ??= "system"; return c === w; };`,
+		"compound &&=": `export const f = (c: string) => { let w: string | undefined = "x"; w &&= "system"; return c === w; };`,
+		"compound +=": `export const f = (c: string) => { let w = ""; w += "system"; return c === w; };`,
+		"assigned through a ternary": `export const f = (c: string, k: boolean) => { let w = "other"; w = k ? "system" : "x"; return c === w; };`,
+		"assigned from another alias": `export const f = (c: string) => { const A = "system"; let w = "other"; w = A; return c === w; };`,
+		"assigned inside a closure": `export const f = (c: string) => { let w = "other"; const set = () => { w = "system"; }; set(); return c === w; };`,
+		"parameter reassigned": `export const f = (c: string, w = "other") => { w = "system"; return c === w; };`,
+		"array destructuring assignment": `export const f = (c: string) => { let w = "other"; [w] = ["system"]; return c === w; };`,
+		"object destructuring assignment": `export const f = (c: string) => { let w = "other"; ({ w } = { w: "system" }); return c === w; };`,
+		"for-of into an existing binding": `export const f = (c: string) => { let w = "other"; for (w of ["system"]) { break; } return c === w; };`,
+		"for-of declaration": `export const f = (c: string) => { for (const w of ["system"]) { return c === w; } return false; };`,
+		"destructuring declaration, object literal": `const { w } = { w: "system" }; export const f = (c: string) => c === w;`,
+		"destructuring declaration, array literal": `const [w] = ["system"]; export const f = (c: string) => c === w;`,
+		"destructuring declaration, renamed and nested": `const { a: { b: w } } = { a: { b: "system" } }; export const f = (c: string) => c === w;`,
+		"destructuring declaration in a parameter": `export const f = (c: string, { w }: { w: string } = { w: "system" }) => c === w;`,
+		"assigned in a switch, compared in a switch": `export const f = (c: string) => { let w = "other"; w = "system"; switch (c) { case w: return 1; default: return 0; } };`,
 	};
 
 	test.each(Object.entries(HOSTILE))("BLOCK: %s", (_name, src) => {
@@ -615,6 +635,14 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		expect(sites.filter((s) => s.cls === null).map((s) => s.file)).toEqual([
 			"convex/x.ts",
 		]);
+	});
+
+	test("BLOCK: a `let` exported from one module, assigned by that module, compared in another", () => {
+		const sites = analyseSystemWord({
+			"convex/lib/word.ts": `export let who = "other"; export function arm(): void { who = "system"; }`,
+			"convex/x.ts": `import { who } from "./lib/word"; export const f = (c: string) => c === who;`,
+		});
+		expect(sites.filter((s) => s.cls === null).map((s) => s.file)).toEqual(["convex/x.ts"]);
 	});
 
 	test("BLOCK: an enum member holding the word", () => {
@@ -678,6 +706,26 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		expect(blockedFiles(`args.callerOrchestrator !== (undefined ?? "system") &&`)).toEqual([
 			"convex/mandates.ts",
 		]);
+		// REVISE 2: the reviewer's splice, on the REAL source. `etaWho = "system"`
+		// added as a STATEMENT beside the predicate (tsc: 0 errors, the old control:
+		// GREEN). The declaration is harmless; only the later assignment carries the word.
+		const ifHead = "\t\tif (\n\t\t\t!isFleetSystemCaller(scope, args.callerOrchestrator) &&";
+		expect(real.includes(ifHead)).toBe(true);
+		const spliced = (stmt: string) =>
+			analyseSystemWord({
+				"convex/mandates.ts": real.replace(
+					ifHead,
+					`\t\tlet etaWho: string | undefined = "other";\n\t\t${stmt}\n\t\tif (\n\t\t\targs.callerOrchestrator !== etaWho &&`,
+				),
+			})
+				.filter((s) => s.cls === null)
+				.map((s) => s.file);
+		expect(spliced(`etaWho = "system";`)).toEqual(["convex/mandates.ts"]);
+		expect(spliced(`etaWho ||= "system";`)).toEqual(["convex/mandates.ts"]);
+		expect(spliced(`etaWho ??= "system";`)).toEqual(["convex/mandates.ts"]);
+		expect(spliced(`etaWho &&= "system";`)).toEqual(["convex/mandates.ts"]);
+		// the same splice with a harmless assignment is NOT a site
+		expect(spliced(`etaWho = "other";`)).toEqual([]);
 		// and the pristine source is clean
 		expect(blockedFiles(needle)).toEqual([]);
 	});
@@ -692,6 +740,12 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"a database filter (not a caller compare)": `declare const q: { eq: (a: unknown, b: unknown) => unknown; field: (n: string) => unknown }; export const f = () => q.eq(q.field("createdBy"), "system");`,
 		"another literal": `export const f = (c: string) => c === "master";`,
 		comment: `// c === "system"\nexport const f = 1;`,
+		"a reassigned binding that never holds the word": `export const f = (c: string) => { let w = "x"; w = "y"; w ||= "z"; return c === w; };`,
+		"a counter": `export const f = (c: number) => { let n = 0; n += 1; n++; return c === n; };`,
+		"a destructure of a CALL's result is not the word": `declare const run: (o: { who: string }) => { id: string }; const { id } = run({ who: "system" }); export const f = (c: string) => c === id;`,
+		"a destructuring declaration of harmless literals": `const { w } = { w: "x" }; const [v] = ["y"]; export const f = (c: string) => c === w || c === v;`,
+		"assignments that only cycle": `export const f = (c: string) => { let a = "x"; let b = "y"; a = b; b = a; return c === a; };`,
+		"the word is written to a binding that is never compared": `export const f = () => { let w = "other"; w = "system"; return w; };`,
 	};
 	test.each(Object.entries(BENIGN))("PASS: %s", (_n, src) => {
 		expect(analyseSystemWord({ "convex/x.ts": src })).toEqual([]);
@@ -708,6 +762,9 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		"value in a container": `const cfg = { who: "system" }; export const f = (c: string) => c === cfg.who;`,
 		"value derived from a call that was passed the word": `declare const run: (o: { who: string }) => { ids: string[] }; const r = run({ who: "system" }); const id = r.ids[0]; export const f = () => id !== undefined;`,
 		"key membership": `export const f = (c: string) => c in { system: 1 };`,
+		"a write to a PROPERTY of a container (not a binding)": `const o = { w: "other" }; o.w = "system"; export const f = (c: string) => c === o.w;`,
+		"a write to an ELEMENT of a container": `const a = ["other"]; a[0] = "system"; export const f = (c: string) => c === a[0];`,
+		"a value passed to a setter that assigns it": `let w = "other"; const set = (v: string) => { w = v; }; set("system"); export const f = (c: string) => c === w;`,
 	};
 	test.each(Object.entries(LIMIT))("DECLARED LIMIT (not seen): %s", (_n, src) => {
 		expect(analyseSystemWord({ "convex/x.ts": src })).toEqual([]);
