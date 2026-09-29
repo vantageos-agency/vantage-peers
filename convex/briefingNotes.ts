@@ -4,6 +4,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import { withOrgScope, requireScope, type OrgScope } from "./lib/auth";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -692,7 +693,7 @@ export const deleteBriefingNote = mutation({
 			);
 		}
 		if (
-			args.callerOrchestrator !== "system" &&
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			note.createdBy !== args.callerOrchestrator
 		) {
 			throw new Error(
@@ -762,7 +763,8 @@ export const update = mutation({
 		}
 
 		const isAuthorized =
-			note.createdBy === callerOrchestrator || callerOrchestrator === "system";
+			note.createdBy === callerOrchestrator ||
+			isFleetSystemCaller(scope, callerOrchestrator);
 		if (!isAuthorized) {
 			throw new Error(
 				`Unauthorized: ${callerOrchestrator} is not creator of this briefing note`,

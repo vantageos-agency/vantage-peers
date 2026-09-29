@@ -2,6 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { withOrgScope, type OrgScope } from "./lib/auth";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -282,7 +283,7 @@ export const deleteDiary = mutation({
 			);
 		}
 		if (
-			args.callerOrchestrator !== "system" &&
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			entry.orchestrator !== args.callerOrchestrator
 		) {
 			throw new Error(

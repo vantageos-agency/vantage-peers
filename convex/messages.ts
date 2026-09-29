@@ -11,6 +11,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 import {
@@ -992,7 +993,7 @@ export const deleteMessage = mutation({
 			);
 		}
 		if (
-			args.callerOrchestrator !== "system" &&
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			message.from !== args.callerOrchestrator
 		) {
 			throw new Error(

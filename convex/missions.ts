@@ -11,6 +11,7 @@ import {
 	requireScope,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -560,7 +561,7 @@ export const update = mutation({
 				);
 			}
 			if (
-				callerOrchestrator !== "system" &&
+				!isFleetSystemCaller(scope, callerOrchestrator) &&
 				mission.createdBy !== callerOrchestrator
 			) {
 				throw new ConvexError(
