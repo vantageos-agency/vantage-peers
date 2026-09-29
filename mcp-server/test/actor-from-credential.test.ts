@@ -21,6 +21,8 @@
  *   S4 read set   — list_tasks / search_tasks_by_keyword / list_tasks_by_mission.
  */
 
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono } from "hono";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
@@ -35,10 +37,22 @@ import {
 } from "vitest";
 import { z } from "zod";
 import {
+	CONTROL_NAME,
+	type Connect,
+	deriveActors,
+	type ProbeOp,
+	type Report,
+	renderReport,
+	runVerification,
+	type ToolClient,
+} from "../scripts/verify-actor-credentials.js";
+import {
+	_resetUnattributedClaimsForTest,
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
 	type OAuthContext,
 	sha256Hex,
+	unattributedClaimCounts,
 } from "../src/auth.js";
 import { defineTool } from "../src/registerTool.js";
 import { registerTools } from "../src/tools.js";
@@ -54,6 +68,13 @@ const SECRET_ALICE_B = "secret-alice-org-b";
 const SECRET_ALICE_C = "secret-alice-org-c";
 const SECRET_INACTIVE = "secret-inactive-agent";
 const SECRET_LOOKUP_THROWS = "secret-lookup-throws";
+// An org whose orchestrator is registered under an accented identifier, exactly
+// as the server returns it (list_peers id: "hélios"): the trap the verification
+// script must not fall into by matching a typed spelling.
+const SECRET_HELIOS = "secret-helios-org-iris";
+const SECRET_MARIE = "secret-marie-org-iris";
+const SECRET_ZOE = "secret-zoe-org-iris";
+const HELIOS = "h\u00e9lios";
 
 let publicJwk: Record<string, unknown>;
 let privateKey: CryptoKey;
@@ -90,6 +111,11 @@ const MAPPINGS: Record<
 		scopes: ["view-own-tasks"],
 		isActive: true,
 	},
+	"org-iris": {
+		allowedOrchestrators: [HELIOS, "marie", "zoe", "old-bot"],
+		scopes: ["view-own-tasks"],
+		isActive: true,
+	},
 };
 
 // What agentCredentials:resolveAgentCredential returns per presented secret.
@@ -103,6 +129,9 @@ const CREDENTIALS: Record<
 	[SECRET_ALICE_B]: { orgSlug: "org-b", agentName: "alice" },
 	[SECRET_ALICE_C]: { orgSlug: "org-c", agentName: "alice" },
 	[SECRET_INACTIVE]: null,
+	[SECRET_HELIOS]: { orgSlug: "org-iris", agentName: HELIOS },
+	[SECRET_MARIE]: { orgSlug: "org-iris", agentName: "marie" },
+	[SECRET_ZOE]: { orgSlug: "org-iris", agentName: "zoe" },
 };
 
 // Opaque OAuth access tokens (auth.ts branch 2), keyed by sha256 of the token.
@@ -345,6 +374,9 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
+	vi.restoreAllMocks();
+	_resetUnattributedClaimsForTest();
 	_setInternalClientForTest(null);
 });
 
@@ -497,7 +529,8 @@ describe("S2 acting — callerOrchestrator is a claim the credential verifies, n
 		});
 	});
 
-	it("DENY: an org-only token (no agent credential) naming an agent is REFUSED — a name typed is not an identity", async () => {
+	it("DENY (strict switch): an org-only token (no agent credential) naming an agent is REFUSED — a name typed is not an identity", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "strict");
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
 		const { json } = await send(app, "/tool/complete_task", {
@@ -728,5 +761,613 @@ describe("S2 acting — the wrapper itself derives a `from`-kind argument the ca
 		};
 		expect(result.isError).toBe(true);
 		expect(probe.seen).toHaveLength(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEPLOYMENT A — the boundary accepts BOTH a presented credential and a typed
+// name; the refusal path is behind ONE switch (VANTAGE_ACTOR_CREDENTIAL_MODE),
+// default permissive. Deployment B flips it to strict.
+//
+// Every pole runs over the Clerk-JWT branch as an ORDINARY org member
+// (isMaster:false, asserted per pole through /echo). None runs under the
+// master bearer or the service account: that identity may declare a name by
+// design and would exercise the bypass, not the switch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("cutover compatibility — four poles under an ordinary (non-master) caller", () => {
+	const COMPLETE = { taskId: "k1", completionNote: "done" };
+
+	async function assertOrdinary(
+		app: Hono,
+		orgId: string,
+		credential?: string,
+	): Promise<void> {
+		const echo = await send(app, "/echo", { orgId, credential });
+		expect(echo.json.oauthCtx?.isMaster).toBe(false);
+	}
+
+	function stderrLines(spy: { mock: { calls: unknown[][] } }): string[] {
+		return spy.mock.calls.map((c) => String(c[0]));
+	}
+
+	it("POLE 1 — credential presented AND agreeing: served, actor is the resolved one, NOT recorded unattributed", async () => {
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		await assertOrdinary(app, "org-a", SECRET_ALICE_A);
+		const { json } = await send(app, "/tool/complete_task", {
+			orgId: "org-a",
+			credential: SECRET_ALICE_A,
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
+		});
+		expect(isRefused(json)).toBe(false);
+		expect(calls.mutations).toHaveLength(1);
+		expect(calls.mutations[0].args).toMatchObject({
+			callerOrchestrator: "alice",
+		});
+		expect(unattributedClaimCounts()).toEqual([]);
+		expect(
+			stderrLines(spy).filter((l) => l.includes("actor.unattributed")),
+		).toEqual([]);
+	});
+
+	it("POLE 2 — credential presented, typed name DISAGREES: AGENT_IDENTITY_MISMATCH in permissive AND in strict, nothing dispatched", async () => {
+		for (const mode of ["permissive", "strict"]) {
+			vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", mode);
+			const { convex, calls } = buildToolConvex({});
+			const app = buildApp(() => convex);
+			await assertOrdinary(app, "org-a", SECRET_ALICE_A);
+			const { json } = await send(app, "/tool/complete_task", {
+				orgId: "org-a",
+				credential: SECRET_ALICE_A,
+				body: { ...COMPLETE, callerOrchestrator: "bob" },
+			});
+			expect(isRefused(json), `mode=${mode}`).toBe(true);
+			expect(resultText(json), `mode=${mode}`).toContain(
+				"AGENT_IDENTITY_MISMATCH",
+			);
+			expect(calls.mutations, `mode=${mode}`).toHaveLength(0);
+		}
+	});
+
+	it("POLE 3 — NO credential, typed name, default switch: served exactly as before AND recorded unattributed (no secret in the record)", async () => {
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		await assertOrdinary(app, "org-a");
+		const { json } = await send(app, "/tool/complete_task", {
+			orgId: "org-a",
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
+		});
+		expect(isRefused(json)).toBe(false);
+		expect(calls.mutations).toHaveLength(1);
+		expect(calls.mutations[0].args).toMatchObject({
+			callerOrchestrator: "alice",
+		});
+
+		const counts = unattributedClaimCounts();
+		expect(counts).toHaveLength(1);
+		expect(counts[0]).toMatchObject({ claimed: "alice", count: 1 });
+		const records = stderrLines(spy).filter((l) =>
+			l.includes("actor.unattributed"),
+		);
+		expect(records).toHaveLength(1);
+		expect(JSON.parse(records[0])).toMatchObject({
+			event: "actor.unattributed",
+			tool: "complete_task",
+			arg: "callerOrchestrator",
+			claimed: "alice",
+		});
+		// Identifiers only: not a bearer, not a credential, not a JWT.
+		expect(records[0]).not.toContain(SECRET_ALICE_A);
+		expect(records[0]).not.toMatch(/eyJ[A-Za-z0-9_-]{10,}/);
+	});
+
+	it("POLE 4 — switch flipped STRICT: the same call is REFUSED (AGENT_CREDENTIAL_REQUIRED), nothing dispatched, nothing recorded", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "strict");
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		await assertOrdinary(app, "org-a");
+		const { json } = await send(app, "/tool/complete_task", {
+			orgId: "org-a",
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
+		});
+		expect(isRefused(json)).toBe(true);
+		expect(resultText(json)).toContain("AGENT_CREDENTIAL_REQUIRED");
+		expect(calls.mutations).toHaveLength(0);
+		expect(unattributedClaimCounts()).toEqual([]);
+		expect(
+			stderrLines(spy).filter((l) => l.includes("actor.unattributed")),
+		).toEqual([]);
+	});
+
+	it("the switch is read at CALL time: one process, flipped between two identical calls, yields served then refused", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		const call = () =>
+			send(app, "/tool/complete_task", {
+				orgId: "org-a",
+				body: { ...COMPLETE, callerOrchestrator: "bob" },
+			});
+		expect(isRefused((await call()).json)).toBe(false);
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "strict");
+		expect(isRefused((await call()).json)).toBe(true);
+		expect(calls.mutations).toHaveLength(1);
+	});
+
+	it("an UNRECOGNISED switch value fails CLOSED to strict (a typo can tighten, never silently loosen)", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permisive");
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		const { json } = await send(app, "/tool/complete_task", {
+			orgId: "org-a",
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
+		});
+		expect(isRefused(json)).toBe(true);
+		expect(resultText(json)).toContain("AGENT_CREDENTIAL_REQUIRED");
+		expect(calls.mutations).toHaveLength(0);
+	});
+
+	it("NO credential and NO typed name: nothing was claimed, so nothing is recorded (the measure counts claims, not silence)", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		await send(app, "/tool/complete_task", {
+			orgId: "org-a",
+			body: COMPLETE,
+		});
+		// (Whether an org-only caller that omits the name is served is the
+		// pre-existing roster path — `String(undefined)` against fromAllowList, the
+		// same on main — and is not this switch's concern. The pin is that no
+		// CLAIM means no record.)
+		expect(unattributedClaimCounts()).toEqual([]);
+	});
+
+	it("the org roster still narrows on the compatibility path: a typed name the roster does not admit is refused although the switch is permissive", async () => {
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		const { json } = await send(app, "/tool/complete_task", {
+			orgId: "org-c",
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
+		});
+		expect(isRefused(json)).toBe(true);
+		expect(resultText(json)).toContain("allowlist");
+		expect(calls.mutations).toHaveLength(0);
+		expect(unattributedClaimCounts()).toEqual([]);
+	});
+
+	it("a `from`-kind key (store_memory createdBy) is recorded under ITS argument name when served on a typed name", async () => {
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		const { json } = await send(app, "/tool/store_memory", {
+			orgId: "org-a",
+			body: {
+				content: "x",
+				type: "user",
+				namespace: "team/org-a",
+				createdBy: "alice",
+			},
+		});
+		expect(isRefused(json)).toBe(false);
+		expect(calls.mutations).toHaveLength(1);
+		const rec = stderrLines(spy).find((l) => l.includes("actor.unattributed"));
+		expect(rec).toBeDefined();
+		expect(JSON.parse(rec as string)).toMatchObject({
+			tool: "store_memory",
+			arg: "createdBy",
+			claimed: "alice",
+		});
+	});
+
+	it("a presented credential that does not resolve is refused at the boundary in permissive mode too (a bad credential never falls back to a typed name)", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const { convex, calls } = buildToolConvex({});
+		const app = buildApp(() => convex);
+		const { status } = await send(app, "/tool/complete_task", {
+			orgId: "org-a",
+			credential: SECRET_INACTIVE,
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
+		});
+		expect(status).toBe(401);
+		expect(calls.mutations).toHaveLength(0);
+	});
+
+	it("the switch is read in exactly ONE place: a single call of actorCredentialMode() outside its definition and comments", () => {
+		const walk = (dir: string, out: string[] = []): string[] => {
+			for (const e of readdirSync(dir)) {
+				const p = join(dir, e);
+				if (statSync(p).isDirectory()) {
+					if (e !== "__tests__") walk(p, out);
+				} else if (e.endsWith(".ts") && !e.endsWith(".test.ts")) out.push(p);
+			}
+			return out;
+		};
+		const lines = walk(join(__dirname, "..", "src")).flatMap((f) =>
+			readFileSync(f, "utf8").split("\n"),
+		);
+		const callSites = lines.filter(
+			(l) =>
+				l.includes("actorCredentialMode()") &&
+				!l.includes("function actorCredentialMode") &&
+				!/^\s*(\/\/|\*)/.test(l),
+		);
+		expect(callSites).toHaveLength(1);
+		const envReads = lines.filter((l) =>
+			l.includes("ACTOR_CREDENTIAL_MODE_ENV]"),
+		);
+		expect(envReads).toHaveLength(1);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// scripts/verify-actor-credentials.ts — the per-actor cutover verification,
+// driven through the REAL boundary (bearerAuthMiddleware -> oauthContext ->
+// registerTools -> handler) as an ORDINARY org member. Three states, and the
+// third (could-not-judge) is asserted as hard as the other two.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("verify-actor-credentials — two proofs per actor, derived from the server, three states", () => {
+	const DAY = 86_400_000;
+	type Peer = { id: string; lastSeen: number };
+
+	const NOW = Date.now();
+	const IRIS_PEERS: Peer[] = [
+		{ id: HELIOS, lastSeen: NOW - 10 * DAY }, // silent ten days: still an agent
+		{ id: "marie", lastSeen: NOW - 1 * DAY },
+		{ id: "zoe", lastSeen: NOW - 2 * DAY },
+	];
+	const ALL_SECRETS = [
+		SECRET_HELIOS,
+		SECRET_MARIE,
+		SECRET_ZOE,
+		SECRET_INACTIVE,
+	];
+
+	function buildIrisConvex(opts: {
+		peers: Peer[] | "error";
+		failMutation?: (name: string, args: Record<string, unknown>) => boolean;
+	}): unknown {
+		return {
+			query: vi.fn(async (name: string) => {
+				if (name === "profiles:listProfiles") {
+					if (opts.peers === "error") throw new Error("profiles unavailable");
+					return opts.peers.map((p) => ({
+						_id: `profile_${p.id}`,
+						_creationTime: 1,
+						orchestratorId: p.id,
+						name: p.id,
+						static: { role: "agent", workspace: "iris" },
+						dynamic: {
+							currentTask: "idle",
+							lastSeen: p.lastSeen,
+							sessionCount: 1,
+						},
+					}));
+				}
+				if (name === "messages:checkNewMessagesEnvelope")
+					return { messages: [] };
+				throw new Error(`unmocked query: ${name}`);
+			}),
+			mutation: vi.fn(async (name: string, args: Record<string, unknown>) => {
+				if (opts.failMutation?.(name, args))
+					throw new Error("operation failed");
+				if (name === "tasks:bulkComplete") return { count: 0, sampleIds: [] };
+				return { ok: true };
+			}),
+			action: vi.fn(async () => null),
+		};
+	}
+
+	/** A Connect whose every session goes through the real HTTP boundary. */
+	function pipelineConnect(
+		app: Hono,
+		orgId: string,
+		bearerOverride?: string,
+	): Connect {
+		return async (credential) => {
+			const bearer = bearerOverride ?? (await mintClerkJwt(orgId));
+			const headers: Record<string, string> = {
+				Authorization: `Bearer ${bearer}`,
+				"Content-Type": "application/json",
+			};
+			if (credential !== undefined) headers[AGENT_HEADER] = credential;
+			const probe = await app.request("http://localhost/echo", { headers });
+			if (probe.status !== 200) {
+				throw new Error(
+					`HTTP ${probe.status}: ${JSON.stringify(await probe.json().catch(() => null))}`,
+				);
+			}
+			const client: ToolClient = {
+				async callTool(name, args) {
+					const res = await app.request(`http://localhost/tool/${name}`, {
+						method: "POST",
+						headers,
+						body: JSON.stringify(args),
+					});
+					const j = (await res.json()) as {
+						result?: { isError?: boolean; content?: { text?: string }[] };
+					};
+					if (res.status !== 200) {
+						return { isError: true, text: `HTTP ${res.status}` };
+					}
+					return {
+						isError: j.result?.isError === true,
+						text: j.result?.content?.[0]?.text ?? "",
+					};
+				},
+				close: async () => {},
+			};
+			return client;
+		};
+	}
+
+	async function run(
+		convex: unknown,
+		credentials: Record<string, string>,
+		extra: Partial<{
+			windowDays: number | "all";
+			bearer: string;
+			opsFor: (id: string) => ProbeOp[];
+		}> = {},
+	): Promise<Report> {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const app = buildApp(() => convex);
+		return runVerification({
+			connect: pipelineConnect(app, "org-iris", extra.bearer),
+			credentials,
+			secrets: ["test-master-token", ...ALL_SECRETS],
+			windowDays: extra.windowDays ?? 45,
+			now: NOW,
+			opsFor: extra.opsFor,
+		});
+	}
+
+	const GOOD_CREDS = {
+		[HELIOS]: SECRET_HELIOS,
+		marie: SECRET_MARIE,
+		zoe: SECRET_ZOE,
+	};
+
+	it("CLEAN (exit 0): the actor list is what the server returned, byte for byte, including the accented identifier and the agent silent for ten days", async () => {
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), GOOD_CREDS);
+		expect(r.state).toBe("clean");
+		expect(r.exit).toBe(0);
+		expect(r.actors.map((a) => a.id).sort()).toEqual([HELIOS, "marie", "zoe"]);
+		expect(r.actors.some((a) => a.id === HELIOS)).toBe(true);
+		// the identifier is the accented one, NOT the typed ASCII spelling
+		expect(r.actors.some((a) => a.id === "helios")).toBe(false);
+		for (const a of r.actors) {
+			expect(a.proof1Resolves, a.id).toBe(true);
+			expect(a.proof2Operates, a.id).toBe(true);
+			expect(a.ops.length).toBeGreaterThanOrEqual(2);
+		}
+		expect(r.orphanCredentialKeys).toEqual([]);
+	});
+
+	it("CLEAN holds under the strict switch too: the verification is exactly what must pass before Deployment B", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "strict");
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), GOOD_CREDS);
+		expect(r.state).toBe("clean");
+		expect(r.exit).toBe(0);
+	});
+
+	it("ACCUSED (exit 1): a credentials file keyed on the TYPED spelling provisions nothing — the accented actor is accused, with the near-miss named", async () => {
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), {
+			helios: SECRET_HELIOS,
+			marie: SECRET_MARIE,
+			zoe: SECRET_ZOE,
+		});
+		expect(r.exit).toBe(1);
+		const helios = r.actors.find((a) => a.id === HELIOS);
+		expect(helios?.state).toBe("accused");
+		expect(helios?.findings.join(" ")).toContain(
+			"differs from it only by accents/case",
+		);
+		expect(r.orphanCredentialKeys).toEqual(["helios"]);
+		// the other two are still judged on their own merits
+		expect(
+			r.actors
+				.filter((a) => a.state === "clean")
+				.map((a) => a.id)
+				.sort(),
+		).toEqual(["marie", "zoe"]);
+	});
+
+	it("ACCUSED: proof 1 — a credential filed under the wrong actor resolves to ANOTHER identifier and is named as such", async () => {
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), {
+			...GOOD_CREDS,
+			zoe: SECRET_MARIE, // marie's credential filed for zoe
+		});
+		expect(r.exit).toBe(1);
+		const zoe = r.actors.find((a) => a.id === "zoe");
+		expect(zoe?.proof1Resolves).toBe(false);
+		expect(zoe?.findings.join(" ")).toContain('"marie"');
+	});
+
+	it("ACCUSED: proof 1 — a credential the boundary refuses (unknown / rotated-out / inactive) is an accusation, not a silence", async () => {
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), {
+			...GOOD_CREDS,
+			zoe: SECRET_INACTIVE,
+		});
+		expect(r.exit).toBe(1);
+		const zoe = r.actors.find((a) => a.id === "zoe");
+		expect(zoe?.state).toBe("accused");
+		expect(zoe?.proof1Resolves).toBe(false);
+	});
+
+	it("ACCUSED: proof 2 — the credential RESOLVES (proof 1 true) but the actor's real operation FAILS under it: identity proven, work not", async () => {
+		const ops = (id: string): ProbeOp[] =>
+			id === "zoe"
+				? [
+						{
+							name: "zoe's real write (complete_task)",
+							tool: "complete_task",
+							args: {
+								taskId: "k1",
+								completionNote: "verification",
+								callerOrchestrator: "$ACTOR",
+							},
+						},
+					]
+				: [];
+		const convex = buildIrisConvex({
+			peers: IRIS_PEERS,
+			failMutation: (name) => name !== "tasks:bulkComplete",
+		});
+		const r = await run(convex, GOOD_CREDS, { opsFor: ops });
+		expect(r.exit).toBe(1);
+		const zoe = r.actors.find((a) => a.id === "zoe");
+		expect(zoe?.proof1Resolves).toBe(true);
+		expect(zoe?.proof2Operates).toBe(false);
+		expect(zoe?.ops.find((o) => !o.ok)?.name).toContain("complete_task");
+		expect(r.actors.find((a) => a.id === "marie")?.state).toBe("clean");
+	});
+
+	it("COULD-NOT-JUDGE (exit 2): the server lists no actors — an empty list is a failure to read, never a clean zero", async () => {
+		const r = await run(buildIrisConvex({ peers: [] }), GOOD_CREDS);
+		expect(r.state).toBe("could-not-judge");
+		expect(r.exit).toBe(2);
+		expect(r.actors).toEqual([]);
+		expect(r.refusal).toBeDefined();
+	});
+
+	it("COULD-NOT-JUDGE: list_peers itself errors", async () => {
+		const r = await run(buildIrisConvex({ peers: "error" }), GOOD_CREDS);
+		expect(r.state).toBe("could-not-judge");
+		expect(r.exit).toBe(2);
+	});
+
+	it("COULD-NOT-JUDGE: every actor is outside the window — the instrument does not let a short window define the population", async () => {
+		const stale = IRIS_PEERS.map((p) => ({ ...p, lastSeen: NOW - 400 * DAY }));
+		const r = await run(buildIrisConvex({ peers: stale }), GOOD_CREDS, {
+			windowDays: 45,
+		});
+		expect(r.exit).toBe(2);
+		const all = await run(buildIrisConvex({ peers: stale }), GOOD_CREDS, {
+			windowDays: "all",
+		});
+		expect(all.exit).toBe(0);
+		expect(all.actors).toHaveLength(3);
+	});
+
+	it("WINDOW: an agent silent for ten days is inside the default window; one silent for 400 days is listed as EXCLUDED, not hidden", async () => {
+		const peers: Peer[] = [
+			...IRIS_PEERS,
+			{ id: "old-bot", lastSeen: NOW - 400 * DAY },
+		];
+		const r = await run(buildIrisConvex({ peers }), GOOD_CREDS);
+		expect(r.exit).toBe(0);
+		expect(r.actors.map((a) => a.id)).toContain(HELIOS);
+		expect(r.excluded.map((e) => e.id)).toEqual(["old-bot"]);
+		expect(renderReport(r)).toContain("old-bot");
+	});
+
+	it("COULD-NOT-JUDGE: the presented bearer is MASTER — a proof under the maintenance identity exercises the bypass, so nothing is certified", async () => {
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), GOOD_CREDS, {
+			bearer: "test-master-token",
+		});
+		expect(r.exit).toBe(2);
+		expect(r.actors.every((a) => a.state === "could-not-judge")).toBe(true);
+		expect(r.actors[0]?.findings.join(" ")).toContain("MASTER");
+	});
+
+	it("COULD-NOT-JUDGE: the server does not bind the credential (control not refused) — a served call proves nothing", async () => {
+		const stub: Connect = async (credential) => ({
+			async callTool(name, args) {
+				if (name === "list_peers") {
+					return {
+						isError: false,
+						text: JSON.stringify([
+							{ id: "marie", lastSeen: new Date(NOW).toISOString() },
+						]),
+					};
+				}
+				if (name === "whoami")
+					return {
+						isError: false,
+						text: JSON.stringify({ scope_profile_name: "team-member" }),
+					};
+				// an old server: serves ANY typed name, control included
+				void credential;
+				void args;
+				return { isError: false, text: JSON.stringify({ count: 0 }) };
+			},
+			close: async () => {},
+		});
+		const r = await runVerification({
+			connect: stub,
+			credentials: { marie: SECRET_MARIE },
+			secrets: [SECRET_MARIE],
+			windowDays: 45,
+			now: NOW,
+		});
+		expect(r.exit).toBe(2);
+		expect(r.actors[0]?.state).toBe("could-not-judge");
+		expect(r.actors[0]?.findings.join(" ")).toContain(
+			"NOT refused AGENT_IDENTITY_MISMATCH",
+		);
+		expect(CONTROL_NAME).not.toBe("marie");
+	});
+
+	it("NEVER prints a secret: neither the report nor its findings contain any credential or the bearer", async () => {
+		const r = await run(buildIrisConvex({ peers: IRIS_PEERS }), {
+			helios: SECRET_HELIOS,
+			marie: SECRET_MARIE,
+			zoe: SECRET_INACTIVE,
+		});
+		const text = renderReport(r) + JSON.stringify(r);
+		for (const secret of [...ALL_SECRETS, "test-master-token"]) {
+			expect(text).not.toContain(secret);
+		}
+	});
+
+	it("deriveActors pages through EVERY page and dedupes by exact identifier (a second instance of one orchestrator is one actor)", async () => {
+		const pages: Record<string, unknown> = {
+			"": {
+				items: [
+					{ id: HELIOS, lastSeen: new Date(NOW).toISOString() },
+					{ id: "marie", lastSeen: new Date(NOW).toISOString() },
+				],
+				nextCursor: "c1",
+			},
+			c1: {
+				items: [
+					{ id: "marie", lastSeen: new Date(NOW).toISOString() },
+					{ id: "zoe", lastSeen: new Date(NOW).toISOString() },
+				],
+			},
+		};
+		const seen: unknown[] = [];
+		const client: ToolClient = {
+			async callTool(_n, args) {
+				seen.push(args.cursor ?? "");
+				return {
+					isError: false,
+					text: JSON.stringify(pages[(args.cursor as string) ?? ""]),
+				};
+			},
+			close: async () => {},
+		};
+		const d = await deriveActors(client, { windowDays: "all", now: NOW });
+		expect(seen).toEqual(["", "c1"]);
+		expect(d.actors.map((a) => a.id)).toEqual([HELIOS, "marie", "zoe"]);
+	});
+
+	it("deriveActors REFUSES an unparseable (truncated) list rather than reading it as empty", async () => {
+		const client: ToolClient = {
+			callTool: async () => ({
+				isError: false,
+				text: '[{"id":"marie","lastSe… [truncated]',
+			}),
+			close: async () => {},
+		};
+		await expect(
+			deriveActors(client, { windowDays: "all", now: NOW }),
+		).rejects.toThrow(/did not return JSON/);
 	});
 });

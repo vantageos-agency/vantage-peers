@@ -36,7 +36,9 @@ import {
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	isMasterScope,
+	isUnattributedClaim,
 	type OAuthContext,
+	recordUnattributedClaim,
 } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +176,12 @@ function actingNameKeys(scope: ToolScope, schema: z.ZodRawShape): string[] {
  * verifies, never an authority (checkActorBinding). Runs BEFORE the tool's
  * scope check and BEFORE the handler, once, for every tool.
  *
- *   - claimed and it disagrees with the actor → refused, nothing dispatched.
+ *   - claimed and it disagrees with the actor → refused, nothing dispatched
+ *     (AGENT_IDENTITY_MISMATCH, in every mode: a typed name never overrides a
+ *     presented credential).
+ *   - claimed, no credential presented        → per the cutover switch
+ *     (actorCredentialMode): permissive serves it AND records it unattributed;
+ *     strict refuses it (AGENT_CREDENTIAL_REQUIRED).
  *   - omitted and an actor is resolved        → DERIVED: the handler (and the
  *     Convex mutation it forwards to) receives the actor's own name.
  *   - omitted and no actor                    → left omitted. No claim was
@@ -187,7 +194,13 @@ function bindActingNames(
 	oauthCtx: OAuthContext | undefined,
 	keys: readonly string[],
 	args: Record<string, unknown>,
-): { denied: McpTextResult } | { args: Record<string, unknown> } {
+):
+	| { denied: McpTextResult }
+	| {
+			args: Record<string, unknown>;
+			unattributed: [key: string, name: string][];
+	  } {
+	const unattributed: [string, string][] = [];
 	let bound = args;
 	for (const key of keys) {
 		const claimed = args[key];
@@ -199,8 +212,15 @@ function bindActingNames(
 		}
 		const err = checkActorBinding(oauthCtx, String(claimed));
 		if (err) return { denied: mcpError(err) };
+		// A typed name with no credential behind it (permissive mode only — strict
+		// refused above). Collected here, RECORDED by the caller only once the
+		// scope check has also passed, so the count is calls actually served on a
+		// typed name: exactly what strict mode would start refusing.
+		if (isUnattributedClaim(oauthCtx, String(claimed))) {
+			unattributed.push([key, String(claimed)]);
+		}
 	}
-	return { args: bound };
+	return { args: bound, unattributed };
 }
 
 /**
@@ -281,6 +301,11 @@ export function defineTool(
 		if ("denied" in bound) return bound.denied;
 		const denied = enforceScope(scope, ctx, bound.args);
 		if (denied) return denied;
+		if (ctx.oauthCtx) {
+			for (const [key, claimed] of bound.unattributed) {
+				recordUnattributedClaim(ctx.oauthCtx, name, key, claimed);
+			}
+		}
 		return handler(bound.args, extra);
 	};
 

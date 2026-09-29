@@ -290,25 +290,62 @@ export function isMasterScope(ctx: OAuthContext | undefined): boolean {
 export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
 
 /**
+ * The ONE switch for the credential cutover (two deployments, never one).
+ *
+ *   permissive (DEFAULT, Deployment A) — a typed acting name from a caller with
+ *     NO presented credential is accepted exactly as before and RECORDED as
+ *     unattributed (see {@link recordUnattributedClaim}) so the cutover can be
+ *     measured. A presented credential is still authoritative: a typed name
+ *     that disagrees with it is AGENT_IDENTITY_MISMATCH in both modes.
+ *   strict (Deployment B) — that same call is REFUSED with
+ *     AGENT_CREDENTIAL_REQUIRED.
+ *
+ * Read in exactly ONE place ({@link actorCredentialMode}, called by
+ * {@link checkActorBinding}); there is no per-tool flag. Unset or empty means
+ * permissive. Any value other than "permissive" / "strict" fails CLOSED to
+ * strict and is logged once, so a typo can only tighten, never silently loosen.
+ */
+export const ACTOR_CREDENTIAL_MODE_ENV = "VANTAGE_ACTOR_CREDENTIAL_MODE";
+export type ActorCredentialMode = "permissive" | "strict";
+
+let warnedUnknownMode: string | null = null;
+
+export function actorCredentialMode(): ActorCredentialMode {
+	const raw = process.env[ACTOR_CREDENTIAL_MODE_ENV];
+	if (raw === undefined || raw.trim() === "" || raw.trim() === "permissive") {
+		return "permissive";
+	}
+	if (raw.trim() === "strict") return "strict";
+	if (warnedUnknownMode !== raw) {
+		warnedUnknownMode = raw;
+		console.error(
+			`[auth] ${ACTOR_CREDENTIAL_MODE_ENV} has an unrecognised value; ` +
+				'treating it as "strict" (expected "permissive" or "strict")',
+		);
+	}
+	return "strict";
+}
+
+/**
  * checkActorBinding — the ONE predicate that decides whether a name a caller
  * TYPED into a tool call may be treated as the acting agent. A typed name is a
- * CLAIM; it is never an authority. It is verified against the actor the
- * bearer-auth boundary resolved from the presented credential.
+ * CLAIM; it is never an authority over a presented credential.
  *
  *   - actor resolved          → the claim must EQUAL `actor.agentName` exactly.
- *                               Another agent's name is AGENT_IDENTITY_MISMATCH.
- *                               The argument can therefore only ever restate
- *                               what the credential already grants (intersect,
- *                               never widen).
+ *                               Another agent's name is AGENT_IDENTITY_MISMATCH
+ *                               in EVERY mode: compatibility never means a
+ *                               presented credential can be overridden by a
+ *                               typed name.
  *   - no actor, master scope  → passes. The master bearer / local-stdio trust
  *                               context is an all-authority identity that is
  *                               not an agent; it already reaches every row and
  *                               every name, so a declared name here widens
  *                               nothing. Named, not hidden.
- *   - no actor, otherwise     → REFUSED (AGENT_CREDENTIAL_REQUIRED). An
- *                               org-only bearer authenticates the organisation,
- *                               not an agent; there is no name to derive and
- *                               none is defaulted in.
+ *   - no actor, otherwise     → per {@link actorCredentialMode}:
+ *                               permissive → accepted (the caller then records
+ *                               it unattributed, see registerTool's
+ *                               bindActingNames); strict → REFUSED
+ *                               (AGENT_CREDENTIAL_REQUIRED).
  *   - no ctx at all           → REFUSED (absence is never authority).
  */
 export function checkActorBinding(
@@ -326,12 +363,77 @@ export function checkActorBinding(
 		);
 	}
 	if (isMasterScope(ctx)) return null;
+	if (actorCredentialMode() === "permissive") return null;
 	return (
 		`AGENT_CREDENTIAL_REQUIRED: this call names "${claimedName}" but the ` +
 		`request carried no per-agent credential (header ${AGENT_CREDENTIAL_HEADER}) — ` +
 		"an org-level bearer authenticates the organisation, not an agent, so a " +
 		"typed name is not accepted as an identity."
 	);
+}
+
+/**
+ * True when a call is served on a TYPED name alone: a real (non-master) caller,
+ * no resolved actor, and a name it typed. Exactly the population that strict
+ * mode would refuse — so counting it is the measurement of the cutover.
+ */
+export function isUnattributedClaim(
+	ctx: OAuthContext | undefined,
+	claimedName: string,
+): boolean {
+	return (
+		ctx !== undefined &&
+		!ctx.actor &&
+		!isMasterScope(ctx) &&
+		claimedName.trim() !== ""
+	);
+}
+
+const unattributedCounts = new Map<string, number>();
+
+/**
+ * Records one unattributed call. Two outputs, no Convex dependency (the MCP
+ * reader deploys before Convex; a new Convex table here would put the reader
+ * ahead of its provider): a structured line on stderr — greppable in the
+ * Railway logs by `"event":"actor.unattributed"` — and an in-process counter.
+ * Identifiers only: never a credential, never a bearer.
+ */
+export function recordUnattributedClaim(
+	ctx: OAuthContext,
+	toolName: string,
+	argName: string,
+	claimedName: string,
+): void {
+	const key = `${ctx.clientId}\u0000${claimedName}`;
+	unattributedCounts.set(key, (unattributedCounts.get(key) ?? 0) + 1);
+	console.error(
+		JSON.stringify({
+			event: "actor.unattributed",
+			tool: toolName,
+			arg: argName,
+			claimed: claimedName,
+			clientId: ctx.clientId,
+			userId: ctx.userId,
+			scopeProfile: ctx.scopeProfile,
+		}),
+	);
+}
+
+/** Snapshot: `{ clientId, claimed, count }[]` of unattributed calls since start. */
+export function unattributedClaimCounts(): {
+	clientId: string;
+	claimed: string;
+	count: number;
+}[] {
+	return [...unattributedCounts.entries()].map(([k, count]) => {
+		const [clientId, claimed] = k.split("\u0000");
+		return { clientId, claimed, count };
+	});
+}
+
+export function _resetUnattributedClaimsForTest(): void {
+	unattributedCounts.clear();
+	warnedUnknownMode = null;
 }
 
 /**
