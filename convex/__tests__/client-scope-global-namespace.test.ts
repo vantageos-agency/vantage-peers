@@ -98,9 +98,7 @@ function checkNamespacePrefix(prefixes: string[], namespace: string): boolean {
 describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the global namespace", () => {
 	test("seedDefaultProfiles catalog entry excludes global", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
@@ -114,24 +112,20 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 
 	test("DENY pole — AUTH_NAMESPACE_DENIED: profile cannot read 'global'", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
 
-		expect(
-			checkNamespacePrefix(profile!.namespaceReadPrefixes, "global"),
-		).toBe(false); // AUTH_NAMESPACE_DENIED
+		expect(checkNamespacePrefix(profile!.namespaceReadPrefixes, "global")).toBe(
+			false,
+		); // AUTH_NAMESPACE_DENIED
 	});
 
 	test("DENY pole — AUTH_NAMESPACE_DENIED: profile cannot write 'global'", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -150,27 +144,29 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 
 	test("ALLOW pole — profile CAN read/write its own orchestrator seat (primary)", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
 		expect(profile).not.toBeNull();
 
 		expect(
-			checkNamespacePrefix(profile!.namespaceReadPrefixes, "orchestrator/marie"),
+			checkNamespacePrefix(
+				profile!.namespaceReadPrefixes,
+				"orchestrator/marie",
+			),
 		).toBe(true);
 		expect(
-			checkNamespacePrefix(profile!.namespaceWritePrefixes, "orchestrator/marie"),
+			checkNamespacePrefix(
+				profile!.namespaceWritePrefixes,
+				"orchestrator/marie",
+			),
 		).toBe(true);
 	});
 
 	test("ALLOW pole — profile CAN read/write its own second orchestrator seat (orchestrator/victor)", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -194,9 +190,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 
 	test("ALLOW pole — profile CAN read/write its project namespace", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -216,9 +210,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	// must NOT be revoked (same token, same session, same expiry).
 	test("migration loop patches a live token snapshot in place, drops global, never revokes", async () => {
 		const t = createT();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		// Insert a live access token row with the OLD leaky prefixes, as if
 		// minted before the catalog fix.

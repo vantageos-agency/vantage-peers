@@ -554,19 +554,11 @@ app.get("/authorize", async (c) => {
 		);
 	}
 
-	const masterTokenForAuthCode = process.env.BEARER_SECRET_MASTER;
-	if (!masterTokenForAuthCode) {
-		console.error(
-			"[oauth] BEARER_SECRET_MASTER not set — cannot mint authorization code",
-		);
-		return c.json({ error: "server_misconfigured" }, 500);
-	}
 	const code = randomOpaqueToken();
 	await internalClient().mutation(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:createAuthorizationCode" as any,
 		{
-			callerToken: masterTokenForAuthCode,
 			code,
 			clientId,
 			redirectUri,
@@ -745,13 +737,6 @@ app.post("/token", async (c) => {
 		}
 
 		// Issue access_token + refresh_token
-		const masterTokenForIssue = process.env.BEARER_SECRET_MASTER;
-		if (!masterTokenForIssue) {
-			console.error(
-				"[oauth] BEARER_SECRET_MASTER not set — cannot mint tokens",
-			);
-			return c.json({ error: "server_misconfigured" }, 500);
-		}
 		const accessToken = randomOpaqueToken();
 		const refreshToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
@@ -762,7 +747,6 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
-				callerToken: masterTokenForIssue,
 				tokenHash: accessTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
@@ -780,7 +764,6 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createRefreshToken" as any,
 			{
-				callerToken: masterTokenForIssue,
 				tokenHash: refreshTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
@@ -876,13 +859,6 @@ app.post("/token", async (c) => {
 			return c.json({ error: "server_error" }, 500);
 		}
 
-		const masterTokenForRefresh = process.env.BEARER_SECRET_MASTER;
-		if (!masterTokenForRefresh) {
-			console.error(
-				"[oauth] BEARER_SECRET_MASTER not set — cannot refresh token",
-			);
-			return c.json({ error: "server_misconfigured" }, 500);
-		}
 		const accessToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
 		const now = Date.now();
@@ -907,7 +883,6 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createRefreshToken" as any,
 			{
-				callerToken: masterTokenForRefresh,
 				tokenHash: newRefreshTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
@@ -919,7 +894,6 @@ app.post("/token", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
-				callerToken: masterTokenForRefresh,
 				tokenHash: accessTokenHash,
 				clientId: record.clientId,
 				userId: record.userId,
@@ -980,10 +954,6 @@ admin.use("*", masterOnlyMiddleware());
 
 // POST /admin/oauth/clients  — create client, returns raw secret ONCE
 admin.post("/oauth/clients", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) {
-		return c.json({ error: "server_misconfigured" }, 500);
-	}
 	let body: Record<string, unknown> = {};
 	try {
 		body = await c.req.json();
@@ -1030,7 +1000,6 @@ admin.post("/oauth/clients", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createClient" as any,
 			{
-				callerToken: masterToken,
 				clientId,
 				clientSecretHash,
 				name,
@@ -1096,7 +1065,9 @@ admin.post("/organizations", async (c) => {
 		})
 		.filter((row): row is { name: string } => row !== null);
 	const scopes = Array.isArray(body.scopes)
-		? (body.scopes as unknown[]).filter((s): s is string => typeof s === "string")
+		? (body.scopes as unknown[]).filter(
+				(s): s is string => typeof s === "string",
+			)
 		: undefined;
 	try {
 		const result = await internalClient().mutation(
@@ -1121,37 +1092,31 @@ admin.post("/organizations", async (c) => {
 
 // GET /admin/oauth/clients  — list (no secrets)
 admin.get("/oauth/clients", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
 	const rows = await internalClient().query(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:listClients" as any,
-		{ callerToken: masterToken },
+		{},
 	);
 	return c.json({ clients: rows });
 });
 
 // DELETE /admin/oauth/clients/:clientId  — revoke client + all its tokens
 admin.delete("/oauth/clients/:clientId", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
 	const clientId = c.req.param("clientId");
 	const result = await internalClient().mutation(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:deleteClient" as any,
-		{ callerToken: masterToken, clientId },
+		{ clientId },
 	);
 	return c.json(result);
 });
 
 // POST /admin/oauth/seed-profiles — idempotent; safe to re-run after deploy
 admin.post("/oauth/seed-profiles", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
 	const created = await internalClient().mutation(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:seedDefaultProfiles" as any,
-		{ callerToken: masterToken },
+		{},
 	);
 	return c.json({ created });
 });
@@ -1186,9 +1151,6 @@ admin.post("/oauth/seed-profiles", async (c) => {
 //   anything else       → 500
 // ─────────────────────────────────────────────────────────────────────────────
 admin.patch("/scope-profiles/:id", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
-
 	const profileId = c.req.param("id");
 	if (!profileId) {
 		return c.json({ error: "invalid_request", detail: "missing :id" }, 400);
@@ -1223,7 +1185,6 @@ admin.patch("/scope-profiles/:id", async (c) => {
 
 	// Optional fields — typed coercion / validation
 	const mutationArgs: Record<string, unknown> = {
-		callerToken: masterToken,
 		profileId,
 		cascadeRevokeTokens: body.cascadeRevokeTokens,
 		reason: body.reason,
@@ -1319,9 +1280,6 @@ admin.patch("/scope-profiles/:id", async (c) => {
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
 admin.post("/oauth/access-tokens", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
-
 	let body: Record<string, unknown> = {};
 	try {
 		body = await c.req.json();
@@ -1399,7 +1357,6 @@ admin.post("/oauth/access-tokens", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
-				callerToken: masterToken,
 				tokenHash,
 				clientId,
 				userId,
@@ -1464,9 +1421,6 @@ admin.post("/oauth/access-tokens", async (c) => {
 //   anything else           → 500
 // ─────────────────────────────────────────────────────────────────────────────
 admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
-
 	const clientId = c.req.param("clientId");
 	if (!clientId) {
 		return c.json(
@@ -1503,7 +1457,6 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:patchClientScopeAndRefreshTokens" as any,
 			{
-				callerToken: masterToken,
 				clientId,
 				newScopeProfile,
 				reason,
@@ -1547,9 +1500,6 @@ admin.post("/oauth/clients/:clientId/patch-scope", async (c) => {
 // Response (200): { clientId, accessTokensRevoked, refreshTokensPreserved }
 // ─────────────────────────────────────────────────────────────────────────────
 admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) return c.json({ error: "server_misconfigured" }, 500);
-
 	const clientId = c.req.param("clientId");
 	if (!clientId) {
 		return c.json(
@@ -1579,7 +1529,7 @@ admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
 		const result = await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:revokeAccessTokensOnly" as any,
-			{ callerToken: masterToken, clientId, reason },
+			{ clientId, reason },
 		);
 		return c.json(result as Record<string, unknown>, 200);
 	} catch (err: unknown) {

@@ -14,9 +14,13 @@
  *      internal path.
  *   3. Guard: enumerates EVERY registration of every importable convex module,
  *      nested ones included (ids are "a/b:fn"), and fails if a public one
- *      REACHES the fleet master secret, unless that function has a runtime
- *      caller under mcp-server/ (derived by reading the mcp-server sources, not
- *      from a hardcoded list). Reach is the whole judgment: the registration's
+ *      REACHES the fleet master secret, unless the handler carries an IDENTITY
+ *      CHECK (it resolves the caller from the verified credential:
+ *      `withOrgScope`, `requireOrgAdmin`, `requireAgentCredentialMatch` or
+ *      `ctx.auth.getUserIdentity()`, directly or through a same-module helper).
+ *      A runtime caller under mcp-server/ is NOT an exemption: being called is
+ *      not being authorised, and it is true of every secret-by-argument function
+ *      that exists to be called. Reach is the whole judgment: the registration's
  *      own source, or a same-module helper it calls, reads the master secret's
  *      environment variable. What the code then does with the value (compare,
  *      switch on, membership test, log, concatenate) is irrelevant and is not
@@ -190,32 +194,6 @@ function argNames(reg: Registration): string[] {
 }
 
 const CONVEX_DIR = join(__dirname, "..");
-const MCP_DIR = join(CONVEX_DIR, "..", "mcp-server");
-
-/** Non-test, non-build .ts sources under mcp-server/ (root files included). */
-function mcpRuntimeSources(dir: string): string[] {
-	const out: string[] = [];
-	for (const entry of readdirSync(dir, { withFileTypes: true })) {
-		const full = join(dir, entry.name);
-		if (entry.isDirectory()) {
-			if (
-				["node_modules", "dist", "test", "tests", "__tests__"].includes(
-					entry.name,
-				)
-			)
-				continue;
-			out.push(...mcpRuntimeSources(full));
-		} else if (
-			entry.name.endsWith(".ts") &&
-			!entry.name.endsWith(".test.ts") &&
-			!entry.name.endsWith(".d.ts")
-		) {
-			out.push(readFileSync(full, "utf-8"));
-		}
-	}
-	return out;
-}
-
 /** Source of a convex module by its Convex name ("a/b" for convex/a/b.ts). */
 function readConvexModule(moduleName: string): string | null {
 	try {
@@ -441,11 +419,55 @@ function exportSource(
 	return null;
 }
 
+// An IDENTITY CHECK is a call that resolves the caller from the verified
+// credential. Comments are stripped first, so a commented-out check earns
+// nothing. Limits (named, not silent): the guard sees that the handler, or a
+// same-module helper it calls, RESOLVES an identity; it does not prove that the
+// secret-bearing branch is the one that check gates. That is why the verdict's
+// `callerGated` list is pinned by name in the guard test rather than trusted.
+const IDENTITY_CALL =
+	/(?<![\w$.])(?:requireOrgAdmin|withOrgScope|requireAgentCredentialMatch)\s*\(|\bctx\.auth\.getUserIdentity\s*\(/;
+
+function identityHelpers(moduleCode: string): Set<string> {
+	const found = new Set<string>();
+	const helpers = declaredHelpers(moduleCode);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const h of helpers) {
+			if (found.has(h.name)) continue;
+			const reaches =
+				IDENTITY_CALL.test(h.body) ||
+				[...found].some((n) =>
+					new RegExp(`(?<![\\w$.])${escapeName(n)}\\s*\\(`).test(h.body),
+				);
+			if (reaches) {
+				found.add(h.name);
+				changed = true;
+			}
+		}
+	}
+	return found;
+}
+
+/** Whether the registration whose source is `body` carries an identity check. */
+function resolvesIdentity(body: string, moduleSource: string = body): boolean {
+	const code = stripComments(body);
+	if (IDENTITY_CALL.test(code)) return true;
+	return [...identityHelpers(stripComments(moduleSource))].some((n) =>
+		new RegExp(`(?<![\\w$.])${escapeName(n)}\\s*\\(`).test(code),
+	);
+}
+
 type GuardEntry = { path: string; exports: Record<string, unknown> };
 type Verdict = {
-	/** Public, reaches the master secret, no runtime caller under mcp-server/. */
+	/** Public, reaches the master secret, and carries no identity check. */
 	offenders: string[];
-	/** Public, reaches the master secret, and has a runtime caller (allowed). */
+	/**
+	 * Public, reaches the master secret, and its handler carries an identity
+	 * check (allowed, and pinned by name in the guard test: a new entry needs a
+	 * human to add it on purpose).
+	 */
 	callerGated: string[];
 	/** Public registrations the guard could not read: a refusal, never a pass. */
 	unreadable: string[];
@@ -460,7 +482,6 @@ type Verdict = {
 function judgeGuard(
 	entries: readonly GuardEntry[],
 	readModule: (name: string) => string | null,
-	runtimeSources: string,
 ): Verdict {
 	const verdict: Verdict = { offenders: [], callerGated: [], unreadable: [] };
 	for (const { path, exports } of entries) {
@@ -489,7 +510,13 @@ function judgeGuard(
 			// A secret-shaped argument NAME is an additional signal, and names the
 			// argument in the message; the accusation does not need it.
 			if (!reaches && !args.some((n) => SECRET_ARG.test(n))) continue;
-			if (runtimeSources.includes(`"${id}"`)) verdict.callerGated.push(id);
+			// The exemption is EARNED by an identity check in the handler. It is
+			// never earned by the existence of a caller.
+			const gated = resolvesIdentity(
+				located.source,
+				readModule(located.module) ?? located.source,
+			);
+			if (gated) verdict.callerGated.push(id);
 			else verdict.offenders.push(id);
 		}
 	}
@@ -521,12 +548,10 @@ function judgeOne(
 	exportName: string,
 	args: readonly string[],
 	source: string | null,
-	runtimeSources = "",
 ): Verdict {
 	return judgeGuard(
 		[{ path, exports: { [exportName]: fakePublic(args) } }],
 		(name) => (source !== null && `../${name}.ts` === path ? source : null),
-		runtimeSources,
 	);
 }
 
@@ -559,22 +584,22 @@ describe("guard — no public registration takes a master secret", () => {
 		expect(loaded.some(({ path }) => path.split("/").length > 2)).toBe(true);
 	});
 
-	test("a public registration whose master secret has no runtime caller under mcp-server/ is a defect", () => {
-		const sources = mcpRuntimeSources(MCP_DIR).join("\n");
-		const verdict = judgeGuard(loaded, readConvexModule, sources);
+	test("a public registration whose handler reaches the master secret without an identity check is a defect", () => {
+		const verdict = judgeGuard(loaded, readConvexModule);
 		expect(verdict.unreadable).toEqual([]);
-		// The sites that still take a secret are exactly the ones a runtime
-		// caller needs; every other one is a defect of this class.
 		expect(verdict.offenders).toEqual([]);
-		// Sanity: the derivation found the callers it is meant to exempt, so an
-		// empty `offenders` cannot be the product of an empty enumeration.
+		// Sanity: the derivation found the registration it is meant to exempt, so
+		// an empty `offenders` cannot be the product of an empty enumeration.
 		expect(verdict.callerGated.length).toBeGreaterThan(0);
 	});
 
 	test("oauth:provisionOrganization is seen and is caller-gated, not accused", () => {
-		const sources = mcpRuntimeSources(MCP_DIR).join("\n");
-		const verdict = judgeGuard(loaded, readConvexModule, sources);
-		expect(verdict.callerGated).toContain("oauth:provisionOrganization");
+		const verdict = judgeGuard(loaded, readConvexModule);
+		// EXACTLY this one. Every other registration that reads the master secret
+		// is an offender until a human adds it here on purpose: the exemption is
+		// earned by an identity check in the handler, and a runtime caller under
+		// mcp-server/ never earned anything (being called is not being authorised).
+		expect(verdict.callerGated).toEqual(["oauth:provisionOrganization"]);
 		expect(verdict.offenders).toEqual([]);
 		expect(verdict.unreadable).toEqual([]);
 	});
@@ -652,13 +677,15 @@ describe("fixtures — H1: a nested module is judged, never skipped", () => {
 		expect(v.unreadable).toEqual([]);
 	});
 
-	test("a nested registration with a runtime caller is caller-gated under its a/b:fn id", () => {
+	test("a nested registration with an identity check is caller-gated under its a/b:fn id", () => {
 		const v = judgeOne(
 			"../migrations/planted.ts",
 			"plantedFn",
 			["callerToken"],
-			PLANTED_SOURCE,
-			'client.mutation("migrations/planted:plantedFn" as any)',
+			PLANTED_SOURCE.replace(
+				"await requireMasterAuth(args.callerToken);",
+				'await requireOrgAdmin(ctx, "acme");\n\t\tawait requireMasterAuth(args.callerToken);',
+			),
 		);
 		expect(v.callerGated).toEqual(["migrations/planted:plantedFn"]);
 		expect(v.offenders).toEqual([]);
@@ -973,19 +1000,13 @@ describe("fixtures — H3: secret-ness is the flow into the MASTER SECRET, not i
 		expect(reachesMasterSecret(src)).toBe(false);
 	});
 
-	test("an inline-compared secret with a runtime caller is caller-gated, like the helper form", () => {
+	test("an inline-compared secret with an identity check is caller-gated, like the helper form", () => {
 		const src = sourceWith(
 			"fleetKey: v.string()",
 			"handler: async (ctx, args)",
-			`if (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
+			`await withOrgScope(ctx);\n\t\tif (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
 		);
-		const v = judgeOne(
-			"../probe.ts",
-			"probeFn",
-			["fleetKey"],
-			src,
-			'client.mutation("probe:probeFn" as any)',
-		);
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], src);
 		expect(v.callerGated).toEqual(["probe:probeFn"]);
 		expect(v.offenders).toEqual([]);
 	});
@@ -1007,7 +1028,6 @@ describe("fixtures — H3: secret-ness is the flow into the MASTER SECRET, not i
 				},
 			],
 			(name) => modules[`../${name}`] ?? null,
-			"",
 		);
 		expect(v.offenders).toEqual(["barrel:probeFn"]);
 	});
@@ -1024,7 +1044,6 @@ describe("fixtures — H3: secret-ness is the flow into the MASTER SECRET, not i
 		const v = judgeGuard(
 			[{ path: "../probe.ts", exports: { probeFn: fakePublic(["fleetKey"]) } }],
 			(name) => modules[`../${name}`] ?? null,
-			"",
 		);
 		// LIMIT, pinned so it cannot become a silent one: this escapes. If the
 		// guard learns to follow imports this test must flip to offenders.
@@ -1048,7 +1067,6 @@ describe("fixtures — H3: secret-ness is the flow into the MASTER SECRET, not i
 				},
 			],
 			(name) => modules[`../${name}`] ?? null,
-			"",
 		);
 		expect(v.offenders).toEqual(["barrel:probeFn"]);
 		expect(v.unreadable).toEqual([]);
@@ -1169,15 +1187,9 @@ describe("fixtures — H4: the accusation is REACH, not the shape of a compariso
 		const src = sourceWith(
 			"fleetKey: v.string()",
 			HEAD,
-			`if (![${ENV}].includes(args.fleetKey)) throw new Error("no");`,
+			`await requireOrgAdmin(ctx, "acme");\n\t\tif (![${ENV}].includes(args.fleetKey)) throw new Error("no");`,
 		);
-		const v = judgeOne(
-			"../probe.ts",
-			"probeFn",
-			["fleetKey"],
-			src,
-			'client.mutation("probe:probeFn" as any)',
-		);
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], src);
 		expect(v.callerGated).toEqual(["probe:probeFn"]);
 		expect(v.offenders).toEqual([]);
 	});
@@ -1192,7 +1204,6 @@ describe("fixtures — H4: the accusation is REACH, not the shape of a compariso
 				},
 			],
 			(name) => (name === "probe" ? src : null),
-			"",
 		);
 		expect(v.offenders).toEqual([]);
 		expect(v.callerGated).toEqual([]);
@@ -1219,7 +1230,6 @@ export const cleanFn = mutation({
 				},
 			],
 			(name) => (name === "probe" ? src : null),
-			"",
 		);
 		expect(v.offenders).toEqual(["probe:probeFn"]);
 	});
@@ -1260,5 +1270,73 @@ export const cleanFn = mutation({
 			"return await ctx.runQuery(internal.probe.readIt, {});",
 		);
 		expect(reachesMasterSecret(src)).toBe(false);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Fixtures — H5: the exemption is EARNED by an identity check, never by a
+//    caller. "It has a caller" is true of every secret-by-argument function
+//    that exists to be called; it says nothing about who is allowed to call.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("fixtures — H5: a caller is not an authorisation", () => {
+	const SECRET_ONLY = sourceWith(
+		"fleetKey: v.string()",
+		"handler: async (ctx, args)",
+		`if (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
+	);
+
+	test("the judgment takes no caller information at all: it cannot be exempted by one", () => {
+		// (entries, readModule) — a third parameter carrying "who calls this" is
+		// how the exemption used to be earned by the mere existence of a caller.
+		expect(judgeGuard.length).toBe(2);
+	});
+
+	test("a secret-reading registration with NO identity check is an offender, called or not", () => {
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], SECRET_ONLY);
+		expect(v.offenders).toEqual(["probe:probeFn"]);
+		expect(v.callerGated).toEqual([]);
+	});
+
+	test("the same registration WITH an identity check is caller-gated", () => {
+		const src = sourceWith(
+			"fleetKey: v.optional(v.string())",
+			"handler: async (ctx, args)",
+			`if (args.fleetKey) { if (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no"); } else { await requireOrgAdmin(ctx, "acme"); }`,
+		);
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], src);
+		expect(v.callerGated).toEqual(["probe:probeFn"]);
+		expect(v.offenders).toEqual([]);
+	});
+
+	test("an identity check that exists only in a comment earns nothing", () => {
+		const src = sourceWith(
+			"fleetKey: v.string()",
+			"handler: async (ctx, args)",
+			`// await requireOrgAdmin(ctx, "acme");\n\t\tif (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
+		);
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], src);
+		expect(v.offenders).toEqual(["probe:probeFn"]);
+		expect(v.callerGated).toEqual([]);
+	});
+
+	test("an identity check reached through a same-module helper earns the exemption", () => {
+		const src = `
+async function whoIsThis(ctx) {
+	return await withOrgScope(ctx);
+}
+${SECRET_ONLY.replace("if (args", "await whoIsThis(ctx);\n\t\tif (args")}`;
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], src);
+		expect(v.callerGated).toEqual(["probe:probeFn"]);
+		expect(v.offenders).toEqual([]);
+	});
+
+	test("a helper that merely shares a name fragment with an identity check earns nothing", () => {
+		const src = SECRET_ONLY.replace(
+			"if (args",
+			"await requireOrgAdminLookalike(ctx);\n\t\tif (args",
+		);
+		const v = judgeOne("../probe.ts", "probeFn", ["fleetKey"], src);
+		expect(v.offenders).toEqual(["probe:probeFn"]);
 	});
 });

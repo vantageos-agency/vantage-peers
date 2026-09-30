@@ -125,13 +125,15 @@ describe("R1 — happy path: 3 clients retargeted on rename", () => {
 		await seedClient(t, "client-2", "old-profile");
 		await seedClient(t, "client-3", "old-profile");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "old-profile",
-			rename: "new-profile",
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "old-profile",
+				rename: "new-profile",
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		expect(result.clientsRetargeted).toBe(3);
 		expect(result.patchedProfileId).toBe("new-profile");
@@ -158,13 +160,15 @@ describe("R2 — no rename arg: no client retargeting", () => {
 		await seedClient(t, "client-a", "stable-profile");
 		await seedClient(t, "client-b", "stable-profile");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "stable-profile",
-			fromAllowList: ["marie", "victor"],
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "stable-profile",
+				fromAllowList: ["marie", "victor"],
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		expect(result.clientsRetargeted).toBe(0);
 
@@ -188,13 +192,15 @@ describe("R3 — rename same as profileId (no-op): no client retargeting", () =>
 		await seedProfile(t, "no-op-profile");
 		await seedClient(t, "client-noop", "no-op-profile");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "no-op-profile",
-			rename: "no-op-profile", // same name — no-op
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "no-op-profile",
+				rename: "no-op-profile", // same name — no-op
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		expect(result.clientsRetargeted).toBe(0);
 
@@ -232,13 +238,15 @@ describe("R4 — other-profile clients untouched during rename", () => {
 		await seedClient(t, "client-other-1", "other-profile");
 		await seedClient(t, "client-other-2", "other-profile");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "old-profile",
-			rename: "new-profile",
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "old-profile",
+				rename: "new-profile",
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		expect(result.clientsRetargeted).toBe(2);
 
@@ -246,7 +254,9 @@ describe("R4 — other-profile clients untouched during rename", () => {
 		const newClients = await t.run(async (ctx) => {
 			return await ctx.db
 				.query("oauth_clients")
-				.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", "new-profile"))
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", "new-profile"),
+				)
 				.collect();
 		});
 		expect(newClients).toHaveLength(2);
@@ -278,13 +288,15 @@ describe("R5 — cascade revoke + retarget combined", () => {
 		await seedAccessToken(t, "token-aa".padEnd(64, "a"), "old");
 		await seedAccessToken(t, "token-bb".padEnd(64, "b"), "old");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "old",
-			rename: "new",
-			cascadeRevokeTokens: true,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "old",
+				rename: "new",
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
 
 		expect(result.patchedProfileId).toBe("new");
 		expect(result.clientsRetargeted).toBe(3);
@@ -320,13 +332,15 @@ describe("R6 — audit log captures clientsRetargeted", () => {
 		await seedClient(t, "ca-2", "audit-src");
 		await seedClient(t, "ca-3", "audit-src");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "audit-src",
-			rename: "audit-dst",
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "audit-src",
+				rename: "audit-dst",
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		const auditRow = await t.run(async (ctx) => {
 			return await ctx.db.get(result.auditLogId);
@@ -353,13 +367,15 @@ describe("R7 — atomicity: Convex mutation transaction guarantee", () => {
 		await seedClient(t, "c-atomic-1", "atomic-src");
 		await seedClient(t, "c-atomic-2", "atomic-src");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "atomic-src",
-			rename: "atomic-dst",
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "atomic-src",
+				rename: "atomic-dst",
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		// If mutation completed, ALL clients must be retargeted (no partial state)
 		expect(result.clientsRetargeted).toBe(2);
@@ -367,9 +383,7 @@ describe("R7 — atomicity: Convex mutation transaction guarantee", () => {
 		const oldClients = await t.run(async (ctx) => {
 			return await ctx.db
 				.query("oauth_clients")
-				.withIndex("by_scopeProfile", (q) =>
-					q.eq("scopeProfile", "atomic-src"),
-				)
+				.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", "atomic-src"))
 				.collect();
 		});
 		// No clients left on old name (atomicity: all-or-nothing)
@@ -378,9 +392,7 @@ describe("R7 — atomicity: Convex mutation transaction guarantee", () => {
 		const newClients = await t.run(async (ctx) => {
 			return await ctx.db
 				.query("oauth_clients")
-				.withIndex("by_scopeProfile", (q) =>
-					q.eq("scopeProfile", "atomic-dst"),
-				)
+				.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", "atomic-dst"))
 				.collect();
 		});
 		expect(newClients).toHaveLength(2);
@@ -419,21 +431,23 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 		});
 		await seedClient(t, "client-marie-iris", "marie-iris-rh");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "marie-iris-rh",
-			rename: "iris-rh",
-			fromAllowList: ["marie", "victor"],
-			namespaceReadPrefixes: [
-				"orchestrator/marie",
-				"orchestrator/victor",
-				"project/iris-rh",
-			],
-			namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
-			cascadeRevokeTokens: false,
-			reason:
-				"D9 workspace rename marie-iris-rh → iris-rh + drop global D4 remediation",
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				rename: "iris-rh",
+				fromAllowList: ["marie", "victor"],
+				namespaceReadPrefixes: [
+					"orchestrator/marie",
+					"orchestrator/victor",
+					"project/iris-rh",
+				],
+				namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
+				cascadeRevokeTokens: false,
+				reason:
+					"D9 workspace rename marie-iris-rh → iris-rh + drop global D4 remediation",
+			},
+		);
 
 		// Profile renamed
 		expect(result.patchedProfileId).toBe("iris-rh");
@@ -456,9 +470,12 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 		expect(profile?.namespaceWritePrefixes).not.toContain("global");
 
 		// Verify old name gone
-		const oldProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "marie-iris-rh",
-		});
+		const oldProfile = await asServiceAccount(t).query(
+			api.oauth.getScopeProfile,
+			{
+				profileId: "marie-iris-rh",
+			},
+		);
 		expect(oldProfile).toBeNull();
 
 		// Verify audit log captures previous state including global
@@ -500,13 +517,15 @@ describe("MT1 — other-tenant clients NOT retargeted on rename", () => {
 		await seedClient(t, "beta-client-1", "beta");
 		await seedClient(t, "beta-client-2", "beta");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "alpha",
-			rename: "alpha-renamed",
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "alpha",
+				rename: "alpha-renamed",
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 
 		expect(result.clientsRetargeted).toBe(2);
 
@@ -557,13 +576,15 @@ describe("MT2 — cascade revoke scoped to renamed profile only", () => {
 		await seedAccessToken(t, "tok-a2".padEnd(64, "2"), "tenant-a");
 		await seedAccessToken(t, "tok-b1".padEnd(64, "3"), "tenant-b");
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "tenant-a",
-			rename: "tenant-a-v2",
-			cascadeRevokeTokens: true,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "tenant-a",
+				rename: "tenant-a-v2",
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
 
 		// 2 tokens for tenant-a deleted
 		expect(result.cascadeRevokedCount).toBe(2);
@@ -586,8 +607,7 @@ describe("MT3 — audit log filter by targetProfileId uses original name (stable
 		const t = createTestConvex();
 		await seedProfile(t, "src-profile");
 
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "src-profile",
 			rename: "dst-profile",
 			cascadeRevokeTokens: false,

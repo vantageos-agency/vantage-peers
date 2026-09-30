@@ -43,11 +43,16 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// seedDefaultProfiles authorises by identity: the caller must be the recognised
+// service account (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this
+// exact subject).
+function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 // Helper: seed scope profiles (required before inserting clients — FK constraint)
 async function seedProfiles(t: ReturnType<typeof createTestConvex>) {
-	await t.mutation(api.oauth.seedDefaultProfiles, {
-		callerToken: "test-master-token-backfill",
-	});
+	await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 }
 
 // Helper: insert an oauth_client row directly via ctx.db.insert to control
@@ -90,11 +95,12 @@ async function insertClient(
 
 describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
 	test("B1 — the migration is not on the public registration surface", async () => {
-		const reg = oauthMigrationsModule.backfillTokenEndpointAuthMethod as unknown as {
-			isPublic?: boolean;
-			isInternal?: boolean;
-			exportArgs: () => string;
-		};
+		const reg =
+			oauthMigrationsModule.backfillTokenEndpointAuthMethod as unknown as {
+				isPublic?: boolean;
+				isInternal?: boolean;
+				exportArgs: () => string;
+			};
 		expect(reg.isPublic).toBeUndefined();
 		expect(reg.isInternal).toBe(true);
 		expect(reg.exportArgs()).not.toMatch(/callerToken/);
