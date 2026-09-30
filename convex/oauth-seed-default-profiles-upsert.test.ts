@@ -62,9 +62,10 @@ function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
 describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 	test("T1: empty DB → inserts all seed profiles (baseline)", async () => {
 		const t = createTestConvex();
-		const summary = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		const summary = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 
 		expect(summary).toEqual(
 			expect.objectContaining({
@@ -87,13 +88,12 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 
 	test("T2: re-run with no catalog drift → idempotent, no writes, empty diff", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
-		const second = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		const second = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 
 		expect(second.inserted).toEqual([]);
 		expect(second.updated).toEqual([]);
@@ -125,9 +125,10 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			});
 		});
 
-		const summary = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		const summary = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 
 		expect(summary.updated as string[]).toContain("marie-iris-rh");
 		expect(summary.inserted as string[]).not.toContain("marie-iris-rh");
@@ -175,9 +176,7 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			});
 		});
 
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const custom = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "operator-custom-tenant-x",
@@ -213,9 +212,7 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		// Advance fake time so updatedAt is distinguishable.
 		vi.setSystemTime(new Date("2026-06-03T12:00:00Z"));
 
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const row = await t.run(async (ctx) => {
 			return await ctx.db
@@ -253,9 +250,7 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			});
 		});
 
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const auditRows = await t.run(async (ctx) => {
 			return await ctx.db.query("oauth_audit_log").collect();
@@ -287,13 +282,9 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 	test("T6b: no audit log entry for no-op idempotent runs", async () => {
 		const t = createTestConvex();
 		// First run inserts.
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		// Second run should be a pure no-op.
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const auditRows = await t.run(async (ctx) => {
 			return await ctx.db.query("oauth_audit_log").collect();
@@ -304,13 +295,11 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		expect(seedUpsertRows).toHaveLength(0);
 	});
 
-	test("T7: still admin-master-token gated (rejects invalid token)", async () => {
+	test("T7: still admin gated (rejects an anonymous caller)", async () => {
 		const t = createTestConvex();
-		await expect(
-			t.mutation(api.oauth.seedDefaultProfiles, {
-				callerToken: "not-the-master",
-			}),
-		).rejects.toThrow(/Unauthorized/);
+		await expect(t.mutation(api.oauth.seedDefaultProfiles, {})).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
 	});
 
 	test("T8: idempotency — running upsert twice yields same DB state + same audit count", async () => {
@@ -328,9 +317,7 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			});
 		});
 
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const afterFirst = await t.run(async (ctx) => {
 			return {
@@ -341,9 +328,10 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			};
 		});
 
-		const second = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		const second = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 
 		expect(second.inserted).toEqual([]);
 		expect(second.updated).toEqual([]);

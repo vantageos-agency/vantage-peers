@@ -7,7 +7,7 @@
  * Mission: k57c7s478gw1a3e5gmhdeptg5n87z78n
  *
  * Cases:
- *   B1 — master token guard: wrong token throws UNAUTHORIZED
+ *   B1 — registration surface: internal, no callerToken argument
  *   B2 — idempotency: second run returns backfilled=0
  *   B3 — respect existing values: row with tokenEndpointAuthMethod="none" NOT overwritten
  *   B4 — empty table: scanned=0 backfilled=0
@@ -16,7 +16,8 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import * as oauthMigrationsModule from "./oauthMigrations";
 import schema from "./schema";
 
 // Load all convex modules except RAG/search/backfill (cannot run in edge-vm)
@@ -42,11 +43,16 @@ function createTestConvex() {
 	return convexTest(schema, modules);
 }
 
+// seedDefaultProfiles authorises by identity: the caller must be the recognised
+// service account (vitest.config.ts sets CLERK_SERVICE_ACCOUNT_USER_ID to this
+// exact subject).
+function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 // Helper: seed scope profiles (required before inserting clients — FK constraint)
 async function seedProfiles(t: ReturnType<typeof createTestConvex>) {
-	await t.mutation(api.oauth.seedDefaultProfiles, {
-		callerToken: "test-master-token-backfill",
-	});
+	await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 }
 
 // Helper: insert an oauth_client row directly via ctx.db.insert to control
@@ -88,13 +94,16 @@ async function insertClient(
 }
 
 describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
-	test("B1 — master token guard: wrong token throws UNAUTHORIZED", async () => {
-		const t = createTestConvex();
-		await expect(
-			t.mutation(api.oauthMigrations.backfillTokenEndpointAuthMethod, {
-				callerToken: "wrong-token",
-			}),
-		).rejects.toThrow(/Unauthorized/);
+	test("B1 — the migration is not on the public registration surface", async () => {
+		const reg =
+			oauthMigrationsModule.backfillTokenEndpointAuthMethod as unknown as {
+				isPublic?: boolean;
+				isInternal?: boolean;
+				exportArgs: () => string;
+			};
+		expect(reg.isPublic).toBeUndefined();
+		expect(reg.isInternal).toBe(true);
+		expect(reg.exportArgs()).not.toMatch(/callerToken/);
 	});
 
 	test("B2 — idempotency: second run returns backfilled=0", async () => {
@@ -104,14 +113,14 @@ describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
 		await insertClient(t, "idem-b");
 
 		const first = await t.mutation(
-			api.oauthMigrations.backfillTokenEndpointAuthMethod,
-			{ callerToken: "test-master-token-backfill" },
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{},
 		);
 		expect(first.backfilled).toBe(2);
 
 		const second = await t.mutation(
-			api.oauthMigrations.backfillTokenEndpointAuthMethod,
-			{ callerToken: "test-master-token-backfill" },
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{},
 		);
 		expect(second.scanned).toBe(2);
 		expect(second.backfilled).toBe(0);
@@ -123,8 +132,8 @@ describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
 		await insertClient(t, "none-client", "none");
 
 		const result = await t.mutation(
-			api.oauthMigrations.backfillTokenEndpointAuthMethod,
-			{ callerToken: "test-master-token-backfill" },
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{},
 		);
 		expect(result.scanned).toBe(1);
 		expect(result.backfilled).toBe(0);
@@ -144,8 +153,8 @@ describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
 	test("B4 — empty table: scanned=0 backfilled=0", async () => {
 		const t = createTestConvex();
 		const result = await t.mutation(
-			api.oauthMigrations.backfillTokenEndpointAuthMethod,
-			{ callerToken: "test-master-token-backfill" },
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{},
 		);
 		expect(result.scanned).toBe(0);
 		expect(result.backfilled).toBe(0);
@@ -159,8 +168,8 @@ describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
 		await insertClient(t, "b5-c", "none"); // has "none" — must not be touched
 
 		const result = await t.mutation(
-			api.oauthMigrations.backfillTokenEndpointAuthMethod,
-			{ callerToken: "test-master-token-backfill" },
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{},
 		);
 		expect(result.scanned).toBe(3);
 		expect(result.backfilled).toBe(2);

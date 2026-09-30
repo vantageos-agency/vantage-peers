@@ -100,17 +100,16 @@ async function seedMasterProfile(t: ReturnType<typeof createTestConvex>) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("T1 — master token guard", () => {
-	test("caller without master token throws UNAUTHORIZED", async () => {
+	test("an anonymous caller is refused (RBAC_DENIED)", async () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 		await expect(
 			t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: "not-the-master",
 				profileId: "marie-iris-rh",
 				cascadeRevokeTokens: false,
 				reason: REASON_OK,
 			}),
-		).rejects.toThrow(/Unauthorized/i);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
 
@@ -123,8 +122,7 @@ describe("T2 — reason length guard", () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 		await expect(
-			t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: MASTER_TOKEN,
+			asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 				profileId: "marie-iris-rh",
 				cascadeRevokeTokens: false,
 				reason: "too short",
@@ -142,8 +140,7 @@ describe("T3 — D4 enforcement: global in readPrefixes for non-master", () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 		await expect(
-			t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: MASTER_TOKEN,
+			asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 				profileId: "marie-iris-rh",
 				namespaceReadPrefixes: ["orchestrator/marie", "global"],
 				cascadeRevokeTokens: false,
@@ -162,8 +159,7 @@ describe("T4 — D4 enforcement: wildcard * in prefixes for non-master", () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 		await expect(
-			t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: MASTER_TOKEN,
+			asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 				profileId: "marie-iris-rh",
 				namespaceWritePrefixes: ["*"],
 				cascadeRevokeTokens: false,
@@ -183,8 +179,7 @@ describe("T5 — master profile CAN include global (no D4 violation)", () => {
 		await seedMasterProfile(t);
 		// master profile can freely have "global" — D4 only blocks non-master profiles
 		await expect(
-			t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: MASTER_TOKEN,
+			asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 				profileId: "master",
 				namespaceReadPrefixes: ["*", "global"],
 				namespaceWritePrefixes: ["*", "global"],
@@ -204,19 +199,21 @@ describe("T6 — happy path: patch fields + return shape", () => {
 	test("returns { patchedProfileId, cascadeRevokedCount, auditLogId }", async () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "marie-iris-rh",
-			fromAllowList: ["marie", "victor"],
-			namespaceReadPrefixes: [
-				"orchestrator/marie",
-				"orchestrator/victor",
-				"project/iris-rh",
-			],
-			namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				fromAllowList: ["marie", "victor"],
+				namespaceReadPrefixes: [
+					"orchestrator/marie",
+					"orchestrator/victor",
+					"project/iris-rh",
+				],
+				namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 		expect(result).toHaveProperty("patchedProfileId");
 		expect(result).toHaveProperty("cascadeRevokedCount");
 		expect(result).toHaveProperty("auditLogId");
@@ -234,32 +231,40 @@ describe("T7 — rename: old profileId → new profileId persisted", () => {
 	test("query by new name succeeds, by old name fails after rename", async () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "marie-iris-rh",
-			rename: "iris-rh",
-			namespaceReadPrefixes: [
-				"orchestrator/marie",
-				"orchestrator/victor",
-				"project/iris-rh",
-			],
-			namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
-			cascadeRevokeTokens: false,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				rename: "iris-rh",
+				namespaceReadPrefixes: [
+					"orchestrator/marie",
+					"orchestrator/victor",
+					"project/iris-rh",
+				],
+				namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
+				cascadeRevokeTokens: false,
+				reason: REASON_OK,
+			},
+		);
 		expect(result.patchedProfileId).toBe("iris-rh");
 
 		// Query by new name succeeds
-		const newProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "iris-rh",
-		});
+		const newProfile = await asServiceAccount(t).query(
+			api.oauth.getScopeProfile,
+			{
+				profileId: "iris-rh",
+			},
+		);
 		expect(newProfile).not.toBeNull();
 		expect(newProfile?.profileId).toBe("iris-rh");
 
 		// Query by old name fails (returns null)
-		const oldProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "marie-iris-rh",
-		});
+		const oldProfile = await asServiceAccount(t).query(
+			api.oauth.getScopeProfile,
+			{
+				profileId: "marie-iris-rh",
+			},
+		);
 		expect(oldProfile).toBeNull();
 	});
 });
@@ -301,14 +306,16 @@ describe("T8 — cascade revoke access_tokens citing profile", () => {
 			});
 		});
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "marie-iris-rh",
-			namespaceReadPrefixes: ["orchestrator/marie", "orchestrator/victor"],
-			namespaceWritePrefixes: ["orchestrator/marie"],
-			cascadeRevokeTokens: true,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				namespaceReadPrefixes: ["orchestrator/marie", "orchestrator/victor"],
+				namespaceWritePrefixes: ["orchestrator/marie"],
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
 		expect(result.cascadeRevokedCount).toBe(2);
 	});
 });
@@ -321,8 +328,7 @@ describe("T9 — audit log row inserted with correct fields", () => {
 	test("audit log has previousState, newState, actorTokenHash, reason", async () => {
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: ["orchestrator/marie"],
 			namespaceWritePrefixes: ["orchestrator/marie"],
@@ -375,14 +381,16 @@ describe("T10 — refresh tokens cascade revoke counted", () => {
 			});
 		});
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "marie-iris-rh",
-			namespaceReadPrefixes: ["orchestrator/marie"],
-			namespaceWritePrefixes: ["orchestrator/marie"],
-			cascadeRevokeTokens: true,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				namespaceReadPrefixes: ["orchestrator/marie"],
+				namespaceWritePrefixes: ["orchestrator/marie"],
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
 		// 0 access tokens + 1 refresh token = 1 total
 		expect(result.cascadeRevokedCount).toBe(1);
 	});
@@ -396,8 +404,7 @@ describe("T11 — missing profile throws", () => {
 	test("throws profile not found when profileId does not exist", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: MASTER_TOKEN,
+			asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 				profileId: "does-not-exist",
 				cascadeRevokeTokens: false,
 				reason: REASON_OK,
@@ -426,8 +433,7 @@ describe("T12 — partial patch: only fromAllowList changes", () => {
 			});
 		});
 
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "partial-test",
 			fromAllowList: ["marie", "victor"], // only this changes
 			cascadeRevokeTokens: false,
@@ -473,14 +479,16 @@ describe("MT1 — access tokens for other profiles are unaffected", () => {
 			});
 		});
 
-		const result = await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
-			profileId: "marie-iris-rh",
-			namespaceReadPrefixes: ["orchestrator/marie"],
-			namespaceWritePrefixes: ["orchestrator/marie"],
-			cascadeRevokeTokens: true,
-			reason: REASON_OK,
-		});
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				namespaceReadPrefixes: ["orchestrator/marie"],
+				namespaceWritePrefixes: ["orchestrator/marie"],
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
 
 		// No tokens for marie-iris-rh → 0 revoked
 		expect(result.cascadeRevokedCount).toBe(0);
@@ -517,16 +525,14 @@ describe("MT2 — audit log filterable via by_targetProfileId index", () => {
 			});
 		});
 
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: ["orchestrator/marie"],
 			namespaceWritePrefixes: ["orchestrator/marie"],
 			cascadeRevokeTokens: false,
 			reason: REASON_OK,
 		});
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "another-profile",
 			namespaceReadPrefixes: ["orchestrator/other"],
 			namespaceWritePrefixes: ["orchestrator/other"],
@@ -581,8 +587,7 @@ describe("MT3 — multiple concurrent profiles tracked separately", () => {
 		}
 
 		for (const pid of ["profile-a", "profile-b", "profile-c"]) {
-			await t.mutation(api.oauth.patchScopeProfileEmergency, {
-				callerToken: MASTER_TOKEN,
+			await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 				profileId: pid,
 				fromAllowList: ["test-updated"],
 				cascadeRevokeTokens: false,
@@ -608,8 +613,7 @@ describe("SL1 — D4 post-condition: no global in resulting prefixes after patch
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: [
 				"orchestrator/marie",
@@ -642,8 +646,7 @@ describe("SL2 — master profile retains wildcard after non-master patch", () =>
 		await seedMasterProfile(t);
 
 		// Patch the leaked non-master profile
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: ["orchestrator/marie"],
 			namespaceWritePrefixes: ["orchestrator/marie"],
@@ -652,9 +655,12 @@ describe("SL2 — master profile retains wildcard after non-master patch", () =>
 		});
 
 		// Master profile must still retain its wildcards
-		const masterProfile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "master",
-		});
+		const masterProfile = await asServiceAccount(t).query(
+			api.oauth.getScopeProfile,
+			{
+				profileId: "master",
+			},
+		);
 		expect(masterProfile?.namespaceReadPrefixes).toContain("*");
 		expect(masterProfile?.namespaceWritePrefixes).toContain("*");
 	});
@@ -669,8 +675,7 @@ describe("SL3 — audit log forensic: previousState captures leaked global", () 
 		const t = createTestConvex();
 		await seedLeakedProfile(t);
 
-		await t.mutation(api.oauth.patchScopeProfileEmergency, {
-			callerToken: MASTER_TOKEN,
+		await asServiceAccount(t).mutation(api.oauth.patchScopeProfileEmergency, {
 			profileId: "marie-iris-rh",
 			namespaceReadPrefixes: ["orchestrator/marie"],
 			namespaceWritePrefixes: ["orchestrator/marie"],

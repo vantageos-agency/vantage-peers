@@ -7,8 +7,9 @@
  */
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { requireActiveLicense } from "../lib/license";
+import * as licensesModule from "../licenses";
 import schema from "../schema";
 
 // Exclude RAG/search/backfill modules (same exclusion pattern as tests.test.ts)
@@ -20,8 +21,6 @@ const modules = Object.fromEntries(
 			!path.includes("backfill"),
 	),
 );
-
-const MASTER_TOKEN = "test-master-token-abc123";
 
 // Freeze time so Date.now() is deterministic across each test
 beforeEach(() => {
@@ -43,13 +42,11 @@ function createTestConvex() {
 describe("generate", () => {
 	test("1. master token → returns license key + correct expiresAt (365d)", async () => {
 		const t = createTestConvex();
-		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
 
 		const now = Date.now(); // 2026-01-01T12:00:00.000Z in ms
 		const expected365d = now + 365 * 24 * 60 * 60 * 1000;
 
-		const result = await t.mutation(api.licenses.generate, {
-			callerToken: MASTER_TOKEN,
+		const result = await t.mutation(internal.licenses.generate, {
 			customerEmail: "cedric@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
@@ -69,18 +66,15 @@ describe("generate", () => {
 		expect(result.expiresAt).toBe(expected365d);
 	});
 
-	test("2. non-master token → throws Forbidden", async () => {
-		const t = createTestConvex();
-		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
-
-		await expect(
-			t.mutation(api.licenses.generate, {
-				callerToken: "wrong-token",
-				customerEmail: "hacker@example.com",
-				productCode: "vantage-peers-self-host",
-				tier: "open-core-99-eur-yr",
-			}),
-		).rejects.toThrow("Forbidden");
+	test("2. generate is not on the public registration surface", async () => {
+		const reg = licensesModule.generate as unknown as {
+			isPublic?: boolean;
+			isInternal?: boolean;
+			exportArgs: () => string;
+		};
+		expect(reg.isPublic).toBeUndefined();
+		expect(reg.isInternal).toBe(true);
+		expect(reg.exportArgs()).not.toMatch(/callerToken/);
 	});
 });
 
@@ -93,9 +87,7 @@ describe("activate", () => {
 		t: ReturnType<typeof createTestConvex>,
 		overrides?: { expiresInDays?: number },
 	) {
-		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
-		return await t.mutation(api.licenses.generate, {
-			callerToken: MASTER_TOKEN,
+		return await t.mutation(internal.licenses.generate, {
 			customerEmail: "cedric@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
@@ -166,11 +158,9 @@ describe("validate", () => {
 
 	test("7. past-expiresAt key → returns status 'expired'", async () => {
 		const t = createTestConvex();
-		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
 
 		// Generate with expiresInDays=1 so it's active now
-		const { licenseKey } = await t.mutation(api.licenses.generate, {
-			callerToken: MASTER_TOKEN,
+		const { licenseKey } = await t.mutation(internal.licenses.generate, {
 			customerEmail: "cedric@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
@@ -194,9 +184,7 @@ describe("validate", () => {
 
 describe("requireActiveLicense", () => {
 	async function seedActiveLicense(t: ReturnType<typeof createTestConvex>) {
-		process.env.BEARER_SECRET_MASTER = MASTER_TOKEN;
-		return await t.mutation(api.licenses.generate, {
-			callerToken: MASTER_TOKEN,
+		return await t.mutation(internal.licenses.generate, {
 			customerEmail: "cedric@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",
@@ -229,8 +217,7 @@ describe("requireActiveLicense", () => {
 
 	test("8c. expired key (past expiresAt) → throws license error", async () => {
 		const t = createTestConvex();
-		const { licenseKey } = await t.mutation(api.licenses.generate, {
-			callerToken: MASTER_TOKEN,
+		const { licenseKey } = await t.mutation(internal.licenses.generate, {
 			customerEmail: "cedric@example.com",
 			productCode: "vantage-peers-self-host",
 			tier: "open-core-99-eur-yr",

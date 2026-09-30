@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 // Load all convex modules except RAG/search/backfill (same exclusion as tests.test.ts)
@@ -41,9 +41,10 @@ function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
 describe("oauth.seedDefaultProfiles", () => {
 	test("seeds master, marie-iris-rh, client-generic, public-readonly on first run", async () => {
 		const t = createTestConvex();
-		const summary = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		const summary = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 		// S3.4 B4: return shape now `{ inserted, updated, skipped }`.
 		// Catalog now contains 6 seed profiles (clio-iris-rh + helios-iris-rh added
 		// for Marie's Iris RH trio). All 4 original profiles must still be present.
@@ -59,12 +60,11 @@ describe("oauth.seedDefaultProfiles", () => {
 
 	test("is idempotent — second run creates nothing", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
-		const secondRun = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		const secondRun = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 		// S3.4 B4: idempotent re-run inserts nothing, updates nothing; all
 		// catalog profiles fall into `skipped`.
 		expect(secondRun.inserted).toEqual([]);
@@ -77,22 +77,18 @@ describe("oauth.seedDefaultProfiles", () => {
 		expect(skipped.length).toBeGreaterThanOrEqual(4);
 	});
 
-	test("rejects invalid master token", async () => {
+	test("refuses an anonymous caller", async () => {
 		const t = createTestConvex();
-		await expect(
-			t.mutation(api.oauth.seedDefaultProfiles, {
-				callerToken: "not-the-master",
-			}),
-		).rejects.toThrow(/Unauthorized/);
+		await expect(t.mutation(api.oauth.seedDefaultProfiles, {})).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
 	});
 });
 
 describe("oauth.getScopeProfile", () => {
 	test("returns the Marie scope profile after seeding", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
@@ -122,13 +118,10 @@ describe("oauth.getScopeProfile", () => {
 describe("oauth.createClient + listClients + deleteClient", () => {
 	test("admin creates a client and lists it", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
 		const clientId = "test-client-uuid";
-		await t.mutation(api.oauth.createClient, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createClient, {
 			clientId,
 			clientSecretHash: "a".repeat(64),
 			name: "marie-test",
@@ -136,9 +129,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			scopeProfile: "marie-iris-rh",
 		});
 
-		const rows = await t.query(api.oauth.listClients, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		const rows = await asServiceAccount(t).query(api.oauth.listClients, {});
 		expect(rows).toHaveLength(1);
 		expect(rows[0].clientId).toBe(clientId);
 		expect(rows[0].scopeProfile).toBe("marie-iris-rh");
@@ -147,8 +138,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 	test("rejects unknown scope_profile", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.mutation(api.oauth.createClient, {
-				callerToken: "test-master-token-deadbeef",
+			asServiceAccount(t).mutation(api.oauth.createClient, {
 				clientId: "x",
 				clientSecretHash: "a".repeat(64),
 				name: "x",
@@ -160,31 +150,25 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 
 	test("rejects duplicate clientId", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const args = {
-			callerToken: "test-master-token-deadbeef",
 			clientId: "dup",
 			clientSecretHash: "a".repeat(64),
 			name: "dup",
 			redirectUris: [],
 			scopeProfile: "client-generic",
 		};
-		await t.mutation(api.oauth.createClient, args);
-		await expect(t.mutation(api.oauth.createClient, args)).rejects.toThrow(
-			/clientId collision/,
-		);
+		await asServiceAccount(t).mutation(api.oauth.createClient, args);
+		await expect(
+			asServiceAccount(t).mutation(api.oauth.createClient, args),
+		).rejects.toThrow(/clientId collision/);
 	});
 
 	test("deleteClient revokes client + all its tokens", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const clientId = "client-for-delete";
-		await t.mutation(api.oauth.createClient, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createClient, {
 			clientId,
 			clientSecretHash: "a".repeat(64),
 			name: "delete-me",
@@ -193,8 +177,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 		});
 
 		// Seed an access token + refresh token against this client
-		await t.mutation(api.oauth.createAccessToken, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createAccessToken, {
 			tokenHash: "b".repeat(64),
 			clientId,
 			userId: "marie",
@@ -206,8 +189,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			expiresAt: Date.now() + 3600_000,
 			refreshTokenHash: "c".repeat(64),
 		});
-		await t.mutation(api.oauth.createRefreshToken, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createRefreshToken, {
 			tokenHash: "c".repeat(64),
 			clientId,
 			userId: "marie",
@@ -215,8 +197,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			expiresAt: Date.now() + 30 * 24 * 3600_000,
 		});
 
-		const result = await t.mutation(api.oauth.deleteClient, {
-			callerToken: "test-master-token-deadbeef",
+		const result = await asServiceAccount(t).mutation(api.oauth.deleteClient, {
 			clientId,
 		});
 		expect(result.revokedClient).toBe(true);
@@ -234,8 +215,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 describe("oauth.createAuthorizationCode + consumeAuthorizationCode", () => {
 	test("code is single-use (consume deletes row)", async () => {
 		const t = createTestConvex();
-		await t.mutation(api.oauth.createAuthorizationCode, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createAuthorizationCode, {
 			code: "auth-code-123",
 			clientId: "test-client",
 			redirectUri: "https://claude.ai/cb",
@@ -266,9 +246,7 @@ describe("oauth.registerPublicClient (DCR default-profile binding)", () => {
 		// An access_token minted off this client has fromAllowList=[] and
 		// namespaceWritePrefixes=[], so any write attempt fails scope checks.
 		const t = createTestConvex();
-		await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: "test-master-token-deadbeef",
-		});
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const clientId = "anon-dcr-client";
 		await t.mutation(api.oauth.registerPublicClient, {
 			clientId,
@@ -289,8 +267,7 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 	test("token round-trips with scope context", async () => {
 		const t = createTestConvex();
 		const tokenHash = "deadbeef".repeat(8); // 64 hex chars
-		await t.mutation(api.oauth.createAccessToken, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createAccessToken, {
 			tokenHash,
 			clientId: "marie-client",
 			userId: "marie",
@@ -308,11 +285,10 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 		expect(row?.fromAllowList).toEqual(["marie"]);
 	});
 
-	test("rejects createAccessToken without a valid callerToken (Blocker 1)", async () => {
+	test("rejects createAccessToken for an anonymous caller (Blocker 1)", async () => {
 		const t = createTestConvex();
 		await expect(
 			t.mutation(api.oauth.createAccessToken, {
-				callerToken: "attacker-guess",
 				tokenHash: "deadbeef".repeat(8),
 				clientId: "forged",
 				userId: "forged",
@@ -323,28 +299,26 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 				namespaceWritePrefixes: ["*"],
 				expiresAt: Date.now() + 3600_000,
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
-	test("rejects createRefreshToken without a valid callerToken (Blocker 1)", async () => {
+	test("rejects createRefreshToken for an anonymous caller (Blocker 1)", async () => {
 		const t = createTestConvex();
 		await expect(
 			t.mutation(api.oauth.createRefreshToken, {
-				callerToken: "attacker-guess",
 				tokenHash: "cafebabe".repeat(8),
 				clientId: "forged",
 				userId: "forged",
 				scopeProfile: "master",
 				expiresAt: Date.now() + 3600_000,
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
-	test("rejects createAuthorizationCode without a valid callerToken (Blocker 1)", async () => {
+	test("rejects createAuthorizationCode for an anonymous caller (Blocker 1)", async () => {
 		const t = createTestConvex();
 		await expect(
 			t.mutation(api.oauth.createAuthorizationCode, {
-				callerToken: "attacker-guess",
 				code: "forged-code",
 				clientId: "forged",
 				redirectUri: "https://evil.example/cb",
@@ -353,14 +327,13 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 				userId: "forged",
 				expiresAt: Date.now() + 600_000,
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("expired tokens are not returned", async () => {
 		const t = createTestConvex();
 		const tokenHash = "cafe".repeat(16); // 64 hex chars
-		await t.mutation(api.oauth.createAccessToken, {
-			callerToken: "test-master-token-deadbeef",
+		await asServiceAccount(t).mutation(api.oauth.createAccessToken, {
 			tokenHash,
 			clientId: "c",
 			userId: "u",
@@ -381,10 +354,9 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 	test("live client-generic token has empty fromAllowList; patch to prometheus fills it", async () => {
 		const t = createTestConvex();
 		const master = "test-master-token-deadbeef";
-		await t.mutation(api.oauth.seedDefaultProfiles, { callerToken: master });
+		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: master,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: {
 				profileId: "prometheus",
 				description:
@@ -396,8 +368,7 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 		});
 
 		const clientId = "prometheus-tdd-client";
-		await t.mutation(api.oauth.createClient, {
-			callerToken: master,
+		await asServiceAccount(t).mutation(api.oauth.createClient, {
 			clientId,
 			clientSecretHash: "a".repeat(64),
 			name: "prometheus-tdd",
@@ -406,8 +377,7 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 		});
 
 		const tokenHash = "abcd".repeat(16);
-		await t.mutation(api.oauth.createAccessToken, {
-			callerToken: master,
+		await asServiceAccount(t).mutation(api.oauth.createAccessToken, {
 			tokenHash,
 			clientId,
 			userId: "prometheus",
@@ -423,27 +393,31 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 		expect(before).not.toBeNull();
 		expect(before?.fromAllowList.length).toBe(0);
 
-		await t.mutation(api.oauth.patchClientScopeAndRefreshTokens, {
-			callerToken: master,
-			clientId,
-			newScopeProfile: "prometheus",
-			reason: "TDD: retarget live client-generic token onto prometheus profile",
-		});
+		await asServiceAccount(t).mutation(
+			api.oauth.patchClientScopeAndRefreshTokens,
+			{
+				clientId,
+				newScopeProfile: "prometheus",
+				reason:
+					"TDD: retarget live client-generic token onto prometheus profile",
+			},
+		);
 
-		const patched = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		const patched = await t.query(api.oauth.getAccessTokenByHash, {
+			tokenHash,
+		});
 		expect(patched?.fromAllowList).toContain("prometheus");
 		expect(patched?.scopeProfile).toBe("prometheus");
 	});
 
-	test("garbage callerToken is Unauthorized", async () => {
+	test("an anonymous caller is refused (RBAC_DENIED)", async () => {
 		const t = createTestConvex();
 		await expect(
 			t.mutation(api.oauth.patchClientScopeAndRefreshTokens, {
-				callerToken: "garbage-not-master",
 				clientId: "any-client",
 				newScopeProfile: "prometheus",
-				reason: "TDD negative path: garbage callerToken must be rejected",
+				reason: "TDD negative path: an anonymous caller must be rejected",
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });

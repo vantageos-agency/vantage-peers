@@ -9,12 +9,15 @@
  * provisioning endpoint and must be transmitted to the client out-of-band.
  *
  * Admin-only mutations (createClient, deleteClient, listClients, seed*)
- * require the caller to present the master bearer token, validated against
- * process.env.BEARER_SECRET_MASTER via constant-time comparison.
+ * require the caller to be the recognised service account (the MCP server's
+ * own Clerk user, matched by id inside `withOrgScope`); see
+ * `requireServiceAccount`. No secret is carried in a request argument.
+ * `provisionOrganization` alone still accepts an OPTIONAL master token, and its
+ * absent-token branch is an organisation-admin identity check.
  */
 
 import { ConvexError, v } from "convex/values";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
 	internalMutation,
 	internalQuery,
@@ -65,6 +68,70 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared auth helper — service-account identity gate for the OAuth admin and
+// token-minting registrations
+//
+// Ten public registrations in this module (seedDefaultProfiles, createClient,
+// listClients, deleteClient, patchClientScopeAndRefreshTokens,
+// revokeAccessTokensOnly, createAuthorizationCode, createAccessToken,
+// createRefreshToken, patchScopeProfileEmergency) used to authorise their
+// caller by a shared secret carried in the request body. They now authorise by
+// IDENTITY: the caller must resolve, through `withOrgScope`, to the recognised
+// service account -- the MCP server's own Clerk user, matched by the by-id
+// grant on CLERK_SERVICE_ACCOUNT_USER_ID (never inferred from the mere absence
+// of an organisation). `withOrgScope` is called WITHOUT `allowNoIdentityMaster`,
+// so an anonymous caller resolves to no scope at all and is refused here.
+//
+// The registrations stay PUBLIC on purpose: the MCP server reaches Convex
+// through a ConvexHttpClient carrying a service-account JWT, which cannot call
+// an `internal.*` function. The refusal, not the registration kind, is what
+// keeps every other caller out.
+//
+// Returns the SHA-256 hex of the verified caller's identity, for the audit
+// rows that record an actor (`actorTokenHash`). Nothing secret is hashed: the
+// caller's user id is an identifier, and the raw value is never stored.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function refuseNonServiceAccount(
+	registration: string,
+	orgSlug: string | null,
+	reason: string,
+): ConvexError<string> {
+	return new ConvexError(
+		`RBAC_DENIED: "${registration}" admits the fleet service account only — ${JSON.stringify(
+			{ registration, orgSlug, reason },
+		)}`,
+	);
+}
+
+async function requireServiceAccount(
+	ctx: QueryCtx | MutationCtx,
+	registration: string,
+): Promise<string> {
+	let scope: Awaited<ReturnType<typeof withOrgScope>>;
+	try {
+		scope = await withOrgScope(ctx);
+	} catch (err: unknown) {
+		// withOrgScope refuses a signed-in caller with no organisation, or with an
+		// unmapped one, by raising. Re-raise it naming THIS door, so a reader can
+		// tell which registration refused it; anything that is not a refusal
+		// (an infrastructure failure) is not swallowed.
+		if (err instanceof ConvexError) {
+			throw refuseNonServiceAccount(registration, null, "unresolved-caller");
+		}
+		throw err;
+	}
+	if (!scope.isMaster) {
+		throw refuseNonServiceAccount(
+			registration,
+			scope.orgSlug,
+			scope.anonymous ? "no-credential" : "not-service-account",
+		);
+	}
+	return await sha256Hex(`identity:${scope.userId}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scope profile shape
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -79,7 +146,7 @@ const scopeProfileShape = v.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// seedDefaultProfiles — admin only, idempotent, UPSERT semantics
+// seedDefaultProfiles — service account only, idempotent, UPSERT semantics
 // S3.4 B4 (catalog-SSOT doctrine): when a persisted row drifts from the
 // catalog seed (description / fromAllowList / namespaceReadPrefixes /
 // namespaceWritePrefixes), patch the differing fields in-place and write an
@@ -93,19 +160,21 @@ const scopeProfileShape = v.object({
 // shown in `convex/migrations/patch_marie_iris_rh_scope.ts`.
 //
 // Return shape: `{ inserted, updated, skipped }` arrays of profileId strings.
-// Master preserves full-access semantics of the BEARER_SECRET_MASTER path.
+// The service account preserves the full-access semantics of the former master path.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const seedDefaultProfiles = mutation({
-	args: { callerToken: v.string() },
+	args: {},
 	returns: v.object({
 		inserted: v.array(v.string()),
 		updated: v.array(v.string()),
 		skipped: v.array(v.string()),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		const actorTokenHash = await requireServiceAccount(
+			ctx,
+			"oauth:seedDefaultProfiles",
+		);
 
 		// SCOPE NOTICE (PR #1120): `profileId` / `fromAllowList` /
 		// `namespaceReadPrefixes` / `namespaceWritePrefixes` below carry the
@@ -275,16 +344,6 @@ export const seedDefaultProfiles = mutation({
 			return true;
 		};
 
-		// actorTokenHash is computed lazily (only when we know we'll write an
-		// audit row) so the no-op idempotent path stays a pure read.
-		let actorTokenHashCache: string | null = null;
-		const getActorTokenHash = async (): Promise<string> => {
-			if (actorTokenHashCache === null) {
-				actorTokenHashCache = await sha256Hex(args.callerToken);
-			}
-			return actorTokenHashCache;
-		};
-
 		for (const p of defaults) {
 			const existing = await ctx.db
 				.query("oauth_scope_profiles")
@@ -361,7 +420,7 @@ export const seedDefaultProfiles = mutation({
 			};
 			await ctx.db.insert("oauth_audit_log", {
 				eventType: "seed_upsert",
-				actorTokenHash: await getActorTokenHash(),
+				actorTokenHash,
 				targetProfileId: p.profileId,
 				previousState,
 				newState,
@@ -387,7 +446,8 @@ export const seedDefaultProfiles = mutation({
 // touches the single targeted row.
 //
 // Contract:
-//   - Master-gated: requireMasterAuth runs FIRST, before any DB access.
+//   - Internal: registered with internalMutation, unreachable from the public
+//     API. The audit actor is a fixed label (no caller credential exists).
 //   - Present  → ctx.db.patch(existing._id, { ...profile, updatedAt: now }),
 //     preserving createdAt + _creationTime. Returns "updated".
 //   - Absent   → ctx.db.insert(..., { ...profile, createdAt: now, updatedAt: now }).
@@ -396,16 +456,13 @@ export const seedDefaultProfiles = mutation({
 //     capturing before/after state, mirroring seedDefaultProfiles' discipline.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const upsertScopeProfile = mutation({
-	args: { callerToken: v.string(), profile: scopeProfileShape },
+export const upsertScopeProfile = internalMutation({
+	args: { profile: scopeProfileShape },
 	returns: v.union(v.literal("inserted"), v.literal("updated")),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
 		const { profile } = args;
 		const now = Date.now();
-		const actorTokenHash = await sha256Hex(args.callerToken);
+		const actorTokenHash = await sha256Hex("internal:oauth:upsertScopeProfile");
 
 		const existing = await ctx.db
 			.query("oauth_scope_profiles")
@@ -548,10 +605,8 @@ const clientPublicShape = v.object({
 	revokedAt: v.optional(v.number()),
 });
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createClient = mutation({
 	args: {
-		callerToken: v.string(),
 		clientId: v.string(),
 		clientSecretHash: v.string(),
 		name: v.string(),
@@ -561,7 +616,7 @@ export const createClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:createClient");
 
 		// Profile must exist
 		const profile = await ctx.db
@@ -1400,12 +1455,11 @@ export const listSeatClientIds = internalQuery({
 });
 
 // returns-projection: security — clientSecretHash is never returned to any caller (secret hash, not for display); tokenEndpointAuthMethod is admin-console metadata omitted from this public listing shape
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const listClients = query({
-	args: { callerToken: v.string() },
+	args: {},
 	returns: v.array(clientPublicShape),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:listClients");
 		const rows = await ctx.db.query("oauth_clients").order("desc").collect();
 		return rows.map((r) => ({
 			_id: r._id,
@@ -1419,16 +1473,15 @@ export const listClients = query({
 	},
 });
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const deleteClient = mutation({
-	args: { callerToken: v.string(), clientId: v.string() },
+	args: { clientId: v.string() },
 	returns: v.object({
 		revokedClient: v.boolean(),
 		revokedTokens: v.number(),
 		revokedRefresh: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:deleteClient");
 		const client = await ctx.db
 			.query("oauth_clients")
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
@@ -1494,12 +1547,10 @@ export const deleteClient = mutation({
 //   5. Append an `oauth_audit_log` row capturing the rename for forensic
 //      traceability (eventType="patch_client_scope").
 //
-// Master-gated. Idempotent on identical profile.
+// Service-account gated. Idempotent on identical profile.
 // ─────────────────────────────────────────────────────────────────────────────
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const patchClientScopeAndRefreshTokens = mutation({
 	args: {
-		callerToken: v.string(),
 		clientId: v.string(),
 		newScopeProfile: v.string(),
 		reason: v.string(),
@@ -1513,7 +1564,10 @@ export const patchClientScopeAndRefreshTokens = mutation({
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		const actorTokenHash = await requireServiceAccount(
+			ctx,
+			"oauth:patchClientScopeAndRefreshTokens",
+		);
 
 		if (args.reason.length < 20) {
 			throw new Error(
@@ -1586,7 +1640,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 
 		const auditLogId = await ctx.db.insert("oauth_audit_log", {
 			eventType: "patch_client_scope",
-			actorTokenHash: await sha256Hex(args.callerToken),
+			actorTokenHash,
 			targetProfileId: args.newScopeProfile,
 			previousState: {
 				profileId: previousScopeProfile,
@@ -1635,12 +1689,10 @@ export const patchClientScopeAndRefreshTokens = mutation({
 // credentials (the refresh token stays alive). This mutation is the
 // minimum-friction force-rotate.
 //
-// Master-gated. Returns the number of access tokens revoked.
+// Service-account gated. Returns the number of access tokens revoked.
 // ─────────────────────────────────────────────────────────────────────────────
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const revokeAccessTokensOnly = mutation({
 	args: {
-		callerToken: v.string(),
 		clientId: v.string(),
 		reason: v.string(),
 	},
@@ -1650,7 +1702,7 @@ export const revokeAccessTokensOnly = mutation({
 		refreshTokensPreserved: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:revokeAccessTokensOnly");
 
 		if (args.reason.length < 20) {
 			throw new Error(
@@ -1700,13 +1752,11 @@ export const revokeAccessTokensOnly = mutation({
 // AUTHORIZATION CODES
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Gated by master token — only the HTTP server (which knows BEARER_SECRET_MASTER)
-// may mint authorization codes. Closes the pre-Day-47 hole where any caller with
+// Gated by identity — only the HTTP server (which carries the service-account identity)
+// may mint authorization codes. Closes the earlier hole where any caller with
 // Convex HTTP access could forge a code row and chain it into a scoped token.
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createAuthorizationCode = mutation({
 	args: {
-		callerToken: v.string(),
 		code: v.string(),
 		clientId: v.string(),
 		redirectUri: v.string(),
@@ -1717,7 +1767,7 @@ export const createAuthorizationCode = mutation({
 	},
 	returns: v.id("oauth_authorization_codes"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:createAuthorizationCode");
 		return await ctx.db.insert("oauth_authorization_codes", {
 			code: args.code,
 			clientId: args.clientId,
@@ -1771,13 +1821,11 @@ export const consumeAuthorizationCode = mutation({
 // ACCESS TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Gated by master token — only the HTTP server may issue access tokens. Without
+// Gated by identity — only the HTTP server may issue access tokens. Without
 // this gate an attacker with Convex HTTP access could insert a row granting
 // master-scope access and present the raw bearer to the MCP server.
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const createAccessToken = mutation({
 	args: {
-		callerToken: v.string(),
 		tokenHash: v.string(),
 		clientId: v.string(),
 		userId: v.string(),
@@ -1792,7 +1840,7 @@ export const createAccessToken = mutation({
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:createAccessToken");
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -1881,11 +1929,9 @@ export const getAccessTokenByHash = query({
 // REFRESH TOKENS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Gated by master token — only the HTTP server may issue refresh tokens.
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
+// Gated by identity — only the HTTP server may issue refresh tokens.
 export const createRefreshToken = mutation({
 	args: {
-		callerToken: v.string(),
 		tokenHash: v.string(),
 		clientId: v.string(),
 		userId: v.string(),
@@ -1894,7 +1940,7 @@ export const createRefreshToken = mutation({
 	},
 	returns: v.id("oauth_refresh_tokens"),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+		await requireServiceAccount(ctx, "oauth:createRefreshToken");
 		return await ctx.db.insert("oauth_refresh_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -1967,7 +2013,7 @@ async function sha256Hex(input: string): Promise<string> {
 //
 // Emergency mutation for administrative scope profile remediation.
 // Security properties:
-//   - Master token guard (constant-time, same timingSafeEqual as createClient)
+//   - Service-account identity guard (same requireServiceAccount as createClient)
 //   - reason ≥ 40 chars required (audit trail hygiene)
 //   - D4 enforcement: `global` and `*` forbidden in read/write prefixes unless
 //     the target profileId is "master" (after optional rename applied)
@@ -1979,10 +2025,8 @@ async function sha256Hex(input: string): Promise<string> {
 // renamed per D9 workspace-level naming (see patch_marie_iris_rh_scope.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
 export const patchScopeProfileEmergency = mutation({
 	args: {
-		callerToken: v.string(),
 		profileId: v.string(),
 		rename: v.optional(v.string()),
 		fromAllowList: v.optional(v.array(v.string())),
@@ -1998,8 +2042,11 @@ export const patchScopeProfileEmergency = mutation({
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
-		// ── Master token guard (constant-time) ────────────────────────────────
-		await requireMasterAuth(args.callerToken);
+		// ── Service-account identity guard ────────────────────────────────────
+		const actorTokenHash = await requireServiceAccount(
+			ctx,
+			"oauth:patchScopeProfileEmergency",
+		);
 
 		// ── Reason length guard ───────────────────────────────────────────────
 		if (args.reason.length < 40) {
@@ -2135,7 +2182,6 @@ export const patchScopeProfileEmergency = mutation({
 		};
 
 		// ── Append audit log ──────────────────────────────────────────────────
-		const actorTokenHash = await sha256Hex(args.callerToken);
 		const auditLogId = await ctx.db.insert("oauth_audit_log", {
 			eventType: "scope_profile_emergency_patch",
 			actorTokenHash,
@@ -2162,7 +2208,7 @@ export const patchScopeProfileEmergency = mutation({
 //
 // Creates 3 scope_profiles for the alpha/beta/gamma test orchestrator trio.
 // IDEMPOTENT: skips any profile that already exists by profileId.
-// Master-gated. Each profile grants symmetric read access to all 3 orchestrator
+// Internal-only. Each profile grants symmetric read access to all 3 orchestrator
 // namespaces + project/mcp-test, and write access scoped to its own namespace.
 //
 // Profiles:
@@ -2173,16 +2219,13 @@ export const patchScopeProfileEmergency = mutation({
 // fromAllowList includes all case variants of Alpha, Beta, Gamma for robustness.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const seedTestTenantTrio = mutation({
-	args: { callerToken: v.string() },
+export const seedTestTenantTrio = internalMutation({
+	args: {},
 	returns: v.object({
 		inserted: v.array(v.string()),
 		skipped: v.array(v.string()),
 	}),
-	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
+	handler: async (ctx) => {
 		const trioReadPrefixes = [
 			"orchestrator/Alpha",
 			"orchestrator/alpha",
@@ -2247,7 +2290,7 @@ export const seedTestTenantTrio = mutation({
 		const inserted: string[] = [];
 		const skipped: string[] = [];
 		const now = Date.now();
-		const actorTokenHash = await sha256Hex(args.callerToken);
+		const actorTokenHash = await sha256Hex("internal:oauth:seedTestTenantTrio");
 
 		for (const p of profiles) {
 			const existing = await ctx.db
@@ -2307,12 +2350,11 @@ export const seedTestTenantTrio = mutation({
 // Returns: array of { name, clientId, clientSecret | null } — clientSecret is
 // the raw secret for newly created clients, null for already-existing ones.
 // The caller MUST persist clientSecret before this call returns.
-// Master-gated.
+// Internal-only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const createTestTenantTrioClients = mutation({
-	args: { callerToken: v.string() },
+export const createTestTenantTrioClients = internalMutation({
+	args: {},
 	returns: v.array(
 		v.object({
 			name: v.string(),
@@ -2322,9 +2364,7 @@ export const createTestTenantTrioClients = mutation({
 			existed: v.boolean(),
 		}),
 	),
-	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
+	handler: async (ctx) => {
 		const clientDefs = [
 			{
 				name: "alpha-test-client",
@@ -2413,15 +2453,13 @@ export const createTestTenantTrioClients = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// listScopeProfiles — admin query (master-gated) to enumerate all profiles
+// listScopeProfiles — internal query to enumerate all profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const listScopeProfiles = query({
-	args: { callerToken: v.string() },
+export const listScopeProfiles = internalQuery({
+	args: {},
 	returns: v.array(scopeProfileShape),
-	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+	handler: async (ctx) => {
 		const rows = await ctx.db
 			.query("oauth_scope_profiles")
 			.order("asc")
@@ -2495,8 +2533,7 @@ export const countClientGlobalUsage = internalQuery({
 			fromAllowList: profile.fromAllowList,
 			globalMemoriesByClient,
 			globalMemoriesInspected,
-			note:
-				"Only `memories` is namespaced in this schema (verified against convex/schema.ts): `messages` has no `namespace` field and there is no `documents` table, so this count covers memories only.",
+			note: "Only `memories` is namespaced in this schema (verified against convex/schema.ts): `messages` has no `namespace` field and there is no `documents` table, so this count covers memories only.",
 		};
 	},
 });

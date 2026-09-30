@@ -3,7 +3,7 @@
  *
  * Security model:
  *   - Raw license keys are NEVER stored. Only SHA-256 hex hashes persist.
- *   - generate() is gated behind BEARER_SECRET_MASTER (timing-safe comparison).
+ *   - generate() is an internal mutation: not reachable from the public API.
  *   - activate() validates key hash + email match + status + expiry.
  *   - validate() is read-only and never throws — returns "unknown" for bad keys.
  *
@@ -27,31 +27,6 @@ async function sha256Hex(input: string): Promise<string> {
 	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Constant-time string comparison to prevent timing attacks. */
-async function timingSafeEqual(a: string, b: string): Promise<boolean> {
-	const encoder = new TextEncoder();
-	const aBytes = encoder.encode(a);
-	const bBytes = encoder.encode(b);
-	if (aBytes.length !== bBytes.length) {
-		// Always run the HMAC to consume constant time.
-		const dummy = new Uint8Array(aBytes.length);
-		const aKey = await crypto.subtle.importKey(
-			"raw",
-			aBytes,
-			{ name: "HMAC", hash: "SHA-256" },
-			false,
-			["sign"],
-		);
-		await crypto.subtle.sign("HMAC", aKey, dummy);
-		return false;
-	}
-	let diff = 0;
-	for (let i = 0; i < aBytes.length; i++) {
-		diff |= aBytes[i] ^ bBytes[i];
-	}
-	return diff === 0;
-}
-
 /**
  * Generate a cryptographically random license key.
  * Uses crypto.getRandomValues (CSPRNG) — never Math.random.
@@ -65,26 +40,12 @@ function generateRawKey(): string {
 	return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** Assert the caller holds the BEARER_SECRET_MASTER token. */
-async function requireMasterAuth(callerToken: string): Promise<void> {
-	const masterToken = process.env.BEARER_SECRET_MASTER;
-	if (!masterToken) {
-		throw new Error("Server misconfiguration: BEARER_SECRET_MASTER not set");
-	}
-	const valid = await timingSafeEqual(callerToken, masterToken);
-	if (!valid) {
-		throw new Error("Forbidden");
-	}
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // generate — admin-only: create and return a new license key
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const generate = mutation({
+export const generate = internalMutation({
 	args: {
-		callerToken: v.string(), // must match BEARER_SECRET_MASTER
 		customerEmail: v.string(),
 		customerName: v.optional(v.string()),
 		productCode: v.string(),
@@ -100,8 +61,6 @@ export const generate = mutation({
 		expiresAt: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
 		const rawKey = generateRawKey();
 		const keyHash = await sha256Hex(rawKey);
 

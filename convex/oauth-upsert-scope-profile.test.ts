@@ -1,14 +1,14 @@
 /// <reference types="vite/client" />
 /**
- * oauth:upsertScopeProfile — generic, idempotent, master-gated keyed upsert.
+ * oauth:upsertScopeProfile — generic, idempotent, internal keyed upsert.
  *
  * Replaces a risky `convex import --append` provisioning path (append can
  * silently replace the whole table); a keyed upsert cannot wipe siblings.
  *
  * Contract:
- *   - args: { callerToken: string, profile: scopeProfileShape }
+ *   - args: { profile: scopeProfileShape }
  *   - returns: "inserted" | "updated"
- *   - requireMasterAuth FIRST — a non-master token throws before any DB access.
+ *   - Internal registration: absent from the public API surface.
  *   - Lookup by `by_profileId`. Present → patch, preserve createdAt, RETURN
  *     "updated". Absent → insert, RETURN "inserted".
  *   - Writes an oauth_audit_log row (eventType="scope_profile_upsert") with
@@ -16,7 +16,8 @@
  */
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { internal } from "./_generated/api";
+import * as oauthModule from "./oauth";
 import schema from "./schema";
 
 const modules = Object.fromEntries(
@@ -28,15 +29,11 @@ const modules = Object.fromEntries(
 	),
 );
 
-const MASTER_TOKEN = "test-master-token-deadbeef";
-
 beforeEach(() => {
 	vi.useFakeTimers();
-	vi.stubEnv("BEARER_SECRET_MASTER", MASTER_TOKEN);
 });
 afterEach(() => {
 	vi.useRealTimers();
-	vi.unstubAllEnvs();
 });
 
 function createTestConvex() {
@@ -55,8 +52,7 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 	test("T1: inserts when absent → returns 'inserted'; row present; createdAt == updatedAt", async () => {
 		const t = createTestConvex();
 
-		const result = await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		const result = await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: testProfile,
 		});
 
@@ -82,8 +78,7 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 		// Pin an initial time so the subsequent advance is unambiguous.
 		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: testProfile,
 		});
 
@@ -108,8 +103,7 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 			],
 		};
 
-		const result = await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		const result = await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: updatedProfile,
 		});
 
@@ -135,13 +129,11 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 	test("T3: idempotent — same input twice; second call 'updated'; total row count unchanged (no duplicate)", async () => {
 		const t = createTestConvex();
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: testProfile,
 		});
 
-		const second = await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		const second = await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: testProfile,
 		});
 
@@ -159,20 +151,15 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 		expect(rows.length).toBe(1);
 	});
 
-	test("T4: master-gate — non-master callerToken throws; no row written", async () => {
-		const t = createTestConvex();
-
-		await expect(
-			t.mutation(api.oauth.upsertScopeProfile, {
-				callerToken: "not-the-master",
-				profile: testProfile,
-			}),
-		).rejects.toThrow(/Unauthorized/);
-
-		const rows = await t.run(async (ctx) => {
-			return await ctx.db.query("oauth_scope_profiles").collect();
-		});
-		expect(rows.length).toBe(0);
+	test("T4: registration surface — internal, no callerToken argument", async () => {
+		const reg = oauthModule.upsertScopeProfile as unknown as {
+			isPublic?: boolean;
+			isInternal?: boolean;
+			exportArgs: () => string;
+		};
+		expect(reg.isPublic).toBeUndefined();
+		expect(reg.isInternal).toBe(true);
+		expect(reg.exportArgs()).not.toMatch(/callerToken/);
 	});
 
 	test("T5: sibling-safety — with 2 pre-seeded profiles, upserting a 3rd leaves the first 2 byte-identical", async () => {
@@ -193,12 +180,10 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 			namespaceWritePrefixes: ["project/two"],
 		};
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: sibling1,
 		});
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: sibling2,
 		});
 
@@ -215,8 +200,7 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 			};
 		});
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: testProfile,
 		});
 
@@ -240,8 +224,7 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 	test("T6: writes oauth_audit_log entry with eventType 'scope_profile_upsert' + before/after", async () => {
 		const t = createTestConvex();
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: testProfile,
 		});
 
@@ -249,8 +232,7 @@ describe("oauth:upsertScopeProfile — generic keyed upsert", () => {
 			...testProfile,
 			description: "Revised description.",
 		};
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: MASTER_TOKEN,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: updatedProfile,
 		});
 

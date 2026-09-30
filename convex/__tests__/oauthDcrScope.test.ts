@@ -229,9 +229,12 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 		});
 		await registerClient(t, "client-service-lookup", "client-generic");
 
-		const result = await asServiceAccount(t).query(api.oauth.getClientByClientId, {
-			clientId: "client-service-lookup",
-		});
+		const result = await asServiceAccount(t).query(
+			api.oauth.getClientByClientId,
+			{
+				clientId: "client-service-lookup",
+			},
+		);
 		expect(result).not.toBeNull();
 		expect(result?.scopeProfile).toBe("client-generic");
 	});
@@ -298,9 +301,10 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 			registerClient(t, "client-pre-reseed", "client-generic"),
 		).rejects.toThrow(/ScopeViolation|self-registrable|not flagged/i);
 
-		const seedResult = await t.mutation(api.oauth.seedDefaultProfiles, {
-			callerToken: MASTER_TOKEN,
-		});
+		const seedResult = await asServiceAccount(t).mutation(
+			api.oauth.seedDefaultProfiles,
+			{},
+		);
 		expect(seedResult.updated).toContain("client-generic");
 
 		// getScopeProfile's public projection omits selfRegistrable (it is an
@@ -314,11 +318,7 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 		});
 		expect(patched?.selfRegistrable).toBe(true);
 
-		const id = await registerClient(
-			t,
-			"client-post-reseed",
-			"client-generic",
-		);
+		const id = await registerClient(t, "client-post-reseed", "client-generic");
 		expect(id).toBeTruthy();
 	});
 });
