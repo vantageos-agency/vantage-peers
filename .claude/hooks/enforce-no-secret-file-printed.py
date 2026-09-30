@@ -46,6 +46,7 @@ line in the audit log, which is the whole difference from what happened.
 import json
 import os
 import re
+import shlex
 import sys
 
 AUDIT_LOG = "/tmp/secret-file-print.log"
@@ -55,11 +56,11 @@ AUDIT_LOG = "/tmp/secret-file-print.log"
 # they carry names with placeholder values and are meant to be read.
 SECRET_FILE_RE = re.compile(
     r"""(?x)
-    (?:^|[\s"'=/])                      # start, separator, or path boundary
+    (?:^|[\s"'=/<>])                      # start, separator, or path boundary
     (?P<path>
         [^\s"';|&<>]*                   # optional directory part
         (?:
-            \.env(?:\.[A-Za-z0-9_-]+)?  # .env, .env.local, .env.production
+            \.env(?:\.[A-Za-z0-9_-]+)*  # .env, .env.local, .env.production.local, .env.local.bak
           | id_[rd]sa                   # ssh private keys
           | \.pem
           | auth\.json                  # vercel / npm credential stores
@@ -138,41 +139,131 @@ def secret_paths(command: str):
     return found
 
 
-def sourcing_only(segment: str) -> bool:
-    """`. ./.env.local` and `source .env` read the file into the shell and
-    print nothing. This is the legitimate use and it must stay cheap.
+def _tokens(segment: str):
+    """Shell-ish tokens. `cat<.env.local` has no space, so redirections are
+    separated first — eta found that exact bypass: `<` was not a boundary."""
+    spaced = re.sub(r"([<>])", r" \1 ", segment)
+    try:
+        return shlex.split(spaced)
+    except ValueError:
+        return spaced.split()
 
-    The dot must be the segment's FIRST word. Anchoring it anywhere was
-    measured wrong on `jq . credentials.json`, where the `.` is jq's filter
-    argument: the guard read it as a source command and let a credential file
-    through. A pattern that turns another command's ARGUMENT into a licence is
-    the shape this whole file exists to refuse."""
-    return bool(re.match(r"\s*(?:source|\.)\s+\S", segment))
+
+def _pattern_stops_at_equals(pattern: str) -> bool:
+    """Can this grep pattern match PAST the `=`?
+
+    THE PROPERTY, not the spelling. Pi's correction at dc72c16c: the previous
+    version hand-typed a character class with no `0-9` and no room for a
+    literal fragment, so it refused
+        grep -oE '^[A-Z0-9_]*CONVEX[A-Z0-9_]*=' .env.local
+    which is the command `.claude/rules/per-project-env-names.md` PRESCRIBES to
+    every station. A guard that refuses the fleet's own credential check is the
+    guard that gets torn out this week, and then it protects nothing.
+
+    That was a mono-formulation matcher written inside the fix for a
+    mono-formulation matcher — one layer down, same disease. So the question is
+    no longer how the pattern is spelled but whether anything follows the last
+    `=`. Nothing after it, and no match can contain a value."""
+    if "=" not in pattern:
+        return False
+    tail = pattern.rsplit("=", 1)[1]
+    return tail == ""
+
+
+def _grep_is_safe(tokens) -> bool:
+    """A grep over a secrets file prints no value in exactly two cases."""
+    long_flags = [t for t in tokens if t.startswith("--")]
+    # SHORT flags only. Joining the long ones in too made `--only-matching`
+    # match the count-only pattern on the `c` of "matching" — a flag NAME's
+    # letters read as flag LETTERS, which is the same argument-as-licence
+    # mistake one more level down. Pi's `--only-matching 'KEY=.*'` found it.
+    flags = "".join(t for t in tokens if t.startswith("-") and not t.startswith("--"))
+    # -c, -l, -L, -q are UNCONDITIONAL: a count, a filename, or nothing. The
+    # pattern cannot matter because no byte of the file reaches stdout.
+    if re.search(r"-[A-Za-z]*[clLq]", flags) or any(
+        f in ("--count", "--files-with-matches", "--files-without-match", "--quiet", "--silent")
+        for f in long_flags
+    ):
+        return True
+    # -o bounds the OUTPUT to the match, never the MATCH to a name. So it is
+    # safe only when the PATTERN itself cannot reach past the `=`.
+    has_o = bool(re.search(r"-[A-Za-z]*o", flags)) or "--only-matching" in long_flags
+    if not has_o:
+        return False
+    for t in tokens[1:]:
+        if t.startswith("-"):
+            continue
+        if secret_paths(t):
+            continue
+        return _pattern_stops_at_equals(t)
+    return False
+
+
+def _sed_is_redacting(tokens) -> bool:
+    """A sed over a secrets file is safe only when its SCRIPT replaces
+    everything after the first `=`. Eta's bypass at dc72c16c: `sed -n p`
+    prints, and the docstring claimed any non-redacting sed was caught while
+    the code only looked for a redaction ANYWHERE in the segment."""
+    for t in tokens[1:]:
+        if t.startswith("-") or secret_paths(t):
+            continue
+        return bool(REDACTING_SED_RE.search(t))
+    return False
 
 
 def prints_contents(command: str) -> bool:
-    """Does any segment of this command put the file's contents on stdout?
+    """Does any segment put a secrets file's contents on stdout?
 
-    Judged per SEGMENT rather than on the whole line, because a command may
-    legitimately source the file and then run something else entirely."""
+    JUDGED ON THE VERB WHOSE OPERAND IS THE SECRETS PATH — eta's correction,
+    and it closes a whole family at once. The previous version judged the
+    SEGMENT, so anything appearing anywhere in it could vouch for anything
+    else: `cat .env.local # grep -c` passed because a safe grep form was
+    present in the text. That is the argument-as-licence class for the third
+    time in this file, which is why the predicate is now structural rather
+    than another pattern.
+
+    Two further things a verb cannot see, handled beside it:
+      - `set -a; . ./.env.local; env` — sourcing is safe and `env` is not;
+        the value never passes through a file operand, it passes through the
+        environment. Eta found it, and it is the shape our own advice creates.
+      - a redirection with no space, `cat<.env.local`, tokenised above."""
     for segment in re.split(r"[;&|]+|\n", command):
         if not secret_paths(segment):
+            # `env` / `printenv` after a source in an EARLIER segment prints
+            # everything that source loaded. Judged across the command, since
+            # by construction the path is not in this segment.
+            if re.match(r"\s*(?:env|printenv)\b\s*$", segment) and any(
+                re.match(r"\s*(?:source|\.)\s+\S", s) and secret_paths(s)
+                for s in re.split(r"[;&|]+|\n", command)
+            ):
+                return True
             continue
-        if sourcing_only(segment):
+
+        tokens = _tokens(segment)
+        if not tokens:
             continue
-        if re.search(r"\bsed\b", segment) and REDACTING_SED_RE.search(segment):
+        verb = os.path.basename(tokens[0])
+
+        if verb in ("source", ".") or (verb == "set" and "." in tokens):
             continue
-        if re.search(r"\bgrep\b", segment):
-            if grep_is_safe(segment):
+        if verb == "grep":
+            if _grep_is_safe(tokens):
                 continue
             return True
-        # `test -f`, `ls`, `stat`, `wc`, `sha256sum`, `md5sum` report ABOUT the
-        # file without revealing what is in it.
-        if re.search(r"\b(?:test|ls|stat|wc|sha256sum|md5sum|find|rm|cp|mv|chmod|chown|touch)\b", segment):
-            if not re.search(r"\b(?:%s)\b" % "|".join(PRINTERS), segment):
+        if verb in ("sed", "perl"):
+            if _sed_is_redacting(tokens):
                 continue
-        if re.search(r"\b(?:%s)\b" % "|".join(PRINTERS), segment):
             return True
+        if verb in PRINTERS:
+            return True
+        # A verb that reports ABOUT the file without revealing its contents.
+        if verb in ("test", "[", "ls", "stat", "wc", "sha256sum", "md5sum",
+                    "find", "rm", "cp", "mv", "chmod", "chown", "touch", "git"):
+            continue
+        # An UNKNOWN verb holding a secrets path as an operand is refused. A
+        # guard that fails open on what it does not recognise is a guard that
+        # can be walked past by naming any tool it has never heard of.
+        return True
     return False
 
 

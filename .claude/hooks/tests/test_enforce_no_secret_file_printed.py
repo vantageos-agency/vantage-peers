@@ -190,3 +190,74 @@ def test_count_only_flags_are_safe_whatever_the_pattern_is():
     file reaches stdout, so the pattern cannot matter — unlike -o."""
     assert run("grep -c 'KEY=.*' .env.local") == 0
     assert run("grep -q '.*' .env.local") == 0
+
+
+# ── THE VERDICTS OF ETA AND PI AT dc72c16c ───────────────────────────────────
+# Two reviewers, six bypasses and one FALSE POSITIVE, all on a guard whose
+# author had already fixed this same class twice. The legitimate pole below is
+# taken from the fleet's own doctrine rather than from the matcher's author —
+# that is what missed pi's finding: a corpus whose MUST_PASS is written by the
+# matcher's author only tests that the matcher understands itself.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -n p .env.local",                     # a non-redacting sed prints
+        "cat .env.local # grep -c",                # argument-as-licence, third instance
+        "cat .env.local --x s/a=.*/b/ sed",        # the same, dressed differently
+        "cat .env.production.local",               # the matcher took only ONE suffix
+        "cat .env.local.bak",
+        "cat<.env.local",                          # `<` was not a boundary
+        "set -a; . ./.env.local; env",             # our own advice, then env prints it all
+        "set -a; . ./.env.local; printenv",
+    ],
+)
+def test_the_bypasses_found_by_review_are_refused(command):
+    assert run(command) == 2, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # PRESCRIBED verbatim by .claude/rules/per-project-env-names.md.
+        # Refusing this is how a guard gets torn out within the week.
+        "grep -oE '^[A-Z0-9_]*CONVEX[A-Z0-9_]*=' .env.local",
+        "grep -oE '^[A-Z0-9_]+=' .env.local",
+        "grep -oE '^[A-Z_]+=' .env.local",
+        "grep --only-matching '^[A-Z0-9_]*RAILWAY[A-Z0-9_]*=' .env.local",
+    ],
+)
+def test_the_fleet_s_own_prescribed_command_passes(command):
+    assert run(command) == 0, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -o '=.*' .env.local",
+        "grep -oE 'KEY=[^ ]+' .env.local",
+        "grep -o 'KEY=.\\{1,\\}' .env.local",
+        "grep -oP 'KEY=\\K.*' .env.local",
+        "grep --only-matching 'KEY=.*' .env.local",
+    ],
+)
+def test_a_pattern_reaching_past_the_equals_is_refused_however_spelled(command):
+    """The PROPERTY, not the spelling: anything after the last `=` can carry a
+    value. pi found five more spellings than either of us had named."""
+    assert run(command) == 2, command
+
+
+def test_an_unknown_verb_holding_a_secrets_path_is_refused():
+    """Fail closed on what the guard does not recognise. A guard that fails
+    open on an unknown verb is walked past by naming any tool it has not heard
+    of — and the print-command list is the seam its own author does not
+    believe complete."""
+    assert run("somenewtool .env.local") == 2
+
+
+def test_the_verbs_that_report_about_the_file_still_pass():
+    """The negative control on failing closed: reporting ABOUT a file is not
+    reading it, and refusing these would make the guard unusable."""
+    for c in ("test -f .env.local", "ls -l .env.local", "sha256sum .env.local", "rm .env.local.bak"):
+        assert run(c) == 0, c
