@@ -121,6 +121,27 @@ def main() -> int:
         if tool_name.endswith("update_task"):
             if tool_input.get("status") not in REPORT_STATUSES:
                 return 0
+            # A DEMAND THAT CANNOT BE MET IS NOT A GATE, IT IS A WALL.
+            # The MCP `update_task` schema carries NO completionNote field
+            # (mcp-server/src/tools.ts, the update_task definition: grep -c
+            # completionNote over it -> 0), so a caller moving a task to
+            # review/done through the MCP has nowhere to write the required
+            # line — and nowhere to write the override either. Judged anyway,
+            # this hook refused that path unconditionally: every station on
+            # this repository lost update_task -> review|done, which is the
+            # direction of failure that gets a guard torn out rather than
+            # fixed. It is also strictly worse than not gating, because the
+            # PRE-EXISTING evidence-bound hook never judged update_task at
+            # all (its own Day-113 guard names complete_task alone).
+            #
+            # So the subject is the NOTE, not the tool: when a caller does
+            # supply a completionNote — the Convex-side mutation accepts one
+            # even where the MCP tool does not expose it — the declaration is
+            # demanded exactly as on complete_task. When there is no note,
+            # there is no report to judge, and a hook that cannot read a
+            # report must not pretend it read a bad one.
+            if "completionNote" not in tool_input:
+                return 0
 
         note = tool_input.get("completionNote") or ""
         if not isinstance(note, str):

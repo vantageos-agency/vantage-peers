@@ -300,6 +300,63 @@ def _test_file_has_denial(repo: str, path: str) -> bool:
         return False
 
 
+# --- jurisdiction, derived from the repository rather than from a name --------------
+
+LITERAL_REPO_FLAG_RE = re.compile(
+    r"(?:^|\s)(?:-C\s+|-C=|--git-dir=|--work-tree=)(?P<path>/[^\s;&|]+)")
+
+
+def _explicit_repo_path(command: str) -> str | None:
+    """Return the repository path a command STATES, or None.
+
+    A stated absolute path is not a guess. A chained directory change is, and is left
+    to the existing refusal: the two cases are distinguished here rather than merged.
+    """
+    stripped = _strip_quoted_strings(command)
+    parts = CHAIN_SPLIT_RE.split(stripped)
+    for idx, part in enumerate(parts):
+        if GIT_COMMIT_RE.search(part):
+            for earlier in parts[:idx]:
+                if CD_RE.match(earlier):
+                    return None  # an unreadable effect precedes the commit
+            match = LITERAL_REPO_FLAG_RE.search(part)
+            return match.group("path") if match else None
+    return None
+
+
+def _repo_is_in_jurisdiction(repo: str) -> bool:
+    """True when this rule has anything to say about `repo`.
+
+    Every TRIGGER_PATTERN of this rule is rooted at `convex/`, and the denial test it
+    demands lives in `convex/__tests__/`. A repository with no `convex/` directory is
+    governed by no clause of it, so firing there produces a refusal with no rule behind
+    it. Derived from the tree, never from a list of repository names.
+
+    Used ONLY on the `-C <path>` branch, where the staged list cannot be read without
+    the guessing this hook refuses. On the cwd branch it is NOT used and must not be:
+    `trigger_files` already answers jurisdiction there, from the staged paths
+    themselves, which is a stronger reading than the presence of a directory.
+
+    A repository that cannot be read returns False, and the caller keeps its own
+    refusal path: this function never converts an unreadable subject into an allow.
+    """
+    try:
+        return os.path.isdir(os.path.join(repo, "convex"))
+    except OSError:
+        return False
+
+
+def _toplevel_or_none(path: str) -> str | None:
+    try:
+        run = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if run.returncode != 0:
+        return None
+    return run.stdout.strip() or None
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -326,6 +383,17 @@ def main() -> int:
         # command line, not only at the start (see GIT_COMMIT_RE docstring).
         if not _invokes_git_commit(command):
             return 0
+
+        # Jurisdiction, before any refusal about which repository is meant.
+        # Every clause of this rule is rooted at `convex/`; a repository carrying no
+        # such directory is outside it, and refusing there is a block with no rule
+        # behind it. An explicit `-C <path>` states its target, so it is read; a
+        # chained directory change stays unreadable and keeps the refusal below.
+        stated = _explicit_repo_path(command)
+        if stated:
+            top = _toplevel_or_none(stated)
+            if top and not _repo_is_in_jurisdiction(top):
+                return 0
 
         # Fail-closed: a command that names a repository this hook did not
         # resolve from the payload cwd is refused, never guessed at.
