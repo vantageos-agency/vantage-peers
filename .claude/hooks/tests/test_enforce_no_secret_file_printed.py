@@ -321,7 +321,7 @@ def test_git_diff_no_index_is_refused():
 def test_find_exec_is_refused():
     """Find's -exec runs a command on each match. If that command is a printer
     over a secrets file, it leaks. Found by Pi."""
-    assert run("find . -name .env.local -exec cat {} \;") == 2
+    assert run(r"find . -name .env.local -exec cat {} \;") == 2
 
 
 # HOLE 5: GREP PATTERN WITH GREEDY QUANTIFIER OVER EQUALS
