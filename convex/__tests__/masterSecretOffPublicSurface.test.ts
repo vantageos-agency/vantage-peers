@@ -55,7 +55,16 @@ const EXCLUDED = (path: string) =>
 const NOT_A_FUNCTION_MODULE = (path: string) =>
 	path.endsWith("convex.config.ts");
 
-const allGlob = import.meta.glob("../**/*.ts");
+// The glob matched EVERY .ts under convex/, and 220 of the 307 paths are
+// *.test.ts files. Importing them pulled convex-test, the schema and every
+// module into this one beforeAll, on every run — which is what pushed
+// unrelated files over their 5000 ms budget under a parallel suite. The
+// subject here is the MODULE surface; a test file is never a registration.
+const allGlob = Object.fromEntries(
+	Object.entries(import.meta.glob("../**/*.ts")).filter(
+		([path]) => !path.endsWith(".test.ts"),
+	),
+);
 const modules = Object.fromEntries(
 	Object.entries(allGlob).filter(([path]) => !EXCLUDED(path)),
 );
