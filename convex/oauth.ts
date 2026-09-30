@@ -387,7 +387,8 @@ export const seedDefaultProfiles = mutation({
 // touches the single targeted row.
 //
 // Contract:
-//   - Master-gated: requireMasterAuth runs FIRST, before any DB access.
+//   - Internal: registered with internalMutation, unreachable from the public
+//     API. The audit actor is a fixed label (no caller credential exists).
 //   - Present  → ctx.db.patch(existing._id, { ...profile, updatedAt: now }),
 //     preserving createdAt + _creationTime. Returns "updated".
 //   - Absent   → ctx.db.insert(..., { ...profile, createdAt: now, updatedAt: now }).
@@ -396,16 +397,13 @@ export const seedDefaultProfiles = mutation({
 //     capturing before/after state, mirroring seedDefaultProfiles' discipline.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const upsertScopeProfile = mutation({
-	args: { callerToken: v.string(), profile: scopeProfileShape },
+export const upsertScopeProfile = internalMutation({
+	args: { profile: scopeProfileShape },
 	returns: v.union(v.literal("inserted"), v.literal("updated")),
 	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
 		const { profile } = args;
 		const now = Date.now();
-		const actorTokenHash = await sha256Hex(args.callerToken);
+		const actorTokenHash = await sha256Hex("internal:oauth:upsertScopeProfile");
 
 		const existing = await ctx.db
 			.query("oauth_scope_profiles")
@@ -2162,7 +2160,7 @@ export const patchScopeProfileEmergency = mutation({
 //
 // Creates 3 scope_profiles for the alpha/beta/gamma test orchestrator trio.
 // IDEMPOTENT: skips any profile that already exists by profileId.
-// Master-gated. Each profile grants symmetric read access to all 3 orchestrator
+// Internal-only. Each profile grants symmetric read access to all 3 orchestrator
 // namespaces + project/mcp-test, and write access scoped to its own namespace.
 //
 // Profiles:
@@ -2173,16 +2171,13 @@ export const patchScopeProfileEmergency = mutation({
 // fromAllowList includes all case variants of Alpha, Beta, Gamma for robustness.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const seedTestTenantTrio = mutation({
-	args: { callerToken: v.string() },
+export const seedTestTenantTrio = internalMutation({
+	args: {},
 	returns: v.object({
 		inserted: v.array(v.string()),
 		skipped: v.array(v.string()),
 	}),
-	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
+	handler: async (ctx) => {
 		const trioReadPrefixes = [
 			"orchestrator/Alpha",
 			"orchestrator/alpha",
@@ -2247,7 +2242,7 @@ export const seedTestTenantTrio = mutation({
 		const inserted: string[] = [];
 		const skipped: string[] = [];
 		const now = Date.now();
-		const actorTokenHash = await sha256Hex(args.callerToken);
+		const actorTokenHash = await sha256Hex("internal:oauth:seedTestTenantTrio");
 
 		for (const p of profiles) {
 			const existing = await ctx.db
@@ -2307,12 +2302,11 @@ export const seedTestTenantTrio = mutation({
 // Returns: array of { name, clientId, clientSecret | null } — clientSecret is
 // the raw secret for newly created clients, null for already-existing ones.
 // The caller MUST persist clientSecret before this call returns.
-// Master-gated.
+// Internal-only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const createTestTenantTrioClients = mutation({
-	args: { callerToken: v.string() },
+export const createTestTenantTrioClients = internalMutation({
+	args: {},
 	returns: v.array(
 		v.object({
 			name: v.string(),
@@ -2322,9 +2316,7 @@ export const createTestTenantTrioClients = mutation({
 			existed: v.boolean(),
 		}),
 	),
-	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
-
+	handler: async (ctx) => {
 		const clientDefs = [
 			{
 				name: "alpha-test-client",
@@ -2413,15 +2405,13 @@ export const createTestTenantTrioClients = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// listScopeProfiles — admin query (master-gated) to enumerate all profiles
+// listScopeProfiles — internal query to enumerate all profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
-// @credential callerToken master-secret: the fleet master secret is compared in constant time against BEARER_SECRET_MASTER by requireMasterAuth before any read or write
-export const listScopeProfiles = query({
-	args: { callerToken: v.string() },
+export const listScopeProfiles = internalQuery({
+	args: {},
 	returns: v.array(scopeProfileShape),
-	handler: async (ctx, args) => {
-		await requireMasterAuth(args.callerToken);
+	handler: async (ctx) => {
 		const rows = await ctx.db
 			.query("oauth_scope_profiles")
 			.order("asc")

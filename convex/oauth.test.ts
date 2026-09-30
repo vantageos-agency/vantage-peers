@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 // Load all convex modules except RAG/search/backfill (same exclusion as tests.test.ts)
@@ -383,8 +383,7 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 		const master = "test-master-token-deadbeef";
 		await t.mutation(api.oauth.seedDefaultProfiles, { callerToken: master });
 
-		await t.mutation(api.oauth.upsertScopeProfile, {
-			callerToken: master,
+		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: {
 				profileId: "prometheus",
 				description:

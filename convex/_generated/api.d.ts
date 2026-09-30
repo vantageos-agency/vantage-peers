@@ -60,6 +60,7 @@ import type * as memories from "../memories.js";
 import type * as memoriesScoped from "../memoriesScoped.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
+import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_backfill_review_task_origin from "../migrations/backfill_review_task_origin.js";
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
 import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_stale_deploy_tasks.js";
@@ -67,7 +68,6 @@ import type * as migrations_diary_backfill_createdBy from "../migrations/diary_b
 import type * as migrations_drop_client_scope_global_prefix from "../migrations/drop_client_scope_global_prefix.js";
 import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_patch_marie_iris_rh_scope from "../migrations/patch_marie_iris_rh_scope.js";
-import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as missionTemplates from "../missionTemplates.js";
@@ -152,6 +152,7 @@ declare const fullApi: ApiFromModules<{
   memoriesScoped: typeof memoriesScoped;
   messages: typeof messages;
   migrations: typeof migrations;
+  "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/backfill_review_task_origin": typeof migrations_backfill_review_task_origin;
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;
   "migrations/dedup_stale_deploy_tasks": typeof migrations_dedup_stale_deploy_tasks;
@@ -159,7 +160,6 @@ declare const fullApi: ApiFromModules<{
   "migrations/drop_client_scope_global_prefix": typeof migrations_drop_client_scope_global_prefix;
   "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/patch_marie_iris_rh_scope": typeof migrations_patch_marie_iris_rh_scope;
-  "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   missionTemplates: typeof missionTemplates;
