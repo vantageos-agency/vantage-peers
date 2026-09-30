@@ -396,3 +396,35 @@ def test_legitimate_uses_from_doctrine_still_pass(command):
     """The negative pole is taken from doctrine and real usage, not from the
     matcher's own examples. These must pass or the guard is torn out."""
     assert run(command) == 0, command
+
+
+# ── THE PAYLOAD PI ACTUALLY RAN, which the first fix for this never tested ───
+# The previous round added cases spelled `cat ".env.local"` — PLAIN quotes,
+# which the boundary class already matched — so the corpus went 61 to 84 while
+# the real payload stayed open. A test that pins the wrong spelling is the same
+# defect wearing the fix's clothes, and it is why this block carries the exact
+# bytes rather than a paraphrase of them.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        r'cat \".env.local\"',
+        r'cat "\".env.local\""',
+        r'head -5 \".env.local\"',
+        r'python3 -c "print(open(\".env.local\").read())"',
+        r'cat \'.env.local\'',
+    ],
+)
+def test_a_backslash_escaped_quote_does_not_hide_the_path(command):
+    """Pi, on 1d62fdd: two characters and the file was invisible to every verb
+    the guard refuses. Closed at the single entry point, not per verb."""
+    assert run(command) == 2, command
+
+
+def test_unescaping_does_not_make_an_ordinary_file_a_secret():
+    """The control on the fix: stripping escapes must not start refusing
+    commands over files that were never secrets."""
+    assert run(r'cat \"README.md\"') == 0
+    assert run(r'python3 -c "print(open(\"README.md\").read())"') == 0
+

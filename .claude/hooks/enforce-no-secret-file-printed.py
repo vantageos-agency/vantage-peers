@@ -128,10 +128,35 @@ REDACTING_SED_RE = re.compile(r"s[/|#].*=\.\*[/|#]")
 OVERRIDE_RE = re.compile(r"#\s*allow-secret-file-read:\s*(?P<reason>.{15,})")
 
 
+def _unescape_quotes(text: str) -> str:
+    """Remove backslashes that only escape a quote or a space.
+
+    THE FIFTH APPEARANCE of this file's own mechanism, and the one that made
+    every other refusal optional. Pi measured it on 1d62fdd:
+
+        cat .env.local        rc=2
+        cat \\".env.local\\"    rc=0     two characters, and the file is invisible
+
+    Same verb, same path. The matcher read `\\"` as part of the filename, so any
+    verb it refuses became reachable by adding a backslash. It also explains a
+    result that looked like an interpreter class and was not: only the
+    escaped-double-quote spelling of `python3 -c` passed, never the plain one.
+    The discriminator was the quoting, never the language.
+
+    Closed HERE, once, before anything else looks at the command — a per-verb
+    patch would have left a sixth spelling for the next reviewer.
+
+    A correction to a correction: the first fix for this shipped a corpus that
+    asserted `cat ".env.local"` — plain quotes, which the boundary class ALREADY
+    matched — so it passed 84/84 while the real payload stayed open. A test that
+    pins the wrong spelling is the same defect wearing the fix's clothes."""
+    return re.sub(r"\\([\"' ])", r"\1", text)
+
+
 def secret_paths(command: str):
     """Every secrets-shaped path the command names, placeholders excluded."""
     found = []
-    for m in SECRET_FILE_RE.finditer(command):
+    for m in SECRET_FILE_RE.finditer(_unescape_quotes(command)):
         path = m.group("path")
         if PLACEHOLDER_RE.search(path):
             continue
@@ -142,7 +167,7 @@ def secret_paths(command: str):
 def _tokens(segment: str):
     """Shell-ish tokens. `cat<.env.local` has no space, so redirections are
     separated first — eta found that exact bypass: `<` was not a boundary."""
-    spaced = re.sub(r"([<>])", r" \1 ", segment)
+    spaced = re.sub(r"([<>])", r" \1 ", _unescape_quotes(segment))
     try:
         return shlex.split(spaced)
     except ValueError:
