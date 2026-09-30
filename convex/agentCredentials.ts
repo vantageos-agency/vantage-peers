@@ -1,7 +1,11 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { refuseUnresolvedCredential, requireOrgAdmin } from "./lib/auth";
-import { resolveAgentCredentialCore, sha256Hex } from "./lib/agentIdentity";
+import {
+	revokeActiveCredentialRows,
+	resolveAgentCredentialCore,
+	sha256Hex,
+} from "./lib/agentIdentity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T4] agentCredentials — the per-agent CREDENTIAL, on top of P-T2's
@@ -135,11 +139,17 @@ export const mintAgentCredential = mutation({
  * requires "revoked 1" and "there was nothing to revoke" to be different
  * bytes; a bare success collapses them.
  *
+ * FOUR OUTCOMES. The reviewer named three: refused (`RBAC_DENIED`),
+ * `{ revoked: N >= 1 }`, and `{ revoked: 0 }` (idempotent, not an error).
+ * The fourth is this file's own, beyond the reviewer's three:
  * NONEXISTENT AGENT -> `AGENT_NOT_FOUND`, not `{ revoked: 0 }`. Agents are
  * never deleted, so a missing `agents` row can only mean a mistyped name, and
  * answering it with a zero would let the operator believe a credential was
  * retired when nothing was addressed. `{ revoked: 0 }` is reserved for an
  * EXISTING agent with no active credential (a true absence).
+ *
+ * The loop is shared with `deactivateAgent` via `revokeActiveCredentialRows`
+ * (convex/lib/agentIdentity.ts).
  */
 export const revokeAgentCredential = mutation({
 	args: { orgSlug: v.string(), agentName: v.string() },
@@ -161,20 +171,11 @@ export const revokeAgentCredential = mutation({
 			);
 		}
 
-		// Same loop shape as mintAgentCredential's rotation.
-		const priorRows = await ctx.db
-			.query("agent_credentials")
-			.withIndex("by_org_agent", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("agentName", args.agentName),
-			)
-			.collect();
-		let revoked = 0;
-		for (const row of priorRows) {
-			if (row.isActive) {
-				await ctx.db.patch(row._id, { isActive: false });
-				revoked += 1;
-			}
-		}
+		const revoked = await revokeActiveCredentialRows(
+			ctx,
+			args.orgSlug,
+			args.agentName,
+		);
 		return { revoked };
 	},
 });

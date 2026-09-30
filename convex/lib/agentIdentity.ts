@@ -84,3 +84,36 @@ export async function resolveAgentCredentialCore(
 
 	return { orgSlug: row.orgSlug, agentName: row.agentName };
 }
+
+/**
+ * revokeActiveCredentialRows — the ONE implementation of "retire every active
+ * credential row of (orgSlug, agentName)". Rows are patched to
+ * `isActive: false`, never deleted (audit trail, as in mintAgentCredential's
+ * rotation). Returns the number of rows THIS call flipped.
+ *
+ * Lives here, not in agentCredentials.ts, because both agentCredentials.ts
+ * (`revokeAgentCredential`) and agents.ts (`deactivateAgent`) need it, and
+ * this module depends only on the generated ctx types: no import cycle with
+ * auth.ts and no agents.ts -> agentCredentials.ts edge. Authorization is the
+ * CALLER's job; this helper trusts that `requireOrgAdmin` already ran.
+ */
+export async function revokeActiveCredentialRows(
+	ctx: MutationCtx,
+	orgSlug: string,
+	agentName: string,
+): Promise<number> {
+	const rows = await ctx.db
+		.query("agent_credentials")
+		.withIndex("by_org_agent", (q) =>
+			q.eq("orgSlug", orgSlug).eq("agentName", agentName),
+		)
+		.collect();
+	let revoked = 0;
+	for (const row of rows) {
+		if (row.isActive) {
+			await ctx.db.patch(row._id, { isActive: false });
+			revoked += 1;
+		}
+	}
+	return revoked;
+}

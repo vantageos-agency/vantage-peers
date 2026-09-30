@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { revokeActiveCredentialRows } from "./lib/agentIdentity";
 import { requireOrgAdmin } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,20 +54,19 @@ const agentReturnValidator = v.object({
  * the existing row (description/outboundAuthRef) rather than creating a
  * duplicate, reusing the `by_org_name` index.
  *
- * DEACTIVATED ROWS ARE NOT SILENTLY REVIVED. This branch used to patch
+ * INACTIVE ROWS ARE NOT SILENTLY REVIVED. This branch used to patch
  * `isActive: true` unconditionally, so re-registering a name retired by
  * `deactivateAgent` resurrected it with no signal: the defect the retire
- * surface closes, wearing the fix's clothes. Now a row with
- * `isActive === false` is REFUSED (`AGENT_DEACTIVATED`) unless the caller
- * passes `reactivate: true`, which is the only way back.
- *   - Chosen: explicit opt-in. A retired name is not burned forever (there is
- *     no other reactivation door and none is added here), yet coming back is
- *     always a deliberate act that appears in the call itself.
- *   - Rejected: refuse-always. It leaves a retired name permanently
- *     unusable, or forces a second, unrequested mutation.
- *   - Rejected: silent patch (the pre-existing behaviour).
- * Reactivating the agent does NOT revive its revoked credentials; those stay
- * revoked and a new one must be minted with `mintAgentCredential`.
+ * surface closes, wearing the fix's clothes. A row with `isActive === false`
+ * is now REFUSED, unconditionally, with `AGENT_INACTIVE`; there is no opt-in
+ * argument. Bringing an identity back is an act someone chose
+ * (`reactivateAgent`), never a side effect of an idempotent call.
+ *   - An earlier draft took `reactivate: true` here. Rejected on review: a
+ *     flag on an idempotent upsert keeps reactivation a side effect of that
+ *     call.
+ *   - The objection that an unconditional refusal burns a retired name
+ *     forever is answered by `reactivateAgent`, the dedicated third door.
+ * Reactivating does NOT revive revoked credentials; mint a new one.
  */
 export const registerAgent = mutation({
 	args: {
@@ -74,7 +74,6 @@ export const registerAgent = mutation({
 		name: v.string(),
 		description: v.optional(v.string()),
 		outboundAuthRef: v.optional(v.string()),
-		reactivate: v.optional(v.boolean()),
 	},
 	returns: v.id("agents"),
 	handler: async (ctx, args) => {
@@ -88,9 +87,9 @@ export const registerAgent = mutation({
 			.unique();
 
 		if (existing) {
-			if (!existing.isActive && args.reactivate !== true) {
+			if (!existing.isActive) {
 				throw new ConvexError(
-					`AGENT_DEACTIVATED: agent "${args.name}" in org "${args.orgSlug}" is deactivated; pass reactivate: true to bring it back — ${JSON.stringify(
+					`AGENT_INACTIVE: agent "${args.name}" in org "${args.orgSlug}" is inactive; use reactivateAgent to bring it back — ${JSON.stringify(
 						{ orgSlug: args.orgSlug, name: args.name },
 					)}`,
 				);
@@ -151,24 +150,30 @@ export const setAgentAddress = mutation({
 });
 
 /**
- * deactivateAgent — retires ONE agent of the caller's own org by patching
- * `isActive: false`. Gated identically to `registerAgent`: `requireOrgAdmin`,
- * no master carve-out. PATCH, never delete — the row and its credential audit
- * trail (see `mintAgentCredential`) are preserved.
+ * deactivateAgent — retires ONE agent of the caller's own org: patches
+ * `isActive: false` AND revokes every active credential of that agent, in the
+ * SAME mutation (one transaction). A retirement that depends on the operator
+ * remembering a second call leaves a retired agent holding a key that still
+ * resolves. Gated identically to `registerAgent`: `requireOrgAdmin`, no
+ * master carve-out. PATCH, never delete; the audit trail is preserved.
  *
- * Unknown name raises the same `AGENT_NOT_FOUND` as `setAgentAddress`, never a
- * silent success. Deactivation alone already stops the agent authenticating
- * (`resolveAgentCredentialCore` refuses a credential of an inactive agent);
- * pair it with `revokeAgentCredential` to also retire the credential rows.
+ * The credential revoke runs even when the agent was already inactive, so a
+ * row deactivated before this door existed heals on the next call. The revoke
+ * is the shared `revokeActiveCredentialRows` (convex/lib/agentIdentity.ts),
+ * the same implementation `revokeAgentCredential` uses.
  *
- * RETURNS `{ wasActive: boolean }` rather than null: true = this call flipped
- * the row, false = it was already inactive. A bare null would make "retired
- * just now" and "was already retired" the same bytes
+ * Unknown name raises `AGENT_NOT_FOUND` (same as `setAgentAddress`), checked
+ * BEFORE anything is written.
+ *
+ * RETURNS `{ deactivated: boolean, revoked: number }`:
+ *   - deactivated true  = this call flipped the row; false = already inactive;
+ *   - revoked = credential rows this call flipped (0 is a real zero).
+ * "Retired just now" and "was already retired" must not be the same bytes
  * (.claude/rules/refusal-is-distinguishable-from-absence.md).
  */
 export const deactivateAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string() },
-	returns: v.object({ wasActive: v.boolean() }),
+	returns: v.object({ deactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
 		await requireOrgAdmin(ctx, args.orgSlug);
 
@@ -187,11 +192,58 @@ export const deactivateAgent = mutation({
 			);
 		}
 
-		const wasActive = existing.isActive;
-		if (wasActive) {
+		const revoked = await revokeActiveCredentialRows(
+			ctx,
+			args.orgSlug,
+			args.name,
+		);
+		const deactivated = existing.isActive;
+		if (deactivated) {
 			await ctx.db.patch(existing._id, { isActive: false });
 		}
-		return { wasActive };
+		return { deactivated, revoked };
+	},
+});
+
+/**
+ * reactivateAgent — the explicit door back for a retired agent: patches
+ * `isActive: true`. Gated by `requireOrgAdmin`, no master carve-out. It is the
+ * answer to "an unconditional refusal in `registerAgent` would burn a retired
+ * name forever": the name is reusable, but only by a deliberate call.
+ *
+ * It does NOT resurrect credentials: revoked rows stay revoked, and a fresh
+ * one must be minted with `mintAgentCredential`.
+ *
+ * Unknown name raises `AGENT_NOT_FOUND`.
+ * RETURNS `{ reactivated: boolean }`: true = this call flipped the row,
+ * false = it was already active.
+ */
+export const reactivateAgent = mutation({
+	args: { orgSlug: v.string(), name: v.string() },
+	returns: v.object({ reactivated: v.boolean() }),
+	handler: async (ctx, args) => {
+		await requireOrgAdmin(ctx, args.orgSlug);
+
+		const existing = await ctx.db
+			.query("agents")
+			.withIndex("by_org_name", (q) =>
+				q.eq("orgSlug", args.orgSlug).eq("name", args.name),
+			)
+			.unique();
+
+		if (!existing) {
+			throw new ConvexError(
+				`AGENT_NOT_FOUND: no agent "${args.name}" in org "${args.orgSlug}" — ${JSON.stringify(
+					{ orgSlug: args.orgSlug, name: args.name },
+				)}`,
+			);
+		}
+
+		const reactivated = !existing.isActive;
+		if (reactivated) {
+			await ctx.db.patch(existing._id, { isActive: true });
+		}
+		return { reactivated };
 	},
 });
 
