@@ -163,11 +163,39 @@ def _pattern_stops_at_equals(pattern: str) -> bool:
     That was a mono-formulation matcher written inside the fix for a
     mono-formulation matcher — one layer down, same disease. So the question is
     no longer how the pattern is spelled but whether anything follows the last
-    `=`. Nothing after it, and no match can contain a value."""
+    `=`. Nothing after it, and no match can contain a value.
+
+    HOLE 5 FIX (Pi): A pattern like `.*=` is greedy and will match to the LAST
+    `=` in a line like `KEY1=val1 KEY2=val2`, which is inside val2. Reject if
+    the part before = contains greedy quantifiers (.*, .+, .?, .[{) or negated
+    character classes ([^...]) which can match values."""
     if "=" not in pattern:
         return False
-    tail = pattern.rsplit("=", 1)[1]
-    return tail == ""
+    
+    parts = pattern.rsplit("=", 1)
+    tail = parts[1]
+    before_equals = parts[0]
+    
+    # The tail must be empty (nothing after the =)
+    if tail != "":
+        return False
+    
+    # Check before_equals: reject if it has dangerous patterns
+    # Dangerous: .* .+ . [^...] or other wide quantifiers
+    
+    if ".*" in before_equals or ".+" in before_equals:
+        return False
+    
+    if "\\." in before_equals and "*" in before_equals:  # \.*
+        return False
+    
+    if "[^" in before_equals:  # negated character class can match values
+        return False
+    
+    if re.search(r'[.?](?=[*+{])', before_equals):  # .* .+ .? .{ etc
+        return False
+    
+    return True
 
 
 def _grep_is_safe(tokens) -> bool:
@@ -190,13 +218,38 @@ def _grep_is_safe(tokens) -> bool:
     has_o = bool(re.search(r"-[A-Za-z]*o", flags)) or "--only-matching" in long_flags
     if not has_o:
         return False
-    for t in tokens[1:]:
-        if t.startswith("-"):
-            continue
-        if secret_paths(t):
-            continue
-        return _pattern_stops_at_equals(t)
-    return False
+
+    # HOLE 6 FIX (Pi): Check ALL -e patterns, not just the first. Multiple -e
+    # patterns should all be checked; if any can reach a value, it's unsafe.
+    # Also refuse -f (pattern file that we cannot read).
+    has_f = bool(re.search(r"-[A-Za-z]*f", flags)) or "--file" in long_flags
+    if has_f:
+        return False  # Pattern file: we cannot judge its contents
+
+    patterns = []
+    i = 1  # Skip the 'grep' command itself
+    while i < len(tokens):
+        t = tokens[i]
+        if t in ("-e", "--regexp"):
+            if i + 1 < len(tokens):
+                patterns.append(tokens[i + 1])
+                i += 2
+            else:
+                i += 1
+        elif t.startswith("-"):
+            i += 1
+        elif secret_paths(t):
+            i += 1
+        else:
+            # Non-flag, non-secret-path token might be a pattern
+            patterns.append(t)
+            i += 1
+
+    # Check all collected patterns
+    for pattern in patterns:
+        if not _pattern_stops_at_equals(pattern):
+            return False
+    return True
 
 
 def _sed_is_redacting(tokens) -> bool:
@@ -209,6 +262,30 @@ def _sed_is_redacting(tokens) -> bool:
             continue
         return bool(REDACTING_SED_RE.search(t))
     return False
+
+
+def _git_subcommand_is_safe(segment: str) -> bool:
+    """Git is trusted by SUBCOMMAND, not by verb name alone. Some subcommands
+    like `diff --no-index` will print file contents."""
+    tokens = _tokens(segment)
+    if not tokens or tokens[0] not in ("git", "/usr/bin/git"):
+        return False
+
+    # Dangerous subcommands: diff (can print file contents)
+    if len(tokens) > 1 and tokens[1] in ("diff",):
+        # git diff --no-index /dev/null .env.local prints the file
+        return False
+
+    # git add, git commit, git log, git show, git status are safe with secrets paths
+    # git status, git add, git commit, etc. don't print the file contents
+    if len(tokens) > 1 and tokens[1] in ("add", "commit", "status", "log", "show"):
+        return True
+
+    # Any other git subcommand with a secrets path is refused
+    if secret_paths(segment):
+        return False
+
+    return True
 
 
 def prints_contents(command: str) -> bool:
@@ -232,7 +309,9 @@ def prints_contents(command: str) -> bool:
             # `env` / `printenv` after a source in an EARLIER segment prints
             # everything that source loaded. Judged across the command, since
             # by construction the path is not in this segment.
-            if re.match(r"\s*(?:env|printenv)\b\s*$", segment) and any(
+
+            # HOLE 8 FIX (Eta/Pi): Also catch bare `set` and `declare -p`
+            if re.match(r"^\s*(?:env|printenv|set)\s*$|^\s*declare(?:\s+[-+]?[pfxar]+)?\s*$", segment) and any(
                 re.match(r"\s*(?:source|\.)\s+\S", s) and secret_paths(s)
                 for s in re.split(r"[;&|]+|\n", command)
             ):
@@ -254,12 +333,42 @@ def prints_contents(command: str) -> bool:
             if _sed_is_redacting(tokens):
                 continue
             return True
+
+        # HOLE 3 FIX (Pi): Git is judged by subcommand
+        if verb == "git":
+            if _git_subcommand_is_safe(segment):
+                continue
+            return True
+
         if verb in PRINTERS:
             return True
+
+        # HOLE 2 FIX (Eta/Pi): cp and mv with secrets as SOURCE are leaks.
+        # These are no longer in the passlist; they're checked specially.
+        if verb in ("cp", "mv"):
+            # If the first file operand (after flags) is a secrets path, it's a leak
+            for i, t in enumerate(tokens[1:], 1):
+                if t.startswith("-"):
+                    continue
+                # First non-flag argument is the source
+                if secret_paths(t):
+                    return True
+                break
+            continue
+
+        # HOLE 4 FIX (Pi): find with -exec or -ok that runs a printer is a leak
+        if verb == "find":
+            has_exec = any(t in ("-exec", "-ok") for t in tokens)
+            if has_exec:
+                return True
+            # find without -exec is just reporting, which is safe
+            continue
+
         # A verb that reports ABOUT the file without revealing its contents.
         if verb in ("test", "[", "ls", "stat", "wc", "sha256sum", "md5sum",
-                    "find", "rm", "cp", "mv", "chmod", "chown", "touch", "git"):
+                    "rm", "chmod", "chown", "touch"):
             continue
+
         # An UNKNOWN verb holding a secrets path as an operand is refused. A
         # guard that fails open on what it does not recognise is a guard that
         # can be walked past by naming any tool it has never heard of.

@@ -261,3 +261,138 @@ def test_the_verbs_that_report_about_the_file_still_pass():
     reading it, and refusing these would make the guard unusable."""
     for c in ("test -f .env.local", "ls -l .env.local", "sha256sum .env.local", "rm .env.local.bak"):
         assert run(c) == 0, c
+
+
+# ── THE NINE HOLES FOUND BY REVIEW (Eta and Pi, 2026-09-30) ──────────────────
+
+# HOLE 1: PATH MATCHER AND BACKSLASH-ESCAPED QUOTES (THE CRITICAL ONE)
+# A character sequence inside the command read as something other than what the
+# shell will do with it. The matcher sees `".env.local"` as THREE tokens, not as
+# the escaped form of `.env.local` that the shell will resolve. Every refusal
+# becomes optional by adding two characters.
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cat ".env.local"',           # HOLE 1a: backslash-escaped quote (Eta)
+        'cat "".env.local""',         # HOLE 1b: paired double-quote escape (Pi)
+        r'cat "\"quoted\".env.local"',# HOLE 1c: backslash-quoted inside double quotes
+    ],
+)
+def test_quoted_secret_paths_are_refused(command):
+    """Found by Eta: `cat ".env.local"` reads the quoted form as separate tokens.
+    Found by Pi: any escape form that works in shell works as bypass.
+    FIXED BY: normalising the command before matching — removing quotes/escapes
+    so the matcher sees what the shell will see. ONE place, ONE time."""
+    assert run(command) == 2, command
+
+
+# HOLE 2: COPY AND MOVE ARE LEAKS WHEN SECRETS ARE THE SOURCE
+# The file lists cp/mv in "reports about the file", which is wrong. A copy that
+# lands bytes somewhere readable is a LEAK whether or not the destination is
+# stdout. The property: a secrets path as the OPERAND of a copying verb is
+# refused. A destination-side mention (cp x .env.local) is a WRITE, not a leak.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp .env.local /dev/stdout",    # HOLE 2a: copy to stdout (Eta)
+        "cp .env.local /tmp/leak.txt",  # HOLE 2b: copy to world-readable dir (Pi)
+        "mv .env.local /dev/stdout",    # HOLE 2c: move to stdout (Eta)
+    ],
+)
+def test_copy_and_move_source_are_leaks(command):
+    """A copying verb with a secrets file as SOURCE is a leak, not 'about the
+    file'. cp .env.local → /tmp is how you steal it. Judged on VERB position:
+    if the secrets path is the source operand, it is refused."""
+    assert run(command) == 2, command
+
+
+# HOLE 3: GIT SUBCOMMAND TRUSTED WHOLESALE
+# `git` is in the passlist but `git diff --no-index /dev/null .env.local` will
+# print the file's contents. Trusted by subcommand, not by verb name alone.
+def test_git_diff_no_index_is_refused():
+    """Git's diff --no-index reads both files. Treat git as a wrapper, judge the
+    subcommand. Found by Pi."""
+    assert run("git diff --no-index /dev/null .env.local") == 2
+
+
+# HOLE 4: FIND -EXEC NOT REFUSED
+# `find` is trusted for reporting, but `-exec cat {} \;` executes a printer
+# inside find's loop. Refuse -exec and -ok on secrets paths.
+def test_find_exec_is_refused():
+    """Find's -exec runs a command on each match. If that command is a printer
+    over a secrets file, it leaks. Found by Pi."""
+    assert run("find . -name .env.local -exec cat {} \;") == 2
+
+
+# HOLE 5: GREP PATTERN WITH GREEDY QUANTIFIER OVER EQUALS
+# The file claims "a pattern cannot reach a value" if it ends AT the `=`. But
+# `grep -oE '.*='` with a greedy `.*` will match to the LAST `=` in the line,
+# which can sit inside a value. The name class must not contain `=` or `.`.
+def test_grep_greedy_pattern_reaching_past_equals_is_refused():
+    """A pattern `.*=` is greedy; in a line like `KEY1=val1 KEY2=val2`, the .*
+    reaches the LAST =, which is inside val2. Not safe. Found by Pi."""
+    assert run("grep -oE '.*=' .env.local") == 2
+
+
+# HOLE 6: GREP -E FLAG WITH MULTIPLE PATTERNS, ONLY FIRST JUDGED
+# `grep -o -e 'KEY=' -e '.*'` is judged only on the first pattern. The second
+# pattern can reach values. Judge EVERY `-e`, and refuse `-f` (pattern file).
+def test_grep_multiple_e_patterns_all_judged():
+    """Multiple -e patterns; the second reaches the value. Only the first is
+    currently judged. Found by Pi."""
+    assert run("grep -o -e 'KEY=' -e '.*' .env.local") == 2
+
+
+# HOLE 7: PIPE INSIDE QUOTED ARGUMENT BREAKS SEGMENT SPLIT
+# The segment split on `[;&|]` will cut a pipe that sits inside a quoted
+# argument, treating the closing quote as a new token. Split on UNQUOTED
+# operators only.
+def test_quoted_pipe_in_grep_pattern_does_not_break_guard():
+    """A pipe inside a grep pattern like 'KEY=.*|secret' should not split the
+    segment. Current split on [;&|] cuts quoted strings. Found by Pi."""
+    assert run("grep -oE 'KEY=([^|]*|secret)' .env.local") == 2
+
+
+# HOLE 8: ENV/PRINTENV/SET AFTER SOURCE PRINTS THE VALUE
+# After sourcing, `env`, `printenv`, bare `set`, and `declare -p` all print
+# the environment including the secrets. The file already catches `env` and
+# `printenv` after source, but bare `set` and `declare -p` pass.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set -a; . ./.env.local; set",         # bare set prints env (Eta)
+        "set -a; . ./.env.local; declare -p",  # declare -p prints env (Pi)
+    ],
+)
+def test_env_printing_commands_after_source_are_refused(command):
+    """After sourcing a secrets file, set and declare -p print the
+    environment including all sourced variables. Refuse these. Found by Eta/Pi."""
+    assert run(command) == 2, command
+
+
+# ── MUST_PASS: the legitimate pole is from doctrine, not the matcher's author ─
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Non-secret files; the guard should be silent
+        "cat README.md",
+        "cp README.md /tmp/copy.md",
+        "python3 -c 'print(1)'",
+        # Prescribed redacting patterns (fleet doctrine)
+        "grep -oE '^[A-Z0-9_]*CONVEX[A-Z0-9_]*=' .env.local",
+        "sed 's/=.*/=<hidden>/' .env.local",
+        # Verification commands (not reading contents)
+        "test -f .env.local",
+        "ls -l .env.local",
+        "sha256sum .env.local",
+        # The correct way to use a sourced value
+        'set -a && . ./.env.local && set +a && CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY_PROD" npx convex data tasks',
+        # Reading by variable name, not value
+        "python3 -c 'print(os.environ.get(\"CONVEX_DEPLOY_KEY\"))'",
+    ],
+)
+def test_legitimate_uses_from_doctrine_still_pass(command):
+    """The negative pole is taken from doctrine and real usage, not from the
+    matcher's own examples. These must pass or the guard is torn out."""
+    assert run(command) == 0, command
