@@ -81,9 +81,44 @@ PRINTERS = (
 )
 
 # `grep` prints the whole matching LINE, so `grep KEY .env` prints the value.
-# It is safe only when the match itself is restricted with -o, or when only a
-# COUNT or a FILENAME is asked for.
-GREP_SAFE_RE = re.compile(r"\bgrep\b[^|;&]*?\s-[A-Za-z]*[oclLq][A-Za-z]*(?=\s|$)")
+#
+# -c, -l, -L and -q are UNCONDITIONALLY safe: a count, a filename, or nothing.
+# Whatever the pattern captures, no byte of the file reaches stdout.
+GREP_COUNT_ONLY_RE = re.compile(r"\bgrep\b[^|;&]*?\s-[A-Za-z]*[clLq][A-Za-z]*(?=\s|$)")
+
+# -o is NOT safety, and reading it as such was this guard's own defect, found
+# by pi at 7013758 in the family the guard exists to close. -o bounds the
+# OUTPUT to the match; it never bounds the MATCH to a name. So a pattern
+# reaching past the `=` prints the value with the guard's blessing:
+#   grep -o 'KEY=.*' .env.local        prints the value
+#   grep -oE 'KEY=.*' .env.local       prints the value
+#   grep -o 'CONVEX_DEPLOY_KEY=.\+'    prints the value
+#   grep -o '.*' .env.local            prints the WHOLE FILE
+# It is the same shape as the `jq .` defect fixed above: there another
+# command's ARGUMENT was read as a licence, here a FLAG is read as one
+# whatever the pattern does. A flag cannot vouch for a pattern.
+#
+# So -o is safe only when the PATTERN ITSELF cannot reach a value: it must end
+# at the `=`, never past it. `^[A-Z_]+=` qualifies; anything with a quantifier
+# or a dot after the `=` does not.
+GREP_NAMES_ONLY_RE = re.compile(
+    r"""(?x)
+    \bgrep\b[^|;&]*?\s-[A-Za-z]*o[A-Za-z]*\s+   # an -o form
+    (?P<q>['"])                                  # the quoted pattern
+    \^?\[?[A-Za-z_\\^\]A-Z-]*\]?[*+]?=          # a name class ending AT the =
+    (?P=q)                                       # and closing immediately
+    """
+)
+
+
+def grep_is_safe(segment: str) -> bool:
+    """A grep over a secrets file is safe when it prints no value.
+
+    Two ways, and only two: it asks for a count/filename/silence, or its
+    pattern stops at the `=` so the match cannot contain what follows."""
+    if GREP_COUNT_ONLY_RE.search(segment):
+        return True
+    return bool(GREP_NAMES_ONLY_RE.search(segment))
 
 # `sed`/`perl` are safe when they REDACT before printing: the script replaces
 # everything after the first `=`. Anything else with sed is treated as printing.
@@ -128,7 +163,7 @@ def prints_contents(command: str) -> bool:
         if re.search(r"\bsed\b", segment) and REDACTING_SED_RE.search(segment):
             continue
         if re.search(r"\bgrep\b", segment):
-            if GREP_SAFE_RE.search(segment):
+            if grep_is_safe(segment):
                 continue
             return True
         # `test -f`, `ls`, `stat`, `wc`, `sha256sum`, `md5sum` report ABOUT the

@@ -147,3 +147,46 @@ def test_the_matcher_actually_matches_something():
 def test_a_placeholder_file_is_not_a_secrets_file():
     assert G.secret_paths("cat .env.example") == []
     assert G.secret_paths("cat .env.local") != []
+
+
+# ── THE HOLE THIS GUARD SHIPPED WITH, found by pi at 7013758 ─────────────────
+# `-o` was read as safety. It bounds the OUTPUT to the match; it never bounds
+# the MATCH to a name. The same shape as the `jq .` defect above — there another
+# command's ARGUMENT was a licence, here a FLAG is one whatever the pattern
+# does. Four doors, one mechanism.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -o 'KEY=.*' .env.local",
+        "grep -oE 'KEY=.*' .env.local",
+        "grep -o 'CONVEX_DEPLOY_KEY=.\\+' .env.local",
+        "grep -o '.*' .env.local",          # prints the WHOLE FILE
+    ],
+)
+def test_dash_o_with_a_pattern_that_reaches_past_the_equals_is_refused(command):
+    assert run(command) == 2, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -oE '^[A-Z_]+=' .env.local",
+        "grep -o '^[A-Z_]*=' .env.local",
+        "grep -c CONVEX .env.local",
+        "grep -l CONVEX .env.local",
+        "grep -q CONVEX .env.local",
+    ],
+)
+def test_a_pattern_that_stops_at_the_equals_still_passes(command):
+    """The negative controls. A fix that refuses every grep would make the
+    guard useless and it would be switched off, which protects nothing."""
+    assert run(command) == 0, command
+
+
+def test_count_only_flags_are_safe_whatever_the_pattern_is():
+    """-c, -l, -L, -q print a count, a filename or nothing. No byte of the
+    file reaches stdout, so the pattern cannot matter — unlike -o."""
+    assert run("grep -c 'KEY=.*' .env.local") == 0
+    assert run("grep -q '.*' .env.local") == 0
