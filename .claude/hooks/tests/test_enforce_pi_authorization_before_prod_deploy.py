@@ -265,12 +265,39 @@ def test_invented_token_refused():
     assert "COULD NOT CHECK" not in out, "an absence is not a could-not-check"
 
 
+def _guard_ttl_sec():
+    """Read the window from the executing file, never restate it here.
+
+    A test that types its own copy of the number passes while the two disagree:
+    the window moved from 3600 to 7200 and this test went on asserting against a
+    figure no longer in the guard, so it failed on a guard that was correct. The
+    number has one home and the test reads it there.
+    """
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "enforce-pi-authorization-before-prod-deploy.py").read_text()
+    m = re.search(r"^TASK_TTL_SEC\s*=\s*(\d+)", src, re.M)
+    assert m, "TASK_TTL_SEC not found in the guard -- the test cannot derive the window"
+    return int(m.group(1))
+
+
 def test_expired_token_refused():
+    ttl = _guard_ttl_sec()
     rc, out = run_with_tasks(
         f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(age_sec=3601)})
-    assert rc == 2, f"a token older than 60 minutes must be refused, rc={rc} out={out}"
+        {_ID_A: token_task(age_sec=ttl + 1)})
+    assert rc == 2, (
+        f"a token older than the guard's own window ({ttl}s) must be refused, "
+        f"rc={rc} out={out}")
     assert "task-invalid" in out
+
+
+def test_token_just_inside_the_window_is_accepted():
+    """The other pole. Without it, a guard refusing EVERY token passes above."""
+    ttl = _guard_ttl_sec()
+    rc, out = run_with_tasks(
+        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
+        {_ID_A: token_task(age_sec=ttl - 60)})
+    assert rc == 0, f"a token inside the window must pass, rc={rc} out={out}"
 
 
 def test_token_without_marker_refused():

@@ -39,6 +39,7 @@ Override (rare, one-shot — RULE #24, Day 108):
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 import subprocess
 import sys
@@ -290,6 +291,67 @@ def _mcp_tool_is_staged(staged: list[str]) -> bool:
     return any(f.startswith(MCP_TOOLS_PREFIX) for f in staged)
 
 
+# --- jurisdiction, derived from the repository rather than from a name --------------
+
+LITERAL_REPO_FLAG_RE = re.compile(
+    r"(?:^|\s)(?:-C\s+|-C=|--git-dir=|--work-tree=)(?P<path>/[^\s;&|]+)")
+
+
+def _explicit_repo_path(command):
+    """Return the repository path a command STATES, or None.
+
+    A stated absolute path is not a guess. A chained directory change is, and is left
+    to the existing refusal: the two cases are distinguished here rather than merged.
+    """
+    stripped = _strip_quoted_strings(command)
+    parts = CHAIN_SPLIT_RE.split(stripped)
+    for idx, part in enumerate(parts):
+        if GIT_COMMIT_RE.search(part):
+            for earlier in parts[:idx]:
+                if CD_RE.match(earlier):
+                    return None  # an unreadable effect precedes the commit
+            match = LITERAL_REPO_FLAG_RE.search(part)
+            return match.group("path") if match else None
+    return None
+
+
+def _repo_is_in_jurisdiction(repo):
+    """True when this rule has anything to say about `repo`.
+
+    The rule mirrors SCHEMA_FILE against MCP_TOOLS_PREFIX. A repository carrying
+    neither is governed by no clause of it, so firing there produces a refusal with no
+    rule behind it. Derived from the tree, never from a list of repository names.
+
+    Used ONLY on the `-C <path>` branch, where the staged list cannot be read without
+    the guessing this hook refuses. On the cwd branch it is NOT used and must not be:
+    the staged paths themselves already answer jurisdiction there, which is a stronger
+    reading than the presence of a directory -- and a mocked staged list over a bare
+    temp repo is judged on what is staged, not on what happens to exist on disk.
+
+    A repository that cannot be read returns False for neither reason and the caller
+    keeps its own refusal path: this function never converts an unreadable subject into
+    an allow.
+    """
+    try:
+        root = pathlib.Path(repo)
+        has_schema = (root / SCHEMA_FILE).exists()
+        has_tools = (root / MCP_TOOLS_PREFIX.rstrip("/")).is_dir()
+    except OSError:
+        return False
+    return has_schema or has_tools
+
+
+def _toplevel_or_none(path):
+    try:
+        run = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if run.returncode != 0:
+        return None
+    return run.stdout.strip() or None
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -316,6 +378,17 @@ def main() -> int:
         # command line, not only at the start (see GIT_COMMIT_RE docstring).
         if not _invokes_git_commit(command):
             return 0
+
+        # Jurisdiction, before any refusal about which repository is meant.
+        # This rule mirrors one schema file against one tools directory; a repository
+        # carrying neither is outside it, and refusing there is a block with no rule
+        # behind it. An explicit `-C <path>` states its target, so it is read; a
+        # chained directory change stays unreadable and keeps the refusal below.
+        stated = _explicit_repo_path(command)
+        if stated:
+            top = _toplevel_or_none(stated)
+            if top and not _repo_is_in_jurisdiction(top):
+                return 0
 
         # Fail-closed: a command that names a repository this hook did not
         # resolve from the payload cwd is refused, never guessed at.

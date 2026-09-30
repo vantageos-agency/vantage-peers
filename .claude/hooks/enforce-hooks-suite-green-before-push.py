@@ -45,6 +45,7 @@ reason to ship red. Fix the suite, then push.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -197,6 +198,58 @@ def _run_pytest(repo: str) -> tuple[int, list[str], str]:
     return failed, failing, combined
 
 
+# --- jurisdiction, derived from the repository rather than from a name --------------
+
+LITERAL_REPO_FLAG_RE = re.compile(
+    r"(?:^|\s)(?:-C\s+|-C=|--git-dir=|--work-tree=)(?P<path>/[^\s;&|]+)")
+
+
+def _explicit_repo_path(command: str) -> str | None:
+    """Return the repository path a command STATES, or None.
+
+    A stated absolute path is not a guess. A chained directory change is, and is left
+    to the existing refusal: the two cases are distinguished here rather than merged.
+    """
+    stripped = _strip_quoted_strings(command)
+    parts = CHAIN_SPLIT_RE.split(stripped)
+    for idx, part in enumerate(parts):
+        if GIT_PUSH_RE.search(part):
+            for earlier in parts[:idx]:
+                if CD_RE.match(earlier):
+                    return None  # an unreadable effect precedes the push
+            match = LITERAL_REPO_FLAG_RE.search(part)
+            return match.group("path") if match else None
+    return None
+
+
+def _repo_is_in_jurisdiction(repo: str) -> bool:
+    """True when this rule has anything to say about `repo`.
+
+    The rule's whole subject is `python3 -m pytest .claude/hooks`. A repository with
+    no `.claude/hooks` directory has no such suite, so the rule carries no clause
+    about it and firing there is a block with no rule behind it. Derived from the
+    tree, never from a list of repository names.
+
+    A repository that cannot be read returns False, and the caller keeps its own
+    refusal path: this function never converts an unreadable subject into an allow.
+    """
+    try:
+        return os.path.isdir(os.path.join(repo, ".claude", "hooks"))
+    except OSError:
+        return False
+
+
+def _toplevel_or_none(path: str) -> str | None:
+    try:
+        run = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if run.returncode != 0:
+        return None
+    return run.stdout.strip() or None
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -221,6 +274,16 @@ def main() -> int:
 
         if not _invokes_git_push(command):
             return 0
+
+        # Jurisdiction, before any refusal about which repository is meant.
+        # This rule's entire subject is the `.claude/hooks` suite; a repository that
+        # has none is outside it. An explicit `-C <path>` states its target, so it is
+        # read; a chained directory change stays unreadable and keeps the refusal.
+        stated = _explicit_repo_path(command)
+        if stated:
+            top = _toplevel_or_none(stated)
+            if top and not _repo_is_in_jurisdiction(top):
+                return 0
 
         if _names_unresolved_repo(command):
             sys.stderr.write(UNRESOLVED_REPO_STDERR_MSG)

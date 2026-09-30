@@ -192,3 +192,64 @@ def test_message_teaches():
     assert "DECLARATION" in err
     assert "allow-no-not-measured" in err
     assert "re-running a command" in err
+
+
+# ---------------------------------------------------------------------------
+# update_task: the MCP schema has NO completionNote field, so a gate demanding
+# a line inside that note is unsatisfiable on that path. Eta's REVISE on #1364
+# named it; these are the poles that pin the fix in both directions.
+# ---------------------------------------------------------------------------
+
+
+def test_update_task_to_review_without_a_note_field_is_not_judged():
+    """The real MCP shape: taskId + status, and no completionNote key at all.
+
+    Blocking here removed update_task -> review from every station, with no way
+    to comply and no way to override. A hook with no report to read must pass.
+    """
+    rc, _, _ = _run(UPDATE, {"taskId": "k" + "a" * 31, "status": "review"})
+    assert rc == 0, (
+        "update_task with no completionNote field was refused; the MCP schema "
+        "has no such field, so this demand cannot be met by any caller"
+    )
+
+
+def test_update_task_to_done_without_a_note_field_is_not_judged():
+    rc, _, _ = _run(UPDATE, {"taskId": "k" + "a" * 31, "status": "done"},
+    )
+    assert rc == 0
+
+
+def test_update_task_WITH_a_note_and_no_declaration_is_still_refused():
+    """The other pole. Without it, the fix above degrades into "never judge
+    update_task", and a caller that CAN carry the line stops being held to it."""
+    rc, _, err = _run(UPDATE, {
+            "taskId": "k" + "a" * 31,
+            "status": "done",
+            "completionNote": (
+                "Closed it. PR #1234 merged at abc1234d, 42/42 tests green, time: 0.4h"
+            ),
+        },
+    )
+    assert rc == 2, "a supplied completionNote with no declaration must still be refused"
+    assert "not_measured" in err
+
+
+def test_update_task_WITH_a_note_and_a_declaration_passes():
+    rc, _, _ = _run(UPDATE, {
+            "taskId": "k" + "a" * 31,
+            "status": "done",
+            "completionNote": (
+                "Closed it. PR #1234 merged at abc1234d, 42/42 tests green.\n"
+                "not_measured: none\n"
+                "time: 0.4h"
+            ),
+        },
+    )
+    assert rc == 0
+
+
+def test_update_task_to_a_non_reporting_status_is_untouched():
+    rc, _, _ = _run(UPDATE, {"taskId": "k" + "a" * 31, "status": "blocked"},
+    )
+    assert rc == 0
