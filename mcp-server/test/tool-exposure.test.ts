@@ -316,20 +316,63 @@ function scanRefusalToolNames(registered: Set<string>): RefusalHit[] {
 // BODY — the file a client actually loads — not `evals/`/`references/`
 // sidecar files, which are examples, not instructions).
 //
-// Extraction form: `mcp__vantage-peers__<name>` fully-qualified references.
-// This is the ONLY form present across every skill file in this tree today
-// (verified by grepping every SKILL.md: allowed-tools frontmatter, backticked
-// prose mentions, and bare command lines all spell the name fully-qualified;
-// no bare-backtick-only or table-cell form exists anywhere in
-// `.claude/skills/`). A narrow pattern that provably matches the real corpus
-// beats a broad one invented for forms that don't occur.
+// THE DISCRIMINATOR IS THE REGISTRATION SURFACE, NOT THE SPELLING. A skill
+// body is prose: it names tool verbs, but also parameters, status values and
+// ordinary words, in the same snake_case shape. What separates a tool
+// reference from a parameter name is not how it is punctuated — it is whether
+// the server REGISTERS that name at all. So every form below is gated on the
+// `registered` set (core + masked, from VP_DUMP_ALL_REGISTERED), and a name
+// the server does not register is not a tool reference in any form.
+// Measured on this corpus: of the bare snake_case names appearing in skill
+// bodies that the exposure artifact does not list, 12 are distinct and only
+// ONE (`list_repo_mappings`) is a registered tool; the other 11 are
+// parameters (`base_branch`, `default_namespace`, `subagent_type`, ...) and a
+// task status (`in_progress`). The registered-set gate excludes all 11 by
+// construction — there is no exemption list here, and adding one would be the
+// instrument admitting it cannot tell a verb from a parameter.
+//
+// THREE FORMS ARE READ, all registered-gated:
+//   1. `mcp__vantage-peers__<name>` — fully qualified (103 hits in this tree).
+//   2. A whole backtick span whose entire content is a registered name —
+//      `` `list_repo_mappings` `` — the bare-backtick form. This is the form
+//      the previous revision of this scan claimed did not exist; it does, in
+//      `open-pr/SKILL.md`, and it named a masked tool while this guard stayed
+//      green. That false claim is why the reasoning below is stated as what
+//      the extraction DOES, never as a census of what happens to occur today.
+//   3. A bare snake_case token anywhere on the line (no delimiter required),
+//      i.e. one containing at least one `_`. This reaches the undelimited
+//      command-line/comment form (`# derived from list_repo_mappings`), which
+//      is the form a caller is most likely to copy verbatim.
+//
+// DELIBERATELY NOT READ, and why — a NAMED limit, not a "none exist today":
+//   * A bare, UNDELIMITED single-word name with no underscore (`recall`,
+//     `whoami`). Such a name is indistinguishable from the ordinary English
+//     word, and this corpus already contains the noun: "exploration, recall,
+//     doc reading" (`dispatch-subagent/SKILL.md`). Reading form 3 without the
+//     underscore requirement would accuse that sentence the moment arbitration
+//     masked `recall`, and the only repair would be an exemption list. Such a
+//     name is therefore read ONLY when qualified (form 1) or fully delimited
+//     in backticks (form 2), where the author's intent to name the tool is
+//     explicit. A masked one-word tool named in undelimited prose is the one
+//     reference this scan does not see.
+//   * Sidecar files under a skill directory (`evals/`, `references/`): only
+//     `SKILL.md`, the body a client actually loads, is scanned.
+//   * Multi-token backtick spans (`` `create_task assignedTo=eta` ``) are not
+//     split; form 3 reaches the name inside them anyway, since it scans the
+//     raw line.
+//
+// A name matched by several forms on one line is ONE hit (deduplicated per
+// line), so the offender count is a count of places, not of patterns.
 //
 // Escape hatch: a skill may legitimately document a tool that is
 // deliberately hidden. An inline marker on the SAME LINE as the reference —
 // `<!-- tool-exposure-allow: <name> -->` — excuses that one occurrence. The
 // marker names the excused tool explicitly so it can't accidentally shadow a
 // different hidden name mentioned elsewhere on the same line.
-const SKILL_TOOL_REF_PATTERN = /mcp__vantage-peers__([a-z][a-z0-9_]*)/g;
+const SKILL_QUALIFIED_REF_PATTERN = /mcp__vantage-peers__([a-z][a-z0-9_]*)/g;
+const SKILL_BACKTICK_SPAN_PATTERN = /`([^`\n]+)`/g;
+// At least one underscore — see "DELIBERATELY NOT READ" above.
+const SKILL_SNAKE_TOKEN_PATTERN = /[a-z][a-z0-9]*(?:_[a-z0-9]+)+/g;
 const SKILL_ESCAPE_MARKER_PATTERN =
 	/<!--\s*tool-exposure-allow:\s*([a-z][a-z0-9_]*)\s*-->/g;
 
@@ -349,11 +392,36 @@ function listSkillFiles(dir: string): string[] {
 	return out.sort();
 }
 
-// Registered-set gated: only a name the server actually registers (core or
-// masked) counts as a tool reference. This keeps the scan from flagging an
-// unrelated lowercase word that happens to follow the `mcp__vantage-peers__`
-// prefix by typo, mirroring the registered-set gate the refusal scan above
-// already applies.
+// Every registered tool name referenced on ONE line, in any of the three read
+// forms, deduplicated. Registered-set gated throughout: the set the server
+// actually registers (core + masked) is what makes a token a tool reference,
+// rather than the punctuation around it. Returned in first-seen order.
+function extractToolRefsFromLine(
+	lineText: string,
+	registered: Set<string>,
+): string[] {
+	const found = new Set<string>();
+	// Form 1 — fully qualified. Consumed first, then removed, so the prefix's
+	// own underscores cannot be re-read as a bare snake_case token by form 3.
+	for (const m of lineText.matchAll(SKILL_QUALIFIED_REF_PATTERN)) {
+		if (registered.has(m[1])) found.add(m[1]);
+	}
+	const bare = lineText.replace(SKILL_QUALIFIED_REF_PATTERN, " ");
+	// Form 2 — a backtick span whose ENTIRE content is a registered name. This
+	// is the only form that can reach a one-word name (`recall`), because the
+	// delimiter is what proves the author meant the tool and not the word.
+	for (const m of bare.matchAll(SKILL_BACKTICK_SPAN_PATTERN)) {
+		const inner = m[1].trim();
+		if (registered.has(inner)) found.add(inner);
+	}
+	// Form 3 — a bare snake_case token, undelimited. The underscore is what
+	// makes it unambiguous; see the header's "DELIBERATELY NOT READ".
+	for (const m of bare.matchAll(SKILL_SNAKE_TOKEN_PATTERN)) {
+		if (registered.has(m[0])) found.add(m[0]);
+	}
+	return [...found];
+}
+
 function scanSkillFile(
 	path: string,
 	rel: string,
@@ -366,9 +434,7 @@ function scanSkillFile(
 		for (const m of lineText.matchAll(SKILL_ESCAPE_MARKER_PATTERN)) {
 			markedNames.add(m[1]);
 		}
-		for (const m of lineText.matchAll(SKILL_TOOL_REF_PATTERN)) {
-			const tool = m[1];
-			if (!registered.has(tool)) continue;
+		for (const tool of extractToolRefsFromLine(lineText, registered)) {
 			hits.push({
 				file: rel,
 				line: idx + 1,
@@ -491,7 +557,10 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 	it("refuses (fails) rather than passing silently when the skills directory cannot be read", () => {
 		const registered = new Set<string>(["whatever"]);
 		expect(() =>
-			scanSkillsDir(join(tmpdir(), "vp-tool-exposure-nonexistent-dir"), registered),
+			scanSkillsDir(
+				join(tmpdir(), "vp-tool-exposure-nonexistent-dir"),
+				registered,
+			),
 		).toThrow();
 	});
 
@@ -501,7 +570,10 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		const registered = new Set<string>(JSON.parse(all.stdout));
 		const core = new Set(CORE_NAMES);
 		const hiddenTool = [...registered].find((t) => !core.has(t));
-		expect(hiddenTool, "no masked tool available to build the fixture").toBeTruthy();
+		expect(
+			hiddenTool,
+			"no masked tool available to build the fixture",
+		).toBeTruthy();
 
 		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
 		tempPaths.push(dir);
@@ -524,7 +596,10 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		const registered = new Set<string>(JSON.parse(all.stdout));
 		const core = new Set(CORE_NAMES);
 		const hiddenTool = [...registered].find((t) => !core.has(t));
-		expect(hiddenTool, "no masked tool available to build the fixture").toBeTruthy();
+		expect(
+			hiddenTool,
+			"no masked tool available to build the fixture",
+		).toBeTruthy();
 
 		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
 		tempPaths.push(dir);
@@ -542,6 +617,131 @@ describe("tool-exposure filter (data-driven allowlist, registration-point)", () 
 		// extracted (visible for the scope line), just not an offender.
 		expect(namesExtracted.has(hiddenTool as string)).toBe(true);
 	});
+
+	// ─── Poles for the two forms beyond the fully-qualified one ───────────────
+	// Each builds its fixture from the LIVE masked set, so none of them can
+	// pass by naming a tool that stopped being masked.
+	function maskedWithUnderscore(registered: Set<string>, core: Set<string>) {
+		return [...registered].find((t) => !core.has(t) && t.includes("_"));
+	}
+
+	it("reads the BARE-BACKTICK form: a skill naming a masked tool in backticks alone, with no mcp__vantage-peers__ prefix, is an offender", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+		const core = new Set(CORE_NAMES);
+		const hidden = maskedWithUnderscore(registered, core);
+		expect(
+			hidden,
+			"no masked underscored tool to build the fixture",
+		).toBeTruthy();
+
+		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
+		tempPaths.push(dir);
+		mkdirSync(join(dir, "fixture-skill"), { recursive: true });
+		writeFileSync(
+			join(dir, "fixture-skill", "SKILL.md"),
+			`Derive it from \`${hidden}\` for \`repo\`; never type it.\n`,
+		);
+
+		const { hits } = scanSkillsDir(dir, registered);
+		const offenders = hits.filter((h) => !core.has(h.tool) && !h.marked);
+		expect(offenders.length, "bare-backtick form not read").toBe(1);
+		expect(offenders[0].tool).toBe(hidden);
+	}, 60_000);
+
+	it("reads the UNDELIMITED snake_case form: a masked tool named in a bare command-line comment is an offender", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+		const core = new Set(CORE_NAMES);
+		const hidden = maskedWithUnderscore(registered, core);
+		expect(
+			hidden,
+			"no masked underscored tool to build the fixture",
+		).toBeTruthy();
+
+		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
+		tempPaths.push(dir);
+		mkdirSync(join(dir, "fixture-skill"), { recursive: true });
+		writeFileSync(
+			join(dir, "fixture-skill", "SKILL.md"),
+			`  project="<project>"   # derived from ${hidden}, never typed\n`,
+		);
+
+		const { hits } = scanSkillsDir(dir, registered);
+		const offenders = hits.filter((h) => !core.has(h.tool) && !h.marked);
+		expect(offenders.length, "undelimited snake_case form not read").toBe(1);
+		expect(offenders[0].tool).toBe(hidden);
+	}, 60_000);
+
+	it("does NOT accuse a snake_case name the server never registers (a parameter or a status value), because the registered set is the discriminator", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+
+		// The exact names measured in the real corpus as bare snake_case
+		// non-tools. None is registered, so none may be extracted at all.
+		const nonTools = [
+			"in_progress",
+			"base_branch",
+			"head_branch",
+			"default_limit",
+			"default_namespace",
+			"run_in_background",
+			"subagent_type",
+			"eta_approved_evidence",
+			"owner_orchestrator",
+			"scope_description",
+			"fix_path",
+		];
+		for (const name of nonTools) {
+			expect(
+				registered.has(name),
+				`${name} is registered — fixture stale`,
+			).toBe(false);
+		}
+
+		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
+		tempPaths.push(dir);
+		mkdirSync(join(dir, "fixture-skill"), { recursive: true });
+		writeFileSync(
+			join(dir, "fixture-skill", "SKILL.md"),
+			`${nonTools.map((n) => `- \`${n}\`: set status ${n} inline.`).join("\n")}\n`,
+		);
+
+		const { hits } = scanSkillsDir(dir, registered);
+		expect(
+			hits.map((h) => h.tool),
+			"a non-registered snake_case name was read as a tool reference",
+		).toEqual([]);
+	}, 60_000);
+
+	it("names its limit: an UNDELIMITED one-word tool name is deliberately NOT read (it is indistinguishable from the English word), while the SAME name in backticks IS", () => {
+		const all = runDumpToolNames({ VP_DUMP_ALL_REGISTERED: "1" });
+		expect(all.status).toBe(0);
+		const registered = new Set<string>(JSON.parse(all.stdout));
+		const oneWord = [...registered].find((t) => !t.includes("_"));
+		expect(
+			oneWord,
+			"no one-word registered tool to build the fixture",
+		).toBeTruthy();
+
+		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-skill-"));
+		tempPaths.push(dir);
+		mkdirSync(join(dir, "fixture-skill"), { recursive: true });
+		// Same name twice: once as bare prose (NOT read), once in backticks (read).
+		writeFileSync(
+			join(dir, "fixture-skill", "SKILL.md"),
+			`exploration, ${oneWord}, doc reading\nthen call \`${oneWord}\`\n`,
+		);
+
+		const { hits } = scanSkillsDir(dir, registered);
+		expect(
+			hits.map((h) => h.line),
+			"undelimited one-word name was read, or the backticked one was not",
+		).toEqual([2]);
+	}, 60_000);
 
 	it("throws at startup naming an unknown core name, refusing to start", () => {
 		const dir = mkdtempSync(join(tmpdir(), "vp-tool-exposure-"));
