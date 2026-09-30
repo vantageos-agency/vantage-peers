@@ -98,7 +98,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 // The scanner lives outside convex/ on purpose: it imports Node builtins, and
 // the Convex CLI bundles every single-dot file under convex/ as a function
 // entry point (scripts/check-convex-node-builtins.mjs guards that class).
@@ -423,6 +423,24 @@ const modules = Object.fromEntries(
 	),
 );
 
+// Where the time goes, measured. Seeding the 203 messages + 203 receipts is
+// ~0.1 s. The expensive part is the FIRST query call: convex-test loads
+// convex/messages.ts and its import graph lazily on first use, and under a
+// loaded parallel run (the whole suite plus busy neighbours) that module
+// load alone took ~9.5 s in a measured run and pushed the test past an explicit
+// 15 s in most loaded runs. That is environment cost, not the property under
+// test, so it is paid in beforeAll (own 60 s budget) and the test keeps only
+// seed + query. Unloaded, the test itself costs ~0.4 s.
+// If this test times out anyway, it does NOT mean the unread scan is
+// unbounded: an unbounded scan fails by assertion (wrong length, or
+// truncated === true), never by timing out. A timeout is a saturated machine
+// or a hung seeding step; a length/truncated failure is a broken bound.
+// 15 s is the value of the one other explicit timeout in this suite
+// (kb-ingest.test.ts).
+beforeAll(async () => {
+	await modules["../messages.ts"]?.();
+}, 60_000);
+
 test("role-only branch: a recipient with a large read history still gets exactly its unread receipts", async () => {
 	const t = convexTest(schema, modules);
 	await t.run(async (ctx) => {
@@ -472,4 +490,4 @@ test("role-only branch: a recipient with a large read history still gets exactly
 	for (const m of result.messages) {
 		expect(m.content).toContain("unread");
 	}
-});
+}, 15_000);
