@@ -1,5 +1,5 @@
-import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { internalMutation, internalQuery } from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // seedClientOrgMapping — idempotent per-org row provisioning.
@@ -56,5 +56,172 @@ export const seedClientOrgMapping = internalMutation({
 			isActive: true,
 			createdAt: Date.now(),
 		});
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// bindScopeProfileToOrg — the write half of the multi-tenant join.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `oauth_scope_profiles.clerkOrgSlug` is READ by the authorisation path
+// (token mint copies it, `orgRoster:getForAccessToken` joins it to
+// `client_org_mapping`) and was writable by nothing in production. This binds
+// ONE profile to ONE organisation, mirroring `seedClientOrgMapping` above for
+// the other side of the same join.
+//
+// internalMutation, same gating as the seed: unreachable from any client call.
+// Operator command (DEV first, name the deployment from `<url>/instance_name`):
+//   npx convex run tenantOrgSeed:bindScopeProfileToOrg \
+//     '{"profileId":"<profileId>","clerkOrgSlug":"<org-slug>"}'
+//
+// Refusals — each its own code, never a shared one:
+//   PROFILE_NOT_FOUND   no oauth_scope_profiles row for profileId
+//   ORG_NOT_FOUND       no client_org_mapping row for clerkOrgSlug
+//   ORG_INACTIVE        the mapping row exists with isActive === false
+//   PROFILE_ALREADY_BOUND_ELSEWHERE  the profile is bound to a DIFFERENT org
+//                       (moving a credential across tenants is not a seed's job)
+//
+// IDEMPOTENCE: same arguments twice returns the same `_id`, changes no row
+// count, and does not touch `updatedAt` on the replay.
+
+export const bindScopeProfileToOrg = internalMutation({
+	args: { profileId: v.string(), clerkOrgSlug: v.string() },
+	returns: v.id("oauth_scope_profiles"),
+	handler: async (ctx, args) => {
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.profileId))
+			.unique();
+		if (!profile) {
+			throw new ConvexError(
+				`PROFILE_NOT_FOUND: no oauth_scope_profiles row for profileId "${args.profileId}"`,
+			);
+		}
+
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) =>
+				q.eq("clerkOrgSlug", args.clerkOrgSlug),
+			)
+			.first();
+		if (!mapping) {
+			throw new ConvexError(
+				`ORG_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		if (!mapping.isActive) {
+			throw new ConvexError(
+				`ORG_INACTIVE: client_org_mapping for "${args.clerkOrgSlug}" exists but isActive is false`,
+			);
+		}
+
+		if (profile.clerkOrgSlug === args.clerkOrgSlug) {
+			return profile._id; // idempotent replay: no write
+		}
+		if (profile.clerkOrgSlug !== undefined && profile.clerkOrgSlug !== "") {
+			throw new ConvexError(
+				`PROFILE_ALREADY_BOUND_ELSEWHERE: profile "${args.profileId}" is bound to "${profile.clerkOrgSlug}", refusing to move it to "${args.clerkOrgSlug}"`,
+			);
+		}
+
+		await ctx.db.patch(profile._id, {
+			clerkOrgSlug: args.clerkOrgSlug,
+			updatedAt: Date.now(),
+		});
+		return profile._id;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deriveRosterFromProfiles / setOrgRoster — roster correction.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The roster of an org is DERIVED from the `fromAllowList` of its profiles that
+// still have at least one non-revoked `oauth_clients` row — never typed from a
+// brief, never read off profile NAMES.
+//
+// THE UNION IS EXACT. No lowercasing, no accent folding, no deduplication by
+// resemblance. Eta measured why on #1377: every consumer of this roster
+// compares with `includes`, an EXACT match —
+//   mcp-server/src/auth.ts:652   roster.includes(assignedTo)
+//   convex/messages.ts:43
+//   convex/tasks.ts:203
+// so a roster folded to ["hélios"] refuses a caller whose profile allows
+// "helios" or "Helios". The first version of this function folded eight
+// allowed spellings down to three, which reads as tidy and is a WITHHELD
+// GRANT: the caller is refused on delegation and reads nothing on messages.
+//
+// A withheld grant is the direction nobody tests, because it surfaces as an
+// empty list rather than as an error. Normalising a name before comparing it
+// is the reflex, and a roster whose consumers use exact match is the one place
+// that reflex is fatal. The same defect appeared independently in a roster
+// written by hand for the same organisation, which is what proves it is a
+// reflex and not a typing slip.
+//
+// So: whatever spelling a profile admits, this roster admits. Order is
+// preserved and duplicates are removed only where the string is IDENTICAL.
+
+export const deriveRosterFromProfiles = internalQuery({
+	args: { profileIds: v.array(v.string()) },
+	returns: v.object({
+		roster: v.array(v.string()),
+		activeProfiles: v.array(v.string()),
+		skippedProfiles: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		const seen = new Set<string>();
+		const roster: string[] = [];
+		const activeProfiles: string[] = [];
+		const skippedProfiles: string[] = [];
+		for (const profileId of args.profileIds) {
+			const profile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", profileId))
+				.unique();
+			const clients = await ctx.db
+				.query("oauth_clients")
+				.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", profileId))
+				.collect();
+			const hasActive = clients.some((c) => c.revokedAt === undefined);
+			if (!profile || !hasActive) {
+				skippedProfiles.push(profileId);
+				continue;
+			}
+			activeProfiles.push(profileId);
+			for (const name of profile.fromAllowList) {
+				// Exact. A spelling the profile admits is a spelling the roster
+				// admits — see the header for why folding is a withheld grant.
+				if (seen.has(name)) continue;
+				seen.add(name);
+				roster.push(name);
+			}
+		}
+		return {
+			roster,
+			activeProfiles,
+			skippedProfiles,
+		};
+	},
+});
+
+export const setOrgRoster = internalMutation({
+	args: { clerkOrgSlug: v.string(), allowedOrchestrators: v.array(v.string()) },
+	returns: v.id("client_org_mapping"),
+	handler: async (ctx, args) => {
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) =>
+				q.eq("clerkOrgSlug", args.clerkOrgSlug),
+			)
+			.first();
+		if (!mapping) {
+			throw new ConvexError(
+				`ORG_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		await ctx.db.patch(mapping._id, {
+			allowedOrchestrators: args.allowedOrchestrators,
+		});
+		return mapping._id;
 	},
 });
