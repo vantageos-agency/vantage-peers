@@ -127,3 +127,71 @@ def test_the_token_check_is_untouched():
     """DO-NOT-TOUCH: this delivery ADDS a condition, it does not replace one."""
     assert G.has_pi_authorization("gh pr merge 1 # pi-authorized-merge: k" + "a" * 20)
     assert not G.has_pi_authorization("gh pr merge 1")
+
+
+# ---------------------------------------------------------------------------
+# Eta's re-gate on PR #1371 @ 536ceee48ec78320a9a0c087d11f61f45ac8e4d7. Two
+# CHANGES_REQUESTED findings, both of which made the guard PASS a merge it
+# exists to refuse. Each case below FAILS on the reviewed head; that is what
+# makes them a corpus rather than a description of the fix.
+# ---------------------------------------------------------------------------
+
+
+def test_the_pull_request_is_named_whatever_the_argument_order():
+    """Finding 1. `PR_NUMBER_RE` alone requires the number to sit immediately
+    after `merge`, so three shapes the fleet actually types went unparsed — and
+    an unparsed number SKIPPED the verdict block and logged
+    `verdict-approved-at-head` for a verdict never read."""
+    for command in (
+        "gh pr merge 215 -R o/r --squash",
+        "gh pr merge --squash 215 -R o/r",
+        "gh pr merge -R o/r 215 --squash",
+        "gh pr merge -R o/r --squash https://github.com/o/r/pull/215",
+    ):
+        assert G.extract_pr_number(command) == "215", command
+
+
+def test_a_number_that_belongs_to_a_flag_is_not_the_pull_request():
+    """The negative control on the same derivation: widening the search must
+    not make the guard act on the first digits it sees."""
+    assert G.extract_pr_number("gh pr merge --squash -b 215 -R o/r") is None
+
+
+def test_a_pull_request_that_cannot_be_named_is_refused_not_skipped():
+    assert G.extract_pr_number("gh pr merge -R o/r --squash --delete-branch") is None
+
+
+def test_a_refusal_is_heard_below_the_opening_line():
+    """Finding 2. Reading the first line alone means a RIEN line, a bold
+    opener, an en dash or the word CHANGES_REQUESTED hides a live refusal and
+    the selection lands on an older APPROVED."""
+    for body, expected in (
+        ("RIEN a signaler sur la forme.\n\n### Eta — REVISE — repo #1 @ `abc1234`", "REVISE"),
+        ("**Eta – REVISE** repo #1", "REVISE"),
+        ("### Eta — CHANGES_REQUESTED @ 536ceee", "CHANGES_REQUESTED"),
+    ):
+        assert G.verdict_of(body) == expected, body
+
+
+def test_a_refusal_anywhere_outranks_an_approval_on_the_opening_line():
+    body = "### Eta — APPROVED @ abc1234\n\non re-reading:\n\n### Eta — REVISE @ abc1234"
+    assert G.verdict_of(body) == "REVISE"
+
+
+def test_prose_about_a_refusal_is_not_a_refusal():
+    """The negative control on the widened reading. Hearing a refusal on every
+    line must not make every mention of one a verdict — the refusal words are
+    matched in CAPITALS only, because this fleet's own prose is full of
+    `verdict-says-revise` in lower case."""
+    for body in (
+        "the guard refused #215 -> rc=2 verdict-says-revise, which is correct",
+        "I asked sigma to revise the wording of the note.",
+        "### Eta — correction to the merge order in my re-pin (APPROVED @ abc1234)",
+    ):
+        assert G.verdict_of(body) != "REVISE", body
+
+
+def test_approval_stays_strict_on_the_opening_line():
+    """DO-NOT-TOUCH: the asymmetry is the safe direction. A refusal is heard
+    wherever written; an approval only where the convention puts it."""
+    assert G.verdict_of("some prose\n\n### Eta — APPROVED @ abc1234") is None

@@ -33,6 +33,7 @@ Exit 2 = block
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -186,6 +187,68 @@ MERGE_OVER_REVISE_RE = re.compile(r"#\s*merge-over-revise:\s*(?P<reason>.{15,})"
 PR_NUMBER_RE = re.compile(r"\bgh\s+pr\s+merge\s+(?P<pr>\d+)\b")
 PR_REPO_RE = re.compile(r"(?:-R|--repo)[=\s]+(?P<repo>[\w.-]+/[\w.-]+)")
 
+# The pull request as a URL, which `gh pr merge` accepts in place of a number.
+PR_URL_RE = re.compile(r"https?://[^\s\"']*/pull/(?P<pr>\d+)\b")
+
+# Flags of `gh pr merge` that TAKE A VALUE. Their value is not the pull request,
+# and `--body 215` must never be read as one.
+_VALUE_FLAGS = {
+    "-R", "--repo", "-b", "--body", "-F", "--body-file", "-t", "--subject",
+    "-m", "--match-head-commit", "--author-email",
+}
+
+
+def extract_pr_number(command: str):
+    """The pull request `gh pr merge` will act on, derived from ANY argument
+    shape — or None, which this guard treats as a REFUSAL, never as a skip.
+
+    Measured wrong by Eta on PR #1371 @ 536ceee: `PR_NUMBER_RE` alone requires
+    the number to sit immediately after `merge`, so `gh pr merge --squash 215`,
+    `gh pr merge -R owner/repo 215` and the /pull/215 URL form all failed to
+    match. The caller then fell through the verdict block entirely and the audit
+    line recorded `verdict-approved-at-head` for a verdict that was never read —
+    a guard going green on a subject it never examined, written into the log as
+    if it had examined it.
+
+    The number is therefore derived by TOKENISING, so argument order cannot hide
+    it, and the failure to derive one is an answer rather than a silence."""
+    if not command:
+        return None
+
+    m = PR_NUMBER_RE.search(command)
+    if m:
+        return m.group("pr")
+    m = PR_URL_RE.search(command)
+    if m:
+        return m.group("pr")
+
+    # Tokenise from `gh pr merge` onward and take the first bare number that is
+    # not the value of a value-taking flag.
+    head = re.search(r"\bgh\s+pr\s+merge\b", command)
+    if not head:
+        return None
+    try:
+        tokens = shlex.split(command[head.end():])
+    except ValueError:
+        tokens = command[head.end():].split()
+
+    skip_next = False
+    for tok in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _VALUE_FLAGS:
+            skip_next = True
+            continue
+        if tok.startswith("-"):
+            continue  # `--flag=value` and valueless flags alike
+        if tok.isdigit():
+            return tok
+        m = PR_URL_RE.search(tok)
+        if m:
+            return m.group("pr")
+    return None
+
 
 def first_nonempty_line(body: str) -> str:
     for line in (body or "").splitlines():
@@ -194,11 +257,43 @@ def first_nonempty_line(body: str) -> str:
     return ""
 
 
-def verdict_of(body: str):
-    """The verdict a comment OPENS with, or None if it opens with anything else.
+# A REFUSAL is looked for on EVERY announcement line of a comment, not only the
+# opening one. Measured by Eta on #1371 @ 536ceee: reading the first line alone
+# means a RIEN line, a bold opener, an en dash or the word CHANGES_REQUESTED
+# hides a live refusal, and the selection then lands on an OLDER APPROVED — the
+# exact failure this whole block was added to close, one formatting choice away.
+#
+# The asymmetry is deliberate and is the safe direction: a refusal is heard
+# wherever it is written, an APPROVAL is heard only where the convention puts it.
+# The refusal words are matched in CAPITALS ONLY, because prose about this guard
+# routinely contains `verdict-says-revise` in lower case and that is a sentence,
+# not a verdict.
+REFUSAL_LINE_RE = re.compile(
+    r"^\s{0,3}(?:#{1,6}|\*\*|__)?[^\n]{0,80}?"
+    r"\b(?P<verdict>REVISE|REJECTED|BLOCKED|CHANGES_REQUESTED)\b"
+)
 
-    Property 1 of the contract: a follow-up note quoting an earlier verdict is
-    not a verdict. Only the opening line decides."""
+
+def refusal_in_any_line(body: str):
+    """The first refusal announced anywhere in the comment, or None."""
+    for line in (body or "").splitlines():
+        m = REFUSAL_LINE_RE.match(line)
+        if m:
+            return m.group("verdict").upper()
+    return None
+
+
+def verdict_of(body: str):
+    """The verdict this comment carries, or None if it carries none.
+
+    Property 1 of the contract is unchanged for APPROVAL: a follow-up note
+    quoting an earlier verdict does not GRANT one, so only the opening line can
+    say yes. A refusal is read from any announcement line, and a refusal found
+    anywhere outranks an approval on the opening line — a reviewer who approved
+    and then refused in the same comment has refused."""
+    refusal = refusal_in_any_line(body)
+    if refusal:
+        return refusal
     m = VERDICT_OPENER_RE.match(first_nonempty_line(body))
     return m.group("verdict").upper() if m else None
 
@@ -322,9 +417,20 @@ try:
     # that landed over a live REVISE, no longer SUFFICIENT: the reviewer's
     # verdict on the head being merged is a separate question, asked below.
     if has_pi_authorization(command):
-        pr_m = PR_NUMBER_RE.search(command)
+        # A pull request this guard cannot NAME is one whose verdict it cannot
+        # read, and an unread verdict is never a pass. The previous shape was
+        # `if pr_m:` — on a command whose number it failed to parse it skipped
+        # this whole block and logged `verdict-approved-at-head`, asserting in
+        # the audit trail the very examination it had just declined to perform.
+        pr_number = extract_pr_number(command)
         repo_m = PR_REPO_RE.search(command)
-        if pr_m:
+        if not pr_number:
+            allowed, cause, detail = (
+                False, "no-verdict-readable",
+                "the pull request number could not be derived from this command, "
+                "so no verdict could be read; name the pull request explicitly",
+            )
+        else:
             repo = repo_m.group("repo") if repo_m else _remote_repo(_command_cwd(command))
             if not repo:
                 allowed, cause, detail = (
@@ -332,51 +438,51 @@ try:
                     "the repository could not be derived, so no verdict could be read",
                 )
             else:
-                comments, head = read_pr_comments(repo, pr_m.group("pr"))
+                comments, head = read_pr_comments(repo, pr_number)
                 allowed, cause, detail = judge_verdict(comments, head)
 
-            if not allowed:
-                ov = MERGE_OVER_REVISE_RE.search(command)
-                if ov:
-                    audit_log({
-                        "ts": int(time.time()), "verdict": "allow",
-                        "reason": "merge-over-revise-override",
-                        "cause_overridden": cause,
-                        "override_reason": ov.group("reason").strip()[:200],
-                        "command": command[:200],
-                    })
-                    sys.exit(0)
+        if not allowed:
+            ov = MERGE_OVER_REVISE_RE.search(command)
+            if ov:
                 audit_log({
-                    "ts": int(time.time()), "verdict": "block",
-                    "reason": cause, "detail": detail[:300],
+                    "ts": int(time.time()), "verdict": "allow",
+                    "reason": "merge-over-revise-override",
+                    "cause_overridden": cause,
+                    "override_reason": ov.group("reason").strip()[:200],
                     "command": command[:200],
                 })
-                print(
-                    f"BLOCKED: the Pi token is present and valid — this refusal is about the REVIEWER'S VERDICT.\n"
-                    f"\n"
-                    f"  cause: {cause}\n"
-                    f"  {detail}\n"
-                    f"\n"
-                    "A signed token says the coordinator authorised a merge. It does not say the\n"
-                    "reviewer approved THIS head. Two pull requests landed on main over a live\n"
-                    "REVISE because the two were read as one question — vantageos-crm #215 at\n"
-                    "b53b3890 and vantage-peers #1364 at 824cf8a2, both merged at the exact head\n"
-                    "their last verdict refused.\n"
-                    "\n"
-                    "The three causes are distinct and so are their remedies:\n"
-                    "  verdict-says-revise             the reviewer refused this head; fix or override\n"
-                    "  verdict-does-not-name-this-head the head moved after the verdict; ask for a re-pin\n"
-                    "  no-verdict-readable             nobody gated it, or the read failed; neither is a pass\n"
-                    "\n"
-                    "Override, when merging over a refusal is the right call (a prose-only finding,\n"
-                    "a reviewer unavailable while a client waits). The reason is recorded in the\n"
-                    "audit line, which is the whole difference from what happened last night:\n"
-                    "  gh pr merge N ... # merge-over-revise: <reason, at least 15 characters>\n"
-                    "\n"
-                    "Audit trail: /tmp/pi-auth-pr-merge.log\n",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
+                sys.exit(0)
+            audit_log({
+                "ts": int(time.time()), "verdict": "block",
+                "reason": cause, "detail": detail[:300],
+                "command": command[:200],
+            })
+            print(
+                f"BLOCKED: the Pi token is present and valid — this refusal is about the REVIEWER'S VERDICT.\n"
+                f"\n"
+                f"  cause: {cause}\n"
+                f"  {detail}\n"
+                f"\n"
+                "A signed token says the coordinator authorised a merge. It does not say the\n"
+                "reviewer approved THIS head. Two pull requests landed on main over a live\n"
+                "REVISE because the two were read as one question — vantageos-crm #215 at\n"
+                "b53b3890 and vantage-peers #1364 at 824cf8a2, both merged at the exact head\n"
+                "their last verdict refused.\n"
+                "\n"
+                "The three causes are distinct and so are their remedies:\n"
+                "  verdict-says-revise             the reviewer refused this head; fix or override\n"
+                "  verdict-does-not-name-this-head the head moved after the verdict; ask for a re-pin\n"
+                "  no-verdict-readable             nobody gated it, or the read failed; neither is a pass\n"
+                "\n"
+                "Override, when merging over a refusal is the right call (a prose-only finding,\n"
+                "a reviewer unavailable while a client waits). The reason is recorded in the\n"
+                "audit line, which is the whole difference from what happened last night:\n"
+                "  gh pr merge N ... # merge-over-revise: <reason, at least 15 characters>\n"
+                "\n"
+                "Audit trail: /tmp/pi-auth-pr-merge.log\n",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
         audit_log({
             "ts": int(time.time()),
