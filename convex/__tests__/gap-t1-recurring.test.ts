@@ -12,7 +12,8 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
+import { getNextRunTime } from "../recurringTasks";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -159,5 +160,85 @@ describe("GAP-T1 delete_recurring_task — recurringTasks.remove mutation", () =
 		await expect(
 			asMaster(t).mutation(api.recurringTasks.remove, { taskId }),
 		).rejects.toThrow();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getNextRunTime — day-of-month and month honoured; unresolvable schedule raises
+//
+// Live damage: "0 7 1,15 * *" minted one task per day because the day-of-month
+// field was discarded and the 8-day scan fell back to +24h. Dates below are
+// built in LOCAL time, the same clock getNextRunTime scans in (Convex runs UTC).
+// Labels: [FIX] red on the pre-fix code, [CONTROL] green on both sides.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getNextRunTime — day-of-month / month fields", () => {
+	const at = (y: number, mo: number, d: number, h = 0, mi = 0) =>
+		new Date(y, mo - 1, d, h, mi, 0, 0).getTime();
+
+	test("[FIX] '0 7 1,15 * *' from 2026-09-26 resolves to 2026-10-01 07:00, not 09-27", () => {
+		expect(getNextRunTime("0 7 1,15 * *", at(2026, 9, 26, 7, 8))).toBe(at(2026, 10, 1, 7));
+	});
+
+	test("[FIX] '0 7 1,15 * *' from 2026-10-01 07:00 resolves to 2026-10-15 07:00", () => {
+		expect(getNextRunTime("0 7 1,15 * *", at(2026, 10, 1, 7))).toBe(at(2026, 10, 15, 7));
+	});
+
+	test("[CONTROL] '0 7 * * *' is still daily", () => {
+		expect(getNextRunTime("0 7 * * *", at(2026, 9, 26, 12))).toBe(at(2026, 9, 27, 7));
+	});
+
+	test("[CONTROL] '0 7 * * 1' resolves to the next Monday (2026-09-28)", () => {
+		expect(getNextRunTime("0 7 * * 1", at(2026, 9, 26, 12))).toBe(at(2026, 9, 28, 7));
+	});
+
+	test("[FIX] '0 7 1 2 *' resolves to the next 1 February, past a month-long gap", () => {
+		expect(getNextRunTime("0 7 1 2 *", at(2026, 9, 26, 12))).toBe(at(2027, 2, 1, 7));
+	});
+
+	test("[FIX] '0 7 31 2 *' (31 February) raises and names the expression", () => {
+		expect(() => getNextRunTime("0 7 31 2 *", at(2026, 9, 26, 12))).toThrow(/0 7 31 2 \*/);
+	});
+
+	test("[FIX] '0 7 29 2 *' resolves to the next 29 February (2028)", () => {
+		expect(getNextRunTime("0 7 29 2 *", at(2026, 9, 26, 12))).toBe(at(2028, 2, 29, 7));
+	});
+
+	test("[FIX] an unsupported dom/month syntax raises instead of degrading to daily", () => {
+		expect(() => getNextRunTime("0 7 */2 * *", at(2026, 9, 26, 12))).toThrow(/0 7 \*\/2 \* \*/);
+		expect(() => getNextRunTime("0 7 1-5 * *", at(2026, 9, 26, 12))).toThrow(/1-5/);
+	});
+
+	test("[CONTROL] '*/30 * * * *' still resolves to the next half hour", () => {
+		expect(getNextRunTime("*/30 * * * *", at(2026, 9, 26, 12, 5))).toBe(at(2026, 9, 26, 12, 30));
+	});
+
+	test("[FIX] processDueTasks isolates an unresolvable row: no task, failed=1, good row still created", async () => {
+		const t = createTestConvex();
+		const past = Date.now() - 60_000;
+		const seed = (title: string, cronExpression: string) =>
+			t.run(async (ctx) =>
+				ctx.db.insert("recurringTasks", {
+					title,
+					assignedTo: "sigma",
+					priority: "medium" as const,
+					cronExpression,
+					nextRunAt: past,
+					active: true,
+					createdBy: "sigma",
+					createdAt: past,
+					updatedAt: past,
+				}),
+			);
+		await seed("GOOD daily", "0 9 * * *");
+		const poison = await seed("POISON 31 Feb", "0 7 31 2 *");
+
+		const res = await t.mutation(internal.recurringTasks.processDueTasks, {});
+		expect(res).toEqual({ created: 1, failed: 1 });
+		await t.run(async (ctx) => {
+			const titles = (await ctx.db.query("tasks").collect()).map((r) => r.title);
+			expect(titles).toEqual(["GOOD daily"]);
+			expect((await ctx.db.get(poison))?.nextRunAt).toBe(past); // untouched
+		});
 	});
 });
