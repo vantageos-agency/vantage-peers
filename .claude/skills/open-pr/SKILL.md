@@ -59,8 +59,9 @@ byte for byte.
 - `body`: PR description; MUST end with the canonical signature line and carry
   zero Anthropic/Claude attribution.
 - `reviewer`: the review orchestrator (default `eta`).
-- `project`: VantagePeers project slug for the review task. Derive it from
-  `list_repo_mappings` for `repo`; never type it.
+- `project`: VantagePeers project slug for the review task. Supplied by the
+  caller; this skill never guesses it. If it is missing, refuse and ask —
+  a typed-from-memory slug files the review against the wrong project.
 - `scope`: one-line scope description of the delivery.
 
 ## WORKFLOW (atomic — three acts, one invocation)
@@ -127,7 +128,7 @@ mcp__vantage-peers__create_task
   assignedTo="eta"               # the reviewer; assignedTo=eta by default
   priority="high"
   createdBy="<your role>"
-  project="<project>"            # derived from list_repo_mappings, never typed
+  project="<project>"            # the caller-supplied slug, never guessed
   description="Review PR #<pr> on <repo> at head SHA <headRefOid>. Gate on
   substance: code proven, standard conformance, scope boundaries. <scope>.
 
@@ -180,7 +181,7 @@ free narrative paragraph.
   and its notification is an incomplete delivery.
 - The `# via-open-pr` marker is fixed and literal — appended to every `gh pr create`.
 - EXACTLY ONE review task per PR — the dedup query in act 2 is mandatory.
-- `project` on the review task is derived from `list_repo_mappings`, never typed.
+- `project` on the review task is the caller-supplied slug — never guessed.
 - The review task cites PR number + head SHA + repo in title and description.
 - The notification is ONE message to `channel="eta,pi"` in the v2 grid, signed.
 - PR body ends with the canonical signature; zero Anthropic/Claude attribution.
