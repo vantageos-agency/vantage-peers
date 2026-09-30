@@ -77,16 +77,29 @@ const priorityValidator = v.union(
 // ─────────────────────────────────────────────────────────────────────────────
 // Simple cron expression → next run time calculator
 // Supports: "0 9 * * *" (daily at 9), "0 9 * * 1" (Monday 9am),
-// "0 */6 * * *" (every 6 hours), "*/30 * * * *" (every 30 min)
+// "0 */6 * * *" (every 6 hours), "*/30 * * * *" (every 30 min),
+// "0 7 1,15 * *" (1st and 15th at 07:00), "0 7 1 2 *" (1 February).
+//
+// Day-of-month and month accept only `*` or a comma list of integers. Steps
+// (`*/N`) and ranges (`1-5`) are NOT supported for those two fields and are
+// refused, never approximated. When day-of-month and day-of-week are both
+// restricted they are ANDed (unlike Vixie cron, which ORs them) — unchanged
+// day-of-week behaviour.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function getNextRunTime(cronExpression: string, after: number = Date.now()): number {
+// Scan horizon: 4 years + 1 day, long enough to reach a 29 February from any
+// starting point. The scan skips whole days/hours that cannot match, so a
+// horizon this long costs ~1.5k iterations, not 2M minutes.
+const CRON_SCAN_HORIZON_DAYS = 4 * 365 + 1 + 1;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function getNextRunTime(cronExpression: string, after: number = Date.now()): number {
 	const parts = cronExpression.trim().split(/\s+/);
 	if (parts.length !== 5) {
 		throw new Error(`Invalid cron expression: "${cronExpression}" — must have 5 fields`);
 	}
 
-	const [minStr, hourStr, , , dowStr] = parts;
+	const [minStr, hourStr, domStr, monthStr, dowStr] = parts;
 
 	// Parse a cron field value (supports: *, N, */N)
 	function parseField(field: string, current: number, max: number): number[] {
@@ -105,36 +118,62 @@ function getNextRunTime(cronExpression: string, after: number = Date.now()): num
 		return vals.filter((n) => !isNaN(n));
 	}
 
+	// Day-of-month and month use the cron 1-based convention (day 1-31, month
+	// 1-12), so the 0-based `*/N` expansion of parseField would be wrong for
+	// them. Only `*` or a plain comma list is accepted; anything else raises.
+	// Returned values are compared against `getDate()` (1-31) as-is and
+	// against `getMonth() + 1` (JS months are 0-11) below.
+	function parseOneBasedField(field: string, name: string): number[] | null {
+		if (field === "*") return null;
+		if (!/^\d+(,\d+)*$/.test(field)) {
+			throw new Error(
+				`Invalid cron expression: "${cronExpression}" — ${name} field "${field}" is unsupported (only * or a comma list of integers)`,
+			);
+		}
+		return parseField(field, 0, 0);
+	}
+
 	const minutes = parseField(minStr, 0, 60);
 	const hours = parseField(hourStr, 0, 24);
+	const doms = parseOneBasedField(domStr, "day-of-month");
+	const months = parseOneBasedField(monthStr, "month");
 	const dows = dowStr === "*" ? null : parseField(dowStr, 0, 7);
 
-	// Start from `after` and scan forward up to 8 days
+	// Start from `after` and scan forward to the horizon.
 	const start = new Date(after + 60_000); // at least 1 minute in the future
-	const maxScan = after + 8 * 24 * 60 * 60 * 1000;
+	const horizon = after + CRON_SCAN_HORIZON_DAYS * DAY_MS;
 
 	const candidate = new Date(start);
 	candidate.setSeconds(0, 0);
 
-	while (candidate.getTime() < maxScan) {
-		const m = candidate.getMinutes();
-		const h = candidate.getHours();
-		const dow = candidate.getDay();
-
+	while (candidate.getTime() < horizon) {
 		if (
-			minutes.includes(m) &&
-			hours.includes(h) &&
-			(dows === null || dows.includes(dow))
+			(months !== null && !months.includes(candidate.getMonth() + 1)) ||
+			(doms !== null && !doms.includes(candidate.getDate())) ||
+			(dows !== null && !dows.includes(candidate.getDay()))
 		) {
+			// Day cannot match: jump to the start of the next day.
+			candidate.setDate(candidate.getDate() + 1);
+			candidate.setHours(0, 0, 0, 0);
+			continue;
+		}
+		const h = candidate.getHours();
+		if (!hours.includes(h)) {
+			candidate.setHours(h + 1, 0, 0, 0);
+			continue;
+		}
+		const m = candidate.getMinutes();
+		if (minutes.includes(m)) {
 			return candidate.getTime();
 		}
-
-		// Advance by 1 minute
-		candidate.setTime(candidate.getTime() + 60_000);
+		candidate.setMinutes(m + 1, 0, 0);
 	}
 
-	// Fallback: 24 hours from now
-	return after + 24 * 60 * 60 * 1000;
+	// An unresolvable schedule is an UNKNOWN, not a daily one: raise (the
+	// per-row catch in processDueTasks isolates it) instead of inventing a time.
+	throw new Error(
+		`Unresolvable cron expression: "${cronExpression}" — no matching run time within ${CRON_SCAN_HORIZON_DAYS} days`,
+	);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
