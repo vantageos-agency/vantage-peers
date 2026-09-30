@@ -7,6 +7,12 @@ Class of failure addressed: the vantage-peers MCP server (Railway) and the Conve
 ## The rule
 
 1. **The MCP server auto-deploys on merge to `main`** (Railway GitHub integration). There is no manual redeploy. The `railway` CLI on the VPS is unauthorized — do not `railway up`, do not `railway login`.
+
+   **"The merge is the trigger" is true of CODE and FALSE of CONFIGURATION.** An environment variable does not merge. On 2026-09-30 three stations spent an evening hunting a Railway credential to set one variable on the vantage-peers service; none exists, by this rule, and the hunt was for something the doctrine deliberately forbids. Theta measured the identical gap on the vantageos-crm service. So:
+
+   - A change to a **deployed service's configuration** — an environment variable, a scaling setting, a domain — has **no path through a merge** and therefore no path through any station. It belongs to the operator's dashboard, or to a project token minted on purpose for that service, knowing it opens a door this rule otherwise closes.
+   - **A station that cannot reach it says so and stops.** It does not hunt for a credential, and it does not widen the rule for one variable. An hour was lost to the first; the second is how a deliberate closure becomes an accidental opening.
+   - **Prefer moving the decision INTO the code.** A default that must be corrected by configuration is a default reachable only by whoever holds the dashboard; a default corrected in the source reaches production by the path that already works. That is the resolution taken for `VANTAGE_ACTOR_CREDENTIAL_MODE` rather than continuing to chase the variable.
 2. **Reader-first order.** For any envelope/return-shape change the MCP reads: merge → let Railway redeploy the MCP reader → **verify by OBSERVING `check_messages` behavior** (the changed block is gone/tolerant while Convex is still old = zero crash window) → **then** deploy Convex prod. Never Convex-first, never both-at-once for a breaking change.
 3. **Verify by behavior, not timing.** Confirm the reader redeployed by the tool's own output, never by assuming the deploy finished.
 4. **Convex prod deploy** is from repo ROOT, named key inline, `# pi-authorized: k<id>`, with an identity read-back (`convex run checkNewMessagesEnvelope`) and a second-orchestrator confirmation.
