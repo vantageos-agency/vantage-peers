@@ -890,6 +890,22 @@ async function resolveActorFromRequest(
 			{ presentedSecret: presented.trim() },
 		)) as ResolvedAgentLookup;
 	} catch (err: unknown) {
+		// The door RAISES `RBAC_DENIED` (data carries reason + registration) for a
+		// wrong or empty secret — a REFUSAL, not a lookup failure. Say so.
+		const data = (err as { data?: unknown } | null)?.data;
+		if (
+			typeof data === "string" &&
+			data.startsWith("RBAC_DENIED") &&
+			data.includes("agentCredentials:resolveAgentCredential")
+		) {
+			return {
+				ok: false,
+				status: 401,
+				error:
+					"AGENT_CREDENTIAL_INVALID: the presented agent credential does not " +
+					"resolve to an active agent",
+			};
+		}
 		const message = err instanceof Error ? err.message : String(err);
 		console.error("[auth] agent credential lookup failed:", message);
 		return {
