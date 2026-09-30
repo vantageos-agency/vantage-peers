@@ -165,6 +165,7 @@ export const resolveAgentCredential = query({
 	args: { presentedSecret: v.string() },
 	returns: resolvedIdentityValidator,
 	handler: async (ctx, args) => {
+		// isolation-contract: server-side only, no reactive subscriber — enumerated 2026-09-30 with: grep -rnE "agentCredentials|resolveAgentCredential" /root/coding/vantage-peers-dashboard --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git -> 0 hits. R-50 declared divergence.
 		if (args.presentedSecret.trim() === "") {
 			return refuseUnresolvedCredential(
 				"agentCredentials:resolveAgentCredential",
@@ -198,6 +199,7 @@ export const getAgentCredentialStatus = query({
 		activeRows: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// isolation-contract: server-side only, no reactive subscriber — enumerated 2026-09-30 with: grep -rnE "agentCredentials|resolveAgentCredential" /root/coding/vantage-peers-dashboard --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git -> 0 hits. R-50 declared divergence.
 		await requireOrgAdmin(ctx, args.orgSlug);
 		const rows = await ctx.db
 			.query("agent_credentials")
