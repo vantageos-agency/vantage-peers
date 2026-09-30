@@ -125,6 +125,61 @@ export const mintAgentCredential = mutation({
 });
 
 /**
+ * revokeAgentCredential — retires EVERY active credential row of ONE agent in
+ * the caller's own org (`isActive: false`; rows are patched, never deleted,
+ * same audit-trail rule as rotation in `mintAgentCredential`). Gated by
+ * `requireOrgAdmin`, no master carve-out.
+ *
+ * RETURNS `{ revoked: number }`, the count of rows this call flipped. Load
+ * bearing, not style: `.claude/rules/refusal-is-distinguishable-from-absence.md`
+ * requires "revoked 1" and "there was nothing to revoke" to be different
+ * bytes; a bare success collapses them.
+ *
+ * NONEXISTENT AGENT -> `AGENT_NOT_FOUND`, not `{ revoked: 0 }`. Agents are
+ * never deleted, so a missing `agents` row can only mean a mistyped name, and
+ * answering it with a zero would let the operator believe a credential was
+ * retired when nothing was addressed. `{ revoked: 0 }` is reserved for an
+ * EXISTING agent with no active credential (a true absence).
+ */
+export const revokeAgentCredential = mutation({
+	args: { orgSlug: v.string(), agentName: v.string() },
+	returns: v.object({ revoked: v.number() }),
+	handler: async (ctx, args) => {
+		await requireOrgAdmin(ctx, args.orgSlug);
+
+		const agent = await ctx.db
+			.query("agents")
+			.withIndex("by_org_name", (q) =>
+				q.eq("orgSlug", args.orgSlug).eq("name", args.agentName),
+			)
+			.unique();
+		if (!agent) {
+			throw new ConvexError(
+				`AGENT_NOT_FOUND: no agent "${args.agentName}" in org "${args.orgSlug}" — ${JSON.stringify(
+					{ orgSlug: args.orgSlug, agentName: args.agentName },
+				)}`,
+			);
+		}
+
+		// Same loop shape as mintAgentCredential's rotation.
+		const priorRows = await ctx.db
+			.query("agent_credentials")
+			.withIndex("by_org_agent", (q) =>
+				q.eq("orgSlug", args.orgSlug).eq("agentName", args.agentName),
+			)
+			.collect();
+		let revoked = 0;
+		for (const row of priorRows) {
+			if (row.isActive) {
+				await ctx.db.patch(row._id, { isActive: false });
+				revoked += 1;
+			}
+		}
+		return { revoked };
+	},
+});
+
+/**
  * resolveAgentCredential — resolves a PRESENTED secret to its (orgSlug,
  * agentName), or REFUSES it with a code. It never answers "no match" with
  * `null`.
