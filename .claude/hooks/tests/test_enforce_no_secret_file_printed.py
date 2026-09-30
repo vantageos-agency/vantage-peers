@@ -428,3 +428,42 @@ def test_unescaping_does_not_make_an_ordinary_file_a_secret():
     assert run(r'cat \"README.md\"') == 0
     assert run(r'python3 -c "print(open(\"README.md\").read())"') == 0
 
+
+
+# ── ETA'S LAST BLOCKER AT c65cd7a, and the three limits it named ─────────────
+# A secrets file is leaked by its HISTORY as readily as by its working copy.
+# `log` and `show` sat in the safe-subcommand tuple because they usually print
+# a diff — but `git show HEAD:.env.local` prints the blob, and `git log -p`
+# prints every version it ever had.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git show HEAD:.env.local",
+        "git show :.env.local",
+        "git log -p -- .env.local",
+        "cat .env.l*",                                        # the glob route
+        "set -a && . ./.env.local && printenv CONVEX_DEPLOY_KEY_PROD_VP",
+    ],
+)
+def test_etas_remaining_routes_are_refused(command):
+    assert run(command) == 2, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git check-ignore .env.local",   # a FALSE POSITIVE at c65cd7a
+        "git ls-files .env.local",
+        "git status --short",
+        "git log --oneline -3",
+        "git add .env.local",
+    ],
+)
+def test_git_subcommands_that_print_no_content_still_pass(command):
+    """The control on dropping log and show: a guard that refuses every git
+    command naming the path would refuse `git add .env.local`, which is how the
+    file gets ignored in the first place."""
+    assert run(command) == 0, command
+

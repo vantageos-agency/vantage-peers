@@ -153,6 +153,24 @@ def _unescape_quotes(text: str) -> str:
     return re.sub(r"\\([\"' ])", r"\1", text)
 
 
+# A glob can name a secrets file without spelling it: `cat .env.l*` reaches
+# `.env.local` and the literal matcher never sees it. Eta, at c65cd7a. Any
+# operand carrying a wildcard that COULD expand onto a secrets basename is
+# treated as naming one — the guard cannot know what the directory holds, and
+# refusing a glob that might is the safe direction.
+GLOB_SECRET_RE = re.compile(
+    r"""(?x)
+    (?:^|[\s"'=/<>])
+    [^\s"';|&<>]*
+    (?:
+        \.env[A-Za-z0-9_.*?\[\]-]*[*?\[]     # .env.l* , .env.*  , .env?
+      | [*?\[][A-Za-z0-9_.*?\[\]-]*env[A-Za-z0-9_.*?\[\]-]*
+    )
+    (?=$|[\s"';|&<>)])
+    """
+)
+
+
 def secret_paths(command: str):
     """Every secrets-shaped path the command names, placeholders excluded."""
     found = []
@@ -161,6 +179,12 @@ def secret_paths(command: str):
         if PLACEHOLDER_RE.search(path):
             continue
         found.append(path)
+    if not found:
+        for m in GLOB_SECRET_RE.finditer(_unescape_quotes(command)):
+            g = m.group(0).strip(" \"'=/<>")
+            if PLACEHOLDER_RE.search(g):
+                continue
+            found.append(g)
     return found
 
 
@@ -303,7 +327,17 @@ def _git_subcommand_is_safe(segment: str) -> bool:
 
     # git add, git commit, git log, git show, git status are safe with secrets paths
     # git status, git add, git commit, etc. don't print the file contents
-    if len(tokens) > 1 and tokens[1] in ("add", "commit", "status", "log", "show"):
+    # `log` and `show` are NOT here, and that is the correction: eta measured
+    # `git show HEAD:.env.local`, `git show :.env.local` and
+    # `git log -p -- .env.local` all rc=0 at c65cd7a. They print the blob and
+    # every historical version of it — a secrets file is leaked by its HISTORY
+    # as readily as by its working copy, and the tuple called them safe because
+    # they usually print a diff rather than a file.
+    # `check-ignore` and `ls-files` report ABOUT a path and print no content;
+    # `check-ignore` was a false positive at that head.
+    if len(tokens) > 1 and tokens[1] in (
+        "add", "commit", "status", "check-ignore", "ls-files",
+    ):
         return True
 
     # Any other git subcommand with a secrets path is refused
@@ -336,7 +370,11 @@ def prints_contents(command: str) -> bool:
             # by construction the path is not in this segment.
 
             # HOLE 8 FIX (Eta/Pi): Also catch bare `set` and `declare -p`
-            if re.match(r"^\s*(?:env|printenv|set)\s*$|^\s*declare(?:\s+[-+]?[pfxar]+)?\s*$", segment) and any(
+            # `printenv NAME` takes an argument, so the bare-word match missed
+            # it — eta, at c65cd7a. A named variable is the likeliest spelling
+            # of all, since that is how anyone would read one secret rather
+            # than the lot.
+            if re.match(r"^\s*(?:env|printenv)(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$|^\s*set\s*$|^\s*declare(?:\s+[-+]?[pfxar]+)?\s*$", segment) and any(
                 re.match(r"\s*(?:source|\.)\s+\S", s) and secret_paths(s)
                 for s in re.split(r"[;&|]+|\n", command)
             ):
