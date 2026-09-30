@@ -35,15 +35,33 @@ function importedModules(source: string): string[] {
 // `declare const fullApi: ApiFromModules<{ ... }>`. That block is what `api`
 // is actually built from; the import block only brings the symbols into scope.
 const FULL_API_OPEN = "declare const fullApi: ApiFromModules<{";
-const FULL_API_KEY_RE = /^\s+"?([^":\s]+)"?:\s*typeof \S+;$/gm;
+const FULL_API_KEY_RE = /^\s+"?([^":\s]+)"?:\s*typeof ([^\s;]+);$/gm;
+const IMPORT_ALIAS_RE = /^import type \* as (\S+) from "\.\.\/(.+)\.js";$/gm;
 
-function fullApiKeys(source: string): string[] {
+interface FullApiRow {
+	key: string;
+	symbol: string;
+}
+
+function fullApiRows(source: string): FullApiRow[] {
 	const start = source.indexOf(FULL_API_OPEN);
 	if (start === -1) return [];
 	const body = source.slice(start + FULL_API_OPEN.length);
 	const end = body.indexOf("\n}>;");
 	if (end === -1) return [];
-	return [...body.slice(0, end).matchAll(FULL_API_KEY_RE)].map((m) => m[1] as string);
+	return [...body.slice(0, end).matchAll(FULL_API_KEY_RE)].map((m) => ({
+		key: m[1] as string,
+		symbol: m[2] as string,
+	}));
+}
+
+function fullApiKeys(source: string): string[] {
+	return fullApiRows(source).map((r) => r.key);
+}
+
+// alias -> module path, from the import block (`import type * as A from "../m.js"`).
+function importAliases(source: string): Map<string, string> {
+	return new Map([...source.matchAll(IMPORT_ALIAS_RE)].map((m) => [m[1] as string, m[2] as string]));
 }
 
 // Every non-test, non-declaration .ts source under convex/ that Convex would
@@ -87,14 +105,26 @@ describe("convex/_generated/api.d.ts is not stale", () => {
 		expect(missing).toEqual([]);
 	});
 
-	// The import block and the `fullApi` key block must name the same modules.
+	// The import block and the `fullApi` block must name the same modules, and
+	// each `fullApi` row must point at ITS OWN module's symbol.
 	//
-	// WHAT THIS CATCHES: a module imported but absent from `fullApi` (the symbol
-	// is in scope, `api` silently loses the module and every call into it
-	// degrades), and a `fullApi` key with no matching import (a dangling
-	// `typeof` that `skipLibCheck` hides). Neither block is read by the poles
-	// above, which parse the import lines only, so a hand edit that updated one
-	// block and not the other passed all of them.
+	// WHAT THIS CATCHES, by two separate poles:
+	//  - module-name parity: a module imported but absent from `fullApi` (the
+	//    symbol is in scope, `api` silently loses the module), and a `fullApi`
+	//    key with no matching import.
+	//  - symbol binding, DANGLING half: a row `"lib/auth": typeof lib_authGONE;`
+	//    keeps the key `lib/auth`, so name parity passes, while the `typeof`
+	//    names nothing. `skipLibCheck` hides that from `tsc` (measured: exit 0)
+	//    and from the deploy-time typecheck alike, so this pole is the ONLY
+	//    instrument that sees it.
+	//  - symbol binding, MISBOUND half: a row whose `typeof` names an alias that
+	//    exists but belongs to another module (`"lib/auth": typeof lib_ids;`).
+	//    This pole refuses it, and so does `tsc` (measured: exit 2, TS2339
+	//    "Property 'lib' does not exist on type ..." in the files that reference
+	//    `internal.lib.*`, because the `lib` namespace collapses out of the
+	//    `fullApi` type). This half is belt-and-braces, NOT the sole catcher.
+	//  Both halves require every `typeof X` to be bound by an
+	//  `import type * as X` whose module path equals the row's key.
 	//
 	// WHAT THIS DOES NOT CATCH: a type collapse INSIDE a correctly-listed
 	// module (a function whose own signature resolves to `any`), or a module
@@ -125,6 +155,28 @@ describe("convex/_generated/api.d.ts is not stale", () => {
 				{ inImportsNotFullApi, inFullApiNotImports },
 				"in block 1 (imports) but not block 2 (fullApi), and the reverse",
 			).toEqual({ inImportsNotFullApi: [], inFullApiNotImports: [] });
+		});
+	});
+
+	describe("every fullApi row's typeof symbol is bound to its own module", () => {
+		const rows = fullApiRows(source);
+		const aliases = importAliases(source);
+
+		test("the row and alias parsers agree with the import block (a vacuous pass proves nothing)", () => {
+			expect(rows.length, "fullApiRows() read nothing; proves nothing").toBeGreaterThan(0);
+			expect(aliases.size, "importAliases() disagrees with importedModules()").toBe(
+				imported.length,
+			);
+		});
+
+		test("no typeof names a symbol that no import binds, or binds to another module", () => {
+			const unbound = rows
+				.filter((r) => !aliases.has(r.symbol))
+				.map((r) => `${r.key}: typeof ${r.symbol} (no import binds ${r.symbol})`);
+			const misbound = rows
+				.filter((r) => aliases.has(r.symbol) && aliases.get(r.symbol) !== r.key)
+				.map((r) => `${r.key}: typeof ${r.symbol} (bound to ${aliases.get(r.symbol)})`);
+			expect({ unbound, misbound }).toEqual({ unbound: [], misbound: [] });
 		});
 	});
 });
