@@ -44,6 +44,7 @@ import {
 	internalClient,
 	isMasterScope,
 	masterOnlyMiddleware,
+	resolveActorCredentialMode,
 	sha256Base64Url,
 	sha256Hex,
 } from "./src/auth.js";
@@ -941,6 +942,16 @@ app.get("/health", (c) =>
 		transport: "streamable-http",
 		oauth: "supported",
 		scopes: ["mcp:full"],
+		// Publishes the ACTIVE actor-credential mode plus its provenance. The
+		// mode alone cannot tell "an operator chose permissive" from "nobody set
+		// the variable" (prod ran the latter for weeks, unobserved). `source` is
+		// a classification, never the raw value: this document is public.
+		// Same resolver as enforcement (resolveActorCredentialMode), so the
+		// published mode cannot disagree with the enforced one.
+		actor_credential: (() => {
+			const { mode, source } = resolveActorCredentialMode();
+			return { mode, source };
+		})(),
 	}),
 );
 
