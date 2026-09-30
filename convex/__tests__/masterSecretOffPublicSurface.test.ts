@@ -16,9 +16,12 @@
  *      nested ones included (ids are "a/b:fn"), and fails if a public one takes
  *      a master secret, unless that function has a runtime caller under
  *      mcp-server/ (derived by reading the mcp-server sources, not from a
- *      hardcoded list). An argument is a master secret when it FLOWS into
- *      requireMasterAuth in its module source; a secret-looking name is only an
- *      additional signal. A registration the guard cannot read is a failure.
+ *      hardcoded list). An argument is a master secret when it is CHECKED
+ *      AGAINST the master secret's environment variable (compared inline, handed
+ *      to a compare next to the secret, or passed to a same-module helper that
+ *      does either); requireMasterAuth is one instance of that, not its
+ *      definition. A secret-looking name is only an additional signal. A
+ *      registration the guard cannot read is a failure.
  *   4. Fixtures: synthetic modules proving the guard refuses a nested planted
  *      registration, a differently-named secret, and an unreadable population.
  *
@@ -45,7 +48,8 @@ const EXCLUDED = (path: string) =>
 
 // Deployment configuration, not a module of registrations; it only loads inside
 // the Convex runtime.
-const NOT_A_FUNCTION_MODULE = (path: string) => path.endsWith("convex.config.ts");
+const NOT_A_FUNCTION_MODULE = (path: string) =>
+	path.endsWith("convex.config.ts");
 
 const allGlob = import.meta.glob("../**/*.ts");
 const modules = Object.fromEntries(
@@ -77,7 +81,10 @@ function registrationOf(value: unknown): Registration | null {
 
 const CONVERTED: ReadonlyArray<readonly [string, unknown]> = [
 	["licenses:generate", licensesModule.generate],
-	["oauth:createTestTenantTrioClients", oauthModule.createTestTenantTrioClients],
+	[
+		"oauth:createTestTenantTrioClients",
+		oauthModule.createTestTenantTrioClients,
+	],
 	["oauth:listScopeProfiles", oauthModule.listScopeProfiles],
 	["oauth:seedTestTenantTrio", oauthModule.seedTestTenantTrio],
 	["oauth:upsertScopeProfile", oauthModule.upsertScopeProfile],
@@ -167,6 +174,15 @@ describe("WITHHELD pole — the internal path still works", () => {
 // deliberately not accused.
 const SECRET_ARG = /^(caller|master|bearer|admin)_?(token|secret|key)$/i;
 
+// THE ANCHOR, named once: the environment variable that holds the master
+// secret. The guard derives "checked against the master secret" from a read of
+// THIS variable, never from the name of a function. If the deployment ever
+// renames the variable this is the one line to change (a guard still pointing
+// at the old name would find no secret at all; the sanity test below reads the
+// production module that defines the check and fails if it no longer mentions
+// this name). It is a variable NAME, not the secret's value.
+const MASTER_SECRET_ENV = "BEARER_SECRET_MASTER";
+
 /** Argument names of a registration, read from its exported validator JSON. */
 function argNames(reg: Registration): string[] {
 	const parsed = JSON.parse(reg.exportArgs()) as {
@@ -184,7 +200,11 @@ function mcpRuntimeSources(dir: string): string[] {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const full = join(dir, entry.name);
 		if (entry.isDirectory()) {
-			if (["node_modules", "dist", "test", "tests", "__tests__"].includes(entry.name))
+			if (
+				["node_modules", "dist", "test", "tests", "__tests__"].includes(
+					entry.name,
+				)
+			)
 				continue;
 			out.push(...mcpRuntimeSources(full));
 		} else if (
@@ -247,17 +267,18 @@ function patternEntries(
 
 const ALL = "*";
 
+type Refs = {
+	/** Names that stand for the whole validated-args object. */
+	objects: Set<string>;
+	/** Local name -> the argument names whose value it carries. */
+	values: Map<string, Set<string>>;
+};
+
 /**
- * Which of `argList` reach `requireMasterAuth` inside `body` (the source text of
- * one registration). Covered forms: `requireMasterAuth(args.x)`, a local alias
- * (`const t = args.x`), destructuring in the body (`const { x } = args`) or in
- * the handler parameters (`handler: async (ctx, { x })`), a renamed args
- * parameter, and passing all of `args`.
+ * Propagates argument-ness through the local bindings of `code`: destructuring
+ * (`const { x } = args`), aliases (`const t = args.x`), and a renamed args object.
  */
-function flowSecretArgs(body: string, argList: readonly string[]): string[] {
-	const code = stripComments(body);
-	const objects = new Set<string>(["args"]);
-	const values = new Map<string, Set<string>>(); // local name -> arg names
+function propagate(code: string, { objects, values }: Refs): void {
 	const bind = (local: string, arg: string) => {
 		const set = values.get(local) ?? new Set<string>();
 		const before = set.size;
@@ -265,19 +286,6 @@ function flowSecretArgs(body: string, argList: readonly string[]): string[] {
 		values.set(local, set);
 		return set.size !== before;
 	};
-
-	const handler =
-		/handler\s*:\s*(?:async\s*)?\(\s*[\w$]+\s*,\s*(?:([\w$]+)|\{([^}]*)\})/.exec(
-			code,
-		);
-	if (handler?.[1]) objects.add(handler[1]);
-	if (handler?.[2]) {
-		for (const e of patternEntries(handler[2])) {
-			if (e.rest) objects.add(e.local);
-			else bind(e.local, e.key);
-		}
-	}
-
 	let changed = true;
 	while (changed) {
 		changed = false;
@@ -320,32 +328,337 @@ function flowSecretArgs(body: string, argList: readonly string[]): string[] {
 			}
 		}
 	}
+}
 
-	const reached = new Set<string>();
-	for (const call of code.matchAll(/\brequireMasterAuth\s*\(/g)) {
-		const text = balancedArguments(code, (call.index as number) + call[0].length - 1);
-		for (const t of text.matchAll(
-			/([A-Za-z_$][\w$]*)(?:\s*\??\.\s*([A-Za-z_$][\w$]*)|\s*\[\s*["']([\w$]+)["']\s*\])?/g,
-		)) {
-			const [, base, prop, quoted] = t;
-			if (objects.has(base)) reached.add((prop ?? quoted) ?? ALL);
-			else for (const a of values.get(base) ?? []) reached.add(a);
+/** The argument names an expression's text carries, through `refs`. */
+function refsIn(text: string, { objects, values }: Refs): Set<string> {
+	const out = new Set<string>();
+	for (const t of text.matchAll(
+		/([A-Za-z_$][\w$]*)(?:\s*\??\.\s*([A-Za-z_$][\w$]*)|\s*\[\s*["']([\w$]+)["']\s*\])?/g,
+	)) {
+		const [, base, prop, quoted] = t;
+		if (objects.has(base)) out.add(prop ?? quoted ?? ALL);
+		else for (const a of values.get(base) ?? []) out.add(a);
+	}
+	return out;
+}
+
+/** Splits call-argument text at top-level commas. */
+function topLevelArguments(text: string): string[] {
+	const out: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if ("([{".includes(c)) depth++;
+		else if (")]}".includes(c)) depth--;
+		else if (c === "," && depth === 0) {
+			out.push(text.slice(start, i));
+			start = i + 1;
 		}
 	}
+	out.push(text.slice(start));
+	return out.filter((a) => a.trim() !== "");
+}
+
+/** The text of the braces opening at `open` (index of the "{"), braces excluded. */
+function balancedBraces(code: string, open: number): string {
+	let depth = 0;
+	for (let i = open; i < code.length; i++) {
+		if (code[i] === "{") depth++;
+		else if (code[i] === "}") {
+			depth--;
+			if (depth === 0) return code.slice(open + 1, i);
+		}
+	}
+	return code.slice(open + 1);
+}
+
+/** The operand ending just before `end` in `code` (a member chain, calls and indexes included). */
+function operandBefore(code: string, end: number): string {
+	let i = end - 1;
+	while (i >= 0 && /\s/.test(code[i])) i--;
+	const last = i;
+	while (i >= 0) {
+		const c = code[i];
+		if (c === ")" || c === "]") {
+			const open = c === ")" ? "(" : "[";
+			let depth = 0;
+			for (; i >= 0; i--) {
+				if (code[i] === c) depth++;
+				else if (code[i] === open && --depth === 0) break;
+			}
+			i--;
+		} else if (/[\w$.?!]/.test(c)) i--;
+		else break;
+	}
+	return code.slice(i + 1, last + 1);
+}
+
+/** The operand starting at `start` in `code`. */
+function operandAfter(code: string, start: number): string {
+	let i = start;
+	while (i < code.length && /\s/.test(code[i])) i++;
+	const first = i;
+	if (/^await\s/.test(code.slice(i, i + 6))) {
+		i += 5;
+		while (i < code.length && /\s/.test(code[i])) i++;
+	}
+	while (i < code.length) {
+		const c = code[i];
+		if (c === "(" || c === "[") {
+			const close = c === "(" ? ")" : "]";
+			let depth = 0;
+			for (; i < code.length; i++) {
+				if (code[i] === c) depth++;
+				else if (code[i] === close && --depth === 0) break;
+			}
+			i++;
+		} else if (/[\w$.?!]/.test(c)) i++;
+		else break;
+	}
+	return code.slice(first, i);
+}
+
+// "The argument is checked against the master secret" is a property of the
+// SECRET, not of a function's name. An argument is a master secret when it
+// reaches an expression that READS `process.env[MASTER_SECRET_ENV]` (directly,
+// through a local/module alias, through a destructured env, or through a helper
+// of the same module that returns it) in one of three ways:
+//   (a) it is an operand of `===` / `!==` / `==` / `!=` whose other operand is a
+//       secret read;
+//   (b) it is one argument of a call whose OTHER argument is a secret read
+//       (a constant-time compare helper, whatever it is called);
+//   (c) it is passed to a same-module helper whose own parameter reaches (a)/(b).
+// `requireMasterAuth` is ONE instance of (c), seeded by name so a module that
+// only imports it is still judged; it is not the definition of the property.
+// Limit (named, not silent): a check reached through a helper defined in
+// ANOTHER module is not followed.
+const SEED_SINK_HELPERS = ["requireMasterAuth"];
+
+function secretEnvRead(): RegExp {
+	return new RegExp(
+		`process\\s*\\.\\s*env\\s*(?:\\.\\s*${MASTER_SECRET_ENV}\\b|\\[\\s*["'\`]${MASTER_SECRET_ENV}["'\`]\\s*\\])`,
+	);
+}
+
+type Helper = { params: (string | null)[]; body: string };
+
+/** Functions declared in `code`: `function f(..){..}` and `const f = (..) => ..`. */
+function declaredHelpers(code: string): Map<string, Helper> {
+	const out = new Map<string, Helper>();
+	const decl =
+		/(?:\bfunction\s+([\w$]+)\s*(?:<[^>(]*>)?\s*\(|\b(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:<[^>(]*>\s*)?\()/g;
+	for (const m of code.matchAll(decl)) {
+		const name = (m[1] ?? m[2]) as string;
+		const open = (m.index as number) + m[0].length - 1;
+		const paramText = balancedArguments(code, open);
+		const after = open + paramText.length + 2;
+		const brace = code.indexOf("{", after);
+		const arrow = code.indexOf("=>", after);
+		let body: string;
+		if (arrow !== -1 && (brace === -1 || arrow < brace)) {
+			let j = arrow + 2;
+			while (j < code.length && /\s/.test(code[j])) j++;
+			if (code[j] === "{") body = balancedBraces(code, j);
+			else {
+				const stop = code.slice(j).search(/;|\n/);
+				body = code.slice(j, stop === -1 ? code.length : j + stop);
+				body = `return ${body}`;
+			}
+		} else if (brace !== -1) body = balancedBraces(code, brace);
+		else continue;
+		const params = topLevelArguments(paramText).map((p) => {
+			const pm = /^\s*(?:\.\.\.)?([\w$]+)/.exec(p);
+			return pm ? pm[1] : null;
+		});
+		out.set(name, { params, body });
+	}
+	return out;
+}
+
+type Facts = {
+	aliases: Set<string>;
+	/** Helpers whose return value is the secret. */
+	readers: Set<string>;
+	/** Helpers that check an argument against the secret: name -> parameter positions. */
+	sinks: Map<string, Set<number> | "all">;
+};
+
+function readsSecret(text: string, facts: Facts): boolean {
+	if (secretEnvRead().test(text)) return true;
+	for (const a of facts.aliases)
+		if (
+			new RegExp(`(?<![\\w$.])${a.replace(/\$/g, "\\$")}(?![\\w$])`).test(text)
+		)
+			return true;
+	for (const r of facts.readers)
+		if (new RegExp(`(?<![\\w$.])${r.replace(/\$/g, "\\$")}\\s*\\(`).test(text))
+			return true;
+	return false;
+}
+
+/** Names bound to the secret read: `const m = process.env.X`, `const { X: m } = process.env`. */
+function secretAliases(code: string): Set<string> {
+	const out = new Set<string>();
+	for (const m of code.matchAll(
+		/\b(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*([^;\n]+)/g,
+	)) {
+		if (secretEnvRead().test(m[2])) out.add(m[1]);
+	}
+	for (const m of code.matchAll(
+		/\b(?:const|let|var)\s*\{([^}]*)\}\s*(?::[^=]+)?=\s*process\s*\.\s*env\b/g,
+	)) {
+		for (const e of patternEntries(m[1]))
+			if (e.key === MASTER_SECRET_ENV) out.add(e.local);
+	}
+	return out;
+}
+
+/**
+ * Which argument names reach a check against the secret inside `code`, given
+ * how `refs` binds names to arguments and what `facts` says about the module.
+ */
+function secretReach(code: string, refs: Refs, facts: Facts): Set<string> {
+	propagate(code, refs);
+	const reached = new Set<string>();
+	const addAll = (set: Set<string>) => {
+		for (const x of set) reached.add(x);
+	};
+	// (c) a same-module helper whose parameter is checked
+	for (const [name, positions] of facts.sinks) {
+		for (const call of code.matchAll(
+			new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}\\s*\\(`, "g"),
+		)) {
+			const text = balancedArguments(
+				code,
+				(call.index as number) + call[0].length - 1,
+			);
+			topLevelArguments(text).forEach((arg, i) => {
+				if (positions === "all" || positions.has(i)) addAll(refsIn(arg, refs));
+			});
+		}
+	}
+	// (a) comparison against a secret read
+	for (const op of code.matchAll(/[!=]==?/g)) {
+		const at = op.index as number;
+		const left = operandBefore(code, at);
+		const right = operandAfter(code, at + op[0].length);
+		if (readsSecret(right, facts)) addAll(refsIn(left, refs));
+		if (readsSecret(left, facts)) addAll(refsIn(right, refs));
+	}
+	// (b) one call, one argument that is the secret and another that is an argument
+	for (const call of code.matchAll(/(?<![\w$])[\w$.]+\s*\(/g)) {
+		const text = balancedArguments(
+			code,
+			(call.index as number) + call[0].length - 1,
+		);
+		const parts = topLevelArguments(text);
+		if (parts.length < 2) continue;
+		const secretAt = parts.map((p) => readsSecret(p, facts));
+		parts.forEach((p, i) => {
+			if (secretAt[i]) return;
+			if (secretAt.some(Boolean)) addAll(refsIn(p, refs));
+		});
+	}
+	return reached;
+}
+
+function moduleFacts(moduleCode: string): Facts {
+	const facts: Facts = {
+		aliases: secretAliases(moduleCode),
+		readers: new Set<string>(),
+		sinks: new Map(SEED_SINK_HELPERS.map((n) => [n, "all" as const])),
+	};
+	const helpers = declaredHelpers(moduleCode);
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const [name, h] of helpers) {
+			if (facts.readers.has(name)) continue;
+			const returned = [...h.body.matchAll(/\breturn\b([^;\n]*)/g)].some((r) =>
+				readsSecret(r[1], facts),
+			);
+			if (returned) {
+				facts.readers.add(name);
+				changed = true;
+			}
+		}
+	}
+	for (let round = 0; round < 6; round++) {
+		let moved = false;
+		for (const [name, h] of helpers) {
+			if (facts.sinks.get(name) === "all") continue;
+			const refs: Refs = { objects: new Set(), values: new Map() };
+			for (const p of h.params) if (p) refs.values.set(p, new Set([p]));
+			const reached = secretReach(h.body, refs, facts);
+			const positions = new Set<number>();
+			h.params.forEach((p, i) => {
+				if (p && reached.has(p)) positions.add(i);
+			});
+			const before = facts.sinks.get(name);
+			const same =
+				before !== undefined &&
+				before !== "all" &&
+				before.size === positions.size &&
+				[...positions].every((i) => before.has(i));
+			if (positions.size > 0 && !same) {
+				facts.sinks.set(name, positions);
+				moved = true;
+			}
+		}
+		if (!moved) break;
+	}
+	return facts;
+}
+
+/**
+ * Which of `argList` are checked against the master secret inside `body` (the
+ * source text of one registration), see the note above. `moduleSource` is the
+ * module the registration lives in (helpers, aliases); it defaults to `body`.
+ * Covered argument forms: `args.x`, a local alias (`const t = args.x`),
+ * destructuring in the body or in the handler parameters, a renamed args
+ * parameter, and passing all of `args`.
+ */
+function flowSecretArgs(
+	body: string,
+	argList: readonly string[],
+	moduleSource: string = body,
+): string[] {
+	const code = stripComments(body);
+	const facts = moduleFacts(stripComments(moduleSource));
+	const refs: Refs = { objects: new Set<string>(["args"]), values: new Map() };
+	const handler =
+		/handler\s*:\s*(?:async\s*)?\(\s*[\w$]+\s*,\s*(?:([\w$]+)|\{([^}]*)\})/.exec(
+			code,
+		);
+	if (handler?.[1]) refs.objects.add(handler[1]);
+	if (handler?.[2]) {
+		for (const e of patternEntries(handler[2])) {
+			if (e.rest) refs.objects.add(e.local);
+			else
+				refs.values.set(
+					e.local,
+					(refs.values.get(e.local) ?? new Set()).add(e.key),
+				);
+		}
+	}
+	const reached = secretReach(code, refs, facts);
 	if (reached.has(ALL)) return [...argList];
 	return argList.filter((a) => reached.has(a));
 }
 
 /**
  * The source text of `exportName` inside module `moduleName`, following a
- * `export { x } from "./y.js"` re-export. Null when it cannot be located.
+ * `export { x } from "./y.js"` re-export, and the module it was found in.
+ * Null when it cannot be located.
  */
 function exportSource(
 	moduleName: string,
 	exportName: string,
 	readModule: (name: string) => string | null,
 	depth = 0,
-): string | null {
+): { source: string; module: string } | null {
 	const source = readModule(moduleName);
 	if (source === null || depth > 4) return null;
 	const declared = new RegExp(
@@ -355,10 +668,13 @@ function exportSource(
 	if (declared) {
 		const rest = source.slice(declared.index + declared[0].length);
 		const next = /^export\s/m.exec(rest);
-		return source.slice(
-			declared.index,
-			declared.index + declared[0].length + (next ? next.index : rest.length),
-		);
+		return {
+			source: source.slice(
+				declared.index,
+				declared.index + declared[0].length + (next ? next.index : rest.length),
+			),
+			module: moduleName,
+		};
 	}
 	for (const m of source.matchAll(
 		/export\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g,
@@ -403,19 +719,25 @@ function judgeGuard(
 			const reg = registrationOf(value);
 			if (!reg || !reg.isPublic) continue;
 			if (!named) {
-				verdict.unreadable.push(`${path}:${exportName} (module name not derivable)`);
+				verdict.unreadable.push(
+					`${path}:${exportName} (module name not derivable)`,
+				);
 				continue;
 			}
 			const moduleName = named[1]; // nested modules are "a/b", ids are "a/b:fn"
 			const id = `${moduleName}:${exportName}`;
 			const args = argNames(reg);
-			const body = exportSource(moduleName, exportName, readModule);
-			if (body === null) {
+			const located = exportSource(moduleName, exportName, readModule);
+			if (located === null) {
 				verdict.unreadable.push(`${id} (source or export not found)`);
 				continue;
 			}
 			const secretArgs = new Set([
-				...flowSecretArgs(body, args),
+				...flowSecretArgs(
+					located.source,
+					args,
+					readModule(located.module) ?? located.source,
+				),
 				...args.filter((n) => SECRET_ARG.test(n)),
 			]);
 			if (secretArgs.size === 0) continue;
@@ -427,12 +749,19 @@ function judgeGuard(
 }
 // <judge-end>
 
-/** `requireMasterAuth(` or a secret-shaped validator in an un-importable module. */
-const EXCLUDED_MODULE_SECRET =
-	/\b(callerToken|masterToken|masterSecret)\s*:\s*v\.|\brequireMasterAuth\s*\(/;
+/**
+ * `requireMasterAuth(`, a secret-shaped validator, or ANY read of the master
+ * secret's environment variable in an un-importable module: the flow analysis
+ * cannot read what it cannot import, so such a module may not touch the secret.
+ */
+const EXCLUDED_MODULE_SECRET = new RegExp(
+	`\\b(callerToken|masterToken|masterSecret)\\s*:\\s*v\\.|\\brequireMasterAuth\\s*\\(|process\\s*\\.\\s*env\\s*(?:\\.\\s*${MASTER_SECRET_ENV}\\b|\\[\\s*["'\`]${MASTER_SECRET_ENV}["'\`]\\s*\\])`,
+);
 
 function fakePublic(args: readonly string[]): unknown {
-	const validator = Object.fromEntries(args.map((a) => [a, { type: "string" }]));
+	const validator = Object.fromEntries(
+		args.map((a) => [a, { type: "string" }]),
+	);
 	return Object.assign(() => undefined, {
 		isPublic: true,
 		exportArgs: () => JSON.stringify({ type: "object", value: validator }),
@@ -502,6 +831,14 @@ describe("guard — no public registration takes a master secret", () => {
 		expect(verdict.unreadable).toEqual([]);
 	});
 
+	test("the anchor is still the variable the production check reads", () => {
+		// If the deployment renames the variable, MASTER_SECRET_ENV goes stale and
+		// the guard would find no secret anywhere; this pins the two together.
+		expect(readConvexModule("oauth")).toContain(
+			`process.env.${MASTER_SECRET_ENV}`,
+		);
+	});
+
 	test("modules the runtime cannot import carry no master secret in source", () => {
 		const stack = [CONVEX_DIR];
 		const files: string[] = [];
@@ -510,7 +847,8 @@ describe("guard — no public registration takes a master secret", () => {
 			for (const e of readdirSync(d, { withFileTypes: true })) {
 				const full = join(d, e.name);
 				if (e.isDirectory()) {
-					if (["_generated", "__tests__", "node_modules"].includes(e.name)) continue;
+					if (["_generated", "__tests__", "node_modules"].includes(e.name))
+						continue;
 					stack.push(full);
 				} else if (e.name.endsWith(".ts") && !e.name.endsWith(".test.ts")) {
 					if (EXCLUDED(full)) files.push(full);
@@ -539,7 +877,11 @@ export const plantedFn = mutation({
 });
 `;
 
-function sourceWith(argsBlock: string, handlerHead: string, bodyLines: string): string {
+function sourceWith(
+	argsBlock: string,
+	handlerHead: string,
+	bodyLines: string,
+): string {
 	return `
 export const probeFn = mutation({
 	args: { ${argsBlock} },
@@ -575,7 +917,12 @@ describe("fixtures — H1: a nested module is judged, never skipped", () => {
 	});
 
 	test("a module name that cannot be derived is unreadable, not skipped", () => {
-		const v = judgeOne("./elsewhere/planted.js", "plantedFn", ["callerToken"], PLANTED_SOURCE);
+		const v = judgeOne(
+			"./elsewhere/planted.js",
+			"plantedFn",
+			["callerToken"],
+			PLANTED_SOURCE,
+		);
 		expect(v.unreadable).toHaveLength(1);
 		expect(v.offenders).toEqual([]);
 	});
@@ -584,12 +931,21 @@ describe("fixtures — H1: a nested module is judged, never skipped", () => {
 describe("fixtures — unreadable is a refusal, never a pass", () => {
 	test("a public registration whose module source cannot be read is unreadable", () => {
 		const v = judgeOne("../ghost.ts", "ghostFn", ["title"], null);
-		expect(v.unreadable).toEqual(["ghost:ghostFn (source or export not found)"]);
+		expect(v.unreadable).toEqual([
+			"ghost:ghostFn (source or export not found)",
+		]);
 	});
 
 	test("a public registration whose export is not in its module source is unreadable", () => {
-		const v = judgeOne("../ghost.ts", "ghostFn", ["title"], "export const other = 1;\n");
-		expect(v.unreadable).toEqual(["ghost:ghostFn (source or export not found)"]);
+		const v = judgeOne(
+			"../ghost.ts",
+			"ghostFn",
+			["title"],
+			"export const other = 1;\n",
+		);
+		expect(v.unreadable).toEqual([
+			"ghost:ghostFn (source or export not found)",
+		]);
 	});
 });
 
@@ -661,7 +1017,7 @@ describe("fixtures — H2: secret-ness is the flow into requireMasterAuth", () =
 			sourceWith(
 				"title: v.string(), sharedSecret: v.string()",
 				"handler: async (ctx, args)",
-				"await ctx.db.insert(\"t\", { title: args.title });",
+				'await ctx.db.insert("t", { title: args.title });',
 			),
 		);
 		expect(v.offenders).toEqual([]);
@@ -691,12 +1047,286 @@ describe("fixtures — H2: secret-ness is the flow into requireMasterAuth", () =
 
 describe("fixtures — the source scan refuses requireMasterAuth in un-importable modules", () => {
 	test("a call to requireMasterAuth is refused", () => {
-		expect("await requireMasterAuth(args.sharedSecret);").toMatch(EXCLUDED_MODULE_SECRET);
+		expect("await requireMasterAuth(args.sharedSecret);").toMatch(
+			EXCLUDED_MODULE_SECRET,
+		);
 	});
 	test("a secret-shaped validator is still refused", () => {
 		expect("args: { callerToken: v.string() }").toMatch(EXCLUDED_MODULE_SECRET);
 	});
+	test("an inline read of the master secret's variable is refused", () => {
+		expect(`if (k !== process.env.${MASTER_SECRET_ENV}) return;`).toMatch(
+			EXCLUDED_MODULE_SECRET,
+		);
+		expect(`const m = process.env["${MASTER_SECRET_ENV}"];`).toMatch(
+			EXCLUDED_MODULE_SECRET,
+		);
+	});
+	test("a read of some OTHER variable is not refused", () => {
+		expect("const m = process.env.SOME_OTHER_VARIABLE;").not.toMatch(
+			EXCLUDED_MODULE_SECRET,
+		);
+	});
 	test("an unrelated source is not refused", () => {
 		expect("args: { title: v.string() }").not.toMatch(EXCLUDED_MODULE_SECRET);
+	});
+});
+
+describe("fixtures — H3: secret-ness is the flow into the MASTER SECRET, not into a function name", () => {
+	const HEAD = "handler: async (ctx, args)";
+	const ENV = `process.env.${MASTER_SECRET_ENV}`;
+	const offenderCases: ReadonlyArray<
+		readonly [string, string, string, string, string]
+	> = [
+		[
+			"inline !== against the env read, no requireMasterAuth (fleetKey)",
+			"fleetKey",
+			HEAD,
+			`if (args.fleetKey !== ${ENV}) {\n\t\t\tthrow new Error("no");\n\t\t}`,
+			"",
+		],
+		[
+			"inline === against the env read",
+			"fleetKey",
+			HEAD,
+			`if (args.fleetKey === ${ENV}) {\n\t\t\treturn 1;\n\t\t}`,
+			"",
+		],
+		[
+			"the env read on the left of the comparison",
+			"fleetKey",
+			HEAD,
+			`if (${ENV} !== args.fleetKey) throw new Error("no");`,
+			"",
+		],
+		[
+			"loose != and a bracketed env read",
+			"fleetKey",
+			HEAD,
+			`if (args.fleetKey != process.env["${MASTER_SECRET_ENV}"]) throw new Error("no");`,
+			"",
+		],
+		[
+			"compared against a local alias of the env read",
+			"fleetKey",
+			HEAD,
+			`const expected = ${ENV} ?? "";\n\t\tif (args.fleetKey !== expected) throw new Error("no");`,
+			"",
+		],
+		[
+			"compared against a module-level alias of the env read",
+			"fleetKey",
+			HEAD,
+			`if (args.fleetKey !== MASTER) throw new Error("no");`,
+			`const MASTER = ${ENV};`,
+		],
+		[
+			"compared against a destructured env read",
+			"fleetKey",
+			HEAD,
+			`const { ${MASTER_SECRET_ENV}: expected } = process.env;\n\t\tif (args.fleetKey !== expected) throw new Error("no");`,
+			"",
+		],
+		[
+			"through an alias of the argument",
+			"fleetKey",
+			HEAD,
+			`const presented = args.fleetKey;\n\t\tif (presented !== ${ENV}) throw new Error("no");`,
+			"",
+		],
+		[
+			"handed to a constant-time compare next to the env read",
+			"fleetKey",
+			HEAD,
+			`if (!timingSafeEqual(args.fleetKey, ${ENV} ?? "")) throw new Error("no");`,
+			"",
+		],
+		[
+			"through a same-module helper that reads the env (not named requireMasterAuth)",
+			"fleetKey",
+			HEAD,
+			"await checkFleet(args.fleetKey);",
+			`async function checkFleet(k: string) {\n\tif (k !== ${ENV}) throw new Error("no");\n}`,
+		],
+		[
+			"through a helper that hands the argument on to a helper that reads the env",
+			"fleetKey",
+			HEAD,
+			"await outer(args.fleetKey);",
+			`async function inner(k: string) {\n\tif (k !== ${ENV}) throw new Error("no");\n}\nasync function outer(k: string) {\n\tawait inner(k);\n}`,
+		],
+		[
+			"compared against a helper that returns the env read",
+			"fleetKey",
+			HEAD,
+			'if (args.fleetKey !== getFleetSecret()) throw new Error("no");',
+			`function getFleetSecret() {\n\treturn ${ENV};\n}`,
+		],
+		[
+			"handler-parameter destructuring compared inline",
+			"fleetKey",
+			"handler: async (ctx, { fleetKey })",
+			`if (fleetKey !== ${ENV}) throw new Error("no");`,
+			"",
+		],
+	];
+	for (const [label, arg, head, body, prelude] of offenderCases) {
+		test(`${label} is an offender`, () => {
+			const src = `${prelude}\n${sourceWith(`${arg}: v.string()`, head, body)}`;
+			const v = judgeOne("../probe.ts", "probeFn", [arg], src);
+			expect(v.offenders).toEqual(["probe:probeFn"]);
+			expect(v.unreadable).toEqual([]);
+			// The verdict names the property, never the helper: requireMasterAuth is absent.
+			expect(src).not.toMatch(/requireMasterAuth/);
+		});
+	}
+
+	const cleanCases: ReadonlyArray<readonly [string, string, string, string]> = [
+		[
+			"an argument that reaches nothing",
+			"sharedSecret: v.string()",
+			"sharedSecret",
+			'await ctx.db.insert("t", { title: "x" });',
+		],
+		[
+			"an argument compared against some OTHER env variable",
+			"sharedSecret: v.string()",
+			"sharedSecret",
+			'if (args.sharedSecret !== process.env.SOME_OTHER_VARIABLE) throw new Error("no");',
+		],
+		[
+			"an argument compared with a literal while the env read is used elsewhere",
+			"sharedSecret: v.string()",
+			"sharedSecret",
+			`const configured = process.env.${MASTER_SECRET_ENV};\n\t\tif (args.sharedSecret !== "fixed") throw new Error(String(configured));`,
+		],
+		[
+			"an unrelated argument beside a master check on the env alone",
+			"title: v.string()",
+			"title",
+			`if (!process.env.${MASTER_SECRET_ENV}) throw new Error("misconfigured");\n\t\tawait ctx.db.insert("t", { title: args.title });`,
+		],
+	];
+	for (const [label, argsBlock, arg, body] of cleanCases) {
+		test(`${label} is not accused`, () => {
+			const v = judgeOne(
+				"../probe.ts",
+				"probeFn",
+				[arg],
+				sourceWith(argsBlock, "handler: async (ctx, args)", body),
+			);
+			expect(v.offenders).toEqual([]);
+			expect(v.callerGated).toEqual([]);
+			expect(v.unreadable).toEqual([]);
+		});
+	}
+
+	test("a helper reading the env that is called with an unrelated argument accuses nothing", () => {
+		const src = `async function loadConfig(x: string) {\n\treturn [x, process.env.${MASTER_SECRET_ENV}];\n}\n${sourceWith(
+			"title: v.string()",
+			"handler: async (ctx, args)",
+			"await loadConfig(args.title);",
+		)}`;
+		// reaching a function that merely READS the secret is not a check of the argument
+		expect(flowSecretArgs(src, ["title"])).toEqual([]);
+	});
+
+	test("only the argument that is compared is accused among several", () => {
+		const src = sourceWith(
+			"title: v.string(), fleetKey: v.string()",
+			"handler: async (ctx, args)",
+			`log(args.title);\n\t\tif (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
+		);
+		expect(flowSecretArgs(src, ["title", "fleetKey"])).toEqual(["fleetKey"]);
+	});
+
+	test("a commented-out inline comparison accuses nothing", () => {
+		const src = sourceWith(
+			"fleetKey: v.string()",
+			"handler: async (ctx, args)",
+			`// if (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");\n\t\treturn null;`,
+		);
+		expect(flowSecretArgs(src, ["fleetKey"])).toEqual([]);
+	});
+
+	test("an inline-compared secret with a runtime caller is caller-gated, like the helper form", () => {
+		const src = sourceWith(
+			"fleetKey: v.string()",
+			"handler: async (ctx, args)",
+			`if (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
+		);
+		const v = judgeOne(
+			"../probe.ts",
+			"probeFn",
+			["fleetKey"],
+			src,
+			'client.mutation("probe:probeFn" as any)',
+		);
+		expect(v.callerGated).toEqual(["probe:probeFn"]);
+		expect(v.offenders).toEqual([]);
+	});
+
+	test("a helper in the module that DEFINES a re-exported registration is followed", () => {
+		const modules: Record<string, string> = {
+			"../barrel": 'export { probeFn } from "./impl.js";',
+			"../impl": `async function checkFleet(k: string) {\n\tif (k !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");\n}\n${sourceWith(
+				"fleetKey: v.string()",
+				"handler: async (ctx, args)",
+				"await checkFleet(args.fleetKey);",
+			)}`,
+		};
+		const v = judgeGuard(
+			[
+				{
+					path: "../barrel.ts",
+					exports: { probeFn: fakePublic(["fleetKey"]) },
+				},
+			],
+			(name) => modules[`../${name}`] ?? null,
+			"",
+		);
+		expect(v.offenders).toEqual(["barrel:probeFn"]);
+	});
+
+	test("a check through a helper imported from ANOTHER module is not followed (named limit)", () => {
+		const modules: Record<string, string> = {
+			"../probe": `import { checkFleet } from "./other";\n${sourceWith(
+				"fleetKey: v.string()",
+				"handler: async (ctx, args)",
+				"await checkFleet(args.fleetKey);",
+			)}`,
+			"../other": `export async function checkFleet(k: string) {\n\tif (k !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");\n}`,
+		};
+		const v = judgeGuard(
+			[{ path: "../probe.ts", exports: { probeFn: fakePublic(["fleetKey"]) } }],
+			(name) => modules[`../${name}`] ?? null,
+			"",
+		);
+		// LIMIT, pinned so it cannot become a silent one: this escapes. If the
+		// guard learns to follow imports this test must flip to offenders.
+		expect(v.offenders).toEqual([]);
+	});
+
+	test("an inline check reached through a re-exported registration is still seen", () => {
+		const modules: Record<string, string> = {
+			"../barrel": 'export { probeFn } from "./impl.js";',
+			"../impl": sourceWith(
+				"fleetKey: v.string()",
+				"handler: async (ctx, args)",
+				`if (args.fleetKey !== process.env.${MASTER_SECRET_ENV}) throw new Error("no");`,
+			),
+		};
+		const v = judgeGuard(
+			[
+				{
+					path: "../barrel.ts",
+					exports: { probeFn: fakePublic(["fleetKey"]) },
+				},
+			],
+			(name) => modules[`../${name}`] ?? null,
+			"",
+		);
+		expect(v.offenders).toEqual(["barrel:probeFn"]);
+		expect(v.unreadable).toEqual([]);
 	});
 });
