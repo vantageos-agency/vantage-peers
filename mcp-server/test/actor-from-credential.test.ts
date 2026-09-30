@@ -119,7 +119,7 @@ const MAPPINGS: Record<
 };
 
 // What agentCredentials:resolveAgentCredential returns per presented secret.
-// An inactive agent resolves to null (the Convex core refuses it).
+// An inactive agent / unknown secret is REFUSED by the door (raises RBAC_DENIED).
 const CREDENTIALS: Record<
 	string,
 	{ orgSlug: string; agentName: string } | null
@@ -178,7 +178,15 @@ function installInternalClient(): void {
 				if (presentedSecret === SECRET_LOOKUP_THROWS) {
 					throw new Error("convex unavailable");
 				}
-				return CREDENTIALS[presentedSecret] ?? null;
+				const found = CREDENTIALS[presentedSecret] ?? null;
+				if (found === null) {
+					// The real door RAISES a coded refusal for a wrong secret (it no
+					// longer answers `null`): ConvexError carries it in `.data`.
+					throw Object.assign(new Error("[Request ID: x] Server Error"), {
+						data: `RBAC_DENIED: the presented agent credential does not resolve to an active agent for "agentCredentials:resolveAgentCredential" — ${JSON.stringify({ registration: "agentCredentials:resolveAgentCredential", orgSlug: null, reason: "credential-not-recognised" })}`,
+					});
+				}
+				return found;
 			}
 			throw new Error(`unmocked query: ${name}`);
 		},

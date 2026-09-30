@@ -148,11 +148,11 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			agentName: "a1",
 		});
 
-		const resolved = await t.query(
-			api.agentCredentials.resolveAgentCredential,
-			{ presentedSecret: "0000garbage0000not-a-real-secret0000" },
-		);
-		expect(resolved).toBeNull();
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: "0000garbage0000not-a-real-secret0000",
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 	});
 
 	test("DENY (direction 2): after rotation (second mint) the OLD plaintext no longer authenticates; only the NEW one does", async () => {
@@ -185,11 +185,11 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		expect(second.secret).not.toBe(first.secret);
 
 		// OLD plaintext: refused after rotation.
-		const resolvedFirstAfter = await t.query(
-			api.agentCredentials.resolveAgentCredential,
-			{ presentedSecret: first.secret },
-		);
-		expect(resolvedFirstAfter).toBeNull();
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: first.secret,
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 
 		// NEW plaintext: authenticates.
 		const resolvedSecond = await t.query(

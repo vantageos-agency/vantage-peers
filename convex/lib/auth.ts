@@ -823,6 +823,41 @@ export function requireResolvedCaller(
 }
 
 
+/**
+ * refuseUnresolvedCredential — the SAME refusal, said at the one door whose
+ * caller is identified by a SECRET rather than by an `OrgScope`
+ * (`agentCredentials:resolveAgentCredential`).
+ *
+ * Not a second mechanism: it raises the same `ConvexError` with the same
+ * `RBAC_DENIED:` prefix and the same `{ registration, orgSlug, reason }`
+ * payload as `requireResolvedCaller` above, so a reader branches on content
+ * exactly as it does for every other refused read. It exists beside it only
+ * because `requireResolvedCaller` judges a resolved `OrgScope`, and the
+ * credential door has none: the presented secret IS the credential, and
+ * demanding a Clerk/bearer scope on top would defeat an agent authenticating
+ * as itself.
+ *
+ * Two reasons, textually distinct, so "nothing was presented" and "something
+ * was presented and it is wrong" are never the same bytes:
+ *   - `no-credential`             the secret is empty / whitespace
+ *   - `credential-not-recognised` the secret matches no ACTIVE credential of
+ *                                 an ACTIVE agent (unknown, rotated-out, or
+ *                                 its agent deactivated)
+ */
+export function refuseUnresolvedCredential(
+	registration: string,
+	reason: "no-credential" | "credential-not-recognised",
+): never {
+	const detail =
+		reason === "no-credential"
+			? `no agent credential presented to "${registration}" — an empty secret is not a credential`
+			: `the presented agent credential does not resolve to an active agent for "${registration}" — refused, not "nothing found"`;
+	throw new ConvexError(
+		`RBAC_DENIED: ${detail} — ${JSON.stringify({ registration, orgSlug: null, reason })}`,
+	);
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveOrgScopeForAction — the ONE way a Convex ACTION resolves its caller's
 // organisation scope.

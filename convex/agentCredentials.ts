@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireOrgAdmin } from "./lib/auth";
+import { refuseUnresolvedCredential, requireOrgAdmin } from "./lib/auth";
 import { resolveAgentCredentialCore, sha256Hex } from "./lib/agentIdentity";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,25 +126,91 @@ export const mintAgentCredential = mutation({
 
 /**
  * resolveAgentCredential — resolves a PRESENTED secret to its (orgSlug,
- * agentName), or null if the secret does not match any ACTIVE credential
- * row.
+ * agentName), or REFUSES it with a code. It never answers "no match" with
+ * `null`.
+ *
+ * THE SHAPE, AND WHY. This read used to return `null` for a wrong secret — the
+ * same bytes as "there is no such credential". That is an absence-shaped
+ * answer to a refusal (.claude/rules/refusal-is-distinguishable-from-absence.md):
+ * any guard reading it could not tell "this secret is wrong" from "nothing
+ * there". It now RAISES `RBAC_DENIED` (via `refuseUnresolvedCredential`, the
+ * same code `requireResolvedCaller` carries), naming this door in `errorData`.
+ *
+ * RAISE, not a typed envelope, because no mounted render subscribes to it —
+ * measured: `grep -rnE "agentCredentials|resolveAgentCredential"
+ * /root/coding/vantage-peers-dashboard --include=*.ts --include=*.tsx
+ * --exclude-dir=node_modules --exclude-dir=.next` -> 0 hits; the only
+ * consumer is mcp-server/src/auth.ts `resolveActorFromRequest`, a server-side
+ * one-shot call that already treats a throw as a DENY. A throw needs no render
+ * to crash (R-50 is about a mounted shell). The caller here is presenting a
+ * credential, not an unresolved principal, so the envelope shape reserved for
+ * a subscribed list does not apply.
+ *
+ * THREE OUTCOMES, never two:
+ *   - resolves            -> { orgSlug, agentName }
+ *   - empty secret        -> RAISES reason "no-credential"
+ *   - wrong / rotated-out / inactive agent
+ *                         -> RAISES reason "credential-not-recognised"
+ * A legitimate ABSENCE ("does this agent hold a credential?") is a different
+ * question with its own door, `getAgentCredentialStatus`, which answers a
+ * plain success `{ hasActiveCredential: false }`.
  *
  * Trusts NO caller-declared name: the only argument is the presented secret
  * itself; the identity returned comes solely from which row's `secretHash`
- * (an index lookup on the same hash `mintAgentCredential` stored) matches.
- * A rotated-out (isActive: false) row's old plaintext no longer resolves,
- * even though the row itself still exists for audit purposes.
- *
- * No `requireOrgAdmin` gate here, deliberately — the credential itself IS
- * the proof of identity being verified; requiring a separate org-admin
- * identity on the same call would defeat the point of an agent
- * authenticating as itself.
+ * matches. No `requireOrgAdmin` gate, deliberately — the credential IS the
+ * proof of identity being verified.
  */
 // @credential presentedSecret agent-credential: the presented agent secret is hashed and resolved against stored agent credentials
 export const resolveAgentCredential = query({
 	args: { presentedSecret: v.string() },
-	returns: v.union(resolvedIdentityValidator, v.null()),
+	returns: resolvedIdentityValidator,
 	handler: async (ctx, args) => {
-		return await resolveAgentCredentialCore(ctx, args.presentedSecret);
+		if (args.presentedSecret.trim() === "") {
+			return refuseUnresolvedCredential(
+				"agentCredentials:resolveAgentCredential",
+				"no-credential",
+			);
+		}
+		const resolved = await resolveAgentCredentialCore(ctx, args.presentedSecret);
+		if (resolved === null) {
+			return refuseUnresolvedCredential(
+				"agentCredentials:resolveAgentCredential",
+				"credential-not-recognised",
+			);
+		}
+		return resolved;
+	},
+});
+
+/**
+ * getAgentCredentialStatus — the legitimate-absence door. An org-admin of the
+ * agent's OWN org asks whether an agent holds an active credential; "no" is a
+ * plain SUCCESS, distinguishable from every refusal above because it is a
+ * value, not a raise. The credential value never appears: only a boolean and
+ * the active-row count.
+ */
+export const getAgentCredentialStatus = query({
+	args: { orgSlug: v.string(), agentName: v.string() },
+	returns: v.object({
+		orgSlug: v.string(),
+		agentName: v.string(),
+		hasActiveCredential: v.boolean(),
+		activeRows: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		await requireOrgAdmin(ctx, args.orgSlug);
+		const rows = await ctx.db
+			.query("agent_credentials")
+			.withIndex("by_org_agent", (q) =>
+				q.eq("orgSlug", args.orgSlug).eq("agentName", args.agentName),
+			)
+			.collect();
+		const activeRows = rows.filter((r) => r.isActive).length;
+		return {
+			orgSlug: args.orgSlug,
+			agentName: args.agentName,
+			hasActiveCredential: activeRows > 0,
+			activeRows,
+		};
 	},
 });

@@ -15,7 +15,7 @@
  *
  * POLES:
  *   ALLOW — an active agent's active credential resolves to (org, agent).
- *   DENY  — the SAME credential resolves to null once the agent is inactive.
+ *   DENY  — the SAME credential is refused once the agent is inactive.
  *   DENY  — ... or once the agent row no longer exists.
  *   ISOLATION — a same-named agent in ANOTHER org keeps resolving to its own
  *   org: deactivating one does not deactivate the other.
@@ -102,21 +102,19 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 		expect(resolved).toEqual({ orgSlug: "org-o", agentName: "alice" });
 	});
 
-	test("DENY: the SAME credential resolves to null once the agent is inactive", async () => {
+	test("DENY: the SAME credential is refused once the agent is inactive", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-o");
 		const secret = await mintAgent(t, "org-o", "alice");
 		await setAgentActive(t, "org-o", "alice", false);
-		const resolved = await t.query(
-			api.agentCredentials.resolveAgentCredential,
-			{
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secret,
-			},
-		);
-		expect(resolved).toBeNull();
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 	});
 
-	test("DENY: the credential resolves to null once the agent row no longer exists", async () => {
+	test("DENY: the credential is refused once the agent row no longer exists", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-o");
 		const secret = await mintAgent(t, "org-o", "alice");
@@ -129,13 +127,11 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 				.unique();
 			if (row) await ctx.db.delete(row._id);
 		});
-		const resolved = await t.query(
-			api.agentCredentials.resolveAgentCredential,
-			{
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secret,
-			},
-		);
-		expect(resolved).toBeNull();
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 	});
 
 	test("ISOLATION: deactivating org-o's alice does not touch org-p's alice, which still resolves to org-p", async () => {
@@ -145,11 +141,11 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 		const secretO = await mintAgent(t, "org-o", "alice");
 		const secretP = await mintAgent(t, "org-p", "alice");
 		await setAgentActive(t, "org-o", "alice", false);
-		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretO,
 			}),
-		).toBeNull();
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 		expect(
 			await t.query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretP,
