@@ -209,6 +209,7 @@ type Wire = {
 		isMaster?: boolean;
 	} | null;
 	tools?: Array<{ name: string; schemaKeys: string[] }>;
+	error?: string;
 };
 
 function buildFakeServer(): {
@@ -439,6 +440,22 @@ describe("S1 boundary — the actor is resolved once, from the presented credent
 			credential: SECRET_LOOKUP_THROWS,
 		});
 		expect(status).toBe(401);
+	});
+
+	it("DENY, TOLD APART: a coded RBAC_DENIED refusal answers AGENT_CREDENTIAL_INVALID; a lookup that throws answers AGENT_CREDENTIAL_LOOKUP_FAILED — same 401, different code", async () => {
+		const app = buildApp(() => buildToolConvex({}).convex);
+		const refused = await send(app, "/echo", {
+			orgId: "org-a",
+			credential: "not-a-real-secret",
+		});
+		const failed = await send(app, "/echo", {
+			orgId: "org-a",
+			credential: SECRET_LOOKUP_THROWS,
+		});
+		expect(refused.status).toBe(401);
+		expect(failed.status).toBe(401);
+		expect(refused.json.error).toMatch(/^AGENT_CREDENTIAL_INVALID:/);
+		expect(failed.json.error).toMatch(/^AGENT_CREDENTIAL_LOOKUP_FAILED:/);
 	});
 
 	it("DENY: an agent of org B presented with org A's session is refused (ORG_MISMATCH) — same name, different tenant", async () => {
