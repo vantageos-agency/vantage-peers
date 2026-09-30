@@ -300,8 +300,11 @@ export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
  *   strict (Deployment B) — that same call is REFUSED with
  *     AGENT_CREDENTIAL_REQUIRED.
  *
- * Read in exactly ONE place ({@link actorCredentialMode}, called by
- * {@link checkActorBinding}); there is no per-tool flag. Unset or empty means
+ * Read in exactly ONE place ({@link resolveActorCredentialMode}), shared by
+ * {@link actorCredentialMode} — which {@link checkActorBinding} calls to
+ * ENFORCE — and by /health, which only PUBLISHES it. One read, so the mode
+ * that is published can never disagree with the mode that is applied.
+ * There is no per-tool flag. Unset or empty means
  * permissive. Any value other than "permissive" / "strict" fails CLOSED to
  * strict and is logged once, so a typo can only tighten, never silently loosen.
  */
@@ -310,20 +313,56 @@ export type ActorCredentialMode = "permissive" | "strict";
 
 let warnedUnknownMode: string | null = null;
 
-export function actorCredentialMode(): ActorCredentialMode {
+/**
+ * Where the effective mode came from. A CLASSIFICATION of the variable, never
+ * an echo of its value (the /health document is unauthenticated):
+ *   configured — set to a value this file recognises ("permissive" | "strict")
+ *   unset      — the variable is absent (the state nobody ever chose)
+ *   empty      — set, but empty after trimming
+ *   coerced    — set to an unrecognised value; failed CLOSED to strict
+ * "permissive"+configured and "permissive"+unset are the same behaviour and
+ * different facts; publishing only the mode collapses them.
+ */
+export type ActorCredentialModeSource =
+	| "configured"
+	| "unset"
+	| "empty"
+	| "coerced";
+
+export interface ActorCredentialResolution {
+	mode: ActorCredentialMode;
+	source: ActorCredentialModeSource;
+	/** Raw value, present only when source is "coerced". Internal: used for the
+	 *  one-shot warning. MUST NOT be serialised into any response. */
+	unrecognisedRaw?: string;
+}
+
+/**
+ * The ONE read of the switch and the ONE decision. Both
+ * {@link actorCredentialMode} (enforcement) and /health (publication) go
+ * through here, so the published mode can never disagree with the enforced one.
+ * Pure: no logging, no state.
+ */
+export function resolveActorCredentialMode(): ActorCredentialResolution {
 	const raw = process.env[ACTOR_CREDENTIAL_MODE_ENV];
-	if (raw === undefined || raw.trim() === "" || raw.trim() === "permissive") {
-		return "permissive";
-	}
-	if (raw.trim() === "strict") return "strict";
-	if (warnedUnknownMode !== raw) {
-		warnedUnknownMode = raw;
+	if (raw === undefined) return { mode: "permissive", source: "unset" };
+	const t = raw.trim();
+	if (t === "") return { mode: "permissive", source: "empty" };
+	if (t === "permissive") return { mode: "permissive", source: "configured" };
+	if (t === "strict") return { mode: "strict", source: "configured" };
+	return { mode: "strict", source: "coerced", unrecognisedRaw: raw };
+}
+
+export function actorCredentialMode(): ActorCredentialMode {
+	const r = resolveActorCredentialMode();
+	if (r.unrecognisedRaw !== undefined && warnedUnknownMode !== r.unrecognisedRaw) {
+		warnedUnknownMode = r.unrecognisedRaw;
 		console.error(
 			`[auth] ${ACTOR_CREDENTIAL_MODE_ENV} has an unrecognised value; ` +
 				'treating it as "strict" (expected "permissive" or "strict")',
 		);
 	}
-	return "strict";
+	return r.mode;
 }
 
 /**
