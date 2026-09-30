@@ -211,16 +211,36 @@ export const deactivateAgent = mutation({
  * answer to "an unconditional refusal in `registerAgent` would burn a retired
  * name forever": the name is reusable, but only by a deliberate call.
  *
- * It does NOT resurrect credentials: revoked rows stay revoked, and a fresh
- * one must be minted with `mintAgentCredential`.
+ * REACTIVATION RESTORES THE IDENTITY AND NEVER A CREDENTIAL. A reactivated
+ * agent holds zero usable credentials and must be re-minted with
+ * `mintAgentCredential`. Before patching `isActive: true` this mutation
+ * sweeps (`revokeActiveCredentialRows`) every active credential of the agent,
+ * not because it was active before but because the identity was retired at
+ * all.
+ *
+ * TWO SWEEPS, ON PURPOSE — DO NOT DELETE ONE AS REDUNDANT. `deactivateAgent`
+ * sweeps on the retirement; this sweeps on the return. The second exists to
+ * catch a credential that ESCAPED the first, by whatever path: a partial
+ * failure, a row written between the two calls, or a code path not written
+ * yet. If retiring an identity and bringing it back could leave any
+ * credential able to resolve, deactivate-then-reactivate would be a way to
+ * keep an old key alive while appearing to have retired it, and retirement
+ * would be a state change with no authority consequence. Belt and braces is
+ * the control, not waste.
+ *
+ * The sweep runs and is reported even when the row was already active (like
+ * `deactivateAgent` on an already-inactive agent): a non-zero `revoked` is a
+ * finding the operator must see, never hidden behind the `reactivated` flag.
+ * It runs BEFORE the patch, after the existence check.
  *
  * Unknown name raises `AGENT_NOT_FOUND`.
- * RETURNS `{ reactivated: boolean }`: true = this call flipped the row,
- * false = it was already active.
+ * RETURNS `{ reactivated: boolean, revoked: number }`: reactivated true = this
+ * call flipped the row, false = it was already active; revoked = credential
+ * rows this call swept (0 is a real zero).
  */
 export const reactivateAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string() },
-	returns: v.object({ reactivated: v.boolean() }),
+	returns: v.object({ reactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
 		await requireOrgAdmin(ctx, args.orgSlug);
 
@@ -239,11 +259,16 @@ export const reactivateAgent = mutation({
 			);
 		}
 
+		const revoked = await revokeActiveCredentialRows(
+			ctx,
+			args.orgSlug,
+			args.name,
+		);
 		const reactivated = !existing.isActive;
 		if (reactivated) {
 			await ctx.db.patch(existing._id, { isActive: true });
 		}
-		return { reactivated };
+		return { reactivated, revoked };
 	},
 });
 

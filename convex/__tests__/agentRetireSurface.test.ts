@@ -216,7 +216,7 @@ describe("agent retire surface", () => {
 			orgSlug: "org-a",
 			name: "beta",
 		});
-		expect(res).toEqual({ reactivated: true });
+		expect(res).toEqual({ reactivated: true, revoked: 0 });
 
 		const byName = await agentsActiveByName(admin);
 		expect(byName.beta).toBe(true);
@@ -242,13 +242,89 @@ describe("agent retire surface", () => {
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "beta" });
 
-		// Already active: reported as such, not as a flip.
+		// Already active: not a flip, but the sweep still runs and reports the
+		// freshly minted credential it just revoked.
 		expect(
 			await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "beta" }),
-		).toEqual({ reactivated: false });
+		).toEqual({ reactivated: false, revoked: 1 });
 		await expect(
 			admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "nobody" }),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
+	});
+
+	test("POLE 6 (the one that matters): mint, deactivate, reactivate — the ORIGINAL secret is refused; a FRESH one resolves and the row is active", async () => {
+		const { t, admin, secrets } = await seedThreeAgents(createT());
+		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", name: "beta" });
+		await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "beta" });
+
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secrets.beta,
+			}),
+		).rejects.toThrow(/credential-not-recognised/);
+
+		// Negative pole: without this, pole 6 passes by breaking reactivation.
+		expect((await agentsActiveByName(admin)).beta).toBe(true);
+		const fresh = await admin.mutation(api.agentCredentials.mintAgentCredential, {
+			orgSlug: "org-a",
+			agentName: "beta",
+		});
+		expect(
+			await t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: fresh.secret,
+			}),
+		).toEqual({ orgSlug: "org-a", agentName: "beta" });
+	});
+
+	test("POLE 6b: reactivateAgent sweeps a credential that SURVIVED the retirement and reports the count; Y and Z untouched per name in both tables", async () => {
+		const { t, admin, secrets } = await seedThreeAgents(createT());
+		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", name: "beta" });
+		// CONSTRUCTED, not reached: no mutation path leaves an active credential
+		// on an inactive agent (deactivateAgent sweeps), and this sweep exists
+		// for exactly the escape no current path produces. Insert it directly.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("agent_credentials", {
+				orgSlug: "org-a",
+				agentName: "beta",
+				secretHash: "escaped-row-hash",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		expect((await activeRowsByName(admin)).beta).toBe(1);
+
+		const res = await admin.mutation(api.agents.reactivateAgent, {
+			orgSlug: "org-a",
+			name: "beta",
+		});
+		expect(res).toEqual({ reactivated: true, revoked: 1 });
+
+		const rows = await activeRowsByName(admin);
+		expect(rows.beta).toBe(0);
+		expect(rows.alpha).toBe(1);
+		expect(rows.gamma).toBe(1);
+		const byName = await agentsActiveByName(admin);
+		expect(byName.beta).toBe(true);
+		expect(byName.alpha).toBe(true);
+		expect(byName.gamma).toBe(true);
+		for (const n of ["alpha", "gamma"] as const) {
+			expect(
+				await t.query(api.agentCredentials.resolveAgentCredential, {
+					presentedSecret: secrets[n],
+				}),
+			).toEqual({ orgSlug: "org-a", agentName: n });
+		}
+	});
+
+	test("POLE 6c: reactivateAgent sweeps and reports even when the row was already active", async () => {
+		const { admin } = await seedThreeAgents(createT());
+		const res = await admin.mutation(api.agents.reactivateAgent, {
+			orgSlug: "org-a",
+			name: "beta",
+		});
+		expect(res).toEqual({ reactivated: false, revoked: 1 });
+		const rows = await activeRowsByName(admin);
+		expect(rows).toEqual({ alpha: 1, beta: 0, gamma: 1 });
 	});
 
 	test("POLE 5: CROSS-ORG DENY — an ordinary org-admin of B is refused RBAC_DENIED on all three mutations against A, and A is untouched", async () => {
