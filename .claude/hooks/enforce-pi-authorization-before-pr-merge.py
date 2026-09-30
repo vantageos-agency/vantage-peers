@@ -33,6 +33,7 @@ Exit 2 = block
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -154,6 +155,232 @@ def has_laurent_override(command: str) -> bool:
     return bool(re.search(r"#\s*laurent-direct-merge\b", command))
 
 
+# ---------------------------------------------------------------------------
+# THE REVIEWER'S VERDICT — added after two pull requests landed on main over a
+# live REVISE (vantageos-crm #215 @ b53b3890, vantage-peers #1364 @ 824cf8a2).
+#
+# The token check above answers ONE question correctly: is there a Pi-signed
+# authorization. It is SILENT on the question the fleet reads it as answering:
+# did the REVIEWER say yes. A missing guard is visible; a silent one is cited as
+# protection, which is why this is worse than an absent check.
+#
+# The two questions are asked separately. The token check is untouched.
+# ---------------------------------------------------------------------------
+
+# A verdict OPENS a comment: the first non-empty line is a markdown header whose
+# text, after the reviewer's name and a dash, IS the verdict word. This is not
+# "the last comment containing APPROVED": on vantage-peers #1370 the last such
+# comment is "### Eta - correction to the merge order in my re-pin (APPROVED @
+# ...)", a note ABOUT a verdict, and selecting on the word lands on it.
+VERDICT_OPENER_RE = re.compile(
+    r"^\s{0,3}#{1,6}\s*[^\n]{0,60}?[\u2014-]\s*"
+    r"(?P<verdict>APPROVED|REVISE|REJECTED|BLOCKED)\b",
+    re.IGNORECASE,
+)
+
+# The override. A merge over a live REVISE is sometimes right — a prose-only
+# finding, a reviewer unavailable while a client waits. What is banned is the
+# SILENT version, which is what happened twice. Fifteen characters, because a
+# reason shorter than that is a word, and a word is not a reason.
+MERGE_OVER_REVISE_RE = re.compile(r"#\s*merge-over-revise:\s*(?P<reason>.{15,})")
+
+PR_NUMBER_RE = re.compile(r"\bgh\s+pr\s+merge\s+(?P<pr>\d+)\b")
+PR_REPO_RE = re.compile(r"(?:-R|--repo)[=\s]+(?P<repo>[\w.-]+/[\w.-]+)")
+
+# The pull request as a URL, which `gh pr merge` accepts in place of a number.
+PR_URL_RE = re.compile(r"https?://[^\s\"']*/pull/(?P<pr>\d+)\b")
+
+# Flags of `gh pr merge` that TAKE A VALUE. Their value is not the pull request,
+# and `--body 215` must never be read as one.
+_VALUE_FLAGS = {
+    "-R", "--repo", "-b", "--body", "-F", "--body-file", "-t", "--subject",
+    "-m", "--match-head-commit", "--author-email",
+}
+
+
+def extract_pr_number(command: str):
+    """The pull request `gh pr merge` will act on, derived from ANY argument
+    shape — or None, which this guard treats as a REFUSAL, never as a skip.
+
+    Measured wrong by Eta on PR #1371 @ 536ceee: `PR_NUMBER_RE` alone requires
+    the number to sit immediately after `merge`, so `gh pr merge --squash 215`,
+    `gh pr merge -R owner/repo 215` and the /pull/215 URL form all failed to
+    match. The caller then fell through the verdict block entirely and the audit
+    line recorded `verdict-approved-at-head` for a verdict that was never read —
+    a guard going green on a subject it never examined, written into the log as
+    if it had examined it.
+
+    The number is therefore derived by TOKENISING, so argument order cannot hide
+    it, and the failure to derive one is an answer rather than a silence."""
+    if not command:
+        return None
+
+    m = PR_NUMBER_RE.search(command)
+    if m:
+        return m.group("pr")
+    m = PR_URL_RE.search(command)
+    if m:
+        return m.group("pr")
+
+    # Tokenise from `gh pr merge` onward and take the first bare number that is
+    # not the value of a value-taking flag.
+    head = re.search(r"\bgh\s+pr\s+merge\b", command)
+    if not head:
+        return None
+    try:
+        tokens = shlex.split(command[head.end():])
+    except ValueError:
+        tokens = command[head.end():].split()
+
+    skip_next = False
+    for tok in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _VALUE_FLAGS:
+            skip_next = True
+            continue
+        if tok.startswith("-"):
+            continue  # `--flag=value` and valueless flags alike
+        if tok.isdigit():
+            return tok
+        m = PR_URL_RE.search(tok)
+        if m:
+            return m.group("pr")
+    return None
+
+
+def first_nonempty_line(body: str) -> str:
+    for line in (body or "").splitlines():
+        if line.strip():
+            return line
+    return ""
+
+
+# A REFUSAL is looked for on EVERY announcement line of a comment, not only the
+# opening one. Measured by Eta on #1371 @ 536ceee: reading the first line alone
+# means a RIEN line, a bold opener, an en dash or the word CHANGES_REQUESTED
+# hides a live refusal, and the selection then lands on an OLDER APPROVED — the
+# exact failure this whole block was added to close, one formatting choice away.
+#
+# The asymmetry is deliberate and is the safe direction: a refusal is heard
+# wherever it is written, an APPROVAL is heard only where the convention puts it.
+# The refusal words are matched in CAPITALS ONLY, because prose about this guard
+# routinely contains `verdict-says-revise` in lower case and that is a sentence,
+# not a verdict.
+REFUSAL_LINE_RE = re.compile(
+    r"^\s{0,3}(?:#{1,6}|\*\*|__)?[^\n]{0,80}?"
+    r"\b(?P<verdict>REVISE|REJECTED|BLOCKED|CHANGES_REQUESTED)\b"
+)
+
+
+def refusal_in_any_line(body: str):
+    """The first refusal announced anywhere in the comment, or None."""
+    for line in (body or "").splitlines():
+        m = REFUSAL_LINE_RE.match(line)
+        if m:
+            return m.group("verdict").upper()
+    return None
+
+
+def verdict_of(body: str):
+    """The verdict this comment carries, or None if it carries none.
+
+    Property 1 of the contract is unchanged for APPROVAL: a follow-up note
+    quoting an earlier verdict does not GRANT one, so only the opening line can
+    say yes. A refusal is read from any announcement line, and a refusal found
+    anywhere outranks an approval on the opening line — a reviewer who approved
+    and then refused in the same comment has refused."""
+    refusal = refusal_in_any_line(body)
+    if refusal:
+        return refusal
+    m = VERDICT_OPENER_RE.match(first_nonempty_line(body))
+    return m.group("verdict").upper() if m else None
+
+
+SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def _contains_head(text: str, head: str) -> bool:
+    """Containment, never a formatted-SHA pattern — property 2.
+
+    Reviewers write the head inside backticks, after an at-sign, and on a bare
+    line. A pattern expecting one spelling reports a pinned verdict as unpinned,
+    so every non-alphanumeric character is stripped from both sides and the
+    prefix is looked for in what remains. Seven characters is git's own
+    abbreviation floor; shorter would collide and make containment a coin toss."""
+    flat = re.sub(r"[^0-9a-zA-Z]", "", text or "").lower()
+    h = (head or "").lower()
+    return bool(h) and (h in flat or h[:8] in flat or h[:7] in flat)
+
+
+def names_head(body: str, head: str) -> bool:
+    """Does this verdict PIN the head being merged?
+
+    The opening line decides WHENEVER IT CARRIES A SHA AT ALL, because that is
+    where the convention puts the pin: "### Eta - APPROVED - repo #N @ `abc1234`".
+    Falling back to the whole body unconditionally was measured wrong on
+    vantage-peers #1370: its last verdict pins `032394ce`, and the body also
+    mentions `df57da7` in the sentence "identical to the approved df57da7 tree".
+    Whole-body containment therefore answered YES for a head the verdict does
+    not pin — a sha mentioned in passing read as an authorisation, which is the
+    same shape as treating "it has a caller" as "it is authorised".
+
+    A verdict whose opening line carries NO sha is not using the convention, so
+    the body is consulted rather than refusing a reviewer for their formatting."""
+    if not head:
+        return False
+    opening = first_nonempty_line(body)
+    if SHA_RE.search(opening):
+        return _contains_head(opening, head)
+    return _contains_head(body, head)
+
+
+def judge_verdict(comments, head):
+    """Pure decision, so the corpus drives it without a network call.
+
+    Returns (allowed: bool, cause: str, detail: str). The three causes are kept
+    DISTINCT — property 4 — because one message for three causes sends the
+    reader to the wrong remedy."""
+    if comments is None:
+        return (False, "no-verdict-readable",
+                "the pull request's comments could not be read; could-not-read "
+                "and found-nothing are different facts and neither is a pass")
+    verdicts = [c for c in comments if verdict_of(c.get("body", ""))]
+    if not verdicts:
+        return (False, "no-verdict-readable",
+                "no comment on this pull request OPENS with a reviewer verdict")
+    last = verdicts[-1]
+    word = verdict_of(last.get("body", ""))
+    opening = first_nonempty_line(last.get("body", ""))[:160]
+    if word != "APPROVED":
+        return (False, "verdict-says-revise",
+                f"the last verdict is {word}: {opening}")
+    if not names_head(last.get("body", ""), head):
+        return (False, "verdict-does-not-name-this-head",
+                f"the last verdict is APPROVED but does not name {head[:12]}: {opening}")
+    return (True, "approved-at-this-head", opening)
+
+
+def read_pr_comments(repo: str, pr: str):
+    """Returns (comments, head) or (None, None) when the read FAILED.
+
+    A failed read must never be indistinguishable from an empty comment list —
+    that is the collapse this whole file exists to prevent."""
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "view", str(pr), "-R", repo, "--json", "comments,headRefOid"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "GH_TOKEN": "", "GITHUB_TOKEN": ""},
+        )
+        if result.returncode != 0:
+            return (None, None)
+        payload = json.loads(result.stdout)
+        return (payload.get("comments", []), payload.get("headRefOid", ""))
+    except Exception:
+        return (None, None)
+
+
 def audit_log(entry: dict) -> None:
     """Append-only audit log to /tmp/pi-auth-pr-merge.log."""
     try:
@@ -186,12 +413,81 @@ try:
         })
         sys.exit(0)
 
-    # Pi-signed authorization
+    # Pi-signed authorization. It is NECESSARY and, since the two pull requests
+    # that landed over a live REVISE, no longer SUFFICIENT: the reviewer's
+    # verdict on the head being merged is a separate question, asked below.
     if has_pi_authorization(command):
+        # A pull request this guard cannot NAME is one whose verdict it cannot
+        # read, and an unread verdict is never a pass. The previous shape was
+        # `if pr_m:` — on a command whose number it failed to parse it skipped
+        # this whole block and logged `verdict-approved-at-head`, asserting in
+        # the audit trail the very examination it had just declined to perform.
+        pr_number = extract_pr_number(command)
+        repo_m = PR_REPO_RE.search(command)
+        if not pr_number:
+            allowed, cause, detail = (
+                False, "no-verdict-readable",
+                "the pull request number could not be derived from this command, "
+                "so no verdict could be read; name the pull request explicitly",
+            )
+        else:
+            repo = repo_m.group("repo") if repo_m else _remote_repo(_command_cwd(command))
+            if not repo:
+                allowed, cause, detail = (
+                    False, "no-verdict-readable",
+                    "the repository could not be derived, so no verdict could be read",
+                )
+            else:
+                comments, head = read_pr_comments(repo, pr_number)
+                allowed, cause, detail = judge_verdict(comments, head)
+
+        if not allowed:
+            ov = MERGE_OVER_REVISE_RE.search(command)
+            if ov:
+                audit_log({
+                    "ts": int(time.time()), "verdict": "allow",
+                    "reason": "merge-over-revise-override",
+                    "cause_overridden": cause,
+                    "override_reason": ov.group("reason").strip()[:200],
+                    "command": command[:200],
+                })
+                sys.exit(0)
+            audit_log({
+                "ts": int(time.time()), "verdict": "block",
+                "reason": cause, "detail": detail[:300],
+                "command": command[:200],
+            })
+            print(
+                f"BLOCKED: the Pi token is present and valid — this refusal is about the REVIEWER'S VERDICT.\n"
+                f"\n"
+                f"  cause: {cause}\n"
+                f"  {detail}\n"
+                f"\n"
+                "A signed token says the coordinator authorised a merge. It does not say the\n"
+                "reviewer approved THIS head. Two pull requests landed on main over a live\n"
+                "REVISE because the two were read as one question — vantageos-crm #215 at\n"
+                "b53b3890 and vantage-peers #1364 at 824cf8a2, both merged at the exact head\n"
+                "their last verdict refused.\n"
+                "\n"
+                "The three causes are distinct and so are their remedies:\n"
+                "  verdict-says-revise             the reviewer refused this head; fix or override\n"
+                "  verdict-does-not-name-this-head the head moved after the verdict; ask for a re-pin\n"
+                "  no-verdict-readable             nobody gated it, or the read failed; neither is a pass\n"
+                "\n"
+                "Override, when merging over a refusal is the right call (a prose-only finding,\n"
+                "a reviewer unavailable while a client waits). The reason is recorded in the\n"
+                "audit line, which is the whole difference from what happened last night:\n"
+                "  gh pr merge N ... # merge-over-revise: <reason, at least 15 characters>\n"
+                "\n"
+                "Audit trail: /tmp/pi-auth-pr-merge.log\n",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
         audit_log({
             "ts": int(time.time()),
             "verdict": "allow",
-            "reason": "pi-authorized",
+            "reason": "pi-authorized+verdict-approved-at-head",
             "command": command[:200],
         })
         sys.exit(0)
