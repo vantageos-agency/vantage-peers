@@ -47,6 +47,8 @@ import {
 	resolveActorCredentialMode,
 	sha256Base64Url,
 	sha256Hex,
+	unattributedClaimCounts,
+	unattributedClaimSummary,
 } from "./src/auth.js";
 import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
 import { registerTools } from "./src/tools.js";
@@ -952,6 +954,12 @@ app.get("/health", (c) =>
 			const { mode, source } = resolveActorCredentialMode();
 			return { mode, source };
 		})(),
+		// The cost of flipping to strict, as a number: calls served on a typed
+		// agent name with no credential since `since`. /health is world-readable,
+		// so ONLY the aggregate is published here (a count is never a secret).
+		// clientId + claimed name are customer-shaped identifiers; the
+		// breakdown lives behind the master-only GET /admin/actor-claims.
+		unattributed_claims: unattributedClaimSummary(),
 	}),
 );
 
@@ -962,6 +970,15 @@ app.get("/health", (c) =>
 
 const admin = new Hono();
 admin.use("*", masterOnlyMiddleware());
+
+// GET /admin/actor-claims — per-client breakdown of unattributed claims
+// (the detail behind /health's aggregate). Master-only via the /admin mount.
+admin.get("/actor-claims", (c) =>
+	c.json({
+		...unattributedClaimSummary(),
+		breakdown: unattributedClaimCounts(),
+	}),
+);
 
 // POST /admin/oauth/clients  — create client, returns raw secret ONCE
 admin.post("/oauth/clients", async (c) => {

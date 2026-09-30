@@ -470,8 +470,46 @@ export function unattributedClaimCounts(): {
 	});
 }
 
+/**
+ * The window the counter covers. `unattributedCounts` lives in process memory,
+ * so its window is "since this process started" (module load). A count with no
+ * window is not a measurement: zero over four minutes and zero over four weeks
+ * are different facts, so the window is always published beside the number.
+ */
+let unattributedSince = new Date();
+
+/**
+ * The aggregate the cutover decision needs, and nothing more: how many calls
+ * `strict` would have refused since `since`. Total only — no clientId, no
+ * claimed name — so it is safe on the unauthenticated /health document. The
+ * per-client breakdown is {@link unattributedClaimCounts}, served only behind
+ * the master-only /admin surface.
+ *
+ * `strict_would_refuse` is always a NUMBER (0 when nothing was recorded), never
+ * absent: a reader must be able to tell "measured zero" from "not published".
+ * Note the counter only grows while the mode is permissive; under strict those
+ * calls are refused instead of recorded, so the number then freezes.
+ */
+export function unattributedClaimSummary(now: Date = new Date()): {
+	strict_would_refuse: number;
+	since: string;
+	window_seconds: number;
+} {
+	let total = 0;
+	for (const n of unattributedCounts.values()) total += n;
+	return {
+		strict_would_refuse: total,
+		since: unattributedSince.toISOString(),
+		window_seconds: Math.max(
+			0,
+			Math.floor((now.getTime() - unattributedSince.getTime()) / 1000),
+		),
+	};
+}
+
 export function _resetUnattributedClaimsForTest(): void {
 	unattributedCounts.clear();
+	unattributedSince = new Date();
 	warnedUnknownMode = null;
 }
 
