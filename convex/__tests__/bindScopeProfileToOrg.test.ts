@@ -219,7 +219,12 @@ describe("bind -> mint -> resolve — both poles under the service account", () 
 });
 
 describe("deriveRosterFromProfiles / setOrgRoster", () => {
-	test("derives from ACTIVE profiles only, canonical accented lowercase, deduped", async () => {
+	// Eta on #1377: the consumers compare EXACTLY — mcp-server/src/auth.ts:652,
+	// convex/messages.ts:43, convex/tasks.ts:203 — so folding eight admitted
+	// spellings into three refuses a caller whose profile allows "helios" or
+	// "Victor". That is a WITHHELD GRANT, and it surfaces as an empty list
+	// rather than an error, which is why nobody tests that direction.
+	test("derives the EXACT union of fromAllowList — every admitted spelling survives", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a", ["wrong", "list"]);
 		await seedProfile(t, "live1", ["Hélios", "Helios", "helios", "hélios", "Clio", "Victor"]);
@@ -245,7 +250,19 @@ describe("deriveRosterFromProfiles / setOrgRoster", () => {
 		const d = await t.query(internal.tenantOrgSeed.deriveRosterFromProfiles, {
 			profileIds: ["live1", "live2", "dead", "absent"],
 		});
-		expect(d.roster).toEqual(["hélios", "clio", "victor"]);
+		// All EIGHT distinct spellings the two active profiles admit, in the
+		// order encountered, deduplicated only on an IDENTICAL string.
+		expect(d.roster).toEqual([
+			"Hélios", "Helios", "helios", "hélios", "Clio", "Victor", "clio", "victor",
+		]);
+		// The pole that names the defect: an unaccented and a capitalised
+		// spelling must BOTH survive, because a consumer comparing exactly
+		// would refuse a caller named either one.
+		expect(d.roster).toContain("Helios");
+		expect(d.roster).toContain("helios");
+		expect(d.roster).toContain("Victor");
+		// And the revoked profile contributes nothing.
+		expect(d.roster).not.toContain("Marie");
 		expect(d.activeProfiles).toEqual(["live1", "live2"]);
 		expect(d.skippedProfiles).toEqual(["dead", "absent"]);
 
@@ -259,6 +276,8 @@ describe("deriveRosterFromProfiles / setOrgRoster", () => {
 				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
 				.first(),
 		);
-		expect(row?.allowedOrchestrators).toEqual(["hélios", "clio", "victor"]);
+		expect(row?.allowedOrchestrators).toEqual([
+			"Hélios", "Helios", "helios", "hélios", "Clio", "Victor", "clio", "victor",
+		]);
 	});
 });

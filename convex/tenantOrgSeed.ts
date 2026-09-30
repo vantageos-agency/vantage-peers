@@ -138,11 +138,28 @@ export const bindScopeProfileToOrg = internalMutation({
 //
 // The roster of an org is DERIVED from the `fromAllowList` of its profiles that
 // still have at least one non-revoked `oauth_clients` row — never typed from a
-// brief, never read off profile NAMES. Canonical form is lowercase WITH accent
-// ("hélios"); unaccented spellings are not registered recipients.
-
-const foldAccents = (s: string): string =>
-	s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+// brief, never read off profile NAMES.
+//
+// THE UNION IS EXACT. No lowercasing, no accent folding, no deduplication by
+// resemblance. Eta measured why on #1377: every consumer of this roster
+// compares with `includes`, an EXACT match —
+//   mcp-server/src/auth.ts:652   roster.includes(assignedTo)
+//   convex/messages.ts:43
+//   convex/tasks.ts:203
+// so a roster folded to ["hélios"] refuses a caller whose profile allows
+// "helios" or "Helios". The first version of this function folded eight
+// allowed spellings down to three, which reads as tidy and is a WITHHELD
+// GRANT: the caller is refused on delegation and reads nothing on messages.
+//
+// A withheld grant is the direction nobody tests, because it surfaces as an
+// empty list rather than as an error. Normalising a name before comparing it
+// is the reflex, and a roster whose consumers use exact match is the one place
+// that reflex is fatal. The same defect appeared independently in a roster
+// written by hand for the same organisation, which is what proves it is a
+// reflex and not a typing slip.
+//
+// So: whatever spelling a profile admits, this roster admits. Order is
+// preserved and duplicates are removed only where the string is IDENTICAL.
 
 export const deriveRosterFromProfiles = internalQuery({
 	args: { profileIds: v.array(v.string()) },
@@ -152,7 +169,8 @@ export const deriveRosterFromProfiles = internalQuery({
 		skippedProfiles: v.array(v.string()),
 	}),
 	handler: async (ctx, args) => {
-		const byFold = new Map<string, string>();
+		const seen = new Set<string>();
+		const roster: string[] = [];
 		const activeProfiles: string[] = [];
 		const skippedProfiles: string[] = [];
 		for (const profileId of args.profileIds) {
@@ -171,17 +189,15 @@ export const deriveRosterFromProfiles = internalQuery({
 			}
 			activeProfiles.push(profileId);
 			for (const name of profile.fromAllowList) {
-				const lower = name.toLowerCase();
-				const key = foldAccents(lower);
-				const prior = byFold.get(key);
-				// Prefer the accented spelling when both exist.
-				if (prior === undefined || (prior === key && lower !== key)) {
-					byFold.set(key, lower);
-				}
+				// Exact. A spelling the profile admits is a spelling the roster
+				// admits — see the header for why folding is a withheld grant.
+				if (seen.has(name)) continue;
+				seen.add(name);
+				roster.push(name);
 			}
 		}
 		return {
-			roster: [...byFold.values()],
+			roster,
 			activeProfiles,
 			skippedProfiles,
 		};
