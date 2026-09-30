@@ -4,6 +4,8 @@ import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import type { OrgScope } from "./lib/auth";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — mandates.ts's own single authority gate.
@@ -24,13 +26,14 @@ import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 async function requireFleetMaster(
 	ctx: Parameters<typeof withOrgScope>[0],
 	action: string,
-): Promise<void> {
+): Promise<OrgScope> {
 	const scope = await withOrgScope(ctx);
 	if (!scope.isMaster) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller may not ${action} — mandates are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 		);
 	}
+	return scope;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,12 +119,15 @@ export const accept = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireFleetMaster(ctx, `accept mandate ${args.mandateId}`);
+		const scope = await requireFleetMaster(ctx, `accept mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
 		}
-		if (args.callerOrchestrator !== "system" && args.callerOrchestrator !== mandate.fulfilledBy) {
+		if (
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
+			args.callerOrchestrator !== mandate.fulfilledBy
+		) {
 			throw new Error(
 				`Unauthorized: only ${mandate.fulfilledBy} (fulfilledBy) or system can accept this mandate`,
 			);
@@ -148,12 +154,15 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireFleetMaster(ctx, `update mandate ${args.mandateId}`);
+		const scope = await requireFleetMaster(ctx, `update mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
 		}
-		if (args.callerOrchestrator !== "system" && args.callerOrchestrator !== mandate.fulfilledBy) {
+		if (
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
+			args.callerOrchestrator !== mandate.fulfilledBy
+		) {
 			throw new Error(
 				`Unauthorized: only ${mandate.fulfilledBy} (fulfilledBy) or system can update this mandate`,
 			);
@@ -186,12 +195,15 @@ export const settle = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await requireFleetMaster(ctx, `settle mandate ${args.mandateId}`);
+		const scope = await requireFleetMaster(ctx, `settle mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
 		}
-		if (args.callerOrchestrator !== "system" && args.callerOrchestrator !== mandate.requestedBy) {
+		if (
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
+			args.callerOrchestrator !== mandate.requestedBy
+		) {
 			throw new Error(
 				`Unauthorized: only ${mandate.requestedBy} (requestedBy) or system can settle this mandate`,
 			);

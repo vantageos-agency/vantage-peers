@@ -16,6 +16,7 @@ import {
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
@@ -231,22 +232,8 @@ function isReviewTask(task: { isReviewTask?: boolean }): boolean {
 	return task.isReviewTask === true;
 }
 
-// isFleetSystemCaller — the ONLY way the word "system" carries authority.
-//
-// `callerOrchestrator` is an ARGUMENT on the public task mutations: a
-// caller-supplied string, exactly the forgery class convex/schema.ts documents
-// for `createdBy` ("can be forged (e.g. createdBy: \"system\")"). Typing the
-// seven letters used to authorise the caller on ANY task of ANY organisation.
-// A fleet-internal caller now proves itself through the VERIFIED scope
-// (master: the by-id service-account carve-out in withOrgScope), never by
-// typing its own name. A caller with an ordinary org scope who types "system"
-// is just a caller asserting a name it has not earned.
-function isFleetSystemCaller(
-	callerScope: OrgScope,
-	callerOrchestrator: string | undefined,
-): boolean {
-	return callerScope.isMaster && callerOrchestrator === "system";
-}
+// isFleetSystemCaller — the ONLY way the word "system" carries authority — lives in
+// convex/lib/systemCaller.ts so every site that reads the word shares ONE predicate.
 
 // assertTaskVisibleToCaller — the TENANT compare, shared by every write site.
 // It is `isRowVisibleToScope`, the SAME predicate the readers apply, so the

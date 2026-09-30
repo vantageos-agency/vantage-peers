@@ -7,6 +7,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
+import { isFleetSystemCaller } from "./lib/systemCaller";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -235,7 +236,7 @@ export const update = mutation({
 		// harmless as a standalone bypass since the scope gate above already
 		// proved the caller's org covers bu.orchestratorId.
 		if (
-			args.callerOrchestrator !== "system" &&
+			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			bu.orchestratorId !== args.callerOrchestrator
 		) {
 			throw new Error(

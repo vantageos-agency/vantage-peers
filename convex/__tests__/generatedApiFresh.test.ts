@@ -70,7 +70,14 @@ function modulesOnDisk(dir: string, prefix = ""): string[] {
 	const out: string[] = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		if (entry.name === "_generated" || entry.name === "node_modules") continue;
-		if (entry.name === "__tests__") continue;
+		// `__tests__` is walked like any other directory. It used to be skipped,
+		// which made this guard blind to it by construction. It is safe to walk
+		// because the pole "convex/__tests__ holds only *.test.ts files" below
+		// makes a non-test file there impossible, and every `*.test.ts` is dropped
+		// by the suffix filter further down. So the walk reports nothing from
+		// there today, and reports a stray file by name if the pole were ever
+		// bypassed: the skip was a hole, not a harmless exclusion, because it
+		// hid the one directory where a test helper is tempting to park.
 		if (entry.isDirectory()) {
 			out.push(...modulesOnDisk(path.join(dir, entry.name), `${prefix}${entry.name}/`));
 			continue;
@@ -81,6 +88,52 @@ function modulesOnDisk(dir: string, prefix = ""): string[] {
 	}
 	return out;
 }
+
+// Convex treats every file under convex/ whose basename has a single dot as a
+// deployable module, `__tests__/` included. A test helper parked there is
+// bundled and pushed with the deployment (and, if it imports `typescript` or a
+// Node builtin, breaks or bloats it). Test helpers live in `tests/lib/`, outside
+// convex/. The population is found by walking the directory, never named.
+const CODE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
+const TEST_FILE_RE = /\.test\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
+
+function nonTestSourcesUnder(dir: string, prefix = ""): string[] {
+	const out: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.name === "node_modules") continue;
+		if (entry.isDirectory()) {
+			out.push(...nonTestSourcesUnder(path.join(dir, entry.name), `${prefix}${entry.name}/`));
+			continue;
+		}
+		if (CODE_EXT_RE.test(entry.name) && !TEST_FILE_RE.test(entry.name)) {
+			out.push(`${prefix}${entry.name}`);
+		}
+	}
+	return out;
+}
+
+describe("convex/__tests__ holds only *.test.ts files", () => {
+	const testsDir = path.join(CONVEX_DIR, "__tests__");
+
+	test("the walk sees the test files (a vacuous pass would prove nothing)", () => {
+		const all: string[] = [];
+		const count = (dir: string): void => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				if (entry.isDirectory()) count(path.join(dir, entry.name));
+				else if (TEST_FILE_RE.test(entry.name)) all.push(entry.name);
+			}
+		};
+		count(testsDir);
+		expect(all.length).toBeGreaterThan(20);
+	});
+
+	test("no non-test source file sits under convex/__tests__", () => {
+		expect(
+			nonTestSourcesUnder(testsDir),
+			"these files would be deployed as Convex modules; move them to tests/lib/",
+		).toEqual([]);
+	});
+});
 
 describe("convex/_generated/api.d.ts is not stale", () => {
 	const source = readFileSync(API_DTS, "utf-8");
