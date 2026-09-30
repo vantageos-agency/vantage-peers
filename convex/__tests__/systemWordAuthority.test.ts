@@ -31,7 +31,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
-import { analyse as analyseSystemWord } from "./lib/systemWordAst";
+import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -495,8 +495,7 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 // The mandates.* sites are reachable only by the verified master, for whom the
 // typed-word compare and `isFleetSystemCaller` are observationally identical —
 // no behavioural pole can tell them apart. This control is the ONLY proof for
-// those three sites, so it reads the syntax tree (convex/__tests__/lib/
-// systemWordAst.ts), never a text pattern, and it reads EVERY convex module.
+// those three sites, so it reads the syntax tree (tests/lib/systemWordAst.ts), never a text pattern, and it reads EVERY convex module.
 // The declared limits (a value built at runtime has no literal node) are in the
 // header of that file; the LIMIT fixtures below pin them as limits.
 const walk = (dir: string): string[] =>
