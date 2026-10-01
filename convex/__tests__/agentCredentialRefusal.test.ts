@@ -92,10 +92,10 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await seedOrg(t, "org-b");
 		const a = await mint(t, "org-a", "b");
 		const b = await mint(t, "org-b", "b");
-		const ra = await t.query(api.agentCredentials.resolveAgentCredential, {
+		const ra = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 			presentedSecret: a,
 		});
-		const rb = await t.query(api.agentCredentials.resolveAgentCredential, {
+		const rb = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 			presentedSecret: b,
 		});
 		expect(ra).toEqual({ orgSlug: "org-a", agentName: "b" });
@@ -107,7 +107,7 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await seedOrg(t, "org-a");
 		await mint(t, "org-a", "b");
 		const refusal = await refusalOf(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: "f".repeat(64),
 			}),
 		);
@@ -122,7 +122,7 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		const old = await mint(t, "org-a", "b");
 		await mint(t, "org-a", "b");
 		const refusal = await refusalOf(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: old,
 			}),
 		);
@@ -134,12 +134,12 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await seedOrg(t, "org-a");
 		await mint(t, "org-a", "b");
 		const absent = await refusalOf(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: "   ",
 			}),
 		);
 		const wrong = await refusalOf(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: "f".repeat(64),
 			}),
 		);
@@ -187,3 +187,18 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
+
+
+/**
+ * `resolveAgentCredential` is closed to everyone but the fleet's service
+ * account (the MCP server's identity). Every call in this file is the MCP
+ * login path, so it is made as that account; the DENY poles that matter for
+ * the door itself live in closeDoorsCreds.test.ts.
+ */
+function asServiceAccount<X extends { withIdentity: (i: never) => unknown }>(
+	t: X,
+): ReturnType<X["withIdentity"]> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as never) as ReturnType<X["withIdentity"]>;
+}

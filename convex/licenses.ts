@@ -27,6 +27,9 @@ async function sha256Hex(input: string): Promise<string> {
 	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Genuine keys are ~43 chars; anything past this is refused unhashed. */
+const MAX_LICENSE_KEY_LENGTH = 256;
+
 /**
  * Generate a cryptographically random license key.
  * Uses crypto.getRandomValues (CSPRNG) — never Math.random.
@@ -90,6 +93,7 @@ export const generate = internalMutation({
 // activate — mark a license as activated (sets activatedAt on first call)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-no-caller-resolution: runs BEFORE the caller has an identity (licence redemption is how a licensee proves themselves); the presented key (sha256-matched to ONE row) plus the licensee's email IS the authorisation; every failure (unknown, wrong email, revoked, expired, oversize) is the same refusal; writes only the presented row. Possession-gated, enumerated callers: none inside convex/, mcp-server/src or the dashboard — external self-host installations cannot be enumerated, so the door stays public.
 // public-mutation: gated by its own credential — the presented licenseKey
 // (hashed and matched against an active, non-expired license row) plus a
 // matching customerEmail IS the authorization; there is no separate caller
@@ -106,6 +110,10 @@ export const activate = mutation({
 		expiresAt: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// An oversize "key" is not a key: refuse it as any unknown key, unhashed.
+		if (args.licenseKey.length > MAX_LICENSE_KEY_LENGTH) {
+			throw new Error("License invalid or expired");
+		}
 		const keyHash = await sha256Hex(args.licenseKey);
 
 		const license = await ctx.db
@@ -145,6 +153,7 @@ export const activate = mutation({
 // validate — read-only license status check, never throws
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-no-caller-resolution: runs BEFORE the caller has an identity (a self-host installation checks its own key); it answers only for the key presented (sha256-matched to ONE row): a status and an expiry, never the licensee's email (the second factor `activate` checks), never another row; an unknown or oversize key is the same `{status:"unknown"}`. External self-host callers cannot be enumerated, so the door stays public.
 // @credential licenseKey license-key: the presented license key is hashed and looked up in `licenses`; it answers only for a key it holds
 export const validate = query({
 	args: {
@@ -159,9 +168,11 @@ export const validate = query({
 			v.literal("unknown"),
 		),
 		expiresAt: v.optional(v.number()),
-		customerEmail: v.optional(v.string()),
 	}),
 	handler: async (ctx, args) => {
+		if (args.licenseKey.length > MAX_LICENSE_KEY_LENGTH) {
+			return { status: "unknown" as const };
+		}
 		const keyHash = await sha256Hex(args.licenseKey);
 
 		const license = await ctx.db
@@ -179,14 +190,12 @@ export const validate = query({
 			return {
 				status: "expired" as const,
 				expiresAt: license.expiresAt,
-				customerEmail: license.customerEmail,
 			};
 		}
 
 		return {
 			status: license.status,
 			expiresAt: license.expiresAt,
-			customerEmail: license.customerEmail,
 		};
 	},
 });

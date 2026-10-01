@@ -98,7 +98,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		// The AUTHENTICATION measurement is made by the credential HOLDER (the
 		// agent itself), an anonymous caller presenting only the secret — not
 		// the org:admin who minted it.
-		const resolved = await t.query(api.agentCredentials.resolveAgentCredential, {
+		const resolved = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 			presentedSecret: minted.secret,
 		});
 		expect(resolved).toEqual({ orgSlug: "org-o", agentName: "a1" });
@@ -149,7 +149,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		});
 
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: "0000garbage0000not-a-real-secret0000",
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
@@ -172,7 +172,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		);
 
 		// Positive control BEFORE rotation: the first secret authenticates.
-		const resolvedFirstBefore = await t.query(
+		const resolvedFirstBefore = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: first.secret },
 		);
@@ -186,13 +186,13 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 
 		// OLD plaintext: refused after rotation.
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: first.secret,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 
 		// NEW plaintext: authenticates.
-		const resolvedSecond = await t.query(
+		const resolvedSecond = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: second.secret },
 		);
@@ -238,7 +238,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 
 		expect(mintedA1.secret).not.toBe(mintedA2.secret);
 
-		const resolvedA1 = await t.query(
+		const resolvedA1 = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: mintedA1.secret },
 		);
@@ -248,7 +248,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		// A2 under any interpretation.
 		expect(resolvedA1?.agentName).not.toBe("a2");
 
-		const resolvedA2 = await t.query(
+		const resolvedA2 = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: mintedA2.secret },
 		);
@@ -259,7 +259,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			agentName: "a1",
 		});
-		const resolvedA2StillGood = await t.query(
+		const resolvedA2StillGood = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: mintedA2.secret },
 		);
@@ -313,3 +313,18 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
 	});
 });
+
+
+/**
+ * `resolveAgentCredential` is closed to everyone but the fleet's service
+ * account (the MCP server's identity). Every call in this file is the MCP
+ * login path, so it is made as that account; the DENY poles that matter for
+ * the door itself live in closeDoorsCreds.test.ts.
+ */
+function asServiceAccount<X extends { withIdentity: (i: never) => unknown }>(
+	t: X,
+): ReturnType<X["withIdentity"]> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as never) as ReturnType<X["withIdentity"]>;
+}

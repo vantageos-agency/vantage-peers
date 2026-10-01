@@ -111,12 +111,12 @@ describe("P1 — a presented credential resolves to its own identity", () => {
 
 		expect(aSecret).not.toBe(bSecret);
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: aSecret,
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "shared-name" });
 		// NEGATIVE control: the other org's credential is NOT org A's identity.
-		const bResolved = await t.query(
+		const bResolved = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: bSecret },
 		);
@@ -127,7 +127,7 @@ describe("P1 — a presented credential resolves to its own identity", () => {
 	test("an unknown secret is REFUSED with a code, not answered with nothing", async () => {
 		const t = createT();
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: "0".repeat(64),
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
@@ -248,9 +248,24 @@ describe("P4 — strict census, derived from rows", () => {
 		});
 		// The rotated-out plaintext no longer satisfies anything.
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: rotated,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 	});
 });
+
+
+/**
+ * `resolveAgentCredential` is closed to everyone but the fleet's service
+ * account (the MCP server's identity). Every call in this file is the MCP
+ * login path, so it is made as that account; the DENY poles that matter for
+ * the door itself live in closeDoorsCreds.test.ts.
+ */
+function asServiceAccount<X extends { withIdentity: (i: never) => unknown }>(
+	t: X,
+): ReturnType<X["withIdentity"]> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as never) as ReturnType<X["withIdentity"]>;
+}

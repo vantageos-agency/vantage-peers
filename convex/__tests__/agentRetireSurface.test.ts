@@ -169,13 +169,13 @@ describe("agent retire surface", () => {
 		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", name: "beta" });
 
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).rejects.toThrow(/credential-not-recognised/);
 
 		for (const name of ["alpha", "gamma"] as const) {
-			const ok = await t.query(api.agentCredentials.resolveAgentCredential, {
+			const ok = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets[name],
 			});
 			expect(ok).toEqual({ orgSlug: "org-a", agentName: name });
@@ -189,7 +189,7 @@ describe("agent retire surface", () => {
 			agentName: "beta",
 		});
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).rejects.toThrow(/credential-not-recognised/);
@@ -226,7 +226,7 @@ describe("agent retire surface", () => {
 		// Old credential NOT resurrected.
 		expect((await activeRowsByName(admin)).beta).toBe(0);
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).rejects.toThrow(/credential-not-recognised/);
@@ -237,7 +237,7 @@ describe("agent retire surface", () => {
 			agentName: "beta",
 		});
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: fresh.secret,
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "beta" });
@@ -250,7 +250,7 @@ describe("agent retire surface", () => {
 			await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "beta" }),
 		).toEqual({ reactivated: false, revoked: 0 });
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: fresh.secret,
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "beta" });
@@ -265,7 +265,7 @@ describe("agent retire surface", () => {
 		await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "beta" });
 
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).rejects.toThrow(/credential-not-recognised/);
@@ -277,7 +277,7 @@ describe("agent retire surface", () => {
 			agentName: "beta",
 		});
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: fresh.secret,
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "beta" });
@@ -316,7 +316,7 @@ describe("agent retire surface", () => {
 		expect(byName.gamma).toBe(true);
 		for (const n of ["alpha", "gamma"] as const) {
 			expect(
-				await t.query(api.agentCredentials.resolveAgentCredential, {
+				await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 					presentedSecret: secrets[n],
 				}),
 			).toEqual({ orgSlug: "org-a", agentName: n });
@@ -346,7 +346,7 @@ describe("agent retire surface", () => {
 		// And the live client still authenticates — the outage this pole exists
 		// to catch is a REFUSAL here, not a count.
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "beta" });
@@ -382,7 +382,7 @@ describe("agent retire surface", () => {
 		});
 		expect(st.activeRows).toBe(1);
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretB,
 			}),
 		).toEqual({ orgSlug: "org-b", agentName: "beta" });
@@ -400,7 +400,7 @@ describe("agent retire surface", () => {
 		expect((await agentsActiveByName(admin)).beta).toBe(false);
 		expect((await activeRowsByName(admin)).beta).toBe(0);
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).rejects.toThrow(/credential-not-recognised/);
@@ -421,7 +421,7 @@ describe("agent retire surface", () => {
 
 		expect((await activeRowsByName(admin)).beta).toBe(0);
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
 		).rejects.toThrow(/credential-not-recognised/);
@@ -478,3 +478,18 @@ describe("agent retire surface", () => {
 		expect(await activeRowsByName(admin)).toEqual({ alpha: 1, beta: 1, gamma: 1 });
 	});
 });
+
+
+/**
+ * `resolveAgentCredential` is closed to everyone but the fleet's service
+ * account (the MCP server's identity). Every call in this file is the MCP
+ * login path, so it is made as that account; the DENY poles that matter for
+ * the door itself live in closeDoorsCreds.test.ts.
+ */
+function asServiceAccount<X extends { withIdentity: (i: never) => unknown }>(
+	t: X,
+): ReturnType<X["withIdentity"]> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as never) as ReturnType<X["withIdentity"]>;
+}
