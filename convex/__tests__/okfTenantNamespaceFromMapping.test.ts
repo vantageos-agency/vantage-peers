@@ -245,6 +245,20 @@ describe.each(DOORS)("$name — tenant namespace from the mapping", (d) => {
 		await expectPassesAuthGate(d.call(asOrg(t, "acme"), "team/acme"));
 	});
 
+	test("REFUSED: member of org-a on the SIBLING slug team/org-ab (segment boundary, not prefix)", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedOrg(t, "org-ab");
+		await expectRbacDenied(d.call(asOrg(t, "org-a"), "team/org-ab"), d.door);
+		await expectRbacDenied(d.call(asOrg(t, "org-a"), "team/org-abc/x"), d.door);
+	});
+
+	test("PRESENT: member of org-a is served its OWN sub-namespace team/org-a/<sub>", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await expectPassesAuthGate(d.call(asOrg(t, "org-a"), "team/org-a/notes"));
+	});
+
 	test("PRESENT: the service account passes the gate on any namespace", async () => {
 		const t = createT();
 		for (const ns of [

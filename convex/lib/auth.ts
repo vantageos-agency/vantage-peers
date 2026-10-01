@@ -833,26 +833,40 @@ export function requireResolvedCaller(
 
 
 /**
+ * isNamespaceAllowedForScope -- THE namespace-ownership predicate (one
+ * implementation; `memories.ts` re-exports it, the OKF gate delegates to it).
+ * Master: any namespace. Org member: `team/<orgSlug>` exactly, or a
+ * sub-namespace under `team/<orgSlug>/`. The match is on a SEGMENT boundary
+ * (`team/org-a/` with the trailing slash), so `team/org-ab` is never admitted
+ * to org-a. No resolved org: nothing.
+ */
+export function isNamespaceAllowedForScope(
+	scope: Pick<OrgScope, "isMaster" | "orgSlug">,
+	namespace: string,
+): boolean {
+	if (scope.isMaster) return true;
+	if (scope.orgSlug === null) return false;
+	const ownPrefix = `team/${scope.orgSlug}`;
+	return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
+}
+
+
+/**
  * requireTenantNamespace -- the OKF export/import namespace gate for a
- * RESOLVED scope. A non-master caller owns exactly ONE namespace,
- * `team/<scope.orgSlug>`, where `orgSlug` is the slug `withOrgScope` /
- * `resolveOrgScopeForAction` returned, i.e. one backed by an ACTIVE
- * `client_org_mapping` row. It is NEVER the raw org claim on the identity.
- * Every other namespace (`orchestrator/*`, `project/*`, `global`, the master
- * namespace) is master-only. The refusal is the shared
+ * RESOLVED scope (an ACTIVE `client_org_mapping` row, never the raw org
+ * claim). A thin wrapper: when the shared `isNamespaceAllowedForScope`
+ * admits the namespace it returns; otherwise it refuses through
  * `requireResolvedCaller(..., { masterOnly: true })` -- same `RBAC_DENIED`
- * code, same payload naming `door`, no second mechanism. That call RAISES for
- * every non-master scope (anonymous, signed-in-no-org, org member), so
- * reaching its end means "refused"; the own-namespace return above it is the
- * only way a non-master caller is served.
+ * code, payload naming `door`, no second mechanism and no second copy of the
+ * namespace rule. That call RAISES for every non-master scope, so reaching its
+ * end means "refused".
  */
 export function requireTenantNamespace(
 	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
 	namespace: string,
 	door: string,
 ): void {
-	if (scope.isMaster) return;
-	if (scope.orgSlug !== null && namespace === `team/${scope.orgSlug}`) return;
+	if (isNamespaceAllowedForScope(scope, namespace)) return;
 	requireResolvedCaller(scope, door, { masterOnly: true });
 }
 
