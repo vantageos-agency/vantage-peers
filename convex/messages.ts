@@ -9,6 +9,7 @@ import {
 	requireResolvedCaller,
 	requireScope,
 	requireOrchestratorOnRoster,
+	requireSenderInstanceOfSender,
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
@@ -378,6 +379,13 @@ export const sendMessage = mutation({
 		// only speak as an orchestrator on its own roster (see
 		// requireOrchestratorOnRoster). Master/service account is unchanged here.
 		requireOrchestratorOnRoster(scope, args.from, "messages:sendMessage");
+		// ...and may only label the message with an instance of that sender.
+		requireSenderInstanceOfSender(
+			scope,
+			args.from,
+			args.fromInstanceId,
+			"messages:sendMessage",
+		);
 
 		return await sendMessageCore(ctx, args, scope);
 	},

@@ -789,6 +789,47 @@ export function requireOrchestratorOnRoster(
 }
 
 /**
+ * requireSenderInstanceOfSender — the instance label of a write is bound to
+ * the verified sender, never a free label.
+ *
+ * Companion of `requireSenderOnRoster` (Eta's finding on #1400): with `from`
+ * bound, `fromInstanceId` was still free text, so a member of org B sending as
+ * its own orchestrator could label the message "eta-vps".
+ *
+ * WHAT THE DATA SUPPORTS. The `profiles` registry (instanceId -> orchestratorId)
+ * is fleet-global and written only by the fleet master (`requireFleetMaster` in
+ * profiles.upsertProfile/updateDynamic): it has no organisation column, so an
+ * org member's instance can never be "registered in the caller's org", and a
+ * profile lookup would admit another tenant's registered instance. The only
+ * org-bindable convention is the naming one: an instance id is the role
+ * (`pi`) or `<role>-<suffix>` (`pi-vps`, `tau-vps-1`, `tau-client-acme`). So
+ * the check is `<from>` exactly, or `<from>-` followed by something, compared
+ * after `normalizeOrchestratorId` — a segment boundary, so sender "pi" does
+ * not own "pigeon-vps". An omitted instance id is not decided here.
+ *
+ * Master (`orgSlug === null`) is unchanged. Refusal: `RBAC_DENIED`,
+ * `reason: "instance-not-of-sender"`, naming the door.
+ */
+export function requireSenderInstanceOfSender(
+	scope: OrgScope,
+	claimedSender: string,
+	claimedInstanceId: string | undefined,
+	registration: string,
+): void {
+	if (scope.orgSlug === null || claimedInstanceId === undefined) return;
+	const sender = normalizeOrchestratorId(claimedSender);
+	const instance = normalizeOrchestratorId(claimedInstanceId);
+	const own =
+		instance === sender ||
+		(instance.startsWith(`${sender}-`) && instance.length > sender.length + 1);
+	if (!own) {
+		throw new ConvexError(
+			`RBAC_DENIED: instance "${claimedInstanceId}" is not an instance of sender "${claimedSender}" — ${JSON.stringify({ reason: "instance-not-of-sender", door: registration, from: claimedSender, fromInstanceId: claimedInstanceId, orgSlug: scope.orgSlug })}`,
+		);
+	}
+}
+
+/**
  * Asserts that `scope` has `requiredScope` in its scopes array.
  * Master scope always passes (isMaster bypasses all scope checks).
  * Throws "Forbidden: missing scope '...'" if the check fails.
