@@ -199,6 +199,9 @@ describe("END TWO sweep — no MCP reader of an envelope-capable door may swallo
 
 	it("S1a the derived set is the four known envelope doors (a new one must be reviewed here)", () => {
 		expect(derived.doors).toEqual([
+			// Dashboard-only project summary (pre-org envelope, #1406); no MCP reader
+			// (grep -rn getProjectSummary mcp-server/src -> 0), so S1b is unchanged.
+			"dashboard:getProjectSummary",
 			"mandates:list",
 			"messages:listByChannel",
 			// Dashboard-only paginated history read; no MCP reader exists, so S1b's
