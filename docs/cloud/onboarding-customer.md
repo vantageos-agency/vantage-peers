@@ -53,8 +53,8 @@ Who am I on VantagePeers?
 The `whoami` tool (shipped in PR #661, commit `5231811`) will return:
 
 - `suggested_orchestrator_id` — your identity anchor for all future operations.
-- `scope_profile` — the permission set your token carries.
-- `namespace_read_prefixes` — the namespaces you can read from.
+- `scope_profile_name` — the permission set your token carries.
+- `namespaceReadPrefixes` — the namespaces you can read from.
 
 Save the `suggested_orchestrator_id` value. You will not need to re-enter it manually — the connector uses it automatically from this point forward.
 
@@ -91,8 +91,8 @@ Qui suis-je sur VantagePeers ?
 L'outil `whoami` (livré dans PR #661, commit `5231811`) retournera :
 
 - `suggested_orchestrator_id` — votre ancre d'identité pour toutes les opérations futures.
-- `scope_profile` — l'ensemble de permissions que porte votre token.
-- `namespace_read_prefixes` — les namespaces que vous pouvez lire.
+- `scope_profile_name` — l'ensemble de permissions que porte votre token.
+- `namespaceReadPrefixes` — les namespaces que vous pouvez lire.
 
 Sauvegardez la valeur `suggested_orchestrator_id`. Vous n'aurez pas besoin de la ressaisir manuellement — le connecteur l'utilise automatiquement à partir de ce moment.
 
@@ -119,15 +119,15 @@ Required fields discovered via `whoami` and used automatically:
 | Field | Source | Usage |
 |---|---|---|
 | `suggested_orchestrator_id` | `whoami` output | Identity anchor for all task, message, and memory operations |
-| `scope_profile` | `whoami` output | Informational — displayed in skill context; not re-injected |
-| `namespace_read_prefixes` | `whoami` output | Scopes `list_memories` + `recall` calls automatically |
+| `scope_profile_name` | `whoami` output | Informational — displayed in skill context; not re-injected |
+| `namespaceReadPrefixes` | `whoami` output | Scopes `list_memories` + `recall` calls automatically |
 
 **Skill initialization template:**
 
 ```
 On startup, call the `whoami` tool to discover identity.
 Use the returned `suggested_orchestrator_id` as the orchestrator identity for all subsequent operations.
-Use `namespace_read_prefixes` to scope all memory queries.
+Use `namespaceReadPrefixes` to scope all memory queries.
 Do not ask the user for their orchestrator_id — it is auto-resolved.
 ```
 
@@ -176,15 +176,15 @@ Champs découverts via `whoami` et utilisés automatiquement :
 | Champ | Source | Usage |
 |---|---|---|
 | `suggested_orchestrator_id` | Sortie `whoami` | Ancre d'identité pour toutes les opérations de tâches, messages et mémoires |
-| `scope_profile` | Sortie `whoami` | Informatif — affiché dans le contexte de la skill ; non ré-injecté |
-| `namespace_read_prefixes` | Sortie `whoami` | Cadre automatiquement les appels `list_memories` + `recall` |
+| `scope_profile_name` | Sortie `whoami` | Informatif — affiché dans le contexte de la skill ; non ré-injecté |
+| `namespaceReadPrefixes` | Sortie `whoami` | Cadre automatiquement les appels `list_memories` + `recall` |
 
 **Modèle d'initialisation de skill :**
 
 ```
 Au démarrage, appelez l'outil `whoami` pour découvrir l'identité.
 Utilisez le `suggested_orchestrator_id` retourné comme identité d'orchestrateur pour toutes les opérations suivantes.
-Utilisez `namespace_read_prefixes` pour cadrer toutes les requêtes mémoire.
+Utilisez `namespaceReadPrefixes` pour cadrer toutes les requêtes mémoire.
 Ne demandez pas à l'utilisateur son orchestrator_id — il est résolu automatiquement.
 ```
 
@@ -224,7 +224,7 @@ After completing connector setup, run the following 10 prompts in order to verif
 
 | # | Prompt | Tool called | Expected outcome |
 |---|---|---|---|
-| 1 | "Hi, who am I?" | `whoami` | Returns `suggested_orchestrator_id` + `scope_profile` + `namespace_read_prefixes`. No error. |
+| 1 | "Hi, who am I?" | `whoami` | Returns `suggested_orchestrator_id` + `scope_profile_name` + `namespaceReadPrefixes`. No error. |
 | 2 | "Save this note: 'Welcome to VantagePeers'" | `store_memory` | Returns a memory `_id`. Confirm the note was stored. |
 | 3 | "Recall what I just saved" | `recall` (query="welcome") | Returns the note saved in step 2. Content matches. |
 | 4 | "Send a message to [a peer in your allow list] saying hello" | `send_message` | Returns a message `_id`. No permission error. |
@@ -232,7 +232,7 @@ After completing connector setup, run the following 10 prompts in order to verif
 | 6 | "Create a task titled 'Smoke test verification'" | `create_task` | Returns a task `_id`. |
 | 7 | "List my tasks" | `list_tasks` | Returns the task created in step 6. Title matches. |
 | 8 | "Write a briefing note titled 'Onboarding complete'" | `create_briefing_note` | Returns a briefing note `_id`. |
-| 9 | "What's in my namespace?" | `list_memories` | Returns memories scoped to `namespace_read_prefixes` from `whoami`. Includes the note from step 2. |
+| 9 | "What's in my namespace?" | `list_memories` | Returns memories scoped to `namespaceReadPrefixes` from `whoami`. Includes the note from step 2. |
 | 10 | "Mark the message from step 5 as read" | `mark_as_read` | Returns confirmation. Subsequent `check_messages` does not re-surface the same message as unread. |
 
 **PASS criteria:** all 10 prompts return expected outcomes with no auth errors, no scope errors, and no tool-not-found errors.
@@ -249,7 +249,7 @@ Après avoir terminé la configuration du connecteur, exécutez les 10 invites s
 
 | # | Invite | Outil appelé | Résultat attendu |
 |---|---|---|---|
-| 1 | "Bonjour, qui suis-je ?" | `whoami` | Retourne `suggested_orchestrator_id` + `scope_profile` + `namespace_read_prefixes`. Aucune erreur. |
+| 1 | "Bonjour, qui suis-je ?" | `whoami` | Retourne `suggested_orchestrator_id` + `scope_profile_name` + `namespaceReadPrefixes`. Aucune erreur. |
 | 2 | "Enregistre cette note : 'Bienvenue sur VantagePeers'" | `store_memory` | Retourne un `_id` de mémoire. Confirme que la note a été stockée. |
 | 3 | "Rappelle-moi ce que je viens de sauvegarder" | `recall` (query="bienvenue") | Retourne la note sauvegardée à l'étape 2. Le contenu correspond. |
 | 4 | "Envoie un message à [un peer de ta liste autorisée] en disant bonjour" | `send_message` | Retourne un `_id` de message. Aucune erreur de permission. |
@@ -257,7 +257,7 @@ Après avoir terminé la configuration du connecteur, exécutez les 10 invites s
 | 6 | "Crée une tâche intitulée 'Vérification smoke test'" | `create_task` | Retourne un `_id` de tâche. |
 | 7 | "Liste mes tâches" | `list_tasks` | Retourne la tâche créée à l'étape 6. Le titre correspond. |
 | 8 | "Rédige une note de briefing intitulée 'Intégration terminée'" | `create_briefing_note` | Retourne un `_id` de note de briefing. |
-| 9 | "Qu'est-ce qu'il y a dans mon namespace ?" | `list_memories` | Retourne les mémoires cadrées sur les `namespace_read_prefixes` issus de `whoami`. Inclut la note de l'étape 2. |
+| 9 | "Qu'est-ce qu'il y a dans mon namespace ?" | `list_memories` | Retourne les mémoires cadrées sur les `namespaceReadPrefixes` issus de `whoami`. Inclut la note de l'étape 2. |
 | 10 | "Marque le message de l'étape 5 comme lu" | `mark_as_read` | Retourne une confirmation. Un `check_messages` ultérieur ne ressort plus le même message comme non lu. |
 
 **Critères PASS :** les 10 invites retournent les résultats attendus sans erreur d'authentification, d'autorisation, ou d'outil introuvable.
@@ -330,7 +330,7 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 | `Bearer expired` / `Bearer revoked` (persistent, not self-healing) | Auto-refresh failed — the refresh token may have been rotated manually by the operator | Ask your operator to run `revokeAccessTokensOnly` (commit `aaf7da2`) to force a clean refresh cycle. Do not delete and re-add the connector. |
 | `Skill asks for orchestrator_id` at runtime | The skill is outdated — it was configured before the `whoami` tool was available (PR #661, commit `5231811`) | Update the skill initialization prompt to call `whoami` at startup and use `suggested_orchestrator_id` automatically. See §2 Step 2 template above. |
 | `Tool not found: whoami` | The MCP server version pre-dates commit `5231811` | Contact your operator to verify the server is running the latest build. |
-| `list_memories` returns empty when data exists | The query is using a namespace outside `namespace_read_prefixes` | Run `whoami` to retrieve the correct `namespace_read_prefixes`, then scope your query accordingly. |
+| `list_memories` returns empty when data exists | The query is using a namespace outside `namespaceReadPrefixes` | Run `whoami` to retrieve the correct `namespaceReadPrefixes`, then scope your query accordingly. |
 | Connector shows `Disconnected` in ChatGPT after a demo | Session was terminated during a credential swap attempt | Re-authorize using the original onboarding credentials. Do not generate new credentials — the originals remain valid. |
 
 **Escalation path:** if none of the above resolutions apply, capture the exact error message and the output of `whoami`, and forward both to your operator. Do not share your `client_secret` or bearer token over email or chat.
@@ -345,7 +345,7 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 | `Bearer expired` / `Bearer revoked` (persistant, non auto-guéri) | Le rafraîchissement automatique a échoué — le refresh token a peut-être été roté manuellement par l'opérateur | Demandez à votre opérateur d'exécuter `revokeAccessTokensOnly` (commit `aaf7da2`) pour forcer un cycle de rafraîchissement propre. Ne supprimez pas et ne rajoutez pas le connecteur. |
 | La skill demande l'`orchestrator_id` à l'exécution | La skill est obsolète — elle a été configurée avant que l'outil `whoami` soit disponible (PR #661, commit `5231811`) | Mettez à jour le prompt d'initialisation de la skill pour appeler `whoami` au démarrage et utiliser `suggested_orchestrator_id` automatiquement. Voir le modèle §2 Étape 2 ci-dessus. |
 | `Tool not found: whoami` | La version du serveur MCP est antérieure au commit `5231811` | Contactez votre opérateur pour vérifier que le serveur tourne sur le build le plus récent. |
-| `list_memories` retourne vide alors que des données existent | La requête utilise un namespace hors des `namespace_read_prefixes` | Exécutez `whoami` pour récupérer les `namespace_read_prefixes` corrects, puis cadrez votre requête en conséquence. |
+| `list_memories` retourne vide alors que des données existent | La requête utilise un namespace hors des `namespaceReadPrefixes` | Exécutez `whoami` pour récupérer les `namespaceReadPrefixes` corrects, puis cadrez votre requête en conséquence. |
 | Le connecteur affiche `Déconnecté` dans ChatGPT après une démo | La session a été interrompue lors d'une tentative de swap d'identifiants | Ré-autorisez avec les identifiants d'intégration d'origine. Ne générez pas de nouveaux identifiants — les originaux restent valides. |
 
 **Chemin d'escalade :** si aucune des résolutions ci-dessus ne s'applique, capturez le message d'erreur exact et la sortie de `whoami`, et transmettez les deux à votre opérateur. Ne partagez pas votre `client_secret` ou votre bearer token par e-mail ou messagerie instantanée.
