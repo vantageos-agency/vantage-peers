@@ -43,6 +43,18 @@ function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): b
 	return scope.allowedOrchestrators.includes(orchestrator);
 }
 
+// Channel membership for a non-master, org-scoped caller: "broadcast" (shared),
+// a channel under its own `team/<orgSlug>` prefix, or one of the orchestrators
+// in its client_org_mapping roster. Same rule `listByChannel` applies inline.
+function isChannelOnScope(scope: OrgScope, channel: string): boolean {
+	if (scope.isMaster) return true;
+	if (channel === "broadcast") return true;
+	if (scope.orgSlug !== null && channel.startsWith(`team/${scope.orgSlug}`)) {
+		return true;
+	}
+	return scope.allowedOrchestrators.includes(channel);
+}
+
 const staleInProgressValidator = v.array(
 	v.object({
 		taskId: v.id("tasks"),
@@ -1189,8 +1201,58 @@ export const listBroadcastStatus = query({
 		truncated: v.boolean(),
 	}),
 	handler: async (ctx, { messageId, limit }) => {
+		// GATE — membership of the message's OWN channel, resolved BEFORE the
+		// receipts are read. Measured against the serving deployment: this query
+		// answered a caller with NO CREDENTIAL AT ALL with the message's sender,
+		// channel, timestamp and every recipient's read state. Read receipts are a
+		// fact about OTHER PARTIES, so "some authenticated caller" is not entitled
+		// (coordinator ruling). A non-master caller must (1) be a resolved member
+		// of an active org holding `view-own-tasks` (the same scope
+		// `listMessages` demands), (2) belong to the org that SENT the message
+		// (`message.tenantId`), and (3) be on its channel under the same rule
+		// `listByChannel` already applies (`isChannelOnScope`). Master passes.
+		// Predicate lives inside the query, before any receipt row is read.
+		//
+		// REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber.
+		// Enumerated by command against vantage-peers-dashboard:
+		//   grep -rn "api\.issues\.\|api\.messages\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers | grep "listBroadcastStatus"  -> 0 hits
+		// Its only consumer is the MCP `list_broadcast_status` tool (one-shot
+		// `convex.query`). So `alsoRefusePreOrg` is safe and a throw crashes no
+		// render. See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "messages:listBroadcastStatus", {
+			alsoRefusePreOrg: true,
+		});
+		requireScope(scope, "view-own-tasks");
+
 		const message = await ctx.db.get(messageId);
 		if (!message) throw new Error("Message not found");
+
+		if (!scope.isMaster) {
+			if (message.tenantId !== scope.orgSlug) {
+				throw new ConvexError(
+					`RBAC_DENIED: "messages:listBroadcastStatus" refuses a caller outside the organisation that sent message ${messageId} — ${JSON.stringify(
+						{
+							registration: "messages:listBroadcastStatus",
+							orgSlug: scope.orgSlug,
+							reason: "cross-tenant",
+						},
+					)}`,
+				);
+			}
+			if (!isChannelOnScope(scope, message.channel)) {
+				throw new ConvexError(
+					`RBAC_DENIED: "messages:listBroadcastStatus" refuses a caller who is not on channel "${message.channel}" of message ${messageId} — ${JSON.stringify(
+						{
+							registration: "messages:listBroadcastStatus",
+							orgSlug: scope.orgSlug,
+							reason: "not-on-channel",
+						},
+					)}`,
+				);
+			}
+		}
 
 		// Deterministic order from the `by_message` index — no Date.now() here,
 		// queries must stay reproducible for reactivity.

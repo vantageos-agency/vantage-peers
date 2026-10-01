@@ -427,6 +427,37 @@ export const listByStatus = query({
 	},
 	returns: v.array(v.any()),
 	handler: async (ctx, args) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. Measured
+		// against the serving deployment: this query served 50 rows (titles,
+		// bodies, repo and project names, orchestrator assignments) to a caller
+		// presenting NO CREDENTIAL AT ALL.
+		//
+		// WHY master-only and not "an org member sees its rows": `issues` carries
+		// no orgId/tenantId column — it is the fleet's own GitHub-issue tracking,
+		// the same table whose writes are already master-only (`requireMasterScope`)
+		// and whose sibling reads `getStats` / `listExternalOpen` are master-only.
+		// There is no per-org slice to scope a member to, so serving any member
+		// would serve every org's rows. Same helper as `getStats`, same code
+		// (`requireResolvedCaller` with `masterOnly`), no new mechanism. The
+		// predicate is the grant itself, evaluated before the read — not a filter
+		// on rows after it.
+		//
+		// REFUSAL SHAPE — a RAISE, at every non-master caller. isolation-contract:
+		// no reactive subscriber. Enumerated by command against the only
+		// subscribing consumer of this backend (vantage-peers-dashboard):
+		//   grep -rn "api\.issues\.\|api\.messages\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers | grep "listByStatus"  -> 0 hits
+		// The one consumer is the MCP `list_issues` tool (one-shot `convex.query`,
+		// service-account identity). So `alsoRefusePreOrg` is safe (no render to
+		// crash) and `masterOnly` is used on a list read because a typed envelope
+		// has no consumer to read it.
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "issues:listByStatus", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
+
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan

@@ -140,7 +140,9 @@ describe("issues pagination — createdBefore applied after unbounded take", () 
 		let pages = 0;
 		while (pages < 10) {
 			pages++;
-			const page: IssueRow[] = await t.query(api.issues.listByStatus, {
+			const page: IssueRow[] = await t
+				.withIdentity({ subject: "test-service-account-user-id" }) // master-only read
+				.query(api.issues.listByStatus, {
 				status: "open",
 				limit: PAGE_LIMIT,
 				createdBefore,

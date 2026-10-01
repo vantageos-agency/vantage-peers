@@ -28,6 +28,12 @@ const modules = Object.fromEntries(
 
 const createT = () => convexTest(schema, modules);
 
+// listBroadcastStatus now refuses an unidentified caller (anonymousReadRefused
+// .test.ts); this file pins the MCP wrapper's CALL SHAPE, which the MCP server
+// makes as the fleet service account (vitest.config.ts sets its id).
+const asFleetMaster = (t: ReturnType<typeof createT>) =>
+	t.withIdentity({ subject: "test-service-account-user-id" });
+
 async function seedBroadcastWithReceipts(
 	t: ReturnType<typeof createT>,
 	receiptCount: number,
@@ -59,7 +65,7 @@ describe("listBroadcastStatus — MCP wrapper call shape (RED before GREEN)", ()
 		// This is byte-for-byte the args object mcp-server/src/tools.ts builds:
 		// { messageId, limit: limit ?? 20, fields: fields ?? "lite" }
 		await expect(
-			t.query(api.messages.listBroadcastStatus, {
+			asFleetMaster(t).query(api.messages.listBroadcastStatus, {
 				messageId,
 				limit: 20,
 				fields: "lite",
@@ -72,7 +78,7 @@ describe("listBroadcastStatus — MCP wrapper call shape (RED before GREEN)", ()
 		const messageId = await seedBroadcastWithReceipts(t, 3);
 
 		await expect(
-			t.query(api.messages.listBroadcastStatus, {
+			asFleetMaster(t).query(api.messages.listBroadcastStatus, {
 				messageId,
 				fields: "lite",
 			} as any),
@@ -83,7 +89,7 @@ describe("listBroadcastStatus — MCP wrapper call shape (RED before GREEN)", ()
 		const t = createT();
 		const messageId = await seedBroadcastWithReceipts(t, 3);
 
-		const result = await t.query(api.messages.listBroadcastStatus, {
+		const result = await asFleetMaster(t).query(api.messages.listBroadcastStatus, {
 			messageId,
 			fields: "lite",
 		} as any);
@@ -97,7 +103,7 @@ describe("listBroadcastStatus — MCP wrapper call shape (RED before GREEN)", ()
 		const t = createT();
 		const messageId = await seedBroadcastWithReceipts(t, 5);
 
-		const result = await t.query(api.messages.listBroadcastStatus, {
+		const result = await asFleetMaster(t).query(api.messages.listBroadcastStatus, {
 			messageId,
 			limit: 2,
 			fields: "lite",
@@ -111,7 +117,7 @@ describe("listBroadcastStatus — MCP wrapper call shape (RED before GREEN)", ()
 		const t = createT();
 		const messageId = await seedBroadcastWithReceipts(t, 3);
 
-		const result = await t.query(api.messages.listBroadcastStatus, {
+		const result = await asFleetMaster(t).query(api.messages.listBroadcastStatus, {
 			messageId,
 			limit: 20,
 			fields: "lite",
