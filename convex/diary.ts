@@ -1,7 +1,8 @@
 import { v, ConvexError } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
-import { withOrgScope, type OrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,6 +123,19 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// GATE — CLOSED (roster-scoped): this door served any orchestrator's
+		// diary entry to a caller presenting NO CREDENTIAL AT ALL. Diary rows are
+		// owned by `orchestrator`, so an ordinary org member is NOT refused: it
+		// reads entries of orchestrators in its OWN roster (same check as
+		// `diary:list` / the writes); another org's entry reads as null.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.diary\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The MCP `diary_read` tool reads it one-shot.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "diary:get", { alsoRefusePreOrg: true });
+		if (!isOrchestratorAllowedForScope(scope, args.orchestrator)) return null;
 		return await ctx.db
 			.query("diary")
 			.withIndex("by_orchestrator_date", (q) =>
@@ -321,8 +335,19 @@ export const listByDateRange = query({
 		}),
 	),
 	handler: async (ctx, args) => {
+		// GATE — CLOSED (roster-scoped), same shape as `diary:get` above: refuses
+		// an unresolved caller; an ordinary member is served ONLY entries of
+		// orchestrators in its own roster (filtered by the index predicate when
+		// `orchestrator` is given, else per row), never another org's.
+		// isolation-contract: no reactive subscriber (0 hits for
+		// `api\.diary\.` in vantage-peers-dashboard app/components/hooks/lib).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "diary:listByDateRange", {
+			alsoRefusePreOrg: true,
+		});
 		if (args.orchestrator !== undefined) {
 			const orchestrator = args.orchestrator;
+			if (!isOrchestratorAllowedForScope(scope, orchestrator)) return [];
 			return await ctx.db
 				.query("diary")
 				.withIndex("by_orchestrator_date", (q) =>
@@ -335,12 +360,33 @@ export const listByDateRange = query({
 				.collect();
 		}
 
-		return await ctx.db
-			.query("diary")
-			.withIndex("by_date", (q) =>
-				q.gte("date", args.from).lte("date", args.to),
-			)
-			.order("asc")
-			.collect();
+		if (scope.isMaster) {
+			return await ctx.db
+				.query("diary")
+				.withIndex("by_date", (q) =>
+					q.gte("date", args.from).lte("date", args.to),
+				)
+				.order("asc")
+				.collect();
+		}
+		// Member without an `orchestrator` arg: one indexed range read PER
+		// orchestrator in its own roster — the roster is the predicate of the
+		// read, not a filter applied to rows already read.
+		const perOrchestrator = await Promise.all(
+			scope.allowedOrchestrators.map((o) =>
+				ctx.db
+					.query("diary")
+					.withIndex("by_orchestrator_date", (q) =>
+						q
+							.eq("orchestrator", o as Doc<"diary">["orchestrator"])
+							.gte("date", args.from)
+							.lte("date", args.to),
+					)
+					.collect(),
+			),
+		);
+		return perOrchestrator
+			.flat()
+			.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 	},
 });

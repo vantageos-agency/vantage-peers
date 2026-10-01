@@ -56,6 +56,12 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+// validateOkfBundle refuses an unidentified caller (closeDoorsB): every call
+// in this file is made as an authenticated caller. The anonymous refusal is
+// pinned in closeDoorsB.test.ts.
+const asCaller = (t: ReturnType<typeof createTestConvex>) =>
+	t.withIdentity({ subject: "okf-validate-caller", organizationSlug: "acme" } as Parameters<typeof t.withIdentity>[0]);
+
 const FIXED_MS = 1_700_000_000_000;
 
 function memoryFixture(overrides: Partial<MemoryDoc> = {}): MemoryDoc {
@@ -145,7 +151,7 @@ describe("validate_okf_bundle action — happy path", () => {
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(VALIDATE_ACTION_REF, {
+		const result = await asCaller(t).action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -181,7 +187,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 		const buf = await packTarball(tamperedEntries);
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(VALIDATE_ACTION_REF, {
+		const result = await asCaller(t).action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -206,7 +212,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 		const buf = await packTarball(tamperedEntries);
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(VALIDATE_ACTION_REF, {
+		const result = await asCaller(t).action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -236,7 +242,7 @@ describe("validate_okf_bundle action — read-only invariant", () => {
 			ctx.db.query("tasks").collect(),
 		);
 
-		await t.action(VALIDATE_ACTION_REF, { storageId });
+		await asCaller(t).action(VALIDATE_ACTION_REF, { storageId });
 
 		const memoriesAfter = await t.run(async (ctx) =>
 			ctx.db.query("memories").collect(),
@@ -276,7 +282,7 @@ describe("validate_okf_bundle action — counting stats", () => {
 		const buf = await packTarball(entries);
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(VALIDATE_ACTION_REF, {
+		const result = await asCaller(t).action(VALIDATE_ACTION_REF, {
 			storageId,
 		});
 
@@ -339,7 +345,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	test("bundleUrl with http:// scheme is rejected (SSRF defence — scheme allowlist)", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.action(VALIDATE_ACTION_REF, {
+			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "http://example.com/bundle.tar",
 			}),
 		).rejects.toThrow(/OKF_VALIDATE_URL_SCHEME_DENIED/);
@@ -348,7 +354,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	test("bundleUrl pointing at localhost is rejected (SSRF defence — loopback)", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.action(VALIDATE_ACTION_REF, {
+			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://localhost/bundle.tar",
 			}),
 		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
@@ -357,7 +363,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	test("bundleUrl pointing at 127.0.0.1 is rejected (SSRF defence — loopback IPv4)", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.action(VALIDATE_ACTION_REF, {
+			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://127.0.0.1/bundle.tar",
 			}),
 		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
@@ -366,7 +372,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	test("bundleUrl pointing at RFC 1918 10.0.0.1 is rejected (SSRF defence — private IPv4)", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.action(VALIDATE_ACTION_REF, {
+			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://10.0.0.1/bundle.tar",
 			}),
 		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
@@ -375,7 +381,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	test("bundleUrl pointing at link-local 169.254.169.254 is rejected (SSRF defence — cloud metadata)", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.action(VALIDATE_ACTION_REF, {
+			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://169.254.169.254/latest/meta-data/",
 			}),
 		).rejects.toThrow(/OKF_VALIDATE_URL_HOST_DENIED/);
@@ -384,7 +390,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	test("bundleUrl that is not a valid URL is rejected (OKF_VALIDATE_URL_INVALID)", async () => {
 		const t = createTestConvex();
 		await expect(
-			t.action(VALIDATE_ACTION_REF, {
+			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "not a url",
 			}),
 		).rejects.toThrow(/OKF_VALIDATE_URL_INVALID/);

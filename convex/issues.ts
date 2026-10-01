@@ -309,6 +309,21 @@ export const getByRepoNumber = query({
 		issueNumber: v.number(),
 	},
 	handler: async (ctx, args) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. `issues`
+		// carries no orgId/tenant column (fleet-internal), so there is no per-org
+		// slice to scope a member to: serving any member would serve every
+		// tenant's rows. Same helper and code as `issues:listByStatus`.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.issues\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The only reader is the MCP tool (one-shot query, service account).
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "issues:getByRepoNumber", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		return await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -339,6 +354,21 @@ export const listByProject = query({
 		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. `issues`
+		// carries no orgId/tenant column (fleet-internal), so there is no per-org
+		// slice to scope a member to: serving any member would serve every
+		// tenant's rows. Same helper and code as `issues:listByStatus`.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.issues\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The only reader is the MCP tool (one-shot query, service account).
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "issues:listByProject", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan
@@ -379,6 +409,21 @@ export const listByOrchestrator = query({
 		createdBefore: v.optional(v.number()),
 	},
 	handler: async (ctx, args) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. `issues`
+		// carries no orgId/tenant column (fleet-internal), so there is no per-org
+		// slice to scope a member to: serving any member would serve every
+		// tenant's rows. Same helper and code as `issues:listByStatus`.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.issues\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The only reader is the MCP tool (one-shot query, service account).
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "issues:listByOrchestrator", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan

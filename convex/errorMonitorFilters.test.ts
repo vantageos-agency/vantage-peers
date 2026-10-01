@@ -651,7 +651,7 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 
 	test("returns [] when no config row exists", async () => {
 		const t = convexTest(schema, modules);
-		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		const aliases = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.getPendingAliasReleases);
 		expect(aliases).toEqual([]);
 	});
 
@@ -660,7 +660,7 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: ["open", "active"],
 		});
-		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		const aliases = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.getPendingAliasReleases);
 		expect(aliases).toEqual(["open", "active"]);
 	});
 
@@ -672,7 +672,7 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: ["active"],
 		});
-		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		const aliases = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.getPendingAliasReleases);
 		expect(aliases).toEqual(["active"]);
 	});
 
@@ -684,7 +684,7 @@ describe("getPendingAliasReleases / setPendingAliasReleases (Convex layer)", () 
 		await t.mutation(internal.errorMonitorFilters.setPendingAliasReleases, {
 			aliases: [],
 		});
-		const aliases = await t.query(api.errorMonitorFilters.getPendingAliasReleases);
+		const aliases = await t.withIdentity(FLEET_IDENTITY as Parameters<typeof t.withIdentity>[0]).query(api.errorMonitorFilters.getPendingAliasReleases);
 		expect(aliases).toEqual([]);
 	});
 });

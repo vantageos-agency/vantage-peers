@@ -104,7 +104,7 @@ describe("defect 1 — end-of-day index vs live summary share one field", () => 
 		// Step 3 — daily-start step 3 tries to read back the end-of-day
 		// index. This is the assertion that MUST FAIL against current code:
 		// there is no separate field, so the index is gone.
-		const profile = await t.query(api.profiles.getProfile, {
+		const profile = await tMaster.query(api.profiles.getProfile, {
 			orchestratorId,
 			instanceId,
 		});

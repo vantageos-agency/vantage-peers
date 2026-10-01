@@ -198,7 +198,7 @@ describe("ENVELOPE sites \u2014 the pre-organisation caller is told it was refus
 		const absent = await outcome(() =>
 			asMember(t).query(api.messages.listByChannel, {}),
 		);
-		await seedMessage(t, "broadcast");
+		await seedMessage(t, "broadcast", "org-a");
 		const refused = await outcome(() =>
 			asPreOrg(t).query(api.messages.listByChannel, {}),
 		);

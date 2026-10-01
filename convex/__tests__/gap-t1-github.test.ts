@@ -113,7 +113,7 @@ describe("GAP-T1 verify_issue — issues.verify mutation", () => {
 			verifiedBy: "eta",
 		});
 
-		const row = await t.query(api.issues.getByRepoNumber, {
+		const row = await asMaster(t).query(api.issues.getByRepoNumber, {
 			repo,
 			issueNumber,
 		});
@@ -150,7 +150,7 @@ describe("GAP-T1 link_commit_to_issue — issues.linkCommit mutation", () => {
 			fixedBy: "sigma",
 		});
 
-		const row = await t.query(api.issues.getByRepoNumber, {
+		const row = await asMaster(t).query(api.issues.getByRepoNumber, {
 			repo,
 			issueNumber,
 		});
@@ -179,7 +179,7 @@ describe("GAP-T1 link_commit_to_issue — issues.linkCommit mutation", () => {
 			fixedBy: "sigma",
 		});
 
-		const row = await t.query(api.issues.getByRepoNumber, {
+		const row = await asMaster(t).query(api.issues.getByRepoNumber, {
 			repo,
 			issueNumber,
 		});

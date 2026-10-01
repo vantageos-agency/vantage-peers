@@ -90,7 +90,7 @@ describe("fixPatterns pagination — createdBefore applied after unbounded take"
 		let pages = 0;
 		while (pages < 10) {
 			pages++;
-			const page: ListByProjectRow[] = await t.query(
+			const page: ListByProjectRow[] = await t.withIdentity(FLEET_IDENTITY).query(
 				api.fixPatterns.listByProject,
 				{ sourceProject: project, limit: PAGE_LIMIT, createdBefore },
 			);
