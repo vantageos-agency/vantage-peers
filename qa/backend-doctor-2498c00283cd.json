@@ -1,0 +1,17 @@
+{
+ "sha": "2498c00283cda02d544694e72eea19c120c8d1a8",
+ "cli_commit": "60780e6",
+ "cli_ref": "main",
+ "cli_mode": "npx tsx src/cli.ts (source)",
+ "convex_path": "/root/coding/vantage-memory/convex",
+ "exit_code": 1,
+ "checked": 49,
+ "total": 50,
+ "mechanical_violations": 8,
+ "cr1_violations": 0,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) - 3 CRITICAL, major 5. CR-1 VERDICT: 0 violation(s).",
+ "checked_total_note": "checked/total copied from earlier report, same CLI; not re-derived",
+ "not_a_clean_bill": "NOT a pass: non-CR-1 mechanical violations remain; doctor fixes elpiarthera/backend-doctor#36 in review.",
+ "what_this_deploy_does": "#1397 SA master by subject, #1394 member missions, #1399 master namespace master-only, #1400 sender bound to verified caller, #1398 coded refusals + migrations + bounded revoke",
+ "qa": "npx vitest run clean tree 2498c00: 359 files, 4731 passed, 0 failed"
+}

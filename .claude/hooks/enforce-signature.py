@@ -54,6 +54,20 @@ C'est un CHANGEMENT de comportement assume : avant, `printf ... | gh pr comment 
 passait silencieusement NON signe. Pour le pipe legitime, une porte de sortie NOMMEE
 existe (voir OVERRIDE). Un garde qui s'ouvre sur ce qu'il ne voit pas n'est pas un garde.
 
+TROIS ETATS SUR UN CHEMIN DE FICHIER (v2.1.0)
+---------------------------------------------
+Un chemin passe par une variable shell — `--body-file "$BODY"` — arrive ici sous sa
+forme LITTERALE, parce que le shell l'aurait resolu avant que l'outil ne le voie, et
+que le hook lit la commande AVANT son execution. La v2.0.0 declarait ce chemin
+illisible, donc bloquait un fichier qui EXISTAIT et qui etait SIGNE.
+
+Un garde qui bloque du legitime se fait arracher dans la semaine, et alors il ne garde
+plus rien. Le chemin resout donc d'abord ses expansions, depuis les affectations de la
+commande elle-meme puis depuis l'environnement. Trois etats se distinguent a la sortie,
+jamais deux : lisible, expansion non resolue, absent. Une expansion non resolue BLOQUE
+toujours — fail-closed — mais en nommant precisement la variable qu'elle n'a pas su
+resoudre, au lieu d'accuser le fichier.
+
 OVERRIDE PROPRE (critere 3)
 ---------------------------
     # allow-unverifiable-body: <raison >= 6 caracteres>
@@ -73,7 +87,7 @@ import re
 import shlex
 import sys
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 SIGNATURE_PATTERN = re.compile(
     r"Orchestrator:\s+\w+\s+—\s+.+\s*\|\s*\d{4}-\d{2}-\d{2}"
@@ -97,17 +111,58 @@ BODY_FLAGS = ("--body", "-b")
 FILE_FLAGS = ("--body-file", "-F")
 
 
-def _read_body_file(path, bodies, unverifiable):
-    """Lit un argument --body-file / -F. Illisible => unverifiable, JAMAIS autorise."""
+# An assignment inside the SAME command string, e.g. `BODY=/tmp/x.md; <the gh call>`.
+ASSIGN_RE = re.compile(r"(?:^|[;&|\n]|\bexport\s+)\s*([A-Za-z_][A-Za-z0-9_]*)=(\'[^\']*\'|\"[^\"]*\"|[^\s;&|]+)")
+EXPANSION_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+
+
+def _resolve_expansions(path, command):
+    """Resolve $VAR / ${VAR} in a path, from the command's own assignments then the
+    environment. A path is never called unreadable before this has been attempted:
+    the shell expands it before the tool ever sees it, so the literal token is not
+    the path. Returns (resolved_path, unresolved_names).
+    """
+    if "$" not in path:
+        return path, []
+    assigned = {}
+    for name, raw in ASSIGN_RE.findall(command or ""):
+        assigned[name] = raw.strip("\'\"")
+    unresolved = []
+
+    def repl(match):
+        name = match.group(1)
+        if name in assigned:
+            return assigned[name]
+        env = os.environ.get(name)
+        if env:
+            return env
+        unresolved.append(name)
+        return match.group(0)
+
+    return EXPANSION_RE.sub(repl, path), unresolved
+
+
+def _read_body_file(path, bodies, unverifiable, command=""):
+    """Lit un argument --body-file / -F. Trois etats, jamais deux : lisible,
+    expansion non resolue, absent. Chacun se nomme distinctement — un fichier
+    existant derriere une variable etait declare illisible, ce qui bloquait du
+    legitime et fait arracher le garde.
+    """
     if path == "-":
         # Body pipe sur stdin : le hook ne peut pas le voir avant l'execution.
         unverifiable.append("stdin (-)")
         return
+    resolved, unresolved = _resolve_expansions(path, command)
+    if unresolved:
+        unverifiable.append(
+            f"{path} (unresolved shell expansion: {', '.join(sorted(set(unresolved)))})"
+        )
+        return
     try:
-        with open(path, encoding="utf-8", errors="replace") as handle:
+        with open(resolved, encoding="utf-8", errors="replace") as handle:
             bodies.append(handle.read())
     except OSError:
-        unverifiable.append(path)
+        unverifiable.append(resolved)
 
 
 def extract_bodies(command):
@@ -140,10 +195,10 @@ def extract_bodies(command):
             bodies.append(token[len("-b="):])
         elif token in FILE_FLAGS:
             if index + 1 < len(tokens):
-                _read_body_file(tokens[index + 1], bodies, unverifiable)
+                _read_body_file(tokens[index + 1], bodies, unverifiable, command)
                 index += 1
         elif token.startswith("--body-file="):
-            _read_body_file(token.split("=", 1)[1], bodies, unverifiable)
+            _read_body_file(token.split("=", 1)[1], bodies, unverifiable, command)
 
         index += 1
 
@@ -217,14 +272,14 @@ def main():
         extra = ""
         if unverifiable:
             extra = (
-                "\n\nCe hook n'a PAS PU LIRE le body "
-                f"({', '.join(unverifiable)}) — sa signature est donc invérifiable.\n"
-                "Un garde ne laisse pas passer en silence ce qu'il ne peut pas inspecter.\n"
-                "Passez le body en ligne (--body) ou pointez --body-file vers un fichier\n"
-                "existant et lisible.\n\n"
-                "Si le body arrive par un canal structurellement illisible (pipe stdin)\n"
-                "ET que vous garantissez la signature, la porte de sortie est :\n"
-                "  # allow-unverifiable-body: <raison >= 6 caracteres>"
+                "\n\nThis hook COULD NOT READ the body "
+                f"({', '.join(unverifiable)}) — its signature is therefore unverifiable.\n"
+                "A guard does not silently let through what it cannot inspect.\n"
+                "Pass the body inline (--body) or point --body-file at an existing,\n"
+                "readable file.\n\n"
+                "If the body arrives through a structurally unreadable channel (stdin pipe)\n"
+                "AND you guarantee the signature, the escape hatch is:\n"
+                "  # allow-unverifiable-body: <reason >= 6 characters>"
             )
         _block(extra)
 

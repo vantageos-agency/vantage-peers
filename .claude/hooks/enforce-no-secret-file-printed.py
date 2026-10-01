@@ -45,6 +45,7 @@ line in the audit log, which is the whole difference from what happened.
 
 import json
 import os
+import fnmatch
 import re
 import shlex
 import sys
@@ -127,6 +128,26 @@ REDACTING_SED_RE = re.compile(r"s[/|#].*=\.\*[/|#]")
 
 OVERRIDE_RE = re.compile(r"#\s*allow-secret-file-read:\s*(?P<reason>.{15,})")
 
+# ── WHAT THIS GUARD DOES NOT COVER, DECLARED RATHER THAN LEFT SILENT ────────
+#
+# This guard reads a COMMAND. It does not read a filesystem and it does not run
+# git. Two routes follow from that and neither is closed:
+#
+#   git stash show -p        names NO path. It prints whatever is stashed, and
+#                            a stash can carry a secrets file. Refusing every
+#                            stash inspection to cover the rare case would be a
+#                            false positive on a command people use constantly,
+#                            and a guard that refuses ordinary work is switched
+#                            off — which protects nothing. Declared, not closed.
+#
+#   a symlink already        `cat link` where `link -> .env.local` names a path
+#   pointing at the file     the matcher has no reason to suspect. Following it
+#                            would mean stat-ing paths at PreToolUse time.
+#
+# Both are named here so a reader does not mistake silence for coverage. The
+# rule this file serves says an absence must be distinguishable from a refusal;
+# the same applies to the guard's own coverage.
+
 
 def _unescape_quotes(text: str) -> str:
     """Remove backslashes that only escape a quote or a space.
@@ -171,6 +192,52 @@ GLOB_SECRET_RE = re.compile(
 )
 
 
+# Basenames a wildcard could expand onto. Eta at 774ba1d: the previous glob
+# matcher required `env` spelled NEXT TO the wildcard, so `cat .env.l*` was
+# refused while `cat .e?v.local` and `cat .env.{local,prod}` passed. Matching a
+# SPELLING again, one layer down — the same mechanism this file has now hosted
+# six times. So the test is fnmatch against the basenames themselves: does this
+# operand's pattern MATCH a name we treat as a secret? The guard cannot know
+# what the directory holds, and refusing a pattern that could reach one is the
+# safe direction.
+_SECRET_BASENAMES = (
+    ".env", ".env.local", ".env.production", ".env.production.local",
+    ".env.development", ".env.test", ".env.local.bak",
+    "id_rsa", "id_dsa", "auth.json", "credentials.json", ".npmrc",
+)
+
+
+def _brace_expand(token: str):
+    """`{local,prod}` is expanded by the SHELL before the command runs, so a
+    guard reading the raw line never sees the resulting names."""
+    m = re.search(r"\{([^{}]*,[^{}]*)\}", token)
+    if not m:
+        return [token]
+    out = []
+    for alt in m.group(1).split(","):
+        out.extend(_brace_expand(token[: m.start()] + alt + token[m.end() :]))
+    return out
+
+
+def _glob_operands_that_could_be_secrets(command: str):
+    """Operands whose wildcard or brace expansion could reach a secrets file."""
+    hits = []
+    for raw in re.split(r"[\s;|&<>]+", _unescape_quotes(command)):
+        tok = raw.strip("\"'")
+        if not tok or tok.startswith("-"):
+            continue
+        if not re.search(r"[*?\[{]", tok):
+            continue
+        for candidate in _brace_expand(tok):
+            base = os.path.basename(candidate)
+            if PLACEHOLDER_RE.search(candidate):
+                continue
+            if any(fnmatch.fnmatch(name, base) for name in _SECRET_BASENAMES):
+                hits.append(tok)
+                break
+    return hits
+
+
 def secret_paths(command: str):
     """Every secrets-shaped path the command names, placeholders excluded."""
     found = []
@@ -180,11 +247,7 @@ def secret_paths(command: str):
             continue
         found.append(path)
     if not found:
-        for m in GLOB_SECRET_RE.finditer(_unescape_quotes(command)):
-            g = m.group(0).strip(" \"'=/<>")
-            if PLACEHOLDER_RE.search(g):
-                continue
-            found.append(g)
+        found.extend(_glob_operands_that_could_be_secrets(command))
     return found
 
 
@@ -248,57 +311,56 @@ def _pattern_stops_at_equals(pattern: str) -> bool:
 
 
 def _grep_is_safe(tokens) -> bool:
-    """A grep over a secrets file prints no value in exactly two cases."""
+    """A grep over a secrets file prints no value in exactly two cases.
+
+    The PATTERN is the first non-flag operand, positionally. Selecting it by
+    "the token that is not a secrets path" was measured wrong here: once the
+    glob matcher learned fnmatch, `grep -o '.*' .env.local` had its PATTERN
+    recognised as a possible secrets name, so the pattern was skipped and the
+    greedy `.*` went through. A token's role comes from its position on the
+    command line, never from what it happens to resemble."""
     long_flags = [t for t in tokens if t.startswith("--")]
-    # SHORT flags only. Joining the long ones in too made `--only-matching`
-    # match the count-only pattern on the `c` of "matching" — a flag NAME's
-    # letters read as flag LETTERS, which is the same argument-as-licence
-    # mistake one more level down. Pi's `--only-matching 'KEY=.*'` found it.
+    # SHORT flags only. Joining the long ones in made `--only-matching` match
+    # the count-only pattern on the `c` of "matching" — a flag NAME's letters
+    # read as flag LETTERS, the same mistake one level down.
     flags = "".join(t for t in tokens if t.startswith("-") and not t.startswith("--"))
-    # -c, -l, -L, -q are UNCONDITIONAL: a count, a filename, or nothing. The
-    # pattern cannot matter because no byte of the file reaches stdout.
+
+    # -c, -l, -L, -q are UNCONDITIONAL: a count, a filename, or nothing. No
+    # byte of the file reaches stdout, so the pattern cannot matter.
     if re.search(r"-[A-Za-z]*[clLq]", flags) or any(
-        f in ("--count", "--files-with-matches", "--files-without-match", "--quiet", "--silent")
+        f in ("--count", "--files-with-matches", "--files-without-match",
+              "--quiet", "--silent")
         for f in long_flags
     ):
         return True
-    # -o bounds the OUTPUT to the match, never the MATCH to a name. So it is
-    # safe only when the PATTERN itself cannot reach past the `=`.
+
+    # -o bounds the OUTPUT to the match, never the MATCH to a name. Safe only
+    # when the pattern itself cannot reach past the `=`.
     has_o = bool(re.search(r"-[A-Za-z]*o", flags)) or "--only-matching" in long_flags
     if not has_o:
         return False
 
-    # HOLE 6 FIX (Pi): Check ALL -e patterns, not just the first. Multiple -e
-    # patterns should all be checked; if any can reach a value, it's unsafe.
-    # Also refuse -f (pattern file that we cannot read).
-    has_f = bool(re.search(r"-[A-Za-z]*f", flags)) or "--file" in long_flags
-    if has_f:
-        return False  # Pattern file: we cannot judge its contents
-
+    # EVERY pattern is judged, not the first. `grep -o -e 'KEY=' -e '.*'` passed
+    # when only the first was read — one -e vouching for the next.
     patterns = []
-    i = 1  # Skip the 'grep' command itself
-    while i < len(tokens):
-        t = tokens[i]
-        if t in ("-e", "--regexp"):
-            if i + 1 < len(tokens):
-                patterns.append(tokens[i + 1])
-                i += 2
-            else:
-                i += 1
-        elif t.startswith("-"):
-            i += 1
-        elif secret_paths(t):
-            i += 1
-        else:
-            # Non-flag, non-secret-path token might be a pattern
+    expect_pattern = False
+    for t in tokens[1:]:
+        if expect_pattern:
             patterns.append(t)
-            i += 1
-
-    # Check all collected patterns
-    for pattern in patterns:
-        if not _pattern_stops_at_equals(pattern):
-            return False
-    return True
+            expect_pattern = False
+            continue
+        if t in ("-f", "--file"):
+            return False  # a PATTERN FILE this guard cannot read
+        if t in ("-e", "--regexp"):
+            expect_pattern = True
+            continue
+        if t.startswith("-"):
+            continue
+        if not patterns:
+            patterns.append(t)  # the positional pattern, before any file
+    if not patterns:
+        return False
+    return all(_pattern_stops_at_equals(pat) for pat in patterns)
 
 
 def _sed_is_redacting(tokens) -> bool:
@@ -335,6 +397,10 @@ def _git_subcommand_is_safe(segment: str) -> bool:
     # they usually print a diff rather than a file.
     # `check-ignore` and `ls-files` report ABOUT a path and print no content;
     # `check-ignore` was a false positive at that head.
+    # `stash show -p` prints the stashed diff, which carries the file's content
+    # exactly as `log -p` does — eta at 774ba1d. Any git subcommand able to
+    # print a blob or a patch is excluded; the allowlist names only the ones
+    # that report ABOUT a path.
     if len(tokens) > 1 and tokens[1] in (
         "add", "commit", "status", "check-ignore", "ls-files",
     ):

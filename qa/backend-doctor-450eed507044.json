@@ -1,0 +1,16 @@
+{
+ "sha": "450eed507044c65234cc4ca5171f8225f4bc08c6",
+ "cli_commit": "60780e6",
+ "cli_ref": "main",
+ "convex_path": "/root/coding/vantage-memory/convex",
+ "deploy_tree": "/root/coding/vantage-memory detached at origin/main 450eed50, 0 local commits, convex/ identical to origin/main, 0 uncommitted under convex/",
+ "exit_code": 1,
+ "checked": 49,
+ "total": 50,
+ "mechanical_violations": 9,
+ "cr1_violations": 31,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) \u2014 3 CRITICAL violation(s) \u2014 revise mandatory, NO bypass. major violations=6, abstentions=30 (critical=10). engine exit=1.",
+ "not_a_clean_bill": "NOT a pass. The gate requires mechanical_violations == 0. This file is the honest score so the gate reads a measurement, not nothing.",
+ "what_this_deploy_does": "CR-1 violations 33 -> 31 on this tree: the two doors fixed by #1387 (issues:listByStatus, messages:listBroadcastStatus) are closed here. Deploying REDUCES the open doors on production; withholding it leaves two confirmed anonymous leaks serving.",
+ "consequence": "The gate cannot be satisfied by any tree that still has an open door, so it blocks the deploy of the fix itself. Production proceeds only on a documented operator override."
+}

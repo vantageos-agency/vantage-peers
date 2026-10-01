@@ -1,0 +1,19 @@
+{
+  "sha": "97f2f2556254b1eaaa42b125f232d2dd97432aa4",
+  "cli_commit": "60780e6",
+  "cli_ref": "main",
+  "cli_mode": "npx tsx src/cli.ts (source)",
+  "convex_path": "scratchpad/deploy-97f2f25/convex (detached worktree at 97f2f25)",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "cr1_violations": 3,
+  "cr1_doors": [
+    "okfBundleDurable:startOkfBundleExportDurable",
+    "okfBundleNode:exportOkfBundle",
+    "okfBundleNode:importOkfBundle"
+  ],
+  "verdict_line": "VERDICT: revise-mandatory (exit 1) \u2014 6 CRITICAL violation(s) \u2014 revise mandatory, NO bypass. major violations=11, abstentions=16 (critical=6). engine exit=1.",
+  "delta_vs_prod_eeceed7": "same 3 CR-1 doors as qa/backend-doctor-eeceed7f1991.json; no new door",
+  "report": "/root/coding/backend-doctor/reports/backend-doctor-convex-2026-10-01.md"
+}

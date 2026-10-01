@@ -1,0 +1,203 @@
+# What each deleted branch carried — read after deletion, from the SHA the manifest kept.
+# Every branch is restorable: git branch <name> <sha>. Nothing is lost.
+#
+# The diff is taken against the MERGE BASE, never against origin/main directly.
+# `git diff --stat origin/main <sha>` reports main's own advance as deletions —
+# 126205 deletions on a one-commit branch — which measures how far main has moved,
+# not what the branch carried. The merge-base diff is what the branch actually added.
+
+- **analysis/s0-cross-tenant-campaign** — 2026-07-23, 2e62b7db
+  - carried: 1 commit(s),  3 files changed, 1947 insertions(+)
+  - analysis: cross-tenant isolation campaign — 94 of 123 tools actually exercised
+- **chore/railway-runbook-rule-v0.2.0-sync-k1714c28** — 2026-08-13, b912d333
+  - carried: 1 commit(s),  2 files changed, 39 insertions(+), 44 deletions(-)
+  - docs(doctrine): sync railway-mcp-redeploy runbook v0.2.0 + fix the false ground-fact in the local rule (k1714c28)
+- **docs/etat-avancement-2026-06-21** — 2026-06-21, 748d625d
+  - carried: 5 commit(s),  12 files changed, 1862 insertions(+), 18 deletions(-)
+  - docs(audit): Day 110 full surface expansion + révision v3 — mcp-crud-baseline + CLAUDE.md MUST-USE|docs(état-avancement): v2 — correction faute Sigma sur clients existants
+- **docs/vp-tool-inventory-generator** — 2026-08-11, 95f82fe2
+  - carried: 1 commit(s),  4 files changed, 2081 insertions(+)
+  - feat(scripts): deterministic VP per-tool inventory generator + runbook
+- **emergency/cgt-alsachimie-provision-neo** — 2026-06-23, 10e94c34
+  - carried: 4 commit(s),  6 files changed, 416 insertions(+), 15 deletions(-)
+  - fix(emergency): provision cgt-alsachimie scope_profile + neo bearer migration|docs(pr-h): tool descriptions VP-Sources doctrine — 3 surfaces (R+P+S) + CHANGELOG
+- **feat/auto-task-dedup-a6-day88** — 2026-06-01, b4bda49f
+  - carried: 1 commit(s),  4 files changed, 472 insertions(+), 5 deletions(-)
+  - feat(convex): A.6 auto-generated deploy task dedup logic + backfill cleanup migration
+- **feature/day92-C0.1-admin-deploy-gate** — 2026-06-06, 57b25118
+  - carried: 4 commit(s),  9 files changed, 1768 insertions(+), 16 deletions(-)
+  - test(c2): RED phase — case-insensitive NFC Day 92 C2 (30 assertions, 1 expected fail)|docs(cloud): Day 92 F2 — plugin-vs-workspace-hooks doctrine + Pi install runbook
+- **feature/day92-F1-hooks-overhaul** — 2026-06-05, 8c8d5d3f
+  - carried: 6 commit(s),  7 files changed, 1611 insertions(+)
+  - feat(analysis): Day 92 A2 VP MCP tools consistency analysis — 4 distributions|feat(whoami): GREEN — add whoami LECTURE tool to VP MCP (Day 92 A3)
+- **fix/backfill-org-ids-paginated** — 2026-09-29, 0eb539b5
+  - carried: 2 commit(s),  3 files changed, 1233 insertions(+), 357 deletions(-)
+  - test(migrations): name the cancelled-chain pole for what it exercises; format|fix(migrations): the tenant backfill pages its reads and writes, and refuses instead of returning a plausible number (R-31)
+- **fix/prod-deploy-guard-published-to-catalogue** — 2026-09-28, 667a3b00
+  - carried: 2 commit(s),  3 files changed, 520 insertions(+)
+  - evidence: the backend-doctor run behind the production deploy at 0726792|fix(hooks): a bite probe for the prod-deploy guard, and the catalogue publish that did NOT land
+- **fix/refusal-carries-its-code-k177hpz3** — 2026-09-28, 8ec44283
+  - carried: 1 commit(s),  19 files changed, 1441 insertions(+), 43 deletions(-)
+  - fix(security): un refus porte son code au lieu de se taire comme une absence
+- **fix/tenant-scoped-drop-global-day128** — 2026-07-13, 225ea55f
+  - carried: 2 commit(s),  71 files changed, 1977 insertions(+), 961 deletions(-)
+  - wip(security): purge client names from tracked files + residu-a + alias externalization|fix(oauth): drop shared global namespace from tenant-scoped client seed profile
+- **hotfix/check-messages-envelope-skew** — 2026-08-04, 73118a48
+  - carried: 1 commit(s),  3 files changed, 143 insertions(+), 5 deletions(-)
+  - fix(#1147-hotfix): make check_messages pendingOnYou rendering deploy-skew tolerant
+- **pi/remove-publish-guard** — 2026-08-14, 787e40ae
+  - carried: 3 commit(s),  7 files changed, 595 insertions(+), 1680 deletions(-)
+  - chore(hooks): remove the npm publish guard from this station|fix(tasks): close the update-verb side door — status=blocked must go through block_task (Eta REVISE #1193)
+- **probe-1355** — 2026-09-29, b7ed7a71
+  - carried: 11 commit(s),  33 files changed, 5015 insertions(+), 228 deletions(-)
+  - test(mcp): pin that a master bearer declaring a name is not counted as an unattributed agent|feat(mcp): cutover Deployment A - accept a credential AND a typed name, record the latter, one switch to strict
+- **rebase-1355** — 2026-09-29, 912b6a4b
+  - carried: 10 commit(s),  17 files changed, 4273 insertions(+), 59 deletions(-)
+  - test(mcp): one write-through-wrapper pole per wrapper, after two mutants survived the bundled row|test(mcp): the acting-name classifier reads defaults and writes, not just the destructuring key
+- **sigma/1357-system-word-ast** — 2026-09-30, 3067a86b
+  - carried: 7 commit(s),  13 files changed, 1727 insertions(+), 30 deletions(-)
+  - test(convex): the AST helper leaves Convex's module space, and the guard stops being blind to __tests__|test(security): the declared limits were never measured; three of four are now closed at zero cost
+- **sigma/GATE-ONLY-npm-publish-hook-DO-NOT-MERGE** — 2026-07-10, 6c062dbe
+  - carried: 2 commit(s),  4 files changed, 1580 insertions(+)
+  - chore(gate-review): sonde adversariale v2 — main() par stdin, varie l'ARGUMENT, teste l'autorisation|chore(gate-review): transport du garde npm-publish pour le gate d'Eta — NE PAS MERGER
+- **sigma/actor-from-credential-r2** — 2026-09-29, 92e5bf2c
+  - carried: 13 commit(s),  33 files changed, 5629 insertions(+), 228 deletions(-)
+  - test(mcp): one write-through-wrapper pole per wrapper, after two mutants survived the bundled row|test(mcp): the acting-name classifier reads defaults and writes, not just the destructuring key
+- **sigma/actor-from-credential-revise** — 2026-09-29, b7ed7a71
+  - carried: 11 commit(s),  33 files changed, 5015 insertions(+), 228 deletions(-)
+  - test(mcp): pin that a master bearer declaring a name is not counted as an unattributed agent|feat(mcp): cutover Deployment A - accept a credential AND a typed name, record the latter, one switch to strict
+- **sigma/d62-pricing-research-vp-cloud** — 2026-05-07, 17d04637
+  - carried: 3 commit(s),  11 files changed, 2640 insertions(+)
+  - feat(pricing-research): B2 Firecrawl deep scrape 8 competitors (D62)|feat(pricing-research): synthesis VP Cloud with launch frame + Lifetime grid (D62)
+- **sigma/d63-railway-template-overview** — 2026-05-08, 18fe2364
+  - carried: 4 commit(s),  2 files changed, 141 insertions(+)
+  - docs(decisions): rename Deployment Links → Deployment Dependencies (Railway spec H3 literal) (D63)|docs(decisions): surgical fix Railway overview Option B — 9497B audit PASS 86/100 (D63)
+- **sigma/day-203** — 2026-09-26, 65925927
+  - carried: 1 commit(s),  1 file changed, 16 insertions(+)
+  - qa: score the tip being activated with the doctor's default-branch build, and record that it refuses
+- **sigma/day159-dispatch-task-start-mirror** — 2026-08-14, 7e80f988
+  - carried: 1 commit(s),  1 file changed, 7 insertions(+), 3 deletions(-)
+  - chore(skill): sync dispatch-task-start mirror to VR 1.0.4 — Bucket B names the unblocking task
+- **sigma/deploy-evidence-2026-09-27** — 2026-09-27, aa506a84
+  - carried: 1 commit(s),  3 files changed, 32 insertions(+)
+  - evidence: the backend-doctor runs behind today's two production deploys
+- **sigma/generated-api-freshness-fleet-form** — 2026-09-29, 798b360f
+  - carried: 2 commit(s),  4 files changed, 227 insertions(+), 16 deletions(-)
+  - fix(migrations): explicit handler return types cut the self-referential type cycle in backfillOrgIds|test(convex): the committed generated API is guarded against a dangling or unlisted module
+- **sigma/generated-api-guard-function-level** — 2026-09-29, 5c1877a2
+  - carried: 1 commit(s),  2 files changed, 57 insertions(+)
+  - test(convex): the bindings guard reads both blocks of api.d.ts, not one
+- **sigma/heal-stranded-segments** — 2026-09-11, b892f55f
+  - carried: 1 commit(s),  3 files changed, 384 insertions(+)
+  - fix(tasks): heal rows stranded open before closeTrailingSegmentOnExit shipped
+- **sigma/master-secret-ten-internal-stacked** — 2026-09-30, 71b21ea7
+  - carried: 4 commit(s),  10 files changed, 1360 insertions(+), 215 deletions(-)
+  - test(convex): the guard judges the REACH of the secret, not the shape of a comparison|test(convex): the master check is anchored on the SECRET, not on a helper's name
+- **sigma/mcp-server-conformance-audit** — 2026-08-15, f344f2ef
+  - carried: 1 commit(s),  1 file changed, 134 insertions(+)
+  - docs(audit): mcp-doctor conformance audit of the vantage-peers MCP server
+- **sigma/mint-grok-agents** — 2026-08-30, 57d4e139
+  - carried: 2 commit(s),  3 files changed, 427 insertions(+)
+  - fix(mint-proof): resolvable channel + read ConvexError payload (err.data) so the both-ways refusal reason is visible|feat(agents): build Model B prod-mint script + both-ways proof for pi-grok/theta-grok
+- **sigma/missions-recurring-write-scope** — 2026-09-21, 1c1b64df
+  - carried: 1 commit(s),  12 files changed, 1218 insertions(+), 52 deletions(-)
+  - fix(missions,recurringTasks): writes refuse anonymous and out-of-scope callers
+- **sigma/pr1217-rebase** — 2026-08-21, 84bdbb38
+  - carried: 2 commit(s),  6 files changed, 549 insertions(+)
+  - test(auth): T-CHECK either-quote NEG and REFUSING TO JUDGE on bad slice|feat(oauth): provisionOrganization creates an org and its seats
+- **sigma/pre-org-typed-refusal** — 2026-09-26, 580d237f
+  - carried: 12 commit(s),  60 files changed, 5073 insertions(+), 228 deletions(-)
+  - fix: narrow R-50 typed-empty branch to scope.refused only, preserving anonymous-caller throw contracts|wip: R-50/R-51 refuseWithoutThrow fix + KNOWN_OFFENDERS hard gate (pre-evidence checkpoint)
+- **sigma/qa-scores-and-worktree-ignore** — 2026-09-29, de1b13cf
+  - carried: 1 commit(s),  4 files changed, 87 insertions(+)
+  - chore: record today's backend-doctor scores and stop tracking agent worktrees
+- **sigma/railway-template-doc** — 2026-09-21, b0345bc3
+  - carried: 1 commit(s),  2 files changed, 324 insertions(+)
+  - docs(self-host): single source of truth for the Railway template page
+- **sigma/read-half-rebased** — 2026-09-21, d6ef6b84
+  - carried: 1 commit(s),  12 files changed, 675 insertions(+), 114 deletions(-)
+  - fix(messages): read half — checkNewMessages/Envelope derive tenant from verified identity, not a caller arg
+- **sigma/receipt-tenant-count-rebased** — 2026-09-18, a1917865
+  - carried: 11 commit(s),  8 files changed, 1487 insertions(+), 1 deletion(-)
+  - docs(changelog): drop an internal task id from the #1259 entry|test(backfill): correct the anonymous-caller guard test's RED claim
+- **sigma/redact-memory-content** — 2026-09-18, 720a1cc5
+  - carried: 1 commit(s),  5 files changed, 451 insertions(+)
+  - feat(convex): add redactMemoryContent — a real erase path for credentials in memory bodies
+- **sigma/remove-dead-tables-dev** — 2026-09-02, 03828b09
+  - carried: 3 commit(s),  29 files changed, 314 insertions(+), 3254 deletions(-)
+  - fix(test): close 8 red tests — no pre-existing, every one FIXED|fix(dead-tables): remove the components table + its five MCP tools — DEV only
+- **sigma/remove-iframe-sessions** — 2026-09-21, 5ca1ac78
+  - carried: 1 commit(s),  8 files changed, 65 insertions(+), 359 deletions(-)
+  - Remove unauthenticated iframeEmbedSessions functions
+- **sigma/station-cron-3min** — 2026-09-07, 3baddbb6
+  - carried: 1 commit(s),  2 files changed, 57 insertions(+), 1 deletion(-)
+  - chore(station): sigma /check-messages cron at 3 min, restored by a wired SessionStart hook
+- **sigma/store-secret-hold** — 2026-09-18, e9033a16
+  - carried: 2 commit(s),  13 files changed, 974 insertions(+), 10 deletions(-)
+  - fix(convex): auth-gate checkMemoryForSecret, stop trusting caller-reported secretCheck|feat(convex): store-time SECRET HOLD on store_memory
+- **sigma/task-mutation-rbac-inventory** — 2026-08-19, af747f2f
+  - carried: 1 commit(s),  1 file changed, 77 insertions(+)
+  - docs(analysis): task-mutation RBAC inventory — 8/10 test a relationship, 0 a tier (k174gxk8)
+- **sigma/tenant-boundary-recurring-update** — 2026-09-29, f6c90e7d
+  - carried: 7 commit(s),  22 files changed, 2699 insertions(+), 229 deletions(-)
+  - fix(security): recurringTasks.getById no longer serves any organisation's schedule to any caller|fix(security): recurringTasks.update refuses a schedule stamped for another organisation
+- **sigma/wip-orgid-stamp-at-write** — 2026-09-29, 76e4c2d0
+  - carried: 3 commit(s),  17 files changed, 1356 insertions(+), 169 deletions(-)
+  - docs(changelog): the tenant boundary, the half-inverted leak, and the unearned grant|fix(convex): a collection read denies an untenanted row exactly as a by-id read does
+- **sigma/write-side-org-stamp** — 2026-09-27, ef9fbd34
+  - carried: 2 commit(s),  16 files changed, 1596 insertions(+), 51 deletions(-)
+  - test(convex): the no-organisation leg is now observed by a pole of its own|fix(convex): a document id is no longer a key to another tenant's row
+- **skill/audit-frontend-consumers-t1** — 2026-06-29, b4b60f40
+  - carried: 2 commit(s),  3 files changed, 1135 insertions(+)
+  - feat(skill): audit-frontend-consumers v1.0.0 — proactive backend contract drift detector|spec(audit-frontend-consumers): proactive skill spec T0 — backend-contract-audit-gate
+- **spec/audit-frontend-consumers-t0** — 2026-06-29, fdbf3bd1
+  - carried: 1 commit(s),  1 file changed, 560 insertions(+)
+  - spec(audit-frontend-consumers): proactive skill spec T0 — backend-contract-audit-gate
+- **worktree-agent-a015f6f990e754537** — 2026-09-26, eec0347a
+  - carried: 1 commit(s),  1 file changed, 136 insertions(+)
+  - test(convex): add org-isolation two-pole regression guard (RED/GREEN + mutant-proven)
+- **worktree-agent-a051d382ff6a9803b** — 2026-09-26, 72af3399
+  - carried: 3 commit(s),  4 files changed, 185 insertions(+), 2 deletions(-)
+  - docs(changelog): the fix-pattern surface reversal and the skill-body guard|fix(skills): fix-pattern-cycle stops instructing calls to hidden tools
+- **worktree-agent-a1ff30565aa53f1b5** — 2026-09-28, 98739b90
+  - carried: 1 commit(s),  8 files changed, 548 insertions(+), 121 deletions(-)
+  - WIP(convex): stamp orgId at write time — interrupted, NOT reviewed, NOT complete
+- **worktree-agent-a29d3848f68f6de5e** — 2026-09-29, 873f5a83
+  - carried: 1 commit(s),  10 files changed, 573 insertions(+), 29 deletions(-)
+  - fix(security): the word "system" carries authority only from the verified master scope at nine more sites
+- **worktree-agent-a426031dd4b986846** — 2026-09-26, 0b2edd17
+  - carried: 1 commit(s),  16 files changed, 1625 insertions(+), 65 deletions(-)
+  - fix(auth): derive mission/mission-template/recurring-task write authority from verified caller, never client assertion
+- **worktree-agent-a49b0c13e738ff624** — 2026-09-26, 87b60de2
+  - carried: 1 commit(s),  4 files changed, 479 insertions(+), 6 deletions(-)
+  - fix(businessUnits): a write can no longer be told which orchestrator it belongs to
+- **worktree-agent-a5086829d137f28c8** — 2026-09-28, abd57e7f
+  - carried: 2 commit(s),  26 files changed, 2190 insertions(+), 117 deletions(-)
+  - WIP(convex): refusal carries its code — reworked on the reviewer's split, interrupted|fix(security): un refus porte son code au lieu de se taire comme une absence
+- **worktree-agent-a591763672d518f3d** — 2026-09-26, 546a4e0f
+  - carried: 1 commit(s),  11 files changed, 841 insertions(+), 68 deletions(-)
+  - fix(auth): master-scope guard + internalMutation conversion for issues/githubRepoMapping/errorMonitor
+- **worktree-agent-a5a2d6c45bc1fb336** — 2026-09-26, 5a26653e
+  - carried: 2 commit(s),  22 files changed, 1525 insertions(+), 52 deletions(-)
+  - test(fixPatternsWriteScope): drive the RAG-sync scheduled call to completion inside the test|fix: derive iframeEmbedSessions/kbMutations/okfBundleDurable/mandates/fixPatterns/profiles write authority from the verified caller
+- **worktree-agent-a672436383645fd4a** — 2026-09-29, 5650d71e
+  - carried: 1 commit(s),  3 files changed, 102 insertions(+), 16 deletions(-)
+  - fix(convex): the deploy typecheck sees what the repository's tsc could not
+- **worktree-agent-a6c883f131b9bc2ee** — 2026-09-27, 2265b678
+  - carried: 4 commit(s),  11 files changed, 1139 insertions(+), 67 deletions(-)
+  - docs(changelog): the anonymous tenant read, the fail-open class, and what stays accused|chore(scripts): inventory the class, with no list a name can hide in
+- **worktree-agent-a7218604d19668ee0** — 2026-09-27, 72abafdd
+  - carried: 1 commit(s),  30 files changed, 1547 insertions(+), 99 deletions(-)
+  - security: a caller with no credential is served no rows from fifteen public reads
+- **worktree-agent-a8442634d1447f7d6** — 2026-09-26, 8bf4de16
+  - carried: 1 commit(s),  2 files changed, 229 insertions(+), 14 deletions(-)
+  - fix(auth): a Clerk-verified caller with no organisation gets a typed refusal, not the generic bearer-invalid 401
+- **worktree-agent-ae47b36d78507c5c9** — 2026-09-29, 89840c4c
+  - carried: 1 commit(s),  7 files changed, 1496 insertions(+)
+  - feat(scripts): a counter for the published surface that reads the registration, not the argument shape
+- **worktree-agent-aecbccda6f08669d7** — 2026-09-29, 7677c6d0
+  - carried: 1 commit(s),  13 files changed, 786 insertions(+), 71 deletions(-)
+  - A pre-organisation caller is refused in a shape that says so, and the MCP transport stops discarding the marker
+- **worktree-agent-aff47808999ad94d0** — 2026-08-24, 748e9ffc
+  - carried: 11 commit(s),  24 files changed, 2885 insertions(+), 46 deletions(-)
+  - fix(auth): bind organisation in THE LOCK; fix stats.test.ts midnight flake|fix(auth): close IDENTITY-CLAIM CASING CLASS on okfBundle namespace guards

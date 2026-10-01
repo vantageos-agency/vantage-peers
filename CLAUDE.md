@@ -20,6 +20,30 @@ VANTAGEPEERS = 2 PRODUITS DISTINCTS — NE JAMAIS MÉLANGER.
 
 ---
 
+## RAPPORTS À LAURENT — COURT, POINT.
+
+**Règle absolue, non négociable.** Laurent a dû l'exiger trois fois le 2026-09-29, la dernière en ces termes : « je ne veux plus que tu rapportes en écrivant un roman ! je n'en peux plus ! j'exige du court, précis, concis ! »
+
+**Format obligatoire : 10 lignes maximum.**
+- Ce qui a changé.
+- Ce qui est bloqué, et sur qui.
+- Ce qui vient ensuite.
+
+**Interdit dans une réponse à Laurent :**
+- Tableaux de preuves, sorties de commandes, md5, SHA — sauf s'il les demande.
+- Paragraphes de doctrine, explication du mécanisme, « pourquoi c'est intéressant ».
+- Raconter la méthode, les mutants, les pôles, ce qui a failli échouer.
+- Redire ce qu'un message précédent a déjà dit.
+- Toute mise en gras décorative servant à donner du poids à de la prose.
+
+**Le détail va dans la tâche, le corps de PR, ou le commit. Jamais dans la réponse.** C'est là que les preuves sont exigées — et elles le restent, intégralement. Ce qui change est l'endroit.
+
+Un chiffre n'entre dans la réponse que s'il porte une décision. Si Laurent veut le détail, il le demande.
+
+Mémoire : `j57cjw9ves787qxy596zjqrwch8fbk61`. Rappel antérieur du même jour : « arrête définitivement avec ton baratin et tes anecdotes / sois concis, précis, factuel / seul compte ce qui reste à faire ».
+
+---
+
 This project uses [Convex](https://convex.dev) as its backend.
 
 When working on Convex code, **always read `convex/_generated/ai/guidelines.md` first** for important guidelines on how to correctly use Convex APIs and patterns.

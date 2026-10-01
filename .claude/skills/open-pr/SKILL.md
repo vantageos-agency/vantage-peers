@@ -59,47 +59,22 @@ byte for byte.
 - `body`: PR description; MUST end with the canonical signature line and carry
   zero Anthropic/Claude attribution.
 - `reviewer`: the review orchestrator (default `eta`).
-- `project`: VantagePeers project slug for the review task. Supplied by the
-  caller; this skill never guesses it. If it is missing, refuse and ask —
-  a typed-from-memory slug files the review against the wrong project.
+- `project`: VantagePeers project slug for the review task. Derive it from
+  `list_repo_mappings` for `repo`; never type it.
 - `scope`: one-line scope description of the delivery.
 
 ## WORKFLOW (atomic — three acts, one invocation)
 
 ### Act 1 — open the PR with the marker
 
-Push is assumed done.
-
-**Write the body to a file FIRST, in its own separate step, then open the PR
-pointing at it.** These two are separate actions on purpose and must never be
-collapsed onto one command line: the `enforce-self-gate-before-review` guard
-reads the `--body-file` at inspection time, BEFORE the command runs, so a file
-written on the same line (a heredoc, or `> file && gh pr create`) does not exist
-yet when the guard looks — it refuses, and the flag was never the problem. A long
-SELF-GATE body with backticks and newlines is also fragile inline, so the file is
-the better path regardless of the guard.
-
-Step 1 — write the filled SELF-GATE body to a file (its own action; use the Write
-tool or a heredoc that is NOT chained to the create):
-
-```bash
-# a dedicated step — nothing else on this line
-cat > /tmp/pr-body-<slug>.md <<'EOF'
-<the filled PR body, ending with the SELF-GATE block and the signature>
-EOF
-```
-
-Step 2 — open the PR pointing at that file (the next, separate action):
+Push is assumed done. Run:
 
 ```bash
 gh pr create -R <repo> --base <base_branch> --head <head_branch> \
-  --title "<title>" --body-file /tmp/pr-body-<slug>.md  # via-open-pr
+  --title "<title>" --body "<body>"  # via-open-pr
 ```
 
-A short body with no backticks or newlines may instead be passed inline with
-`--body "<body>"  # via-open-pr` — that carries the filled block equally and the
-guard reads it directly. The `# via-open-pr` marker is appended either way.
-Immediately read back the
+The `# via-open-pr` marker is appended to the command. Immediately read back the
 authoritative facts — never trust the create output alone:
 
 ```bash
@@ -128,7 +103,7 @@ mcp__vantage-peers__create_task
   assignedTo="eta"               # the reviewer; assignedTo=eta by default
   priority="high"
   createdBy="<your role>"
-  project="<project>"            # the caller-supplied slug, never guessed
+  project="<project>"            # derived from list_repo_mappings, never typed
   description="Review PR #<pr> on <repo> at head SHA <headRefOid>. Gate on
   substance: code proven, standard conformance, scope boundaries. <scope>.
 
@@ -181,7 +156,7 @@ free narrative paragraph.
   and its notification is an incomplete delivery.
 - The `# via-open-pr` marker is fixed and literal — appended to every `gh pr create`.
 - EXACTLY ONE review task per PR — the dedup query in act 2 is mandatory.
-- `project` on the review task is the caller-supplied slug — never guessed.
+- `project` on the review task is derived from `list_repo_mappings`, never typed.
 - The review task cites PR number + head SHA + repo in title and description.
 - The notification is ONE message to `channel="eta,pi"` in the v2 grid, signed.
 - PR body ends with the canonical signature; zero Anthropic/Claude attribution.

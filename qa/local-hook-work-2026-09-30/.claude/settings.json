@@ -38,14 +38,7 @@
       "Bash(git push:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh pr close:*)",
-      "Bash(gh pr comment:*)",
-      "Bash(npx convex data:*)",
-      "Bash(npx vitest:*)",
-      "Bash(bunx vitest:*)",
-      "Bash(npm test:*)",
-      "Bash(bun test:*)",
-      "Bash(python3 -m pytest:*)",
-      "Bash(npx convex codegen:*)"
+      "Bash(gh pr comment:*)"
     ],
     "deny": [
       "Write(**/.ssh/**)",
@@ -63,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-brief-template.py",
+            "command": "python3 /root/coding/elpi-corp/.claude/hooks/enforce-brief-template.py",
             "timeout": 5
           }
         ]
@@ -73,7 +66,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-signature.py",
+            "command": "python3 /root/coding/elpi-corp/.claude/hooks/enforce-signature.py",
             "timeout": 5
           }
         ]
@@ -111,7 +104,7 @@
           },
           {
             "type": "command",
-            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-signature.py",
+            "command": "python3 /root/coding/elpi-corp/.claude/hooks/enforce-signature.py",
             "timeout": 5
           },
           {
@@ -141,7 +134,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py\""
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/enforce-pi-authorization-before-prod-deploy.py"
           },
           {
             "type": "command",
@@ -151,6 +144,10 @@
           {
             "type": "command",
             "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-pr-opened-via-skill.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-no-table-drop.py"
           }
         ]
       },
@@ -192,7 +189,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-fresh-state-in-messages.py\"",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/enforce-fresh-state-in-messages.py",
             "timeout": 15
           }
         ]
@@ -232,7 +229,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-ship-24-7.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
           }
         ]
       },
@@ -241,7 +238,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-ship-24-7.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
           },
           {
             "type": "command",
@@ -250,6 +247,10 @@
           {
             "type": "command",
             "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pi-task-doctrine.py"
           }
         ]
       },
@@ -258,7 +259,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-ship-24-7.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
           },
           {
             "type": "command",
@@ -267,6 +268,14 @@
           {
             "type": "command",
             "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-trust-system.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pi-task-doctrine.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-no-blocked-limbo.py"
           }
         ]
       },
@@ -275,20 +284,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-ship-24-7.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-ship-24-7.py\""
           },
           {
             "type": "command",
             "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-friction-field.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__vantage-peers__complete_task|mcp__vantage-peers__update_task",
-        "hooks": [
+          },
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-claim-carries-its-command.py\""
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-pi-task-doctrine.py"
           }
         ]
       },
@@ -367,56 +371,29 @@
         ]
       },
       {
-        "matcher": "Agent",
+        "matcher": "mcp__vantage-peers__send_message",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-work-under-task.py\""
+            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-operator-report-brevity.py\""
           }
         ]
       },
       {
-        "matcher": "Edit|Write",
+        "matcher": "mcp__vantage-peers__block_task",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-work-under-task.py\""
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-no-blocked-limbo.py"
           }
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "mcp__vantage-peers__create_task|mcp__vantage-peers__send_message",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-work-under-task.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__vantage-peers__complete_task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-work-under-task.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__vantage-peers__update_task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-work-under-task.py\""
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__vantage-peers__bulk_complete_tasks",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-work-under-task.py\""
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-create-task-notify-followup.py"
           }
         ]
       }
@@ -457,6 +434,24 @@
           {
             "type": "command",
             "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/monitor-npm-version-vs-deployed.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vantage-peers__create_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-create-task-notify-followup.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-post-merge-tmp-cleanup.py"
           }
         ]
       }

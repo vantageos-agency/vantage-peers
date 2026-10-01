@@ -1,0 +1,22 @@
+{
+ "sha": "353debcabb0876351ce6ceca8082536699f26954",
+ "cli_commit": "60780e6",
+ "cli_ref": "main",
+ "convex_path": "/root/coding/vantage-memory/convex",
+ "deploy_tree": "/root/coding/vantage-memory detached at origin/main 353debca, 0 uncommitted under convex/",
+ "exit_code": 1,
+ "checked": 49,
+ "total": 50,
+ "mechanical_violations": 20,
+ "cr1_violations": 18,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) - 7 CRITICAL violation(s). major violations=13, abstentions=17 (critical=6). engine exit=1. CR-1 VERDICT: 18 violation(s).",
+ "same_cli_on_previous_prod_commit_450eed5": {
+  "mechanical_violations": 20,
+  "cr1_violations": 38,
+  "verdict_line": "7 CRITICAL, major 13, abstentions 17"
+ },
+ "checked_total_note": "checked/total copied from the 450eed5 report, same CLI 60780e6; not re-derived",
+ "not_a_clean_bill": "NOT a pass. mechanical_violations 20 on both this commit and the commit now in production: nothing rises, CR-1 falls 38 -> 18.",
+ "what_this_deploy_does": "closes 20 doors (PR #1388) incl. fixPatterns:listByStack, the third confirmed anonymous production leak",
+ "consequence": "the gate requires 0 and cannot pass while any door is open; deploy proceeds on Laurent's explicit override 2026-10-01 ('go fais dev et production')"
+}
