@@ -82,7 +82,8 @@ const NOW = 1_753_000_000_000;
 describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call; engine bookkeeping is proven on a real deployment, not here", () => {
 	test("startOkfBundleExportDurable no longer throws Unauthenticated; it now hits the convex-test component-boundary limitation instead", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
-		const t = base.withIdentity({ organizationId: "elpi-corp", org_id: "elpi-corp" });
+		// Service account: the master namespace is reserved to the fleet master.
+		const t = base.withIdentity({ subject: "test-service-account-user-id" });
 
 		// This proves the orgId-as-argument fix (alpha.2 -> alpha.4) reached the
 		// engine: auth is no longer the failure mode for this call. The
@@ -426,10 +427,8 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 
 	test("rejects totalSteps <= 0", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
-		const t = base.withIdentity({
-			organizationId: "elpi-corp",
-			org_id: "elpi-corp",
-		});
+		// Service account: the master namespace is reserved to the fleet master.
+		const t = base.withIdentity({ subject: "test-service-account-user-id" });
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 				namespace: "project/elpi-corp",

@@ -48,6 +48,14 @@ const modules = Object.fromEntries(
 
 const createTestConvex = () => convexTest(schema, modules);
 
+// The master namespace `project/elpi-corp` is reserved to the fleet master.
+// These tests used to import into it with NO identity at all (the leak this
+// gate closes), so they now present the service account the MCP server really
+// authenticates as (CLERK_SERVICE_ACCOUNT_USER_ID in vitest.config.ts).
+function asMaster(t: ReturnType<typeof createTestConvex>) {
+	return t.withIdentity({ subject: "test-service-account-user-id" });
+}
+
 const FIXED_MS = 1_700_000_000_000;
 
 function memoryFixture(overrides: Partial<MemoryDoc> = {}): MemoryDoc {
@@ -132,7 +140,7 @@ describe("import_okf_bundle action — dry-run", () => {
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
-		const result = await t.action(IMPORT_ACTION_REF, {
+		const result = await asMaster(t).action(IMPORT_ACTION_REF, {
 			storageId,
 			targetNamespace: "project/elpi-corp",
 			mode: "dry-run",
@@ -160,7 +168,7 @@ describe("import_okf_bundle action — merge mode", () => {
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
-		const first = await t.action(IMPORT_ACTION_REF, {
+		const first = await asMaster(t).action(IMPORT_ACTION_REF, {
 			storageId,
 			targetNamespace: "project/elpi-corp",
 			mode: "merge",
@@ -168,7 +176,7 @@ describe("import_okf_bundle action — merge mode", () => {
 		});
 		expect(first.imported.memories).toBe(1);
 
-		const second = await t.action(IMPORT_ACTION_REF, {
+		const second = await asMaster(t).action(IMPORT_ACTION_REF, {
 			storageId,
 			targetNamespace: "project/elpi-corp",
 			mode: "merge",
@@ -194,8 +202,8 @@ describe("import_okf_bundle action — idempotency", () => {
 			mode: "merge" as const,
 			idempotencyKey: "test-idem-replay",
 		};
-		await t.action(IMPORT_ACTION_REF, args);
-		await t.action(IMPORT_ACTION_REF, args);
+		await asMaster(t).action(IMPORT_ACTION_REF, args);
+		await asMaster(t).action(IMPORT_ACTION_REF, args);
 
 		const memCount = await t.run(
 			async (ctx) => (await ctx.db.query("memories").collect()).length,

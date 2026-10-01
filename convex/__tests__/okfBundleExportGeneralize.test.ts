@@ -21,15 +21,42 @@
 // Orchestrator: Sigma — VantagePeers | 2026-06-20
 
 import { describe, expect, test } from "vitest";
-import { assertCanExportNamespace } from "../okfBundleNode";
+import { assertCanExportNamespace as guard } from "../okfBundleNode";
 
-function ctxWithIdentity(identity: Record<string, unknown> | null) {
+// The guard now resolves the caller's scope through
+// `internal.lib.auth.resolveOrgScopeForAction` (via ctx.runQuery) when the
+// namespace is the master namespace. The mock mirrors that projection:
+// anonymous -> { refused, anonymous }, signed-in no-org -> { refused },
+// org member -> { orgSlug }, fleet master (service account) -> { isMaster }.
+function ctxWithIdentity(
+	identity: Record<string, unknown> | null,
+	opts: { master?: boolean } = {},
+) {
+	const orgSlug =
+		(identity?.organizationSlug as string | undefined) ??
+		(identity?.org_slug as string | undefined) ??
+		null;
+	const scope = opts.master
+		? { isMaster: true, orgSlug: null, refused: false, anonymous: false }
+		: {
+				isMaster: false,
+				orgSlug,
+				refused: orgSlug === null,
+				anonymous: identity === null,
+			};
 	return {
 		auth: {
 			getUserIdentity: async () => identity,
 		},
+		runQuery: async () => scope,
 	};
 }
+
+type GuardCtx = Parameters<typeof guard>[0];
+const assertCanExportNamespace = (
+	ctx: ReturnType<typeof ctxWithIdentity>,
+	namespace: string,
+) => guard(ctx as unknown as GuardCtx, namespace, "okfBundleNode:exportOkfBundle");
 
 const noIdentityCtx = ctxWithIdentity(null);
 
@@ -51,22 +78,36 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
 	});
 
-	test("Phase 1 regression: project/elpi-corp with org elpi-corp still works", async () => {
-		const ctx = ctxWithIdentity({ organizationId: "elpi-corp" });
+	test("Phase 1 regression: project/elpi-corp is still exportable by the fleet master (service account)", async () => {
+		// ADAPTED (was: an ordinary identity carrying organizationId "elpi-corp"
+		// exported the master namespace). The positive contract the original
+		// guarded -- the master namespace stays exportable -- is kept, with the
+		// caller the MCP tool really uses (service account => isMaster).
+		const ctx = ctxWithIdentity({ subject: "svc" }, { master: true });
 		await expect(
 			assertCanExportNamespace(ctx, "project/elpi-corp"),
 		).resolves.toBeUndefined();
 	});
 
-	test("no-identity caller is allowed ONLY on the master namespace (project/elpi-corp)", async () => {
-		// Eta REVISE iter-2 #888: the MCP Cloud surface never calls setAuth, so
-		// `getUserIdentity()` is always null on the prod hot path. Pre-fix, that
-		// authorized ANY namespace → cross-tenant bypass. The fail-closed guard
-		// keeps `project/elpi-corp` (the legacy CLI/deploy-key path) and rejects
-		// every other namespace.
+	test("INVERTED (encoded the leak): an ordinary identity with org elpi-corp is NOT the fleet master and is refused the master namespace", async () => {
+		// Pre-fix this resolved: organizationId was ignored, orgSlug fell to null
+		// and the `isMasterNamespace` early return served the caller.
+		const ctx = ctxWithIdentity({ organizationId: "elpi-corp" });
+		await expect(
+			assertCanExportNamespace(ctx, "project/elpi-corp"),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("no-identity caller is refused EVERY namespace, the master namespace included", async () => {
+		// INVERTED (first assertion encoded the leak). Eta REVISE iter-2 #888
+		// closed the tenant namespaces for a null identity but left
+		// `project/elpi-corp` open "for the legacy CLI/deploy-key path". The MCP
+		// server now authenticates as the service account (setAuth), so no
+		// legitimate caller arrives credential-less: the master namespace is
+		// refused RBAC_DENIED to anonymous, like every other namespace.
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "project/elpi-corp"),
-		).resolves.toBeUndefined();
+		).rejects.toThrow(/RBAC_DENIED/);
 
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "team/whatever-org"),
@@ -117,13 +158,20 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
 	});
 
-	test("identity without orgId/orgSlug is allowed ONLY on the master namespace (fail-closed)", async () => {
-		// Same fail-closed posture as the null-identity branch: an identity that
-		// carries no org affiliation (system:cron, deploy key with metadata, etc.)
-		// can only touch the master namespace. Any tenant namespace is denied.
+	test("identity without orgId/orgSlug is refused every namespace unless it is the fleet master (fail-closed)", async () => {
+		// INVERTED (first assertion encoded the leak): a signed-in identity with
+		// no org affiliation (system:cron, deploy key with metadata, etc.) used to
+		// be served the master namespace. Master is a named by-id grant, never
+		// inferred from the absence of an org. Tenant namespaces stay denied.
 		const ctx = ctxWithIdentity({ tokenIdentifier: "system:cron" });
 		await expect(
 			assertCanExportNamespace(ctx, "project/elpi-corp"),
+		).rejects.toThrow(/RBAC_DENIED/);
+		await expect(
+			assertCanExportNamespace(
+				ctxWithIdentity({ tokenIdentifier: "system:cron" }, { master: true }),
+				"project/elpi-corp",
+			),
 		).resolves.toBeUndefined();
 		await expect(
 			assertCanExportNamespace(ctx, "team/anyone"),

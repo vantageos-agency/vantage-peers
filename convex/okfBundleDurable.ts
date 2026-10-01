@@ -72,7 +72,9 @@ import { v } from "convex/values";
 import { components, internal as generatedInternal } from "./_generated/api";
 import {
 	internalMutation,
+	type MutationCtx,
 	mutation,
+	type QueryCtx,
 	query,
 } from "./_generated/server";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
@@ -103,8 +105,9 @@ const agentEngineComponents = components as any;
 const MASTER_NAMESPACE = "project/elpi-corp";
 
 async function assertCanExportNamespaceV8(
-	ctx: { auth: { getUserIdentity: () => Promise<unknown> } },
+	ctx: QueryCtx | MutationCtx,
 	namespace: string,
+	door: string,
 ): Promise<void> {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
@@ -116,13 +119,22 @@ async function assertCanExportNamespaceV8(
 			`OKF_NAMESPACE_INVALID: namespace "${namespace}" contains a path-traversal segment.`,
 		);
 	}
+	// The master namespace is reserved to the fleet master (service account).
+	// It used to be served to ANY caller with no credential, and to any
+	// signed-in caller with no org slug, through the two early returns below.
+	// Master is resolved by `withOrgScope` (named by-id grant), never inferred
+	// from the absence of an identity or of an org. Refused by RAISING
+	// `RBAC_DENIED` naming the door, through the one shared helper.
+	if (namespace === MASTER_NAMESPACE) {
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, door, { masterOnly: true });
+		return;
+	}
 	const identity = (await ctx.auth.getUserIdentity()) as Record<
 		string,
 		unknown
 	> | null;
-	const isMasterNamespace = namespace === MASTER_NAMESPACE;
 	if (identity === null || identity === undefined) {
-		if (isMasterNamespace) return;
 		throw new Error(
 			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
 		);
@@ -139,7 +151,6 @@ async function assertCanExportNamespaceV8(
 		(identity.org_slug as string | undefined) ??
 		null;
 	if (orgSlug === null) {
-		if (isMasterNamespace) return;
 		throw new Error(
 			`AUTH_NO_ORG: caller without org affiliation cannot export non-master namespace "${namespace}".`,
 		);
@@ -165,7 +176,11 @@ export const startOkfBundleExportDurable = mutation({
 	},
 	returns: v.string(),
 	handler: async (ctx, args): Promise<string> => {
-		await assertCanExportNamespaceV8(ctx, args.namespace);
+		await assertCanExportNamespaceV8(
+			ctx,
+			args.namespace,
+			"okfBundleDurable:startOkfBundleExportDurable",
+		);
 
 		if (args.totalSteps <= 0) {
 			throw new Error(
@@ -437,7 +452,11 @@ export const getOkfBundleExportDurableStatus = query({
 					`OKF_DURABLE_JOB_NOT_FOUND: no progress row for jobId="${args.jobId}".`,
 				);
 			}
-			await assertCanExportNamespaceV8(ctx, owned.orgId);
+			await assertCanExportNamespaceV8(
+				ctx,
+				owned.orgId,
+				"okfBundleDurable:getOkfBundleExportDurableStatus",
+			);
 		}
 		const engineStatus = await ctx.runQuery(
 			agentEngineComponents.agentEngine.engine.durableJob.getStatus,
@@ -500,7 +519,11 @@ export const cancelOkfBundleExportDurable = mutation({
 		// progress.orgId IS the export namespace string — reuse the exact
 		// tenant-membership check startOkfBundleExportDurable already
 		// enforces, never a second resolver.
-		await assertCanExportNamespaceV8(ctx, progress.orgId);
+		await assertCanExportNamespaceV8(
+			ctx,
+			progress.orgId,
+			"okfBundleDurable:cancelOkfBundleExportDurable",
+		);
 
 		await ctx.runMutation(
 			agentEngineComponents.agentEngine.engine.durableJob.cancel,
