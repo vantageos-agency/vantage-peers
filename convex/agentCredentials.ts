@@ -1,7 +1,11 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { refuseUnresolvedCredential, requireOrgAdmin } from "./lib/auth";
-import { resolveAgentCredentialCore, sha256Hex } from "./lib/agentIdentity";
+import {
+	revokeActiveCredentialRows,
+	resolveAgentCredentialCore,
+	sha256Hex,
+} from "./lib/agentIdentity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T4] agentCredentials — the per-agent CREDENTIAL, on top of P-T2's
@@ -121,6 +125,59 @@ export const mintAgentCredential = mutation({
 		// Plaintext returned EXACTLY ONCE — never written to the DB, never
 		// re-derivable afterward.
 		return { secret: rawSecret, mintedAt };
+	},
+});
+
+/**
+ * revokeAgentCredential — retires EVERY active credential row of ONE agent in
+ * the caller's own org (`isActive: false`; rows are patched, never deleted,
+ * same audit-trail rule as rotation in `mintAgentCredential`). Gated by
+ * `requireOrgAdmin`, no master carve-out.
+ *
+ * RETURNS `{ revoked: number }`, the count of rows this call flipped. Load
+ * bearing, not style: `.claude/rules/refusal-is-distinguishable-from-absence.md`
+ * requires "revoked 1" and "there was nothing to revoke" to be different
+ * bytes; a bare success collapses them.
+ *
+ * FOUR OUTCOMES. The reviewer named three: refused (`RBAC_DENIED`),
+ * `{ revoked: N >= 1 }`, and `{ revoked: 0 }` (idempotent, not an error).
+ * The fourth is this file's own, beyond the reviewer's three:
+ * NONEXISTENT AGENT -> `AGENT_NOT_FOUND`, not `{ revoked: 0 }`. Agents are
+ * never deleted, so a missing `agents` row can only mean a mistyped name, and
+ * answering it with a zero would let the operator believe a credential was
+ * retired when nothing was addressed. `{ revoked: 0 }` is reserved for an
+ * EXISTING agent with no active credential (a true absence).
+ *
+ * The loop is shared with `deactivateAgent` via `revokeActiveCredentialRows`
+ * (convex/lib/agentIdentity.ts).
+ */
+export const revokeAgentCredential = mutation({
+	args: { orgSlug: v.string(), agentName: v.string() },
+	returns: v.object({ revoked: v.number() }),
+	handler: async (ctx, args) => {
+		// write-contract: no mcp-server/src/tools.ts wiring and no dashboard reference exists for "agentCredentials:revokeAgentCredential" (same grep, 0 hits). Its only callers are convex-test direct mutations; a pre-organisation client has no render path to a credential revoke, and requireOrgAdmin refuses it RBAC_DENIED at an imperative call, an R-16 refusal, never an uncaught Server Error.
+		await requireOrgAdmin(ctx, args.orgSlug);
+
+		const agent = await ctx.db
+			.query("agents")
+			.withIndex("by_org_name", (q) =>
+				q.eq("orgSlug", args.orgSlug).eq("name", args.agentName),
+			)
+			.unique();
+		if (!agent) {
+			throw new ConvexError(
+				`AGENT_NOT_FOUND: no agent "${args.agentName}" in org "${args.orgSlug}" — ${JSON.stringify(
+					{ orgSlug: args.orgSlug, agentName: args.agentName },
+				)}`,
+			);
+		}
+
+		const revoked = await revokeActiveCredentialRows(
+			ctx,
+			args.orgSlug,
+			args.agentName,
+		);
+		return { revoked };
 	},
 });
 
