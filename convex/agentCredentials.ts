@@ -243,6 +243,7 @@ export const resolveAgentCredential = query({
 		requireResolvedCaller(scope, "agentCredentials:resolveAgentCredential", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			mcpBoundOnly: true,
 		});
 		if (args.presentedSecret.trim() === "") {
 			return refuseUnresolvedCredential(

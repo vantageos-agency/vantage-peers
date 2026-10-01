@@ -6,6 +6,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
@@ -198,10 +199,19 @@ export async function requireAuthenticatedCaller(
 	// list. On the MCP path the shared service account resolves
 	// allowedOrchestrators ["*"] + isMaster, so every in-org name passes this
 	// check. Membership ≠ single-actor identity; the equality gate is T2's job.
+	// A non-master (including the operator human in a mutation, who resolves as an
+	// ordinary member of the operator org) is held to its org's roster: compared
+	// after normalizeOrchestratorId on both sides, and a "*" entry names nobody
+	// (an org's own openness to READ, never licence to act as another name).
 	if (
 		callerOrchestrator !== undefined &&
 		!scope.isMaster &&
-		!scope.allowedOrchestrators.includes(callerOrchestrator)
+		!scope.allowedOrchestrators.some(
+			(entry) =>
+				entry !== "*" &&
+				normalizeOrchestratorId(entry) ===
+					normalizeOrchestratorId(callerOrchestrator),
+		)
 	) {
 		throw new ConvexError(
 			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
@@ -975,12 +985,32 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// Multi-status/no-status branches now always widen; single-status
 		// branches are untouched (Eta confirmed `canPushCursorIntoIndex`
 		// correct as-is).
+		//
+		// UNFILTERED READ (`tasks.list {}` — what the dashboard's activity feed and
+		// blockers widget send, measured at vantage-peers-dashboard origin/main
+		// e2dc58f): with no status, no assignee/instance/project and no
+		// createdBy/updatedSince/createdBefore there is NO pre-slice filter, so the
+		// widening protects nothing — and once the table holds more than
+		// TASK_LIST_SCAN_CAP rows it threw SCAN_CAP_EXCEEDED at every such caller.
+		// The newest `limit` rows of the whole table are exactly `.take(limit)` for
+		// a master (scope filter is a no-op); a non-master reads its OWN org through
+		// `by_orgId` below, so the cap bounds the org's rows, never the fleet's.
+		const isUnfilteredRead =
+			statuses === undefined &&
+			assignedToInstance === undefined &&
+			assignedTo === undefined &&
+			project === undefined &&
+			createdBy === undefined &&
+			updatedSince === undefined &&
+			before === undefined;
+		const unfilteredNeedsNoWidening = isUnfilteredRead && scope.isMaster;
 		const needsWideScan =
 			createdBy !== undefined ||
 			updatedSince !== undefined ||
 			before !== undefined ||
-			statuses === undefined ||
-			statuses.length > 1;
+			(statuses === undefined
+				? !unfilteredNeedsNoWidening
+				: statuses.length > 1);
 		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
 
 		// Preferred fix (Pi): push the cursor bound into the index RANGE
@@ -1205,8 +1235,16 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				allRows = applyStatusFilter(base);
 			}
 		}
-		// No filters — return all, newest first
-		else {
+		// No filters — return all, newest first. A non-master caller reads its own
+		// org's rows through `by_orgId` (tenant predicate inside the index range).
+		else if (isUnfilteredRead && !scope.isMaster && scope.orgSlug !== null) {
+			const orgSlug = scope.orgSlug;
+			allRows = await ctx.db
+				.query("tasks")
+				.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
+				.order("desc")
+				.take(fetchCap);
+		} else {
 			allRows = await ctx.db.query("tasks").order("desc").take(fetchCap);
 		}
 
@@ -1328,6 +1366,7 @@ export const listForWebhook = internalQuery({
 				"view-orchestrator-summary",
 			],
 			isMaster: true,
+			masterSource: "internal",
 		};
 		return await runTasksList(ctx, args, masterScope);
 	},

@@ -546,6 +546,7 @@ export const listForWebhook = internalQuery({
 				"view-orchestrator-summary",
 			],
 			isMaster: true,
+			masterSource: "internal",
 		};
 		return await runMissionsList(ctx, args, masterScope);
 	},

@@ -73,10 +73,12 @@ async function seedMessageAndReceipt(
 	t: ReturnType<typeof createT>,
 	from: string,
 	recipient: string,
+	tenantId?: string,
 ) {
 	return await t.run(async (ctx) => {
 		const messageId = await ctx.db.insert("messages", {
 			from,
+			tenantId,
 			channel: recipient,
 			content: "test content",
 			createdAt: Date.now(),
@@ -84,6 +86,7 @@ async function seedMessageAndReceipt(
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId,
 			recipient,
+			tenantId,
 			readAt: undefined,
 		});
 		return { messageId, receiptId };
@@ -114,7 +117,7 @@ describe("messages.markAsRead — write-scope enforcement", () => {
 	test("org-a marking its own receipt as read succeeds", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
-		const { receiptId } = await seedMessageAndReceipt(t, "seat-x", "seat-a");
+		const { receiptId } = await seedMessageAndReceipt(t, "seat-x", "seat-a", "org-a");
 		const tA = asOrgA(t);
 
 		const count = await tA.mutation(api.messages.markAsRead, {
@@ -176,6 +179,7 @@ describe("messages.markAsRead — write-scope enforcement", () => {
 			t,
 			"seat-x",
 			"seat-a",
+			"org-a",
 		);
 		const { receiptId: foreignReceiptId } = await seedMessageAndReceipt(
 			t,
@@ -246,7 +250,7 @@ describe("messages.deleteMessage — write-scope enforcement", () => {
 	test("org-a deleting its own (sender seat-a) message succeeds", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
-		const { messageId } = await seedMessageAndReceipt(t, "seat-a", "seat-x");
+		const { messageId } = await seedMessageAndReceipt(t, "seat-a", "seat-x", "org-a");
 		const tA = asOrgA(t);
 
 		const result = await tA.mutation(api.messages.deleteMessage, {

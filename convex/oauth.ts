@@ -26,7 +26,7 @@ import {
 	query,
 } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
-import { requireOrgAdmin, withOrgScope } from "./lib/auth";
+import { isMcpBoundMaster, requireOrgAdmin, withOrgScope } from "./lib/auth";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 
@@ -127,7 +127,10 @@ async function requireServiceAccount(
 		}
 		throw err;
 	}
-	if (!scope.isMaster) {
+	// The door is the fleet SERVICE ACCOUNT, not "any master": an operator-org
+	// admin is a human master (masterSource "operator-admin") and must not mint
+	// access tokens or read the client registry. Decided by the grant's SOURCE.
+	if (!scope.isMaster || scope.masterSource !== "service-account") {
 		throw refuseNonServiceAccount(
 			registration,
 			scope.orgSlug,
@@ -573,7 +576,7 @@ export const getScopeProfile = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getScopeProfile' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
+		if (!isMcpBoundMaster(scope)) {
 			throw new ConvexError(
 				"RBAC_DENIED: getScopeProfile requires master scope — " +
 					"anonymous and non-master callers may never read an OAuth scope profile's fromAllowList or namespace prefixes.",
@@ -1210,7 +1213,7 @@ export const getClientByClientId = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getClientByClientId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
+		if (!isMcpBoundMaster(scope)) {
 			throw new ConvexError(
 				"RBAC_DENIED: getClientByClientId requires master scope — " +
 					"anonymous and non-master callers may never read an OAuth client's scopeProfile.",
