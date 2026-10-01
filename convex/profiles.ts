@@ -87,6 +87,29 @@ export const getProfile = query({
       alsoRefusePreOrg: true,
     });
 
+    // ROSTER FIRST, THEN LOOKUP. The roster predicate is on the REQUESTED
+    // orchestrator, so it can run before the read: a non-roster member is
+    // refused whether or not a profile row exists. Checking after the lookup
+    // made the answer depend on existence (refusal if a row exists, success
+    // `null` if not) — an existence oracle on orchestrators outside the org.
+    // `instanceId` lookups carry no orchestrator name up front, so they are
+    // checked against the fetched row (an absent row is then an absence for an
+    // instance id, which names no roster entry to leak).
+    const requireOnRoster = (orchestratorId: string): void => {
+      if (scope.isMaster || scope.allowedOrchestrators.includes(orchestratorId)) {
+        return;
+      }
+      throw new ConvexError(
+        `RBAC_DENIED: "profiles:getProfile" refuses a caller whose organisation roster does not include orchestrator "${orchestratorId}" — ${JSON.stringify(
+          {
+            registration: "profiles:getProfile",
+            orgSlug: scope.orgSlug,
+            reason: "not-on-roster",
+          },
+        )}`,
+      );
+    };
+
     let profile: Doc<"profiles"> | null = null;
     // Prefer instanceId lookup if provided
     if (args.instanceId !== undefined) {
@@ -94,7 +117,9 @@ export const getProfile = query({
         .query("profiles")
         .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
         .unique();
+      if (profile !== null) requireOnRoster(profile.orchestratorId);
     } else if (args.orchestratorId !== undefined) {
+      requireOnRoster(args.orchestratorId);
       // Returns first match — for role-level lookup when only one instance exists
       profile = await ctx.db
         .query("profiles")
@@ -102,20 +127,6 @@ export const getProfile = query({
           q.eq("orchestratorId", args.orchestratorId!),
         )
         .first();
-    }
-
-    if (profile !== null && !scope.isMaster) {
-      if (!scope.allowedOrchestrators.includes(profile.orchestratorId)) {
-        throw new ConvexError(
-          `RBAC_DENIED: "profiles:getProfile" refuses a caller whose organisation roster does not include orchestrator "${profile.orchestratorId}" — ${JSON.stringify(
-            {
-              registration: "profiles:getProfile",
-              orgSlug: scope.orgSlug,
-              reason: "not-on-roster",
-            },
-          )}`,
-        );
-      }
     }
     return profile;
   },
