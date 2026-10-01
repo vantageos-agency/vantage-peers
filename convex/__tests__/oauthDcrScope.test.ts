@@ -127,7 +127,9 @@ async function registerClient(
 	clientId: string,
 	scopeProfile: string,
 ) {
-	return t.mutation(api.oauth.registerPublicClient, {
+	// registerPublicClient is the MCP server's persistence step: it admits the
+	// service account only (see closeDoorsOauth.test.ts for the refusal poles).
+	return asServiceAccount(t).mutation(api.oauth.registerPublicClient, {
 		clientId,
 		clientSecretHash: `hash-${clientId}`,
 		name: "anonymous-dcr-fixture",
@@ -138,7 +140,7 @@ async function registerClient(
 
 describe("oauthDcrScope — DCR self-registration is data-flagged, not code-denylisted", () => {
 	// ── RED-before-fix pole 1 ────────────────────────────────────────────────
-	test("anonymous DCR with a seat profile is accepted", async () => {
+	test("DCR with a seat profile is refused", async () => {
 		const t = createT();
 		// org-a's real per-seat profile — carries org-a's own fromAllowList.
 		// selfRegistrable intentionally NOT set (a seat profile must never be
@@ -153,7 +155,7 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 	});
 
 	// ── RED-before-fix pole 2 ────────────────────────────────────────────────
-	test("anonymous DCR with a non-flagged profile is accepted", async () => {
+	test("DCR with a non-flagged profile is refused", async () => {
 		const t = createT();
 		// A profile that exists, is not "master", but is also not flagged
 		// self-registrable — must be refused even though the old code's only
@@ -209,7 +211,7 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 	});
 
 	// ── GREEN positive pole 1 — the safe generic profile still works ────────
-	test("a flagged generic profile still registers anonymously", async () => {
+	test("a flagged generic profile still registers (service account)", async () => {
 		const t = createT();
 		await seedScopeProfile(t, "client-generic", {
 			fromAllowList: [],
@@ -279,7 +281,7 @@ describe("oauthDcrScope — DCR self-registration is data-flagged, not code-deny
 	// entirely) leaves the row unflagged — every new connector registration
 	// against "client-generic" would then be refused in prod, and this test
 	// must go RED under that mutant.
-	test("seedDefaultProfiles reseed patches a pre-fix client-generic row missing selfRegistrable, and anonymous DCR then succeeds", async () => {
+	test("seedDefaultProfiles reseed patches a pre-fix client-generic row missing selfRegistrable, and DCR then succeeds", async () => {
 		const t = createT();
 		const now = Date.now();
 		await t.run(async (ctx) => {
