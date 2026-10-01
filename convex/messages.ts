@@ -380,14 +380,15 @@ export const sendMessage = mutation({
 		// requireOrchestratorOnRoster). Master/service account is unchanged here.
 		requireOrchestratorOnRoster(scope, args.from, "messages:sendMessage");
 		// ...and may only label the message with an instance of that sender.
-		requireSenderInstanceOfSender(
+		// The stored label is the NORMALISED form that was checked.
+		const fromInstanceId = requireSenderInstanceOfSender(
 			scope,
 			args.from,
 			args.fromInstanceId,
 			"messages:sendMessage",
 		);
 
-		return await sendMessageCore(ctx, args, scope);
+		return await sendMessageCore(ctx, { ...args, fromInstanceId }, scope);
 	},
 });
 

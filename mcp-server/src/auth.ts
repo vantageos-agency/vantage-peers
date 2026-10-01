@@ -597,6 +597,58 @@ export function checkFromAllowed(
 }
 
 /**
+ * The instance label of a message is bound to the sender (mirror of
+ * `requireSenderInstanceOfSender`, convex/lib/auth.ts). An OAuth access-token
+ * caller reaches Convex as the service account (master), so the Convex check
+ * never sees it; this is where its `fromInstanceId` is judged, beside
+ * `checkFromAllowed` (which judges only `from`).
+ *
+ * The roster used for sibling ownership is `ctx.fromAllowList` (the only
+ * roster this layer holds synchronously): the instance belongs to the LONGEST
+ * allow-list entry e with `instance === e` or `instance` starting `e-`; that
+ * owner must be `from`. With no owner, `<from>` or `<from>-<suffix>`. Every
+ * "-" segment must be non-empty with a letter/digit and no whitespace /
+ * control / format character. Master (or an omitted instance) is not decided
+ * here. Returns `{ error, instance }`: `instance` is the NORMALISED label to
+ * forward (the checked form), `error` a refusal string or null.
+ * DECLARED LIMIT: a sibling absent from `fromAllowList` cannot be seen here.
+ */
+export function checkInstanceOfSender(
+	ctx: OAuthContext | undefined,
+	from: string,
+	fromInstanceId: string | undefined,
+): { error: string | null; instance: string | undefined } {
+	if (fromInstanceId === undefined) return { error: null, instance: undefined };
+	if (!ctx) return { error: NO_CONTEXT_REFUSAL, instance: undefined };
+	if (isMasterScope(ctx)) return { error: null, instance: fromInstanceId };
+	const sender = normalizeOrchestratorId(from);
+	const instance = normalizeOrchestratorId(fromInstanceId);
+	const wellFormed =
+		!/[\p{Z}\p{C}]/u.test(instance) &&
+		instance.split("-").every((segment) => /[\p{L}\p{N}]/u.test(segment));
+	let owner: string | undefined;
+	for (const entry of ctx.fromAllowList) {
+		if (entry === "*") continue;
+		const e = normalizeOrchestratorId(entry);
+		if (instance === e || instance.startsWith(`${e}-`)) {
+			if (owner === undefined || e.length > owner.length) owner = e;
+		}
+	}
+	const own =
+		wellFormed &&
+		(owner !== undefined
+			? owner === sender
+			: instance === sender || instance.startsWith(`${sender}-`));
+	if (!own) {
+		return {
+			error: `Forbidden: fromInstanceId='${fromInstanceId}' is not an instance of from='${from}'.`,
+			instance: undefined,
+		};
+	}
+	return { error: null, instance };
+}
+
+/**
  * Answers the DELEGATION question — is `assignedTo` a member of the CALLER'S
  * own organisation? — as distinct from `checkFromAllowed`, which answers a
  * different question (may this client SPEAK AS `from`). Conflating the two

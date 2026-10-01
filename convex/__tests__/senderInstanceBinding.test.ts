@@ -113,9 +113,9 @@ describe("sendMessage — the instance label belongs to the verified sender", ()
 		}
 	});
 
-	test("SERVED: own instances (exact role, <role>-vps, <role>-vps-1, case variant) are stamped as given", async () => {
+	test("SERVED: own instances (exact role, <role>-vps, <role>-vps-1) are stamped as given", async () => {
 		const t = await fixture();
-		for (const fromInstanceId of ["bob", "bob-vps", "bob-vps-1", "BOB-VPS"]) {
+		for (const fromInstanceId of ["bob", "bob-vps", "bob-vps-1"]) {
 			const id = await memberOf(t, "org-b").mutation(api.messages.sendMessage, {
 				from: "bob",
 				fromInstanceId,
@@ -125,6 +125,76 @@ describe("sendMessage — the instance label belongs to the verified sender", ()
 			const row = await t.run((ctx) => ctx.db.get(id));
 			expect(row?.fromInstanceId).toBe(fromInstanceId);
 			expect(row?.tenantId).toBe("org-b");
+		}
+	});
+
+	test("STORED FORM: a case/whitespace variant is served and persisted NORMALISED", async () => {
+		const t = await fixture();
+		for (const [raw, stored] of [
+			["BOB-VPS", "bob-vps"],
+			["  bob-vps  ", "bob-vps"],
+			["Bob", "bob"],
+		]) {
+			const id = await memberOf(t, "org-b").mutation(api.messages.sendMessage, {
+				from: "bob",
+				fromInstanceId: raw,
+				channel: "bea",
+				content: "x",
+			});
+			expect((await t.run((ctx) => ctx.db.get(id)))?.fromInstanceId).toBe(stored);
+		}
+	});
+
+	test("REFUSED: zero-width / inner-whitespace / empty-segment suffixes ('bob-\u200b', 'bob-vps\u200b', 'bob- x', 'bob--x')", async () => {
+		const t = await fixture();
+		for (const fromInstanceId of [
+			"bob-\u200b",
+			"bob-vps\u200b",
+			"bob- x",
+			"bob--x",
+			"bob-vps-",
+		]) {
+			const refusal = await refusalOf(
+				memberOf(t, "org-b").mutation(api.messages.sendMessage, {
+					from: "bob",
+					fromInstanceId,
+					channel: "bea",
+					content: "x",
+				}),
+			);
+			expect(refusal).toMatch(/reason\\*":\\*"instance-not-of-sender/);
+		}
+		expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(0);
+	});
+
+	test("SIBLING: roster [pi, pi-x]: 'pi' may not label 'pi-x' / 'pi-x-vps' / 'pi-x-vps-1'; 'pi-x' may; 'pi' keeps pi, pi-vps", async () => {
+		const t = createT();
+		await seedOrg(t, "org-p", ["pi", "pi-x", "bea"]);
+		for (const p of ["pi", "pi-x", "bea"]) await seedProfile(t, p);
+		for (const fromInstanceId of ["pi-x", "pi-x-vps", "pi-x-vps-1", "PI-X-VPS"]) {
+			const refusal = await refusalOf(
+				memberOf(t, "org-p").mutation(api.messages.sendMessage, {
+					from: "pi",
+					fromInstanceId,
+					channel: "bea",
+					content: "sibling",
+				}),
+			);
+			expect(refusal).toMatch(/reason\\*":\\*"instance-not-of-sender/);
+		}
+		for (const [from, fromInstanceId] of [
+			["pi", "pi"],
+			["pi", "pi-vps"],
+			["pi", "pi-xx-vps"], // pi-xx is not a roster entry: owned by pi
+			["pi-x", "pi-x"],
+			["pi-x", "pi-x-vps"],
+		]) {
+			await memberOf(t, "org-p").mutation(api.messages.sendMessage, {
+				from,
+				fromInstanceId,
+				channel: "bea",
+				content: "own",
+			});
 		}
 	});
 
