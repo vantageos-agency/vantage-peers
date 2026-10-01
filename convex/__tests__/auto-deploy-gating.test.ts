@@ -35,6 +35,7 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import schema from "../schema";
 
 // Exclude RAG/search/backfill modules (same pattern as sibling tests)
@@ -113,6 +114,7 @@ async function postWebhook(
 		headers: {
 			"Content-Type": "application/json",
 			"x-github-event": "pull_request",
+			"x-hub-signature-256": signGithubBody(body),
 		},
 		body,
 	});
@@ -155,8 +157,8 @@ async function countDeployNotifyMessages(
 beforeEach(() => {
 	// Provide a GITHUB_TOKEN so the gating logic attempts to fetch file list
 	process.env.GITHUB_TOKEN = GITHUB_TOKEN;
-	// Suppress GITHUB_WEBHOOK_SECRET so signature check is skipped in tests
-	delete process.env.GITHUB_WEBHOOK_SECRET;
+	// The webhook fails closed without its secret; tests sign their bodies.
+	process.env.GITHUB_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 });
 
 afterEach(() => {
