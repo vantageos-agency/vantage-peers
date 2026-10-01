@@ -23,13 +23,23 @@
  * absence-shaped answer to a refused writer and change `returns` for the MCP
  * caller. This suite pins, per site, the three poles:
  *   PRE-ORG   — signed in, no organisation: RAISES `RBAC_DENIED` with
- *               `"orgSlug":null`, and the table is UNCHANGED.
- *   ANONYMOUS — no credential: still RAISES `RBAC_DENIED` (never weakened).
- *   MEMBER    — a legitimate member of an active org is served (the write
- *               lands, or for the owner-gated deletes it passes the org gate).
+ *               `"orgSlug":null`, and the table is UNCHANGED. This pole pins
+ *               what `withOrgScope` itself throws for that caller
+ *               (`convex/lib/auth.ts`, the `!orgSlug` branch); it does NOT
+ *               prove the site's own guard. The site-level proof is mutant E
+ *               (`refuseWithoutThrow: true` + absence of the guard -> 13/13 red).
+ *   ANONYMOUS — no credential: `withOrgScope` RETURNS (orgSlug null, not
+ *               master) and the SITE'S OWN GUARD is the only thing that
+ *               refuses. Pinned TWICE per site: against a SEEDED row, and
+ *               against a GHOST id (row seeded then deleted, or never seeded)
+ *               where the guard is the sole difference between `RBAC_DENIED`
+ *               and an existence-leaking "not found" / a SUCCESS. The ghost
+ *               pole also forbids any `not found`, `orgId` or `tenantId` text.
+ *   MEMBER    — a legitimate member of an active org is served: the exact
+ *               return value (and, where stated, the resulting rows) is pinned.
  */
 
-import { ConvexError } from "convex/values";
+import type { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
@@ -173,8 +183,12 @@ const seedSession = (t: T, sessionId: string) =>
 
 interface Site {
 	name: string;
-	/** Seeds rows for the call and returns the call, as the given caller. */
-	prepare: (t: T) => Promise<(c: Caller) => Promise<unknown>>;
+	/**
+	 * Seeds rows for the call and returns the call, as the given caller.
+	 * `ghost: true` makes the id the call names NONEXISTENT (seeded then
+	 * deleted, or never seeded) so only the site's own guard can refuse it.
+	 */
+	prepare: (t: T, ghost: boolean) => Promise<(c: Caller) => Promise<unknown>>;
 	/** Tables whose row counts must not move on a refusal. */
 	tables: (
 		| "briefingNotes"
@@ -184,15 +198,27 @@ interface Site {
 		| "iframeEmbedSessions"
 		| "tasks"
 	)[];
-	/** true: the member write lands; false: asserted only to pass the org gate. */
-	memberSucceeds: boolean;
+	/** The exact value a legitimate member receives. */
+	memberReturns: (value: unknown) => void;
 }
+
+/** Makes a seeded id nonexistent: the row existed, now it does not. */
+const ghostOf = async (
+	t: T,
+	id: Id<"briefingNotes"> | Id<"diary"> | Id<"messages"> | Id<"missions">,
+): Promise<void> => {
+	await t.run((ctx) => ctx.db.delete(id));
+};
+
+const isString = (v: unknown) => expect(typeof v).toBe("string");
+const isNull = (v: unknown) => expect(v).toBeNull();
+const isDeleted = (v: unknown) => expect(v).toEqual({ deleted: true });
 
 const SITES: Site[] = [
 	{
 		name: "briefingNotes:create",
 		tables: ["briefingNotes"],
-		memberSucceeds: true,
+		memberReturns: isString,
 		prepare: async () => (c) =>
 			c.mutation(api.briefingNotes.create, {
 				title: "n",
@@ -205,9 +231,10 @@ const SITES: Site[] = [
 	{
 		name: "briefingNotes:update",
 		tables: ["briefingNotes"],
-		memberSucceeds: true,
-		prepare: async (t) => {
+		memberReturns: isNull,
+		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
+			if (ghost) await ghostOf(t, noteId);
 			return (c) =>
 				c.mutation(api.briefingNotes.update, {
 					noteId,
@@ -219,9 +246,10 @@ const SITES: Site[] = [
 	{
 		name: "briefingNotes:deleteBriefingNote",
 		tables: ["briefingNotes"],
-		memberSucceeds: true,
-		prepare: async (t) => {
+		memberReturns: isDeleted,
+		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
+			if (ghost) await ghostOf(t, noteId);
 			return (c) =>
 				c.mutation(api.briefingNotes.deleteBriefingNote, {
 					noteId,
@@ -232,9 +260,10 @@ const SITES: Site[] = [
 	{
 		name: "diary:deleteDiary",
 		tables: ["diary"],
-		memberSucceeds: true,
-		prepare: async (t) => {
+		memberReturns: isDeleted,
+		prepare: async (t, ghost) => {
 			const diaryId = await seedDiary(t);
+			if (ghost) await ghostOf(t, diaryId);
 			return (c) =>
 				c.mutation(api.diary.deleteDiary, {
 					diaryId,
@@ -245,7 +274,7 @@ const SITES: Site[] = [
 	{
 		name: "iframeEmbedSessions:createSession",
 		tables: ["iframeEmbedSessions"],
-		memberSucceeds: true,
+		memberReturns: isString,
 		prepare: async () => (c) =>
 			c.mutation(api.iframeEmbedSessions.createSession, {
 				sessionId: "sess-new",
@@ -256,9 +285,9 @@ const SITES: Site[] = [
 	{
 		name: "iframeEmbedSessions:touchSession",
 		tables: ["iframeEmbedSessions"],
-		memberSucceeds: false,
-		prepare: async (t) => {
-			await seedSession(t, "sess-touch");
+		memberReturns: (v) => expect(v).toBe(true),
+		prepare: async (t, ghost) => {
+			if (!ghost) await seedSession(t, "sess-touch");
 			return (c) =>
 				c.mutation(api.iframeEmbedSessions.touchSession, {
 					sessionId: "sess-touch",
@@ -268,9 +297,9 @@ const SITES: Site[] = [
 	{
 		name: "iframeEmbedSessions:revokeSession",
 		tables: ["iframeEmbedSessions"],
-		memberSucceeds: true,
-		prepare: async (t) => {
-			await seedSession(t, "sess-revoke");
+		memberReturns: (v) => expect(v).toBe(true),
+		prepare: async (t, ghost) => {
+			if (!ghost) await seedSession(t, "sess-revoke");
 			return (c) =>
 				c.mutation(api.iframeEmbedSessions.revokeSession, {
 					sessionId: "sess-revoke",
@@ -280,7 +309,7 @@ const SITES: Site[] = [
 	{
 		name: "kbMutations:generateUploadUrl",
 		tables: [],
-		memberSucceeds: true,
+		memberReturns: isString,
 		prepare: async () => (c) =>
 			c.mutation(api.kbMutations.generateUploadUrl, {
 				orgId: "org-a",
@@ -290,9 +319,11 @@ const SITES: Site[] = [
 	{
 		name: "messages:deleteMessage",
 		tables: ["messages"],
-		memberSucceeds: true,
-		prepare: async (t) => {
+		memberReturns: (v) =>
+			expect(v).toEqual({ deleted: true, receiptsDeleted: 0 }),
+		prepare: async (t, ghost) => {
 			const messageId = await seedMessage(t);
+			if (ghost) await ghostOf(t, messageId);
 			return (c) =>
 				c.mutation(api.messages.deleteMessage, {
 					messageId,
@@ -303,10 +334,15 @@ const SITES: Site[] = [
 	{
 		name: "missionTemplates:instantiateTemplateIntoMission",
 		tables: ["tasks"],
-		memberSucceeds: false,
-		prepare: async (t) => {
+		memberReturns: (v) => {
+			const r = v as { taskIds: unknown[]; count: number };
+			expect(r.count).toBe(1);
+			expect(r.taskIds).toHaveLength(1);
+		},
+		prepare: async (t, ghost) => {
 			await seedTemplate(t);
 			const missionId = await seedMission(t);
+			if (ghost) await ghostOf(t, missionId);
 			return (c) =>
 				c.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
 					templateName: "tpl",
@@ -318,7 +354,7 @@ const SITES: Site[] = [
 	{
 		name: "missions:create",
 		tables: ["missions"],
-		memberSucceeds: true,
+		memberReturns: isString,
 		prepare: async () => (c) =>
 			c.mutation(api.missions.create, {
 				name: "m",
@@ -333,9 +369,10 @@ const SITES: Site[] = [
 	{
 		name: "missions:updateStatus",
 		tables: ["missions"],
-		memberSucceeds: true,
-		prepare: async (t) => {
+		memberReturns: isNull,
+		prepare: async (t, ghost) => {
 			const missionId: Id<"missions"> = await seedMission(t);
+			if (ghost) await ghostOf(t, missionId);
 			return (c) =>
 				c.mutation(api.missions.updateStatus, { missionId, status: "execute" });
 		},
@@ -343,9 +380,10 @@ const SITES: Site[] = [
 	{
 		name: "missions:updateProgress",
 		tables: ["missions"],
-		memberSucceeds: true,
-		prepare: async (t) => {
+		memberReturns: isNull,
+		prepare: async (t, ghost) => {
 			const missionId = await seedMission(t);
+			if (ghost) await ghostOf(t, missionId);
 			return (c) =>
 				c.mutation(api.missions.updateProgress, { missionId, progress: 50 });
 		},
@@ -362,13 +400,16 @@ async function counts(t: T, tables: Site["tables"]): Promise<string> {
 	);
 }
 
+/** Text that would betray a row's existence or its owner to a refused caller. */
+const LEAK = /not found|orgId|tenantId/i;
+
 describe("R-51 — public writes refuse a no-org caller with the coded refusal", () => {
 	for (const site of SITES) {
 		describe(site.name, () => {
 			test("PRE-ORG: raises RBAC_DENIED carrying orgSlug:null, writes nothing", async () => {
 				const t = createT();
 				await seedOrgMapping(t);
-				const call = await site.prepare(t);
+				const call = await site.prepare(t, false);
 				const before = await counts(t, site.tables);
 				const bytes = await outcome(() => call(asPreOrg(t)));
 				expect(bytes).toContain("RBAC_DENIED");
@@ -376,23 +417,42 @@ describe("R-51 — public writes refuse a no-org caller with the coded refusal",
 				expect(await counts(t, site.tables)).toBe(before);
 			});
 
-			test("ANONYMOUS: still raises RBAC_DENIED, writes nothing", async () => {
+			test("ANONYMOUS (seeded row): still raises RBAC_DENIED, writes nothing", async () => {
 				const t = createT();
 				await seedOrgMapping(t);
-				const call = await site.prepare(t);
+				const call = await site.prepare(t, false);
 				const before = await counts(t, site.tables);
 				const bytes = await outcome(() => call(t));
 				expect(bytes).toContain("RBAC_DENIED");
 				expect(await counts(t, site.tables)).toBe(before);
 			});
 
-			test("MEMBER: a legitimate org member is served (not refused as no-org)", async () => {
+			test("ANONYMOUS (ghost id): the site's own guard refuses — no existence leak, no success", async () => {
 				const t = createT();
 				await seedOrgMapping(t);
-				const call = await site.prepare(t);
-				const bytes = await outcome(() => call(asMember(t)));
-				expect(bytes).not.toMatch(/orgSlug\\*"\s*:\s*null/);
-				if (site.memberSucceeds) expect(bytes).toBe("SUCCESS");
+				const call = await site.prepare(t, true);
+				const before = await counts(t, site.tables);
+				const bytes = await outcome(() => call(t));
+				expect(bytes).not.toBe("SUCCESS");
+				expect(bytes).toContain("RBAC_DENIED");
+				expect(bytes).toMatch(/orgSlug\\*"\s*:\s*null/);
+				expect(bytes).not.toMatch(LEAK);
+				expect(await counts(t, site.tables)).toBe(before);
+			});
+
+			test("MEMBER: a legitimate org member is served the exact expected result", async () => {
+				const t = createT();
+				await seedOrgMapping(t);
+				const call = await site.prepare(t, false);
+				let value: unknown;
+				try {
+					value = await call(asMember(t));
+				} catch (e) {
+					throw new Error(
+						`member refused: ${String((e as ConvexError<string>).data ?? e)}`,
+					);
+				}
+				site.memberReturns(value);
 			});
 		});
 	}
