@@ -180,6 +180,7 @@ describe("messages:getUnreadCount", () => {
 			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a" });
 			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a" });
 			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "sigma", tenantId: "org-b" });
+			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "iris", tenantId: "org-b" });
 		});
 
 		refusedAs(
@@ -188,10 +189,46 @@ describe("messages:getUnreadCount", () => {
 			"no-credential",
 		);
 		expect(await asMemberA(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(2);
-		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(1);
+		// own roster -> a number (member B's roster is ["iris"]); a differently
+		// spelled own-roster name binds on the normalised form
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "iris" })).toBe(1);
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: " IRIS " })).toBe(1);
+		// off-roster: B's own tenant holds a "sigma" receipt, yet "sigma" is not on
+		// B's roster -> the typed envelope, not a bare 0 and not that receipt's 1
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toEqual({
+			refused: true,
+			count: 0,
+		});
 		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(3);
-		// declared divergence: a subscribed sidebar cannot take a throw at pre-org
-		expect(await asPreOrg(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(0);
+		// pre-org: a mounted sidebar cannot take a throw, and a bare 0 would be the
+		// bytes of an absence, so the refusal is the typed envelope.
+		expect(await asPreOrg(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toEqual({
+			refused: true,
+			count: 0,
+		});
+	});
+});
+
+describe("messages:getUnreadCount served zero", () => {
+	test("a SERVED caller with nothing unread gets a bare 0, never the refusal envelope", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const mA = await seedMsg(t, "sigma", "org-a");
+		await t.run(async (ctx) => {
+			// a receipt that is already read: present in the table, not unread
+			await ctx.db.insert("messageReceipts", {
+				messageId: mA,
+				recipient: "sigma",
+				tenantId: "org-a",
+				readAt: 1,
+			});
+		});
+		// member, own roster, all read -> 0
+		expect(await asMemberA(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(0);
+		// member, own roster, no receipts at all -> 0 (member B's roster is ["iris"])
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "iris" })).toBe(0);
+		// fleet master, nothing unread for that recipient -> 0
+		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "nobody" })).toBe(0);
 	});
 });
 

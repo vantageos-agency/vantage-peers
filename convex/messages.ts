@@ -11,11 +11,13 @@ import {
 	requireScope,
 	requireOrchestratorOnRoster,
 	requireSenderInstanceOfSender,
+	isOrchestratorOnOrgRoster,
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
 import {
 	computePeersStuckOnYou,
@@ -1191,7 +1193,12 @@ export const listMessages = query({
 
 export const getUnreadCount = query({
 	args: { orchestratorId: creatorValidator },
-	returns: v.number(),
+	// A served caller gets the bare number; a signed-in caller with no
+	// organisation gets the typed envelope (a zero would be a false figure).
+	returns: v.union(
+		v.number(),
+		v.object({ refused: v.literal(true), count: v.number() }),
+	),
 	handler: async (ctx, { orchestratorId }) => {
 		// GATE — this read took NO identity check: it counted the unread receipts
 		// of ANY recipient name for ANY caller, including one presenting no
@@ -1201,16 +1208,16 @@ export const getUnreadCount = query({
 		// after the read.
 		//
 		// CALLERS (measured): MCP — none (grep getUnreadCount mcp-server/src -> 0);
-		// dashboard — app-sidebar.tsx:279 and message-timeline.tsx:63, both
+		// dashboard — app-sidebar.tsx:289 and message-timeline.tsx:66, both
 		// `useQuery`, both in a mounted shell behind clerkMiddleware.
 		//   anonymous            -> RAISES RBAC_DENIED (no mounted render exists).
-		//   signed in, no org    -> 0. DECLARED DIVERGENCE: a subscribed render
-		//                           (the sidebar badge) cannot take a throw, and the
-		//                           return type is a bare number the dashboard reads
-		//                           as-is. A caller with no organisation owns no
-		//                           tenant receipts, so 0 is the count of ITS OWN
-		//                           data — it is never another tenant's number.
-		//   member of an org     -> the unread count of its own tenant.
+		//   signed in, no org    -> `{ refused: true, count: 0 }`: a mounted render
+		//                           (the sidebar badge) cannot take a throw, and a
+		//                           bare 0 is byte-identical to "nothing unread". The
+		//                           dashboard reads both shapes (readUnreadCount,
+		//                           vantage-peers-dashboard PR #60).
+		//   member, off-roster   -> `{ refused: true, count: 0 }` (same envelope).
+		//   member, own roster   -> the unread count of its own tenant.
 		//   fleet master         -> unchanged (all tenants, by recipient).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "messages:getUnreadCount");
@@ -1224,18 +1231,52 @@ export const getUnreadCount = query({
 				.take(UNREAD_RECEIPTS_SCAN_CAP);
 			return receipts.length;
 		}
-		if (scope.orgSlug === null) return 0;
+		if (scope.orgSlug === null) {
+			return { refused: true as const, count: 0 };
+		}
+		// A member counts only the mailbox of an orchestrator on ITS OWN roster
+		// (the free `orchestratorId` argument is not a licence to probe another
+		// recipient's mailbox inside the tenant). Off-roster is the SAME typed
+		// envelope as pre-org, never a bare 0 (the bytes of an absence) and never
+		// a throw (the sidebar badge is a mounted useQuery). Bound on the
+		// normalised name (NFC + lowercase + trim) on both sides; "*" names nobody.
+		// isolation-contract: subscribers enumerated with
+		// grep -rn "api.messages.getUnreadCount" in vantage-peers-dashboard
+		// (app-sidebar.tsx, message-timeline.tsx), both read the envelope (PR #60).
+		if (!isOrchestratorOnOrgRoster(scope, orchestratorId)) {
+			return { refused: true as const, count: 0 };
+		}
+		// STORED-FORM LOOKUP. `messageReceipts.recipient` is written verbatim by
+		// the delivery core: a broadcast stores the roster entry as the roster
+		// spells it, a direct send stores the trimmed profile id. Neither path
+		// normalises, so a roster entry "Eta" has receipts stored as "Eta".
+		// Looking up only normalizeOrchestratorId(name) would MISS those rows and
+		// under-count, so the index is probed with every stored form that the
+		// normalised name can denote: the normalised form, the argument as sent,
+		// and each roster spelling that normalises to it (distinct keys, so no
+		// receipt is counted twice).
 		const orgSlug = scope.orgSlug;
-		const receipts = await ctx.db
-			.query("messageReceipts")
-			.withIndex("by_tenant_recipient_unread", (q) =>
-				q
-					.eq("tenantId", orgSlug)
-					.eq("recipient", orchestratorId)
-					.eq("readAt", undefined),
-			)
-			.take(UNREAD_RECEIPTS_SCAN_CAP);
-		return receipts.length;
+		const wanted = normalizeOrchestratorId(orchestratorId);
+		const storedForms = new Set<string>([wanted, orchestratorId.trim()]);
+		for (const entry of scope.allowedOrchestrators) {
+			if (entry !== "*" && normalizeOrchestratorId(entry) === wanted) {
+				storedForms.add(entry);
+			}
+		}
+		let unread = 0;
+		for (const recipient of storedForms) {
+			const receipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_tenant_recipient_unread", (q) =>
+					q
+						.eq("tenantId", orgSlug)
+						.eq("recipient", recipient)
+						.eq("readAt", undefined),
+				)
+				.take(UNREAD_RECEIPTS_SCAN_CAP);
+			unread += receipts.length;
+		}
+		return unread;
 	},
 });
 

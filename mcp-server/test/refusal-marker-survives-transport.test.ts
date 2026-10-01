@@ -203,6 +203,7 @@ describe("END TWO sweep — no MCP reader of an envelope-capable door may swallo
 			// (grep -rn getProjectSummary mcp-server/src -> 0), so S1b is unchanged.
 			"dashboard:getProjectSummary",
 			"mandates:list",
+			"messages:getUnreadCount",
 			"messages:listByChannel",
 			// Dashboard-only paginated history read; no MCP reader exists, so S1b's
 			// call-site set below is unchanged.
