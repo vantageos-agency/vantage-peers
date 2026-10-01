@@ -410,6 +410,72 @@ describe("T8b — cascade revoke is bounded and still revokes the right rows", (
 	});
 });
 
+describe("T8c — cascade revoke drains past two batches", () => {
+	test("1201 access tokens: every continuation re-schedules itself until drained; other profile untouched; one audit row per continuation", async () => {
+		const t = createTestConvex();
+		await seedLeakedProfile(t);
+
+		const row = (i: number, scopeProfile: string) => ({
+			tokenHash: i.toString(16).padStart(64, "0"),
+			clientId: `client-drain-${i}`,
+			userId: "marie",
+			scopes: ["vantage:read"],
+			scopeProfile,
+			fromAllowList: ["marie"],
+			namespaceReadPrefixes: ["orchestrator/marie"],
+			namespaceWritePrefixes: ["orchestrator/marie"],
+			expiresAt: Date.now() + 3600_000,
+			createdAt: Date.now(),
+		});
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 1201; i++) {
+				await ctx.db.insert("oauth_access_tokens", row(i, "marie-iris-rh"));
+			}
+			await ctx.db.insert("oauth_access_tokens", row(9001, "other-profile"));
+		});
+
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
+		expect(result.cascadeRevokedCount).toBe(500);
+
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		await t.run(async (ctx) => {
+			const left = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", "marie-iris-rh"),
+				)
+				.collect();
+			expect(left.length).toBe(0);
+			const other = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", "other-profile"),
+				)
+				.collect();
+			expect(other.length).toBe(1);
+			const audits = await ctx.db
+				.query("oauth_audit_log")
+				.withIndex("by_targetProfileId", (q) =>
+					q.eq("targetProfileId", "marie-iris-rh"),
+				)
+				.collect();
+			const cont = audits.filter(
+				(a) => a.eventType === "scope_profile_emergency_cascade_continuation",
+			);
+			// 1201 = 500 (parent) + 500 + 201: exactly two continuations.
+			expect(cont.map((a) => a.cascadeRevokedCount)).toEqual([500, 201]);
+		});
+	});
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // T9 — audit log row inserted
 // ─────────────────────────────────────────────────────────────────────────────

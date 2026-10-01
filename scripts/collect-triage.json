@@ -487,6 +487,14 @@
     "reason": "by_clientId indexed, bounded by one client's own refresh-token count \u2014 not corpus-sized.",
     "verdict": "OUT"
   },
+  "convex/oauth.ts::revokeTokenBatch::1": {
+    "reason": "Bounded index range: by_scopeProfile take(CASCADE_REVOKE_BATCH + 1) = 501 rows max, 500 deleted per batch; the remainder is drained by the self-rescheduling continueCascadeRevoke.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::revokeTokenBatch::2": {
+    "reason": "Same bounded index range as ::1, over oauth_refresh_tokens: take(501), 500 deleted per batch, continuation drains the rest.",
+    "verdict": "OUT"
+  },
   "convex/oauth.ts::revokeAccessTokensOnly::1": {
     "reason": "by_clientId indexed, bounded by one client's own access-token count.",
     "verdict": "OUT"
