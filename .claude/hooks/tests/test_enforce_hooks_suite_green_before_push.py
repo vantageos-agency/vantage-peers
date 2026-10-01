@@ -133,5 +133,32 @@ class TestHooksSuiteGreenBeforePush(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
 
 
+    # -- A hooks directory with NO test file: the suite has nothing to judge --
+    def test_hooks_dir_without_any_test_file_abstains_and_says_so(self):
+        """A repository whose `.claude/hooks` holds guards but no test file has no
+        suite. pytest answers exit 5 (no tests collected), which the guard used to
+        read as one failure and so refused every push from that repository. The
+        rule's subject is the suite; with no suite there is nothing to judge, and
+        the guard abstains: it allows the push AND says why, so "did not apply"
+        never reads like "suite green"."""
+        repo = _init_temp_repo("")
+        os.remove(os.path.join(repo, ".claude", "hooks", "test_synthetic.py"))
+        with open(os.path.join(repo, ".claude", "hooks", "some_guard.py"), "w") as f:
+            f.write("print('a guard, not a test')\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "guard only"], cwd=repo, check=True)
+        rc, out = _run_hook("git push origin main", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ABSTAIN", out)
+
+    def test_hooks_dir_with_a_failing_test_still_blocks_after_the_abstain_rule(self):
+        """Control for the abstain rule: a test file present and failing is still
+        refused. The abstain path keys on the ABSENCE of a test file, never on
+        pytest's exit code alone."""
+        repo = _init_temp_repo("def test_bad():\n    assert False\n")
+        rc, out = _run_hook("git push origin main", repo)
+        self.assertEqual(rc, 2, out)
+
+
 if __name__ == "__main__":
     unittest.main()

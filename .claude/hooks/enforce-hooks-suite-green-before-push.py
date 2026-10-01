@@ -239,6 +239,33 @@ def _repo_is_in_jurisdiction(repo: str) -> bool:
         return False
 
 
+def _hooks_suite_has_a_test_file(repo: str) -> bool | None:
+    """True when `.claude/hooks` holds at least one file pytest would collect.
+
+    A repository can carry guards without carrying a single test for them. Its
+    suite is then EMPTY: `pytest .claude/hooks` answers exit 5, "no tests
+    collected", and reading that exit as a failure refuses every push from the
+    repository for a defect that is not there. The rule's subject is the suite,
+    so with no suite there is nothing to judge and the guard ABSTAINS -- a third
+    outcome, reported as such, never folded into "green".
+
+    Keyed on the presence of a test FILE, derived from the tree with pytest's
+    default naming, never on pytest's exit code: a test file that exists and
+    collects nothing is a broken suite, and stays a refusal.
+    Returns None when the directory cannot be read: the caller keeps its refusal.
+    """
+    root = os.path.join(repo, ".claude", "hooks")
+    try:
+        for _dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in ("__pycache__", "node_modules")]
+            for name in filenames:
+                if name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")):
+                    return True
+        return False
+    except OSError:
+        return None
+
+
 def _toplevel_or_none(path: str) -> str | None:
     try:
         run = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
@@ -291,6 +318,13 @@ def main() -> int:
 
         try:
             repo = _resolve_repo(payload)
+            if _hooks_suite_has_a_test_file(repo) is False:
+                sys.stderr.write(
+                    "ABSTAIN: enforce-hooks-suite-green-before-push -- "
+                    f"{repo}/.claude/hooks holds no test file, so there is no suite to "
+                    "judge. This push is NOT certified green; the rule did not apply.\n"
+                )
+                return 0
             failed, failing, output = _run_pytest(repo)
         except RepoResolutionError as exc:
             sys.stderr.write(
