@@ -106,9 +106,11 @@ export interface WithOrgScopeOptions {
  *   FAIL-CLOSED: isMaster=false, allowedOrchestrators=[], scopes=[]. This is
  *   the default for any new or client-facing call site — absence of identity
  *   on a client-facing surface must never resolve to full access.
- * - No org attached (identity present) → isMaster=true ONLY when the identity's
- *   subject matches the configured CLERK_SERVICE_ACCOUNT_USER_ID allowlist (the
- *   MCP server service account). ANY OTHER no-org identity is REFUSED with
+ * - Subject matches the configured CLERK_SERVICE_ACCOUNT_USER_ID (the MCP server
+ *   service account) → isMaster=true, decided BY SUBJECT FIRST and regardless of
+ *   any org claim the token carries (the account is also a member of orgs; an
+ *   org claim must never downgrade it). Unset/empty env var grants nobody.
+ * - No org attached (identity present), not the service account → REFUSED with
  *   RBAC_DENIED via requireTenantId — master is a named by-id grant, never
  *   inferred from the mere absence of an org (see the service-account carve-out
  *   and the refuse-on-absence branch below; fixed in #1123).
@@ -157,11 +159,45 @@ export async function withOrgScope(
 		};
 	}
 
+	// SERVICE ACCOUNT FIRST, BY SUBJECT. The MCP server authenticates to Convex
+	// as a real, dedicated Clerk user (see mcp-server/src/serviceAccountAuth.ts).
+	// That identity is granted master scope by matching its known, configured
+	// user id — a named, by-id check, never inferred from the absence of an org
+	// (the explicit-grant pattern @vantageos/cloud-identity 0.3.0 was built
+	// around). The decision is made on the SUBJECT ALONE, BEFORE any org claim is
+	// read: an org claim neither downgrades nor upgrades it.
+	//
+	// Why subject-first (production incident): the service account is also a
+	// Clerk member (org:admin) of some organisations it created through the API.
+	// Once the "convex" JWT template carried org claims (org_slug/org_role, which
+	// ordinary dashboard members need), a fresh service-account session
+	// auto-activated one of those orgs, its token carried org_slug, and the old
+	// `!orgSlug &&` condition resolved the whole fleet's MCP traffic as an
+	// ordinary member of a test org: master-only reads were refused and the
+	// fleet's own tasks became unreadable. Unset/empty
+	// CLERK_SERVICE_ACCOUNT_USER_ID grants nobody master; any other subject is
+	// never master here.
+	const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
+	if (serviceAccountUserId && identity.subject === serviceAccountUserId) {
+		return {
+			userId: identity.subject,
+			orgSlug: null,
+			allowedOrchestrators: ["*"],
+			scopes: [
+				"cross-tenant-read",
+				"view-own-tasks",
+				"view-own-missions",
+				"view-stats-aggregated",
+				"view-orchestrator-summary",
+			],
+			isMaster: true,
+		};
+	}
+
 	// `client_org_mapping.clerkOrgSlug` (the `by_clerk_slug` index this join
 	// resolves against — see lookupOrgMapping below) is keyed on a SLUG.
-	// Clerk's "convex" JWT template on this deployment delivers the org slug in
-	// the `organizationId` claim (a claim NAME that maps to `{{org.slug}}`), not
-	// always in `organizationSlug` — the cross-tenant isolation suites
+	// Measured today: the "convex" JWT template carries NO org claim; it may
+	// carry `org_slug`/`org_role` later. The cross-tenant isolation suites
 	// (messages-with-org-scope, multiTenantIsolation) construct callers with the
 	// slug in `organizationId`, and Pi's decision-(b) TESTS pole requires an
 	// identity carrying `organizationId` to resolve the mapping and keep its
@@ -186,35 +222,6 @@ export async function withOrgScope(
 		(orgSlugRec.organizationId as string | undefined) ??
 		(orgSlugRec.org_id as string | undefined) ??
 		null;
-
-	// Recognized service-account carve-out: the MCP server authenticates to
-	// Convex as a real, dedicated Clerk user with no org attached (see
-	// mcp-server/src/serviceAccountAuth.ts). That identity is granted master
-	// scope, but ONLY by matching its known, configured user id — never
-	// inferred from the mere absence of an org. This is the explicit-grant
-	// pattern @vantageos/cloud-identity 0.3.0 was built around (a right is
-	// never granted by absence): the master decision here is a named,
-	// by-id allowlist check, not a fallthrough.
-	const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
-	if (
-		!orgSlug &&
-		serviceAccountUserId &&
-		identity.subject === serviceAccountUserId
-	) {
-		return {
-			userId: identity.subject,
-			orgSlug: null,
-			allowedOrchestrators: ["*"],
-			scopes: [
-				"cross-tenant-read",
-				"view-own-tasks",
-				"view-own-missions",
-				"view-stats-aggregated",
-				"view-orchestrator-summary",
-			],
-			isMaster: true,
-		};
-	}
 
 	// Any other identity with no org attached: REFUSED. Uses the package's
 	// requireTenantId guard (@vantageos/cloud-identity) — the door this repo

@@ -271,15 +271,11 @@ describe("LEAK — a caller that is not the service account is refused, and writ
 					t.withIdentity({ subject: "member-1", organizationSlug: "acme" }),
 				null,
 			],
-			[
-				"the service account's subject presented WITH an organisation",
-				(t) =>
-					t.withIdentity({
-						subject: SERVICE_ACCOUNT_ID,
-						organizationSlug: "acme",
-					}),
-				null,
-			],
+			// The service account presented WITH an organisation is NO LONGER a refused
+			// caller: withOrgScope decides the service account by SUBJECT FIRST
+			// (production incident — the account is also an org member, and an org
+			// claim in its token downgraded the whole fleet). It is pinned as SERVED
+			// in the WITHHELD block below and in serviceAccountMasterFirst.test.ts.
 		];
 	for (const site of SITES) {
 		for (const [label, as] of callers) {
@@ -331,6 +327,18 @@ describe("WITHHELD — the service account is served at every site", () => {
 			const t = asT(makeT());
 			await seed(t);
 			await expect(call(asService(t), site)).resolves.toBeDefined();
+		});
+	}
+
+	for (const site of SITES) {
+		test(`${site.id} serves the service account even when its token carries an org claim`, async () => {
+			const t = asT(makeT());
+			await seed(t);
+			const withOrg = t.withIdentity({
+				subject: SERVICE_ACCOUNT_ID,
+				organizationSlug: "acme",
+			});
+			await expect(call(withOrg, site)).resolves.toBeDefined();
 		});
 	}
 
