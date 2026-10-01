@@ -108,6 +108,8 @@ const seedMessage = (t: T, from: string) =>
 			channel: "seat-x",
 			content: "seed message",
 			createdAt: Date.now(),
+			// sendMessage stamps the caller's org; deleteMessage's tenant gate reads it.
+			tenantId: "org-a",
 		}),
 	);
 
