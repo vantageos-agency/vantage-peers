@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **A pull request no longer edits `CHANGELOG.md`; it adds one `changelog.d/<slug>.md` fragment.** Every PR used to write the top of `CHANGELOG.md` under `[Unreleased]`, so each merge made every other open PR CONFLICTING (#1402, #1403, #1404, #1405 on 2026-10-01). `scripts/changelog-assemble.mjs` (no dependencies) validates fragments with `--check` (exit 2 naming the malformed file) and folds them into a version section at release time in a deterministic order, deleting them; with no fragments it is a no-op. `enforce-pr-docs-sync.py` v1.2.0 counts a top-level `changelog.d/*.md` as the docs update; a code-only PR is still blocked. Convention: `docs/changelog-fragments.md`. Tests: `scripts/__tests__/changelog-assemble.test.mjs` 12/12, `.claude/hooks/tests/test_enforce_pr_docs_sync.py` 12/12.

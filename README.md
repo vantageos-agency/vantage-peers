@@ -839,6 +839,8 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 
 Contributions welcome. Please open an issue first to discuss what you would like to change.
 
+Each pull request records its changelog entry as one new file `changelog.d/<pr-or-branch-slug>.md` and never edits `CHANGELOG.md` directly, so open pull requests do not conflict with each other. Validate with `node scripts/changelog-assemble.mjs --check`. See [docs/changelog-fragments.md](docs/changelog-fragments.md).
+
 ## Credits
 
 Built by the VantageOS AI Orchestrator Team — sigma, omega, kappa, tau, beta, theta, gamma, mu, athena, hermes, demeter, eta, chi, iota, psi, rho, phi, alpha, lambda, victor, ulysse, atlas, argus — under the supervision of Pi (π) and Laurent Perello.
