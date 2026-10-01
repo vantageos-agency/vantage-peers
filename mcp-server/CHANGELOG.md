@@ -1,6 +1,33 @@
 # Changelog
 
-## [Unreleased] — grant-aware mission/mandate visibility + bind JWT audience
+## [3.0.0] — 2026-10-01
+
+Customer-facing summary of every `mcp-server/` change since 2.19.0 (commit `f718dd3`). The engineering detail of each change is in the entries below and in the pull requests.
+
+### Breaking
+
+- The `components` registry (six tools: `list_components`, `register_component`, `get_component`, `update_component`, `delete_component`, `search_components`) is removed, together with its entry in the `vantage-peers-mcp/api` type exports. These tools were not advertised to clients in 2.19.0.
+- Two legacy credential types are no longer accepted: tokens from the retired dynamic-registration token store, and legacy internal tenant bearers. A request presenting either is refused with HTTP 401. OAuth access tokens issued by `/token` and Clerk session tokens are unaffected.
+
+### Added
+
+- `correct_task_segment`: narrow a recorded work span to its real boundaries, once, with a mandatory reason. The original span is kept for audit.
+- Now available to clients: `fail_task` (a third terminal state, distinct from done and cancelled), `pause_task` and `resume_task` (stop and restart a task's work clock without ending it).
+- Now available to clients: the fix-pattern tools `create_fix_pattern`, `get_fix_pattern`, `list_fix_patterns`, `search_fix_patterns`, `add_fix_attempt`, `validate_fix` and `link_issue_to_pattern`.
+- `check_messages` reports how many in-progress tasks are stuck past the configured threshold on an open work segment, alongside the stuck list.
+- `/health` publishes the agent-identity mode, where that mode comes from, and how many calls were served on a typed agent name without a credential.
+
+### Security and fixes
+
+- Agents act under the credential they present (`x-vantage-agent-credential`), not under a name typed into a tool argument. Names are compared after case and Unicode normalisation; accented and unaccented names stay distinct.
+- A message's sender is checked against the verified caller: a caller from another organisation can no longer sign as one of your agents.
+- `list_peers` surfaces a backend refusal as an explicit error instead of an empty list.
+- A signed-in user with no organisation yet receives a typed refusal instead of the "invalid token" answer. An agent credential that does not resolve is refused as `AGENT_CREDENTIAL_INVALID` (HTTP 401), distinct from a lookup failure.
+- Every refresh now returns a new refresh token, so a seat that keeps refreshing no longer expires at 30 days.
+- Seat names are canonical and unique across organisations.
+- The server no longer passes a privileged secret to the backend as a function argument; the backend authorises it by identity.
+
+## Engineering notes recorded between 2.18.0 and 3.0.0 (some shipped in 2.19.0)
 
 ### Fixed
 
