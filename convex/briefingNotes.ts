@@ -3,7 +3,7 @@ import { ConvexError } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
-import { withOrgScope, requireScope, type OrgScope } from "./lib/auth";
+import { withOrgScope, requireScope, requireOrchestratorOnRoster, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 
@@ -183,6 +183,10 @@ export const create = mutation({
 				`RBAC_DENIED: caller may not create a briefing note — ${JSON.stringify({ orgSlug: null })}`,
 			);
 		}
+		// Acting identity derives from the verified caller: a member may author
+		// a note only as an orchestrator on its OWN resolved roster (the MCP-layer
+		// gate is bypassed by the service-account path). Master unchanged.
+		requireOrchestratorOnRoster(scope, args.createdBy, "briefingNotes:create", "actor");
 		const noteId = await ctx.db.insert("briefingNotes", {
 			...args,
 			createdAt: Date.now(),

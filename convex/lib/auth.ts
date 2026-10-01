@@ -729,8 +729,33 @@ export async function requireAgentCredentialMatch(
 }
 
 /**
- * requireSenderOnRoster — the sender of a write is DERIVED from the verified
- * caller, never taken from the `from` argument.
+ * Which identity-bearing field is being checked. "sender" (messages `from`),
+ * "actor" (createdBy/author of a write), "assignee" (assignedTo/pilot: the
+ * target of an assignment must also be on the caller's own roster, so a member
+ * cannot assign work into another organisation). The kind names the refusal's
+ * `reason` (`<kind>-not-on-roster`) and is the only thing that varies.
+ */
+export type RosterNameKind = "sender" | "actor" | "assignee";
+
+/**
+ * The ONE roster-membership predicate behind requireOrchestratorOnRoster (and
+ * any read that must answer without throwing): normalised on both sides, and
+ * "*" names nobody.
+ */
+export function isOrchestratorOnOrgRoster(scope: OrgScope, name: string): boolean {
+	const claimed = normalizeOrchestratorId(name);
+	return scope.allowedOrchestrators.some(
+		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,
+	);
+}
+
+/**
+ * requireOrchestratorOnRoster — the sender (and, via `kind`, the acting or
+ * assigned identity) of a write is DERIVED from the verified
+ * caller, never taken from the `from` argument. Previously `requireSenderOnRoster`;
+ * generalised for the intra-org acting-identity sites so there is ONE helper.
+ *
+ * The original sender case:
  *
  * Measured on production (task k17fdch7gfak29nyvna9r3qe098fed1d): an ordinary
  * member of org B sent a message with from="eta" (and "pi"). The agent
@@ -747,21 +772,18 @@ export async function requireAgentCredentialMatch(
  * callers are not decided here: the master is bound at the MCP layer, the
  * unresolved caller is refused by the tenant derivation in the delivery core.
  *
- * Refusal: `RBAC_DENIED`, `reason: "sender-not-on-roster"`, naming the door.
+ * Refusal: `RBAC_DENIED`, `reason: "<kind>-not-on-roster"`, naming the door.
  */
-export function requireSenderOnRoster(
+export function requireOrchestratorOnRoster(
 	scope: OrgScope,
-	claimedSender: string,
+	claimedName: string,
 	registration: string,
+	kind: RosterNameKind = "sender",
 ): void {
-	if (scope.orgSlug === null) return;
-	const claimed = normalizeOrchestratorId(claimedSender);
-	const onRoster = scope.allowedOrchestrators.some(
-		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,
-	);
-	if (!onRoster) {
+	if (scope.isMaster || scope.orgSlug === null) return;
+	if (!isOrchestratorOnOrgRoster(scope, claimedName)) {
 		throw new ConvexError(
-			`RBAC_DENIED: sender "${claimedSender}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: "sender-not-on-roster", door: registration, from: claimedSender, orgSlug: scope.orgSlug })}`,
+			`RBAC_DENIED: ${kind} "${claimedName}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: `${kind}-not-on-roster`, door: registration, from: claimedName, orgSlug: scope.orgSlug })}`,
 		);
 	}
 }

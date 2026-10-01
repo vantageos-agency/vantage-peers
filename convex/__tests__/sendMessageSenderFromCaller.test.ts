@@ -11,7 +11,7 @@
 // Poles: REFUSED (foreign name, wildcard roster, credential for another
 // name), SERVED (own roster, case variant, own credential), MASTER unchanged.
 //
-// DELETION PROBE (not committed): remove the requireSenderOnRoster call in
+// DELETION PROBE (not committed): remove the requireOrchestratorOnRoster call in
 // messages:sendMessage and the REFUSED poles go RED.
 
 import { convexTest } from "convex-test";

@@ -13,6 +13,7 @@ import {
 	requireResolvedCaller,
 	requireScope,
 	withOrgScope,
+	requireOrchestratorOnRoster,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireId } from "./lib/ids";
@@ -564,6 +565,11 @@ export const create = mutation({
 			args.createdBy,
 			agentCredentialSecret,
 		);
+		// createdBy is already bound to the roster inside requireAuthenticatedCaller
+		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
+		// the target of an assignment: it must also be on the caller's own roster,
+		// so a member cannot assign work into another organisation. Master unchanged.
+		requireOrchestratorOnRoster(scope, args.assignedTo, "tasks:create", "assignee");
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
 		return await insertTask(ctx, taskArgs, orgIdForWrite(scope, "task"));
@@ -1463,6 +1469,14 @@ export const update = mutation({
 			);
 		}
 		assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope);
+
+		// An ASSIGNMENT target is not an asserted caller name, so the caller
+		// lock above does not cover it: without this, the cross-org assignment
+		// `create` refuses is one `update` call away. Same helper, same rule
+		// (roster-only, "*" admits nobody for a member, master unchanged).
+		if (fields.assignedTo !== undefined) {
+			requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
+		}
 
 		// Build patch object with only provided fields
 		const patch: Record<string, any> = { updatedAt: Date.now() };

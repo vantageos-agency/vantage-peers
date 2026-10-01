@@ -123,15 +123,15 @@ describe("briefingNotes.create — write-scope enforcement", () => {
 		await seedOrgAMapping(t);
 		const tA = asOrgA(t);
 
-		// Named attack M1 shape: org-a asserts a createdBy value that could be
-		// mistaken for another org's own agent name. orgId must STILL derive
-		// from the verified scope, never from anything caller-supplied.
+		// orgId must derive from the verified scope, never from anything
+		// caller-supplied. createdBy is an own-roster name: a foreign one
+		// ("seat-b") is now refused outright (intraOrgActingIdentity.test.ts).
 		const noteId = await tA.mutation(api.briefingNotes.create, {
 			title: "org-a note",
 			topic: "handoff",
 			participants: ["seat-b"],
 			content: "content",
-			createdBy: "seat-b",
+			createdBy: "seat-a",
 		});
 
 		const note = await t.run((ctx) => ctx.db.get(noteId));

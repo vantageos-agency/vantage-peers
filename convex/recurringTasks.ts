@@ -10,6 +10,7 @@ import {
 	isRowVisibleToScope,
 	requireResolvedCaller,
 	withOrgScope,
+	requireOrchestratorOnRoster,
 } from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
 
@@ -50,14 +51,6 @@ import { requireAuthenticatedCaller } from "./tasks";
 // `filterByOrgScope` already applies at read time), never from a
 // caller-supplied argument standing in for that proof.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function isAssigneeAllowedForScope(
-	scope: { isMaster: boolean; allowedOrchestrators: string[] },
-	assignedTo: string,
-): boolean {
-	if (scope.isMaster) return true;
-	return scope.allowedOrchestrators.includes(assignedTo);
-}
 
 // Issue #1064 slice-6 (FINAL) — same hint for all five single-id handlers
 // below, all reads/writes on the recurringTasks table.
@@ -194,11 +187,8 @@ export const create = mutation({
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
-		if (!isAssigneeAllowedForScope(scope, args.assignedTo)) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not create a recurring task assigned to "${args.assignedTo}" — outside the authenticated org's allowed-orchestrator list — ${JSON.stringify({ assignedTo: args.assignedTo, orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
-			);
-		}
+		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
+
 
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
@@ -374,23 +364,16 @@ export const update = mutation({
 				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
 			);
 		}
-		if (!isAssigneeAllowedForScope(scope, existing.assignedTo)) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} (assignedTo "${existing.assignedTo}") — ${JSON.stringify({ orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
-			);
-		}
+		requireOrchestratorOnRoster(scope, existing.assignedTo, "recurringTasks:update", "assignee");
+
 		// The row's STORED assignedTo passed the check above; a caller
 		// REASSIGNING the row to a new orchestrator outside its own scope is
 		// refused the same way — the patch can never move a row to an owner
 		// the caller could not itself have created it under.
-		if (
-			args.assignedTo !== undefined &&
-			!isAssigneeAllowedForScope(scope, args.assignedTo)
-		) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not reassign recurring task ${recurringTaskId} to "${args.assignedTo}" — outside the authenticated org's allowed-orchestrator list — ${JSON.stringify({ assignedTo: args.assignedTo, orgSlug: scope.orgSlug, allowedOrchestrators: scope.allowedOrchestrators })}`,
-			);
+		if (args.assignedTo !== undefined) {
+			requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:update", "assignee");
 		}
+
 
 		const patch: Record<string, any> = { updatedAt: Date.now() };
 		if (args.title !== undefined) patch.title = args.title;

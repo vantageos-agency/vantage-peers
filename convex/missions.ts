@@ -6,6 +6,7 @@ import type { Doc } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
 	withOrgScope,
+	requireOrchestratorOnRoster,
 	filterByOrgScope,
 	isRowVisibleToScope,
 	requireScope,
@@ -180,6 +181,11 @@ export const create = mutation({
 				`RBAC_DENIED: caller may not create a mission — ${JSON.stringify({ orgSlug: null })}`,
 			);
 		}
+		// Acting identity and pilot derive from the verified caller: a member
+		// may create only as, and assign the pilot role only to, an orchestrator
+		// on its OWN resolved roster. Master unchanged.
+		requireOrchestratorOnRoster(scope, args.createdBy, "missions:create", "actor");
+		requireOrchestratorOnRoster(scope, args.pilot, "missions:create", "assignee");
 		const now = Date.now();
 		return await ctx.db.insert("missions", {
 			...args,
@@ -605,6 +611,12 @@ export const update = mutation({
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update mission ${missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
+		}
+
+		// A pilot reassignment must land on the caller's own roster — a member
+		// cannot hand a mission to an orchestrator of another organisation.
+		if (fields.pilot !== undefined) {
+			requireOrchestratorOnRoster(scope, fields.pilot, "missions:update", "assignee");
 		}
 
 		// Build patch object with only provided fields

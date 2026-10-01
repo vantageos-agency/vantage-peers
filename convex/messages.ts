@@ -8,7 +8,7 @@ import {
 	requireAgentCredentialMatch,
 	requireResolvedCaller,
 	requireScope,
-	requireSenderOnRoster,
+	requireOrchestratorOnRoster,
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
@@ -376,8 +376,8 @@ export const sendMessage = mutation({
 
 		// The sender derives from the verified caller: a member of an org may
 		// only speak as an orchestrator on its own roster (see
-		// requireSenderOnRoster). Master/service account is unchanged here.
-		requireSenderOnRoster(scope, args.from, "messages:sendMessage");
+		// requireOrchestratorOnRoster). Master/service account is unchanged here.
+		requireOrchestratorOnRoster(scope, args.from, "messages:sendMessage");
 
 		return await sendMessageCore(ctx, args, scope);
 	},

@@ -225,13 +225,21 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 		// Same tenant, but assigned OFF the roster — so the ROSTER, not the
 		// tenant gate, is what drops it. `createdBy` stays on-roster because the
 		// create path authorises the author, not the assignee.
-		await tSeed.mutation(api.tasks.create, {
-			title: "kappa task",
-			assignedTo: "kappa",
-			status: "todo",
-			priority: "medium",
-			createdBy: "victor",
-		});
+		// tasks.create now refuses an off-roster assignee (an org member cannot
+		// assign into another organisation), so the off-roster row is seeded
+		// directly with the tenant stamp the create path would have written.
+		await t.run((ctx) =>
+			ctx.db.insert("tasks", {
+				title: "kappa task",
+				assignedTo: "kappa",
+				status: "todo",
+				priority: "medium",
+				createdBy: "victor",
+				orgId: "acme-hr",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}),
+		);
 
 		const tWithAuth = tSeed;
 
@@ -290,13 +298,21 @@ describe("withOrgScope — active org mapping", () => {
 		});
 		// Same tenant, assigned OFF the roster: the ROSTER is the discriminator
 		// here, not the tenant gate.
-		await tWithAuth.mutation(api.tasks.create, {
-			title: "kappa task",
-			assignedTo: "kappa",
-			status: "todo",
-			priority: "medium",
-			createdBy: "victor",
-		});
+		// tasks.create now refuses an off-roster assignee (an org member cannot
+		// assign into another organisation), so the off-roster row is seeded
+		// directly with the tenant stamp the create path would have written.
+		await t.run((ctx) =>
+			ctx.db.insert("tasks", {
+				title: "kappa task",
+				assignedTo: "kappa",
+				status: "todo",
+				priority: "medium",
+				createdBy: "victor",
+				orgId: "acme-hr",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}),
+		);
 
 		const result = await tWithAuth.query(api.tasks.list, {});
 		expect(result).toHaveLength(1);

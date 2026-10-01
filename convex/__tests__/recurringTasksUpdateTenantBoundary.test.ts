@@ -157,7 +157,7 @@ describe("recurringTasks.update — tenant gate", () => {
 				recurringTaskId: id,
 				assignedTo: "seat-elsewhere",
 			}),
-		).rejects.toThrow(/RBAC_DENIED.*reassign/);
+		).rejects.toThrow(/RBAC_DENIED.*assignee/);
 
 		expect((await t.run((ctx) => ctx.db.get(id)))?.assignedTo).toBe(
 			SHARED_SEAT,
