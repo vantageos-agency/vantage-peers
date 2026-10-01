@@ -707,6 +707,21 @@ export const getPendingAliasReleases = query({
 	args: {},
 	returns: v.array(v.string()),
 	handler: async (ctx) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. `errorMonitorConfig`
+		// carries no orgId/tenant column (fleet-internal), so there is no per-org
+		// slice to scope a member to: serving any member would serve every
+		// tenant's rows. Same helper and code as `issues:listByStatus`.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.errorMonitorFilters\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The only reader is the MCP tool (one-shot query, service account).
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "errorMonitorFilters:getPendingAliasReleases", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		const row = await ctx.db
 			.query("errorMonitorConfig")
 			.withIndex("by_key", (q) => q.eq("key", "pendingAliasReleases"))

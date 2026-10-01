@@ -395,6 +395,14 @@ export const get = query({
 	args: { mandateId: v.string() },
 	returns: v.union(mandateObject, v.null()),
 	handler: async (ctx, args) => {
+		// GATE — this read returned any mandate (budget, spending limits) to any
+		// caller, including one with no credential. `mandates` has no org column and
+		// every mandate write is fleet-master-only (requireFleetMaster), so no
+		// ordinary reader exists: masterOnly. No reactive subscriber
+		// (grep "mandates\.get\b" dashboard app components hooks lib -> 0; MCP
+		// `get_mandate` one-shot), so a RAISE is safe.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "mandates:get", { masterOnly: true });
 		const mandateId = requireId(
 			ctx,
 			"mandates",
@@ -424,6 +432,14 @@ export const validateSpending = query({
 		perPeriodLimit: v.optional(v.number()),
 	}),
 	handler: async (ctx, args) => {
+		// GATE — spending authority. This read disclosed a mandate's budget, spend
+		// and limits to any caller, including one with no credential. No org column,
+		// master-only writes, no ordinary reader: masterOnly. No reactive subscriber
+		// (MCP `validate_mandate_spending` one-shot; dashboard grep -> 0).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "mandates:validateSpending", {
+			masterOnly: true,
+		});
 		const mandate = await ctx.db.get(args.mandateId);
 		if (!mandate) {
 			return { withinLimits: false, reason: "Mandate not found", currentSpend: 0, remainingBudget: 0 };

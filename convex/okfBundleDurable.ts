@@ -76,6 +76,7 @@ import {
 	query,
 } from "./_generated/server";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // Codegen-lag workaround (mirrors okfBundle.ts / okfBundleNode.ts comment).
 // `components.agentEngine.*` is not yet in `_generated/api.d.ts`'s typed
@@ -412,6 +413,32 @@ export const getOkfBundleExportDurableStatus = query({
 		),
 	}),
 	handler: async (ctx, args) => {
+		// GATE — this read answered ANY caller, including one with no credential,
+		// with a job's engine status and per-family row counts for any `jobId`.
+		// The progress row carries the export namespace (`orgId`), so a non-master
+		// caller must be a resolved org member whose org owns that namespace —
+		// the SAME check start/cancel use (`assertCanExportNamespaceV8`), never a
+		// second resolver. An unknown job is refused to a non-master caller (no
+		// existence oracle on jobIds). Master passes.
+		// REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber
+		// (grep getOkfBundleExportDurableStatus in mcp-server/src and dashboard
+		// app components hooks lib -> 0 hits).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "okfBundleDurable:getOkfBundleExportDurableStatus", {
+			alsoRefusePreOrg: true,
+		});
+		if (!scope.isMaster) {
+			const owned = await ctx.db
+				.query("okfDurableExportProgress")
+				.withIndex("by_jobId", (q) => q.eq("jobId", args.jobId))
+				.unique();
+			if (owned === null) {
+				throw new Error(
+					`OKF_DURABLE_JOB_NOT_FOUND: no progress row for jobId="${args.jobId}".`,
+				);
+			}
+			await assertCanExportNamespaceV8(ctx, owned.orgId);
+		}
 		const engineStatus = await ctx.runQuery(
 			agentEngineComponents.agentEngine.engine.durableJob.getStatus,
 			{ jobId: args.jobId },

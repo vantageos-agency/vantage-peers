@@ -27,7 +27,7 @@
 
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { action } from "./_generated/server";
@@ -649,8 +649,21 @@ export async function assertCanValidate(ctx: {
 		unknown
 	> | null;
 	if (identity === null || identity === undefined) {
-		// CLI / deploy-key — server-trusted path. Mirrors exportOkfBundle.
-		return;
+		// FAIL-OPEN CLOSED. This branch used to `return;` ("CLI / deploy-key —
+		// server-trusted"), which waved through ANY caller presenting no credential
+		// at all — the SSRF + storage-peek vector this gate exists to stop. The
+		// only callers are `validateOkfBundle` below (MCP always attaches a Clerk
+		// JWT: service-account or caller's own) and the unit tests. An absent
+		// identity is REFUSED, by raising, with the code in the payload.
+		throw new ConvexError(
+			`RBAC_DENIED: no credential presented to "okfBundleNode:validateOkfBundle" — an unidentified caller is refused — ${JSON.stringify(
+				{
+					registration: "okfBundleNode:validateOkfBundle",
+					orgSlug: null,
+					reason: "no-credential",
+				},
+			)}`,
+		);
 	}
 	// Identity attached: minimal sanity — must carry at least one usable claim
 	// so a stripped/garbled identity is rejected before we touch storage / network.

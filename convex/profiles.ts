@@ -72,17 +72,31 @@ export const getProfile = query({
   },
   returns: v.union(profileDocValidator, v.null()),
   handler: async (ctx, args) => {
+    // GATE — this read took NO identity check: any caller, including one with no
+    // credential, read a fleet-internal orchestrator profile by name. `profiles`
+    // has no tenant column (see requireFleetMaster), so the only per-caller
+    // predicate is the org's own orchestrator roster
+    // (`allowedOrchestrators`, the same roster the MCP `get_profile` filter
+    // narrows on): a member is served a profile only for an orchestrator on its
+    // roster; the master is served all.
+    // REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber.
+    //   grep -rn "profiles\.getProfile\b" app components hooks lib (dashboard) -> 0
+    // Its only consumer is the MCP `get_profile` tool (one-shot `convex.query`).
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    requireResolvedCaller(scope, "profiles:getProfile", {
+      alsoRefusePreOrg: true,
+    });
+
+    let profile: Doc<"profiles"> | null = null;
     // Prefer instanceId lookup if provided
     if (args.instanceId !== undefined) {
-      return await ctx.db
+      profile = await ctx.db
         .query("profiles")
         .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
         .unique();
-    }
-
-    if (args.orchestratorId !== undefined) {
+    } else if (args.orchestratorId !== undefined) {
       // Returns first match — for role-level lookup when only one instance exists
-      return await ctx.db
+      profile = await ctx.db
         .query("profiles")
         .withIndex("by_orchestrator", (q) =>
           q.eq("orchestratorId", args.orchestratorId!),
@@ -90,7 +104,20 @@ export const getProfile = query({
         .first();
     }
 
-    return null;
+    if (profile !== null && !scope.isMaster) {
+      if (!scope.allowedOrchestrators.includes(profile.orchestratorId)) {
+        throw new ConvexError(
+          `RBAC_DENIED: "profiles:getProfile" refuses a caller whose organisation roster does not include orchestrator "${profile.orchestratorId}" — ${JSON.stringify(
+            {
+              registration: "profiles:getProfile",
+              orgSlug: scope.orgSlug,
+              reason: "not-on-roster",
+            },
+          )}`,
+        );
+      }
+    }
+    return profile;
   },
 });
 

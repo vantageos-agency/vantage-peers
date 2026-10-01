@@ -1157,10 +1157,46 @@ export const getUnreadCount = query({
 	args: { orchestratorId: creatorValidator },
 	returns: v.number(),
 	handler: async (ctx, { orchestratorId }) => {
+		// GATE — this read took NO identity check: it counted the unread receipts
+		// of ANY recipient name for ANY caller, including one presenting no
+		// credential at all. `messageReceipts` carries `tenantId`, so a non-master
+		// caller is served only its OWN organisation's receipts, pushed into the
+		// index (`by_tenant_recipient_unread`) before the scan cap, never a filter
+		// after the read.
+		//
+		// CALLERS (measured): MCP — none (grep getUnreadCount mcp-server/src -> 0);
+		// dashboard — app-sidebar.tsx:279 and message-timeline.tsx:63, both
+		// `useQuery`, both in a mounted shell behind clerkMiddleware.
+		//   anonymous            -> RAISES RBAC_DENIED (no mounted render exists).
+		//   signed in, no org    -> 0. DECLARED DIVERGENCE: a subscribed render
+		//                           (the sidebar badge) cannot take a throw, and the
+		//                           return type is a bare number the dashboard reads
+		//                           as-is. A caller with no organisation owns no
+		//                           tenant receipts, so 0 is the count of ITS OWN
+		//                           data — it is never another tenant's number.
+		//   member of an org     -> the unread count of its own tenant.
+		//   fleet master         -> unchanged (all tenants, by recipient).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "messages:getUnreadCount");
+
+		if (scope.isMaster) {
+			const receipts = await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_recipient_unread", (q) =>
+					q.eq("recipient", orchestratorId).eq("readAt", undefined),
+				)
+				.take(UNREAD_RECEIPTS_SCAN_CAP);
+			return receipts.length;
+		}
+		if (scope.orgSlug === null) return 0;
+		const orgSlug = scope.orgSlug;
 		const receipts = await ctx.db
 			.query("messageReceipts")
-			.withIndex("by_recipient_unread", (q) =>
-				q.eq("recipient", orchestratorId).eq("readAt", undefined),
+			.withIndex("by_tenant_recipient_unread", (q) =>
+				q
+					.eq("tenantId", orgSlug)
+					.eq("recipient", orchestratorId)
+					.eq("readAt", undefined),
 			)
 			.take(UNREAD_RECEIPTS_SCAN_CAP);
 		return receipts.length;
@@ -1373,36 +1409,45 @@ export const listByChannel = query({
 			return { refused: true as const, items: [] };
 		}
 
-		// Fail-closed channel scoping: messages carry no orgId/tenantId column
-		// (schema.ts), so channel-name proximity to the caller's own scope is the
-		// only generic (non-hardcoded) signal available. A non-master, org-scoped
-		// caller may only read: "broadcast" (universally shared), a channel
-		// exactly matching one of its allowedOrchestrators, or one prefixed with
-		// its own "team/<orgSlug>/" convention. Anything else is denied.
-		const isChannelAllowed = (ch: string): boolean => {
-			if (scope.isMaster) return true;
-			if (ch === "broadcast") return true;
-			if (scope.orgSlug !== null && ch.startsWith(`team/${scope.orgSlug}`)) {
-				return true;
+		// Fail-closed channel scoping. Messages DO carry `tenantId` (schema.ts, set
+		// by sendMessage from the verified sender's org — never a client argument),
+		// and a client's "broadcast" is tenant-scoped at write time. So the
+		// "broadcast" channel is NOT universally shared: a hardcoded
+		// `ch === "broadcast"` grant served every org's broadcast rows to every
+		// resolved member (cross-tenant read). A non-master caller reads only rows
+		// of its OWN tenant, pushed into the index predicate, and within that
+		// tenant only channels `isChannelOnScope` admits. The master reads all.
+		if (scope.isMaster) {
+			if (channel !== undefined) {
+				return await ctx.db
+					.query("messages")
+					.withIndex("by_channel", (q) => q.eq("channel", channel))
+					.order("desc")
+					.take(take);
 			}
-			return scope.allowedOrchestrators.includes(ch);
-		};
+			return await ctx.db.query("messages").order("desc").take(take);
+		}
+
+		const orgSlug = scope.orgSlug;
+		if (orgSlug === null) return { refused: true as const, items: [] };
 
 		if (channel !== undefined) {
-			if (!isChannelAllowed(channel)) return [];
+			if (!isChannelOnScope(scope, channel)) return [];
 			return await ctx.db
 				.query("messages")
-				.withIndex("by_channel", (q) => q.eq("channel", channel))
+				.withIndex("by_tenant_channel", (q) =>
+					q.eq("tenantId", orgSlug).eq("channel", channel),
+				)
 				.order("desc")
 				.take(take);
 		}
 
-		if (scope.isMaster) {
-			return await ctx.db.query("messages").order("desc").take(take);
-		}
-
-		const rows = await ctx.db.query("messages").order("desc").take(take);
-		return rows.filter((r) => isChannelAllowed(r.channel));
+		const rows = await ctx.db
+			.query("messages")
+			.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
+			.order("desc")
+			.take(take);
+		return rows.filter((r) => isChannelOnScope(scope, r.channel));
 	},
 });
 
@@ -1423,6 +1468,21 @@ export const getById = query({
 	// #1072 (tasks:getById), on a read.
 	args: { messageId: v.string() },
 	handler: async (ctx, args) => {
+		// GATE — this read returned ANY message row to ANY caller by id, including
+		// one with no credential. A non-master caller must be a resolved member of
+		// an active org, belong to the org that SENT the row (`tenantId`), and be
+		// on its channel (`isChannelOnScope`) — the exact rule
+		// `listBroadcastStatus` applies. Master passes.
+		// REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber.
+		//   grep -rn "messages\.getById" app components hooks lib  (dashboard) -> 0
+		// Its only consumer is the MCP `get_message` tool (one-shot
+		// `convex.query`, tools.ts). See
+		// .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "messages:getById", {
+			alsoRefusePreOrg: true,
+		});
+
 		const messageId = requireId(
 			ctx,
 			"messages",
@@ -1430,7 +1490,32 @@ export const getById = query({
 			"messageId",
 			"Use the full 32-char messageId returned by list_messages or checkNewMessages.",
 		);
-		return await ctx.db.get(messageId);
+		const row = await ctx.db.get(messageId);
+		if (row === null || scope.isMaster) return row;
+
+		if (row.tenantId !== scope.orgSlug) {
+			throw new ConvexError(
+				`RBAC_DENIED: "messages:getById" refuses a caller outside the organisation that sent message ${messageId} — ${JSON.stringify(
+					{
+						registration: "messages:getById",
+						orgSlug: scope.orgSlug,
+						reason: "cross-tenant",
+					},
+				)}`,
+			);
+		}
+		if (!isChannelOnScope(scope, row.channel)) {
+			throw new ConvexError(
+				`RBAC_DENIED: "messages:getById" refuses a caller who is not on channel "${row.channel}" of message ${messageId} — ${JSON.stringify(
+					{
+						registration: "messages:getById",
+						orgSlug: scope.orgSlug,
+						reason: "not-on-channel",
+					},
+				)}`,
+			);
+		}
+		return row;
 	},
 });
 

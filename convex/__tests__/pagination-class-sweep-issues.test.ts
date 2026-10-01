@@ -83,7 +83,7 @@ describe("issues pagination — createdBefore applied after unbounded take", () 
 		let pages = 0;
 		while (pages < 10) {
 			pages++;
-			const page: IssueRow[] = await t.query(api.issues.listByProject, {
+			const page: IssueRow[] = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.issues.listByProject, {
 				project: repo,
 				limit: PAGE_LIMIT,
 				createdBefore,
@@ -112,7 +112,7 @@ describe("issues pagination — createdBefore applied after unbounded take", () 
 		let pages = 0;
 		while (pages < 10) {
 			pages++;
-			const page: IssueRow[] = await t.query(api.issues.listByOrchestrator, {
+			const page: IssueRow[] = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.issues.listByOrchestrator, {
 				assignedOrchestrator: orchestrator,
 				limit: PAGE_LIMIT,
 				createdBefore,

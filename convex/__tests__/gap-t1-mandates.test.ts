@@ -81,7 +81,7 @@ describe("GAP-T1 accept_mandate — mandates.accept mutation", () => {
 			callerOrchestrator: "tau",
 		});
 
-		const row = await t.query(api.mandates.get, { mandateId });
+		const row = await asMaster(t).query(api.mandates.get, { mandateId });
 		expect(row?.status).toBe("accepted");
 	});
 
@@ -119,7 +119,7 @@ describe("GAP-T1 settle_mandate — mandates.settle mutation", () => {
 			finalCost: 250,
 		});
 
-		const row = await t.query(api.mandates.get, { mandateId });
+		const row = await asMaster(t).query(api.mandates.get, { mandateId });
 		expect(row?.status).toBe("settled");
 		expect(row?.tokensCost).toBe(250);
 		expect(row?.completedAt).toBeGreaterThan(0);
@@ -154,7 +154,7 @@ describe("GAP-T1 validate_mandate_spending — mandates.validateSpending query",
 			maxPerTransaction: 500,
 		});
 
-		const result = await t.query(api.mandates.validateSpending, {
+		const result = await asMaster(t).query(api.mandates.validateSpending, {
 			mandateId,
 			proposedAmount: 200,
 		});
@@ -171,7 +171,7 @@ describe("GAP-T1 validate_mandate_spending — mandates.validateSpending query",
 			maxPerTransaction: 100,
 		});
 
-		const result = await t.query(api.mandates.validateSpending, {
+		const result = await asMaster(t).query(api.mandates.validateSpending, {
 			mandateId,
 			proposedAmount: 250,
 		});

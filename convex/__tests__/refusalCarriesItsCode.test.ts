@@ -344,13 +344,14 @@ const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 		});
 	});
 
-const seedMessage = (t: T, channel: string) =>
+const seedMessage = (t: T, channel: string, tenantId?: string) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("messages", {
 			from: "sigma",
 			channel,
 			content: `content on ${channel}`,
 			createdAt: now(),
+			...(tenantId !== undefined ? { tenantId } : {}),
 		});
 	});
 
@@ -544,7 +545,9 @@ const SITES: Site[] = [
 	{
 		registration: "messages:listByChannel",
 		hasReactiveSubscriber: true, // components/messages/message-timeline.tsx:51
-		seed: (t) => seedMessage(t, "broadcast"),
+		// Stamped with the reader's org: broadcast is tenant-scoped (closeDoorsB),
+		// so an UNSTAMPED fleet-internal broadcast is served to no org member.
+		seed: (t) => seedMessage(t, "broadcast", "org-a"),
 		read: (c) => c.query(api.messages.listByChannel, { channel: "broadcast" }),
 		allow: asRosterAllow,
 		nonEmpty: (v) => Array.isArray(v) && v.length === 1,

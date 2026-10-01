@@ -380,13 +380,14 @@ const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 		});
 	});
 
-const seedMessage = (t: T, channel: string) =>
+const seedMessage = (t: T, channel: string, tenantId?: string) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("messages", {
 			from: "sigma",
 			channel,
 			content: `content on ${channel}`,
 			createdAt: now(),
+			...(tenantId !== undefined ? { tenantId } : {}),
 		});
 	});
 
@@ -772,7 +773,8 @@ describe("FAIL-OPEN closed — messages:listByChannel (1 row leaked via the hard
 	test("ALLOW — an ordinary member of an ACTIVE org still reads broadcast (the shared channel is not withdrawn from legitimate callers)", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a", ["sigma"]);
-		await seedMessage(t, "broadcast");
+		// Stamped with the reader's org: broadcast is tenant-scoped (closeDoorsB).
+		await seedMessage(t, "broadcast", "org-a");
 
 		expect(
 			await asOrgMember(t, "org-a").query(api.messages.listByChannel, {
@@ -784,7 +786,7 @@ describe("FAIL-OPEN closed — messages:listByChannel (1 row leaked via the hard
 	test("ALLOW — an ordinary org member still reads a channel named for an orchestrator ON its roster", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a", ["sigma"]);
-		await seedMessage(t, "sigma");
+		await seedMessage(t, "sigma", "org-a");
 
 		expect(
 			await asOrgMember(t, "org-a").query(api.messages.listByChannel, {

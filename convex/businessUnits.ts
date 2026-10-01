@@ -314,7 +314,26 @@ export const get = query({
 			"buId",
 			"Use the full 32-char buId returned by businessUnits.list or businessUnits.create.",
 		);
-		return await ctx.db.get(buId);
+		// GATE — CLOSED (org-scoped): this door served any business unit by id
+		// to a caller presenting NO CREDENTIAL AT ALL. The table is org-scoped
+		// through `orchestratorId` (the roster `client_org_mapping` judges), so
+		// an ordinary member is NOT refused: it reads its own org's units via
+		// the same per-row roster check the writes use, and a unit of another
+		// org reads as null (no existence leak across tenants).
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.businessUnits\.get\b" --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// (`businessUnits:list` IS subscribed; this door is not.) The MCP tool
+		// reads it one-shot.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "businessUnits:get", {
+			alsoRefusePreOrg: true,
+		});
+		const bu = await ctx.db.get(buId);
+		if (bu === null) return null;
+		if (!isOrchestratorAllowedForScope(scope, bu.orchestratorId)) return null;
+		return bu;
 	},
 });
 

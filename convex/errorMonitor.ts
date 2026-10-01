@@ -587,6 +587,21 @@ export const listDeployments = query({
 		}),
 	),
 	handler: async (ctx) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. `monitoredDeployments`
+		// carries no orgId/tenant column (fleet-internal), so there is no per-org
+		// slice to scope a member to: serving any member would serve every
+		// tenant's rows. Same helper and code as `issues:listByStatus`.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.errorMonitor\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The only reader is the MCP tool (one-shot query, service account).
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "errorMonitor:listDeployments", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		return await ctx.db
 			.query("monitoredDeployments")
 			.withIndex("by_active", (q) => q.eq("active", true))
@@ -749,6 +764,21 @@ export const getError = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// GATE — fleet master only, resolved BEFORE any row is read. `errorLogs`
+		// carries no orgId/tenant column (fleet-internal), so there is no per-org
+		// slice to scope a member to: serving any member would serve every
+		// tenant's rows. Same helper and code as `issues:listByStatus`.
+		// isolation-contract: no reactive subscriber. Enumerated by command
+		// against vantage-peers-dashboard:
+		//   grep -rn "api\.errorMonitor\." --include=*.tsx --include=*.ts \
+		//     app components hooks lib contexts providers  -> 0 hits
+		// The only reader is the MCP tool (one-shot query, service account).
+		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "errorMonitor:getError", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		const errorId = requireId(
 			ctx,
 			"errorLogs",
