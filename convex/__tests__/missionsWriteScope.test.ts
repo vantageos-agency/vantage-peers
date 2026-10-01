@@ -118,17 +118,17 @@ describe("missions.create — write-scope enforcement", () => {
 		await seedOrgAMapping(t);
 		const tA = asOrgA(t);
 
-		// Named attack shape: org-a asserts a pilot/createdBy value that could
-		// be mistaken for another org's own agent name. orgId must STILL
-		// derive from the verified scope, never from anything caller-supplied.
+		// orgId must derive from the verified scope, never from anything
+		// caller-supplied. pilot/createdBy are own-roster names: a foreign one
+		// ("seat-b") is now refused outright (intraOrgActingIdentity.test.ts).
 		const missionId = await tA.mutation(api.missions.create, {
 			name: "org-a mission",
 			project: "p",
 			status: "plan",
 			priority: "medium",
-			pilot: "seat-b",
+			pilot: "seat-a",
 			agents: ["seat-b"],
-			createdBy: "seat-b",
+			createdBy: "seat-a",
 		});
 
 		const mission = await t.run((ctx) => ctx.db.get(missionId));

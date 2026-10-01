@@ -8,7 +8,11 @@ import {
 	query,
 } from "./_generated/server";
 import { creatorValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+	requireOrchestratorOnRoster,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -467,6 +471,16 @@ export const instantiateTemplateIntoMission = mutation({
 			);
 		}
 
+		// The acting identity, when named, must be on the caller's own roster.
+		// Omitted stays "system" (unchanged: nothing is claimed).
+		if (args.callerOrchestrator !== undefined) {
+			requireOrchestratorOnRoster(
+				scope,
+				args.callerOrchestrator,
+				"missionTemplates:instantiateTemplateIntoMission",
+				"actor",
+			);
+		}
 		const now = Date.now();
 		const createdBy = args.callerOrchestrator ?? "system";
 
