@@ -188,6 +188,7 @@ describe("okfBundleNode:exportOkfBundle — master namespace", () => {
 
 	test("PRESENT (unchanged): an org member exporting its OWN tenant namespace passes the auth gate", async () => {
 		const t = createT();
+		await seedOrg(t, "team-zen");
 		await expectPassesAuthGate(
 			asOrg(t, "team-zen").action(EXPORT_REF, {
 				namespace: "team/team-zen",
@@ -196,17 +197,18 @@ describe("okfBundleNode:exportOkfBundle — master namespace", () => {
 		);
 	});
 
-	test("UNCHANGED: cross-tenant export is still AUTH_NAMESPACE_DENIED; anonymous tenant export is still AUTH_NO_IDENTITY", async () => {
+	test("cross-tenant export and anonymous tenant export are refused RBAC_DENIED", async () => {
 		const t = createT();
+		await seedOrg(t, "team-x");
 		await expect(
 			asOrg(t, "team-x").action(EXPORT_REF, {
 				namespace: "team/team-y",
 				format: "tarball",
 			}),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
 			t.action(EXPORT_REF, { namespace: "team/team-y", format: "tarball" }),
-		).rejects.toThrow(/AUTH_NO_IDENTITY/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
 
@@ -296,6 +298,7 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 
 	test("UNCHANGED: an org member importing into its OWN tenant namespace still works", async () => {
 		const t = createT();
+		await seedOrg(t, "team-zen");
 		const storageId = await storeBundle(t, "team/team-zen");
 		const result = await asOrg(t, "team-zen").action(IMPORT_REF, {
 			storageId,
@@ -307,7 +310,7 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 		expect(await memoryCount(t)).toBe(1);
 	});
 
-	test("UNCHANGED: anonymous import into a tenant namespace is still AUTH_NO_IDENTITY", async () => {
+	test("UNCHANGED: anonymous import into a tenant namespace is refused RBAC_DENIED", async () => {
 		const t = createT();
 		const storageId = await storeBundle(t, "team/team-zen");
 		await expect(
@@ -317,7 +320,7 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 				mode: "merge",
 				idempotencyKey: "anon-tenant",
 			}),
-		).rejects.toThrow(/AUTH_NO_IDENTITY/);
+		).rejects.toThrow(/RBAC_DENIED/);
 		expect(await memoryCount(t)).toBe(0);
 	});
 });

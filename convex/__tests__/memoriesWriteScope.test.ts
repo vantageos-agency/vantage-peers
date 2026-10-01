@@ -105,6 +105,21 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
+	test("an org-a caller storing into the SIBLING slug team/org-ab is refused (segment boundary)", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		for (const namespace of ["team/org-ab", "team/org-ab/x"]) {
+			await expect(
+				asOrgA(t).mutation(api.memories.storeMemory, {
+					namespace,
+					type: "project",
+					content: "sibling-slug write attempt",
+					createdBy: "dummy-a",
+				}),
+			).rejects.toThrow(/RBAC_DENIED/);
+		}
+	});
+
 	test("an org-a-scoped caller superseding an org-b memory via 'updates' is refused", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);

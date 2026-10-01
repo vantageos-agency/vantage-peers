@@ -31,7 +31,7 @@ import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { type ActionCtx, action } from "./_generated/server";
-import { requireResolvedCaller } from "./lib/auth";
+import { requireTenantNamespace } from "./lib/auth";
 import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
@@ -227,22 +227,19 @@ export async function packTarball(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Lightweight namespace authorization (Phase 2 — B3 generalize).
+ * Namespace authorization for OKF export/import.
  *
  * Rules:
- *   - Namespace prefix is accepted as long as it is a non-empty string with no
- *     path-traversal segments (`..`). The Phase 1 hard-lock to
- *     `project/elpi-corp` was relaxed by B3 (mission k5779qbxh, task
- *     k17f3407sg7cn6gswn5qs9j5b5891581) so multi-tenant `team/<orgId>/*`
- *     and other namespaces can export their own bundles.
- *   - The master namespace `project/elpi-corp` is reserved to the fleet master
- *     (the MCP service account, resolved by `lib/auth.withOrgScope`). A caller
- *     with no credential, a signed-in caller with no org, and an ordinary org
- *     member are all refused `RBAC_DENIED`. Absence of identity grants nothing.
- *   - Any other namespace: identity is required (`AUTH_NO_IDENTITY`) and its org
- *     slug MUST match the tail of the requested namespace (e.g. `team/abc-123`
- *     → org `abc-123`). Mismatch → `AUTH_NAMESPACE_DENIED`. Cross-tenant
- *     export remains forbidden.
+ *   - The namespace must be a non-empty string with no path-traversal segment.
+ *   - Ownership is decided on the RESOLVED scope (`resolveOrgScopeForAction`:
+ *     an ACTIVE `client_org_mapping` row), never on the raw org-slug claim.
+ *   - The fleet master (the MCP service account) may use any namespace.
+ *   - An org member may use ONLY `team/<resolvedOrgSlug>`. Every other
+ *     namespace (`orchestrator/*`, `project/*`, `global`, the master namespace
+ *     `project/elpi-corp`) is master-only.
+ *   - Refusals are `RBAC_DENIED` naming the door (`requireTenantNamespace` ->
+ *     `requireResolvedCaller`). An unmapped or inactive org is refused by
+ *     `withOrgScope` itself, also `RBAC_DENIED`.
  */
 export async function assertCanExportNamespace(
 	ctx: Pick<ActionCtx, "auth" | "runQuery">,
@@ -263,57 +260,19 @@ export async function assertCanExportNamespace(
 		);
 	}
 
-	// The master namespace is reserved to the fleet master (service account).
-	// Before this gate a caller with NO credential, and any signed-in caller
-	// carrying no org slug, was allowed to export it through the two early
-	// returns this block replaced -- an anonymous export of the fleet's own
-	// memory. Master is a named by-id grant resolved by `withOrgScope` (reached
-	// from an action through `resolveOrgScopeForAction`), never inferred from the
-	// absence of an identity or of an org. Refused by RAISING `RBAC_DENIED`
-	// naming the door, through the one shared helper.
-	if (namespace === "project/elpi-corp") {
-		const scope = await ctx.runQuery(
-			internal.lib.auth.resolveOrgScopeForAction,
-			{},
-		);
-		requireResolvedCaller(scope, door, { masterOnly: true });
-		return;
-	}
-
-	const identity = (await ctx.auth.getUserIdentity()) as Record<
-		string,
-		unknown
-	> | null;
-
-	if (identity === null || identity === undefined) {
-		throw new Error(
-			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
-		);
-	}
-	// Slug-first, id excluded: `orgSlug` is compared below to a slug-shaped
-	// export namespace suffix, and an org_id (org_xxxxx) is not a slug -- it
-	// must never stand in for one. Mirrors #1224 item 4
-	// (requireOrgAdmin/withOrgScope: slug-first, id excluded). A token
-	// carrying only an org_id (no slug) resolves orgSlug === null here and
-	// falls into the AUTH_NO_ORG fail-closed branch below, rather than
-	// mis-comparing the id to a slug suffix.
-	const orgSlug =
-		(identity.organizationSlug as string | undefined) ??
-		(identity.org_slug as string | undefined) ??
-		null;
-	if (orgSlug === null) {
-		// Identity attached but carries no org affiliation — same fail-closed
-		// posture as the null branch above.
-		throw new Error(
-			`AUTH_NO_ORG: caller without org affiliation cannot export non-master namespace "${namespace}".`,
-		);
-	}
-	const expectedSuffix = namespace.split("/").slice(1).join("/");
-	if (orgSlug !== expectedSuffix) {
-		throw new Error(
-			`AUTH_NAMESPACE_DENIED: caller org "${orgSlug}" cannot export namespace "${namespace}".`,
-		);
-	}
+	// Namespace ownership comes from the RESOLVED scope (an ACTIVE
+	// client_org_mapping row, reached from an action through
+	// `resolveOrgScopeForAction`), never from the raw org claim on the identity:
+	// a claim naming "pi" with no mapping row used to be served
+	// `orchestrator/pi`, `project/vantage-peers` and `orchestrator/eta`. The
+	// fleet master (service account) is served any namespace; a member is served
+	// only `team/<resolvedOrgSlug>`; everything else, including the master
+	// namespace `project/elpi-corp`, is refused `RBAC_DENIED` naming the door.
+	const scope = await ctx.runQuery(
+		internal.lib.auth.resolveOrgScopeForAction,
+		{},
+	);
+	requireTenantNamespace(scope, namespace, door);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

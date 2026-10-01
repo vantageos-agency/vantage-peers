@@ -21,12 +21,11 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // "team/<orgSlug>" prefix; anything else is denied (never leaked cross-tenant).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function isNamespaceAllowedForScope(scope: OrgScope, namespace: string): boolean {
-  if (scope.isMaster) return true;
-  if (scope.orgSlug === null) return false;
-  const ownPrefix = `team/${scope.orgSlug}`;
-  return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
-}
+// The single implementation lives in lib/auth.ts (the OKF export/import gate
+// delegates to it; memories.ts cannot be imported from lib/auth.ts without a
+// cycle). Re-exported here so existing importers keep working.
+export { isNamespaceAllowedForScope } from "./lib/auth";
+import { isNamespaceAllowedForScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeMemory

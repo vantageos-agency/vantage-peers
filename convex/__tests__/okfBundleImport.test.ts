@@ -217,16 +217,24 @@ describe("import_okf_bundle action — idempotency", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("import_okf_bundle action — cross-tenant deny", () => {
-	test("identity org X importing namespace team/Y → AUTH_NAMESPACE_DENIED", async () => {
+	test("identity org X importing namespace team/Y → RBAC_DENIED", async () => {
 		const t = createTestConvex();
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
-		// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda): `orgSlug`
-		// resolves slug-first, id excluded. This test's intent is a
-		// RESOLVED-org cross-tenant mismatch (org X resolves, then mismatches
-		// team/team-y) -> AUTH_NAMESPACE_DENIED, so the fixture needs a real
-		// slug claim, not a bare id.
+		// Org X is a MAPPED, active org (ownership comes from client_org_mapping,
+		// never the raw claim); the cross-tenant mismatch with team/team-y is
+		// refused RBAC_DENIED.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "team-x",
+				allowedOrchestrators: ["sigma"],
+				scopes: ["view-own-tasks"],
+				displayName: "team-x",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
 		const asOrgX = t.withIdentity({
 			subject: "user_test",
 			tokenIdentifier: "test|user_x",
@@ -240,6 +248,6 @@ describe("import_okf_bundle action — cross-tenant deny", () => {
 				mode: "merge",
 				idempotencyKey: "test-cross-tenant",
 			}),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
