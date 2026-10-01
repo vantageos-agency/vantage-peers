@@ -269,7 +269,14 @@ export default defineSchema({
 		.index("by_pilot", ["pilot", "status"])
 		.index("by_status", ["status", "createdAt"])
 		.index("by_priority", ["priority", "status"])
-		.index("by_orgId", ["orgId"]),
+		.index("by_orgId", ["orgId"])
+		// Org-keyed list reads (missions.list for non-master callers): the tenant
+		// predicate lives INSIDE the index range so `take(limit)` pages the
+		// caller's own rows, never the fleet's. `_creationTime` is the implicit
+		// trailing field, so each index is newest-first under `.order("desc")`.
+		.index("by_orgId_status", ["orgId", "status"])
+		.index("by_orgId_project_status", ["orgId", "project", "status"])
+		.index("by_orgId_pilot_status", ["orgId", "pilot", "status"]),
 
 	// ── tasks ──────────────────────────────────────────────────────────────────
 	tasks: defineTable({

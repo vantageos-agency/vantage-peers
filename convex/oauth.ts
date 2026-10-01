@@ -26,6 +26,7 @@ import {
 } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { requireOrgAdmin, withOrgScope } from "./lib/auth";
+import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -949,7 +950,9 @@ export const provisionOrganization = mutation({
 		}
 
 		const now = Date.now();
-		const scopes = args.scopes ?? ["view-own-tasks"];
+		// Default member scopes: own-org reads only; see lib/memberScopes.ts for
+		// the per-scope justification (no cross-tenant-read, no fleet aggregate).
+		const scopes = args.scopes ?? [...DEFAULT_MEMBER_SCOPES];
 		const mappingId = await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
 			displayName: args.displayName.trim(),
