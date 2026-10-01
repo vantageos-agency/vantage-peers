@@ -266,3 +266,126 @@ describe("memberScopesMigration:addDefaultMemberScopes", () => {
 		expect(r.isDone).toBe(false);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// missions:list — the grant is consulted INSIDE the read, not after it
+// (PR #1394 review). Burial pole: the member's own mission is OLDER than
+// `limit` newer missions of another org. A fleet-wide `take(limit)` followed by
+// filterByOrgScope served [] — byte-identical to "no missions".
+// ─────────────────────────────────────────────────────────────────────────────
+describe("missions:list — a member's mission is not buried under other orgs' newer rows", () => {
+	type Row = { name: string; orgId?: string };
+	const OTHERS = 40;
+
+	async function buried(t: T) {
+		await provision(t, "org-a", "seat-a");
+		await provision(t, "org-b", "seat-b");
+		await seedMission(t, "own-old", "org-a", "seat-a");
+		for (let i = 0; i < OTHERS; i++) {
+			await seedMission(t, `other-${i}`, "org-b", "seat-b");
+		}
+		// A legacy row with NO orgId, newest of all: never visible to a member.
+		await t.run((ctx) =>
+			ctx.db.insert("missions", {
+				name: "legacy-no-org",
+				project: "p",
+				status: "execute",
+				priority: "medium",
+				pilot: "seat-a",
+				agents: ["seat-a"],
+				createdBy: "seat-a",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as never),
+		);
+	}
+
+	const names = (rows: unknown) => (rows as Row[]).map((r) => r.name);
+
+	test("served for {} (default limit 50)", async () => {
+		const t = createT();
+		await buried(t);
+		expect(names(await asMemberOf(t, "org-a").query(api.missions.list, {}))).toEqual([
+			"own-old",
+		]);
+	});
+
+	test("served for the MCP defaults (limit 20, lite)", async () => {
+		const t = createT();
+		await buried(t);
+		const rows = await asMemberOf(t, "org-a").query(api.missions.list, {
+			limit: 20,
+			fields: "lite",
+		});
+		expect(names(rows)).toEqual(["own-old"]);
+	});
+
+	test("served for limit 1", async () => {
+		const t = createT();
+		await buried(t);
+		const rows = await asMemberOf(t, "org-a").query(api.missions.list, { limit: 1 });
+		expect(names(rows)).toEqual(["own-old"]);
+	});
+
+	test("served under a status filter and a project filter", async () => {
+		const t = createT();
+		await buried(t);
+		const m = asMemberOf(t, "org-a");
+		expect(names(await m.query(api.missions.list, { status: "execute", limit: 1 }))).toEqual([
+			"own-old",
+		]);
+		expect(names(await m.query(api.missions.list, { status: ["execute", "plan"], limit: 1 }))).toEqual([
+			"own-old",
+		]);
+		expect(names(await m.query(api.missions.list, { project: "p", limit: 1 }))).toEqual([
+			"own-old",
+		]);
+		expect(names(await m.query(api.missions.list, { pilot: "seat-a" as never, limit: 1 }))).toEqual([
+			"own-old",
+		]);
+	});
+
+	test("another org's missions and the orgId-less legacy row are never returned", async () => {
+		const t = createT();
+		await buried(t);
+		const rows = (await asMemberOf(t, "org-b").query(api.missions.list, {
+			limit: 100,
+		})) as Row[];
+		expect(rows).toHaveLength(OTHERS);
+		expect(rows.every((r) => r.orgId === "org-b")).toBe(true);
+		const own = (await asMemberOf(t, "org-a").query(api.missions.list, {
+			limit: 100,
+		})) as Row[];
+		expect(own.map((r) => r.name)).toEqual(["own-old"]);
+		expect(own.some((r) => r.name === "legacy-no-org")).toBe(false);
+	});
+
+	test("cursor paging (createdBefore) stays inside the org and pages correctly", async () => {
+		const t = createT();
+		await provision(t, "org-a", "seat-a");
+		await provision(t, "org-b", "seat-b");
+		for (let i = 0; i < 3; i++) await seedMission(t, `a-${i}`, "org-a", "seat-a");
+		for (let i = 0; i < 5; i++) await seedMission(t, `b-${i}`, "org-b", "seat-b");
+		const m = asMemberOf(t, "org-a");
+		const page1 = (await m.query(api.missions.list, { limit: 2 })) as (Row & {
+			_creationTime: number;
+		})[];
+		expect(names(page1)).toEqual(["a-2", "a-1"]);
+		const page2 = await m.query(api.missions.list, {
+			limit: 2,
+			createdBefore: page1[1]._creationTime,
+		});
+		expect(names(page2)).toEqual(["a-0"]);
+	});
+
+	test("master path unchanged: reads fleet-wide, legacy rows included", async () => {
+		const t = createT();
+		await buried(t);
+		const rows = (await t.query(internal.missions.listForWebhook, {
+			limit: 100,
+		})) as Row[];
+		expect(rows).toHaveLength(OTHERS + 2);
+		expect(rows.some((r) => r.name === "legacy-no-org")).toBe(true);
+		expect(rows.some((r) => r.name === "own-old")).toBe(true);
+	});
+});

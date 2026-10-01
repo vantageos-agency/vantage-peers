@@ -315,6 +315,7 @@ async function runMissionsList(
 	};
 
 	let allRows: MissionRow[];
+	const orgSlug = scope.orgSlug;
 
 	// Guard: project + pilot together is NOT covered by any compound index.
 	// The branches below pick ONE of {project, pilot} — silently combining
@@ -329,8 +330,79 @@ async function runMissionsList(
 		);
 	}
 
+	// NON-MASTER callers read through an ORG-KEYED index: the tenant predicate is
+	// inside the query, so `take` pages the caller's OWN rows. The earlier shape
+	// (fleet-wide take, then filterByOrgScope) consulted the grant AFTER the
+	// read — a member whose missions sat behind `limit` newer rows of other
+	// orgs was served [] (PR #1394 review). Rows with NO orgId never match
+	// `eq("orgId", slug)`, so legacy rows are invisible to a member (the same
+	// verdict filterByOrgScope's tenant gate gives); master still reads them.
+	if (!scope.isMaster) {
+		if (orgSlug === null) return [];
+		// createdBefore (cursor anchor) is pushed INTO the index range so the
+		// page is the next `limit` rows older than the anchor, not a short page.
+		// No anchor = an upper bound no creation time can reach.
+		const before = args.createdBefore ?? Number.MAX_VALUE;
+		// [orgId, project|pilot, status, _creationTime]: a range on creation time
+		// needs `status` pinned, so project/pilot without a status fan out over
+		// every status and merge newest-first below.
+		const statusList: (MissionStatus | undefined)[] =
+			statuses !== undefined
+				? (statuses as MissionStatus[])
+				: project !== undefined || pilot !== undefined
+					? [...MISSION_STATUSES]
+					: [undefined];
+		const perStatus = await Promise.all(
+			statusList.map(async (status) => {
+				const q = ctx.db.query("missions");
+				if (project !== undefined) {
+					return await q
+						.withIndex("by_orgId_project_status", (i) => {
+							return i
+								.eq("orgId", orgSlug)
+								.eq("project", project)
+								.eq("status", status as MissionStatus)
+								.lt("_creationTime", before);
+						})
+						.order("desc")
+						.take(fetchCap);
+				}
+				if (pilot !== undefined) {
+					return await q
+						.withIndex("by_orgId_pilot_status", (i) => {
+							return i
+								.eq("orgId", orgSlug)
+								.eq("pilot", pilot as MissionRow["pilot"])
+								.eq("status", status as MissionStatus)
+								.lt("_creationTime", before);
+						})
+						.order("desc")
+						.take(fetchCap);
+				}
+				if (status !== undefined) {
+					return await q
+						.withIndex("by_orgId_status", (i) => {
+							return i.eq("orgId", orgSlug).eq("status", status).lt("_creationTime", before);
+						})
+						.order("desc")
+						.take(fetchCap);
+				}
+				const rows = await q
+					.withIndex("by_orgId", (i) => {
+						return i.eq("orgId", orgSlug).lt("_creationTime", before);
+					})
+					.order("desc")
+					.take(fetchCap);
+				return rows;
+			}),
+		);
+		allRows = perStatus
+			.flat()
+			.sort((a, b) => b._creationTime - a._creationTime)
+			.slice(0, fetchCap);
+	}
 	// Filter by project + single status — use compound index
-	if (project !== undefined && statuses !== undefined && statuses.length === 1) {
+	else if (project !== undefined && statuses !== undefined && statuses.length === 1) {
 		allRows = await ctx.db
 			.query("missions")
 			.withIndex("by_project", (q) =>
