@@ -242,11 +242,18 @@ describe("agent retire surface", () => {
 			}),
 		).toEqual({ orgSlug: "org-a", agentName: "beta" });
 
-		// Already active: not a flip, but the sweep still runs and reports the
-		// freshly minted credential it just revoked.
+		// Already active: a NO-OP. The sweep is scoped to the inactive -> active
+		// transition, so a doubled call writes NOTHING and the live credential
+		// survives. At 00bd640a this returned { revoked: 1 } and cut the client
+		// — an outage path dressed as idempotence.
 		expect(
 			await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "beta" }),
-		).toEqual({ reactivated: false, revoked: 1 });
+		).toEqual({ reactivated: false, revoked: 0 });
+		expect(
+			await t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: fresh.secret,
+			}),
+		).toEqual({ orgSlug: "org-a", agentName: "beta" });
 		await expect(
 			admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "nobody" }),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
@@ -316,15 +323,136 @@ describe("agent retire surface", () => {
 		}
 	});
 
-	test("POLE 6c: reactivateAgent sweeps and reports even when the row was already active", async () => {
-		const { admin } = await seedThreeAgents(createT());
+	test("POLE 6c (INVERTED at the reviewer's verdict): reactivateAgent on an ALREADY-ACTIVE agent is a NO-OP and never cuts a live client", async () => {
+		// This pole asserted the OPPOSITE at 00bd640a, and the opposite was an
+		// OUTAGE PATH: a doubled call, or one naming a live agent by mistake,
+		// silently revoked a working client's credential and the client just
+		// stopped authenticating. The ruling that introduced the sweep is
+		// scoped to a REACTIVATED agent; an agent that was never retired has
+		// no escaped credential to catch, so the sweep buys nothing there.
+		// The pole flips with the code rather than being deleted, because a
+		// corpus that asserted the old behaviour is the evidence of what
+		// changed.
+		const { t, admin, secrets } = await seedThreeAgents(createT());
 		const res = await admin.mutation(api.agents.reactivateAgent, {
 			orgSlug: "org-a",
 			name: "beta",
 		});
-		expect(res).toEqual({ reactivated: false, revoked: 1 });
-		const rows = await activeRowsByName(admin);
-		expect(rows).toEqual({ alpha: 1, beta: 0, gamma: 1 });
+		expect(res).toEqual({ reactivated: false, revoked: 0 });
+		// Nothing moved, in either table, for ANY name.
+		expect(await activeRowsByName(admin)).toEqual({ alpha: 1, beta: 1, gamma: 1 });
+		const byName = await agentsActiveByName(admin);
+		for (const n of NAMES) expect(byName[n]).toBe(true);
+		// And the live client still authenticates — the outage this pole exists
+		// to catch is a REFUSAL here, not a count.
+		expect(
+			await t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secrets.beta,
+			}),
+		).toEqual({ orgSlug: "org-a", agentName: "beta" });
+	});
+
+	// CROSS-ORG LEG of the negative pole. The same agent NAME exists in org-b
+	// with a credential of its own. org-a's admin acting legitimately on
+	// org-a/beta must leave org-b/beta alone. POLE 5 only proves B's admin is
+	// refused on A; it does not prove this. Each test asserts BOTH directions:
+	// A's beta WAS retired (so a no-op mutation cannot pass) and B's beta was
+	// not.
+	async function seedOrgBBeta(t: T) {
+		await seedOrg(t, "org-b");
+		const adminB = t.withIdentity(adminOf("org-b"));
+		await adminB.mutation(api.agents.registerAgent, { orgSlug: "org-b", name: "beta" });
+		const minted = await adminB.mutation(api.agentCredentials.mintAgentCredential, {
+			orgSlug: "org-b",
+			agentName: "beta",
+		});
+		return { adminB, secretB: minted.secret };
+	}
+
+	async function expectOrgBBetaUntouched(
+		t: T,
+		adminB: ReturnType<T["withIdentity"]>,
+		secretB: string,
+	) {
+		const row = await adminB.query(api.agents.getAgent, { orgSlug: "org-b", name: "beta" });
+		expect(row?.isActive).toBe(true);
+		const st = await adminB.query(api.agentCredentials.getAgentCredentialStatus, {
+			orgSlug: "org-b",
+			agentName: "beta",
+		});
+		expect(st.activeRows).toBe(1);
+		expect(
+			await t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secretB,
+			}),
+		).toEqual({ orgSlug: "org-b", agentName: "beta" });
+	}
+
+	test("POLE 7a: same-named agent in another org — org-a deactivateAgent(beta) retires A/beta and leaves B/beta untouched", async () => {
+		const { t, admin, secrets } = await seedThreeAgents(createT());
+		const { adminB, secretB } = await seedOrgBBeta(t);
+
+		expect(
+			await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", name: "beta" }),
+		).toEqual({ deactivated: true, revoked: 1 });
+
+		// Positive leg: A/beta really was retired.
+		expect((await agentsActiveByName(admin)).beta).toBe(false);
+		expect((await activeRowsByName(admin)).beta).toBe(0);
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secrets.beta,
+			}),
+		).rejects.toThrow(/credential-not-recognised/);
+		// Negative leg: B/beta untouched.
+		await expectOrgBBetaUntouched(t, adminB, secretB);
+	});
+
+	test("POLE 7b: same-named agent in another org — org-a revokeAgentCredential(beta) revokes A/beta and leaves B/beta untouched", async () => {
+		const { t, admin, secrets } = await seedThreeAgents(createT());
+		const { adminB, secretB } = await seedOrgBBeta(t);
+
+		expect(
+			await admin.mutation(api.agentCredentials.revokeAgentCredential, {
+				orgSlug: "org-a",
+				agentName: "beta",
+			}),
+		).toEqual({ revoked: 1 });
+
+		expect((await activeRowsByName(admin)).beta).toBe(0);
+		await expect(
+			t.query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secrets.beta,
+			}),
+		).rejects.toThrow(/credential-not-recognised/);
+		await expectOrgBBetaUntouched(t, adminB, secretB);
+	});
+
+	test("POLE 7c: same-named agent in another org — org-a reactivateAgent(beta) sweep does not reach B/beta", async () => {
+		const { t, admin } = await seedThreeAgents(createT());
+		const { adminB, secretB } = await seedOrgBBeta(t);
+
+		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", name: "beta" });
+		// Constructed: a surviving credential on inactive A/beta, so the
+		// reactivation sweep has something to revoke and a widened sweep would
+		// have a reason to reach B.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("agent_credentials", {
+				orgSlug: "org-a",
+				agentName: "beta",
+				secretHash: "escaped-row-hash-7c",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		expect(
+			await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "beta" }),
+		).toEqual({ reactivated: true, revoked: 1 });
+
+		// Positive leg: A/beta is back and its escaped row was swept.
+		expect((await agentsActiveByName(admin)).beta).toBe(true);
+		expect((await activeRowsByName(admin)).beta).toBe(0);
+		await expectOrgBBetaUntouched(t, adminB, secretB);
 	});
 
 	test("POLE 5: CROSS-ORG DENY — an ordinary org-admin of B is refused RBAC_DENIED on all three mutations against A, and A is untouched", async () => {

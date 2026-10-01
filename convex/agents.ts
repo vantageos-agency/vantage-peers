@@ -175,6 +175,7 @@ export const deactivateAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string() },
 	returns: v.object({ deactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test — measured 2026-10-01 with `grep -rnE "deactivateAgent|reactivateAgent|revokeAgentCredential" /root/coding/vantage-peers-dashboard mcp-server/src --include=*.ts --include=*.tsx --exclude-dir=node_modules --exclude-dir=.next` -> 0 hits. No subscribing pre-org client shell can reach this retire write; a signed-in caller with no organisation is refused RBAC_DENIED by requireOrgAdmin, an R-16 refusal thrown at an imperative SDK call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await ctx.db
@@ -242,6 +243,7 @@ export const reactivateAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string() },
 	returns: v.object({ reactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test (same grep as deactivateAgent, 0 hits in the dashboard and mcp-server/src). This is the way BACK for a retired identity and also sweeps credentials, so it is a deliberately chosen admin act: a pre-organisation client has no render path to it, and requireOrgAdmin refuses it RBAC_DENIED at an imperative call, an R-16 refusal rather than an uncaught Server Error.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await ctx.db
@@ -259,13 +261,29 @@ export const reactivateAgent = mutation({
 			);
 		}
 
-		const revoked = await revokeActiveCredentialRows(
-			ctx,
-			args.orgSlug,
-			args.name,
-		);
+		// THE SWEEP IS SCOPED TO THE inactive -> active TRANSITION, and that
+		// bound is load-bearing. Sweeping unconditionally — which this handler
+		// did at 00bd640a — turns reactivateAgent into an OUTAGE PATH: a
+		// doubled call, or a call naming a live agent by mistake, silently
+		// revokes a working client's credential and the client simply stops
+		// authenticating. Reviewer verdict on #1380 @ 00bd640a.
+		//
+		// The retirement bypass this sweep exists to close only arises on the
+		// RETURN of a retired identity, so that is the only place it belongs:
+		// a credential that escaped `deactivateAgent`'s sweep meets this one
+		// when the identity comes back. An agent that was never retired has no
+		// escaped credential to catch, so the sweep buys nothing there and
+		// costs an outage. Belt and braces across the two ENDS of a
+		// retirement, never a sweep on every call — do not "simplify" this by
+		// hoisting it out of the branch.
 		const reactivated = !existing.isActive;
+		let revoked = 0;
 		if (reactivated) {
+			revoked = await revokeActiveCredentialRows(
+				ctx,
+				args.orgSlug,
+				args.name,
+			);
 			await ctx.db.patch(existing._id, { isActive: true });
 		}
 		return { reactivated, revoked };

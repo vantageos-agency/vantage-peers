@@ -155,6 +155,7 @@ export const revokeAgentCredential = mutation({
 	args: { orgSlug: v.string(), agentName: v.string() },
 	returns: v.object({ revoked: v.number() }),
 	handler: async (ctx, args) => {
+		// write-contract: no mcp-server/src/tools.ts wiring and no dashboard reference exists for "agentCredentials:revokeAgentCredential" (same grep, 0 hits). Its only callers are convex-test direct mutations; a pre-organisation client has no render path to a credential revoke, and requireOrgAdmin refuses it RBAC_DENIED at an imperative call, an R-16 refusal, never an uncaught Server Error.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const agent = await ctx.db
