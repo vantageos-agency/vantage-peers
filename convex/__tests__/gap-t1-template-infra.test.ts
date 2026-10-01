@@ -54,7 +54,7 @@ describe("GAP-T1 get_mission_template — missionTemplates.getByName query", () 
 			createdBy: "sigma",
 		});
 
-		const tpl = await t.query(api.missionTemplates.getByName, {
+		const tpl = await asMaster(t).query(api.missionTemplates.getByName, {
 			name: "gap-t1-test-template",
 		});
 		expect(tpl).not.toBeNull();
@@ -64,7 +64,7 @@ describe("GAP-T1 get_mission_template — missionTemplates.getByName query", () 
 
 	test("edge case — unknown template name returns null", async () => {
 		const t = createTestConvex();
-		const tpl = await t.query(api.missionTemplates.getByName, {
+		const tpl = await asMaster(t).query(api.missionTemplates.getByName, {
 			name: "no-such-template",
 		});
 		expect(tpl).toBeNull();

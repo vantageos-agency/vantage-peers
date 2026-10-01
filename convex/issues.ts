@@ -6,7 +6,7 @@ import {
 	query,
 	type QueryCtx,
 } from "./_generated/server";
-import { api } from "./_generated/api";
+import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
@@ -111,7 +111,7 @@ export const upsertFromGitHub = internalMutation({
 		const body = args.body.slice(0, 2000);
 
 		// Get assignedOrchestrator + project from repo mapping
-		const mapping = await ctx.runQuery(api.githubRepoMapping.getByRepo, {
+		const mapping = await ctx.runQuery(internal.githubRepoMapping.getByRepoInternal, {
 			repo: args.repo,
 		});
 		const assignedOrchestrator: string = mapping?.orchestrator ?? "sigma";

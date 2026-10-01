@@ -1,6 +1,12 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+	type QueryCtx,
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
+} from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
@@ -86,19 +92,50 @@ const templateDocValidator = v.object({
 // getByName — fetch a template by its unique name
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Shared body of the public door and its internal twin.
+async function lookupTemplateByName(ctx: QueryCtx, name: string) {
+	const template = await ctx.db
+		.query("missionTemplates")
+		.withIndex("by_name", (q) => q.eq("name", name))
+		.unique();
+	// Soft-deleted templates are invisible to reads, like a superseded memory.
+	if (template !== null && template.deletedAt !== undefined) {
+		return null;
+	}
+	return template;
+}
+
+// Public door. Fleet-master only: the catalog is shared fleet-wide with no
+// orgId column, so there is no tenant predicate — same admission as
+// `listNames` and the `upsert`/`softDelete` writes. An ordinary org member is
+// REFUSED by raising (`masterOnly`), never answered with a null that would
+// read as "no such template".
+// isolation-contract: no reactive subscriber. Enumerated by command against
+// the only subscribing consumer (vantage-peers-dashboard):
+//   grep -rn "api\.missionTemplates\." --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
+// So `alsoRefusePreOrg` is safe: no mounted render exists for the throw to crash.
+// The webhook in convex/http.ts runs with NO identity and uses
+// `getByNameInternal` below.
 export const getByName = query({
 	args: { name: v.string() },
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
-		const template = await ctx.db
-			.query("missionTemplates")
-			.withIndex("by_name", (q) => q.eq("name", args.name))
-			.unique();
-		// Soft-deleted templates are invisible to reads, like a superseded memory.
-		if (template !== null && template.deletedAt !== undefined) {
-			return null;
-		}
-		return template;
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "missionTemplates:getByName", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
+		return await lookupTemplateByName(ctx, args.name);
+	},
+});
+
+// Internal twin — callable only from other Convex functions (the HMAC-verified
+// GitHub webhook). Not reachable from the public internet.
+export const getByNameInternal = internalQuery({
+	args: { name: v.string() },
+	returns: v.union(templateDocValidator, v.null()),
+	handler: async (ctx, args) => {
+		return await lookupTemplateByName(ctx, args.name);
 	},
 });
 
