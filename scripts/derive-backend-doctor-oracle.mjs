@@ -49,9 +49,18 @@
  *   rbac_coherence_table  per table group: the set of authority tiers of the
  *                    read rows vs of the write rows; equal (or one side empty)
  *                    => COHERENT(...), else INCOHERENT read=... write=...
+ *                    A row's tier is what the Convex handlers it reaches
+ *                    enforce on the data door (master / org, see convexTierOf),
+ *                    NOT the MCP transport label: a direct caller of the public
+ *                    backend never passes through the MCP layer.
  *   rbac_adjustment_needed  a remediation decision, no code source => `?`,
- *                    except a `public`/`filtered` scope `reason` string, which
- *                    is quoted verbatim (never rewritten into a token).
+ *                    except (1) the tool's own `// oracle-justified: <reason>`
+ *                    comment block, immediately before its defineTool( call,
+ *                    emitted as `JUSTIFIED: <reason>` (the reason is the
+ *                    author's statement in the source, never generated here;
+ *                    a marker without reason text makes the population guard
+ *                    refuse), and (2) a `public`/`filtered` scope `reason`
+ *                    string, quoted verbatim as `source reason (...)`.
  *   table_purpose    the leading comment of the table in convex/schema.ts
  *                    (banner lines dropped); `?` when there is none.
  *   table_conserver_supprimer  a disposition decision, no code source => "".
@@ -434,6 +443,10 @@ function convexFacts(fnKeys) {
 		paginate: false,
 		external: false,
 		guards: new Set(),
+		// per reached Convex function: the tier its OWN handler enforces on the
+		// data door (see convexTierOf) — the coherence flag compares THESE, not
+		// the MCP transport label.
+		tiers: new Set(),
 		text: "",
 		resolved: [],
 		unresolved: [],
@@ -451,13 +464,19 @@ function convexFacts(fnKeys) {
 				facts.idTables.add(m[1]);
 		if (!fn.handler) continue;
 		const { nodes } = reach(fn.file, fn.handler, { followConvexRuns: true });
+		const fnGuards = new Set();
+		let fnText = "";
 		for (const [, node] of nodes) {
 			const text = node.getText();
 			facts.text += `\n${text}`;
+			fnText += `\n${text}`;
 			for (const m of text.matchAll(/searchType\s*:\s*"(vector|text|hybrid)"/g))
 				facts.search.add(m[1]);
 			for (const g of GUARDS)
-				if (new RegExp(`\\b${g}\\s*\\(`).test(text)) facts.guards.add(g);
+				if (new RegExp(`\\b${g}\\s*\\(`).test(text)) {
+					facts.guards.add(g);
+					fnGuards.add(g);
+				}
 			forEachDeep(node, (n) => {
 				if (!ts.isCallExpression(n)) return;
 				const callee = n.expression;
@@ -533,8 +552,41 @@ function convexFacts(fnKeys) {
 				}
 			});
 		}
+		facts.tiers.add(convexTierOf(fnText, fnGuards));
 	}
 	return facts;
+}
+
+/**
+ * The tier ONE Convex handler enforces on the data door, read from its own
+ * reached source (never from the MCP transport label, which a direct caller
+ * of the public backend bypasses):
+ *   master    the handler admits only the fleet master: `masterOnly: true`
+ *             on requireResolvedCaller, or an `if (!scope.isMaster)` that
+ *             throws or returns (requireFleetMaster / requireMasterScope
+ *             helpers included, they are reached like any helper);
+ *   org       it resolves the caller's organisation (a GUARDS resolver)
+ *             without a master-only gate;
+ *   unguarded it reaches no resolver at all.
+ */
+function convexTierOf(text, guards) {
+	if (
+		/masterOnly\s*:\s*true/.test(text) ||
+		/if\s*\(\s*!\s*scope\.isMaster\s*\)\s*\{?\s*(throw|return)\b/.test(text)
+	)
+		return "master";
+	return guards.size > 0 ? "org" : "unguarded";
+}
+
+/**
+ * The tier a tool's coherence is judged on: what the Convex handlers it can
+ * reach enforce. A tool reaching ANY org-admitting handler is org (the most
+ * permissive reachable door decides); only-master handlers => master; a tool
+ * with an unguarded handler, or none reached, keeps its MCP-layer tier.
+ */
+function effectiveTier(mcpTier, cf) {
+	if (cf.tiers.size === 0 || cf.tiers.has("unguarded")) return mcpTier;
+	return cf.tiers.has("org") ? "org" : "master";
 }
 
 /** Closed verb (backend-doctor src/detectors/predicates.ts:39-51) or `?`. */
@@ -595,6 +647,41 @@ function objProps(node, file) {
 	return out;
 }
 
+/**
+ * The written justification a tool's source carries for a divergence from its
+ * table neighbours: a `// oracle-justified: <reason>` comment block placed
+ * immediately before the tool's `defineTool(` statement (continuation lines
+ * are the following `//` lines of the same block). The reason is the
+ * author's own statement, never generated here; a marker with no reason text
+ * makes the population guard refuse (returned as `{ empty: true }`).
+ */
+function justificationOf(file, call) {
+	let stmt = call;
+	while (
+		stmt.parent &&
+		!ts.isBlock(stmt.parent) &&
+		!ts.isSourceFile(stmt.parent) &&
+		!ts.isModuleBlock(stmt.parent)
+	)
+		stmt = stmt.parent;
+	const text = sourceOf(file).getFullText();
+	const lines = [];
+	for (const r of ts.getLeadingCommentRanges(text, stmt.getFullStart()) ?? [])
+		lines.push(
+			...text
+				.slice(r.pos, r.end)
+				.split("\n")
+				.map((l) => l.replace(/^\s*\/\/ ?/, "").trim()),
+		);
+	const at = lines.findLastIndex((l) => l.startsWith("oracle-justified:"));
+	if (at < 0) return null;
+	const reason = [lines[at].slice("oracle-justified:".length), ...lines.slice(at + 1)]
+		.join(" ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return reason === "" ? { empty: true } : { reason };
+}
+
 const tools = [];
 const mcpFiles = walkFiles(MCP_SRC).filter(
 	(f) => !f.endsWith("registerTool.ts"),
@@ -626,7 +713,11 @@ for (const file of mcpFiles) {
 			scope[k] = evalString(file, v) ?? v.getText();
 		const schemaNode = strip(a[5]);
 		const handler = a[a.length - 1];
+		const justification = justificationOf(file, n);
+		if (justification?.empty)
+			astSkipped.push(`${where} oracle-justified marker carries no reason text`);
 		tools.push({
+			justification: justification?.reason ?? "",
 			file,
 			line: sourceOf(file).getLineAndCharacterOfPosition(n.getStart()).line + 1,
 			name,
@@ -949,9 +1040,13 @@ for (const t of tools) {
 	const tokens = Math.ceil(
 		((t.name ?? "").length + t.description.length + sf.text.length) / 4,
 	);
-	const reason = t.scope.reason
-		? `source reason (${t.scope.kind}): ${t.scope.reason}`
-		: UNKNOWN;
+	const reason =
+		[
+			t.justification ? `JUSTIFIED: ${t.justification}` : "",
+			t.scope.reason ? `source reason (${t.scope.kind}): ${t.scope.reason}` : "",
+		]
+			.filter(Boolean)
+			.join(" | ") || UNKNOWN;
 	const purpose = tables.size
 		? [...tables]
 				.sort()
@@ -967,7 +1062,7 @@ for (const t of tools) {
 			"; ",
 		) || "(no Convex call reached)";
 	rows.push({
-		_tier: auth.tier,
+		_tier: effectiveTier(auth.tier, cf),
 		_verb: verb,
 		_src: `${relative(ROOT, t.file)}:${t.line}`,
 		table,

@@ -233,6 +233,10 @@ export function registerKbIngestTools(
 	);
 
 	// ── soft_delete_document ───────────────────────────────────────────────────
+	// oracle-justified: kb:softDeleteDocument is an action that flags a document's chunks isLatest=false inside the
+	//   caller's own team namespace, filtered in-handler by org (assertScopeAuthorizesOrg,
+	//   convex/kb.ts); list_episodes is a namespace-read tool (checkNamespaceRead on the namespace
+	//   argument).
 	defineTool(
 		server,
 		authCtx,
