@@ -42,8 +42,9 @@ import { randomUUID } from "node:crypto";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action } from "./_generated/server";
+import { type ActionCtx, action } from "./_generated/server";
 import { assertOrgArgs, assertScopeAuthorizesOrg } from "./kbShared";
+import { requireResolvedCaller } from "./lib/auth";
 
 // NOTE: the upload-URL-minting mutation lives in convex/kbMutations.ts
 // (V8 runtime), NOT here. Convex rejects public mutations defined in a
@@ -170,6 +171,38 @@ export function chunkText(text: string): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// resolveKbCaller — the ONE way a KB action resolves and refuses its caller.
+//
+// An action has no ctx.db, so it cannot call `withOrgScope` directly; it reaches
+// it through the internal bridge `resolveOrgScopeForAction` (convex/lib/auth.ts).
+// This wraps that bridge and the refusal in one place, exactly as
+// `resolveSearchNamespace` does in convex/search.ts, so both KB doors bind the
+// resolved scope and refuse an unresolved caller by the same helper every read
+// and write in this repo refuses through (`requireResolvedCaller`: RAISES
+// `RBAC_DENIED` naming `registration`; never a typed empty).
+//
+// `isolation-contract:` `alsoRefusePreOrg` is safe -- an action has no reactive
+// subscriber (a render cannot subscribe to one), and no dashboard code reaches
+// these doors. Enumerated by command:
+//   grep -rln "api\.kb\.\|storeDocumentChunked\|softDeleteDocument" \
+//     app components hooks lib contexts providers   # in vantage-peers-dashboard -> 0 hits
+// The one consumer is the MCP kb tools (one-shot calls with a credential).
+// See .claude/rules/refusal-is-distinguishable-from-absence.md.
+//
+// The caller still has to NARROW to the org it claims: the handler passes the
+// returned scope to `assertScopeAuthorizesOrg` (args.orgId may confirm the
+// resolved org, never re-scope the call).
+// ─────────────────────────────────────────────────────────────────────────────
+async function resolveKbCaller(ctx: ActionCtx, registration: string) {
+	const scope = await ctx.runQuery(
+		internal.lib.auth.resolveOrgScopeForAction,
+		{},
+	);
+	requireResolvedCaller(scope, registration, { alsoRefusePreOrg: true });
+	return scope;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // storeDocumentChunked — main public action
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -206,14 +239,14 @@ export const storeDocumentChunked = action({
 		//    setAuth call — server-http.ts:1437). Defense-in-depth: validate args.
 		//    namespace here is the team-prefix: "team/<orgId>" (without docId).
 		//    The full doc namespace is assembled below as team/<orgId>/<docId>.
-		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 
-		// ORDER: argument SHAPE first (assertOrgArgs, immediately above), then the
-		// AUTHORITY JOIN. Shape-validating first preserves this surface's
-		// pre-existing AUTH_NO_ORG_ID contract for malformed input (pinned by
-		// convex/__tests__/kb-ingest.test.ts) and leaks nothing -- it only ever
-		// reports that the caller's OWN two arguments disagree with each other.
-		// The authority gate still runs before ANY data is read or written.
+		// ORDER: argument SHAPE first (assertOrgArgs), then the AUTHORITY JOIN.
+		// Shape-validating first preserves this surface's pre-existing
+		// AUTH_NO_ORG_ID contract for malformed input (pinned by
+		// convex/__tests__/kb-ingest.test.ts, anonymous caller included) and leaks
+		// nothing -- it only ever reports that the caller's OWN two arguments
+		// disagree with each other. The authority gate (resolveKbCaller, then
+		// assertScopeAuthorizesOrg) still runs before ANY data is read or written.
 		//
 		// WHY THE AUTHORITY JOIN IS NEEDED AT ALL: assertOrgArgs compares two
 		// CALLER-SUPPLIED arguments against each other. It proves the request is
@@ -226,10 +259,8 @@ export const storeDocumentChunked = action({
 		// CONFIRM the resolved org, it can never re-scope the call. Refuses BY
 		// THROW -- this is an imperative WRITE. See
 		// .claude/rules/authority-attached-to-anonymous-object.md.
-		const scope = await ctx.runQuery(
-			internal.lib.auth.resolveOrgScopeForAction,
-			{},
-		);
+		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
+		const scope = await resolveKbCaller(ctx, "kb:storeDocumentChunked");
 		assertScopeAuthorizesOrg(scope, args.orgId);
 
 		// 2. Resolve docId and full namespace
@@ -328,14 +359,14 @@ export const softDeleteDocument = action({
 	handler: async (ctx, args) => {
 		// Auth — same oauthCtx→args pattern as storeDocumentChunked (B4 #915).
 		// namespace is "team/<orgId>" prefix; full doc namespace is team/<orgId>/<docId>.
-		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 
-		// ORDER: argument SHAPE first (assertOrgArgs, immediately above), then the
-		// AUTHORITY JOIN. Shape-validating first preserves this surface's
-		// pre-existing AUTH_NO_ORG_ID contract for malformed input (pinned by
-		// convex/__tests__/kb-ingest.test.ts) and leaks nothing -- it only ever
-		// reports that the caller's OWN two arguments disagree with each other.
-		// The authority gate still runs before ANY data is read or written.
+		// ORDER: argument SHAPE first (assertOrgArgs), then the AUTHORITY JOIN.
+		// Shape-validating first preserves this surface's pre-existing
+		// AUTH_NO_ORG_ID contract for malformed input (pinned by
+		// convex/__tests__/kb-ingest.test.ts, anonymous caller included) and leaks
+		// nothing -- it only ever reports that the caller's OWN two arguments
+		// disagree with each other. The authority gate (resolveKbCaller, then
+		// assertScopeAuthorizesOrg) still runs before ANY data is read or written.
 		//
 		// WHY THE AUTHORITY JOIN IS NEEDED AT ALL: assertOrgArgs compares two
 		// CALLER-SUPPLIED arguments against each other. It proves the request is
@@ -348,10 +379,8 @@ export const softDeleteDocument = action({
 		// CONFIRM the resolved org, it can never re-scope the call. Refuses BY
 		// THROW -- this is an imperative WRITE. See
 		// .claude/rules/authority-attached-to-anonymous-object.md.
-		const scope = await ctx.runQuery(
-			internal.lib.auth.resolveOrgScopeForAction,
-			{},
-		);
+		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
+		const scope = await resolveKbCaller(ctx, "kb:softDeleteDocument");
 		assertScopeAuthorizesOrg(scope, args.orgId);
 
 		const namespace = `${args.namespace}/${args.docId}`;
