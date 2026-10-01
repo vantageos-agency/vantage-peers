@@ -688,16 +688,16 @@ export const deleteBriefingNote = mutation({
 		}
 
 		if (args.callerOrchestrator === undefined) {
-			throw new Error(
-				"Unauthorized: callerOrchestrator is required to delete a briefing note — omitting it is refused, not exempted",
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required to delete a briefing note — omitting it is refused, not exempted — ${JSON.stringify({ registration: "briefingNotes:deleteBriefingNote", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
 			);
 		}
 		if (
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			note.createdBy !== args.callerOrchestrator
 		) {
-			throw new Error(
-				`Unauthorized: only ${note.createdBy} (creator) or system can delete this briefing note`,
+			throw new ConvexError(
+				`RBAC_DENIED: only ${note.createdBy} (creator) or system can delete this briefing note — ${JSON.stringify({ registration: "briefingNotes:deleteBriefingNote", orgSlug: scope.orgSlug, reason: "not-creator" })}`,
 			);
 		}
 
@@ -766,8 +766,8 @@ export const update = mutation({
 			note.createdBy === callerOrchestrator ||
 			isFleetSystemCaller(scope, callerOrchestrator);
 		if (!isAuthorized) {
-			throw new Error(
-				`Unauthorized: ${callerOrchestrator} is not creator of this briefing note`,
+			throw new ConvexError(
+				`RBAC_DENIED: ${callerOrchestrator} is not creator of this briefing note — ${JSON.stringify({ registration: "briefingNotes:update", orgSlug: scope.orgSlug, reason: "not-creator" })}`,
 			);
 		}
 		const patch: Record<string, unknown> = {

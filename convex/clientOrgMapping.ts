@@ -56,6 +56,7 @@ export const getByClerkSlug = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.clientOrgMapping\.getByClerkSlug' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Its caller is the MCP transport via imperative convex query (mcp-server/src/auth.ts:1194), not a subscription. R-50 declared divergence (a claim, verified against that enumeration).
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
 			throw new ConvexError(

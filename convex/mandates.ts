@@ -128,8 +128,8 @@ export const accept = mutation({
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			args.callerOrchestrator !== mandate.fulfilledBy
 		) {
-			throw new Error(
-				`Unauthorized: only ${mandate.fulfilledBy} (fulfilledBy) or system can accept this mandate`,
+			throw new ConvexError(
+				`RBAC_DENIED: only ${mandate.fulfilledBy} (fulfilledBy) or system can accept this mandate — ${JSON.stringify({ registration: "mandates:accept", orgSlug: scope.orgSlug, reason: "not-fulfilled-by" })}`,
 			);
 		}
 		await ctx.db.patch(args.mandateId, {
@@ -163,8 +163,8 @@ export const update = mutation({
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			args.callerOrchestrator !== mandate.fulfilledBy
 		) {
-			throw new Error(
-				`Unauthorized: only ${mandate.fulfilledBy} (fulfilledBy) or system can update this mandate`,
+			throw new ConvexError(
+				`RBAC_DENIED: only ${mandate.fulfilledBy} (fulfilledBy) or system can update this mandate — ${JSON.stringify({ registration: "mandates:update", orgSlug: scope.orgSlug, reason: "not-fulfilled-by" })}`,
 			);
 		}
 
@@ -204,8 +204,8 @@ export const settle = mutation({
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			args.callerOrchestrator !== mandate.requestedBy
 		) {
-			throw new Error(
-				`Unauthorized: only ${mandate.requestedBy} (requestedBy) or system can settle this mandate`,
+			throw new ConvexError(
+				`RBAC_DENIED: only ${mandate.requestedBy} (requestedBy) or system can settle this mandate — ${JSON.stringify({ registration: "mandates:settle", orgSlug: scope.orgSlug, reason: "not-requested-by" })}`,
 			);
 		}
 		const now = Date.now();

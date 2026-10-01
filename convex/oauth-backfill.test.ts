@@ -204,4 +204,40 @@ describe("oauthMigrations.backfillTokenEndpointAuthMethod", () => {
 			expect(rowB?.tokenEndpointAuthMethod).toBe("client_secret_basic");
 		});
 	});
+
+	test("B6 — bounded batches: 5 clients with batchSize=2 drain over 3 pages, every row patched", async () => {
+		const t = createTestConvex();
+		await seedProfiles(t);
+		for (const n of ["b6-a", "b6-b", "b6-c", "b6-d", "b6-e"]) {
+			await insertClient(t, n);
+		}
+
+		const first = await t.mutation(
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{ batchSize: 2 },
+		);
+		// One page only: bounded by batchSize, not by table size.
+		expect(first.scanned).toBe(2);
+		expect(first.backfilled).toBe(2);
+		expect(first.isDone).toBe(false);
+
+		// The continuation was scheduled; drain it.
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		await t.run(async (ctx) => {
+			const rows = await ctx.db.query("oauth_clients").collect();
+			expect(rows.length).toBe(5);
+			for (const r of rows) {
+				expect(r.tokenEndpointAuthMethod).toBe("client_secret_basic");
+			}
+		});
+
+		// Re-run over the drained table: nothing left to patch.
+		const again = await t.mutation(
+			internal.oauthMigrations.backfillTokenEndpointAuthMethod,
+			{ batchSize: 100 },
+		);
+		expect(again.backfilled).toBe(0);
+		expect(again.isDone).toBe(true);
+	});
 });

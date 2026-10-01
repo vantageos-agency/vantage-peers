@@ -292,16 +292,16 @@ export const deleteDiary = mutation({
 		}
 
 		if (args.callerOrchestrator === undefined) {
-			throw new Error(
-				"Unauthorized: callerOrchestrator is required to delete a diary entry — omitting it is refused, not exempted",
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required to delete a diary entry — omitting it is refused, not exempted — ${JSON.stringify({ registration: "diary:deleteDiary", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
 			);
 		}
 		if (
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			entry.orchestrator !== args.callerOrchestrator
 		) {
-			throw new Error(
-				`Unauthorized: only ${entry.orchestrator} (owner) or system can delete this diary entry`,
+			throw new ConvexError(
+				`RBAC_DENIED: only ${entry.orchestrator} (owner) or system can delete this diary entry — ${JSON.stringify({ registration: "diary:deleteDiary", orgSlug: scope.orgSlug, reason: "not-owner" })}`,
 			);
 		}
 

@@ -403,42 +403,6 @@
     "reason": "Second profiles.collect() in the same handler (non-broadcast channel-resolution branch) \u2014 same defect as ::1, same table, same hot path. Not fixed here; to be filed.",
     "verdict": "IN"
   },
-  "convex/migrations.ts::backfillTaskTimes::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestBriefings::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMemories::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMessages::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMessages::2": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMissions::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestTasks::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::migrateDiaryOrchestrator::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::migrateMemoriesNamespace::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
   "convex/missionTemplates.ts::listNames::1": {
     "reason": "not yet examined",
     "verdict": "UNJUDGED"

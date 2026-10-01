@@ -23,7 +23,7 @@
  * `callerToken` to be a non-empty string matching BEARER_SECRET_MASTER for
  * EVERY caller — the org-admin (no callerToken) calls below would have
  * thrown "BEARER_SECRET_MASTER env var is not configured" /
- * "Unauthorized: invalid master token" instead of succeeding/refusing on
+ * "RBAC_DENIED: invalid master token" instead of succeeding/refusing on
  * the ORG-SCOPING property this file actually tests. Reproduced via
  * `git stash` in the RETURN SHAPE section of the dispatching brief.
  */
@@ -279,7 +279,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 					displayName: "Master Path Org 2",
 					orchestrators: [{ name: "master-seat-2" }],
 				}),
-			).rejects.toThrow(/Unauthorized: invalid master token/);
+			).rejects.toThrow(/RBAC_DENIED: invalid master token/);
 		} finally {
 			if (previous === undefined) {
 				delete process.env.BEARER_SECRET_MASTER;

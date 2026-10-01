@@ -321,6 +321,96 @@ describe("T8 — cascade revoke access_tokens citing profile", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// T8b — cascade revoke is bounded (R-31): read through by_scopeProfile, at most
+// 500 rows per table per profile name per transaction, the rest drained by a
+// scheduled continuation. Rows of OTHER profiles are never touched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("T8b — cascade revoke is bounded and still revokes the right rows", () => {
+	test("501 access tokens: first transaction revokes 500, continuation drains the last; other profile untouched", async () => {
+		const t = createTestConvex();
+		await seedLeakedProfile(t);
+
+		const row = (i: number, scopeProfile: string) => ({
+			tokenHash: i.toString(16).padStart(64, "0"),
+			clientId: `client-bulk-${i}`,
+			userId: "marie",
+			scopes: ["vantage:read"],
+			scopeProfile,
+			fromAllowList: ["marie"],
+			namespaceReadPrefixes: ["orchestrator/marie"],
+			namespaceWritePrefixes: ["orchestrator/marie"],
+			expiresAt: Date.now() + 3600_000,
+			createdAt: Date.now(),
+		});
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 501; i++) {
+				await ctx.db.insert("oauth_access_tokens", row(i, "marie-iris-rh"));
+			}
+			await ctx.db.insert("oauth_access_tokens", row(9001, "other-profile"));
+			await ctx.db.insert("oauth_refresh_tokens", {
+				tokenHash: "cc".repeat(32),
+				clientId: "client-marie-r",
+				userId: "marie",
+				scopeProfile: "marie-iris-rh",
+				expiresAt: Date.now() + 3600_000,
+				createdAt: Date.now(),
+			});
+		});
+
+		const result = await asServiceAccount(t).mutation(
+			api.oauth.patchScopeProfileEmergency,
+			{
+				profileId: "marie-iris-rh",
+				cascadeRevokeTokens: true,
+				reason: REASON_OK,
+			},
+		);
+		// Bounded: 500 access + the 1 refresh token in the first transaction.
+		expect(result.cascadeRevokedCount).toBe(501);
+		await t.run(async (ctx) => {
+			const left = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", "marie-iris-rh"),
+				)
+				.collect();
+			expect(left.length).toBe(1);
+		});
+
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		await t.run(async (ctx) => {
+			const left = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", "marie-iris-rh"),
+				)
+				.collect();
+			expect(left.length).toBe(0);
+			const other = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_scopeProfile", (q) =>
+					q.eq("scopeProfile", "other-profile"),
+				)
+				.collect();
+			expect(other.length).toBe(1);
+			const audits = await ctx.db
+				.query("oauth_audit_log")
+				.withIndex("by_targetProfileId", (q) =>
+					q.eq("targetProfileId", "marie-iris-rh"),
+				)
+				.collect();
+			const cont = audits.filter(
+				(a) => a.eventType === "scope_profile_emergency_cascade_continuation",
+			);
+			expect(cont.length).toBe(1);
+			expect(cont[0].cascadeRevokedCount).toBe(1);
+		});
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // T9 — audit log row inserted
 // ─────────────────────────────────────────────────────────────────────────────
 

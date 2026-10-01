@@ -4474,6 +4474,7 @@ export const listReviewBacklogByLineage = internalQuery({
 	args: {},
 	returns: v.object({
 		automation: v.array(
+			// returns-projection: backlog-sweep identity row (id, title, parsed PR link) — the sweep closes by id and never reads the rest of the task document
 			v.object({
 				_id: v.id("tasks"),
 				title: v.string(),
@@ -4482,6 +4483,7 @@ export const listReviewBacklogByLineage = internalQuery({
 			}),
 		),
 		bootstrapNoPrLink: v.array(
+			// returns-projection: backlog-sweep identity row (id, title) for review tasks with no parseable PR link — reported for manual triage, the rest of the task document is not needed
 			v.object({
 				_id: v.id("tasks"),
 				title: v.string(),
