@@ -456,19 +456,20 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 			type: "reference",
 		});
 
-		// The MESSAGE is asserted, not merely "it threw". Both refusal branches in
-		// assertScopeAuthorizesOrg deny this call (an anonymous caller has
-		// orgSlug === null, which also fails the cross-org compare), so asserting
-		// only `.rejects.toThrow()` leaves the no-organisation branch unpinned —
-		// deleting it still went GREEN under mutation until this assertion named
-		// the branch it is actually testing.
+		// The CODE and the DOOR are asserted, not merely "it threw". The anonymous
+		// caller is refused by requireResolvedCaller (resolveKbCaller in
+		// convex/kb.ts) BEFORE the claimed-org comparison: `RBAC_DENIED` naming
+		// `kb:softDeleteDocument`, the same code every refused read and write in this
+		// repo raises (.claude/rules/refusal-is-distinguishable-from-absence.md).
+		// This pin used to match the message of assertScopeAuthorizesOrg's
+		// no-organisation branch; closeDoorsKb.test.ts pins the full poles.
 		await expect(
 			t.action(api.kb.softDeleteDocument, {
 				docId: "doc-1",
 				orgId: "org-a",
 				namespace: "team/org-a",
 			}),
-		).rejects.toThrow("caller has no verified organisation");
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*kb:softDeleteDocument/);
 
 		// The chunk is untouched — still isLatest.
 		const rows = await t.run(async (ctx) =>

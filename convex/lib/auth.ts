@@ -780,7 +780,9 @@ export function requireScope(scope: OrgScope, requiredScope: string): void {
  *   divergence `convex/orgRoster.ts` already uses.
  */
 export function requireResolvedCaller(
-	scope: OrgScope,
+	// Only the four resolution fields are read, so an ACTION can pass the
+	// projection `resolveOrgScopeForAction` returns (it has no full OrgScope).
+	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
 	registration: string,
 	opts?: { alsoRefusePreOrg?: boolean; masterOnly?: boolean },
 ): void {
@@ -906,6 +908,15 @@ export const actionOrgScopeValidator = v.object({
 	 * this is true: typed-empty for a read, throw for a write.
 	 */
 	refused: v.boolean(),
+	/**
+	 * True ONLY when the caller presented NO CREDENTIAL AT ALL (mirrors
+	 * `OrgScope.anonymous`). It lets an action tell an anonymous caller from a
+	 * signed-in-no-org one and refuse through `requireResolvedCaller`, the same
+	 * helper every query uses, instead of open-coding a second refusal. It
+	 * reports who the caller is; like the rest of this projection it hands out
+	 * no right.
+	 */
+	anonymous: v.boolean(),
 });
 
 /** The resolved shape actions receive from `resolveOrgScopeForAction`. */
@@ -913,6 +924,7 @@ export interface ActionOrgScope {
 	isMaster: boolean;
 	orgSlug: string | null;
 	refused: boolean;
+	anonymous: boolean;
 }
 
 export const resolveOrgScopeForAction = internalQuery({
@@ -924,16 +936,31 @@ export const resolveOrgScopeForAction = internalQuery({
 		// Master: the fleet's own callers (the by-id service-account carve-out /
 		// explicit internal opt-in inside withOrgScope). Unrestricted, unchanged.
 		if (scope.isMaster) {
-			return { isMaster: true, orgSlug: null, refused: false };
+			return {
+				isMaster: true,
+				orgSlug: null,
+				refused: false,
+				anonymous: false,
+			};
 		}
 
 		// No verified organisation -> REFUSED. Never master. withOrgScope returns
 		// this same empty shape for both the anonymous branch and the
 		// signed-in-no-org branch, so one check covers both.
 		if (scope.orgSlug === null) {
-			return { isMaster: false, orgSlug: null, refused: true };
+			return {
+				isMaster: false,
+				orgSlug: null,
+				refused: true,
+				anonymous: scope.anonymous === true,
+			};
 		}
 
-		return { isMaster: false, orgSlug: scope.orgSlug, refused: false };
+		return {
+			isMaster: false,
+			orgSlug: scope.orgSlug,
+			refused: false,
+			anonymous: false,
+		};
 	},
 });
