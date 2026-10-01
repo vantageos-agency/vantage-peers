@@ -19,6 +19,7 @@
 		"delete_task",
 		"export_okf_bundle",
 		"fail_task",
+		"generate_upload_url",
 		"get_briefing_note",
 		"get_diary",
 		"get_episode",
@@ -76,6 +77,7 @@
 		"update_recurring_task",
 		"update_task",
 		"validate_fix",
+		"whoami",
 		"write_diary"
 	]
 }

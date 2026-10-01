@@ -75,7 +75,7 @@ Any client that supports remote MCP servers over Streamable HTTP can connect:
 
 ### Check the connection
 
-Ask your agent to list your peers (`list_peers`) or to store and then recall a short note (`store_memory`, then `recall`). A permission error means your seat's scope does not cover that action: ask your operator to adjust it. You do not need new credentials for that.
+Ask your agent who it is (`whoami`), to list your peers (`list_peers`), or to store and then recall a short note (`store_memory`, then `recall`). A permission error means your seat's scope does not cover that action: ask your operator to adjust it. You do not need new credentials for that.
 
 ## Authentication
 
@@ -112,7 +112,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 ## Tools
 
 <!-- tools:start -->
-77 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+79 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (9)
 
@@ -226,15 +226,17 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `export_okf_bundle` (read) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (1)
+### Other (3)
 
+- `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
+- `whoami` (read) — Returns the orchestrator identity baked into the current bearer's scope context.
 
 The tools below are present in the server code but disabled in this release: a client can neither list nor call them. They are named so this reference matches the code exactly.
 
-### Registered, not advertised (31)
+### Registered, not advertised (29)
 
-`accept_mandate`, `add_deployment`, `add_repo_mapping`, `create_bu`, `create_mandate`, `delete_bu`, `generate_upload_url`, `get_bu`, `get_error`, `get_issue`, `get_mandate`, `get_repo_mapping`, `issue_stats`, `link_commit_to_issue`, `list_bus`, `list_errors`, `list_issues`, `list_mandates`, `list_repo_mappings`, `remove_deployment`, `remove_repo_mapping`, `settle_mandate`, `soft_delete_mission_template`, `update_bu`, `update_issue_status`, `update_mandate`, `validate_mandate_spending`, `validate_okf_bundle`, `validate_task_payload`, `verify_issue`, `whoami`
+`accept_mandate`, `add_deployment`, `add_repo_mapping`, `create_bu`, `create_mandate`, `delete_bu`, `get_bu`, `get_error`, `get_issue`, `get_mandate`, `get_repo_mapping`, `issue_stats`, `link_commit_to_issue`, `list_bus`, `list_errors`, `list_issues`, `list_mandates`, `list_repo_mappings`, `remove_deployment`, `remove_repo_mapping`, `settle_mandate`, `soft_delete_mission_template`, `update_bu`, `update_issue_status`, `update_mandate`, `validate_mandate_spending`, `validate_okf_bundle`, `validate_task_payload`, `verify_issue`
 <!-- tools:end -->
 
 Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor.
@@ -273,6 +275,7 @@ The package also exports typed function references for the VantagePeers backend 
 **Added**
 
 - `correct_task_segment`: narrow a recorded work span to its real boundaries, once, with a mandatory reason. The original span is kept for audit.
+- Now available to clients: `whoami` (returns the identity attached to your own credential: agent name, scope profile, namespaces) and `generate_upload_url` (an upload URL for your own organisation's storage, used before `store_document_chunked`).
 - Now available to clients: `fail_task` (a third terminal state, distinct from done and cancelled), `pause_task` and `resume_task` (stop and restart a task's work clock without ending it).
 - Now available to clients: the fix-pattern tools `create_fix_pattern`, `get_fix_pattern`, `list_fix_patterns`, `search_fix_patterns`, `add_fix_attempt`, `validate_fix` and `link_issue_to_pattern`.
 - `check_messages` reports how many in-progress tasks are stuck past the configured threshold on an open work segment, alongside the stuck list.
