@@ -19,6 +19,7 @@ import { z } from "zod";
 import {
 	checkDelegationAllowed,
 	checkFromAllowed,
+	checkInstanceOfSender,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	filterRowsToActorTenant,
@@ -3065,6 +3066,12 @@ export function registerTools(
 			try {
 				const fromDenied = guardFrom(from);
 				if (fromDenied) return fromDenied;
+				const instanceCheck = checkInstanceOfSender(
+					oauthCtx,
+					from,
+					fromInstanceId,
+				);
+				if (instanceCheck.error) return mcpError(instanceCheck.error);
 
 				// State tokens (Day 128 brief, k... — "un état tapé à la main
 				// est un mensonge en sursis"): {{pr:owner/repo#N}} /
@@ -3150,7 +3157,7 @@ export function registerTools(
 						: normalizeOrchestratorId(channel);
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from: normFrom,
-					fromInstanceId,
+					fromInstanceId: instanceCheck.instance,
 					channel: normChannel,
 					content: resolvedContent,
 					sessionDay: derivedSessionDay,

@@ -789,6 +789,90 @@ export function requireOrchestratorOnRoster(
 }
 
 /**
+ * requireSenderInstanceOfSender — the instance label of a write is bound to
+ * the verified sender, never a free label.
+ *
+ * Companion of `requireSenderOnRoster` (Eta's finding on #1400): with `from`
+ * bound, `fromInstanceId` was still free text, so a member of org B sending as
+ * its own orchestrator could label the message "eta-vps".
+ *
+ * WHAT THE DATA SUPPORTS. The `profiles` registry (instanceId -> orchestratorId)
+ * is fleet-global and written only by the fleet master (`requireFleetMaster` in
+ * profiles.upsertProfile/updateDynamic): it has no organisation column, so an
+ * org member's instance can never be "registered in the caller's org", and a
+ * profile lookup would admit another tenant's registered instance. The only
+ * org-bindable convention is the naming one: an instance id is the role
+ * (`pi`) or `<role>-<suffix>` (`pi-vps`, `tau-vps-1`, `tau-client-acme`). So
+ * the check is `<from>` exactly, or `<from>-` followed by something, compared
+ * after `normalizeOrchestratorId` — a segment boundary, so sender "pi" does
+ * not own "pigeon-vps". An omitted instance id is not decided here.
+ *
+ * SIBLING OWNERSHIP. Roster entries may themselves be hyphenated ("pi" and
+ * "pi-x" on one roster): "pi-x-vps" is "pi" + suffix AND "pi-x" + suffix. The
+ * instance therefore belongs to the LONGEST roster entry e (normalised, "*"
+ * excluded) with `instance === e` or `instance.startsWith(e + "-")`; that
+ * owner must equal the sender. Only when no roster entry owns the instance
+ * does the plain `<sender>` / `<sender>-<suffix>` rule decide.
+ *
+ * SHAPE. After normalisation the instance is split on "-": every segment must
+ * be non-empty and contain a letter or digit, and no whitespace, control or
+ * format character (zero-width space, ...) may remain inside. This refuses
+ * "bob-", "pi--x", and "bob-\u200b" (a zero-width "suffix" that is visually
+ * empty).
+ *
+ * STORED FORM. Returns the NORMALISED instance (NFC, lowercase, trim) and the
+ * caller stores THAT, never the raw string, so what was checked is what is
+ * persisted. Readers do not key on `fromInstanceId` (routing keys on
+ * `recipientInstanceId`; `fromInstanceId` is only echoed back), so
+ * normalising breaks no routing. Rejecting raw != normalised would instead
+ * refuse harmless case/whitespace variants that were accepted before.
+ *
+ * KNOWN LIMIT (declared): an OAuth access-token MCP caller reaches Convex as
+ * the service account (master, `orgSlug === null`), so this check is skipped
+ * for it here; the same rule is applied at the MCP layer
+ * (`checkInstanceOfSender`, mcp-server/src/auth.ts), where `from` is also
+ * validated (`checkFromAllowed`).
+ *
+ * Master (`orgSlug === null`) is unchanged (returns the instance as given).
+ * Refusal: `RBAC_DENIED`, `reason: "instance-not-of-sender"`, naming the door.
+ */
+export function requireSenderInstanceOfSender(
+	scope: OrgScope,
+	claimedSender: string,
+	claimedInstanceId: string | undefined,
+	registration: string,
+): string | undefined {
+	if (claimedInstanceId === undefined) return undefined;
+	if (scope.orgSlug === null) return claimedInstanceId;
+	const sender = normalizeOrchestratorId(claimedSender);
+	const instance = normalizeOrchestratorId(claimedInstanceId);
+	const wellFormed =
+		!/[\p{Z}\p{C}]/u.test(instance) &&
+		instance
+			.split("-")
+			.every((segment) => /[\p{L}\p{N}]/u.test(segment));
+	let owner: string | undefined;
+	for (const entry of scope.allowedOrchestrators) {
+		if (entry === "*") continue;
+		const e = normalizeOrchestratorId(entry);
+		if (instance === e || instance.startsWith(`${e}-`)) {
+			if (owner === undefined || e.length > owner.length) owner = e;
+		}
+	}
+	const own =
+		wellFormed &&
+		(owner !== undefined
+			? owner === sender
+			: instance === sender || instance.startsWith(`${sender}-`));
+	if (!own) {
+		throw new ConvexError(
+			`RBAC_DENIED: instance "${claimedInstanceId}" is not an instance of sender "${claimedSender}" — ${JSON.stringify({ reason: "instance-not-of-sender", door: registration, from: claimedSender, fromInstanceId: claimedInstanceId, orgSlug: scope.orgSlug })}`,
+		);
+	}
+	return instance;
+}
+
+/**
  * Asserts that `scope` has `requiredScope` in its scopes array.
  * Master scope always passes (isMaster bypasses all scope checks).
  * Throws "Forbidden: missing scope '...'" if the check fails.
