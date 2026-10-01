@@ -50,6 +50,7 @@ import {
 	_resetUnattributedClaimsForTest,
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
+	checkActorBinding,
 	type OAuthContext,
 	sha256Hex,
 	unattributedClaimCounts,
@@ -1414,5 +1415,95 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 		await expect(
 			deriveActors(client, { windowDays: "all", now: NOW }),
 		).rejects.toThrow(/did not return JSON/);
+	});
+});
+
+describe("S2 identity binding — the credential binding compares through normalizeOrchestratorId, as every sibling gate does", () => {
+	const actorCtx = (agentName: string): OAuthContext => ({
+		clientId: "client-iris",
+		userId: "user-iris",
+		scopes: ["vantage:read"],
+		scopeProfile: "team-member",
+		fromAllowList: [],
+		namespaceReadPrefixes: [],
+		namespaceWritePrefixes: [],
+		expiresAt: Date.now() + 60_000,
+		isMaster: false,
+		actor: { orgSlug: "iris", agentName },
+	});
+	const NFD_HELIOS_CAPITAL = "H\u0065\u0301lios"; // "H" + e + combining acute
+	const ctx = actorCtx(HELIOS);
+
+	it("credential hélios ACCEPTS Hélios (composed)", () => {
+		expect(checkActorBinding(ctx, "H\u00e9lios")).toBeNull();
+	});
+	it("credential hélios ACCEPTS the NFD-decomposed Hélios", () => {
+		expect(NFD_HELIOS_CAPITAL.normalize("NFC")).not.toBe(NFD_HELIOS_CAPITAL);
+		expect(checkActorBinding(ctx, NFD_HELIOS_CAPITAL)).toBeNull();
+	});
+	it("credential hélios still REFUSES clio", () => {
+		expect(checkActorBinding(ctx, "clio")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+	});
+	it("credential hélios still REFUSES victor", () => {
+		expect(checkActorBinding(ctx, "victor")).toMatch(
+			/^AGENT_IDENTITY_MISMATCH/,
+		);
+	});
+	it('"*" as the claimed name is REFUSED, not matched', () => {
+		expect(checkActorBinding(ctx, "*")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+	});
+	// POLE 1 — NEAR NEIGHBOURS. The reviewer's mutant C replaced `===` with
+	// `startsWith`, and the corpus SURVIVED it 58/58: refusing only `clio`,
+	// `victor` and `*` leaves every prefix, suffix and extension of the real
+	// name unasserted. Measured: normalizeOrchestratorId("victor").startsWith(
+	// normalizeOrchestratorId("vic")) is true, so under that mutant a credential
+	// for victor would have accepted "vic".
+	const NEAR_NEIGHBOURS = ["h", "héli", "", "hélios2", "xhélios"];
+	for (const claimed of NEAR_NEIGHBOURS) {
+		it(`credential hélios REFUSES the near neighbour ${JSON.stringify(claimed)}`, () => {
+			const err = checkActorBinding(ctx, claimed);
+			expect(err).not.toBeNull();
+			expect(err).toMatch(/^AGENT_IDENTITY_MISMATCH|^AGENT_CREDENTIAL/);
+		});
+	}
+
+	// POLE 2 — THE ACCENT IS NOT FOLDED, AND THAT IS DELIBERATE. The
+	// normaliser's own docstring claimed all six spellings of Hélios collapse
+	// to one. Measured in node, independently of that claim:
+	//   "hélios" "Hélios" "HÉLIOS" -> "hélios"
+	//   "helios" "Helios" "HELIOS" -> "helios"
+	//   distinct results: TWO, not one.
+	// So it handles CASE and COMPOSITION FORM and does NOT fold accents. The
+	// ruling is to keep it that way: folding would collapse genuinely different
+	// names on an IDENTITY gate, and `Clio` and `clio` can coexist as two rows
+	// today because registerAgent enforces no uniqueness under the normaliser.
+	// A gate that cannot say which of two rows it matched is worse than a
+	// strict one. Uniqueness first; any widening only after.
+	// This assertion is what makes the docstring correction true rather than
+	// cosmetic, and it kills the accent-folding mutant.
+	it("credential hélios REFUSES the UNACCENTED helios — accents are not folded, by ruling", () => {
+		expect(checkActorBinding(ctx, "helios")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+		expect(checkActorBinding(ctx, "HELIOS")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+	});
+
+	// POLE 3 — BOTH SIDES, not just the claim. The reviewer's mutant A left the
+	// ACTOR side un-normalised and the corpus survived, because every existing
+	// pole stored the actor already-normalised. registerAgent stores names RAW
+	// (normalizeOrchestratorId count in convex/agents.ts = 0), so an actor
+	// genuinely stored as "Hélios" is reachable and must bind.
+	it("an actor STORED as Hélios accepts a call naming hélios — the stored side is normalised too", () => {
+		const storedCapital = actorCtx("Hélios");
+		expect(checkActorBinding(storedCapital, "hélios")).toBeNull();
+		expect(checkActorBinding(storedCapital, "HÉLIOS")).toBeNull();
+		// and it still refuses a different name, so this is not a deleted check
+		expect(checkActorBinding(storedCapital, "clio")).toMatch(
+			/^AGENT_IDENTITY_MISMATCH/,
+		);
+	});
+
+	it("the refusal names the spelling the caller PRESENTED, not the normalised form", () => {
+		const msg = checkActorBinding(ctx, "CLIO") ?? "";
+		expect(msg).toContain('names "CLIO"');
+		expect(msg).not.toContain('names "clio"');
 	});
 });
