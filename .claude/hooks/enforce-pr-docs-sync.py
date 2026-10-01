@@ -2,12 +2,13 @@
 """
 PreToolUse hook : enforce RULE #25 DOCS-CONTEXT-LOOP on `gh pr create`.
 
+v1.2.0 — 2026-10-01 (accept changelog.d/*.md fragments as docs; docs/changelog-fragments.md).
 v1.1.0 — Day 109 (changelog-fragments-doctrine: accept changes/*.md as docs).
 v1.0.0 — Day 103 (Pi-dispatched, RULE #25 ship).
 
 Blocks `gh pr create` commands when the branch diff vs the PR base touches
 code paths but DOES NOT touch any docs path (README.md, CHANGELOG.md,
-docs/**, vantage-peers/docs/**, changes/*.md), UNLESS the PR body or the
+docs/**, vantage-peers/docs/**, changes/*.md, changelog.d/*.md), UNLESS the PR body or the
 latest commit message carries a well-formed exemption marker:
 
     # docs-skip: <type> <reason ≥15 chars>
@@ -24,6 +25,7 @@ Docs paths accepted (additive, backward-compatible):
   - README.md / CHANGELOG.md (any directory level)
   - docs/** and vantage-peers/docs/**
   - changes/*.md  (changelog fragment — see docs/fleet/changelog-fragments-doctrine.md)
+  - changelog.d/*.md  (per-PR CHANGELOG fragment — see docs/changelog-fragments.md)
 
 Fail-open on any git plumbing failure or unexpected exception: this hook
 NEVER blocks a PR because it could not talk to git -- only because the
@@ -42,7 +44,7 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -81,6 +83,10 @@ DOCS_BASENAMES = ("readme.md", "changelog.md")
 # Changelog fragment pattern — changes/<anything>.md
 # See docs/fleet/changelog-fragments-doctrine.md for the convention.
 CHANGELOG_FRAGMENT_RE = re.compile(r"^changes/[^/]+\.md$", re.IGNORECASE)
+
+# v1.2.0 — per-PR CHANGELOG fragment: changelog.d/<pr-or-branch-slug>.md
+# Folded into CHANGELOG.md at release by scripts/changelog-assemble.mjs.
+CHANGELOG_D_FRAGMENT_RE = re.compile(r"^changelog\.d/[^/]+\.md$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +229,9 @@ def is_docs_path(path: str) -> bool:
         return True
     # v1.1.0 — changelog fragment: changes/<branch-slug>.md
     if CHANGELOG_FRAGMENT_RE.match(p):
+        return True
+    # v1.2.0 — changelog.d/<pr-or-branch-slug>.md
+    if CHANGELOG_D_FRAGMENT_RE.match(p):
         return True
     return False
 
@@ -373,7 +382,8 @@ def run_hook(command: str) -> int:
         f"Code files changed ({len(code_files)}):\n  - {listing}\n"
         "\n"
         "Resolution — pick ONE:\n"
-        "  A) Update at least one doc: README.md, CHANGELOG.md, or docs/**.\n"
+        "  A) Update at least one doc: a changelog.d/<slug>.md fragment (preferred),\n"
+        "     README.md, CHANGELOG.md, or docs/**.\n"
         "  B) Add an exemption marker to the PR body OR the latest commit message:\n"
         "       # docs-skip: <type> <reason ≥15 chars>\n"
         "     where <type> ∈ {trivial-fix, chore, hotfix-urgent}.\n"
