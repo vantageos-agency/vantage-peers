@@ -50,6 +50,7 @@ import {
 	_resetUnattributedClaimsForTest,
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
+	checkActorBinding,
 	type OAuthContext,
 	sha256Hex,
 	unattributedClaimCounts,
@@ -1414,5 +1415,46 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 		await expect(
 			deriveActors(client, { windowDays: "all", now: NOW }),
 		).rejects.toThrow(/did not return JSON/);
+	});
+});
+
+describe("S2 identity binding — the credential binding compares through normalizeOrchestratorId, as every sibling gate does", () => {
+	const actorCtx = (agentName: string): OAuthContext => ({
+		clientId: "client-iris",
+		userId: "user-iris",
+		scopes: ["vantage:read"],
+		scopeProfile: "team-member",
+		fromAllowList: [],
+		namespaceReadPrefixes: [],
+		namespaceWritePrefixes: [],
+		expiresAt: Date.now() + 60_000,
+		isMaster: false,
+		actor: { orgSlug: "iris", agentName },
+	});
+	const NFD_HELIOS_CAPITAL = "H\u0065\u0301lios"; // "H" + e + combining acute
+	const ctx = actorCtx(HELIOS);
+
+	it("credential hélios ACCEPTS Hélios (composed)", () => {
+		expect(checkActorBinding(ctx, "H\u00e9lios")).toBeNull();
+	});
+	it("credential hélios ACCEPTS the NFD-decomposed Hélios", () => {
+		expect(NFD_HELIOS_CAPITAL.normalize("NFC")).not.toBe(NFD_HELIOS_CAPITAL);
+		expect(checkActorBinding(ctx, NFD_HELIOS_CAPITAL)).toBeNull();
+	});
+	it("credential hélios still REFUSES clio", () => {
+		expect(checkActorBinding(ctx, "clio")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+	});
+	it("credential hélios still REFUSES victor", () => {
+		expect(checkActorBinding(ctx, "victor")).toMatch(
+			/^AGENT_IDENTITY_MISMATCH/,
+		);
+	});
+	it('"*" as the claimed name is REFUSED, not matched', () => {
+		expect(checkActorBinding(ctx, "*")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+	});
+	it("the refusal names the spelling the caller PRESENTED, not the normalised form", () => {
+		const msg = checkActorBinding(ctx, "CLIO") ?? "";
+		expect(msg).toContain('names "CLIO"');
+		expect(msg).not.toContain('names "clio"');
 	});
 });

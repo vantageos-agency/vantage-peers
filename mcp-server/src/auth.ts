@@ -36,6 +36,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { createServiceAccountConvexClient } from "./authenticatedConvexClient.js";
+import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context types attached to Hono request
@@ -370,7 +371,9 @@ export function actorCredentialMode(): ActorCredentialMode {
  * TYPED into a tool call may be treated as the acting agent. A typed name is a
  * CLAIM; it is never an authority over a presented credential.
  *
- *   - actor resolved          → the claim must EQUAL `actor.agentName` exactly.
+ *   - actor resolved          → the claim must EQUAL `actor.agentName` after
+ *                               normalizeOrchestratorId on both sides (NFC,
+ *                               lowercase, trim — the rule every sibling gate uses).
  *                               Another agent's name is AGENT_IDENTITY_MISMATCH
  *                               in EVERY mode: compatibility never means a
  *                               presented credential can be overridden by a
@@ -393,7 +396,11 @@ export function checkActorBinding(
 ): string | null {
 	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (ctx.actor) {
-		if (claimedName === ctx.actor.agentName) return null;
+		if (
+			normalizeOrchestratorId(claimedName) ===
+			normalizeOrchestratorId(ctx.actor.agentName)
+		)
+			return null;
 		return (
 			`AGENT_IDENTITY_MISMATCH: the presented agent credential resolves to ` +
 			`"${ctx.actor.agentName}" (org "${ctx.actor.orgSlug}") but this call ` +
