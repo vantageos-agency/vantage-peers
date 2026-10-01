@@ -180,6 +180,7 @@ describe("messages:getUnreadCount", () => {
 			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a" });
 			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a" });
 			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "sigma", tenantId: "org-b" });
+			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "iris", tenantId: "org-b" });
 		});
 
 		refusedAs(
@@ -188,7 +189,16 @@ describe("messages:getUnreadCount", () => {
 			"no-credential",
 		);
 		expect(await asMemberA(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(2);
-		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(1);
+		// own roster -> a number (member B's roster is ["iris"]); a differently
+		// spelled own-roster name binds on the normalised form
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "iris" })).toBe(1);
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: " IRIS " })).toBe(1);
+		// off-roster: B's own tenant holds a "sigma" receipt, yet "sigma" is not on
+		// B's roster -> the typed envelope, not a bare 0 and not that receipt's 1
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toEqual({
+			refused: true,
+			count: 0,
+		});
 		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(3);
 		// pre-org: a mounted sidebar cannot take a throw, and a bare 0 would be the
 		// bytes of an absence, so the refusal is the typed envelope.
