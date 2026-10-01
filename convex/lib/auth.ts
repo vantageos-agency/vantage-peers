@@ -2,6 +2,7 @@ import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
 import { ConvexError, v } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
 import { resolveAgentCredentialCore } from "./agentIdentity";
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrgScope — resolved auth + multi-tenant scope context
@@ -723,6 +724,44 @@ export async function requireAgentCredentialMatch(
 	if (targetOrgSlug !== null && resolved.orgSlug !== targetOrgSlug) {
 		throw new ConvexError(
 			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agentName}" in org "${resolved.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agentName, resolvedOrgSlug: resolved.orgSlug, targetOrgSlug })}`,
+		);
+	}
+}
+
+/**
+ * requireSenderOnRoster — the sender of a write is DERIVED from the verified
+ * caller, never taken from the `from` argument.
+ *
+ * Measured on production (task k17fdch7gfak29nyvna9r3qe098fed1d): an ordinary
+ * member of org B sent a message with from="eta" (and "pi"). The agent
+ * credential lock is optional and a no-op when omitted, so nothing bound the
+ * typed name to the caller.
+ *
+ * For a caller resolved into an organisation (`scope.orgSlug !== null`), the
+ * claimed sender must be an orchestrator on that org's OWN roster
+ * (`scope.allowedOrchestrators`), compared after `normalizeOrchestratorId` on
+ * both sides. Deliberately NOT `isInAllowList`: its "*" short-circuit would
+ * admit any name, and a "*" roster names nobody — it is an org's own
+ * openness to READ, never licence to speak as a foreign orchestrator. The
+ * true internal master (service account, `orgSlug === null`) and unresolved
+ * callers are not decided here: the master is bound at the MCP layer, the
+ * unresolved caller is refused by the tenant derivation in the delivery core.
+ *
+ * Refusal: `RBAC_DENIED`, `reason: "sender-not-on-roster"`, naming the door.
+ */
+export function requireSenderOnRoster(
+	scope: OrgScope,
+	claimedSender: string,
+	registration: string,
+): void {
+	if (scope.orgSlug === null) return;
+	const claimed = normalizeOrchestratorId(claimedSender);
+	const onRoster = scope.allowedOrchestrators.some(
+		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,
+	);
+	if (!onRoster) {
+		throw new ConvexError(
+			`RBAC_DENIED: sender "${claimedSender}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: "sender-not-on-roster", door: registration, from: claimedSender, orgSlug: scope.orgSlug })}`,
 		);
 	}
 }
