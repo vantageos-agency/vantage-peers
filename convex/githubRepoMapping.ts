@@ -1,6 +1,12 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+	type QueryCtx,
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
+} from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,13 +31,64 @@ async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
 	}
 }
 
+const repoMappingDocOrNull = v.union(
+	v.object({
+		_id: v.id("githubRepoMapping"),
+		_creationTime: v.number(),
+		repo: v.string(),
+		orchestrator: v.string(),
+		project: v.string(),
+		active: v.boolean(),
+		lastDeployedSHA: v.optional(v.string()),
+		lastDeployedAt: v.optional(v.number()),
+	}),
+	v.null(),
+);
+
+// Shared body of the public door and its internal twin — one lookup, two
+// admission rules.
+async function lookupByRepo(
+	ctx: QueryCtx,
+	repo: string,
+): Promise<Doc<"githubRepoMapping"> | null> {
+	return await ctx.db
+		.query("githubRepoMapping")
+		.withIndex("by_repo", (q) => q.eq("repo", repo))
+		.unique();
+}
+
+// Public door. Fleet-master only: the table has no orgId column (it maps the
+// FLEET's own repositories to orchestrators), so there is no tenant predicate
+// to scope by — same admission as `list`, `add` and `remove` in this file.
+// An ordinary org member is REFUSED by raising (`masterOnly`), never answered
+// with a null that would read as "no such repo".
+// isolation-contract: no reactive subscriber. Enumerated by command against
+// the only subscribing consumer (vantage-peers-dashboard):
+//   grep -rn "api\.githubRepoMapping\." --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
+// So `alsoRefusePreOrg` is safe: no mounted render exists for the throw to crash.
+// Server-side callers (convex/http.ts webhook, convex/issues.ts) run with NO
+// identity and use `getByRepoInternal` below.
 export const getByRepo = query({
 	args: { repo: v.string() },
+	returns: repoMappingDocOrNull,
 	handler: async (ctx, args) => {
-		return await ctx.db
-			.query("githubRepoMapping")
-			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
-			.unique();
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
+		return await lookupByRepo(ctx, args.repo);
+	},
+});
+
+// Internal twin — callable only from other Convex functions (the HMAC-verified
+// GitHub webhook in convex/http.ts, convex/issues.ts upsertFromGitHub). Not
+// reachable from the public internet, so it carries no caller identity check.
+export const getByRepoInternal = internalQuery({
+	args: { repo: v.string() },
+	returns: repoMappingDocOrNull,
+	handler: async (ctx, args) => {
+		return await lookupByRepo(ctx, args.repo);
 	},
 });
 

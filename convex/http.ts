@@ -80,7 +80,7 @@ http.route({
 			return new Response("OK - no repo", { status: 200 });
 		}
 
-		const mapping = await ctx.runQuery(api.githubRepoMapping.getByRepo, {
+		const mapping = await ctx.runQuery(internal.githubRepoMapping.getByRepoInternal, {
 			repo: repoFullName,
 		});
 		console.log("Mapping result:", JSON.stringify(mapping));
@@ -123,7 +123,7 @@ http.route({
 			const priority = isUrgent ? ("urgent" as const) : ("high" as const);
 
 			// 3. Load default mission template
-			const template = await ctx.runQuery(api.missionTemplates.getByName, {
+			const template = await ctx.runQuery(internal.missionTemplates.getByNameInternal, {
 				name: "issue-resolution-v3",
 			});
 

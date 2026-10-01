@@ -47,12 +47,12 @@ describe("missionTemplates.softDelete", () => {
 		await seedTemplate(t, name);
 
 		// Sanity: template exists before delete.
-		const before = await t.query(api.missionTemplates.getByName, { name });
+		const before = await asMaster(t).query(api.missionTemplates.getByName, { name });
 		expect(before).not.toBeNull();
 
 		await asMaster(t).mutation(api.missionTemplates.softDelete, { name });
 
-		const after = await t.query(api.missionTemplates.getByName, { name });
+		const after = await asMaster(t).query(api.missionTemplates.getByName, { name });
 		expect(after).toBeNull();
 	});
 
@@ -65,13 +65,13 @@ describe("missionTemplates.softDelete", () => {
 			name: "_probe-deleted",
 		});
 
-		const kept = await t.query(api.missionTemplates.getByName, {
+		const kept = await asMaster(t).query(api.missionTemplates.getByName, {
 			name: "issue-resolution-kept",
 		});
 		expect(kept).not.toBeNull();
 		expect(kept?.name).toBe("issue-resolution-kept");
 
-		const deleted = await t.query(api.missionTemplates.getByName, {
+		const deleted = await asMaster(t).query(api.missionTemplates.getByName, {
 			name: "_probe-deleted",
 		});
 		expect(deleted).toBeNull();
@@ -90,14 +90,14 @@ describe("missionTemplates.softDelete", () => {
 		const t = createTestConvex();
 		const name = "_probe-by-id";
 		await seedTemplate(t, name);
-		const template = await t.query(api.missionTemplates.getByName, { name });
+		const template = await asMaster(t).query(api.missionTemplates.getByName, { name });
 		expect(template).not.toBeNull();
 
 		await asMaster(t).mutation(api.missionTemplates.softDelete, {
 			templateId: template!._id,
 		});
 
-		const after = await t.query(api.missionTemplates.getByName, { name });
+		const after = await asMaster(t).query(api.missionTemplates.getByName, { name });
 		expect(after).toBeNull();
 	});
 
