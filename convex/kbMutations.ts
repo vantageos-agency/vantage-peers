@@ -179,6 +179,7 @@ export const generateUploadUrl = mutation({
 	},
 	returns: v.string(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("kbMutations:generateUploadUrl", …) at mcp-server/src/tools/kbIngest.ts:297 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(

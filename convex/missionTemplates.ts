@@ -432,6 +432,7 @@ export const instantiateTemplateIntoMission = mutation({
 		count: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missionTemplates:instantiateTemplateIntoMission", …) at mcp-server/src/tools.ts:9206 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		// Fail-closed multi-tenant fix — see the file-header comment block
 		// above for the full rationale. Resolved BEFORE either fetch below
 		// (mirrors convex/missions.ts update / convex/briefingNotes.ts

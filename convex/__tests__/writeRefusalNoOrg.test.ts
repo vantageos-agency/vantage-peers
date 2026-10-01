@@ -1,0 +1,459 @@
+/// <reference types="vite/client" />
+/**
+ * R-51 — THE PRE-ORGANISATION CALLER OF A PUBLIC WRITE IS REFUSED WITH THE CODED
+ * REFUSAL, AND NOTHING IS WRITTEN.
+ *
+ * Thirteen public mutations throw on the no-org path with no `write-contract`
+ * marker. Each was re-decided on ONE measured fact — does a client render
+ * issue the write — enumerated by command in BOTH repositories
+ * (`mcp-server/src/` and `vantage-peers-dashboard`):
+ *
+ *   briefingNotes:create        dashboard briefing-form.tsx:93 (submit handler,   KEEP THROW +
+ *                               try/catch :153-165) and MCP tools.ts:6146         MARKER
+ *   briefingNotes:update        MCP only (tools.ts:6216)                          KEEP THROW + MARKER
+ *   kbMutations:generateUploadUrl, messages:deleteMessage,
+ *   missionTemplates:instantiateTemplateIntoMission, missions:create,
+ *   missions:updateStatus       MCP only                                          KEEP THROW + MARKER
+ *   briefingNotes:deleteBriefingNote, diary:deleteDiary,
+ *   iframeEmbedSessions:{createSession,touchSession,revokeSession},
+ *   missions:updateProgress     no caller outside convex-test                     KEEP THROW + MARKER
+ *
+ * A write has no "empty" shape, so the refusal stays a RAISE (R-16 coded
+ * refusal: `RBAC_DENIED`, `orgSlug: null`) — a typed-empty return would be the
+ * absence-shaped answer to a refused writer and change `returns` for the MCP
+ * caller. This suite pins, per site, the three poles:
+ *   PRE-ORG   — signed in, no organisation: RAISES `RBAC_DENIED` with
+ *               `"orgSlug":null`, and the table is UNCHANGED. This pole pins
+ *               what `withOrgScope` itself throws for that caller
+ *               (`convex/lib/auth.ts`, the `!orgSlug` branch); it does NOT
+ *               prove the site's own guard. The site-level proof is mutant E
+ *               (`refuseWithoutThrow: true` + absence of the guard -> 13/13 red).
+ *   ANONYMOUS — no credential: `withOrgScope` RETURNS (orgSlug null, not
+ *               master) and the SITE'S OWN GUARD is the only thing that
+ *               refuses. Pinned TWICE per site: against a SEEDED row, and
+ *               against a GHOST id (row seeded then deleted, or never seeded)
+ *               where the guard is the sole difference between `RBAC_DENIED`
+ *               and an existence-leaking "not found" / a SUCCESS. The ghost
+ *               pole also forbids any `not found`, `orgId` or `tenantId` text.
+ *   MEMBER    — a legitimate member of an active org is served: the exact
+ *               return value (and, where stated, the resulting rows) is pinned.
+ */
+
+import type { ConvexError } from "convex/values";
+import { convexTest } from "convex-test";
+import { describe, expect, test } from "vitest";
+import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import schema from "../schema";
+
+const modules = Object.fromEntries(
+	Object.entries(import.meta.glob("../**/*.ts")).filter(
+		([path]) =>
+			!path.includes("ragSync") &&
+			!path.includes("search") &&
+			!path.includes("backfill"),
+	),
+);
+
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
+type Caller = Pick<T, "mutation">;
+
+const SERVICE_ACCOUNT_USER_ID = "test-service-account-user-id";
+const PRE_ORG = "signed-in-user-with-no-organisation-yet";
+const MEMBER = "ordinary-member-of-org-a";
+const SEAT = "seat-a";
+const NOW = 1_748_390_400_000;
+
+for (const subject of [PRE_ORG, MEMBER]) {
+	if (subject === SERVICE_ACCOUNT_USER_ID) {
+		throw new Error(
+			`test-integrity: ${subject} must not be the service-account id — a DENY pole under the maintenance identity proves the bypass, not the control`,
+		);
+	}
+}
+
+/** Authenticated, NO organisation claim of any kind. */
+const asPreOrg = (t: T) =>
+	t.withIdentity({ subject: PRE_ORG } as Parameters<typeof t.withIdentity>[0]);
+
+const asMember = (t: T) =>
+	t.withIdentity({
+		subject: MEMBER,
+		organizationId: "org-a",
+		organizationSlug: "org-a",
+	} as Parameters<typeof t.withIdentity>[0]);
+
+const seedOrgMapping = (t: T) =>
+	t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "org-a",
+			allowedOrchestrators: [SEAT],
+			scopes: ["view-own-tasks"],
+			displayName: "org-a",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+
+/** The bytes of the error a caller would receive, or "SUCCESS". */
+async function outcome(write: () => Promise<unknown>): Promise<string> {
+	try {
+		await write();
+		return "SUCCESS";
+	} catch (e) {
+		return String((e as ConvexError<string>).data ?? e);
+	}
+}
+
+const seedBriefingNote = (t: T, orgId: string) =>
+	t.run((ctx) =>
+		ctx.db.insert("briefingNotes", {
+			title: "seed note",
+			topic: "handoff",
+			participants: [SEAT],
+			content: "seed content",
+			createdBy: SEAT,
+			createdAt: NOW,
+			orgId,
+		}),
+	);
+
+const seedDiary = (t: T) =>
+	t.run((ctx) =>
+		ctx.db.insert("diary", {
+			date: "2026-07-11",
+			orchestrator: SEAT,
+			content: "seed entry",
+			createdAt: NOW,
+		}),
+	);
+
+const seedMessage = (t: T) =>
+	t.run((ctx) =>
+		ctx.db.insert("messages", {
+			from: SEAT,
+			channel: "general",
+			content: "seed message",
+			createdAt: NOW,
+			tenantId: "org-a",
+		}),
+	);
+
+const seedMission = (t: T) =>
+	t.run((ctx) =>
+		ctx.db.insert("missions", {
+			name: "seed mission",
+			project: "p",
+			status: "plan",
+			priority: "medium",
+			pilot: SEAT,
+			agents: [SEAT],
+			createdBy: SEAT,
+			createdAt: NOW,
+			updatedAt: NOW,
+			orgId: "org-a",
+		}),
+	);
+
+const seedTemplate = (t: T) =>
+	t.run((ctx) =>
+		ctx.db.insert("missionTemplates", {
+			name: "tpl",
+			steps: [{ title: "Step 1", description: "do the thing" }],
+			isDefault: false,
+			createdBy: SEAT,
+			createdAt: NOW,
+			updatedAt: NOW,
+		}),
+	);
+
+const seedSession = (t: T, sessionId: string) =>
+	t.run((ctx) =>
+		ctx.db.insert("iframeEmbedSessions", {
+			sessionId,
+			tenantId: "org-a",
+			origin: "https://acme.example.com",
+			createdAt: NOW,
+			lastSeenAt: NOW,
+			expiresAt: NOW + 3_600_000,
+			revoked: false,
+		}),
+	);
+
+interface Site {
+	name: string;
+	/**
+	 * Seeds rows for the call and returns the call, as the given caller.
+	 * `ghost: true` makes the id the call names NONEXISTENT (seeded then
+	 * deleted, or never seeded) so only the site's own guard can refuse it.
+	 */
+	prepare: (t: T, ghost: boolean) => Promise<(c: Caller) => Promise<unknown>>;
+	/** Tables whose row counts must not move on a refusal. */
+	tables: (
+		| "briefingNotes"
+		| "diary"
+		| "messages"
+		| "missions"
+		| "iframeEmbedSessions"
+		| "tasks"
+	)[];
+	/** The exact value a legitimate member receives. */
+	memberReturns: (value: unknown) => void;
+}
+
+/** Makes a seeded id nonexistent: the row existed, now it does not. */
+const ghostOf = async (
+	t: T,
+	id: Id<"briefingNotes"> | Id<"diary"> | Id<"messages"> | Id<"missions">,
+): Promise<void> => {
+	await t.run((ctx) => ctx.db.delete(id));
+};
+
+const isString = (v: unknown) => expect(typeof v).toBe("string");
+const isNull = (v: unknown) => expect(v).toBeNull();
+const isDeleted = (v: unknown) => expect(v).toEqual({ deleted: true });
+
+const SITES: Site[] = [
+	{
+		name: "briefingNotes:create",
+		tables: ["briefingNotes"],
+		memberReturns: isString,
+		prepare: async () => (c) =>
+			c.mutation(api.briefingNotes.create, {
+				title: "n",
+				topic: "handoff",
+				participants: [SEAT],
+				content: "c",
+				createdBy: SEAT,
+			}),
+	},
+	{
+		name: "briefingNotes:update",
+		tables: ["briefingNotes"],
+		memberReturns: isNull,
+		prepare: async (t, ghost) => {
+			const noteId = await seedBriefingNote(t, "org-a");
+			if (ghost) await ghostOf(t, noteId);
+			return (c) =>
+				c.mutation(api.briefingNotes.update, {
+					noteId,
+					callerOrchestrator: SEAT,
+					content: "edited",
+				});
+		},
+	},
+	{
+		name: "briefingNotes:deleteBriefingNote",
+		tables: ["briefingNotes"],
+		memberReturns: isDeleted,
+		prepare: async (t, ghost) => {
+			const noteId = await seedBriefingNote(t, "org-a");
+			if (ghost) await ghostOf(t, noteId);
+			return (c) =>
+				c.mutation(api.briefingNotes.deleteBriefingNote, {
+					noteId,
+					callerOrchestrator: SEAT,
+				});
+		},
+	},
+	{
+		name: "diary:deleteDiary",
+		tables: ["diary"],
+		memberReturns: isDeleted,
+		prepare: async (t, ghost) => {
+			const diaryId = await seedDiary(t);
+			if (ghost) await ghostOf(t, diaryId);
+			return (c) =>
+				c.mutation(api.diary.deleteDiary, {
+					diaryId,
+					callerOrchestrator: SEAT,
+				});
+		},
+	},
+	{
+		name: "iframeEmbedSessions:createSession",
+		tables: ["iframeEmbedSessions"],
+		memberReturns: isString,
+		prepare: async () => (c) =>
+			c.mutation(api.iframeEmbedSessions.createSession, {
+				sessionId: "sess-new",
+				origin: "https://acme.example.com",
+				expiresAt: Date.now() + 3_600_000,
+			}),
+	},
+	{
+		name: "iframeEmbedSessions:touchSession",
+		tables: ["iframeEmbedSessions"],
+		memberReturns: (v) => expect(v).toBe(true),
+		prepare: async (t, ghost) => {
+			if (!ghost) await seedSession(t, "sess-touch");
+			return (c) =>
+				c.mutation(api.iframeEmbedSessions.touchSession, {
+					sessionId: "sess-touch",
+				});
+		},
+	},
+	{
+		name: "iframeEmbedSessions:revokeSession",
+		tables: ["iframeEmbedSessions"],
+		memberReturns: (v) => expect(v).toBe(true),
+		prepare: async (t, ghost) => {
+			if (!ghost) await seedSession(t, "sess-revoke");
+			return (c) =>
+				c.mutation(api.iframeEmbedSessions.revokeSession, {
+					sessionId: "sess-revoke",
+				});
+		},
+	},
+	{
+		name: "kbMutations:generateUploadUrl",
+		tables: [],
+		memberReturns: isString,
+		prepare: async () => (c) =>
+			c.mutation(api.kbMutations.generateUploadUrl, {
+				orgId: "org-a",
+				namespace: "team/org-a/docs",
+			}),
+	},
+	{
+		name: "messages:deleteMessage",
+		tables: ["messages"],
+		memberReturns: (v) =>
+			expect(v).toEqual({ deleted: true, receiptsDeleted: 0 }),
+		prepare: async (t, ghost) => {
+			const messageId = await seedMessage(t);
+			if (ghost) await ghostOf(t, messageId);
+			return (c) =>
+				c.mutation(api.messages.deleteMessage, {
+					messageId,
+					callerOrchestrator: SEAT,
+				});
+		},
+	},
+	{
+		name: "missionTemplates:instantiateTemplateIntoMission",
+		tables: ["tasks"],
+		memberReturns: (v) => {
+			const r = v as { taskIds: unknown[]; count: number };
+			expect(r.count).toBe(1);
+			expect(r.taskIds).toHaveLength(1);
+		},
+		prepare: async (t, ghost) => {
+			await seedTemplate(t);
+			const missionId = await seedMission(t);
+			if (ghost) await ghostOf(t, missionId);
+			return (c) =>
+				c.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+					templateName: "tpl",
+					missionId,
+					callerOrchestrator: SEAT,
+				});
+		},
+	},
+	{
+		name: "missions:create",
+		tables: ["missions"],
+		memberReturns: isString,
+		prepare: async () => (c) =>
+			c.mutation(api.missions.create, {
+				name: "m",
+				project: "p",
+				status: "plan",
+				priority: "medium",
+				pilot: SEAT,
+				agents: [SEAT],
+				createdBy: SEAT,
+			}),
+	},
+	{
+		name: "missions:updateStatus",
+		tables: ["missions"],
+		memberReturns: isNull,
+		prepare: async (t, ghost) => {
+			const missionId: Id<"missions"> = await seedMission(t);
+			if (ghost) await ghostOf(t, missionId);
+			return (c) =>
+				c.mutation(api.missions.updateStatus, { missionId, status: "execute" });
+		},
+	},
+	{
+		name: "missions:updateProgress",
+		tables: ["missions"],
+		memberReturns: isNull,
+		prepare: async (t, ghost) => {
+			const missionId = await seedMission(t);
+			if (ghost) await ghostOf(t, missionId);
+			return (c) =>
+				c.mutation(api.missions.updateProgress, { missionId, progress: 50 });
+		},
+	},
+];
+
+async function counts(t: T, tables: Site["tables"]): Promise<string> {
+	return JSON.stringify(
+		await t.run(async (ctx) => {
+			const out: Record<string, unknown> = {};
+			for (const tb of tables) out[tb] = await ctx.db.query(tb).collect();
+			return out;
+		}),
+	);
+}
+
+/** Text that would betray a row's existence or its owner to a refused caller. */
+const LEAK = /not found|orgId|tenantId/i;
+
+describe("R-51 — public writes refuse a no-org caller with the coded refusal", () => {
+	for (const site of SITES) {
+		describe(site.name, () => {
+			test("PRE-ORG: raises RBAC_DENIED carrying orgSlug:null, writes nothing", async () => {
+				const t = createT();
+				await seedOrgMapping(t);
+				const call = await site.prepare(t, false);
+				const before = await counts(t, site.tables);
+				const bytes = await outcome(() => call(asPreOrg(t)));
+				expect(bytes).toContain("RBAC_DENIED");
+				expect(bytes).toMatch(/orgSlug\\*"\s*:\s*null/);
+				expect(await counts(t, site.tables)).toBe(before);
+			});
+
+			test("ANONYMOUS (seeded row): still raises RBAC_DENIED, writes nothing", async () => {
+				const t = createT();
+				await seedOrgMapping(t);
+				const call = await site.prepare(t, false);
+				const before = await counts(t, site.tables);
+				const bytes = await outcome(() => call(t));
+				expect(bytes).toContain("RBAC_DENIED");
+				expect(await counts(t, site.tables)).toBe(before);
+			});
+
+			test("ANONYMOUS (ghost id): the site's own guard refuses — no existence leak, no success", async () => {
+				const t = createT();
+				await seedOrgMapping(t);
+				const call = await site.prepare(t, true);
+				const before = await counts(t, site.tables);
+				const bytes = await outcome(() => call(t));
+				expect(bytes).not.toBe("SUCCESS");
+				expect(bytes).toContain("RBAC_DENIED");
+				expect(bytes).toMatch(/orgSlug\\*"\s*:\s*null/);
+				expect(bytes).not.toMatch(LEAK);
+				expect(await counts(t, site.tables)).toBe(before);
+			});
+
+			test("MEMBER: a legitimate org member is served the exact expected result", async () => {
+				const t = createT();
+				await seedOrgMapping(t);
+				const call = await site.prepare(t, false);
+				let value: unknown;
+				try {
+					value = await call(asMember(t));
+				} catch (e) {
+					throw new Error(
+						`member refused: ${String((e as ConvexError<string>).data ?? e)}`,
+					);
+				}
+				site.memberReturns(value);
+			});
+		});
+	}
+});
