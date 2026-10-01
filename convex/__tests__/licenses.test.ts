@@ -153,7 +153,6 @@ describe("validate", () => {
 
 		expect(result.status).toBe("unknown");
 		expect(result.expiresAt).toBeUndefined();
-		expect(result.customerEmail).toBeUndefined();
 	});
 
 	test("7. past-expiresAt key → returns status 'expired'", async () => {
@@ -174,7 +173,7 @@ describe("validate", () => {
 
 		expect(result.status).toBe("expired");
 		expect(result.expiresAt).toBeDefined();
-		expect(result.customerEmail).toBe("cedric@example.com");
+		expect(result).not.toHaveProperty("customerEmail");
 	});
 });
 

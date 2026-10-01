@@ -93,7 +93,7 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-o");
 		const secret = await mintAgent(t, "org-o", "alice");
-		const resolved = await t.query(
+		const resolved = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{
 				presentedSecret: secret,
@@ -108,7 +108,7 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 		const secret = await mintAgent(t, "org-o", "alice");
 		await setAgentActive(t, "org-o", "alice", false);
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secret,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
@@ -128,7 +128,7 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 			if (row) await ctx.db.delete(row._id);
 		});
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secret,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
@@ -142,14 +142,29 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 		const secretP = await mintAgent(t, "org-p", "alice");
 		await setAgentActive(t, "org-o", "alice", false);
 		await expect(
-			t.query(api.agentCredentials.resolveAgentCredential, {
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretO,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*credential-not-recognised/);
 		expect(
-			await t.query(api.agentCredentials.resolveAgentCredential, {
+			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretP,
 			}),
 		).toEqual({ orgSlug: "org-p", agentName: "alice" });
 	});
 });
+
+
+/**
+ * `resolveAgentCredential` is closed to everyone but the fleet's service
+ * account (the MCP server's identity). Every call in this file is the MCP
+ * login path, so it is made as that account; the DENY poles that matter for
+ * the door itself live in closeDoorsCreds.test.ts.
+ */
+function asServiceAccount<X extends { withIdentity: (i: never) => unknown }>(
+	t: X,
+): ReturnType<X["withIdentity"]> {
+	return t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as never) as ReturnType<X["withIdentity"]>;
+}

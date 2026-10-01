@@ -1,6 +1,11 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { refuseUnresolvedCredential, requireOrgAdmin } from "./lib/auth";
+import {
+	refuseUnresolvedCredential,
+	requireOrgAdmin,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 import {
 	revokeActiveCredentialRows,
 	resolveAgentCredentialCore,
@@ -214,8 +219,19 @@ export const revokeAgentCredential = mutation({
  *
  * Trusts NO caller-declared name: the only argument is the presented secret
  * itself; the identity returned comes solely from which row's `secretHash`
- * matches. No `requireOrgAdmin` gate, deliberately — the credential IS the
- * proof of identity being verified.
+ * matches.
+ *
+ * WHO MAY ASK — THE FLEET'S SERVICE ACCOUNT ONLY. This door used to serve any
+ * caller, anonymous included: whoever held a secret could ask "is it live, and
+ * whose is it". Its sole consumer is the MCP server (`resolveActorFromRequest`,
+ * mcp-server/src/auth.ts), which always calls through its service-account
+ * identity (`createServiceAccountConvexClient`) — that account resolves as
+ * master. So the caller is resolved FIRST (`withOrgScope` +
+ * `requireResolvedCaller(..., { masterOnly: true })`) and everyone else is
+ * refused BEFORE the secret is examined: a made-up secret and a live one are
+ * the same bytes to a non-service caller, so the door is no validity oracle.
+ * The refusal keeps the `RBAC_DENIED` code and names this door, so the MCP
+ * reader (which branches on both) still maps it to a 401.
  */
 // @credential presentedSecret agent-credential: the presented agent secret is hashed and resolved against stored agent credentials
 export const resolveAgentCredential = query({
@@ -223,6 +239,11 @@ export const resolveAgentCredential = query({
 	returns: resolvedIdentityValidator,
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only, no reactive subscriber — enumerated 2026-09-30 with: grep -rnE "agentCredentials|resolveAgentCredential" /root/coding/vantage-peers-dashboard --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git -> 0 hits. R-50 declared divergence.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "agentCredentials:resolveAgentCredential", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
+		});
 		if (args.presentedSecret.trim() === "") {
 			return refuseUnresolvedCredential(
 				"agentCredentials:resolveAgentCredential",
