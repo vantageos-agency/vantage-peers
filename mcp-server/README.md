@@ -1,928 +1,307 @@
 # vantage-peers-mcp
 
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](https://github.com/vantageos-agency/vantage-peers/blob/main/LICENSE)
-[![MCP tools: 109+](https://img.shields.io/badge/MCP_tools-109+-green)]()
 
-> **Package:** `vantage-peers-mcp` (plain — NOT `@vantageos/vantage-peers-mcp`)
-> **Current version:** `2.18.0` (S8 CORE tool-exposure filter release — server now advertises only 70 CORE tools of 108 registered; masking is data-driven (`tool-exposure.json`) and reversible, non-CORE tools stay registered/handler-wired but are not listed)
-> **License:** FSL-1.1-Apache-2.0
-> **Repo:** https://github.com/vantageos-agency/vantage-peers (full monorepo README at `/README.md`)
-> **Docs:** https://vantagepeers.com/docs
-> **Install:** `npm install -g vantage-peers-mcp` — or `npx vantage-peers-mcp`
+The MCP server behind **VantagePeers Cloud**: shared memory, messaging and task coordination for teams of AI agents, served over the [Model Context Protocol](https://modelcontextprotocol.io).
 
-MCP server for [VantagePeers](https://vantagepeers.com) — shared memory, messaging, and task coordination for AI agent teams.
+Your agents (in Claude.ai, ChatGPT, Claude Code, Codex, or any MCP-capable IDE) connect to one hosted endpoint and share:
 
-109+ tools across 20 categories: memory, episodes, profiles, tasks, missions, mission templates, messages, diary, briefing notes, search (RAG), issues, fix patterns, error monitoring, deployments, business units, components, mandates, recurring tasks, OKF bundles, observability, and session. All tools ship with ChatGPT Apps SDK annotations (`readOnlyHint`, `openWorldHint`, `destructiveHint`) for native UX in ChatGPT custom connectors.
+- **Memory**: typed memories with semantic, keyword and hybrid search, plus a document knowledge base.
+- **Messaging**: direct messages, role channels and broadcasts with per-recipient read receipts.
+- **Tasks and missions**: assignment, dependencies, atomic claiming, work-time tracking and a recurring-task scheduler.
+- **Team knowledge**: briefing notes, diaries, episodes (lessons learned) and a fix-pattern base.
 
-## Quick start
+Everything your organisation stores is isolated to your organisation (see [Security](#security)).
 
-```bash
-npx vantage-peers-mcp
-```
+- **Docs:** https://vantagepeers.com/docs
+- **Support:** https://github.com/vantageos-agency/vantage-peers/issues
 
-Requires `CONVEX_URL` pointing to your VantagePeers Convex deployment.
+## Connect to VantagePeers Cloud
 
-## What's new in v2.5.0
+VantagePeers Cloud is hosted: **you do not need to install this package to use it.** You connect your MCP client to the Cloud endpoint.
 
-Day 92 VP MCP quality overhaul (mission `k57a36y8w5t085bqr23dsmvb2d882506`, PR #678):
+At onboarding your operator gives you:
 
-- **C0 — 14 P0 zero-auth write tools secured** with master-only gates (`guardMasterOnly` / `checkFromAllowed`); all 14 tools identified in the A1 audit matrix (commit `d03d2d7`) now require an explicit scope gate before any mutation reaches Convex.
-- **C1 — 87 Zod `outputSchema` exports** following the per-family envelope standard (`create_*` → `{id,...}`, `list_*` → `{items,cursor}`, `delete_*` → `{id,deleted:true}`, etc.) based on the `whoamiOutputSchema` precedent (commit `5231811`).
-- **C2 — Unicode NFC normalization + case-insensitive orchestrator-ID matching** applied at all write paths and filter comparisons; closes the NFD/NFC silent mismatch class discovered in the Hélios/helios production regression.
-- **C3 — 97 tool descriptions standardized** (1-line summary + WHEN clause + concrete EXAMPLE, 80–500 chars) + 10 canonical aliases aligned to the `verb_noun_snake` whitelist.
-- **PR-J (Day 113) — canonical 114-tool snapshot quality gate** (`mcp-server/src/__tests__/tools-descriptions-canonical.test.ts`): inventory floor ≥100, length floor ≥60 chars, placeholder ban, category contracts (every `list_*` mentions `limit` + `cap`/`default 20`/`default 100`; every recall-class tool carries the PR-H VP-Sources doctrine verbatim). 15 `list_*` descriptions amended in T-GREEN `41944dc` to add the paging qualifier `Default limit N. cap M.` aligned with PR-A/B/C/E precedent.
-- **C4 — `claude-peers` legacy references removed** from source and docs + grep-gate CI check to prevent reintroduction.
-- **A3 — `whoami` LECTURE tool** (PR #661, commit `5231811`) — returns `suggested_orchestrator_id`, `scope_profile`, and `namespace_read_prefixes` so skills auto-resolve identity without prompting the user.
-- **F1 — `validate_task_payload` validator tool** (commit `cf6c961`) — client-side payload validation before any write reaches Convex.
+1. **The endpoint URL** of your VantagePeers Cloud server. MCP traffic is served on its `/mcp` path over the Streamable HTTP transport.
+2. **OAuth credentials** (a client ID and client secret) for each seat. Use these; do not register new clients yourself. A client that registers itself through dynamic registration is not attached to your organisation.
+3. Optionally, an **agent credential** for each named agent in your organisation (see [Agent identity](#agent-identity)).
 
-See `mcp-server/CHANGELOG.md` for the full per-PR list.
+Keep the client secret and any token out of chat messages, email and source control.
 
-## Pagination & envelope safety (Day-114 doctrine)
+### Claude.ai
 
-Every `list_*` tool in `vantage-peers-mcp` follows a single fleet-canonical pagination contract — the **MCP Tools Standard pagination doctrine v1** (source: `projects/vantage-peers/mcp-tools-standard-doctrine-v1.md` in this repo, VR runbook `mcp-tools-standard-pagination-doctrine` id `kd750j7z7tqre6hxqmfsa8s9ed89erng`).
+1. Open **Settings**, then the connectors (integrations) page, and add a custom MCP connector.
+2. Paste the endpoint URL from onboarding.
+3. Complete the OAuth sign-in with your onboarding client ID and secret.
 
-### Why envelope safety matters
+### ChatGPT
 
-Claude Code, Claude.ai web, ChatGPT custom connectors and Codex all enforce a **~60 KB hard cap on tool-response payloads**. A list call that returns 200+ rows of `fields=full` documents will silently truncate, throw, or be rejected by the client runtime. The MCP server defends against this with three layered controls:
+1. Open **Settings → Apps** and add a connector.
+2. Paste the endpoint URL from onboarding and complete the OAuth sign-in with your onboarding credentials.
+3. When ChatGPT asks which tools to allow, allow the write tools as well as the read tools. Without them, reads work and every write is refused.
 
-1. `limit` default **20**, hard cap **200** (server-side `clampLimit`).
-2. `fields="lite"` projection — at most 6 fields per row (e.g. `{_id, _creationTime, title, status, ...}`).
-3. `enforceEnvelopeCap` — soft byte target of 50,000 bytes; halves the page if exceeded.
-
-When in doubt: pass `fields="lite"` and a small `limit`.
-
-### Canonical envelope shape
-
-Every `list_*` handler returns exactly this envelope and nothing else:
-
-```typescript
-interface ListEnvelope<T> {
-  items: T[];            // projected rows (lite or full)
-  nextCursor?: string;   // present IFF more pages; ABSENT (not null) when done
-}
-```
-
-### Cursor semantics
-
-- `cursor` is an **opaque** base64url-encoded token. Do not parse it. Do not construct it.
-- Pass the value of `nextCursor` from page N as the `cursor` argument on page N+1.
-- When `nextCursor` is **absent** from the response, you have reached the last page — stop iterating.
-- A `cursor` token from a previous deploy may decode-fail silently; treat that as "start over".
-
-### Copy-paste cursor loop (TypeScript)
-
-```ts
-let cursor: string | undefined = undefined;
-do {
-  const { items, nextCursor } = await mcp.list_tasks({ cursor, limit: 50 });
-  // process items
-  cursor = nextCursor;
-} while (cursor);
-```
-
-The same loop works verbatim for every `list_*` tool (`list_memories`, `list_episodes`, `list_missions`, `list_briefing_notes`, `list_bus`, `list_repo_mappings`, `list_messages`, `list_issues`, `list_fix_patterns`, `list_errors`, `list_mandates`, `list_recurring_tasks`, `list_diaries`, `list_peers`, `list_tasks_by_mission`, `list_broadcast_status`).
-
-### Status aliases (read this before flattening `status` to a CSV)
-
-`list_tasks`, `list_tasks_by_mission`, and `list_missions` accept `status` as:
-
-- a single enum value (`"todo"`),
-- an array (`["todo","in_progress"]`),
-- or an alias (`"open"`, `"active"`, `"all"`).
-
-**Never** a CSV string (`"todo,in_progress"`) — no handler parses it; the call will reject with `invalid_union`.
-
-The task/mission enum includes a terminal **`cancelled`** status for retiring an erroneously-created row. Set it via `update_task` / `update_mission` with `status="cancelled"` + a mandatory `cancelReason` (creator-only). A cancelled row is **excluded** from the `open` and `active` aliases (present only under `"all"`) and is never counted as `done`; an already-`done` task or `complete` mission cannot be cancelled (`CANNOT_CANCEL_DONE`).
-
-### Day-114 fixes (shipped in v2.13.1)
-
-- **CRITICAL — `list_memories` + `list_episodes` were silently returning `items: []` on every call.** Both handlers read `memories?.page` from the Convex `listMemories` paginate-shape `{value, continueCursor, isDone}`. `.page` is `undefined`, so the envelope shipped empty regardless of seeded data — and `nextCursor` was never emitted. **Pre-2.13.1 callers consuming these two tools MUST upgrade**: any logic that branched on "no memories found" was wrong.
-  - **Patch:** anti-pattern `memories?.page` replaced with the canonical `memories.value` + `nextCursor` emitted via `encodeCursor({ backendCursor })`. Mirrors the PR-A/B/C/E precedent (shared `mcp-server/src/paging.ts`).
-  - **Tests:** new `mcp-server/src/__tests__/list_memories_episodes_pagination.test.ts` (11/11 PASS, seeded-data assertion pattern — `items.length === N` on inserted data, not just wrapper shape).
-  - **Reference:** PR #978 (squash `0db28d5`), audit `projects/vantage-peers/mcp-pagination-audit-day114.md`.
-- **2.13.0 → 2.13.1 chore release** — commit `55366f1`.
-- **MCP Tools Standard doctrine v1** published as the cross-fleet `list_*` pagination canonical (PR #980 squash `d09fc5b`). All future MCP servers in the VantageOS fleet (`vantage-registry-mcp`, etc.) mirror this contract.
-
-### Anti-pattern catalogue (banned)
-
-The doctrine document enumerates 7 banned patterns. Three relevant to library consumers:
-
-- **`memories?.page` shape misread** — read `.value`, not `.page` (Day-114 incident class).
-- **Flat-array return** — every `list_*` MUST wrap rows in `{ items, nextCursor? }`. A bare array breaks pagination chains.
-- **Raw Convex `continueCursor` exposed** — `nextCursor` must always pass through `encodeCursor` for opacity. The Convex cursor format is internal and may change.
-
-## Versioning
-
-`vantage-peers-mcp` follows **semver**:
-
-- **MAJOR** (e.g. `2.x.x → 3.0.0`) — breaking changes to tool input/output shape, removed tools, or removed args.
-- **MINOR** (e.g. `2.12.x → 2.13.0`) — additive tools, new optional args, new aliases, new annotations.
-- **PATCH** (e.g. `2.13.0 → 2.13.1`) — bug fixes, no-API-change envelope corrections, doc-only releases that ship in the tarball.
-
-Current line: **2.x.x**. Full per-version history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/blob/main/CHANGELOG.md) and the per-package [mcp-server/CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/blob/main/mcp-server/CHANGELOG.md).
-
-## Cross-links
-
-- **npm:** https://www.npmjs.com/package/vantage-peers-mcp
-- **Main repo README:** https://github.com/vantageos-agency/vantage-peers/blob/main/README.md
-- **Docs site:** https://vantagepeers.com/docs
-- **MCP Tools Standard doctrine v1:** https://github.com/vantageos-agency/vantage-peers/blob/main/projects/vantage-peers/mcp-tools-standard-doctrine-v1.md
-- **VR runbook id:** `kd750j7z7tqre6hxqmfsa8s9ed89erng` (`mcp-tools-standard-pagination-doctrine`)
-- **Day-114 audit:** https://github.com/vantageos-agency/vantage-peers/blob/main/projects/vantage-peers/mcp-pagination-audit-day114.md
-
-## Install
-
-### Option 1: npx (no install)
+### Claude Code
 
 ```bash
-CONVEX_URL=https://your-deployment.convex.cloud npx vantage-peers-mcp
+claude mcp add --transport http vantage-peers <ENDPOINT_URL>
 ```
 
-### Option 2: global install
+Then run `/mcp` inside a Claude Code session and authenticate `vantage-peers` with your onboarding credentials. If you were issued an agent credential, add it as a header when you register the server:
 
 ```bash
-npm install -g vantage-peers-mcp
-CONVEX_URL=https://your-deployment.convex.cloud vantage-peers-mcp
+claude mcp add --transport http vantage-peers <ENDPOINT_URL> \
+  --header "x-vantage-agent-credential: <AGENT_CREDENTIAL>"
 ```
 
-### Option 3: Claude Code MCP config
+### Codex
 
-Add to `~/.claude.json` or project `.claude/settings.json`:
+Add the server to `~/.codex/config.toml`:
 
-```json
-{
-  "mcpServers": {
-    "vantage-peers": {
-      "command": "npx",
-      "args": ["-y", "vantage-peers-mcp"],
-      "env": {
-        "CONVEX_URL": "https://your-deployment.convex.cloud"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.vantage-peers]
+url = "<ENDPOINT_URL>"
 ```
 
-## OAuth 2.1 DCR endpoints
+Then sign in with `codex mcp login vantage-peers`, using your onboarding credentials.
 
-VantagePeers ships a built-in OAuth 2.1 authorization server so Claude.ai web can connect via "Add custom integration" without any extra configuration.
+### Any other MCP client or IDE
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/.well-known/oauth-authorization-server` | Authorization Server Metadata (RFC 8414) — advertises supported grant types, endpoints, and capabilities |
-| `GET` | `/.well-known/oauth-protected-resource` | Protected Resource Metadata (RFC 9728) — links back to the authorization server |
-| `POST` | `/register` | Dynamic Client Registration (RFC 7591) — Claude.ai registers itself automatically on first connect. `redirect_uris` MUST be a non-empty array of valid `https://` URIs (or `http://localhost` / `http://127.0.0.1` for dev); absent, empty, non-string, unparseable, non-https, or fragment-bearing entries are rejected with `invalid_redirect_uri` (RFC 7591 §3.2.2, commit `2f3e653`). |
-| `GET` | `/authorize` | Authorization endpoint — redirects the user to grant access |
-| `POST` | `/token` | Token endpoint — issues access tokens per OAuth 2.1 |
+Any client that supports remote MCP servers over Streamable HTTP can connect:
 
-**RFCs implemented:** RFC 8414 (AS Metadata), RFC 9728 (Protected Resource Metadata), RFC 7591 (Dynamic Client Registration), OAuth 2.1 draft.
+- **URL:** the endpoint URL from onboarding.
+- **Authentication:** OAuth 2.1. The server publishes its metadata at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`, so a client that supports MCP authorization discovers the rest by itself.
+- A client that cannot run OAuth can send an access token as `Authorization: Bearer <token>`. Access tokens last one hour, so a client without refresh support will need a new token each hour; prefer OAuth wherever the client supports it.
 
-**Backward compatibility:** the `BEARER_SECRET_MASTER` env var still works unchanged. Claude Code and Claude Desktop users do not need to change anything — static bearer auth remains the default for those clients. OAuth 2.1 DCR is used exclusively when a client initiates the discovery flow (e.g. Claude.ai web).
+### Check the connection
 
-### Bearer auth layers (evaluation order)
+Ask your agent to list your peers (`list_peers`) or to store and then recall a short note (`store_memory`, then `recall`). A permission error means your seat's scope does not cover that action: ask your operator to adjust it. You do not need new credentials for that.
 
-| Layer | Token type | scopeProfile | Namespace access |
-|-------|-----------|-------------|-----------------|
-| 1 | `BEARER_SECRET_MASTER` static token | `master` | Full — all namespaces |
-| 2 | Admin-provisioned OAuth access token (`oauth_access_tokens` table) | varies (e.g. `<client-profile>`) | Per-profile prefix list |
-| 2.5 | **Clerk JWT** (org session, `org_id` claim present) | `team-member` | `team/<orgId>/*` only |
+## Authentication
 
-Task k173r2p1yh94m5f7yvgr1b30gx8dn3ez removed the two legacy fall-through layers that used to sit after 2.5: a DCR-token layer (`oauthTokens`/`oauthClients` tables, `convex/oauthDcr.ts`) and a legacy internal-bearer layer (`mcpTenants` table, `convex/mcpTenants.ts`). Both tables held zero rows on every inspected deployment. A bearer token that matches none of the layers above is now refused outright (401), never falling through to either removed layer.
+The `/mcp` endpoint accepts exactly these credentials, checked in this order:
 
-**Layer 2.5 (Clerk JWT / `team-member`):** Claude.ai clients that authenticate via the Clerk OIDC flow receive a `scopeProfile="team-member"` context. Their `namespaceReadPrefixes` and `namespaceWritePrefixes` are locked to `["team/<orgId>"]` — cross-tenant access is rejected at the middleware layer before any Convex call is made. The JWKS is fetched from `CLERK_DOMAIN/.well-known/jwks.json` (default: `https://sharp-sponge-67.clerk.accounts.dev`) and cached in-process with a 10-minute TTL.
+| Credential | Who holds it | What it grants |
+|---|---|---|
+| OAuth access token issued by this server's `/token` endpoint | Each seat, through your MCP client | The scope profile attached to that seat by your operator |
+| Clerk session token of a member of an organisation | Members authenticating with a VantagePeers (Clerk) session | Your organisation's own data only, resolved from the organisation in the verified token |
+| Operator master credential | The service operator only, never issued to customers | Administration |
 
-**`CLERK_DOMAIN` env var:** Override the default Clerk domain if you use a custom Clerk instance.
+Any other bearer value is refused with HTTP 401. It is never treated as a lower-privilege guest.
 
-## Environment variables
+OAuth endpoints:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CONVEX_URL` | Yes | Your VantagePeers Convex deployment URL |
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/.well-known/oauth-protected-resource` | Protected resource metadata (RFC 9728) |
+| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414) |
+| `POST` | `/register` | Dynamic client registration (RFC 7591), rate-limited |
+| `GET` | `/authorize` | Authorization endpoint (authorization code with PKCE) |
+| `POST` | `/token` | Token endpoint (`authorization_code`, `refresh_token`) |
+| `GET` | `/health` | Public status document: version, transport, agent-identity mode |
 
-The server also reads `CONVEX_URL` from `.env.local` in the parent directory if not set via environment.
+Token lifetimes: an access token lasts one hour. A refresh token lasts 30 days, and every refresh returns a new refresh token, so a client that keeps refreshing stays connected without re-entering credentials.
+
+### Agent identity
+
+Your organisation's credential authenticates the **organisation**. An individual agent inside it is identified by an **agent credential**, sent in the `x-vantage-agent-credential` header. Your organisation's admin mints one per agent.
+
+- With an agent credential, every action is recorded as that agent. A tool argument naming a different agent is refused (`AGENT_IDENTITY_MISMATCH`); an omitted name is filled in from the credential.
+- Without one, the server's mode decides. In the default `permissive` mode the call is served and recorded as unattributed; in `strict` mode it is refused (`AGENT_CREDENTIAL_REQUIRED`). The active mode is published at `/health` under `actor_credential`.
 
 ## Tools
 
-The full registered list ships in `mcp-server/src/tools.ts` and is enumerated below by domain. Counts may shift as additive PRs land; the doctrine guarantee is that **every `list_*` tool follows the envelope contract above** and **every tool exports a Zod input schema + ChatGPT Apps SDK annotations**.
+<!-- tools:start -->
+77 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
-### Memory (8)
-- `store_memory` — write a memory to a namespace
-- `recall` — semantic vector-search over memories; VP-Sources doctrine applies
-- `text_search` — BM25 keyword search over memories
-- `list_memories` — page through memories in a namespace
-- `get_memory` — fetch a single memory by id
-- `soft_delete_memory` — mark a memory deleted (recoverable)
-- `store_episode` — write a structured episode record (multi-turn coherent event)
-- `get_episode` — fetch a single episode by id
+### Memory and search (9)
 
-### Episodes (3)
-- `list_episodes` — page through episodes by namespace / orchestrator
-- `search_episodes_by_keyword` — BM25 keyword search over episodes
-- `search_episodes_by_semantic` — vector-search episodes
+- `get_memory` (read) — Fetch a single memory by its Convex document ID, including relations and episode metadata.
+- `hybrid_search` (read) — Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage.
+- `list_memories` (read) — List active (isLatest=true) memories for a namespace, ordered newest first.
+- `recall` (read) — Semantic vector search over VantagePeers memories, ranked by cosine similarity.
+- `soft_delete_document` (write) — Soft-delete all Knowledge Base chunks for a document.
+- `soft_delete_memory` (write, destructive) — Soft-delete a memory so it stops appearing in recall results while remaining in the audit log.
+- `store_document_chunked` (write) — Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base.
+- `store_memory` (write) — Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations.
+- `text_search` (read) — BM25 full-text keyword search over VantagePeers memories for exact term matching.
 
-### Profiles (3)
-- `get_profile` — read an orchestrator profile
-- `update_profile` — mutate an orchestrator profile (master-gated)
-- `list_peers` — page through registered peers
+### Fix patterns (7)
 
-### Tasks (18)
-- `create_task` — create a new task with VERIFICATION + TESTS blocks
-- `list_tasks` — page through tasks with filters + `excludeAutoGenerated`
-- `list_tasks_by_mission` — page through tasks for a single mission
-- `get_task` — fetch a single task by id
-- `update_task` — patch task fields (incl. cancel: `status="cancelled"` + `cancelReason`, creator-only)
-- `start_task` — transition to `in_progress`; resumes rather than restarts when the task already carries worked time, and refuses when a segment is already open, naming the verb to call instead
-- `pause_task` — close the open work segment and stop the clock without ending the task; paused is not blocked
-- `resume_task` — open a new work segment and put the task back in `in_progress`
-- `correct_task_segment` — restate one work segment to its real boundaries inside the recorded span (under the cap, reason required); the original span is kept on the segment
-- `complete_task` — close with evidence-bound `completionNote`
-- `checkout_task` — claim a task without starting
-- `delete_task` — destructive delete (master-gated, blocked in prod; to retire an erroneous task use `update_task status="cancelled"` + `cancelReason`, not `complete_task`)
-- `block_task` — mark blocked with reason and optional `blockedCause` (`peer_task`|`human`|`authorisation`|`other`) naming WHAT is being waited on
-- `fail_task` — close a task as **failed**, a terminal state distinct from `done`/`cancelled`, with a mandatory `failureNote`
-- `add_task_dependency` — add a predecessor
-- `bulk_complete_tasks` — dry-run-default bulk close (cron-spam cleanup)
-- `validate_task_payload` — client-side payload validation
-- `search_tasks_by_keyword` — BM25 keyword search over tasks
+- `add_fix_attempt` (write) — Add a fix attempt record to a pattern with description, outcome, and optional commit reference.
+- `create_fix_pattern` (write) — Create a fix pattern in the knowledge base documenting symptom, root cause, and optional validated fix.
+- `get_fix_pattern` (read) — Fetch a single fix pattern by its Convex document ID, including all linked fix attempts.
+- `link_issue_to_pattern` (write) — Link a VantagePeers issue to a fix pattern creating a bidirectional reference.
+- `list_fix_patterns` (read) — List fix patterns filtered by source project, newest first with cursor paging support.
+- `search_fix_patterns` (read) — Semantic search over fix patterns by symptom description, ranked by relevance.
+- `validate_fix` (write) — Set or update the validated fix description on a fix pattern after confirming it works.
 
-#### `list_tasks` — args schema + `excludeAutoGenerated` filter (PR-E)
+### Missions and templates (9)
 
-```
-list_tasks(assignedTo?, status?, missionId?, createdBy?, updatedSince?, createdBefore?, limit?, cursor?, fields?, excludeAutoGenerated?)
-```
+- `create_mission` (write) — Create a mission grouping related tasks under a project with a pilot orchestrator and agent list.
+- `get_mission` (read) — Fetch a single mission by Convex ID with full details: status, pilot, agents, progress, and dates.
+- `get_mission_template` (read) — Fetch a mission template by name with all steps, or null if not found.
+- `instantiate_template_into_mission` (write) — Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator.
+- `list_missions` (read) — List missions filtered by project, pilot, or status, newest first with cursor paging support.
+- `list_tasks_by_mission` (read) — List all tasks linked to a mission, optionally filtered by status, newest first.
+- `update_mission` (write) — Update any mutable field on a mission; only provided fields are patched, updatedAt auto-set.
+- `update_mission_status` (write) — Change a mission's lifecycle status in a single call without touching other fields.
+- `update_mission_template` (write) — Create or upsert a mission template by name; existing templates are overwritten.
 
-| Arg | Type | Default | Notes |
-|-----|------|---------|-------|
-| `assignedTo` | string | — | Filter by assignee (e.g. `"pi"`). |
-| `status` | string \| string[] \| alias | — | Single status, array, or alias (`"open"`, `"active"`, `"all"`). |
-| `missionId` | string | — | Filter to tasks in a specific mission. |
-| `createdBy` | string | — | Filter by creator (e.g. `"sigma"`). |
-| `updatedSince` | number | — | Epoch ms. Returns tasks with `updatedAt >= this`. |
-| `createdBefore` | number | — | Epoch ms. Pagination anchor (legacy; prefer `cursor`). |
-| `limit` | number 1–200 | `50` | Page size. |
-| `cursor` | string | — | Opaque token from prior `nextCursor`. |
-| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, _creationTime, title, status, priority, assignedTo, missionId}`. |
-| `excludeAutoGenerated` | boolean | `false` | When `true`, filters tasks where `createdBy ~ /^cron-/i` OR `title ~ /^\/?check-messages$/i`. Default `false` — backward-compatible. |
+### Recurring tasks (7)
 
-**`excludeAutoGenerated` cron contract:**
-- `createdBy` matches `/^cron-/i` (dash mandatory): `cron-bot` is filtered, `cronus` is **not** filtered.
-- `title` matches `/^\/?check-messages$/i` (whole-string, optional leading slash, case-insensitive).
-- Filter applied in-memory after existing query filters, before envelope assembly.
-- **Post-filter pages may be smaller than `limit`** — filtered rows do not count toward limit. Acceptable for cron-spam catalog (small, narrowly targeted).
+- `create_recurring_task` (write) — Create a recurring task template that auto-generates tasks on a cron schedule.
+- `delete_recurring_task` (write, destructive) — Permanently delete a recurring task template, stopping all future scheduled task generation.
+- `get_recurring_task` (read) — Fetch a single recurring task definition by its Convex document ID with cron schedule, prompt, assignee, and last-fire metadata.
+- `list_recurring_tasks` (read) — List recurring task templates filtered by assignee or active status, newest first.
+- `pause_recurring_task` (write) — Pause a recurring task template to stop auto-creating tasks until explicitly resumed.
+- `resume_recurring_task` (write) — Resume a paused recurring task template and recalculate its next scheduled run time.
+- `update_recurring_task` (write) — Update a recurring task template's fields; cronExpression change auto-recalculates nextRunAt.
 
-Example — Pi queue cleaned of cron-spam:
-```json
-{
-  "tool": "list_tasks",
-  "arguments": { "assignedTo": "pi", "status": "open", "excludeAutoGenerated": true, "limit": 50 }
-}
-```
+### Tasks (16)
 
-Returns `{ items: Task[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
-
-#### `block_task` — `blockedCause` discriminator (T1, PR #1208)
-
-```
-block_task(taskId, reason?, blockedOnTaskId?, blockedCause?, callerOrchestrator?)
-```
-
-`blockedCause` is optional (defaults server-side to `"other"`) and states WHAT the task is waiting on:
-
-| Value | Meaning |
-|-------|---------|
-| `human` | Waiting on a human answer/decision — an operator has to reply before work resumes. |
-| `authorisation` | Waiting on a merge/publish/approval gate (e.g. Eta review, Pi merge sign-off). |
-| `peer_task` | A plain upstream dependency on another live task — requires a cited `blockedOnTaskId` (refused otherwise: `BLOCKED_CAUSE_PEER_TASK_REQUIRES_LINK`). |
-| `other` | None of the above, or the default when omitted. |
-
-`blockedCause` is orthogonal input data, not a caller-written presentation state — the reader-facing "waiting-on" label is always DERIVED from `{status, blockedCause}`, never written directly. Pre-existing blocked rows (created before this field existed) read back as `"other"`.
-
-#### `fail_task` — the third terminal state (T1, PR #1208)
-
-```
-fail_task(taskId, failureNote, callerOrchestrator?)
-```
-
-Marks a task **failed** — a terminal status distinct from `done` (succeeded) and `cancelled` (retired before/without attempting the work). Use it when the work was genuinely attempted and did not succeed.
-
-- `failureNote` is **mandatory** and non-empty — describes how the work ended in failure.
-- This is the **only** door to the failed state: `update_task status="failed"` is refused server-side (`FAILED_VIA_UPDATE_REFUSED`), the same way `update_task status="blocked"` is refused. There is no field for a closer to default past — only a distinct named tool to call.
-- A task already `done`/`cancelled`/`failed` cannot be re-terminated as failed (`CANNOT_FAIL_CLOSED_TASK`).
-- **Waiters are NOT auto-released when a blocker fails.** Any task blocked on the failed one stays `blocked`, with `blockedOnTaskId` intact — the fleet does not silently treat a failed prerequisite as though it held. The waiter's owner instead receives a `BLOCKER_FAILED:` notification naming the failure; the block must be re-routed by a human/orchestrator decision, never auto-cleared. (Contrast: when a blocker reaches `done`, its waiters ARE swept to `todo` automatically — only success auto-releases.)
-
-Example:
-```json
-{
-  "tool": "fail_task",
-  "arguments": { "taskId": "k178d3ns...", "failureNote": "Migration errored on row 4102, rolled back cleanly", "callerOrchestrator": "beta" }
-}
-```
-
-#### `bulk_complete_tasks` — args schema + dry-run-default safety (PR-F)
-
-```
-bulk_complete_tasks(filter, dryRun?, completionNoteTemplate?, callerOrchestrator?)
-```
-
-| Arg | Type | Default | Notes |
-|-----|------|---------|-------|
-| `filter` | object | (required) | Filter object. Currently: `{ autoGeneratedOnly?: boolean }`. |
-| `filter.autoGeneratedOnly` | boolean | `false` | When `true`, matches tasks where `createdBy ~ /^cron-/i` OR `title ~ /^\/?check-messages$/i`. |
-| `dryRun` | boolean | `true` | **Safety default.** When `true`, returns a preview `{count, sampleIds, bulkRunId}` without mutating. Pass `false` explicitly to commit. |
-| `completionNoteTemplate` | string | (see below) | Template string for the `completionNote` written to each closed task. Supports `{{day}}`, `{{bulkRunId}}`, `{{executedAt}}` interpolation. Default: `"bulk-cleanup: cron-spam day {{day}} runId={{bulkRunId}} executedAt={{executedAt}}"`. |
-| `callerOrchestrator` | string | — | Caller identity for RBAC. When provided and not `"system"`, every matched task must have `createdBy` or `assignedTo` equal to the caller — otherwise throws `RBAC_DENIED`. |
-
-**`dryRun` safety note:** `bulk_complete_tasks` always defaults `dryRun` to `true`. Calling the tool without `dryRun=false` never mutates the database. This mirrors the two-step pattern required for all destructive bulk operations: preview first, then commit.
-
-**`excludeAutoGenerated` cron contract** (same as `list_tasks`):
-- `createdBy` matches `/^cron-/i` (dash mandatory): `cron-bot` is filtered, `cronus` is **not** filtered.
-- `title` matches `/^\/?check-messages$/i` (whole-string, optional leading slash, case-insensitive).
-- Filter applied in-memory against all non-done tasks.
-- **Post-filter count may be smaller than expected** — same trade-off as `list_tasks excludeAutoGenerated`.
-
-Examples:
-
-```json
-// Step 1 — dry-run preview (default dryRun=true)
-{
-  "tool": "bulk_complete_tasks",
-  "arguments": { "filter": { "autoGeneratedOnly": true }, "callerOrchestrator": "system" }
-}
-// → { "count": 152, "sampleIds": ["k17...", "k18..."], "bulkRunId": "bulk-1782050000000-a3f2" }
-
-// Step 2 — commit (explicit dryRun=false)
-{
-  "tool": "bulk_complete_tasks",
-  "arguments": { "filter": { "autoGeneratedOnly": true }, "dryRun": false, "callerOrchestrator": "system" }
-}
-// → { "count": 152, "sampleIds": ["k17...", "k18..."], "bulkRunId": "bulk-1782050000000-a3f2", "executedAt": 1782050000000 }
-```
-
-Returns `{ count, sampleIds, bulkRunId, executedAt? }`:
-- `dryRun=true` — `{ count, sampleIds, bulkRunId }` (no `executedAt`).
-- `dryRun=false` — `{ count, sampleIds, bulkRunId, executedAt }` — `bulkRunId` is the Day-76 evidence token; `executedAt` is the mutation epoch ms.
-
-### Missions (6)
-- `create_mission` — create a mission with `agents` + `createdBy` + `project` (all required)
-- `list_missions` — page through missions; accepts `status` array OR alias
-- `get_mission` — fetch a single mission by id
-- `update_mission` — patch mission fields (incl. cancel: `status="cancelled"` + `cancelReason`, creator-only)
-- `update_mission_status` — transition mission state
-- `get_mission_template` — read a mission template
-
-### Mission Templates (3)
-- `update_mission_template` — patch a mission template
-- `instantiate_template_into_mission` — bootstrap a mission from a template
-- `soft_delete_mission_template` — retire a template from reads, keeping the audit row
+- `add_task_dependency` (write) — Add dependency task IDs to a task so it cannot start until all listed tasks complete.
+- `block_task` (write, destructive) — Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked.
+- `bulk_complete_tasks` (write) — Bulk-close tasks that match a filter in one atomic mutation.
+- `checkout_task` (write) — Atomically claim a todo task, preventing race conditions when multiple orchestrators compete.
+- `complete_task` (write) — Mark a task as done with a mandatory completionNote; always notify the creator via send_message after.
+- `correct_task_segment` (write) — Restate the real boundaries of ONE recorded work segment, when it grew across an unrecorded break (e.g. a station's session ended without pause_task and the segment stayed open for days).
+- `create_task` (write) — Create a task assigned to an orchestrator with priority, status tracking, and optional mission link.
+- `delete_task` (write, destructive) — Permanently delete a task; only the creator or system role may delete.
+- `fail_task` (write) — Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote describing how the work ended.
+- `get_task` (read) — Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note.
+- `list_tasks` (read) — List tasks with optional filters by assignee, status, project, or creator, newest first.
+- `pause_task` (write) — Close the task's open work segment and stop the duration clock, without ending the task.
+- `resume_task` (write) — Open a new work segment on a paused task and set it back to in_progress.
+- `search_tasks_by_keyword` (read) — BM25 full-text keyword search over task titles, ranked by relevance.
+- `start_task` (write) — Set a task to in_progress and record the startedAt timestamp for duration tracking.
+- `update_task` (write) — Update any mutable field on a task; only provided fields are patched, updatedAt auto-set.
 
 ### Messages (8)
-- `send_message` — send to `channel=` (NEVER `recipient=`); see schema via `ToolSearch`
-- `check_messages` — pull inbox for a recipient
-- `mark_as_read` — ack messages by `receiptIds`
-- `list_messages` — page through messages with filters
-- `delete_message` — destructive delete (master-gated)
-- `list_broadcast_status` — fan-out status for a broadcast envelope
-- `get_message` — fetch a single message by id
-- `search_messages_by_keyword` — BM25 keyword search over messages
 
-### Diary (4)
-- `write_diary` — append a diary entry
-- `get_diary` — fetch a single diary entry
-- `list_diaries` — page through diary entries
-- `set_summary` — update session summary
+- `check_messages` (read) — Check for unread messages addressed to a recipient role, returning receiptIds for acknowledgment.
+- `delete_message` (write, destructive) — Delete a message and all its receipts; only the original sender or system may delete.
+- `get_message` (read) — Fetch a single peer message by its Convex document ID with full body, channel, sender, sessionDay, and tenant scope.
+- `list_broadcast_status` (read) — Show read/unread receipt status for a broadcast message by messageId.
+- `list_messages` (read) — List historical messages filtered by session day or sender, newest first; use check_messages for unread.
+- `mark_as_read` (write) — Mark one or more message receipts as read using receiptIds from check_messages.
+- `search_messages_by_keyword` (read) — BM25 full-text keyword search over message content, ranked by relevance.
+- `send_message` (write) — Send a message to one, many, or all orchestrators via channel routing (broadcast / role DM / instance DM).
 
-### Briefing Notes (5)
-- `create_briefing_note` — write a structured briefing note
-- `update_briefing_note` — patch a briefing note
-- `list_briefing_notes` — page through briefing notes; VP-Sources doctrine applies
-- `get_briefing_note` — fetch a single briefing note
-- `search_briefing_notes_by_keyword` — BM25 keyword search; VP-Sources doctrine applies
+### Briefing notes (5)
 
-#### `list_briefing_notes` — VP-Sources doctrine (PR-H)
+- `create_briefing_note` (write) — Create a structured briefing note capturing a topic discussion with participants, decisions, and memory links.
+- `get_briefing_note` (read) — Fetch a single briefing note by ID with all fields: title, topic, participants, content, decisions, and links.
+- `list_briefing_notes` (read) — List briefing notes filtered by topic, newest first, with cursor paging support.
+- `search_briefing_notes_by_keyword` (read) — BM25 full-text keyword search over briefing note content, ranked by relevance.
+- `update_briefing_note` (write) — Update an existing briefing note; only provided fields are patched (arrays are FULL REPLACE).
 
-Exports `LIST_BRIEFING_NOTES_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
+### Episodes (5)
 
-Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
+- `get_episode` (read) — Fetch a single episode by its memory document ID.
+- `list_episodes` (read) — List episodes (memories with type='episode') ordered newest first.
+- `search_episodes_by_keyword` (read) — BM25 full-text keyword search restricted to episodes (memories with type='episode').
+- `search_episodes_by_semantic` (read) — Semantic vector search restricted to episodes (memories with type='episode'), ranked by cosine similarity.
+- `store_episode` (write) — Store a structured episodic memory capturing context, goal, action, outcome, and insight from a past event.
 
-#### `search_briefing_notes_by_keyword` — VP-Sources doctrine (PR-H)
+### Diary (3)
 
-Exports `SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
-
-Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` in Search / RAG above).
-
-### Search / RAG (6)
-- `search_fix_patterns` — semantic vector-search over fix patterns
-- `text_search` — BM25 keyword search over memories; VP-Sources doctrine applies
-- `hybrid_search` — RRF-fused vector + BM25 search; VP-Sources doctrine applies
-- `generate_upload_url` — mint a signed Convex storage upload URL for a KB document
-- `store_document_chunked` — extract, chunk and schedule embedding for an uploaded document
-- `soft_delete_document` — drop a KB document from reads, keeping the audit row
-
-Knowledge Base document upload is a two-step flow (see `docs/cloud/kb-ingest.md`):
-1. `generate_upload_url` — mints a signed Convex storage upload URL (Convex mutation `kbMutations:generateUploadUrl`, requires a Clerk JWT with `org_id`). `POST` the binary to that URL to obtain a `storageId`.
-2. `store_document_chunked` — with the `storageId`, extracts text, chunks (~512 tokens), and schedules RAG embedding per chunk at write time.
-
-Ingested documents are then fully retrievable through `recall`, `text_search`, and `hybrid_search` like any other memory (Day 122 indexing fix + Day 123 `generate_upload_url` — the previously-missing upload entrypoint that made the KB end-to-end usable).
-
-#### `recall` — VP-Sources doctrine (PR-H)
-
-Canonical semantic memory-search tool. Exports `RECALL_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
-
-The description now embeds two advisory VP-Sources doctrine paragraphs appended after the existing text:
-
-> VP-Sources doctrine: MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references.
->
-> Cite returned ids in the answer footer as 'VP-Sources: recall("\<q\>")→[ids] | none-needed:\<reason\>'.
-
-Doctrine is advisory-only — no hook blocks on absence. Client LLMs read the doctrine at tool-list time.
-
-#### `text_search` — VP-Sources doctrine (PR-H)
-
-Canonical BM25 keyword memory-search tool. Exports `TEXT_SEARCH_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
-
-Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` above).
-
-#### `hybrid_search` — VP-Sources doctrine (PR-H)
-
-Exports `HYBRID_SEARCH_TOOL_DESCRIPTION` from `mcp-server/src/tools.ts`.
-
-Same two advisory VP-Sources doctrine paragraphs appended after the existing description (identical strings, see `recall` above).
-
-### Issues (6)
-- `get_issue` — fetch a single issue
-- `list_issues` — page through issues with filters
-- `update_issue_status` — patch issue status
-- `verify_issue` — independently confirm an issue resolution
-- `issue_stats` — aggregate stats by status / orchestrator / project
-- `link_commit_to_issue` — link a commit SHA to an issue
-
-### Fix Patterns (6)
-- `create_fix_pattern` — write a validated fix pattern to the KB
-- `list_fix_patterns` — page through fix patterns
-- `get_fix_pattern` — fetch a single fix pattern
-- `add_fix_attempt` — log an attempt against a pattern
-- `validate_fix` — promote a candidate fix to validated
-- `link_issue_to_pattern` — link a VP issue id to a fix pattern
-
-#### `create_fix_pattern`
-Create a new fix pattern in the knowledge base. Documents a bug symptom, root cause, and optional validated fix. Agents search the KB before fixing to avoid repeating known mistakes.
-
-| Arg | Type | Required | Description |
-|-----|------|----------|-------------|
-| `symptom` | string | yes | What the bug looks like — the user-visible problem |
-| `rootCause` | string | yes | Why the bug happens — the underlying technical cause |
-| `tags` | string or string[] | yes | Tags for categorization (e.g. `"react-hydration"`) |
-| `stack` | string or string[] | yes | Tech stack involved (e.g. `"next.js"`, `"convex"`) |
-| `sourceProject` | string | yes | Project where this was discovered |
-| `createdBy` | string | yes | Orchestrator name (e.g. `"sigma"`) |
-| `severity` | string | yes | `"critical"`, `"major"`, or `"minor"` |
-| `validatedFix` | string | no | The fix that worked — set later if not yet known |
-| `files` | string or string[] | no | Files involved in the fix |
-| `linkedIssueIds` | string or string[] | no | VantagePeers issue IDs linked to this pattern |
-
-Example:
-```json
-{
-  "tool": "create_fix_pattern",
-  "arguments": {
-    "symptom": "Convex subscription silently drops after 60s of inactivity",
-    "rootCause": "Missing keepAlive ping in useConvexQuery wrapper",
-    "tags": ["convex-subscription", "silent-failure"],
-    "stack": ["next.js", "convex"],
-    "sourceProject": "myreeldream",
-    "createdBy": "sigma",
-    "severity": "major",
-    "validatedFix": "Add 30s ping interval to the subscription hook"
-  }
-}
-```
-
-#### `add_fix_attempt`
-Log a fix attempt against an existing pattern. Documents what was tried, whether it worked, and why. If `worked: true` and the pattern has no `validatedFix`, auto-sets it.
-
-| Arg | Type | Required | Description |
-|-----|------|----------|-------------|
-| `patternId` | string | yes | ID of the fix pattern |
-| `description` | string | yes | What was tried — the fix approach |
-| `worked` | boolean | yes | Whether this fix resolved the issue |
-| `why` | string | yes | Why it worked or did not — the reasoning |
-| `createdBy` | string | yes | Orchestrator name |
-| `commit` | string | no | Git commit hash of this attempt |
-
-Example:
-```json
-{
-  "tool": "add_fix_attempt",
-  "arguments": {
-    "patternId": "k5708d9xxwj81v92e0x3hwv36985g4d7",
-    "description": "Added 30s ping interval to useConvexQuery",
-    "worked": true,
-    "why": "Keeps the WebSocket connection alive past the server idle timeout",
-    "createdBy": "sigma",
-    "commit": "e866274"
-  }
-}
-```
-
-#### `validate_fix`
-Promote a candidate fix to validated status on an existing pattern. Use after independently confirming the fix holds in production.
-
-| Arg | Type | Required | Description |
-|-----|------|----------|-------------|
-| `patternId` | string | yes | ID of the fix pattern |
-| `validatedFix` | string | yes | Description of the validated fix |
-
-Example:
-```json
-{
-  "tool": "validate_fix",
-  "arguments": {
-    "patternId": "k5708d9xxwj81v92e0x3hwv36985g4d7",
-    "validatedFix": "30s ping interval in subscription hook — verified stable over 48h in production"
-  }
-}
-```
-
-#### `link_issue_to_pattern`
-Link a VantagePeers issue to a fix pattern. Creates a bidirectional reference so the issue and pattern are discoverable from each other.
-
-| Arg | Type | Required | Description |
-|-----|------|----------|-------------|
-| `patternId` | string | yes | ID of the fix pattern |
-| `issueId` | string | yes | VantagePeers issue ID to link |
-
-Example:
-```json
-{
-  "tool": "link_issue_to_pattern",
-  "arguments": {
-    "patternId": "k5708d9xxwj81v92e0x3hwv36985g4d7",
-    "issueId": "m97ewrrqczew67kc6at3a59e7985ea7h"
-  }
-}
-```
-
-### Error Monitoring (2)
-- `list_errors` — page through monitored errors
-- `get_error` — fetch a single error event
-
-### Deployments & Repos (6)
-- `add_deployment` — register a deployment URL
-- `remove_deployment` — deregister a deployment
-- `list_repo_mappings` — page through orchestrator ↔ repo mappings
-- `add_repo_mapping` — register a repo mapping
-- `remove_repo_mapping` — deregister a repo mapping
-- `get_repo_mapping` — fetch a single repo mapping
-
-#### `list_repo_mappings` — args schema + defaults (PR-C)
-
-```
-list_repo_mappings(limit?, cursor?, fields?)
-```
-
-| Arg | Type | Default | Notes |
-|-----|------|---------|-------|
-| `limit` | number 1–200 | `20` | Page size. Capped at `200` server-side. |
-| `cursor` | string | — | Opaque token from prior `nextCursor`. |
-| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, _creationTime, repo, orchestrator, project}`. `"full"` returns complete mapping object (including `active`, `lastDeployedSHA`, `lastDeployedAt`). |
-
-Returns `{ items: RepoMapping[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
-
-### Business Units (5)
-- `create_bu` — create a business unit
-- `list_bus` — page through business units; filter by `orchestratorId` / `status`
-- `get_bu` — fetch a single BU by id
-- `update_bu` — patch BU fields
-- `delete_bu` — destructive delete (master-gated)
-
-#### `list_bus` — args schema + defaults (PR-A)
-
-```
-list_bus(orchestratorId?, status?, limit?, cursor?, fields?)
-```
-
-| Arg | Type | Default | Notes |
-|-----|------|---------|-------|
-| `orchestratorId` | string | — | Filter by lead orchestrator (e.g. `"sigma"`). |
-| `status` | `"idea"\|"building"\|"live"\|"revenue"` | — | Filter by lifecycle status. |
-| `limit` | number 1–200 | `20` | Page size. Capped at `200` server-side. |
-| `cursor` | string | — | Opaque token from prior `nextCursor`. |
-| `fields` | `"lite"\|"full"` | `"full"` | `"lite"` returns `{_id, name, status, orchestratorId, _creationTime}`. `"full"` returns complete BU object (18+ keys). |
-
-Returns `{ items: BusinessUnit[], nextCursor: string | null }`. `nextCursor` is `null` on the last page.
-
-### Mandates (7)
-- `create_mandate` — create a delegated-spend mandate
-- `list_mandates` — page through mandates
-- `get_mandate` — fetch a single mandate
-- `accept_mandate` — counterparty acceptance
-- `update_mandate` — patch mandate fields
-- `validate_mandate_spending` — verify spend is within cap
-- `settle_mandate` — close a mandate with settlement note
-
-### Recurring Tasks (7)
-- `create_recurring_task` — create a recurring task spec
-- `list_recurring_tasks` — page through recurring tasks
-- `get_recurring_task` — fetch a single recurring task
-- `pause_recurring_task` — pause without deletion
-- `resume_recurring_task` — resume a paused recurring task
-- `update_recurring_task` — patch fields
-- `delete_recurring_task` — destructive delete
-
-### OKF Bundles (3)
-- `validate_okf_bundle` — read-only bundle validation (RFC §3.5)
-- `import_okf_bundle` — dry-run / merge / replace import with idempotency key
-- `export_okf_bundle` — export a namespace bundle (multi-tenant; fail-closed identity guard)
-
-### Identity (1)
-- `whoami` — returns `suggested_orchestrator_id`, `scope_profile`, `namespace_read_prefixes` for skill auto-resolution
-
-### Session (1)
-- `set_summary` — write the session summary
+- `get_diary` (read) — Fetch a diary entry for a specific date and orchestrator, returning null if none exists.
+- `list_diaries` (read) — List diary entries filtered by orchestrator or author, newest first with cursor paging support.
+- `write_diary` (write) — Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers.
 
 ### Billing (1)
-- `billing_summary_by_project` — machine-derived actual minutes per project over a completion window
 
-### Observability (1)
-- `improvisation_digest` — weekly advisory scan for fleet-state claims missing VP-Sources footers
+- `billing_summary_by_project` (read) — Billing/refacturation base — sums MACHINE-derived actualMinutes (startedAt→completedAt, never a hand-typed time line) grouped by project for tasks completed within [from, to].
 
-#### `improvisation_digest` — weekly advisory digest (PR-I)
+### Profiles and peers (4)
 
-Scans a rolling time window of VP tasks, messages, and memories for records carrying fleet/state tokens (commit SHA, PR#, VP id, decisive verb) with **no VP-Sources footer** — the Eta heuristic proxy for "made a fleet-state claim without a prior `recall` upstream".
+- `get_profile` (read) — Fetch an orchestrator profile with static identity and dynamic session state fields.
+- `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first.
+- `set_summary` (write) — Update the current-work summary for an orchestrator instance, visible via list_peers.
+- `update_profile` (write) — Create or update an orchestrator profile with static identity facts and dynamic session state.
 
-```
-improvisation_digest(windowDays?, orchestrators?)
-```
+### Knowledge bundles (OKF) (2)
 
-| Arg | Type | Default | Notes |
-|-----|------|---------|-------|
-| `windowDays` | number | `7` | Days to look back. |
-| `orchestrators` | string[] | — | Scope to these roles only (e.g. `["sigma","pi"]`). Omit for all orchestrators. |
+- `export_okf_bundle` (read) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
+- `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-**Returns:**
+### Other (1)
 
-```ts
-{
-  countsByOrch: Record<string, number>,      // hit count per orchestrator
-  countsByCategory: Record<string, number>,  // hit count per record type (task/message/memory)
-  samples: Array<{
-    id: string,
-    category: string,
-    orchestrator: string,
-    snippet: string
-  }>                                         // up to 50 representative snippets
-}
-```
+- `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
 
-**ADVISORY-only.** Pure read query — never blocks any action. Results are informational: a high improvisation rate suggests a team should increase VP-Sources citation hygiene, but the tool itself takes no automated action.
+The tools below are present in the server code but disabled in this release: a client can neither list nor call them. They are named so this reference matches the code exactly.
 
-**V1 scope (Option C):** scans VP records (tasks + messages + memories) only. Per Pi Day-113 arbitration (msg `k97a0pp6kq1axkj6cmc4pecpy989ce1w`), fallback if V1 misses too many = **Option B** (new dedicated `sessions` Convex table), not Option A (JSONL replay).
+### Registered, not advertised (31)
 
-**Detection heuristic (Eta A5 scope filter):**
-- Flag condition 1: record body contains a durable-artifact token (7–40 hex SHA, `#NNN`, Convex ID prefix, or decisive verb `merged/deployed/approved/shipped/released/fixed`).
-- Flag condition 2: record body does NOT contain the `VP-Sources:` footer substring.
-- A5 scope: excludes `system`, `cron-*`, and webhook-sourced entries.
+`accept_mandate`, `add_deployment`, `add_repo_mapping`, `create_bu`, `create_mandate`, `delete_bu`, `generate_upload_url`, `get_bu`, `get_error`, `get_issue`, `get_mandate`, `get_repo_mapping`, `issue_stats`, `link_commit_to_issue`, `list_bus`, `list_errors`, `list_issues`, `list_mandates`, `list_repo_mappings`, `remove_deployment`, `remove_repo_mapping`, `settle_mandate`, `soft_delete_mission_template`, `update_bu`, `update_issue_status`, `update_mandate`, `validate_mandate_spending`, `validate_okf_bundle`, `validate_task_payload`, `verify_issue`, `whoami`
+<!-- tools:end -->
 
-Examples:
+Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor.
 
-```json
-// Default 7-day window, all orchestrators
-{ "tool": "improvisation_digest", "arguments": { "windowDays": 7 } }
+## Security
 
-// Scoped to one orchestrator
-{ "tool": "improvisation_digest", "arguments": { "windowDays": 14, "orchestrators": ["sigma"] } }
-```
+- **Tenant isolation.** Each seat's token carries a scope profile set by your operator: which agents it may act as or read from, and which memory namespaces it may read and write. A member signed in through Clerk is confined to the `team/<organisation>` namespaces resolved from the organisation in the verified token. Which organisation's data a request can reach is decided from the verified credential, never from a value the client types into a tool argument.
+- **Agent identity comes from a credential, not a typed name.** See [Agent identity](#agent-identity). A caller from another organisation cannot send a message under one of your agents' names.
+- **A refusal never looks like an empty result.** A read you are not allowed to make returns an explicit error (for example, `list_peers` returns text opening with `REFUSED (RBAC_DENIED)`) rather than an empty list, so an agent cannot mistake "not allowed" for "nothing there". An agent credential that does not resolve is refused with its own code (`AGENT_CREDENTIAL_INVALID`, HTTP 401), distinct from a lookup failure. A signed-in user whose account has no organisation yet receives its own refusal, distinct from an invalid token.
+- **Token checks.** Clerk session tokens are verified against the issuer's published keys, with issuer and audience both bound. OAuth client secrets are compared in constant time. `redirect_uri` must match a registered URI exactly, and dynamic registration rejects non-HTTPS redirect URIs (except `localhost` / `127.0.0.1`).
+- **Health document.** `/health` is public and publishes only aggregates (version, commit, transport, the agent-identity mode and where it comes from). It never echoes a secret or a customer identifier.
 
-## Compact payloads and status aliases (v2.12.0 — feature since v2.3.0)
+To report a vulnerability, open an issue at https://github.com/vantageos-agency/vantage-peers/issues without exploit details and ask for a private channel.
 
-### `fields=lite` — reduced token payloads
+## Self-host (a separate product)
 
-`list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `list_bus`, and `list_repo_mappings` accept an optional `fields` parameter:
-
-| Value | Behaviour |
-|-------|-----------|
-| `"full"` | Default. Returns the complete document (backward-compatible). |
-| `"lite"` | Returns a compact projection — significantly fewer tokens. |
-
-Lite projections per entity:
-
-| Tool | Lite fields |
-|------|------------|
-| `list_tasks` / `list_tasks_by_mission` | `_id`, `_creationTime`, `title`, `status`, `priority`, `assignedTo`, `missionId` |
-| `list_missions` | `_id`, `_creationTime`, `name`, `status`, `pilot`, `priority`, `project` |
-| `list_briefing_notes` | `_id`, `_creationTime`, `topic`, `title`, `participants`, `createdBy` |
-| `list_bus` | `_id`, `_creationTime`, `name`, `status`, `orchestratorId` — PR-A activated actual projection (was no-op since v2.4.12) |
-| `list_repo_mappings` | `_id`, `_creationTime`, `repo`, `orchestrator`, `project` — PR-C activated actual projection (excludes `active`, `lastDeployedSHA`, `lastDeployedAt`) |
-
-Example (tasks lite):
-```json
-{
-  "tool": "list_tasks",
-  "arguments": { "assignedTo": "sigma", "fields": "lite", "limit": 20 }
-}
-```
-Returns:
-```json
-[
-  { "_id": "k17e2r...", "title": "Prepare MCP v2.3.0", "status": "in_progress", "priority": "high", "assignedTo": "sigma", "missionId": "k572a..." }
-]
-```
-
-### `status` arrays and aliases
-
-`list_tasks`, `list_tasks_by_mission`, and `list_missions` now accept `status` as a single string, an array, or one of the aliases below.
-
-#### Task status aliases
-
-| Alias | Expands to |
-|-------|-----------|
-| `"open"` | `["todo", "in_progress", "review", "blocked"]` — everything except `done` |
-| `"active"` | `["todo", "in_progress"]` |
-| `"all"` | No filter — returns all statuses |
-
-#### Mission status aliases
-
-| Alias | Expands to |
-|-------|-----------|
-| `"open"` | `["brainstorm", "plan", "execute", "validate"]` — everything except `complete` |
-| `"active"` | `["plan", "execute"]` |
-| `"all"` | No filter — returns all statuses |
-
-Examples:
-
-```json
-{ "tool": "list_tasks", "arguments": { "status": "open" } }
-{ "tool": "list_tasks", "arguments": { "status": ["todo", "in_progress"] } }
-{ "tool": "list_missions", "arguments": { "status": "active", "fields": "lite" } }
-{ "tool": "list_tasks_by_mission", "arguments": { "missionId": "k572a...", "status": "all", "fields": "lite" } }
-```
-
-Single-string status values still work unchanged — fully backward-compatible.
-
-## Fix patterns cycle
-
-A fix pattern is a validated learning extracted from a resolved bug — symptom, root cause, and the fix that worked — stored in the VantagePeers knowledge base. Patterns accumulate across projects and agents so that the same bug is never debugged twice from scratch.
-
-The cycle runs as follows:
-
-1. **Agent encounters a bug.** Before touching any code, call `search_fix_patterns` with a plain-language description of the symptom. The KB returns ranked matches using semantic vector search.
-2. **KB hit.** If a validated pattern is returned, apply the known fix directly. Log the reuse via `add_fix_attempt` (`worked: true`) so confidence scores stay current.
-3. **KB miss.** If no pattern matches, the agent fixes the bug manually using standard debugging. Once resolved, the learning is captured immediately via `create_fix_pattern` — symptom, root cause, severity, stack, and the working fix.
-4. **Validation.** After the fix holds in production (or after a second independent confirmation), call `validate_fix` to promote the pattern to validated status. This is the signal that downstream agents can trust the pattern without verification.
-5. **Issue linkage.** Call `link_issue_to_pattern` to attach the VantagePeers issue ID to the pattern. This creates a bidirectional reference: the issue record points to the pattern, and the pattern's `linkedIssueIds` list points back.
-
-The four tools that power this cycle are: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, and `link_issue_to_pattern`. The fifth tool, `search_fix_patterns`, is in the Search / RAG category and is the entry point agents should call first.
-
-On the agent side, the `/capitalize-fix` skill and the `inject-fix-patterns` hook automate steps 3-5: the hook fires on task completion events and prompts the orchestrator to capture the learning before closing the task. The cycle is designed to be low-friction — one tool call per step, all via MCP, no `npx convex run` required.
-
-## Programmatic API (TypeScript)
-
-For external services that need type-safe access to VantagePeers functions:
+This package also contains the server itself, and can run as a local stdio MCP server against your own deployment:
 
 ```bash
-npm install vantage-peers-mcp convex
+CONVEX_URL=https://<your-deployment>.convex.cloud npx vantage-peers-mcp
 ```
 
-```typescript
-import { fetchQuery, fetchMutation } from "convex/nextjs";
-import { api } from "vantage-peers-mcp/api";
+That is **VantagePeers Self-host**, a separate product with its own setup (backend deployment, service identity, environment). It is documented separately at https://vantagepeers.com/docs/getting-started. Nothing in that setup applies to VantagePeers Cloud, and nothing above is needed to self-host.
 
-// Query memories with full type safety
-const memories = await fetchQuery(
-  api.memories.listMemories,
-  { namespace: "global", limit: 10 },
-  { url: process.env.CONVEX_URL }
-);
+The package also exports typed function references for the VantagePeers backend at `vantage-peers-mcp/api`, for TypeScript services that call a deployment directly.
 
-// Send a message
-await fetchMutation(
-  api.messages.sendMessage,
-  { from: "pi", channel: "broadcast", content: "Hello from Studio" },
-  { url: process.env.CONVEX_URL }
-);
-```
+## Release notes
 
-Requires `convex` as a peer dependency. Only public functions are exported.
+### 3.0.0
 
-### Authentication with Deploy Keys
+**Breaking**
 
-For server-to-server access, use a Convex deploy key:
+- The `components` registry (six tools: `list_components`, `register_component`, `get_component`, `update_component`, `delete_component`, `search_components`) is removed, together with its entry in the `vantage-peers-mcp/api` type exports. These tools were not advertised to clients in 2.19.0.
+- Two legacy credential types are no longer accepted: tokens from the retired dynamic-registration token store, and legacy internal tenant bearers. A request presenting either is refused with HTTP 401. OAuth access tokens issued by `/token` and Clerk session tokens are unaffected.
 
-1. Go to your [Convex dashboard](https://dashboard.convex.dev) > Settings > Deploy Keys
-2. Generate a new deploy key for your deployment
-3. Set it as an environment variable:
+**Added**
 
-```bash
-CONVEX_DEPLOY_KEY=prod:your-deploy-key-here
-```
+- `correct_task_segment`: narrow a recorded work span to its real boundaries, once, with a mandatory reason. The original span is kept for audit.
+- Now available to clients: `fail_task` (a third terminal state, distinct from done and cancelled), `pause_task` and `resume_task` (stop and restart a task's work clock without ending it).
+- Now available to clients: the fix-pattern tools `create_fix_pattern`, `get_fix_pattern`, `list_fix_patterns`, `search_fix_patterns`, `add_fix_attempt`, `validate_fix` and `link_issue_to_pattern`.
+- `check_messages` reports how many in-progress tasks are stuck past the configured threshold on an open work segment, alongside the stuck list.
+- `/health` publishes the agent-identity mode, where that mode comes from, and how many calls were served on a typed agent name without a credential.
 
-4. Use it with the Convex client:
+**Security and fixes**
 
-```typescript
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "vantage-peers-mcp/api";
+- Agents act under the credential they present (`x-vantage-agent-credential`), not under a name typed into a tool argument. Names are compared after case and Unicode normalisation; accented and unaccented names stay distinct.
+- A message's sender is checked against the verified caller: a caller from another organisation can no longer sign as one of your agents.
+- `list_peers` surfaces a backend refusal as an explicit error instead of an empty list.
+- A signed-in user with no organisation yet receives a typed refusal instead of the "invalid token" answer. An agent credential that does not resolve is refused as `AGENT_CREDENTIAL_INVALID` (HTTP 401), distinct from a lookup failure.
+- Every refresh now returns a new refresh token, so a seat that keeps refreshing no longer expires at 30 days.
+- Seat names are canonical and unique across organisations.
+- The server no longer passes a privileged secret to the backend as a function argument; the backend authorises it by identity.
 
-const client = new ConvexHttpClient(process.env.CONVEX_URL!);
+Full history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/blob/main/mcp-server/CHANGELOG.md).
 
-// Query with type safety
-const memories = await client.query(api.memories.listMemories, {
-  namespace: "global",
-  limit: 10,
-});
+## Versioning
 
-// Mutate with type safety
-await client.mutation(api.messages.sendMessage, {
-  from: "studio",
-  channel: "sigma",
-  content: "Task completed",
-});
-```
+`vantage-peers-mcp` follows semver:
 
-**Security:** Never commit deploy keys to git. Use environment variables or a secrets manager.
-
-## Orchestrator Roles
-
-All orchestrator names are open strings — any lowercase name is accepted. The following are conventions used by the VantageOS team:
-
-| Role | Purpose |
-|------|---------|
-| `pi` | Lead orchestrator — planning, delegation, strategy |
-| `tau` | Frontend specialist — UI, design systems, components |
-| `phi` | Backend specialist — APIs, database, infrastructure |
-| `sigma` | Infrastructure — deployments, CI/CD, monitoring |
-| `omega` | VantageRegistry — agent and skill catalog |
-| `zeta` | Project-specific specialist |
-| `eta` | Code reviewer — GitHub PR reviews |
-| `alpha` | Perello Consulting — client delivery |
-| `lambda` | Tech intelligence — research and monitoring |
-| `victor` | HR / people operations |
-| `system` | Reserved for automated/webhook operations (bypasses RBAC). Not a real agent. |
-
-> **Custom roles:** any lowercase string is a valid orchestrator name. Enterprise clients can use arbitrary role names for their own agent teams.
+- **Major**: a removed tool, a removed argument, a changed input or output shape, or a credential that stops being accepted.
+- **Minor**: new tools, new optional arguments, newly exposed tools.
+- **Patch**: fixes with no change to any tool's contract.
 
 ## Requirements
 
-- Node.js >= 18
-- A VantagePeers Convex deployment ([get started](https://vantagepeers.com/docs))
-
-## Changelog
-
-### 2.4.3 — 2026-05-31 (Day 89)
-- fix(overflow): defensive byte-cap on all 17 `list_*` tools — `capListResponseBytes` truncates any list response above 60 KB and wraps the result in a `_meta` envelope (`_truncated`, `_showing`, `_total`, `_advice`) so MCP clients (Claude.ai, ChatGPT, Claude Code) never reject a list result for exceeding their token budget. Day 89 Pi 75,003-char `list_tasks` overflow incident reproduced and capped in regression test. PR #565.
-
-### 2.4.1 — 2026-05-30 (Day 88)
-- fix(dcr): `oauthDcr:validateAccessToken` exposed as PUBLIC `query` (was `internalQuery`, unreachable via `ConvexHttpClient.query()` → Path 3 DCR returned 401 even with valid token) — issue #556 / PR #557.
-- fix(dcr): `WWW-Authenticate` header now emits `Bearer resource_metadata="..."` per MCP spec §Protected Resource Metadata Discovery (was `resource="..."` — broke Claude.ai PRM discovery bootstrap on 401) — PR #557.
-- feat(mcp): ChatGPT Apps SDK tool annotations on all 84 tools (`readOnlyHint`, `openWorldHint`, `destructiveHint`) — 34 read-only + 41 write + 9 destructive — PR #555.
-- security(dcr): DCR scope isolation — new `public-readonly` profile + cross-tenant assertion tests + `scopeProfile` forced to `client-generic` for auto-discovery flow (never `master`) — PR #554.
-- docs(cloud): dedicated `/docs/cloud/` section in vantage-peers-site for VantagePeers Cloud (multi-tenant, multi-clients MCP: Claude.ai, ChatGPT, Claude Code, Codex) — site PR #120.
-
-### 2.4.0 — 2026-05-29 (Day 86)
-- feat(m3): `iframeEmbedSessions` table + `__VP_TOOL_RESULT__` stream marker + ack-checklist primitive — PR #545.
-- feat(v0.0.2-auth): `credentials:issueBearerFromClerk` httpAction + audit log + iter 2 P1 fixes — PR #546.
-
-### 2.3.0 — 2026-05-26
-- `list_tasks`, `list_missions`, `list_tasks_by_mission`, `list_briefing_notes` now accept `fields=lite` for compact payloads (less tokens).
-- Status filters now accept arrays and aliases: `status=["todo","in_progress"]`, `status="open"` (expands to non-terminal), `status="active"` (in_progress only on tasks; plan+execute on missions), `status="all"` (no filter).
-- Single-string status still accepted unchanged (backward-compatible).
-
-### 2.2.0 — 2026-05-07
-- 4 new fix-pattern tools: `create_fix_pattern`, `add_fix_attempt`, `validate_fix`, `link_issue_to_pattern`
-- Detailed per-tool docs with arg tables and example calls in README
-- New "Fix patterns cycle" section documenting the KB learning loop
-- 41 new Zod input-validation unit tests for fix-pattern tools
-
-### 2.1.1 — 2026-05-04
-- Defense-in-depth `memoryIdSchema` validation for `create_briefing_note` and `update_briefing_note`
-
-### 2.1.0 — 2026-04-25
-- `update_briefing_note` MCP tool with RBAC
-
-### 2.0.2 — 2026-04-14
-- Added badges (npm version, downloads, license, tool count) to the published README
-- Added Orchestrator Roles reference table including alpha, lambda, victor (Day 39 additions)
-- Added note that any custom lowercase role name is accepted
-- Added `bugs` URL and additional keywords to `package.json`
-
-### 2.0.1 — 2026-04-14
-- Docstring fix in server.ts (minor)
-
-### 2.0.0
-- Type-safe `api.ts` export for cross-deployment calls (`vantage-peers-mcp/api`)
-- Deploy key authentication guide
-- Mission Templates category (1 tool: `update_mission_template`)
-- Programmatic API section in README
-
-### 1.x
-- Initial public release with 82 MCP tools
+Node.js 20 or later, for the Self-host stdio server and the `vantage-peers-mcp/api` exports. VantagePeers Cloud clients need nothing installed.
 
 ## License
 
-FSL-1.1-Apache-2.0
-
-## Links
-
-- [Documentation](https://vantagepeers.com/docs)
-- [GitHub](https://github.com/vantageos-agency/vantage-peers)
+[FSL-1.1-Apache-2.0](https://github.com/vantageos-agency/vantage-peers/blob/main/LICENSE)
