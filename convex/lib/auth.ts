@@ -22,12 +22,32 @@ import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 //   Org slug is looked up in client_org_mapping. Inactive or unknown orgs throw
 //   Forbidden. Active orgs receive scoped allowedOrchestrators + scopes.
 
+export type MasterSource = "service-account" | "internal" | "operator-admin";
+
 export interface OrgScope {
 	userId: string;
 	orgSlug: string | null;
 	allowedOrchestrators: string[]; // ["*"] = full access
 	scopes: string[];
 	isMaster: boolean;
+	/**
+	 * WHICH grant made this scope master. Set in EACH master branch of
+	 * `withOrgScope` and nowhere else; absent on every non-master scope.
+	 *
+	 *   - "service-account"  the by-id fleet service account (MCP server).
+	 *   - "internal"         the explicit `allowNoIdentityMaster` opt-in (no
+	 *                        Clerk identity; internal call sites only).
+	 *   - "operator-admin"   a HUMAN: the verified `org:admin` of the org whose
+	 *                        mapping is `orgKind: "operator"`.
+	 *
+	 * WHY. `isMaster` answers "may this caller READ the whole fleet". It does
+	 * not answer "is this caller the MCP-bound service account". The operator
+	 * human is master FOR READS ONLY (see the operator branch of `withOrgScope`);
+	 * a door that is service-account-only by purpose (secrets, hashes, credential
+	 * oracles, the fleet "system" word) decides with `isMcpBoundMaster`, never
+	 * with `isMaster` alone.
+	 */
+	masterSource?: MasterSource;
 	/**
 	 * Set ONLY when `opts.refuseWithoutThrow` was passed AND the caller has a
 	 * verified identity with NO organisation attached (and is not the
@@ -95,6 +115,13 @@ export interface OrgScope {
 export interface WithOrgScopeOptions {
 	allowNoIdentityMaster?: boolean;
 	refuseWithoutThrow?: boolean;
+	/**
+	 * Resolve an operator-org admin as an ORDINARY member of the operator org
+	 * even in a read-only ctx. `resolveOrgScopeForAction` sets it: an action's
+	 * scope bridge is an internalQuery (a query ctx) but the action it serves may
+	 * write, and an action has no read/write split of its own.
+	 */
+	operatorAsMember?: boolean;
 }
 
 /**
@@ -143,6 +170,7 @@ export async function withOrgScope(
 					"view-orchestrator-summary",
 				],
 				isMaster: true,
+				masterSource: "internal",
 			};
 		}
 
@@ -192,6 +220,7 @@ export async function withOrgScope(
 				"view-orchestrator-summary",
 			],
 			isMaster: true,
+			masterSource: "service-account",
 		};
 	}
 
@@ -283,6 +312,44 @@ export async function withOrgScope(
 		);
 	}
 
+	// OPERATOR ORG ADMIN -> FLEET MASTER FOR READS ONLY. The operator's own
+	// organisation is the row marked `orgKind: "operator"` (setOrgKind); its
+	// verified `org:admin` is the operator human, who must see the whole fleet on
+	// the dashboard. Two keys must BOTH hold, each read from a place the caller
+	// cannot write: the row's orgKind (the mapping the join above just resolved
+	// as ACTIVE) and the VERIFIED role claim (readOrgRole, the reader
+	// requireOrgAdmin uses). A member/editor, an admin of a "client" org, an admin
+	// with no role claim and an inactive mapping are NOT master. This never reads
+	// a client-registration field.
+	//
+	// READS ONLY. The grant is made in a ctx that CANNOT write (isReadOnlyCtx);
+	// in a mutation (or an action's scope bridge, `operatorAsMember`) the same
+	// human falls through to the ordinary member scope below: operator org slug,
+	// the mapping's REAL roster. Every write path therefore applies normal org
+	// rules with no per-door patch, and the service-account-only doors need only
+	// `isMcpBoundMaster` for the query side.
+	if (
+		mapping.orgKind === "operator" &&
+		readOrgRole(identity).role === "admin" &&
+		!opts?.operatorAsMember &&
+		isReadOnlyCtx(ctx)
+	) {
+		return {
+			userId: identity.subject,
+			orgSlug: null,
+			allowedOrchestrators: ["*"],
+			scopes: [
+				"cross-tenant-read",
+				"view-own-tasks",
+				"view-own-missions",
+				"view-stats-aggregated",
+				"view-orchestrator-summary",
+			],
+			isMaster: true,
+			masterSource: "operator-admin",
+		};
+	}
+
 	return {
 		userId: identity.subject,
 		orgSlug,
@@ -294,8 +361,78 @@ export async function withOrgScope(
 		// (allowedOrchestrators/scopes above) but master is reachable ONLY via
 		// the master secret or the by-id service-account carve-out
 		// (allowNoIdentityMaster / serviceAccountUserId branches above), never
-		// via membership of a wildcard org.
+		// via membership of a wildcard org. The ONE membership-derived master is
+		// the operator-org admin branch above (orgKind + verified admin role).
 		isMaster: false,
+	};
+}
+
+/**
+ * True when `ctx` can perform NO write. The discriminator is the WRITE
+ * CAPABILITY itself, not a flag a caller could set or a name a wrapper could
+ * change: a Convex QueryCtx carries a `DatabaseReader` (no `insert`/`patch`/
+ * `replace`/`delete`) and no `scheduler`; a MutationCtx carries a
+ * `DatabaseWriter` and a `scheduler`. Both are checked and EITHER one present
+ * means "can write" (fail closed: an unrecognised ctx shape is never read-only).
+ * A reading `internalQuery` reached from an action is a QueryCtx too, which is
+ * why `resolveOrgScopeForAction` passes `operatorAsMember`.
+ */
+function isReadOnlyCtx(ctx: QueryCtx | MutationCtx): boolean {
+	const c = ctx as unknown as {
+		db?: { insert?: unknown; patch?: unknown; replace?: unknown; delete?: unknown };
+		scheduler?: unknown;
+	};
+	return (
+		c.db !== undefined &&
+		typeof c.db.insert !== "function" &&
+		typeof c.db.patch !== "function" &&
+		typeof c.db.replace !== "function" &&
+		typeof c.db.delete !== "function" &&
+		c.scheduler === undefined
+	);
+}
+
+/**
+ * The MCP-bound masters only: the by-id service account and the explicit
+ * internal opt-in. NEVER the operator human (`masterSource "operator-admin"`),
+ * who is master for dashboard READS but is not the MCP layer. Use it for every
+ * door that is service-account-only by purpose (secrets, hashes, credential
+ * resolution, the fleet "system" word) instead of `scope.isMaster`.
+ */
+export function isMcpBoundMaster(scope: {
+	isMaster: boolean;
+	masterSource?: MasterSource;
+}): boolean {
+	return (
+		scope.isMaster &&
+		(scope.masterSource === "service-account" ||
+			scope.masterSource === "internal")
+	);
+}
+
+/**
+ * The caller's org role from the verified claim, normalised ("org:admin" ->
+ * "admin"). Single reader shared by withOrgScope and requireOrgAdmin — Clerk's
+ * default claim is `org_role`; the camelCase spellings are what Convex's OIDC
+ * mapping may surface. Absent claim -> null.
+ */
+function readOrgRole(identity: object): {
+	roleRaw: string | null;
+	role: string | null;
+} {
+	const rec = identity as Record<string, unknown>;
+	// A claim is a role only when it is a STRING. An array/object/number claim
+	// is "no role" — never coerced, never a TypeError on `.replace`.
+	const asRole = (x: unknown): string | undefined =>
+		typeof x === "string" ? x : undefined;
+	const roleRaw =
+		asRole(rec.orgRole) ??
+		asRole(rec.org_role) ??
+		asRole(rec.organizationRole) ??
+		null;
+	return {
+		roleRaw,
+		role: roleRaw ? roleRaw.replace(/^org:/i, "").toLowerCase() : null,
 	};
 }
 
@@ -321,6 +458,7 @@ export async function lookupOrgMapping(
 	allowedOrchestrators: string[];
 	scopes: string[];
 	isActive: boolean;
+	orgKind?: "operator" | "client";
 } | null> {
 	const mapping = await ctx.db
 		.query("client_org_mapping")
@@ -331,6 +469,7 @@ export async function lookupOrgMapping(
 		allowedOrchestrators: mapping.allowedOrchestrators,
 		scopes: mapping.scopes,
 		isActive: mapping.isActive,
+		orgKind: mapping.orgKind,
 	};
 }
 
@@ -591,14 +730,7 @@ export async function requireOrgAdmin(
 	// Read defensively across the spellings Convex's OIDC identity mapping
 	// may surface, mirroring the organizationId/organizationSlug fallback
 	// above — no new claim shape is invented here.
-	const roleRaw =
-		(rec.orgRole as string | undefined) ??
-		(rec.org_role as string | undefined) ??
-		(rec.organizationRole as string | undefined) ??
-		null;
-	const normalizedRole = roleRaw
-		? roleRaw.replace(/^org:/i, "").toLowerCase()
-		: null;
+	const { roleRaw, role: normalizedRole } = readOrgRole(identity);
 
 	if (normalizedRole !== "admin") {
 		throw new ConvexError(
@@ -828,13 +960,35 @@ export function requireScope(scope: OrgScope, requiredScope: string): void {
 export function requireResolvedCaller(
 	// Only the four resolution fields are read, so an ACTION can pass the
 	// projection `resolveOrgScopeForAction` returns (it has no full OrgScope).
-	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "orgSlug" | "anonymous" | "refused" | "masterSource"
+	>,
 	registration: string,
-	opts?: { alsoRefusePreOrg?: boolean; masterOnly?: boolean },
+	opts?: {
+		alsoRefusePreOrg?: boolean;
+		masterOnly?: boolean;
+		mcpBoundOnly?: boolean;
+	},
 ): void {
 	// Master / service-account / active-org callers are resolved — never their
 	// business. This helper judges ONLY "could the caller be resolved at all".
-	if (scope.isMaster) return;
+	// `mcpBoundOnly`: a door that is service-account-only by purpose (a
+	// credential oracle). The operator human is master for READS but is not the
+	// MCP layer (`isMcpBoundMaster`), so it is refused here like any member.
+	if (scope.isMaster && (!opts?.mcpBoundOnly || isMcpBoundMaster(scope))) return;
+
+	if (opts?.mcpBoundOnly) {
+		throw new ConvexError(
+			`RBAC_DENIED: "${registration}" admits the MCP-bound fleet service account only — ${JSON.stringify(
+				{
+					registration,
+					orgSlug: scope.orgSlug,
+					reason: scope.anonymous ? "no-credential" : "not-mcp-bound-master",
+				},
+			)}`,
+		);
+	}
 
 	if (scope.anonymous) {
 		throw new ConvexError(
@@ -1002,6 +1156,19 @@ export const actionOrgScopeValidator = v.object({
 	 * no right.
 	 */
 	anonymous: v.boolean(),
+	/**
+	 * WHICH grant made `isMaster` true (absent when not master). An action reads
+	 * it to tell the MCP-bound masters from anything else; the operator human is
+	 * never master here (resolved as a member of the operator org), so the value
+	 * is only ever "service-account" or "internal".
+	 */
+	masterSource: v.optional(
+		v.union(
+			v.literal("service-account"),
+			v.literal("internal"),
+			v.literal("operator-admin"),
+		),
+	),
 });
 
 /** The resolved shape actions receive from `resolveOrgScopeForAction`. */
@@ -1010,13 +1177,20 @@ export interface ActionOrgScope {
 	orgSlug: string | null;
 	refused: boolean;
 	anonymous: boolean;
+	masterSource?: MasterSource;
 }
 
 export const resolveOrgScopeForAction = internalQuery({
 	args: {},
 	returns: actionOrgScopeValidator,
 	handler: async (ctx): Promise<ActionOrgScope> => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// operatorAsMember: this bridge is a QUERY ctx, but the action it serves
+		// may write. The operator human is master for READS only, so here it
+		// resolves as a member of the operator org (its orgSlug), like in a mutation.
+		const scope = await withOrgScope(ctx, {
+			refuseWithoutThrow: true,
+			operatorAsMember: true,
+		});
 
 		// Master: the fleet's own callers (the by-id service-account carve-out /
 		// explicit internal opt-in inside withOrgScope). Unrestricted, unchanged.
@@ -1026,6 +1200,7 @@ export const resolveOrgScopeForAction = internalQuery({
 				orgSlug: null,
 				refused: false,
 				anonymous: false,
+				masterSource: scope.masterSource,
 			};
 		}
 

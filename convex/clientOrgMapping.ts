@@ -66,7 +66,15 @@ export const getByClerkSlug = query({
 					"by slug.",
 			);
 		}
-		return await lookupOrgMapping(ctx, args.orgSlug);
+		const mapping = await lookupOrgMapping(ctx, args.orgSlug);
+		if (!mapping) return null;
+		// Explicit three-field projection: the published contract is unchanged
+		// (orgKind is an internal input of withOrgScope, not part of this read).
+		return {
+			allowedOrchestrators: mapping.allowedOrchestrators,
+			scopes: mapping.scopes,
+			isActive: mapping.isActive,
+		};
 	},
 });
 

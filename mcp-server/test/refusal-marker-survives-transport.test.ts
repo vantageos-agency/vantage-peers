@@ -197,10 +197,13 @@ const MCP_SRC = load(SRC_DIR, SRC_DIR);
 describe("END TWO sweep — no MCP reader of an envelope-capable door may swallow the marker", () => {
 	const derived = deriveDoors(CONVEX_SRC);
 
-	it("S1a the derived set is the three known envelope doors (a new one must be reviewed here)", () => {
+	it("S1a the derived set is the four known envelope doors (a new one must be reviewed here)", () => {
 		expect(derived.doors).toEqual([
 			"mandates:list",
 			"messages:listByChannel",
+			// Dashboard-only paginated history read; no MCP reader exists, so S1b's
+			// call-site set below is unchanged.
+			"messages:listByChannelPaginated",
 			"profiles:listProfiles",
 		]);
 	});

@@ -1,3 +1,4 @@
+import { type PaginationResult, paginationOptsValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
@@ -1454,6 +1455,176 @@ export const listByChannel = query({
 			.order("desc")
 			.take(take);
 		return rows.filter((r) => isChannelOnScope(scope, r.channel));
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listByChannelPaginated — the dashboard message-history table's own read.
+//
+// `components/messages/message-history-table.tsx:85` (vantage-peers-dashboard
+// origin/main e2dc58f) calls `usePaginatedQuery(api.messages.listByChannel,
+// { from?, since?, until? })`. usePaginatedQuery injects `paginationOpts`, and
+// `listByChannel` (args: channel, limit) rejects it BEFORE its handler runs
+// ("Unexpected field `paginationOpts` in object" — reproduced in
+// convex/__tests__/operatorListByChannel.test.ts), which prod shows as
+// `Server Error` for EVERY caller, org or no org. Same cure as
+// `tasks.listPaginated`: a dedicated paginated read, same scope rules as
+// `listByChannel`, the tenant predicate inside the index range.
+//
+// Index per branch (never `.filter()`): master -> by_channel / by_from /
+// by_createdAt; a non-master -> by_tenant_channel / by_tenant_created. `from`
+// is index-backed for the master when no channel is named; in every other
+// branch it narrows the already index-bounded page in memory (a page may be
+// short, `isDone`/`continueCursor` stay correct). The roster rule
+// (`isChannelOnScope`) is applied the same way.
+//
+// REFUSAL SHAPE (.claude/rules/refusal-is-distinguishable-from-absence.md): a
+// caller with no credential is RAISED at; a signed-in caller with no
+// organisation gets an empty page carrying `refused: true` (a mounted render
+// must not throw, and the bytes must not be those of an absence).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The return validator is exact: PaginationResult also carries optional
+// `pageStatus`/`splitCursor`, which would fail it, so project the three fields.
+function toHistoryPage(
+	result: { isDone: boolean; continueCursor: string },
+	page: Doc<"messages">[],
+) {
+	return {
+		page,
+		isDone: result.isDone,
+		continueCursor: result.continueCursor,
+	};
+}
+
+export const listByChannelPaginated = query({
+	args: {
+		paginationOpts: paginationOptsValidator,
+		channel: v.optional(v.string()),
+		from: v.optional(creatorValidator),
+		since: v.optional(v.number()),
+		until: v.optional(v.number()),
+	},
+	returns: v.object({
+		page: v.array(listByChannelRow),
+		isDone: v.boolean(),
+		continueCursor: v.string(),
+		refused: v.optional(v.literal(true)),
+	}),
+	handler: async (ctx, args) => {
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "messages:listByChannelPaginated");
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: "",
+				refused: true as const,
+			};
+		}
+
+		const { channel, from, since, until, paginationOpts } = args;
+
+		let result: PaginationResult<Doc<"messages">>;
+		if (scope.isMaster) {
+			if (channel !== undefined) {
+				result = await ctx.db
+					.query("messages")
+					.withIndex("by_channel", (q) => {
+						const base = q.eq("channel", channel);
+						if (since !== undefined && until !== undefined)
+							return base.gte("createdAt", since).lt("createdAt", until);
+						if (since !== undefined) return base.gte("createdAt", since);
+						if (until !== undefined) return base.lt("createdAt", until);
+						return base;
+					})
+					.order("desc")
+					.paginate(paginationOpts);
+			} else if (from !== undefined) {
+				result = await ctx.db
+					.query("messages")
+					.withIndex("by_from", (q) => {
+						const base = q.eq("from", from);
+						if (since !== undefined && until !== undefined)
+							return base.gte("createdAt", since).lt("createdAt", until);
+						if (since !== undefined) return base.gte("createdAt", since);
+						if (until !== undefined) return base.lt("createdAt", until);
+						return base;
+					})
+					.order("desc")
+					.paginate(paginationOpts);
+			} else {
+				result = await ctx.db
+					.query("messages")
+					.withIndex("by_createdAt", (q) => {
+						if (since !== undefined && until !== undefined)
+							return q.gte("createdAt", since).lt("createdAt", until);
+						if (since !== undefined) return q.gte("createdAt", since);
+						if (until !== undefined) return q.lt("createdAt", until);
+						return q;
+					})
+					.order("desc")
+					.paginate(paginationOpts);
+			}
+			// Master + a channel + a sender: the channel index bounded the page;
+			// narrow by sender in memory.
+			return toHistoryPage(
+				result,
+				channel !== undefined && from !== undefined
+					? result.page.filter((r) => r.from === from)
+					: result.page,
+			);
+		}
+
+		const orgSlug = scope.orgSlug;
+		if (orgSlug === null) {
+			return {
+				page: [],
+				isDone: true,
+				continueCursor: "",
+				refused: true as const,
+			};
+		}
+		if (channel !== undefined && !isChannelOnScope(scope, channel)) {
+			// A channel this caller may not read is an absence of ROWS for it, as in
+			// `listByChannel` (the tenant predicate would match nothing anyway).
+			return { page: [], isDone: true, continueCursor: "" };
+		}
+
+		result =
+			channel !== undefined
+				? await ctx.db
+						.query("messages")
+						.withIndex("by_tenant_channel", (q) => {
+							const base = q.eq("tenantId", orgSlug).eq("channel", channel);
+							if (since !== undefined && until !== undefined)
+								return base.gte("createdAt", since).lt("createdAt", until);
+							if (since !== undefined) return base.gte("createdAt", since);
+							if (until !== undefined) return base.lt("createdAt", until);
+							return base;
+						})
+						.order("desc")
+						.paginate(paginationOpts)
+				: await ctx.db
+						.query("messages")
+						.withIndex("by_tenant_created", (q) => {
+							const base = q.eq("tenantId", orgSlug);
+							if (since !== undefined && until !== undefined)
+								return base.gte("createdAt", since).lt("createdAt", until);
+							if (since !== undefined) return base.gte("createdAt", since);
+							if (until !== undefined) return base.lt("createdAt", until);
+							return base;
+						})
+						.order("desc")
+						.paginate(paginationOpts);
+		return toHistoryPage(
+			result,
+			result.page.filter(
+				(r) =>
+					isChannelOnScope(scope, r.channel) &&
+					(from === undefined || r.from === from),
+			),
+		);
 	},
 });
 

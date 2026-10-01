@@ -187,6 +187,10 @@ export default defineSchema({
 		// dominates the recent window. by_tenant_channel cannot be reused here because
 		// channel is a required equality field in that compound (can't skip to createdAt).
 		.index("by_tenant_created", ["tenantId", "createdAt"])
+		// messages.listByChannelPaginated (master, no channel / sender named):
+		// the dashboard history table's `since`/`until` day window must live in the
+		// index range, not in a post-fetch filter.
+		.index("by_createdAt", ["createdAt"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on message body, with filterFields for the
 		// common audit narrowing axes (from, channel, sessionDay).

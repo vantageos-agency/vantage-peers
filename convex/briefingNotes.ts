@@ -355,14 +355,22 @@ const BYTE_LIMIT_ERROR_PATTERN = /too much data|too many bytes|16777216/i;
 
 async function fetchCappedOrOverflow(
 	fetch: () => Promise<Doc<"briefingNotes">[]>,
-): Promise<{ rows: Doc<"briefingNotes">[]; overflowed: boolean }> {
+): Promise<{
+	rows: Doc<"briefingNotes">[];
+	overflowed: boolean;
+	byteLimitHit: boolean;
+}> {
 	try {
 		const rows = await fetch();
-		return { rows, overflowed: rows.length > BRIEFING_NOTES_LIST_SCAN_CAP };
+		return {
+			rows,
+			overflowed: rows.length > BRIEFING_NOTES_LIST_SCAN_CAP,
+			byteLimitHit: false,
+		};
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		if (BYTE_LIMIT_ERROR_PATTERN.test(message)) {
-			return { rows: [], overflowed: true };
+			return { rows: [], overflowed: true, byteLimitHit: true };
 		}
 		throw err;
 	}
@@ -421,8 +429,22 @@ export const list = query({
 		const needsVisibilityFilter = scope.isMaster
 			? args.master !== true && args.callerIdentities !== undefined
 			: true;
+		// A non-master read with NO updatedSince and NO callerIdentities has no
+		// pre-slice filter: the tenant predicate already lives inside the
+		// `by_orgId` / `by_orgId_topic` index range below (the in-memory
+		// `r.orgId === orgSlug` check further down stays as defence in depth, it
+		// removes nothing), and the rows come back newest-first. Widening it to
+		// BRIEFING_NOTES_LIST_SCAN_CAP + 1 full-content rows is what tripped the
+		// cap (row count or the 16MB byte ceiling) for the dashboard's
+		// `briefingNotes.list { limit: 50 }`; it now reads `limit` rows.
+		// updatedSince keeps its widened union (its indexes are not org-prefixed,
+		// so the org filter is a real pre-slice filter there) and callerIdentities
+		// keeps its widened scan (participant visibility is a pre-slice filter).
 		const needsWideScan =
-			args.updatedSince !== undefined || needsVisibilityFilter;
+			args.updatedSince !== undefined ||
+			(scope.isMaster
+				? needsVisibilityFilter
+				: args.callerIdentities !== undefined);
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
 
 		let rows: Doc<"briefingNotes">[];
@@ -438,6 +460,11 @@ export const list = query({
 		// topic-bound, or full-table scan hit its cap OR the platform's own
 		// byte-ceiling error — see fetchCappedOrOverflow, issue #1294.
 		let plainScanOverflowed = false;
+		// True when a plain (non-updatedSince) fetch tripped the platform byte
+		// ceiling. fetchCappedOrOverflow turns that error into an EMPTY result, so
+		// without a narrow-fetch refusal below a narrow read would silently answer
+		// "no notes" for a refusal.
+		let plainScanByteLimitHit = false;
 
 		if (args.updatedSince !== undefined) {
 			const since = args.updatedSince;
@@ -463,8 +490,8 @@ export const list = query({
 			// fixed. The two branches are set-disjoint (a row is in exactly one
 			// of "updatedAt set" / "updatedAt undefined"), so concatenating
 			// them needs no separate de-dup pass.
-			let branchAResult: { rows: Doc<"briefingNotes">[]; overflowed: boolean };
-			let branchBResult: { rows: Doc<"briefingNotes">[]; overflowed: boolean };
+			let branchAResult: Awaited<ReturnType<typeof fetchCappedOrOverflow>>;
+			let branchBResult: Awaited<ReturnType<typeof fetchCappedOrOverflow>>;
 			if (args.topic !== undefined) {
 				const topic = args.topic;
 				branchAResult = await fetchCappedOrOverflow(() =>
@@ -544,6 +571,7 @@ export const list = query({
 						);
 			rows = capped.rows;
 			plainScanOverflowed = capped.overflowed;
+			plainScanByteLimitHit = capped.byteLimitHit;
 		} else if (args.topic !== undefined) {
 			// Master path -- unchanged scan shape, now wrapped in
 			// fetchCappedOrOverflow (same helper already used by the updatedSince
@@ -559,12 +587,14 @@ export const list = query({
 			);
 			rows = capped.rows;
 			plainScanOverflowed = capped.overflowed;
+			plainScanByteLimitHit = capped.byteLimitHit;
 		} else {
 			const capped = await fetchCappedOrOverflow(() =>
 				ctx.db.query("briefingNotes").order("desc").take(fetchCap),
 			);
 			rows = capped.rows;
 			plainScanOverflowed = capped.overflowed;
+			plainScanByteLimitHit = capped.byteLimitHit;
 		}
 
 		// Refuse to return a silently-incomplete page: if the widened scan
@@ -589,7 +619,7 @@ export const list = query({
 		const scanOverflowed = usedIndexedUpdatedSinceBound
 			? updatedSinceBranchOverflowed
 			: plainScanOverflowed;
-		if (needsWideScan && scanOverflowed) {
+		if ((needsWideScan && scanOverflowed) || plainScanByteLimitHit) {
 			const windowAdvice = usedIndexedUpdatedSinceBound
 				? " or shrink the updatedSince window"
 				: "";

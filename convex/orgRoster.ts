@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
-import { withOrgScope } from "./lib/auth";
+import { isMcpBoundMaster, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getMyOrgRoster — the authenticated caller's own organisation roster.
@@ -58,7 +58,7 @@ export const getForAccessToken = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport via imperative client.query (mcp-server/src/auth.ts getOrgRoster + tools.ts:1897), never a reactive client useQuery. The fail-closed AUTH_REQUIRED/RBAC_DENIED throws are caught by the MCP auth layer's try/catch and returned as refusals, so no subscribing client ever receives an uncaught Server Error. R-50 declared divergence (a claim, verified here against the call sites).
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
+		if (!isMcpBoundMaster(scope)) {
 			throw new ConvexError(
 				"RBAC_DENIED: orgRoster.getForAccessToken requires master or " +
 					"service-account scope — anonymous and org-scoped callers may " +
