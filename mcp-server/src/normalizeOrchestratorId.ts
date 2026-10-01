@@ -6,8 +6,28 @@
  * separate file to satisfy mcp-server tsconfig rootDir constraint).
  *
  * Rule: NFC normalize → lowercase → trim.
- * This collapses "Hélios" (composed), "Hélios" (decomposed NFD), "HELIOS",
- * "Helios", "helios", "hélios" all to "hélios".
+ *
+ * WHAT IT COLLAPSES, and what it does NOT. It folds CASE and COMPOSITION FORM,
+ * and it does NOT fold ACCENTS. Measured in node rather than reasoned:
+ *   "hélios"  "Hélios"  "HÉLIOS"  -> "hélios"
+ *   "helios"  "Helios"  "HELIOS"  -> "helios"
+ *   distinct results: TWO. The NFD form of "hélios" equals its NFC form.
+ *
+ * This paragraph previously claimed all six collapse to ONE, and that was
+ * FALSE for the three unaccented spellings. The false claim travelled: it was
+ * quoted as settled authority in a task brief, and the brief's whole argument
+ * was that claims must be measured rather than quoted. `helios` is now pinned
+ * as REFUSED against a credential for `hélios` in
+ * mcp-server/test/actor-from-credential.test.ts, so this correction is an
+ * assertion rather than a comment.
+ *
+ * NOT folding accents is a RULING, not an omission. Folding would collapse
+ * names that are genuinely different on an IDENTITY gate, and today
+ * `registerAgent` (convex/agents.ts) enforces no uniqueness under this
+ * function — `Clio` and `clio` can coexist as two rows. One normalised name
+ * resolving to two rows, at a gate that cannot say which it matched, is worse
+ * than a strict comparison. Uniqueness is enforced first; any widening only
+ * after.
  *
  * Reference: PR #667, mission k57a36y8w5t085bqr23dsmvb2d882506.
  */
