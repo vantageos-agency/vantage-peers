@@ -125,6 +125,7 @@ export const getMembership = query({
 	args: { clerkOrgSlug: v.optional(v.string()) },
 	returns: v.array(membershipShape),
 	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.orgMembership\.getMembership' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed refused scope
 		// instead of a throw. The pre-existing anonymous-caller throw below

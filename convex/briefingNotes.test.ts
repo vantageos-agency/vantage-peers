@@ -130,7 +130,7 @@ describe("briefingNotes:update", () => {
 				callerOrchestrator: "tau", // not sigma, not system
 				title: "should-fail",
 			}),
-		).rejects.toThrow(/Unauthorized: tau is not creator/);
+		).rejects.toThrow(/RBAC_DENIED: tau is not creator/);
 	});
 
 	test("updatedAt + updatedBy set after successful patch", async () => {

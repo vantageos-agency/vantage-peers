@@ -97,7 +97,7 @@ describe("GAP-T1 accept_mandate — mandates.accept mutation", () => {
 				mandateId,
 				callerOrchestrator: "phi", // not fulfilledBy, not system → refused
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
 
@@ -138,7 +138,7 @@ describe("GAP-T1 settle_mandate — mandates.settle mutation", () => {
 				callerOrchestrator: "tau", // fulfilledBy cannot settle — only requestedBy
 				finalCost: 100,
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
 

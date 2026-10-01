@@ -778,12 +778,14 @@ async function readExternalOpen(
 // door beside it carries the master-only guard.
 export const listExternalOpenForMonitor = internalQuery({
 	args: externalOpenArgs,
+	// returns-projection: external-PR tracking dashboard summary row — full issue fetched via issues.get when a row is opened
 	returns: externalOpenReturns,
 	handler: async (ctx, args) => await readExternalOpen(ctx, args),
 });
 
 export const listExternalOpen = query({
 	args: externalOpenArgs,
+	// returns-projection: external-PR tracking dashboard summary row — full issue fetched via issues.get when a row is opened
 	returns: externalOpenReturns,
 	handler: async (ctx, args) => {
 		// Fail-closed READ counterpart of this file's own master-only WRITE gate

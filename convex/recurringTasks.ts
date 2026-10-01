@@ -610,6 +610,7 @@ export const processDueTasks = internalMutation({
 export const getById = query({
 	args: { recurringTaskId: v.string() },
 	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.recurringTasks\.getById' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Its callers are MCP tools via imperative convex.query (mcp-server/src/tools.ts:6938, :10084), not subscriptions. R-50 declared divergence (a claim, verified against that enumeration).
 		// REFUSAL SHAPE, chosen deliberately: a refusal RAISES; it is never
 		// `null`. `null` already means "no such row" on this query (a deleted id
 		// resolves null), so returning null for a refused caller would make two

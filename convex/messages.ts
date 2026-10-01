@@ -1006,16 +1006,16 @@ export const deleteMessage = mutation({
 
 		// RBAC: callerOrchestrator is required and must match message.from
 		if (args.callerOrchestrator === undefined) {
-			throw new Error(
-				"Unauthorized: callerOrchestrator is required to delete a message — omitting it is refused, not exempted",
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required to delete a message — omitting it is refused, not exempted — ${JSON.stringify({ registration: "messages:deleteMessage", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
 			);
 		}
 		if (
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			message.from !== args.callerOrchestrator
 		) {
-			throw new Error(
-				`Unauthorized: only ${message.from} (sender) or system can delete this message`,
+			throw new ConvexError(
+				`RBAC_DENIED: only ${message.from} (sender) or system can delete this message — ${JSON.stringify({ registration: "messages:deleteMessage", orgSlug: scope.orgSlug, reason: "not-sender" })}`,
 			);
 		}
 

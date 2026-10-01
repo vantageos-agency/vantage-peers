@@ -795,7 +795,7 @@ describe("Messages", () => {
 				messageId,
 				callerOrchestrator: "phi",
 			}),
-		).rejects.toThrow("Unauthorized");
+		).rejects.toThrow("RBAC_DENIED");
 	});
 
 	test("delete message throws on non-existent messageId", async () => {

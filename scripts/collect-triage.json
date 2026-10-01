@@ -403,42 +403,6 @@
     "reason": "Second profiles.collect() in the same handler (non-broadcast channel-resolution branch) \u2014 same defect as ::1, same table, same hot path. Not fixed here; to be filed.",
     "verdict": "IN"
   },
-  "convex/migrations.ts::backfillTaskTimes::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestBriefings::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMemories::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMessages::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMessages::2": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestMissions::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::deleteTestTasks::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::migrateDiaryOrchestrator::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
-  "convex/migrations.ts::migrateMemoriesNamespace::1": {
-    "reason": "not yet examined",
-    "verdict": "UNJUDGED"
-  },
   "convex/missionTemplates.ts::listNames::1": {
     "reason": "not yet examined",
     "verdict": "UNJUDGED"
@@ -521,6 +485,14 @@
   },
   "convex/oauth.ts::retrofitSeatRefreshToken::1": {
     "reason": "by_clientId indexed, bounded by one client's own refresh-token count \u2014 not corpus-sized.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::revokeTokenBatch::1": {
+    "reason": "Bounded index range: by_scopeProfile take(CASCADE_REVOKE_BATCH + 1) = 501 rows max, 500 deleted per batch; the remainder is drained by the self-rescheduling continueCascadeRevoke.",
+    "verdict": "OUT"
+  },
+  "convex/oauth.ts::revokeTokenBatch::2": {
+    "reason": "Same bounded index range as ::1, over oauth_refresh_tokens: take(501), 500 deleted per batch, continuation drains the rest.",
     "verdict": "OUT"
   },
   "convex/oauth.ts::revokeAccessTokensOnly::1": {

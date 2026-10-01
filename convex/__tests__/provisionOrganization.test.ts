@@ -157,7 +157,7 @@ describe("oauth:provisionOrganization", () => {
 				displayName: "y",
 				orchestrators: [{ name: "a" }],
 			}),
-		).rejects.toThrow(/Unauthorized/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("registerPublicClient args have no clerkOrgSlug (DCR cannot take an org)", () => {

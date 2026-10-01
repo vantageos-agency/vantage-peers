@@ -17,6 +17,7 @@
  */
 
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
 	internalMutation,
@@ -64,7 +65,9 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 	}
 	const valid = await timingSafeEqual(callerToken, masterToken);
 	if (!valid) {
-		throw new Error("Unauthorized: invalid master token");
+		throw new ConvexError(
+			`RBAC_DENIED: invalid master token — ${JSON.stringify({ registration: "oauth:provisionOrganization", orgSlug: null, reason: "invalid-master-token" })}`,
+		);
 	}
 }
 
@@ -568,6 +571,7 @@ export const getScopeProfile = query({
 	args: { profileId: v.string() },
 	returns: v.union(scopeProfileShape, v.null()),
 	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getScopeProfile' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
 			throw new ConvexError(
@@ -1204,6 +1208,7 @@ export const getClientByClientId = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getClientByClientId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
 			throw new ConvexError(
@@ -2019,6 +2024,96 @@ async function sha256Hex(input: string): Promise<string> {
 // renamed per D9 workspace-level naming (see patch_marie_iris_rh_scope.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Max token rows deleted per table, per profile name, per transaction by the
+// emergency cascade revoke. 2 tables x 2 names x 500 = 2000 deletes worst case
+// per transaction, well inside Convex's per-mutation write budget.
+const CASCADE_REVOKE_BATCH = 500;
+
+/**
+ * Deletes up to CASCADE_REVOKE_BATCH access + refresh tokens whose scopeProfile
+ * is `profileName`, reading through each table's `by_scopeProfile` index.
+ * `more` is true when a table still held rows beyond the batch.
+ */
+async function revokeTokenBatch(
+	ctx: MutationCtx,
+	profileName: string,
+): Promise<{ deleted: number; more: boolean }> {
+	let deleted = 0;
+	let more = false;
+
+	const accessTokens = await ctx.db
+		.query("oauth_access_tokens")
+		.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", profileName))
+		.take(CASCADE_REVOKE_BATCH + 1);
+	for (const t of accessTokens.slice(0, CASCADE_REVOKE_BATCH)) {
+		await ctx.db.delete(t._id);
+		deleted++;
+	}
+	if (accessTokens.length > CASCADE_REVOKE_BATCH) more = true;
+
+	const refreshTokens = await ctx.db
+		.query("oauth_refresh_tokens")
+		.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", profileName))
+		.take(CASCADE_REVOKE_BATCH + 1);
+	for (const t of refreshTokens.slice(0, CASCADE_REVOKE_BATCH)) {
+		await ctx.db.delete(t._id);
+		deleted++;
+	}
+	if (refreshTokens.length > CASCADE_REVOKE_BATCH) more = true;
+
+	return { deleted, more };
+}
+
+/**
+ * Continuation of patchScopeProfileEmergency's cascade revoke when more than
+ * CASCADE_REVOKE_BATCH tokens cite the profile. Internal-only (scheduled by the
+ * parent, never client-reachable; the parent already authenticated the
+ * service account). The audit log stays append-only: every continuation batch
+ * appends its OWN row (eventType "scope_profile_emergency_cascade_continuation")
+ * copying the parent row's actor, states and reason, rather than patching the
+ * parent.
+ */
+export const continueCascadeRevoke = internalMutation({
+	args: {
+		profileNames: v.array(v.string()),
+		parentAuditLogId: v.id("oauth_audit_log"),
+	},
+	returns: v.object({ deleted: v.number(), isDone: v.boolean() }),
+	handler: async (ctx, args) => {
+		const parent = await ctx.db.get(args.parentAuditLogId);
+		if (!parent) {
+			throw new Error(
+				`continueCascadeRevoke: parent audit row ${args.parentAuditLogId} not found`,
+			);
+		}
+		let deleted = 0;
+		let more = false;
+		for (const profileName of args.profileNames) {
+			const drained = await revokeTokenBatch(ctx, profileName);
+			deleted += drained.deleted;
+			if (drained.more) more = true;
+		}
+		await ctx.db.insert("oauth_audit_log", {
+			eventType: "scope_profile_emergency_cascade_continuation",
+			actorTokenHash: parent.actorTokenHash,
+			targetProfileId: parent.targetProfileId,
+			previousState: parent.previousState,
+			newState: parent.newState,
+			reason: parent.reason,
+			cascadeRevokedCount: deleted,
+			createdAt: Date.now(),
+		});
+		if (more) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.oauth.continueCascadeRevoke,
+				args,
+			);
+		}
+		return { deleted, isDone: !more };
+	},
+});
+
 export const patchScopeProfileEmergency = mutation({
 	args: {
 		profileId: v.string(),
@@ -2130,37 +2225,26 @@ export const patchScopeProfileEmergency = mutation({
 		}
 
 		// ── Cascade revoke tokens ─────────────────────────────────────────────
+		// Bounded (R-31): read through the `by_scopeProfile` index of each token
+		// table, at most CASCADE_REVOKE_BATCH rows per table per profile name per
+		// transaction. If rows remain, `continueCascadeRevoke` is scheduled and
+		// drains the rest in further bounded batches.
 		let cascadeRevokedCount = 0;
+		let cascadeRevokeContinues = false;
+		let profileNamesToRevoke: string[] = [];
 
 		if (args.cascadeRevokeTokens) {
-			const oldName = args.profileId;
-
-			// Collect profile names to revoke (old name + new name if renamed)
-			const profileNamesToRevoke = new Set<string>([oldName]);
-			if (newProfileId !== oldName) {
-				profileNamesToRevoke.add(newProfileId);
+			// Profile names to revoke (old name + new name if renamed)
+			const names = new Set<string>([args.profileId]);
+			if (newProfileId !== args.profileId) {
+				names.add(newProfileId);
 			}
+			profileNamesToRevoke = [...names];
 
 			for (const profileName of profileNamesToRevoke) {
-				// Delete access tokens citing this profile
-				const accessTokens = await ctx.db
-					.query("oauth_access_tokens")
-					.filter((q) => q.eq(q.field("scopeProfile"), profileName))
-					.collect();
-				for (const t of accessTokens) {
-					await ctx.db.delete(t._id);
-					cascadeRevokedCount++;
-				}
-
-				// Delete refresh tokens citing this profile
-				const refreshTokens = await ctx.db
-					.query("oauth_refresh_tokens")
-					.filter((q) => q.eq(q.field("scopeProfile"), profileName))
-					.collect();
-				for (const t of refreshTokens) {
-					await ctx.db.delete(t._id);
-					cascadeRevokedCount++;
-				}
+				const drained = await revokeTokenBatch(ctx, profileName);
+				cascadeRevokedCount += drained.deleted;
+				if (drained.more) cascadeRevokeContinues = true;
 			}
 		}
 
@@ -2187,6 +2271,14 @@ export const patchScopeProfileEmergency = mutation({
 			clientsRetargeted,
 			createdAt: Date.now(),
 		});
+
+		if (cascadeRevokeContinues) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.oauth.continueCascadeRevoke,
+				{ profileNames: profileNamesToRevoke, parentAuditLogId: auditLogId },
+			);
+		}
 
 		return {
 			patchedProfileId: newProfileId,

@@ -171,7 +171,7 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 				noteId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/Unauthorized: only seat-b \(creator\)/);
+		).rejects.toThrow(/RBAC_DENIED: only seat-b \(creator\)/);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).not.toBeNull();
 	});
 
@@ -210,7 +210,7 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 				callerOrchestrator: "system",
 				title: "hijacked",
 			}),
-		).rejects.toThrow(/Unauthorized: system is not creator/);
+		).rejects.toThrow(/RBAC_DENIED: system is not creator/);
 		const row = await t.run((ctx) => ctx.db.get(noteId));
 		expect(row?.title).toBe("seed note");
 	});
@@ -295,7 +295,7 @@ describe("diary.deleteDiary — the word 'system' is not authority", () => {
 				diaryId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/Unauthorized: only seat-b \(owner\)/);
+		).rejects.toThrow(/RBAC_DENIED: only seat-b \(owner\)/);
 		expect(await t.run((ctx) => ctx.db.get(diaryId))).not.toBeNull();
 	});
 
@@ -333,7 +333,7 @@ describe("messages.deleteMessage — the word 'system' is not authority", () => 
 				messageId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/Unauthorized: only seat-b \(sender\)/);
+		).rejects.toThrow(/RBAC_DENIED: only seat-b \(sender\)/);
 		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
 	});
 
@@ -478,7 +478,7 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 		const tM = asMaster(t);
 		await expect(
 			tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "seat-a" }),
-		).rejects.toThrow(/Unauthorized: only seat-b \(fulfilledBy\)/);
+		).rejects.toThrow(/RBAC_DENIED: only seat-b \(fulfilledBy\)/);
 		await tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "seat-b" });
 		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("accepted");
 		await expect(
@@ -487,7 +487,7 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 				callerOrchestrator: "seat-a",
 				finalCost: 1,
 			}),
-		).rejects.toThrow(/Unauthorized: only seat-b \(requestedBy\)/);
+		).rejects.toThrow(/RBAC_DENIED: only seat-b \(requestedBy\)/);
 	});
 });
 
