@@ -128,6 +128,32 @@ describe("operator org admin -> fleet master", () => {
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
+	// The admin match is EXACT on the normalised role (readOrgRole strips one
+	// leading "org:" and lowercases). A role that merely CONTAINS "admin" is a
+	// custom role, never fleet master.
+	test.each([
+		"org:billing_admin",
+		"org:admin_readonly",
+		"org:superadmin",
+		"admin_lite",
+		"billing:admin",
+	])("operator-org role %s (contains admin, not exactly admin) -> refused", async (role) => {
+		const t = createT();
+		await seed(t);
+		const c = as(t, { subject: "x", org_slug: OPERATOR_ORG, org_role: role });
+		expect(await refusal(read(c))).toContain("not-fleet-master");
+	});
+
+	test.each(["org:admin", "admin", "ORG:Admin"])(
+		"operator-org role %s (exact admin after normalisation) -> still master",
+		async (role) => {
+			const t = createT();
+			await seed(t);
+			const c = as(t, { subject: "op", org_slug: OPERATOR_ORG, org_role: role });
+			expect(await read(c)).toEqual([]);
+		},
+	);
+
 	test("client-org admin -> refused", async () => {
 		const t = createT();
 		await seed(t);
