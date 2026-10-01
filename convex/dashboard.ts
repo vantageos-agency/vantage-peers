@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { withOrgScope, filterByOrgScope, requireScope } from "./lib/auth";
+import {
+	withOrgScope,
+	filterByOrgScope,
+	requireResolvedCaller,
+	requireScope,
+} from "./lib/auth";
 
 // In-progress tasks and mandates are both small, bounded tables today; 500 rows
 // is a comfortable ceiling well above observed volume for either.
@@ -58,26 +63,26 @@ export const getDashboardSummary = query({
 	}),
 	handler: async (ctx) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
-		// Master scope (no org): full dashboard, all orchestrators.
-		// Client org: filtered to their allowedOrchestrators.
-		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
-		// the signed-in-no-org branch to a typed-empty result instead of a
-		// throw (the pre-existing requireScope below would otherwise throw
-		// "Missing scope" for that same caller).
+		// Master scope: the whole fleet, unchanged.
+		// Client org with view-stats-aggregated: ITS OWN TENANT ONLY — every
+		// table read below is keyed on the caller's org (tenant index) or, where
+		// a row carries only an orchestrator (profiles), narrowed to the org's
+		// roster. `mandates` carries no tenant column (fleet-internal), so a
+		// member is served none of it.
+		// REFUSALS ARE CODED, NEVER ZEROED (.claude/rules/
+		// refusal-is-distinguishable-from-absence.md): anonymous and
+		// signed-in-no-org callers RAISE RBAC_DENIED (a zeroed aggregate is a
+		// fabricated figure); the dashboard's route error boundary renders that
+		// raise as a refusal (app/[locale]/dashboard/error.tsx). A member lacking
+		// view-stats-aggregated is refused by requireScope below, same code.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) {
-			return {
-				tasksInProgress: 0,
-				activeOrchestrators: [],
-				unreadMessages: 0,
-				openMandates: 0,
-				recentActivity: [],
-			};
-		}
-		// getDashboardSummary requires either master or aggregated stats scope.
+		requireResolvedCaller(scope, "dashboard:getDashboardSummary", {
+			alsoRefusePreOrg: true,
+		});
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
+		const orgSlug = scope.orgSlug;
 
 		// Tasks in progress — uses index, bounded
 		const inProgressTasksAll = await ctx.db
@@ -86,26 +91,47 @@ export const getDashboardSummary = query({
 			.take(DASHBOARD_SCAN_CAP);
 		const inProgressTasks = filterByOrgScope(inProgressTasksAll, scope);
 
-		// Open mandates — filter in memory (small table)
-		const allMandates = await ctx.db.query("mandates").take(DASHBOARD_SCAN_CAP);
+		// Open mandates — fleet-internal, no tenant column: master only. A member
+		// has no mandates of its own, so 0 is the count of ITS data, not a refusal.
+		const allMandates = scope.isMaster
+			? await ctx.db.query("mandates").take(DASHBOARD_SCAN_CAP)
+			: [];
 		const openMandates = allMandates.filter((m) => m.status !== "settled").length;
 
-		// All profiles (small table — one row per instance)
-		const profiles = await ctx.db.query("profiles").collect();
+		// Profiles (small table — one row per instance). No tenant column: a
+		// member is narrowed to its org's roster.
+		const allProfiles = await ctx.db.query("profiles").collect();
+		const profiles = scope.isMaster
+			? allProfiles
+			: allProfiles.filter((p) => scope.allowedOrchestrators.includes(p.orchestratorId));
 
 		// Unread messages — full scan bounded (receipts table is small)
 		// Index is composite [recipient, readAt] so we cannot filter by readAt alone.
-		const allReceipts = await ctx.db
-			.query("messageReceipts")
-			.take(DASHBOARD_WIDE_SCAN_CAP);
+		// Member: the tenant index is bound BEFORE the cap, never a post-read filter.
+		const allReceipts =
+			scope.isMaster || orgSlug === null
+				? await ctx.db.query("messageReceipts").take(DASHBOARD_WIDE_SCAN_CAP)
+				: await ctx.db
+						.query("messageReceipts")
+						.withIndex("by_tenant", (q) => q.eq("tenantId", orgSlug))
+						.take(DASHBOARD_WIDE_SCAN_CAP);
 		const unreadMessages = allReceipts.filter((r) => r.readAt === undefined).length;
 
 		// Recent activity — fetch bounded slices of each entity
 		// Fetch more tasks before filtering so client-orgs still get 20 items.
 		const recentTasksAll = await ctx.db.query("tasks").order("desc").take(100);
 		const recentTasks = filterByOrgScope(recentTasksAll, scope).slice(0, 20);
-		const recentMessages = await ctx.db.query("messages").order("desc").take(20);
-		const recentMandates = await ctx.db.query("mandates").order("desc").take(20);
+		const recentMessages =
+			scope.isMaster || orgSlug === null
+				? await ctx.db.query("messages").order("desc").take(20)
+				: await ctx.db
+						.query("messages")
+						.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
+						.order("desc")
+						.take(20);
+		const recentMandates = scope.isMaster
+			? await ctx.db.query("mandates").order("desc").take(20)
+			: [];
 
 		type ActivityEvent = {
 			type: "task" | "message" | "mandate";
@@ -159,29 +185,38 @@ export const getDashboardSummary = query({
 // Returns one entry per unique project name found across tasks and missions.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const projectSummaryObject = v.object({
+	name: v.string(),
+	missionCount: v.number(),
+	tasksByStatus: v.object({
+		todo: v.number(),
+		in_progress: v.number(),
+		review: v.number(),
+		blocked: v.number(),
+		done: v.number(),
+	}),
+	activeOrchestrators: v.array(v.string()),
+});
+
 export const getProjectSummary = query({
 	args: {},
-	returns: v.array(
-		v.object({
-			name: v.string(),
-			missionCount: v.number(),
-			tasksByStatus: v.object({
-				todo: v.number(),
-				in_progress: v.number(),
-				review: v.number(),
-				blocked: v.number(),
-				done: v.number(),
-			}),
-			activeOrchestrators: v.array(v.string()),
-		}),
+	// Bare array for a served caller (rows or a genuine absence); the typed
+	// refusal envelope for a signed-in caller with no organisation (the
+	// dashboard reads `.items` via readList — never the bytes of an absence).
+	returns: v.union(
+		v.array(projectSummaryObject),
+		v.object({ refused: v.literal(true), items: v.array(projectSummaryObject) }),
 	),
 	handler: async (ctx) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// R-50: reactively-subscribed public query — see getDashboardSummary
 		// above for the typed-empty-not-throw rationale.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// Anonymous RAISES (no mounted render). Signed-in-no-org is a mounted,
+		// subscribed render: typed envelope, never a bare [] (an absence's bytes).
+		requireResolvedCaller(scope, "dashboard:getProjectSummary");
 		if (scope.refused) {
-			return [];
+			return { refused: true as const, items: [] };
 		}
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");

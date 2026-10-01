@@ -939,6 +939,15 @@ export const markAsRead = mutation({
 					`RBAC_DENIED: caller may not mark receipt ${receiptId} (recipient "${receipt.recipient}") as read — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 				);
 			}
+			// TENANT GATE. The roster above is a string membership, not a tenant
+			// boundary: two orgs may both name "seat-x". A non-master caller may
+			// only touch a receipt STAMPED with its own org; an absent tenantId
+			// asserts nothing and grants nothing (same stance as filterByOrgScope).
+			if (!scope.isMaster && receipt.tenantId !== scope.orgSlug) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not mark receipt ${receiptId} as read — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:markAsRead", orgSlug: scope.orgSlug, reason: "receipt-tenant-mismatch" })}`,
+				);
+			}
 			if (
 				args.callerOrchestrator !== undefined &&
 				receipt.recipient !== args.callerOrchestrator
@@ -1002,6 +1011,16 @@ export const deleteMessage = mutation({
 		if (!isOrchestratorAllowedForScope(scope, message.from)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} (sender "${message.from}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
+		}
+
+		// TENANT GATE (same as markAsRead): the roster check above is a name
+		// match, not a tenant boundary, and this mutation cascade-deletes the
+		// message's receipts. A non-master caller may only delete a message
+		// stamped with its own org.
+		if (!scope.isMaster && message.tenantId !== scope.orgSlug) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete message ${args.messageId} — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:deleteMessage", orgSlug: scope.orgSlug, reason: "message-tenant-mismatch" })}`,
 			);
 		}
 

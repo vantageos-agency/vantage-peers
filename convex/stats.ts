@@ -1,7 +1,12 @@
 import { v } from "convex/values";
 import type { QueryCtx } from "./_generated/server";
 import { query } from "./_generated/server";
-import { withOrgScope, requireScope, filterByOrgScope } from "./lib/auth";
+import {
+	withOrgScope,
+	requireResolvedCaller,
+	requireScope,
+	filterByOrgScope,
+} from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orchestratorStats — server-side aggregation for the VantagePeers Dashboard
@@ -86,7 +91,12 @@ export const orchestratorStats = query({
 		// of a throw (the requireScope call below would otherwise throw for
 		// that same caller).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
+		// Coded refusal, never an empty array: anonymous and signed-in-no-org
+		// callers RAISE RBAC_DENIED (the dashboard route error boundary renders
+		// it as a refusal), a member lacking the scope is refused by requireScope.
+		requireResolvedCaller(scope, "stats:orchestratorStats", {
+			alsoRefusePreOrg: true,
+		});
 		if (!scope.scopes.includes("view-stats-aggregated") && !scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
 		}
