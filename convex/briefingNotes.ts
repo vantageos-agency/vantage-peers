@@ -161,6 +161,7 @@ export const create = mutation({
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
+		// write-contract: a user-initiated submit, never a render-time call — dashboard components/briefings/briefing-form.tsx:93 binds useMutation(api.briefingNotes.create) and calls it only inside handleSubmit within try/catch (lines 153-165), which maps a refusal to the form_error alert; the other caller is the imperative MCP client.mutation("briefingNotes:create") at mcp-server/src/tools.ts:6146. The RBAC_DENIED throw is the R-16 coded refusal of an unauthorised write (measured 2026-10-01, origin/main 2498c00), caught by both callers, not an uncaught Server Error. `returns` stays v.id so neither caller changes.
 		// Fail-closed multi-tenant fix (defect class: authority attached to an
 		// anonymously-registered object — see
 		// .claude/rules/authority-attached-to-anonymous-object.md). create used
@@ -662,6 +663,7 @@ export const deleteBriefingNote = mutation({
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "deleteBriefingNote" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		// Fail-closed multi-tenant fix (same defect class as create above) —
 		// deleteBriefingNote used to authorize solely on the client-supplied
 		// callerOrchestrator argument: an anonymous caller (or a caller from a
@@ -729,6 +731,7 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("briefingNotes:update", …) at mcp-server/src/tools.ts:6216 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		const { noteId, callerOrchestrator, ...fields } = args;
 
 		// Fail-closed multi-tenant fix (same defect class as create/

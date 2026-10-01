@@ -166,6 +166,7 @@ export const create = mutation({
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missions:create", …) at mcp-server/src/tools.ts:5473 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		// Fail-closed multi-tenant fix — create used to insert with NO
 		// identity/scope check at all (the `orgId` field simply was not set,
 		// leaving every created mission unscoped). withOrgScope is called
@@ -677,6 +678,7 @@ export const updateStatus = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missions:updateStatus", …) at mcp-server/src/tools.ts:5816 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		// Fail-closed multi-tenant fix (same defect class and same fix as
 		// `update` above) — updateStatus used to take NO caller-identity
 		// check of any kind. Resolved BEFORE ctx.db.get for the same
@@ -718,6 +720,7 @@ export const updateProgress = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "updateProgress" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		// Fail-closed multi-tenant fix (same defect class and same fix as
 		// `update`/`updateStatus` above) — updateProgress used to take NO
 		// caller-identity check of any kind. Resolved BEFORE ctx.db.get for

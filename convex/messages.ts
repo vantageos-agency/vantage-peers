@@ -968,6 +968,7 @@ export const deleteMessage = mutation({
 	},
 	returns: v.object({ deleted: v.boolean(), receiptsDeleted: v.number() }),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("messages:deleteMessage", …) at mcp-server/src/tools.ts:3460 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		// Fail-closed multi-tenant fix (same defect class as markAsRead
 		// above) — deleteMessage used to authorize solely on the
 		// client-supplied callerOrchestrator argument: an anonymous caller

@@ -59,6 +59,7 @@ export const createSession = mutation({
 	},
 	returns: v.id("iframeEmbedSessions"),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "iframeEmbedSessions|createSession" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
@@ -174,6 +175,7 @@ export const touchSession = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "iframeEmbedSessions|touchSession" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
@@ -209,6 +211,7 @@ export const revokeSession = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
+		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "iframeEmbedSessions|revokeSession" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
