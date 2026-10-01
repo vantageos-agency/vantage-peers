@@ -198,6 +198,35 @@ export const create = mutation({
 	},
 });
 
+const briefingNoteFullValidator = v.object({
+	_id: v.id("briefingNotes"),
+	_creationTime: v.number(),
+	title: v.string(),
+	topic: v.string(),
+	participants: v.array(v.string()),
+	content: v.string(),
+	decisions: v.optional(v.array(v.string())),
+	linkedMemoryIds: v.optional(v.array(v.id("memories"))),
+	createdBy: creatorValidator,
+	createdAt: v.number(),
+	updatedAt: v.optional(v.number()),
+	updatedBy: v.optional(creatorValidator),
+	// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
+	orgId: v.optional(v.string()),
+	// R-18 import idempotency key (sha256 of the OKF dedup key). Optional
+	// because only OKF-imported rows carry it.
+	contentHash: v.optional(v.string()),
+});
+
+const briefingNoteLiteValidator = v.object({
+	_id: v.id("briefingNotes"),
+	_creationTime: v.number(),
+	topic: v.string(),
+	title: v.string(),
+	participants: v.array(v.string()),
+	createdBy: creatorValidator,
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // get — fetch a single briefing note by ID
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,28 +245,7 @@ export const get = query({
 		master: v.optional(v.boolean()),
 		callerIdentities: v.optional(v.array(v.string())),
 	},
-	returns: v.union(
-		v.object({
-			_id: v.id("briefingNotes"),
-			_creationTime: v.number(),
-			title: v.string(),
-			topic: v.string(),
-			participants: v.array(v.string()),
-			content: v.string(),
-			decisions: v.optional(v.array(v.string())),
-			linkedMemoryIds: v.optional(v.array(v.id("memories"))),
-			createdBy: creatorValidator,
-			createdAt: v.number(),
-			updatedAt: v.optional(v.number()),
-			updatedBy: v.optional(creatorValidator),
-			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
-			orgId: v.optional(v.string()),
-			// R-18 import idempotency key (sha256 of the OKF dedup key). Optional
-			// because only OKF-imported rows carry it.
-			contentHash: v.optional(v.string()),
-		}),
-		v.null(),
-	),
+	returns: v.union(briefingNoteFullValidator, v.null()),
 	handler: async (ctx, args) => {
 		// Security fix — resolve the VERIFIED caller scope before anything
 		// else. No identity (and no recognized service-account carve-out)
@@ -250,6 +258,16 @@ export const get = query({
 		// must receive a typed empty result, never an uncaught throw into the
 		// subscription. `refuseWithoutThrow` narrows exactly that one branch
 		// of withOrgScope; every other refusal path is unchanged.
+		// isolation-contract: a SUBSCRIBER exists — components/briefings/briefing-detail.tsx:81
+		// `useQuery(api.briefingNotes.get, { noteId })` (enumerated with
+		// `git grep -nE "api\.briefingNotes\.(get|list)\b" origin/main -- app components hooks lib contexts providers`
+		// in vantage-peers-dashboard, e2dc58f and 0466fac: 2 hits, this and `list`).
+		// The signed-in-no-organisation caller (that render is mounted) is therefore
+		// NEVER thrown at: it receives `null`, which the detail panel already renders
+		// as "Note not found." (a single-document read has no `items` to carry an
+		// envelope). Only the ANONYMOUS caller (no credential — the dashboard sits
+		// behind clerkMiddleware, so no render exists for it) is RAISED at below,
+		// per refusal-is-distinguishable-from-absence.md rule 1.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// `scope.refused` is set ONLY for a signed-in caller with no org (the
 		// R-50 target case) — a typed null, never a throw. A truly anonymous
@@ -290,12 +308,12 @@ export const get = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 type BriefingNoteLite = {
-	_id: string;
+	_id: Id<"briefingNotes">;
 	_creationTime: number;
 	topic: string;
 	title: string;
 	participants: string[];
-	createdBy: string;
+	createdBy: Doc<"briefingNotes">["createdBy"];
 };
 
 function projectBriefingNoteLite(doc: Doc<"briefingNotes">): BriefingNoteLite {
@@ -381,6 +399,7 @@ async function fetchCappedOrOverflow(
 	}
 }
 
+// returns-projection: fields="lite" returns a compact list-view projection (briefingNoteLiteValidator) that omits content/decisions/linkedMemoryIds/timestamps/orgId; the full note is fetched via briefingNotes.get
 export const list = query({
 	args: {
 		topic: v.optional(v.string()),
@@ -393,7 +412,16 @@ export const list = query({
 		master: v.optional(v.boolean()),
 		callerIdentities: v.optional(v.array(v.string())),
 	},
-	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"briefingNotes"> optionality
+	// The envelope arm is the contract for the signed-in-no-organisation caller
+	// (see the isolation-contract marker below); an array is a served result.
+	returns: v.union(
+		v.array(briefingNoteFullValidator),
+		v.array(briefingNoteLiteValidator),
+		v.object({
+			refused: v.literal(true),
+			items: v.array(v.union(briefingNoteFullValidator, briefingNoteLiteValidator)),
+		}),
+	),
 	handler: async (ctx, args) => {
 		// Security fix — same defect and same fix as `get` above: resolve the
 		// VERIFIED caller scope FIRST. Anonymous (no identity, no recognized
@@ -401,13 +429,19 @@ export const list = query({
 		// no legacy unscoped `list` any more.
 		// R-50: reactively-subscribed public query — see `get` above for the
 		// typed-empty-not-throw rationale.
+		// isolation-contract: a SUBSCRIBER exists —
+		// components/briefings/briefing-list.tsx:191 `useQuery(api.briefingNotes.list,
+		// { limit: 50 })`, which normalises `Array.isArray(r) ? r : (r.items ?? [])`
+		// (enumerated with the `git grep` named on `get` above: e2dc58f and 0466fac).
+		// The signed-in-no-organisation caller's render is mounted, so it is NEVER
+		// thrown at: it is answered `{ refused: true, items: [] }` — empty to that
+		// render AND not the bytes of "no notes exist". The MCP readers
+		// (tools.ts list_briefing_notes, ui-resources/primitives/briefing-note.ts)
+		// test `isRefusedEnvelope` first. Only the ANONYMOUS caller is RAISED at
+		// below: it has no mounted shell (clerkMiddleware).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		// `scope.refused` is set ONLY for a signed-in caller with no org (the
-		// R-50 target case) -- a typed empty array, never a throw. A truly
-		// anonymous caller (no identity at all) is UNCHANGED and still throws
-		// below ("anonymous list is refused", out of this fix's scope).
 		if (scope.refused) {
-			return [];
+			return { refused: true as const, items: [] };
 		}
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(

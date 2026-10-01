@@ -170,6 +170,10 @@ export const validate = query({
 		expiresAt: v.optional(v.number()),
 	}),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.licenses\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). This read has NO organisation path at all: it is keyed by the presented license key, never raises, and answers
+		// `{ status: "unknown" }` for an unknown key, so there is no org-missing branch for a subscribing client to hit.
 		if (args.licenseKey.length > MAX_LICENSE_KEY_LENGTH) {
 			return { status: "unknown" as const };
 		}

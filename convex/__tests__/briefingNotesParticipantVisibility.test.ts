@@ -207,7 +207,7 @@ describe("briefingNotes.list — participant visibility parity", () => {
 			callerIdentities: ["prometheus"],
 		});
 
-		const titles = notes.map((n: { title: string }) => n.title);
+		const titles = (notes as Array<{ title: string }>).map((n) => n.title);
 		expect(titles).toContain("owned by pi");
 		expect(titles).not.toContain("owned by pi, no prometheus");
 	});

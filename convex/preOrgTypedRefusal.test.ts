@@ -100,9 +100,53 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 			).resolves.toBeNull();
 		});
 
-		test("list: typed empty array, not a throw", async () => {
+		// REFUSED / ABSENT / PRESENT for the subscribed list read (the dashboard's
+		// briefing-list.tsx reads `.items`): the no-organisation caller is told it
+		// was REFUSED, in bytes an empty table can never produce.
+		test("list REFUSED: the signed-in-no-org caller gets the typed envelope, not a throw and not a bare []", async () => {
 			const t = asNoOrg(createT());
-			await expect(t.query(api.briefingNotes.list, {})).resolves.toEqual([]);
+			const r = await t.query(api.briefingNotes.list, {});
+			expect(r).toEqual({ refused: true, items: [] });
+			expect(Array.isArray(r)).toBe(false);
+		});
+
+		test("list ABSENT: a scoped member of an org with no notes gets a bare empty array with NO refused key", async () => {
+			const base = createT();
+			await seedOrgAMapping(base);
+			const r = await base
+				.withIdentity({
+					subject: "user-org-a",
+					organizationId: "org-a",
+				} as Parameters<typeof base.withIdentity>[0])
+				.query(api.briefingNotes.list, {});
+			expect(r).toEqual([]);
+			expect(Array.isArray(r)).toBe(true);
+		});
+
+		test("list PRESENT: a scoped member still receives its own org's rows (no grant withheld)", async () => {
+			const base = createT();
+			await seedOrgAMapping(base);
+			await base.run(async (ctx) => {
+				await ctx.db.insert("briefingNotes", {
+					title: "org-a note",
+					topic: "daily",
+					participants: ["seat-a"],
+					content: "content",
+					createdBy: "seat-a",
+					createdAt: Date.now(),
+					orgId: "org-a",
+				});
+			});
+			const r = await base
+				.withIdentity({
+					subject: "user-org-a",
+					organizationId: "org-a",
+				} as Parameters<typeof base.withIdentity>[0])
+				.query(api.briefingNotes.list, {});
+			expect(Array.isArray(r)).toBe(true);
+			expect((r as Array<{ title: string }>).map((n) => n.title)).toEqual([
+				"org-a note",
+			]);
 		});
 
 		test("searchBriefingNotesByKeyword: typed empty array, not a throw", async () => {

@@ -240,6 +240,11 @@ export const listMemoriesScoped = query({
 	},
 	returns: v.array(memoryRowValidator),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.memoriesScoped\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). DECLARED, NOT CLOSED: the no-organisation caller still receives the typed empty array below, the shape of
+		// an absence (pinned by auth-namespace-deny.test.ts and anonymousCallerServedTenantRows.test.ts); with no subscriber it could raise, which is a
+		// behaviour change to those pinned poles and is left to its own task. R-50 is satisfied (no throw reaches a subscription); refusal-is-distinguishable-from-absence is not.
 		// ── Auth: resolve org and enforce team namespace boundary ──
 		// REFUSAL SHAPE -- TYPED EMPTY for "no verified organisation": this is a
 		// reactively-subscribed public READ, and a query that throws crashes the

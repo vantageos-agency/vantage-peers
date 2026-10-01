@@ -1281,7 +1281,7 @@ describe("Briefing Notes", () => {
 			topic: "architecture",
 		});
 		expect(archNotes).toHaveLength(2);
-		expect(archNotes.every((n) => n.topic === "architecture")).toBe(true);
+		expect((archNotes as Array<{ topic: string }>).every((n) => n.topic === "architecture")).toBe(true);
 
 		const planningNotes = await t
 		.query(api.briefingNotes.list, {
@@ -1724,7 +1724,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 		const liteKeys = ["_id", "_creationTime", "topic", "title", "participants", "createdBy"];
 		const forbiddenKeys = ["content", "decisions", "linkedMemoryIds", "createdAt", "updatedAt"];
 
-		for (const row of liteRows) {
+		for (const row of liteRows as Array<Record<string, unknown>>) {
 			for (const k of liteKeys) {
 				expect(row).toHaveProperty(k);
 			}
