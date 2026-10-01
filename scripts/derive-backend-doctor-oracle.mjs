@@ -57,9 +57,31 @@
  *   table_conserver_supprimer  a disposition decision, no code source => "".
  *   statut_suppression  a current tool is not removed => "".
  *
- * Usage: node scripts/derive-backend-doctor-oracle.mjs [--check]
+ * Population guard (refuses, never shrinks). The AST enumeration of tools is
+ * cross-checked BEFORE any row is written, in both modes, against sources that
+ * do not share its walker:
+ *   1. required inputs exist (REQUIRED_INPUTS below) and every relative import
+ *      reachable from the registration entry (mcp-server/src/tools.ts)
+ *      resolves to a file — a missing module is a missing slice of surface;
+ *   2. a LEXICAL count of `defineTool(` call sites per file (comments
+ *      removed, no AST) equals the AST count of defineTool calls turned into
+ *      rows — a call the walker skipped, could not name, or never saw shows
+ *      up as a per-file difference;
+ *   3. no lexical `.tool(` / `.registerTool(` call outside registerTool.ts,
+ *      and no use of `defineTool` other than as a direct call (aliased or
+ *      passed as a value) — such registrations are invisible to both counts;
+ *   4. every name in mcp-server/tool-exposure.json `core` (a data file the
+ *      server itself asserts against its registered set at boot,
+ *      tools.ts registerTools) is among the derived tool names.
+ * Any failure exits 2 naming expected vs found and what is missing; no file
+ * is written.
+ *
+ * Usage: node scripts/derive-backend-doctor-oracle.mjs [--check] [--root <dir>]
  *   default: writes .backend-doctor/vp-by-tool.csv and prints a summary.
  *   --check: exits 1 when the committed CSV differs from a fresh derivation.
+ *   --root:  derive from another tree (tests run against temp copies);
+ *            defaults to the repository containing this script.
+ *   exit 2:  the population guard refused (see above), in either mode.
  */
 
 import {
@@ -77,11 +99,40 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const rootArg = process.argv.indexOf("--root");
+const ROOT =
+	rootArg > -1 && process.argv[rootArg + 1]
+		? resolve(process.argv[rootArg + 1])
+		: resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MCP_SRC = join(ROOT, "mcp-server", "src");
 const CONVEX = join(ROOT, "convex");
 const OUT = join(ROOT, ".backend-doctor", "vp-by-tool.csv");
 const UNKNOWN = "?";
+
+/** Exit 2 with a named population failure; nothing is written. */
+function refusePopulation(problems) {
+	console.error(
+		`REFUSED: the tool enumeration does not cover the surface (${problems.length} problem(s)); ${relative(ROOT, OUT)} not written/checked`,
+	);
+	for (const p of problems) console.error(`  - ${p}`);
+	process.exit(2);
+}
+
+// Inputs whose absence silently removes rows or columns: refuse up front.
+const REGISTRATION_ENTRY = join(MCP_SRC, "tools.ts");
+const REQUIRED_INPUTS = [
+	REGISTRATION_ENTRY,
+	join(MCP_SRC, "registerTool.ts"),
+	join(ROOT, "mcp-server", "tool-exposure.json"),
+	join(CONVEX, "schema.ts"),
+];
+{
+	const missing = REQUIRED_INPUTS.filter((f) => !existsSync(f));
+	if (missing.length)
+		refusePopulation(
+			missing.map((f) => `required input missing: ${relative(ROOT, f)}`),
+		);
+}
 
 const COLUMNS = [
 	"table",
@@ -545,8 +596,11 @@ function objProps(node, file) {
 }
 
 const tools = [];
-for (const file of walkFiles(MCP_SRC)) {
-	if (file.endsWith("registerTool.ts")) continue;
+const mcpFiles = walkFiles(MCP_SRC).filter(
+	(f) => !f.endsWith("registerTool.ts"),
+);
+const astSkipped = [];
+for (const file of mcpFiles) {
 	forEachDeep(sourceOf(file), (n) => {
 		if (
 			!ts.isCallExpression(n) ||
@@ -555,8 +609,16 @@ for (const file of walkFiles(MCP_SRC)) {
 		)
 			return;
 		const a = n.arguments;
-		if (a.length < 7) return;
+		const where = `${relative(ROOT, file)}:${sourceOf(file).getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
+		if (a.length < 7 || a.some((x) => ts.isSpreadElement(x))) {
+			astSkipped.push(`${where} defineTool call with an unparsed shape`);
+			return;
+		}
 		const name = evalString(file, a[3]);
+		if (name === null) {
+			astSkipped.push(`${where} defineTool name is not a resolvable literal`);
+			return;
+		}
 		const description = evalString(file, a[4]) ?? a[4].getText();
 		const scopeProps = objProps(a[2], file) ?? {};
 		const scope = {};
@@ -574,6 +636,142 @@ for (const file of walkFiles(MCP_SRC)) {
 			handler,
 		});
 	});
+}
+
+// ── population guard ────────────────────────────────────────────────────────
+
+/** A `/` starts a regex literal (not a division) after these. */
+function regexMayStart(before) {
+	const t = before.slice(-32).trimEnd();
+	if (t === "") return before.trim() === "";
+	if (/[([{,;:=!&|?+\-*%<>~^]$/.test(t)) return true;
+	return /\b(return|typeof|case|do|else|in|of|void|yield|await)$/.test(t);
+}
+
+/** Source text with comments removed (string/template contents kept, line
+ * structure kept). Independent of the TypeScript parser on purpose. */
+function withoutComments(text) {
+	let out = "";
+	let i = 0;
+	const n = text.length;
+	while (i < n) {
+		const c = text[i];
+		const d = text[i + 1];
+		if (c === "/" && d === "/") {
+			while (i < n && text[i] !== "\n") i++;
+		} else if (c === "/" && d === "*") {
+			const end = text.indexOf("*/", i + 2);
+			const stop = end === -1 ? n : end + 2;
+			// keep the newlines so line numbers still point at the source
+			out += ` ${text.slice(i, stop).replace(/[^\n]/g, "")}`;
+			i = stop;
+		} else if (c === "/" && regexMayStart(out)) {
+			// a regex literal: its quotes and slashes are not code
+			let j = i + 1;
+			let inClass = false;
+			while (j < n && text[j] !== "\n") {
+				if (text[j] === "\\") j++;
+				else if (text[j] === "[") inClass = true;
+				else if (text[j] === "]") inClass = false;
+				else if (text[j] === "/" && !inClass) break;
+				j++;
+			}
+			out += text.slice(i, j + 1);
+			i = j + 1;
+		} else if (c === '"' || c === "'" || c === "`") {
+			let j = i + 1;
+			while (j < n && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+			out += text.slice(i, j + 1);
+			i = j + 1;
+		} else {
+			out += c;
+			i++;
+		}
+	}
+	return out;
+}
+
+function populationProblems() {
+	const problems = [];
+	// (1) every relative import reachable from the registration entry resolves.
+	const seen = new Set();
+	const queue = [REGISTRATION_ENTRY];
+	while (queue.length) {
+		const f = queue.shift();
+		if (seen.has(f)) continue;
+		seen.add(f);
+		for (const st of sourceOf(f).statements) {
+			if (
+				!(ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) ||
+				!st.moduleSpecifier ||
+				!ts.isStringLiteral(st.moduleSpecifier)
+			)
+				continue;
+			const spec = st.moduleSpecifier.text;
+			if (!spec.startsWith(".")) continue;
+			const target = resolveModule(f, spec);
+			if (target) queue.push(target);
+			else
+				problems.push(
+					`${relative(ROOT, f)} imports "${spec}", which resolves to no file`,
+				);
+		}
+	}
+	// (2) lexical defineTool( count == AST rows, per file.
+	// (3) no registration that bypasses defineTool.
+	const astByFile = new Map();
+	for (const t of tools)
+		astByFile.set(t.file, (astByFile.get(t.file) ?? 0) + 1);
+	let lexicalTotal = 0;
+	for (const f of mcpFiles) {
+		const code = withoutComments(readFileSync(f, "utf8"));
+		const lexical = (code.match(/\bdefineTool\s*(?:<[^>(]*>)?\s*\(/g) ?? [])
+			.length;
+		lexicalTotal += lexical;
+		const ast = astByFile.get(f) ?? 0;
+		if (lexical !== ast)
+			problems.push(
+				`${relative(ROOT, f)}: ${lexical} defineTool( call site(s) in the text, ${ast} enumerated as tools`,
+			);
+		// defineTool used as a value (aliased, passed, wrapped): its calls are
+		// out of reach of both counts above, so the reference itself refuses.
+		const codeNoImports = code.replace(
+			/\bimport\s+(?:type\s+)?\{[^}]*\}\s*from\s*["'][^"']+["']/g,
+			(m) => m.replace(/[^\n]/g, ""),
+		);
+		for (const m of codeNoImports.matchAll(
+			/\bdefineTool\b(?!\s*(?:<[^>(]*>)?\s*\()/g,
+		)) {
+			const line = codeNoImports.slice(0, m.index).split("\n").length;
+			problems.push(
+				`${relative(ROOT, f)}:${line} uses defineTool other than as a direct call — its registrations cannot be counted`,
+			);
+		}
+		for (const m of code.matchAll(/\.(registerTool|tool)\s*\(/g)) {
+			const line = code.slice(0, m.index).split("\n").length;
+			problems.push(
+				`${relative(ROOT, f)}:${line} registers through .${m[1]}( directly, outside defineTool — invisible to the enumeration`,
+			);
+		}
+	}
+	if (lexicalTotal !== tools.length)
+		problems.push(
+			`expected ${lexicalTotal} tools (lexical defineTool( count across mcp-server/src), found ${tools.length} (AST enumeration)`,
+		);
+	problems.push(...astSkipped);
+	// (4) every advertised core name is enumerated.
+	const derived = new Set(tools.map((t) => t.name));
+	const missingCore = exposure.core.filter((c) => !derived.has(c));
+	if (missingCore.length)
+		problems.push(
+			`expected all ${exposure.core.length} core names of mcp-server/tool-exposure.json, ${missingCore.length} not enumerated: ${missingCore.join(", ")}`,
+		);
+	return problems;
+}
+
+{
+	const problems = populationProblems();
+	if (problems.length) refusePopulation(problems);
 }
 
 // ── per-tool column derivation ──────────────────────────────────────────────
