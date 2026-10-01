@@ -78,7 +78,11 @@ import {
 	query,
 } from "./_generated/server";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+	requireResolvedCaller,
+	requireTenantNamespace,
+	withOrgScope,
+} from "./lib/auth";
 
 // Codegen-lag workaround (mirrors okfBundle.ts / okfBundleNode.ts comment).
 // `components.agentEngine.*` is not yet in `_generated/api.d.ts`'s typed
@@ -102,7 +106,6 @@ const agentEngineComponents = components as any;
 // iter-2 #888 fail-closed fix, generalized non-master namespaces #B3).
 // ─────────────────────────────────────────────────────────────────────────
 
-const MASTER_NAMESPACE = "project/elpi-corp";
 
 async function assertCanExportNamespaceV8(
 	ctx: QueryCtx | MutationCtx,
@@ -119,48 +122,13 @@ async function assertCanExportNamespaceV8(
 			`OKF_NAMESPACE_INVALID: namespace "${namespace}" contains a path-traversal segment.`,
 		);
 	}
-	// The master namespace is reserved to the fleet master (service account).
-	// It used to be served to ANY caller with no credential, and to any
-	// signed-in caller with no org slug, through the two early returns below.
-	// Master is resolved by `withOrgScope` (named by-id grant), never inferred
-	// from the absence of an identity or of an org. Refused by RAISING
-	// `RBAC_DENIED` naming the door, through the one shared helper.
-	if (namespace === MASTER_NAMESPACE) {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, door, { masterOnly: true });
-		return;
-	}
-	const identity = (await ctx.auth.getUserIdentity()) as Record<
-		string,
-		unknown
-	> | null;
-	if (identity === null || identity === undefined) {
-		throw new Error(
-			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
-		);
-	}
-	// Slug-first, id excluded: `orgSlug` is compared below to a slug-shaped
-	// export namespace suffix, and an org_id (org_xxxxx) is not a slug -- it
-	// must never stand in for one. Mirrors #1224 item 4
-	// (requireOrgAdmin/withOrgScope: slug-first, id excluded). A token
-	// carrying only an org_id (no slug) resolves orgSlug === null here and
-	// falls into the AUTH_NO_ORG fail-closed branch below, rather than
-	// mis-comparing the id to a slug suffix.
-	const orgSlug =
-		(identity.organizationSlug as string | undefined) ??
-		(identity.org_slug as string | undefined) ??
-		null;
-	if (orgSlug === null) {
-		throw new Error(
-			`AUTH_NO_ORG: caller without org affiliation cannot export non-master namespace "${namespace}".`,
-		);
-	}
-	const expectedSuffix = namespace.split("/").slice(1).join("/");
-	if (orgSlug !== expectedSuffix) {
-		throw new Error(
-			`AUTH_NAMESPACE_DENIED: caller org "${orgSlug}" cannot export namespace "${namespace}".`,
-		);
-	}
+	// Ownership comes from the RESOLVED scope (an ACTIVE client_org_mapping row
+	// via `withOrgScope`), never from the raw org claim on the identity. Master
+	// is served any namespace; a member only `team/<resolvedOrgSlug>`; every
+	// other namespace, including `project/elpi-corp`, is master-only and refused
+	// `RBAC_DENIED` naming the door. See okfBundleNode.ts:assertCanExportNamespace.
+	const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+	requireTenantNamespace(scope, namespace, door);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

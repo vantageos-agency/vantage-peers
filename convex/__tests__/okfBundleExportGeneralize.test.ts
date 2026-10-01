@@ -23,9 +23,13 @@
 import { describe, expect, test } from "vitest";
 import { assertCanExportNamespace as guard } from "../okfBundleNode";
 
-// The guard now resolves the caller's scope through
-// `internal.lib.auth.resolveOrgScopeForAction` (via ctx.runQuery) when the
-// namespace is the master namespace. The mock mirrors that projection:
+// The guard resolves the caller's scope through
+// `internal.lib.auth.resolveOrgScopeForAction` (via ctx.runQuery) for EVERY
+// namespace: ownership is the RESOLVED org (an active client_org_mapping row),
+// never the raw claim. The mock stands in for that resolver, so an identity
+// that carries an org claim models a MAPPED org here; the unmapped/inactive
+// poles run end-to-end in okfTenantNamespaceFromMapping.test.ts. The mock
+// mirrors that projection:
 // anonymous -> { refused, anonymous }, signed-in no-org -> { refused },
 // org member -> { orgSlug }, fleet master (service account) -> { isMaster }.
 function ctxWithIdentity(
@@ -75,7 +79,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		const ctx = ctxWithIdentity({ organizationSlug: "other-org" });
 		await expect(
 			assertCanExportNamespace(ctx, "team/abc-123"),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("Phase 1 regression: project/elpi-corp is still exportable by the fleet master (service account)", async () => {
@@ -111,10 +115,10 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "team/whatever-org"),
-		).rejects.toThrow(/AUTH_NO_IDENTITY/);
+		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "project/acme-hr"),
-		).rejects.toThrow(/AUTH_NO_IDENTITY/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("identity with organizationSlug (not organizationId) is read identically", async () => {
@@ -124,7 +128,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).resolves.toBeUndefined();
 		await expect(
 			assertCanExportNamespace(ctx, "team/other"),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("empty namespace is rejected", async () => {
@@ -155,7 +159,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).resolves.toBeUndefined();
 		await expect(
 			assertCanExportNamespace(ctx, "team/other"),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("identity without orgId/orgSlug is refused every namespace unless it is the fleet master (fail-closed)", async () => {
@@ -175,7 +179,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).resolves.toBeUndefined();
 		await expect(
 			assertCanExportNamespace(ctx, "team/anyone"),
-		).rejects.toThrow(/AUTH_NO_ORG/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("runtime prod-path simulation — null identity + tenant namespace → AUTH_NO_IDENTITY (Eta iter-2 must-cover)", async () => {
@@ -185,7 +189,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		// no mock — and asserts the guard rejects any non-master namespace.
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "team/some-tenant"),
-		).rejects.toThrow(/AUTH_NO_IDENTITY: anonymous caller/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	// PRECEDENCE FIX (task k17eqf7p3n6a30vt07zptyjsts8d3gda, decision mirrors
@@ -214,20 +218,20 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		// and the export was WRONGLY ALLOWED. This is exactly the class ruled
 		// out for requireOrgAdmin/withOrgScope in #1224 item 4. Litmus: if the
 		// precedence fix were reverted, this test would go back to resolving
-		// (fail to throw AUTH_NO_ORG) — it is bound to the id-exclusion, not
+		// (fail to throw RBAC_DENIED) — it is bound to the id-exclusion, not
 		// to any casing behaviour.
-		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused RBAC_DENIED even when the id string equals the namespace's slug-shaped tail", async () => {
 			const ctx = ctxWithIdentity({ org_id: "org_xxxxx" });
 			await expect(
 				assertCanExportNamespace(ctx, "team/org_xxxxx"),
-			).rejects.toThrow(/AUTH_NO_ORG/);
+			).rejects.toThrow(/RBAC_DENIED/);
 		});
 
-		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused RBAC_DENIED even when the id string equals the namespace's slug-shaped tail", async () => {
 			const ctx = ctxWithIdentity({ organizationId: "org_xxxxx" });
 			await expect(
 				assertCanExportNamespace(ctx, "team/org_xxxxx"),
-			).rejects.toThrow(/AUTH_NO_ORG/);
+			).rejects.toThrow(/RBAC_DENIED/);
 		});
 	});
 });

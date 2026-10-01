@@ -77,6 +77,24 @@ function withAgentEngine<T extends { registerComponent: Function }>(t: T): T {
 	return t;
 }
 
+// Tenant namespace ownership comes from an ACTIVE client_org_mapping row, not
+// from the raw org claim, so every "own namespace" pole seeds one.
+async function seedOrgMapping(
+	t: Pick<ReturnType<typeof convexTest>, "run">,
+	slug: string,
+) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: slug,
+			allowedOrchestrators: ["sigma"],
+			scopes: ["view-own-tasks"],
+			displayName: slug,
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+}
+
 const NOW = 1_753_000_000_000;
 
 describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call; engine bookkeeping is proven on a real deployment, not here", () => {
@@ -118,7 +136,9 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 	describe("precedence -- id excluded from orgSlug resolution (V8 path)", () => {
 		test("ALLOW pole: an identity carrying a real slug (org_slug) matching the namespace tail passes the auth gate", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
-			const t = base.withIdentity({ org_slug: "acme" });
+			await seedOrgMapping(base, "acme");
+			await seedOrgMapping(base, "acme");
+		const t = base.withIdentity({ org_slug: "acme" });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 					namespace: "team/acme",
@@ -132,8 +152,8 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 		// that raw id string, which -- if the export namespace's slug-shaped
 		// suffix happened to equal that same id string -- mis-compared equal
 		// and the auth gate was WRONGLY PASSED. Litmus: reverting the
-		// precedence fix makes this test go back to NOT throwing AUTH_NO_ORG.
-		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+		// precedence fix makes this test go back to NOT throwing RBAC_DENIED.
+		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused RBAC_DENIED (no mapping row) even when the id string equals the namespace's slug-shaped tail", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
 			const t = base.withIdentity({ org_id: "org_xxxxx" });
 			await expect(
@@ -141,10 +161,10 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 					namespace: "team/org_xxxxx",
 					totalSteps: 3,
 				}),
-			).rejects.toThrow(/AUTH_NO_ORG/);
+			).rejects.toThrow(/RBAC_DENIED/);
 		});
 
-		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused RBAC_DENIED (no mapping row) even when the id string equals the namespace's slug-shaped tail", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
 			const t = base.withIdentity({ organizationId: "org_xxxxx" });
 			await expect(
@@ -152,7 +172,7 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 					namespace: "team/org_xxxxx",
 					totalSteps: 3,
 				}),
-			).rejects.toThrow(/AUTH_NO_ORG/);
+			).rejects.toThrow(/RBAC_DENIED/);
 		});
 	});
 });
@@ -406,13 +426,14 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 		// resolves into `orgSlug` at all (see the DENY-pole precedence tests
 		// below).
 		const base = withAgentEngine(convexTest(schema, modules));
+		await seedOrgMapping(base, "other-org");
 		const t = base.withIdentity({ organizationSlug: "other-org" });
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 				namespace: "team/acme",
 				totalSteps: 1,
 			}),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("rejects anonymous caller on a non-master namespace before ever reaching the component call", async () => {
@@ -422,7 +443,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 				namespace: "team/acme",
 				totalSteps: 1,
 			}),
-		).rejects.toThrow(/AUTH_NO_IDENTITY/);
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("rejects totalSteps <= 0", async () => {
@@ -450,6 +471,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 	// AUTH_NAMESPACE_DENIED.
 	test("accepts a snake_case-only identity (org_slug, no organizationSlug/organizationId) for its own namespace", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
+		await seedOrgMapping(base, "acme");
 		const t = base.withIdentity({ org_slug: "acme" });
 
 		await expect(
@@ -474,7 +496,9 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 	describe("precedence -- id excluded from orgSlug resolution (V8 path)", () => {
 		test("ALLOW pole: an identity carrying a real slug (org_slug) matching the namespace tail passes the auth gate", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
-			const t = base.withIdentity({ org_slug: "acme" });
+			await seedOrgMapping(base, "acme");
+			await seedOrgMapping(base, "acme");
+		const t = base.withIdentity({ org_slug: "acme" });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 					namespace: "team/acme",
@@ -488,8 +512,8 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 		// that raw id string, which -- if the export namespace's slug-shaped
 		// suffix happened to equal that same id string -- mis-compared equal
 		// and the auth gate was WRONGLY PASSED. Litmus: reverting the
-		// precedence fix makes this test go back to NOT throwing AUTH_NO_ORG.
-		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+		// precedence fix makes this test go back to NOT throwing RBAC_DENIED.
+		test("DENY pole: an identity carrying ONLY org_id (no slug claim) is refused RBAC_DENIED (no mapping row) even when the id string equals the namespace's slug-shaped tail", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
 			const t = base.withIdentity({ org_id: "org_xxxxx" });
 			await expect(
@@ -497,10 +521,10 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 					namespace: "team/org_xxxxx",
 					totalSteps: 3,
 				}),
-			).rejects.toThrow(/AUTH_NO_ORG/);
+			).rejects.toThrow(/RBAC_DENIED/);
 		});
 
-		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused AUTH_NO_ORG even when the id string equals the namespace's slug-shaped tail", async () => {
+		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused RBAC_DENIED (no mapping row) even when the id string equals the namespace's slug-shaped tail", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
 			const t = base.withIdentity({ organizationId: "org_xxxxx" });
 			await expect(
@@ -508,7 +532,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 					namespace: "team/org_xxxxx",
 					totalSteps: 3,
 				}),
-			).rejects.toThrow(/AUTH_NO_ORG/);
+			).rejects.toThrow(/RBAC_DENIED/);
 		});
 	});
 });

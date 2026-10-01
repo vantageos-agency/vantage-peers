@@ -287,8 +287,8 @@ describe("okfBundleDurable:getOkfBundleExportDurableStatus", () => {
 		t.run(async (ctx) =>
 			ctx.db.insert("okfDurableExportProgress", {
 				jobId: "job-org-a",
-				orgId: "project/org-a",
-				namespace: "project/org-a",
+				orgId: "team/org-a",
+				namespace: "team/org-a",
 				memoriesCursor: null,
 				memoriesDone: false,
 				briefingsCursor: null,
@@ -317,7 +317,7 @@ describe("okfBundleDurable:getOkfBundleExportDurableStatus", () => {
 		);
 		expect(
 			await failure(asMemberB(t).query(api.okfBundleDurable.getOkfBundleExportDurableStatus, args)),
-		).toContain("AUTH_NAMESPACE_DENIED");
+		).toContain("RBAC_DENIED");
 		expect(
 			await failure(
 				asMemberA(t).query(api.okfBundleDurable.getOkfBundleExportDurableStatus, { jobId: "nope" }),

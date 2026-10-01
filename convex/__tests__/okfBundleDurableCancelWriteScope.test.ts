@@ -64,6 +64,21 @@ function asMaster(t: ReturnType<typeof createT>) {
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
+// Tenant namespace ownership comes from an ACTIVE client_org_mapping row, not
+// from the raw org claim on the identity.
+async function seedOrg(t: ReturnType<typeof createT>, slug: string) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: slug,
+			allowedOrchestrators: ["sigma"],
+			scopes: ["view-own-tasks"],
+			displayName: slug,
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+}
+
 async function seedProgress(
 	t: ReturnType<typeof createT>,
 	jobId: string,
@@ -127,6 +142,7 @@ describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcem
 
 	test("a caller from a DIFFERENT org may not cancel another org's durable export (cross-tenant)", async () => {
 		const t = createT();
+		await seedOrg(t, "org-b");
 		await seedProgress(t, "job-org-a", "team/org-a");
 		const tB = asOrgB(t);
 
@@ -134,7 +150,7 @@ describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcem
 			tB.mutation(api.okfBundleDurable.cancelOkfBundleExportDurable, {
 				jobId: "job-org-a",
 			}),
-		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED/);
 
 		const row = await t.run((ctx) =>
 			ctx.db
@@ -147,6 +163,7 @@ describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcem
 
 	test("the owning org may reach the durable-job cancel call for its own export (passes the RBAC gate)", async () => {
 		const t = createT();
+		await seedOrg(t, "org-a");
 		await seedProgress(t, "job-org-a-2", "team/org-a");
 		const tA = asOrgA(t);
 

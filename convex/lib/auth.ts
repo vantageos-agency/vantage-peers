@@ -833,6 +833,31 @@ export function requireResolvedCaller(
 
 
 /**
+ * requireTenantNamespace -- the OKF export/import namespace gate for a
+ * RESOLVED scope. A non-master caller owns exactly ONE namespace,
+ * `team/<scope.orgSlug>`, where `orgSlug` is the slug `withOrgScope` /
+ * `resolveOrgScopeForAction` returned, i.e. one backed by an ACTIVE
+ * `client_org_mapping` row. It is NEVER the raw org claim on the identity.
+ * Every other namespace (`orchestrator/*`, `project/*`, `global`, the master
+ * namespace) is master-only. The refusal is the shared
+ * `requireResolvedCaller(..., { masterOnly: true })` -- same `RBAC_DENIED`
+ * code, same payload naming `door`, no second mechanism. That call RAISES for
+ * every non-master scope (anonymous, signed-in-no-org, org member), so
+ * reaching its end means "refused"; the own-namespace return above it is the
+ * only way a non-master caller is served.
+ */
+export function requireTenantNamespace(
+	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
+	namespace: string,
+	door: string,
+): void {
+	if (scope.isMaster) return;
+	if (scope.orgSlug !== null && namespace === `team/${scope.orgSlug}`) return;
+	requireResolvedCaller(scope, door, { masterOnly: true });
+}
+
+
+/**
  * refuseUnresolvedCredential — the SAME refusal, said at the one door whose
  * caller is identified by a SECRET rather than by an `OrgScope`
  * (`agentCredentials:resolveAgentCredential`).
