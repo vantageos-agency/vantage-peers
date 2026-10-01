@@ -209,6 +209,29 @@ describe("messages:getUnreadCount", () => {
 	});
 });
 
+describe("messages:getUnreadCount served zero", () => {
+	test("a SERVED caller with nothing unread gets a bare 0, never the refusal envelope", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const mA = await seedMsg(t, "sigma", "org-a");
+		await t.run(async (ctx) => {
+			// a receipt that is already read: present in the table, not unread
+			await ctx.db.insert("messageReceipts", {
+				messageId: mA,
+				recipient: "sigma",
+				tenantId: "org-a",
+				readAt: 1,
+			});
+		});
+		// member, own roster, all read -> 0
+		expect(await asMemberA(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(0);
+		// member, own roster, no receipts at all -> 0 (member B's roster is ["iris"])
+		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "iris" })).toBe(0);
+		// fleet master, nothing unread for that recipient -> 0
+		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "nobody" })).toBe(0);
+	});
+});
+
 // ───────────────────────────── profiles:getProfile ─────────────────────────────
 describe("profiles:getProfile", () => {
 	test("anonymous + pre-org refused; member served a rostered orchestrator, refused an off-roster one; master served", async () => {
