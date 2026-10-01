@@ -365,6 +365,7 @@ export const sendMessage = mutation({
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("messages:sendMessage", …) at mcp-server/src/tools.ts:3158 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] Resolve scope BEFORE the
 		// credential lock so the lock can bind the presented credential's org
 		// against the SAME `orgSlug` the rest of this handler already derives

@@ -221,6 +221,7 @@ export const upsert = mutation({
 	},
 	returns: v.id("missionTemplates"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missionTemplates:upsert", …) at mcp-server/src/tools.ts:9109 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only fail-closed fix — see the file-header comment block
 		// above for the full rationale (shared, unscoped catalog write).
 		const scope = await withOrgScope(ctx);
@@ -274,6 +275,7 @@ export const softDelete = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missionTemplates:softDelete", …) at mcp-server/src/tools.ts:9276 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only fail-closed fix — see the file-header comment block
 		// above for the full rationale (shared, unscoped catalog write).
 		// Mirrors the MCP server's own pre-existing `guardMasterOnly` gate on

@@ -186,6 +186,7 @@ export const create = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:create", …) at mcp-server/src/tools.ts:6638 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
 		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
 
@@ -334,6 +335,7 @@ export const update = mutation({
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:update", …) at mcp-server/src/tools.ts:6964 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Resolved BEFORE ctx.db.get (mirrors convex/tasks.ts's
 		// requireAuthenticatedCaller call sites and convex/briefingNotes.ts's
 		// update/deleteBriefingNote): an unauthenticated caller must get
@@ -400,6 +402,7 @@ export const pause = mutation({
 	args: { taskId: v.string() },
 	returns: v.object({ taskId: v.id("recurringTasks"), active: v.boolean() }),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:pause", …) at mcp-server/src/tools.ts:6799 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only, mirroring the MCP server's own `guardMasterOnly` gate
 		// on pause_recurring_task (mcp-server/src/tools.ts, `{ kind: "master" }`)
 		// — re-enforced independently here, never trusting that MCP gate alone
@@ -435,6 +438,7 @@ export const resume = mutation({
 		nextRunAt: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:resume", …) at mcp-server/src/tools.ts:6836 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only — see pause's identical rationale above.
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
 		if (!scope.isMaster) {
@@ -470,6 +474,7 @@ export const remove = mutation({
 	args: { taskId: v.string() },
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:remove", …) at mcp-server/src/tools.ts:6873 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only — see pause's identical rationale above.
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
 		if (!scope.isMaster) {

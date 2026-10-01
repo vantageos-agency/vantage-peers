@@ -566,6 +566,7 @@ export const create = mutation({
 	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:create", …) at mcp-server/src/tools.ts:4117 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const { agentCredentialSecret, ...taskArgs } = args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
@@ -1897,6 +1898,7 @@ export const blockTask = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:blockTask", …) at mcp-server/src/tools.ts:5177 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2340,6 +2342,7 @@ export const failTask = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:failTask", …) at mcp-server/src/tools.ts:4766 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2548,6 +2551,7 @@ export const pause = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:pause", …) at mcp-server/src/tools.ts:4867 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2604,6 +2608,7 @@ export const resume = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:resume", …) at mcp-server/src/tools.ts:4916 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2670,6 +2675,7 @@ export const correctSegment = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:correctSegment", …) at mcp-server/src/tools.ts:4985 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2800,6 +2806,7 @@ export const checkout = mutation({
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:checkout", …) at mcp-server/src/tools.ts:5040 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,

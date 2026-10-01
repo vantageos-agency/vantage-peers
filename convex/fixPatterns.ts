@@ -48,6 +48,7 @@ export const create = mutation({
 	},
 	returns: v.id("fixPatterns"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:create", …) at mcp-server/src/tools.ts:8594 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireFleetMaster(ctx, "create a fix pattern");
 		const now = Date.now();
 
@@ -93,6 +94,7 @@ export const addAttempt = mutation({
 	},
 	returns: v.id("fixAttempts"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:addAttempt", …) at mcp-server/src/tools.ts:8651 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireFleetMaster(ctx, `add an attempt to fix pattern ${args.patternId}`);
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
@@ -140,6 +142,7 @@ export const validate = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:validate", …) at mcp-server/src/tools.ts:8701 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireFleetMaster(ctx, `validate fix pattern ${args.patternId}`);
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
@@ -174,6 +177,7 @@ export const linkIssue = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:linkIssue", …) at mcp-server/src/tools.ts:8961 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireFleetMaster(ctx, `link an issue to fix pattern ${args.patternId}`);
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {

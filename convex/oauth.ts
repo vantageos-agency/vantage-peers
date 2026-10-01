@@ -180,6 +180,7 @@ export const seedDefaultProfiles = mutation({
 		skipped: v.array(v.string()),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:seedDefaultProfiles", …) at mcp-server/server-http.ts:1146 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const actorTokenHash = await requireServiceAccount(
 			ctx,
 			"oauth:seedDefaultProfiles",
@@ -626,6 +627,7 @@ export const createClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createClient", …) at mcp-server/server-http.ts:1029 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createClient");
 
 		// Profile must exist
@@ -829,6 +831,7 @@ export const provisionOrganization = mutation({
 		),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:provisionOrganization", …) at mcp-server/server-http.ts:1103 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const slug = args.clerkOrgSlug.trim();
 		if (!slug) {
 			throw new Error("clerkOrgSlug is required");
@@ -1126,6 +1129,7 @@ export const registerPublicClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:registerPublicClient", …) at mcp-server/server-http.ts:446 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:registerPublicClient");
 
 		// SECURITY: Defense-in-depth — reject empty redirectUris at the Convex
@@ -1496,6 +1500,7 @@ export const deleteClient = mutation({
 		revokedRefresh: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:deleteClient", …) at mcp-server/server-http.ts:1136 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:deleteClient");
 		const client = await ctx.db
 			.query("oauth_clients")
@@ -1579,6 +1584,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:patchClientScopeAndRefreshTokens", …) at mcp-server/server-http.ts:1486 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const actorTokenHash = await requireServiceAccount(
 			ctx,
 			"oauth:patchClientScopeAndRefreshTokens",
@@ -1717,6 +1723,7 @@ export const revokeAccessTokensOnly = mutation({
 		refreshTokensPreserved: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:revokeAccessTokensOnly", …) at mcp-server/server-http.ts:1559 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:revokeAccessTokensOnly");
 
 		if (args.reason.length < 20) {
@@ -1782,6 +1789,7 @@ export const createAuthorizationCode = mutation({
 	},
 	returns: v.id("oauth_authorization_codes"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createAuthorizationCode", …) at mcp-server/server-http.ts:563 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createAuthorizationCode");
 		return await ctx.db.insert("oauth_authorization_codes", {
 			code: args.code,
@@ -1816,6 +1824,7 @@ export const consumeAuthorizationCode = mutation({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:consumeAuthorizationCode", …) at mcp-server/server-http.ts:627 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:consumeAuthorizationCode");
 		const row = await ctx.db
 			.query("oauth_authorization_codes")
@@ -1858,6 +1867,7 @@ export const createAccessToken = mutation({
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createAccessToken", …) at mcp-server/server-http.ts:751, mcp-server/server-http.ts:898, mcp-server/server-http.ts:1386 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createAccessToken");
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
@@ -1949,6 +1959,7 @@ export const createRefreshToken = mutation({
 	},
 	returns: v.id("oauth_refresh_tokens"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createRefreshToken", …) at mcp-server/server-http.ts:768, mcp-server/server-http.ts:887 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createRefreshToken");
 		return await ctx.db.insert("oauth_refresh_tokens", {
 			tokenHash: args.tokenHash,
@@ -2134,6 +2145,7 @@ export const patchScopeProfileEmergency = mutation({
 		auditLogId: v.id("oauth_audit_log"),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:patchScopeProfileEmergency", …) at mcp-server/server-http.ts:1249 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// ── Service-account identity guard ────────────────────────────────────
 		const actorTokenHash = await requireServiceAccount(
 			ctx,

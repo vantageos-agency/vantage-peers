@@ -47,6 +47,7 @@ export const write = mutation({
 	},
 	returns: v.id("diary"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("diary:write", …) at mcp-server/src/tools.ts:5880 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Fail-closed multi-tenant fix (defect class: authority attached
 		// to an anonymously-registered object — see
 		// .claude/rules/authority-attached-to-anonymous-object.md). write

@@ -110,6 +110,7 @@ export const activate = mutation({
 		expiresAt: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "licenses:activate" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
 		// An oversize "key" is not a key: refuse it as any unknown key, unhashed.
 		if (args.licenseKey.length > MAX_LICENSE_KEY_LENGTH) {
 			throw new Error("License invalid or expired");
