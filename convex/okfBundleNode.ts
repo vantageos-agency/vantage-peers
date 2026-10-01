@@ -30,7 +30,8 @@ import { Readable } from "node:stream";
 import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
-import { action } from "./_generated/server";
+import { type ActionCtx, action } from "./_generated/server";
+import { requireResolvedCaller } from "./lib/auth";
 import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
@@ -234,17 +235,19 @@ export async function packTarball(
  *     `project/elpi-corp` was relaxed by B3 (mission k5779qbxh, task
  *     k17f3407sg7cn6gswn5qs9j5b5891581) so multi-tenant `team/<orgId>/*`
  *     and other namespaces can export their own bundles.
- *   - Identity is resolved via `ctx.auth.getUserIdentity()`. Absence is
- *     permitted when running through the Convex CLI / deploy key (mirrors
- *     `lib/auth.withOrgScope` master-scope behaviour).
- *   - When an org slug is attached, it MUST match the tail of the requested
- *     namespace (e.g. `team/abc-123` → org `abc-123`; `project/elpi-corp` →
- *     org `elpi-corp`). Mismatch → `AUTH_NAMESPACE_DENIED`. Cross-tenant
+ *   - The master namespace `project/elpi-corp` is reserved to the fleet master
+ *     (the MCP service account, resolved by `lib/auth.withOrgScope`). A caller
+ *     with no credential, a signed-in caller with no org, and an ordinary org
+ *     member are all refused `RBAC_DENIED`. Absence of identity grants nothing.
+ *   - Any other namespace: identity is required (`AUTH_NO_IDENTITY`) and its org
+ *     slug MUST match the tail of the requested namespace (e.g. `team/abc-123`
+ *     → org `abc-123`). Mismatch → `AUTH_NAMESPACE_DENIED`. Cross-tenant
  *     export remains forbidden.
  */
 export async function assertCanExportNamespace(
-	ctx: { auth: { getUserIdentity: () => Promise<unknown> } },
+	ctx: Pick<ActionCtx, "auth" | "runQuery">,
 	namespace: string,
+	door: string,
 ): Promise<void> {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
@@ -260,27 +263,29 @@ export async function assertCanExportNamespace(
 		);
 	}
 
+	// The master namespace is reserved to the fleet master (service account).
+	// Before this gate a caller with NO credential, and any signed-in caller
+	// carrying no org slug, was allowed to export it through the two early
+	// returns this block replaced -- an anonymous export of the fleet's own
+	// memory. Master is a named by-id grant resolved by `withOrgScope` (reached
+	// from an action through `resolveOrgScopeForAction`), never inferred from the
+	// absence of an identity or of an org. Refused by RAISING `RBAC_DENIED`
+	// naming the door, through the one shared helper.
+	if (namespace === "project/elpi-corp") {
+		const scope = await ctx.runQuery(
+			internal.lib.auth.resolveOrgScopeForAction,
+			{},
+		);
+		requireResolvedCaller(scope, door, { masterOnly: true });
+		return;
+	}
+
 	const identity = (await ctx.auth.getUserIdentity()) as Record<
 		string,
 		unknown
 	> | null;
 
-	// Master-bypass allowlist. In production the MCP Cloud surface never calls
-	// setAuth on the Convex client, so `getUserIdentity()` is always null on the
-	// hot path. Eta REVISE iter-2 on PR #888 flagged this as a CRITICAL
-	// cross-tenant bypass: prior to this guard, a null identity authorized ANY
-	// namespace, so any tenant token could export any other tenant's data.
-	//
-	// The fix is fail-CLOSED on null/no-org identities for all but the legacy
-	// "self" namespace. CLI / deploy-key callers still get through because their
-	// invocations carry no identity AND target `project/elpi-corp` — which is
-	// what the Phase 1 contract (PR #850) actually meant by "master".
-	const isMasterNamespace = namespace === "project/elpi-corp";
-
 	if (identity === null || identity === undefined) {
-		if (isMasterNamespace) {
-			return;
-		}
 		throw new Error(
 			`AUTH_NO_IDENTITY: anonymous caller cannot export non-master namespace "${namespace}".`,
 		);
@@ -298,11 +303,7 @@ export async function assertCanExportNamespace(
 		null;
 	if (orgSlug === null) {
 		// Identity attached but carries no org affiliation — same fail-closed
-		// posture as the null branch above. Only the legacy master namespace is
-		// allowed through (system:cron, deploy key with metadata, etc.).
-		if (isMasterNamespace) {
-			return;
-		}
+		// posture as the null branch above.
 		throw new Error(
 			`AUTH_NO_ORG: caller without org affiliation cannot export non-master namespace "${namespace}".`,
 		);
@@ -329,7 +330,11 @@ export const exportOkfBundle = action({
 	},
 	handler: async (ctx, args): Promise<ExportOkfBundleResult> => {
 		// 1. Auth.
-		await assertCanExportNamespace(ctx, args.namespace);
+		await assertCanExportNamespace(
+			ctx,
+			args.namespace,
+			"okfBundleNode:exportOkfBundle",
+		);
 
 		// 2. Format gate — Phase 1 supports tarball only.
 		if (args.format !== "tarball") {
@@ -817,12 +822,16 @@ export interface ImportOkfBundleResult {
 }
 
 async function assertCanImport(
-	ctx: { auth: { getUserIdentity: () => Promise<unknown> } },
+	ctx: Pick<ActionCtx, "auth" | "runQuery">,
 	namespace: string,
 ): Promise<void> {
 	// Reuse the export-side guard semantics 1:1 — import has identical
 	// cross-tenant write risk (Eta REVISE iter-2 on #888 fail-closed pattern).
-	await assertCanExportNamespace(ctx, namespace);
+	await assertCanExportNamespace(
+		ctx,
+		namespace,
+		"okfBundleNode:importOkfBundle",
+	);
 }
 
 interface ParsedMemory {
