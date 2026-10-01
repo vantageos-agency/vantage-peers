@@ -1191,7 +1191,12 @@ export const listMessages = query({
 
 export const getUnreadCount = query({
 	args: { orchestratorId: creatorValidator },
-	returns: v.number(),
+	// A served caller gets the bare number; a signed-in caller with no
+	// organisation gets the typed envelope (a zero would be a false figure).
+	returns: v.union(
+		v.number(),
+		v.object({ refused: v.literal(true), count: v.number() }),
+	),
 	handler: async (ctx, { orchestratorId }) => {
 		// GATE — this read took NO identity check: it counted the unread receipts
 		// of ANY recipient name for ANY caller, including one presenting no
@@ -1204,12 +1209,11 @@ export const getUnreadCount = query({
 		// dashboard — app-sidebar.tsx:279 and message-timeline.tsx:63, both
 		// `useQuery`, both in a mounted shell behind clerkMiddleware.
 		//   anonymous            -> RAISES RBAC_DENIED (no mounted render exists).
-		//   signed in, no org    -> 0. DECLARED DIVERGENCE: a subscribed render
-		//                           (the sidebar badge) cannot take a throw, and the
-		//                           return type is a bare number the dashboard reads
-		//                           as-is. A caller with no organisation owns no
-		//                           tenant receipts, so 0 is the count of ITS OWN
-		//                           data — it is never another tenant's number.
+		//   signed in, no org    -> `{ refused: true, count: 0 }`: a mounted render
+		//                           (the sidebar badge) cannot take a throw, and a
+		//                           bare 0 is byte-identical to "nothing unread". The
+		//                           dashboard reads both shapes (readUnreadCount,
+		//                           vantage-peers-dashboard PR #60).
 		//   member of an org     -> the unread count of its own tenant.
 		//   fleet master         -> unchanged (all tenants, by recipient).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
@@ -1224,7 +1228,9 @@ export const getUnreadCount = query({
 				.take(UNREAD_RECEIPTS_SCAN_CAP);
 			return receipts.length;
 		}
-		if (scope.orgSlug === null) return 0;
+		if (scope.orgSlug === null) {
+			return { refused: true as const, count: 0 };
+		}
 		const orgSlug = scope.orgSlug;
 		const receipts = await ctx.db
 			.query("messageReceipts")

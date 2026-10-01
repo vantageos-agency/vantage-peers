@@ -190,8 +190,12 @@ describe("messages:getUnreadCount", () => {
 		expect(await asMemberA(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(2);
 		expect(await asMemberB(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(1);
 		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(3);
-		// declared divergence: a subscribed sidebar cannot take a throw at pre-org
-		expect(await asPreOrg(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(0);
+		// pre-org: a mounted sidebar cannot take a throw, and a bare 0 would be the
+		// bytes of an absence, so the refusal is the typed envelope.
+		expect(await asPreOrg(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toEqual({
+			refused: true,
+			count: 0,
+		});
 	});
 });
 

@@ -605,7 +605,7 @@ export type PublicApiType = {
       "query",
       "public",
       { orchestratorId: string },
-      number
+      number | { count: number; refused: true }
     >;
     listBroadcastStatus: FunctionReference<
       "query",
