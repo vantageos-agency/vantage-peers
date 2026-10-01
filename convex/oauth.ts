@@ -71,12 +71,14 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 // Shared auth helper — service-account identity gate for the OAuth admin and
 // token-minting registrations
 //
-// Ten public registrations in this module (seedDefaultProfiles, createClient,
-// listClients, deleteClient, patchClientScopeAndRefreshTokens,
+// Fourteen public registrations in this module (seedDefaultProfiles,
+// createClient, listClients, deleteClient, patchClientScopeAndRefreshTokens,
 // revokeAccessTokensOnly, createAuthorizationCode, createAccessToken,
-// createRefreshToken, patchScopeProfileEmergency) used to authorise their
-// caller by a shared secret carried in the request body. They now authorise by
-// IDENTITY: the caller must resolve, through `withOrgScope`, to the recognised
+// createRefreshToken, patchScopeProfileEmergency, and the four protocol steps
+// registerPublicClient, consumeAuthorizationCode, getAccessTokenByHash,
+// getRefreshTokenByHash) authorise their caller by IDENTITY (ten of them used
+// to carry a shared secret in the request body; the four protocol steps used
+// to authorise no one): the caller must resolve, through `withOrgScope`, to the recognised
 // service account -- the MCP server's own Clerk user, matched by the by-id
 // grant on CLERK_SERVICE_ACCOUNT_USER_ID (never inferred from the mere absence
 // of an organisation). `withOrgScope` is called WITHOUT `allowNoIdentityMaster`,
@@ -1089,20 +1091,20 @@ export const provisionOrganization = mutation({
 // POST /admin/oauth/clients endpoint (masterOnlyMiddleware gated).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Public DCR path — anonymous clients (Claude.ai connector) register themselves
-// with the default profile. The returned clientSecret is the caller's
+// DCR persistence step — service account only. RFC 7591 dynamic client
+// registration is public at the MCP server's HTTP `POST /register`, NOT at this
+// Convex mutation: the MCP server writes the row through `internalClient()`,
+// which always carries its service-account identity, so the identity exists
+// before this step runs. Leaving the mutation anonymous let anyone holding the
+// deployment URL write unbounded client rows past the MCP server's own
+// validation and rate limits. The returned clientSecret is the HTTP caller's
 // responsibility to capture; we store only the hash.
 //
-// SECURITY: This function enforces that self-registration NEVER yields a
-// profile that has not been explicitly data-flagged `selfRegistrable: true`
-// — master scope, per-org seat profiles, and any future admin-only profile
-// are refused by construction (they simply lack the flag), not by name.
-// public-mutation: RFC 7591 dynamic client registration is intentionally
-// open to anonymous callers by design — no caller identity to derive.
-// Defense-in-depth against privilege escalation lives in-handler (rejects
-// empty redirectUris, requires an existing scope_profiles row flagged
-// selfRegistrable=true).
-// @open RFC 7591 dynamic client registration is anonymous by design; it mints a client with only self-registrable profiles and no token
+// SECURITY: self-registration NEVER yields a profile that has not been
+// explicitly data-flagged `selfRegistrable: true` — master scope, per-org seat
+// profiles, and any future admin-only profile are refused by construction
+// (they simply lack the flag), not by name. That in-handler defence stays as a
+// second layer behind the identity gate.
 export const registerPublicClient = mutation({
 	args: {
 		clientId: v.string(),
@@ -1114,6 +1116,8 @@ export const registerPublicClient = mutation({
 	},
 	returns: v.id("oauth_clients"),
 	handler: async (ctx, args) => {
+		await requireServiceAccount(ctx, "oauth:registerPublicClient");
+
 		// SECURITY: Defense-in-depth — reject empty redirectUris at the Convex
 		// layer so that non-HTTP callers (admin scripts, direct Convex calls) also
 		// cannot create zombie clients. The HTTP layer (server-http.ts POST /register)
@@ -1780,11 +1784,13 @@ export const createAuthorizationCode = mutation({
 	},
 });
 
-// public-mutation: OAuth authorization-code exchange — the presented
-// single-use `code` itself IS the credential (deleted on first consumption),
-// public by design per the OAuth 2.0 authorization-code grant; there is no
-// separate caller identity to derive at this step.
-// @credential code authorization-code: the single-use authorization code is the credential; it is looked up and deleted on first consumption (expiry is returned to the caller, not enforced here)
+// Authorization-code exchange — service account only. The presented
+// single-use `code` is looked up and deleted on first consumption, but the
+// caller is the MCP server's `/oauth/token` handler, which reaches Convex
+// through `internalClient()` (service-account identity attached to every call).
+// An anonymous caller who guessed or intercepted a code could otherwise spend
+// it, denying the legitimate exchange and learning the code's client, redirect
+// URI, PKCE challenge and user.
 export const consumeAuthorizationCode = mutation({
 	args: { code: v.string() },
 	returns: v.union(
@@ -1799,6 +1805,7 @@ export const consumeAuthorizationCode = mutation({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		await requireServiceAccount(ctx, "oauth:consumeAuthorizationCode");
 		const row = await ctx.db
 			.query("oauth_authorization_codes")
 			.withIndex("by_code", (q) => q.eq("code", args.code))
@@ -1874,34 +1881,25 @@ const oauthContextShape = v.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getAccessTokenByHash — SECURITY: deliberately public, no auth gate.
+// getAccessTokenByHash — service account only.
 //
-// `args.tokenHash` is `sha256Hex(accessToken)` where `accessToken` is a
-// 256-bit value from `crypto.getRandomValues` (mcp-server/server-http.ts's
-// `randomOpaqueToken`), hashed CLIENT-SIDE so the raw bearer never crosses
-// the wire to Convex (mcp-server/src/auth.ts case (2), `sha256Hex(token)`
-// before this call). SHA-256 is one-way: the ONLY way to present the exact
-// hash this query looks up BY is to already hold the raw 256-bit token —
-// there is no brute-force or enumeration path shorter than already
-// possessing the credential. Presenting the hash is therefore equivalent,
-// as an authorization signal, to presenting the bearer token itself; a
-// caller who can compute this hash already has everything this query
-// returns (the same scopes/fromAllowList/namespace prefixes the token
-// itself grants at the MCP tool layer). Adding a `ctx.auth` gate here would
-// not narrow the readable set — token-hash possession IS the credential —
-// and would break the legitimate caller: `internalClient()` in
-// mcp-server/src/auth.ts case (2) calls this over Convex's public HTTP
-// query API before any Convex-side identity has been established for the
-// bearer being verified.
+// `args.tokenHash` is `sha256Hex(accessToken)`, hashed CLIENT-SIDE so the raw
+// bearer never crosses the wire to Convex. The caller is the MCP server's
+// bearer-auth middleware (mcp-server/src/auth.ts case (2)), which reaches
+// Convex through `internalClient()`: every call it makes carries the MCP
+// server's service-account identity, so this lookup runs with an identity even
+// though the BEARER being verified has none yet. An earlier version of this
+// comment said a `ctx.auth` gate would break that caller; it does not, the
+// identity that matters is the service's, not the bearer's.
 //
-// Row-level checks (revoked / expired) still apply below — a valid hash for
-// a dead token yields null, not the dead grant.
+// The lookup answers the same `null` for an unknown, revoked or expired hash,
+// and never returns a stored hash or secret.
 // ─────────────────────────────────────────────────────────────────────────────
-// @credential tokenHash token-hash: the SHA-256 of a bearer token is the credential and the lookup key; only its holder can present it
 export const getAccessTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(oauthContextShape, v.null()),
 	handler: async (ctx, args) => {
+		await requireServiceAccount(ctx, "oauth:getAccessTokenByHash");
 		const row = await ctx.db
 			.query("oauth_access_tokens")
 			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
@@ -1953,21 +1951,13 @@ export const createRefreshToken = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getRefreshTokenByHash — SECURITY: deliberately public, no auth gate. Same
-// reasoning as `getAccessTokenByHash` above: `args.tokenHash` is
-// `sha256Hex(refreshToken)` where `refreshToken` is an independent 256-bit
-// `randomOpaqueToken()` value, hashed client-side before it ever reaches
-// Convex (mcp-server/server-http.ts's `/oauth/token` refresh-grant path,
-// `sha256Hex(refreshTokenRaw)`). Possession of the hash requires possession
-// of the raw refresh token; the returned `scopeProfile` is re-resolved
-// against the CURRENT `oauth_scope_profiles` row during token re-issue
-// (`loadScopeProfile`), never trusted verbatim, so this read adds nothing an
-// attacker without the raw token could not already do with it. Do not add a
-// `ctx.auth` gate: the caller (`internalClient()` in mcp-server/server-http.ts)
-// presents this hash before any Convex-side identity is established for the
-// refresh token being redeemed.
+// getRefreshTokenByHash — service account only. Same reasoning as
+// `getAccessTokenByHash`: `args.tokenHash` is `sha256Hex(refreshToken)`, hashed
+// client-side, and the sole caller is the MCP server's `/oauth/token`
+// refresh-grant path through `internalClient()` (service-account identity on
+// every call). The returned `scopeProfile` is re-resolved against the CURRENT
+// `oauth_scope_profiles` row during token re-issue, never trusted verbatim.
 // ─────────────────────────────────────────────────────────────────────────────
-// @credential tokenHash token-hash: the SHA-256 of a refresh token is the credential and the lookup key; only its holder can present it
 export const getRefreshTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(
@@ -1980,6 +1970,7 @@ export const getRefreshTokenByHash = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		await requireServiceAccount(ctx, "oauth:getRefreshTokenByHash");
 		const row = await ctx.db
 			.query("oauth_refresh_tokens")
 			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))

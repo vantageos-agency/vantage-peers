@@ -87,9 +87,10 @@ describe("oauth:provisionOrganization", () => {
 				.map((b) => b.toString(16).padStart(2, "0"))
 				.join("");
 		});
-		const tokenCtx = await t.query(api.oauth.getAccessTokenByHash, {
-			tokenHash,
-		});
+		// The lookup admits the service account only (closeDoorsOauth.test.ts).
+		const tokenCtx = await t
+			.withIdentity({ subject: "test-service-account-user-id" })
+			.query(api.oauth.getAccessTokenByHash, { tokenHash });
 		expect(tokenCtx?.clerkOrgSlug).toBe("plan-org-alpha");
 	});
 

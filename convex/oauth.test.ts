@@ -205,9 +205,12 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 		expect(result.revokedRefresh).toBe(1);
 
 		// The access token is now revoked and getAccessTokenByHash returns null
-		const token = await t.query(api.oauth.getAccessTokenByHash, {
-			tokenHash: "b".repeat(64),
-		});
+		const token = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{
+				tokenHash: "b".repeat(64),
+			},
+		);
 		expect(token).toBeNull();
 	});
 });
@@ -225,16 +228,22 @@ describe("oauth.createAuthorizationCode + consumeAuthorizationCode", () => {
 			expiresAt: Date.now() + 600_000,
 		});
 
-		const first = await t.mutation(api.oauth.consumeAuthorizationCode, {
-			code: "auth-code-123",
-		});
+		const first = await asServiceAccount(t).mutation(
+			api.oauth.consumeAuthorizationCode,
+			{
+				code: "auth-code-123",
+			},
+		);
 		expect(first).not.toBeNull();
 		expect(first?.clientId).toBe("test-client");
 
 		// Second consume must return null (row was deleted)
-		const second = await t.mutation(api.oauth.consumeAuthorizationCode, {
-			code: "auth-code-123",
-		});
+		const second = await asServiceAccount(t).mutation(
+			api.oauth.consumeAuthorizationCode,
+			{
+				code: "auth-code-123",
+			},
+		);
 		expect(second).toBeNull();
 	});
 });
@@ -248,7 +257,7 @@ describe("oauth.registerPublicClient (DCR default-profile binding)", () => {
 		const t = createTestConvex();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
 		const clientId = "anon-dcr-client";
-		await t.mutation(api.oauth.registerPublicClient, {
+		await asServiceAccount(t).mutation(api.oauth.registerPublicClient, {
 			clientId,
 			clientSecretHash: "a".repeat(64),
 			name: "anonymous-dcr",
@@ -279,7 +288,10 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 			expiresAt: Date.now() + 3600_000,
 		});
 
-		const row = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		const row = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{ tokenHash },
+		);
 		expect(row).not.toBeNull();
 		expect(row?.scopeProfile).toBe("marie-iris-rh");
 		expect(row?.fromAllowList).toEqual(["marie"]);
@@ -345,7 +357,10 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 			expiresAt: Date.now() - 1000, // already expired
 		});
 
-		const row = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		const row = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{ tokenHash },
+		);
 		expect(row).toBeNull();
 	});
 });
@@ -389,7 +404,10 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 			expiresAt: Date.now() + 3600_000,
 		});
 
-		const before = await t.query(api.oauth.getAccessTokenByHash, { tokenHash });
+		const before = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{ tokenHash },
+		);
 		expect(before).not.toBeNull();
 		expect(before?.fromAllowList.length).toBe(0);
 
@@ -403,9 +421,12 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 			},
 		);
 
-		const patched = await t.query(api.oauth.getAccessTokenByHash, {
-			tokenHash,
-		});
+		const patched = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{
+				tokenHash,
+			},
+		);
 		expect(patched?.fromAllowList).toContain("prometheus");
 		expect(patched?.scopeProfile).toBe("prometheus");
 	});

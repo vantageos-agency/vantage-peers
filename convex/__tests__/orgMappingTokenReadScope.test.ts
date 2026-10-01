@@ -33,8 +33,10 @@
  *    `withOrgScope(ctx).isMaster` (master/service-account only), matching
  *    the #1318 pattern; no legitimate caller is narrowed out.
  *
- * 3. `oauth:getAccessTokenByHash` / `oauth:getRefreshTokenByHash` — chosen
- *    disposition (c): kept public, NO functional change. `tokenHash` is
+ * 3. `oauth:getAccessTokenByHash` / `oauth:getRefreshTokenByHash` — SUPERSEDED:
+ *    now service-account only (see closeDoorsOauth.test.ts). The text below is
+ *    the original disposition (c), kept for history: kept public, NO
+ *    functional change. `tokenHash` is
  *    `sha256Hex()` of an independent 256-bit `crypto.getRandomValues()`
  *    secret, hashed client-side before the call — presenting the exact hash
  *    this query looks up by is only possible for a caller that already
@@ -273,13 +275,16 @@ describe("orgRoster.getForAccessToken requires master or service-account scope",
 	});
 });
 
-describe("oauth token-hash reads (possession-is-credential, no auth gate)", () => {
-	// getAccessTokenByHash / getRefreshTokenByHash keep NO ctx.auth check —
-	// choice (c). These tests pin that anonymous callers presenting the
-	// correct hash are served (possession of the hash already proves
-	// possession of the raw 256-bit token), while a WRONG hash (no
-	// possession) yields null exactly as before.
-	test("getAccessTokenByHash serves an anonymous caller presenting the correct hash", async () => {
+describe("oauth token-hash reads (service account only)", () => {
+	// getAccessTokenByHash / getRefreshTokenByHash were first kept public on
+	// the argument that possession of the hash proves possession of the raw
+	// token. That left an anonymous caller able to probe the table at will.
+	// Their only caller, the MCP server, reaches Convex through
+	// internalClient(), which always carries the service-account identity, so
+	// they now admit the service account only. The refusal poles live in
+	// closeDoorsOauth.test.ts; these tests pin that the admitted caller is
+	// still served for the correct hash and gets null for a wrong one.
+	test("getAccessTokenByHash serves the service account presenting the correct hash", async () => {
 		const t = createT();
 		const now = Date.now();
 		await t.run(async (ctx) => {
@@ -297,12 +302,14 @@ describe("oauth token-hash reads (possession-is-credential, no auth gate)", () =
 			});
 		});
 
-		// No .withIdentity() applied — models the real production caller
-		// shape (internalClient() presents this hash before any Convex-side
-		// identity has been established for the bearer being verified).
-		const result = await t.query(api.oauth.getAccessTokenByHash, {
-			tokenHash: "correct-hash-abc",
-		});
+		// The real production caller shape: internalClient() carries the MCP
+		// server's service-account identity on every call.
+		const result = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{
+				tokenHash: "correct-hash-abc",
+			},
+		);
 		expect(result?.clientId).toBe("client-x");
 	});
 
@@ -324,13 +331,16 @@ describe("oauth token-hash reads (possession-is-credential, no auth gate)", () =
 			});
 		});
 
-		const result = await t.query(api.oauth.getAccessTokenByHash, {
-			tokenHash: "guessed-wrong-hash",
-		});
+		const result = await asServiceAccount(t).query(
+			api.oauth.getAccessTokenByHash,
+			{
+				tokenHash: "guessed-wrong-hash",
+			},
+		);
 		expect(result).toBeNull();
 	});
 
-	test("getRefreshTokenByHash serves an anonymous caller presenting the correct hash", async () => {
+	test("getRefreshTokenByHash serves the service account presenting the correct hash", async () => {
 		const t = createT();
 		const now = Date.now();
 		await t.run(async (ctx) => {
@@ -344,9 +354,12 @@ describe("oauth token-hash reads (possession-is-credential, no auth gate)", () =
 			});
 		});
 
-		const result = await t.query(api.oauth.getRefreshTokenByHash, {
-			tokenHash: "correct-refresh-hash-abc",
-		});
+		const result = await asServiceAccount(t).query(
+			api.oauth.getRefreshTokenByHash,
+			{
+				tokenHash: "correct-refresh-hash-abc",
+			},
+		);
 		expect(result?.clientId).toBe("client-x");
 	});
 
@@ -364,9 +377,12 @@ describe("oauth token-hash reads (possession-is-credential, no auth gate)", () =
 			});
 		});
 
-		const result = await t.query(api.oauth.getRefreshTokenByHash, {
-			tokenHash: "guessed-wrong-hash",
-		});
+		const result = await asServiceAccount(t).query(
+			api.oauth.getRefreshTokenByHash,
+			{
+				tokenHash: "guessed-wrong-hash",
+			},
+		);
 		expect(result).toBeNull();
 	});
 });
