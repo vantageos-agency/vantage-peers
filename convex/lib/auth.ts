@@ -738,6 +738,18 @@ export async function requireAgentCredentialMatch(
 export type RosterNameKind = "sender" | "actor" | "assignee";
 
 /**
+ * The ONE roster-membership predicate behind requireOrchestratorOnRoster (and
+ * any read that must answer without throwing): normalised on both sides, and
+ * "*" names nobody.
+ */
+export function isOrchestratorOnOrgRoster(scope: OrgScope, name: string): boolean {
+	const claimed = normalizeOrchestratorId(name);
+	return scope.allowedOrchestrators.some(
+		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,
+	);
+}
+
+/**
  * requireOrchestratorOnRoster — the sender (and, via `kind`, the acting or
  * assigned identity) of a write is DERIVED from the verified
  * caller, never taken from the `from` argument. Previously `requireSenderOnRoster`;
@@ -769,11 +781,7 @@ export function requireOrchestratorOnRoster(
 	kind: RosterNameKind = "sender",
 ): void {
 	if (scope.isMaster || scope.orgSlug === null) return;
-	const claimed = normalizeOrchestratorId(claimedName);
-	const onRoster = scope.allowedOrchestrators.some(
-		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,
-	);
-	if (!onRoster) {
+	if (!isOrchestratorOnOrgRoster(scope, claimedName)) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${kind} "${claimedName}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: `${kind}-not-on-roster`, door: registration, from: claimedName, orgSlug: scope.orgSlug })}`,
 		);

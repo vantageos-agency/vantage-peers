@@ -1470,6 +1470,14 @@ export const update = mutation({
 		}
 		assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope);
 
+		// An ASSIGNMENT target is not an asserted caller name, so the caller
+		// lock above does not cover it: without this, the cross-org assignment
+		// `create` refuses is one `update` call away. Same helper, same rule
+		// (roster-only, "*" admits nobody for a member, master unchanged).
+		if (fields.assignedTo !== undefined) {
+			requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
+		}
+
 		// Build patch object with only provided fields
 		const patch: Record<string, any> = { updatedAt: Date.now() };
 		for (const [key, value] of Object.entries(fields)) {

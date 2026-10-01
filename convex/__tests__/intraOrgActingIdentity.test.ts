@@ -266,3 +266,105 @@ describe("tasks:create — createdBy already guarded; assignedTo now bound", () 
 		expect(await t.run((c) => c.db.query("tasks").collect())).toHaveLength(1);
 	});
 });
+
+describe("tasks:update — assignedTo reassignment (assignee)", () => {
+	async function seedTask(t: T, orgId: string | undefined) {
+		return await t.run((ctx) =>
+			ctx.db.insert("tasks", {
+				title: "t",
+				assignedTo: "bob",
+				priority: "medium",
+				status: "todo",
+				createdBy: "bob",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				orgId,
+			}),
+		);
+	}
+	test("REFUSED: member reassigns to 'eta'", async () => {
+		const t = await fixture();
+		const taskId = await seedTask(t, "org-b");
+		await expectDenied(
+			member(t).mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "bob",
+				assignedTo: "eta",
+			}),
+			"tasks:update",
+			"assignee",
+		);
+		expect((await t.run((c) => c.db.get(taskId)))?.assignedTo).toBe("bob");
+	});
+	test("SERVED: own roster; non-assignment update untouched", async () => {
+		const t = await fixture();
+		const taskId = await seedTask(t, "org-b");
+		await member(t).mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "bob",
+			assignedTo: "bea",
+		});
+		expect((await t.run((c) => c.db.get(taskId)))?.assignedTo).toBe("bea");
+		await member(t).mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "bob",
+			title: "renamed",
+		});
+	});
+	test("MASTER unchanged: any assignee", async () => {
+		const t = await fixture();
+		const taskId = await seedTask(t, "org-b");
+		await master(t).mutation(api.tasks.update, {
+			taskId,
+			callerOrchestrator: "system",
+			assignedTo: "eta",
+		});
+		expect((await t.run((c) => c.db.get(taskId)))?.assignedTo).toBe("eta");
+	});
+});
+
+describe("recurringTasks — one roster rule (normalised, '*' names nobody)", () => {
+	const args = (assignedTo: string) => ({
+		title: "r",
+		assignedTo,
+		priority: "medium" as const,
+		cronExpression: "0 9 * * *",
+		createdBy: "bob",
+	});
+	test("REFUSED: create for foreign 'eta'", async () => {
+		const t = await fixture();
+		await expectDenied(
+			member(t).mutation(api.recurringTasks.create, args("eta")),
+			"recurringTasks:create",
+			"assignee",
+		);
+	});
+	test("SERVED: create for 'Bob' (normalisation) and own roster", async () => {
+		const t = await fixture();
+		await member(t).mutation(api.recurringTasks.create, args("Bob"));
+		await member(t).mutation(api.recurringTasks.create, args("bea"));
+		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(2);
+	});
+	test("REFUSED: update reassigns to foreign; SERVED: to own roster", async () => {
+		const t = await fixture();
+		const id = await member(t).mutation(api.recurringTasks.create, args("bob"));
+		await expectDenied(
+			member(t).mutation(api.recurringTasks.update, {
+				recurringTaskId: id,
+				assignedTo: "eta",
+			}),
+			"recurringTasks:update",
+			"assignee",
+		);
+		await member(t).mutation(api.recurringTasks.update, {
+			recurringTaskId: id,
+			assignedTo: "BEA",
+		});
+		expect((await t.run((c) => c.db.get(id)))?.assignedTo).toBe("BEA");
+	});
+	test("MASTER unchanged", async () => {
+		const t = await fixture();
+		await master(t).mutation(api.recurringTasks.create, args("eta"));
+		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(1);
+	});
+});
