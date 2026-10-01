@@ -16,12 +16,13 @@
 //
 // So this suite drives the real HTTP route (`POST /github/webhook`) with
 // synthetic GitHub payloads, via convex-test's `t.fetch`, and asserts on the
-// tasks table afterwards. Signature verification is skipped because
-// GITHUB_WEBHOOK_SECRET is unset under test (see convex/http.ts:45).
+// tasks table afterwards. Bodies are signed with GITHUB_WEBHOOK_SECRET (the
+// route fails closed when the secret is unset or the signature is wrong).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -72,9 +73,11 @@ const createT = async () => {
 // Fake timers keep the scheduler under test control.
 beforeEach(() => {
 	vi.useFakeTimers();
+	process.env.GITHUB_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 });
 afterEach(() => {
 	vi.useRealTimers();
+	delete process.env.GITHUB_WEBHOOK_SECRET;
 });
 
 const REPO = "vantageos-agency/vantage-peers";
@@ -93,19 +96,22 @@ const post = (
 	t: Awaited<ReturnType<typeof createT>>,
 	action: string,
 	pull_request: Record<string, unknown>,
-) =>
-	t.fetch("/github/webhook", {
+) => {
+	const body = JSON.stringify({
+		action,
+		pull_request,
+		repository: { full_name: REPO },
+	});
+	return t.fetch("/github/webhook", {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
 			"x-github-event": "pull_request",
+			"x-hub-signature-256": signGithubBody(body),
 		},
-		body: JSON.stringify({
-			action,
-			pull_request,
-			repository: { full_name: REPO },
-		}),
+		body,
 	});
+};
 
 const reviewTasks = (t: Awaited<ReturnType<typeof createT>>) =>
 	t.run(async (ctx) => {

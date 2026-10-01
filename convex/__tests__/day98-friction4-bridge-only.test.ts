@@ -26,6 +26,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { internal } from "../_generated/api";
+import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -43,7 +44,7 @@ const ISSUE_URL = `https://github.com/${REPO}/issues/${ISSUE_NUMBER}`;
 const COMMENT_URL = `${ISSUE_URL}#issuecomment-12345`;
 
 beforeEach(() => {
-	delete process.env.GITHUB_WEBHOOK_SECRET;
+	process.env.GITHUB_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 	delete process.env.GITHUB_TOKEN;
 });
 
@@ -116,6 +117,7 @@ async function postWebhook(t: ReturnType<typeof makeConvex>, body: string, event
 		headers: {
 			"Content-Type": "application/json",
 			"x-github-event": event,
+			"x-hub-signature-256": signGithubBody(body),
 		},
 		body,
 	});

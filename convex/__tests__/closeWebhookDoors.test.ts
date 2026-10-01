@@ -16,6 +16,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
+import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -201,7 +202,7 @@ describe("server-side path: internal twins serve with NO identity", () => {
 	});
 
 	test("webhook POST /github/webhook (no identity) still resolves the mapping", async () => {
-		delete process.env.GITHUB_WEBHOOK_SECRET;
+		process.env.GITHUB_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 		const t = createT();
 		await seedMapping(t);
 		await t.run(async (ctx) => {
@@ -212,22 +213,27 @@ describe("server-side path: internal twins serve with NO identity", () => {
 				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
 			});
 		});
+		const payload = JSON.stringify({
+			action: "opened",
+			repository: { full_name: REPO },
+			issue: {
+				number: 7,
+				title: "door test",
+				body: "b",
+				html_url: "https://github.com/acme/door-repo/issues/7",
+				labels: [],
+				created_at: "2026-01-01T00:00:00Z",
+				updated_at: "2026-01-01T00:00:00Z",
+			},
+		});
 		const res = await t.fetch("/github/webhook", {
 			method: "POST",
-			headers: { "x-github-event": "issues", "content-type": "application/json" },
-			body: JSON.stringify({
-				action: "opened",
-				repository: { full_name: REPO },
-				issue: {
-					number: 7,
-					title: "door test",
-					body: "b",
-					html_url: "https://github.com/acme/door-repo/issues/7",
-					labels: [],
-					created_at: "2026-01-01T00:00:00Z",
-					updated_at: "2026-01-01T00:00:00Z",
-				},
-			}),
+			headers: {
+				"x-github-event": "issues",
+				"content-type": "application/json",
+				"x-hub-signature-256": signGithubBody(payload),
+			},
+			body: payload,
 		});
 		// Mapped (not "unmapped repo"), then reached the template read (none seeded).
 		expect(await res.text()).toBe("OK - no template");
