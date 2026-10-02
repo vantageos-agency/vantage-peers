@@ -57,6 +57,7 @@ async function attempt(fn) {
 	try {
 		return { id: await fn(), code: null };
 	} catch (err) {
+		if (process.env.PROVE_DEBUG) console.error(TAG, "error data:", String(typeof err?.data === "string" ? err.data : JSON.stringify(err?.data ?? err?.message)).slice(0, 300));
 		return { id: null, code: errorCode(err) };
 	}
 }
@@ -107,7 +108,7 @@ async function main() {
 
 	const base = {
 		from: station,
-		channel: orgAdminUserId, // self-addressed: always resolvable, touches no other station's inbox
+		channel: process.env.PROVE_CHANNEL || "pi", // a roster recipient other than the sender (a self-addressed send yields zero recipients and bounces)
 		content: `[credential proof ${phase}] task k17awnbe5njbfwxed3z4e1md358fhra0 station=${station}`,
 	};
 
