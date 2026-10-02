@@ -2711,6 +2711,10 @@ export function registerTools(
 
 	// ── get_profile ─────────────────────────────────────────────────────────────
 
+	// oracle-justified: single-row read that serves a member only profiles of orchestrators on its own roster
+	//   (profiles:getProfile), where list_peers lists and set_summary is an actor-bound write; profile
+	//   WRITES are master-only at the Convex door (requireFleetMaster, convex/profiles.ts) because the
+	//   table has no orgId.
 	defineTool(
 		server,
 		authCtx,
@@ -2787,6 +2791,8 @@ export function registerTools(
 
 	// ── update_profile ──────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound `from` tool, but its door profiles:upsertProfile is master-only (requireFleetMaster,
+	//   convex/profiles.ts: the table has no orgId); get_profile serves a member its own roster.
 	defineTool(
 		server,
 		authCtx,
@@ -3428,6 +3434,10 @@ export function registerTools(
 
 	// ── delete_message ──────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound `from` write (callerOrchestrator) whose door compares message.tenantId with the
+	//   caller's org before deleting (messages:deleteMessage); list_broadcast_status is an
+	//   in-handler-filtered read whose crud is `?` because it loads the message by id and lists its
+	//   receipts, a get+list composite.
 	defineTool(
 		server,
 		authCtx,
@@ -3479,6 +3489,8 @@ export function registerTools(
 
 	// ── set_summary ─────────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound `from` tool, but its door profiles:updateDynamic is master-only (requireFleetMaster,
+	//   convex/profiles.ts: the table has no orgId); get_profile serves a member its own roster.
 	defineTool(
 		server,
 		authCtx,
@@ -3542,6 +3554,9 @@ export function registerTools(
 
 	// ── list_peers ──────────────────────────────────────────────────────────────
 
+	// oracle-justified: served to the fleet master only: a member receives { refused: true, items: [] }
+	//   (profiles:listProfiles, convex/profiles.ts); get_profile serves a member its own roster and
+	//   profile writes are master-only (requireFleetMaster).
 	defineTool(
 		server,
 		authCtx,
@@ -3822,6 +3837,9 @@ export function registerTools(
 	// BM25 keyword search over message content. Backed by Convex
 	// `messages:searchMessagesByKeyword` using the `search_content` searchIndex.
 
+	// oracle-justified: BM25 searchIndex read that applies a post-take tenant filter in the handler
+	//   (messages:searchMessagesByKeyword), where list_messages pushes the tenant into its index range
+	//   before the take; both go through requireResolvedCaller and requireScope.
 	defineTool(
 		server,
 		authCtx,
@@ -4296,6 +4314,9 @@ export function registerTools(
 	// ── bulk_complete_tasks ─────────────────────────────────────────────────────
 	// PR-F — bulk close cron-spam tasks in one mutation. dryRun=true by default.
 
+	// oracle-justified: bulk TRANSITION over a filtered set: each row is admitted individually by isRowVisibleToScope in
+	//   tasks:bulkComplete (MCP scope `filtered`), where correct_task_segment targets one task by id and
+	//   is actor-bound (`from`, assertTaskCallerAuthorized); both go through requireAuthenticatedCaller.
 	defineTool(
 		server,
 		authCtx,
@@ -4483,6 +4504,11 @@ export function registerTools(
 	// query is never a post-hoc filter over a truncated cross-project scan —
 	// the same "bound applied after the fetch" disease as the period fix.
 
+	// oracle-justified: MCP scope master (isMasterScope, global boundary) for a fleet-wide billing figure, narrower than
+	//   the data door: tasks:billingSummaryByProject itself serves a member only its own org's done
+	//   tasks (filterByOrgScope + requireScope view-own-tasks); checkout_task is an actor-bound `from`
+	//   transition on one task; list_tasks pages with limit and cursor where the summary takes a date
+	//   range and no cursor.
 	defineTool(
 		server,
 		authCtx,
@@ -5418,6 +5444,9 @@ export function registerTools(
 
 	// ── create_mission ──────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound `from` write (createdBy recorded) whose door stamps orgId from the verified scope
+	//   (missions:create) and whose updates compare the stored orgId with the caller's org
+	//   (isOrgAllowedForScope, convex/missions.ts); list_missions is an in-handler-filtered read.
 	defineTool(
 		server,
 		authCtx,
@@ -5835,6 +5864,9 @@ export function registerTools(
 
 	// ── write_diary ─────────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound upsert: MCP scope `from` (checkFromAllowed + checkActorBinding on `orchestrator`)
+	//   and diary:write admits only orchestrators on the caller's roster (isOrchestratorAllowedForScope,
+	//   convex/diary.ts); get_diary is a read filtered in-handler by the same roster predicate.
 	defineTool(
 		server,
 		authCtx,
@@ -6182,6 +6214,9 @@ export function registerTools(
 
 	// ── update_briefing_note ────────────────────────────────────────────────────
 
+	// oracle-justified: the boundary key differs from create_briefing_note only in the name of the actor argument:
+	//   update binds the editing caller (callerOrchestrator), create binds the note's author
+	//   (createdBy); both are `from` scope checked by checkActorBinding.
 	defineTool(
 		server,
 		authCtx,
@@ -7068,6 +7103,10 @@ export function registerTools(
 
 	// ── accept_mandate ──────────────────────────────────────────────────────────
 
+	// oracle-justified: a state TRANSITION whose actor argument is callerOrchestrator (create_mandate binds
+	//   requestedBy), actor-bound `from`; list_mandates is an in-handler-filtered read that serves the
+	//   fleet master only and answers a member with a refused envelope; every mandate write is
+	//   master-only at the Convex door (requireFleetMaster, convex/mandates.ts).
 	defineTool(
 		server,
 		authCtx,
@@ -7410,6 +7449,10 @@ export function registerTools(
 
 	// ── create_bu ───────────────────────────────────────────────────────────────
 
+	// oracle-justified: business units are roster-scoped, not tenant-split: create, update and list admit a member only
+	//   for orchestrators on its own client_org_mapping roster (isOrchestratorAllowedForScope in
+	//   convex/businessUnits.ts); only businessUnits:remove (delete_bu) is master-only, which is why
+	//   this table's write tiers are not one tier.
 	defineTool(
 		server,
 		authCtx,
@@ -7512,6 +7555,10 @@ export function registerTools(
 
 	// ── update_bu ───────────────────────────────────────────────────────────────
 
+	// oracle-justified: business units are roster-scoped, not tenant-split: create, update and list admit a member only
+	//   for orchestrators on its own client_org_mapping roster (isOrchestratorAllowedForScope in
+	//   convex/businessUnits.ts); only businessUnits:remove (delete_bu) is master-only, which is why
+	//   this table's write tiers are not one tier.
 	defineTool(
 		server,
 		authCtx,
@@ -7674,6 +7721,9 @@ export function registerTools(
 
 	// ── list_bus ────────────────────────────────────────────────────────────────
 
+	// oracle-justified: rows are filtered by the same isOrchestratorAllowedForScope roster predicate the create and
+	//   update writes use (convex/businessUnits.ts); the only write a roster does not admit a member to
+	//   is businessUnits:remove (delete_bu), which is master-only.
 	defineTool(
 		server,
 		authCtx,
@@ -7809,6 +7859,10 @@ export function registerTools(
 
 	// ── delete_bu ───────────────────────────────────────────────────────────────
 
+	// oracle-justified: master-only by design: deleting a business unit is irreversible and restricted to the fleet
+	//   master at both doors (MCP scope master; businessUnits:remove throws unless isMaster,
+	//   convex/businessUnits.ts), so its verb, tier, isolation locus and global boundary differ from
+	//   create, update and list, which admit a member by roster.
 	defineTool(
 		server,
 		authCtx,
@@ -7853,6 +7907,10 @@ export function registerTools(
 
 	// ── add_repo_mapping ────────────────────────────────────────────────────────
 
+	// oracle-justified: fleet webhook-routing config with no orgId on the table: writes are master-only (MCP scope
+	//   master; requireMasterScope in convex/githubRepoMapping.ts) and the reads are master-only at the
+	//   Convex door too (requireResolvedCaller masterOnly); the in-handler-filtered label on the read
+	//   tools is the MCP-layer kind, not a wider door.
 	defineTool(
 		server,
 		authCtx,
@@ -8376,6 +8434,9 @@ export function registerTools(
 
 	// ── link_commit_to_issue ────────────────────────────────────────────────────
 
+	// oracle-justified: master-only write through requireMasterScope (convex/issues.ts throws unless isMaster); the read
+	//   side refuses through requireResolvedCaller masterOnly, so both are master-only with different
+	//   resolver calls.
 	defineTool(
 		server,
 		authCtx,
@@ -8480,6 +8541,9 @@ export function registerTools(
 
 	// ── issue_stats ─────────────────────────────────────────────────────────────
 
+	// oracle-justified: an unpaged aggregate over the issues table (issues:getStats) that returns counts, not rows: no
+	//   cursor and no limit argument, where get_issue reads one row and list_issues pages with a cursor
+	//   (limit default 50, max 200).
 	defineTool(
 		server,
 		authCtx,
@@ -8934,6 +8998,10 @@ export function registerTools(
 
 	// ── link_issue_to_pattern ───────────────────────────────────────────────────
 
+	// oracle-justified: create_fix_pattern is actor-bound (`from`, createdBy recorded on the row) whereas this tool
+	//   mutates an existing pattern with no author argument and is master-scoped (global boundary);
+	//   every fixPatterns write is master-only at the Convex door (requireFleetMaster,
+	//   convex/fixPatterns.ts).
 	defineTool(
 		server,
 		authCtx,
@@ -9235,6 +9303,10 @@ export function registerTools(
 
 	// ── soft_delete_mission_template ────────────────────────────────────────────
 
+	// oracle-justified: master-only: MCP scope master and missionTemplates:softDelete throws unless isMaster, the
+	//   template catalog being shared fleet-wide and never per-org; the tool is absent from the `core`
+	//   list of mcp-server/tool-exposure.json, so it is registered but masked (hors-MCP), where
+	//   get_mission_template is advertised and in-handler-filtered.
 	defineTool(
 		server,
 		authCtx,
@@ -9376,6 +9448,9 @@ export function registerTools(
 
 	// ── remove_deployment ───────────────────────────────────────────────────────
 
+	// oracle-justified: sets active=false on the monitored-deployment row (a patch, the row is kept) rather than
+	//   deleting it, so it derives UPDATE where add_deployment inserts or patches (UPSERT); both are
+	//   master-only (requireMasterScope, convex/errorMonitor.ts).
 	defineTool(
 		server,
 		authCtx,
@@ -9817,6 +9892,9 @@ export function registerTools(
 
 	// ── get_fix_pattern ─────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix. Convex fixPatterns:get exists.
+	// oracle-justified: crud is `?` because fixPatterns:get loads one pattern by id and then lists its attempts
+	//   (ctx.db.get plus an indexed take(100)), a get+list composite the closed verb set has no single
+	//   value for; search_fix_patterns is a pure SEARCH.
 	defineTool(
 		server,
 		authCtx,
