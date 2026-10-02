@@ -135,13 +135,15 @@ async function seedDiary(t: T, orchestrator: string) {
 	);
 }
 
-async function seedMessage(t: T, from: string) {
+async function seedMessage(t: T, from: string, tenantId = "org-a") {
 	return await t.run((ctx) =>
 		ctx.db.insert("messages", {
 			from,
 			channel: "seat-x",
 			content: "seed message",
 			createdAt: Date.now(),
+			// sendMessage stamps the caller's org; deleteMessage's tenant gate reads it.
+			tenantId,
 		}),
 	);
 }
@@ -347,6 +349,20 @@ describe("messages.deleteMessage — the word 'system' is not authority", () => 
 		});
 		expect(result.deleted).toBe(true);
 		expect(await t.run((ctx) => ctx.db.get(messageId))).toBeNull();
+	});
+
+	test("TENANT: member deleting a message stamped with ANOTHER org's tenantId is refused", async () => {
+		const t = createT();
+		await seedOrgA(t);
+		// Sender name matches the caller, so only the tenant gate can refuse.
+		const messageId = await seedMessage(t, "seat-a", "org-b");
+		await expect(
+			asMemberOfOrgA(t).mutation(api.messages.deleteMessage, {
+				messageId,
+				callerOrchestrator: "seat-a",
+			}),
+		).rejects.toThrow(/message-tenant-mismatch/);
+		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
 	});
 
 	test("MASTER: the verified master typing 'system' still deletes", async () => {

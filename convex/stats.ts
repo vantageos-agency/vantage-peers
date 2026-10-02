@@ -94,6 +94,13 @@ export const orchestratorStats = query({
 		// Coded refusal, never an empty array: anonymous and signed-in-no-org
 		// callers RAISE RBAC_DENIED (the dashboard route error boundary renders
 		// it as a refusal), a member lacking the scope is refused by requireScope.
+		// isolation-contract: alsoRefusePreOrg raises at a signed-in-no-organisation
+		// caller although this read is subscribed. Subscribers (vantage-peers-dashboard):
+		// app/[locale]/dashboard/stats/page.tsx:43. The dashboard org gate (lib/auth/dashboardGate.ts, dashboard PR #62 at
+		// 0466fac) never mounts a protected page for a session with no organisation
+		// (reason "no-organisation" -> redirect to /closed-beta), so no mounted render
+		// reaches this read for that caller. Enumeration (run in vantage-peers-dashboard):
+		// grep -rn "api\.dashboard\.\|api\.stats\." --include=*.tsx --include=*.ts app components hooks lib contexts providers
 		requireResolvedCaller(scope, "stats:orchestratorStats", {
 			alsoRefusePreOrg: true,
 		});

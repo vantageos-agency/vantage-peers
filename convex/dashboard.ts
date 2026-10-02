@@ -76,6 +76,13 @@ export const getDashboardSummary = query({
 		// raise as a refusal (app/[locale]/dashboard/error.tsx). A member lacking
 		// view-stats-aggregated is refused by requireScope below, same code.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// isolation-contract: alsoRefusePreOrg raises at a signed-in-no-organisation
+		// caller although this read is subscribed. Subscribers (vantage-peers-dashboard):
+		// app/[locale]/dashboard/page.tsx:364. The dashboard org gate (lib/auth/dashboardGate.ts, dashboard PR #62 at
+		// 0466fac) never mounts a protected page for a session with no organisation
+		// (reason "no-organisation" -> redirect to /closed-beta), so no mounted render
+		// reaches this read for that caller. Enumeration (run in vantage-peers-dashboard):
+		// grep -rn "api\.dashboard\.\|api\.stats\." --include=*.tsx --include=*.ts app components hooks lib contexts providers
 		requireResolvedCaller(scope, "dashboard:getDashboardSummary", {
 			alsoRefusePreOrg: true,
 		});

@@ -34,6 +34,7 @@
  */
 
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
@@ -52,6 +53,18 @@ function asNoOrg(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "user-no-org",
 	} as Parameters<typeof t.withIdentity>[0]);
+}
+
+/** Awaits a refused call; returns the ConvexError payload as text. */
+async function refusalText(call: Promise<unknown>): Promise<string> {
+	let caught: unknown;
+	try {
+		await call;
+	} catch (e) {
+		caught = e;
+	}
+	expect(caught).toBeInstanceOf(ConvexError);
+	return String((caught as ConvexError<string>).data);
 }
 
 function asMaster(t: ReturnType<typeof createT>) {
@@ -148,24 +161,21 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 	});
 
 	describe("dashboard", () => {
-		test("getDashboardSummary: typed all-zero summary, not a throw", async () => {
+		test("getDashboardSummary: RAISES a coded refusal (a zeroed summary is a fabricated figure)", async () => {
 			const t = asNoOrg(createT());
-			await expect(
+			const text = await refusalText(
 				t.query(api.dashboard.getDashboardSummary, {}),
-			).resolves.toEqual({
-				tasksInProgress: 0,
-				activeOrchestrators: [],
-				unreadMessages: 0,
-				openMandates: 0,
-				recentActivity: [],
-			});
+			);
+			expect(text).toContain("RBAC_DENIED");
+			expect(text).toContain("dashboard:getDashboardSummary");
+			expect(text).toContain("no-verified-organisation");
 		});
 
-		test("getProjectSummary: typed empty array, not a throw", async () => {
+		test("getProjectSummary: refusal envelope, not a throw and not the bytes of an absence", async () => {
 			const t = asNoOrg(createT());
 			await expect(
 				t.query(api.dashboard.getProjectSummary, {}),
-			).resolves.toEqual([]);
+			).resolves.toEqual({ refused: true, items: [] });
 		});
 	});
 
@@ -254,11 +264,14 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 	});
 
 	describe("stats", () => {
-		test("orchestratorStats: typed empty array, not a throw", async () => {
+		test("orchestratorStats: RAISES a coded refusal (no mounted render reaches it pre-org)", async () => {
 			const t = asNoOrg(createT());
-			await expect(
+			const text = await refusalText(
 				t.query(api.stats.orchestratorStats, { window: "24h" }),
-			).resolves.toEqual([]);
+			);
+			expect(text).toContain("RBAC_DENIED");
+			expect(text).toContain("stats:orchestratorStats");
+			expect(text).toContain("no-verified-organisation");
 		});
 
 		test("openTaskCountsByOrchestrator: typed empty array, not a throw", async () => {
