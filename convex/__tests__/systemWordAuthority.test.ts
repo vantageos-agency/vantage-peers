@@ -365,6 +365,46 @@ describe("messages.deleteMessage — the word 'system' is not authority", () => 
 		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
 	});
 
+	test("TENANT-ABSENT: member deleting a legacy message with NO tenantId is refused", async () => {
+		const t = createT();
+		await seedOrgA(t);
+		// Sender matches the caller, so only the tenant gate can refuse. The row
+		// is inserted directly: seedMessage's default would stamp "org-a".
+		const messageId = await t.run((ctx) =>
+			ctx.db.insert("messages", {
+				from: "seat-a",
+				channel: "seat-x",
+				content: "legacy unstamped message",
+				createdAt: Date.now(),
+			}),
+		);
+		await expect(
+			asMemberOfOrgA(t).mutation(api.messages.deleteMessage, {
+				messageId,
+				callerOrchestrator: "seat-a",
+			}),
+		).rejects.toThrow(/message-tenant-mismatch/);
+		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
+	});
+
+	test("TENANT-ABSENT: the fleet master still deletes a legacy message with NO tenantId", async () => {
+		const t = createT();
+		const messageId = await t.run((ctx) =>
+			ctx.db.insert("messages", {
+				from: "seat-a",
+				channel: "seat-x",
+				content: "legacy unstamped message",
+				createdAt: Date.now(),
+			}),
+		);
+		const result = await asMaster(t).mutation(api.messages.deleteMessage, {
+			messageId,
+			callerOrchestrator: "seat-a",
+		});
+		expect(result.deleted).toBe(true);
+		expect(await t.run((ctx) => ctx.db.get(messageId))).toBeNull();
+	});
+
 	test("MASTER: the verified master typing 'system' still deletes", async () => {
 		const t = createT();
 		const messageId = await seedMessage(t, "seat-b");
