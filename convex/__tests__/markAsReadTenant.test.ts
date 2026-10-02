@@ -92,6 +92,29 @@ describe("messages:markAsRead — receipt tenant", () => {
 		expect(row?.readAt).toBeUndefined();
 	});
 
+	test("an unstamped receipt is refused with the receipt-tenant-mismatch reason", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const { receiptId } = await seedRow(t, undefined);
+		await expect(
+			asOrgA(t).mutation(api.messages.markAsRead, { receiptIds: [receiptId] }),
+		).rejects.toThrow(/receipt-tenant-mismatch/);
+		const row = await t.run((ctx) => ctx.db.get(receiptId));
+		expect(row?.readAt).toBeUndefined();
+	});
+
+	test("master marks a legacy receipt that carries no tenantId", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const { receiptId } = await seedRow(t, undefined);
+		const n = await asMaster(t).mutation(api.messages.markAsRead, {
+			receiptIds: [receiptId],
+		});
+		expect(n).toBe(1);
+		const row = await t.run((ctx) => ctx.db.get(receiptId));
+		expect(row?.readAt).toBeDefined();
+	});
+
 	test("a batch mixing own and foreign receipts is refused whole, nothing marked", async () => {
 		const t = createT();
 		await seedMappings(t);
@@ -140,6 +163,20 @@ describe("messages:deleteMessage — message tenant (sibling receipt mutation)",
 				callerOrchestrator: "seat-x",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
+		expect(await t.run((ctx) => ctx.db.get(receiptId))).not.toBeNull();
+	});
+
+	test("an unstamped message is refused with the message-tenant-mismatch reason and its receipt survives", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const { messageId, receiptId } = await seedRow(t, undefined);
+		await expect(
+			asOrgA(t).mutation(api.messages.deleteMessage, {
+				messageId,
+				callerOrchestrator: "seat-x",
+			}),
+		).rejects.toThrow(/message-tenant-mismatch/);
 		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
 		expect(await t.run((ctx) => ctx.db.get(receiptId))).not.toBeNull();
 	});
