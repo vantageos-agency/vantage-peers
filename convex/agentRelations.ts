@@ -64,6 +64,7 @@ export const linkChild = mutation({
 	},
 	returns: v.id("agent_relations"),
 	handler: async (ctx, args) => {
+		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentRelations:linkChild" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await ctx.db
@@ -100,6 +101,7 @@ export const unlinkChild = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentRelations:unlinkChild" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await ctx.db

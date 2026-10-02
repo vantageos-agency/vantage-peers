@@ -64,6 +64,7 @@ export const storeMemory = mutation({
   },
   returns: v.id("memories"),
   handler: async (ctx, args) => {
+  	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:storeMemory", …) at mcp-server/src/tools.ts:2014 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
     // Fail-closed multi-tenant fix (defect class: authority attached
     // to an anonymously-registered object — see
     // .claude/rules/authority-attached-to-anonymous-object.md). storeMemory
@@ -396,6 +397,7 @@ export const softDeleteMemory = mutation({
   args: { memoryId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
+  	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:softDeleteMemory", …) at mcp-server/src/tools.ts:2075 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
     const memoryId = requireId(
       ctx,
       "memories",

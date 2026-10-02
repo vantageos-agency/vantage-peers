@@ -171,6 +171,7 @@ export const updateStatus = mutation({
 		status: issueStatusValidator,
 	},
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:updateStatus", …) at mcp-server/src/tools.ts:8354 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("issues")
@@ -196,6 +197,7 @@ export const linkCommit = mutation({
 		fixedBy: v.string(),
 	},
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:linkCommit", …) at mcp-server/src/tools.ts:8406 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("issues")
@@ -256,6 +258,7 @@ export const verify = mutation({
 		verifiedBy: v.string(),
 	},
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:verify", …) at mcp-server/src/tools.ts:8458 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("issues")

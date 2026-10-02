@@ -286,6 +286,7 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 	},
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:add", …) at mcp-server/src/tools.ts:7892 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireMasterScope(ctx);
 		// Upsert by repo
 		const existing = await ctx.db
@@ -312,6 +313,7 @@ export const add = mutation({
 export const remove = mutation({
 	args: { repo: v.string() },
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:remove", …) at mcp-server/src/tools.ts:8085 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireMasterScope(ctx);
 		const existing = await ctx.db
 			.query("githubRepoMapping")

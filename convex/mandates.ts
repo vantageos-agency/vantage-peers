@@ -91,6 +91,7 @@ export const create = mutation({
 	},
 	returns: v.id("mandates"),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:create", …) at mcp-server/src/tools.ts:7042 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireFleetMaster(ctx, "create a mandate");
 		const now = Date.now();
 		return await ctx.db.insert("mandates", {
@@ -119,6 +120,7 @@ export const accept = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:accept", …) at mcp-server/src/tools.ts:7100 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const scope = await requireFleetMaster(ctx, `accept mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
@@ -154,6 +156,7 @@ export const update = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:update", …) at mcp-server/src/tools.ts:7161 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const scope = await requireFleetMaster(ctx, `update mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
@@ -195,6 +198,7 @@ export const settle = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:settle", …) at mcp-server/src/tools.ts:7214 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const scope = await requireFleetMaster(ctx, `settle mandate ${args.mandateId}`);
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
