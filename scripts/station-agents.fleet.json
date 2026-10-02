@@ -1,0 +1,154 @@
+[
+	{
+		"role": "pi",
+		"instanceId": "pi-chromebook"
+	},
+	{
+		"role": "sigma",
+		"instanceId": "sigma-vps"
+	},
+	{
+		"role": "eta",
+		"instanceId": "eta-vps"
+	},
+	{
+		"role": "theta",
+		"instanceId": "theta-vps"
+	},
+	{
+		"role": "omega",
+		"instanceId": "omega-vps"
+	},
+	{
+		"role": "tau",
+		"instanceId": "tau-vps"
+	},
+	{
+		"role": "phi",
+		"instanceId": "phi-vps"
+	},
+	{
+		"role": "alpha",
+		"instanceId": "alpha-vps"
+	},
+	{
+		"role": "beta",
+		"instanceId": "beta-vps"
+	},
+	{
+		"role": "gamma",
+		"instanceId": "gamma-vps"
+	},
+	{
+		"role": "delta",
+		"instanceId": "delta-vps"
+	},
+	{
+		"role": "epsilon",
+		"instanceId": "epsilon-vps"
+	},
+	{
+		"role": "zeta",
+		"instanceId": "zeta-vps"
+	},
+	{
+		"role": "iota",
+		"instanceId": "iota-vps"
+	},
+	{
+		"role": "chi",
+		"instanceId": "chi-vps"
+	},
+	{
+		"role": "psi",
+		"instanceId": "psi-vps"
+	},
+	{
+		"role": "kappa",
+		"instanceId": "kappa-vps"
+	},
+	{
+		"role": "lambda",
+		"instanceId": "lambda-vps"
+	},
+	{
+		"role": "mu",
+		"instanceId": "mu-vps"
+	},
+	{
+		"role": "nu",
+		"instanceId": "nu-vps"
+	},
+	{
+		"role": "xi",
+		"instanceId": "xi-vps"
+	},
+	{
+		"role": "omicron",
+		"instanceId": "omicron-vps"
+	},
+	{
+		"role": "upsilon",
+		"instanceId": "upsilon-vps"
+	},
+	{
+		"role": "rho",
+		"instanceId": "rho-vps"
+	},
+	{
+		"role": "hestia",
+		"instanceId": "hestia-vps"
+	},
+	{
+		"role": "talos",
+		"instanceId": "talos-vps"
+	},
+	{
+		"role": "argus",
+		"instanceId": "argus-vps"
+	},
+	{
+		"role": "athena",
+		"instanceId": "athena-vps"
+	},
+	{
+		"role": "demeter",
+		"instanceId": "demeter-vps"
+	},
+	{
+		"role": "hermes",
+		"instanceId": "hermes-vps"
+	},
+	{
+		"role": "hephaistos",
+		"instanceId": "hephaistos-vps"
+	},
+	{
+		"role": "themis",
+		"instanceId": "themis-vps"
+	},
+	{
+		"role": "proxima",
+		"instanceId": "proxima-vps"
+	},
+	{
+		"role": "verify",
+		"instanceId": "verify-vps"
+	},
+	{
+		"role": "scan",
+		"instanceId": "scan-vps"
+	},
+	{
+		"role": "gaia",
+		"instanceId": "gaia-vps"
+	},
+	{
+		"role": "apollon",
+		"instanceId": "apollon-vps"
+	},
+	{
+		"role": "pygmalion",
+		"instanceId": "pygmalion-vps"
+	}
+]
