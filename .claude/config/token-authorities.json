@@ -1,0 +1,6 @@
+{
+  "authorities": [
+    "pi"
+  ],
+  "_why": "Roles whose tasks titled [<NAME>-AUTHORIZED] are honoured as authorization tokens by enforce-work-under-task. Data, not code: a role is added here, never in the guard."
+}

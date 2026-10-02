@@ -1,0 +1,29 @@
+{
+  "sha": "5e372db4e46007c9d9d98a836f860961887b7096",
+  "cli_commit": "60780e6",
+  "cli_mode": "npx tsx src/cli.ts (source)",
+  "exit_code": 1,
+  "critical_violations": [
+    "R-10",
+    "R-7",
+    "R-37",
+    "R-50",
+    "R-51",
+    "R-6"
+  ],
+  "critical_abstentions": [
+    "R-5",
+    "R-40",
+    "R-34",
+    "R-29",
+    "R-26",
+    "R-48"
+  ],
+  "cr1_doors": [
+    "okfBundleDurable:startOkfBundleExportDurable",
+    "okfBundleNode:exportOkfBundle",
+    "okfBundleNode:importOkfBundle"
+  ],
+  "verdict_line": "VERDICT: revise-mandatory (exit 1) \u2014 6 CRITICAL violation(s) \u2014 revise mandatory, NO bypass. major violations=11, abstentions=16 (critical=6). engine exit=1.",
+  "delta_vs_97f2f25": "identical critical set (qa/backend-doctor-97f2f2556254.json); override: Laurent 2026-10-01 + Pi ruling on k173kgj8v98rvnyv105530tn5d8feg19"
+}

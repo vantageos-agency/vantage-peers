@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """enforce-work-under-task.py — no work without an active task; real durations.
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 Class of failure: work is driven through instruction-messages instead of tasks,
 so effort leaves no trace and no billable record; and where tasks exist, their
@@ -64,8 +64,8 @@ Two gates (PreToolUse):
     mcp__vantage-peers__update_task whose status is "done" (the second door to
     the same completion; any other status passes untouched) AND on
     mcp__vantage-peers__bulk_complete_tasks (a batch can never be timed per task
-    against a single flag, so it is refused whatever the elapsed time unless its
-    note leads with [META] or [ADMIN]; the refusal says to close each task with
+    against a single flag, so it is refused whatever the elapsed time unless every
+    named task is an authorization token; the refusal says to close each task with
     complete_task when its work ends): BLOCK (exit 2)
     when the elapsed time since start_task is under MIN_REAL_SECONDS, and also
     when the elapsed time cannot be read at all (no flag, no `startedAt=` line,
@@ -76,11 +76,13 @@ Two gates (PreToolUse):
     completed. The elapsed time is that of the flag of the task BEING CLOSED, held by
     THIS station: a flag naming a different station, a flag whose taskId differs
     from the taskId of the call (both ids named), or a flag/call with no taskId
-    is refused — one old flag never times a batch of closures. Exempt: [META] or
-    [ADMIN] as the LEADING token of the note (completionNote, or any other note
-    field the call carries; a call with no note field is never exempt) (a pure orchestration
-    side-effect, e.g. a creator closure, has no work duration); the tag anywhere
-    else in the note, or in any other field, exempts nothing.
+    is refused — one old flag never times a batch of closures. The ONLY exemption
+    is an authorization-token task: the task's own TITLE (fetched read-only by
+    taskId, see `fetch_task`) starts with `[<NAME>-AUTHORIZED]`. A [META] or
+    [ADMIN] tag in a note or a description exempts nothing, and the
+    `allow-no-time-line` marker is reserved for token tasks (refused otherwise).
+    A task that cannot be fetched is refused (fail-closed), naming what could not
+    be read.
 
 correct_task_segment is deliberately NOT gated: it is the sanctioned correction
 path and can only shrink a recorded span, never extend it, so it cannot
@@ -114,7 +116,7 @@ import re
 import sys
 import time
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 
 def workspace_root(start):
@@ -313,53 +315,217 @@ def is_mutating_bash(command):
     return any(pattern.search(command) for pattern in MUTATING_BASH_RES)
 
 
-LEADING_EXEMPT_RE = re.compile(r"\A\s*\[(META|ADMIN)\]", re.IGNORECASE)
+TOKEN_TITLE_RE = re.compile(r"^(?:\[(?:META|ADMIN)\]\s*)*\[[A-Z-]+-AUTHORIZED\]")
+AUTHORITIES_ENV = "WORK_UNDER_TASK_AUTHORITIES"
+AUTHORITIES_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                   "config", "token-authorities.json")
+TIME_LINE_MARKER_RE = re.compile(r"allow-no-time-line", re.IGNORECASE)
+FETCH_TIMEOUT_SECONDS = 5
+MCP_SERVER_NAME = "vantage-peers"
+TASK_FIXTURE_ENV = "WORK_UNDER_TASK_TASK_FIXTURE"
+
+EXEMPT_RULE = (
+    "Exemptions exist only for authorization-token tasks: the task's own TITLE "
+    "starts with [<NAME>-AUTHORIZED] (e.g. [PR-MERGE-AUTHORIZED]), optionally after "
+    "[META]/[ADMIN] tags, AND the task was created by a token authority listed in "
+    ".claude/config/token-authorities.json. A title is writable by any station; its "
+    "creator is not. A [META] or [ADMIN] tag in a note or description exempts nothing.\n"
+)
 
 
-def leading_exemption(tool_input):
-    """True when any note-bearing field of the call leads with [META] or [ADMIN].
+def _mcp_server_config():
+    """URL + headers of the vantage-peers MCP server, read from the station's own config.
 
-    Note fields (completionNote, note, notes, ...) are derived from the input's
-    own keys, never from a typed list of names. A call with no note field has
-    nothing to exempt it.
+    Search order: the project entry of ~/.claude.json for this workspace, its
+    user-level mcpServers, then <workspace>/.mcp.json. Names only are ever
+    reported; header values are never printed.
     """
+    root = own_workspace_root()
+    sources = []
+    try:
+        with open(os.path.expanduser("~/.claude.json"), "r", encoding="utf-8") as handle:
+            user = json.load(handle)
+        sources.append((user.get("projects") or {}).get(root, {}).get("mcpServers") or {})
+        sources.append(user.get("mcpServers") or {})
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(root, ".mcp.json"), "r", encoding="utf-8") as handle:
+            sources.append(json.load(handle).get("mcpServers") or {})
+    except Exception:
+        pass
+    for servers in sources:
+        server = servers.get(MCP_SERVER_NAME)
+        if isinstance(server, dict) and server.get("url"):
+            return server["url"], dict(server.get("headers") or {})
+    raise RuntimeError(f"no `{MCP_SERVER_NAME}` MCP server with a url in ~/.claude.json or .mcp.json")
+
+
+def fetch_task(task_id):
+    """Read-only lookup of one task by id: {"title", "description"}. Raises RuntimeError.
+
+    Tests inject WORK_UNDER_TASK_TASK_FIXTURE (a JSON map taskId -> {title,
+    description}); an id the fixture lacks is a fetch failure. Otherwise a
+    single stateless `tools/call get_task` over the MCP HTTP endpoint.
+    """
+    fixture = os.environ.get(TASK_FIXTURE_ENV)
+    if fixture:
+        try:
+            with open(fixture, "r", encoding="utf-8") as handle:
+                entry = json.load(handle).get(task_id)
+        except Exception as exc:
+            raise RuntimeError(f"task fixture unreadable: {exc}")
+        if not isinstance(entry, dict):
+            raise RuntimeError("task fixture has no entry for this id")
+        return {"title": str(entry.get("title") or ""), "description": str(entry.get("description") or ""),
+                "createdBy": str(entry.get("createdBy") or "")}
+    import urllib.request
+
+    try:
+        url, headers = _mcp_server_config()
+        headers.update({"Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream"})
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": "get_task", "arguments": {"taskId": task_id}}})
+        request = urllib.request.Request(url, body.encode("utf-8"), headers)
+        with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+            payload = response.read().decode("utf-8")
+        message = None
+        for line in payload.splitlines():
+            if line.startswith("data:"):
+                message = json.loads(line[5:].strip())
+                break
+        if message is None:
+            message = json.loads(payload)
+        if message.get("error") or (message.get("result") or {}).get("isError"):
+            raise RuntimeError(f"get_task returned an error: {str(message)[:200]}")
+        task = json.loads(message["result"]["content"][0]["text"])
+        return {"title": str(task.get("title") or ""), "description": str(task.get("description") or ""),
+                "createdBy": str(task.get("createdBy") or "")}
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"{type(exc).__name__}: {exc}")
+
+
+def token_status(task_id):
+    """(is_token, failure): failure is a sentence naming what could not be read, else None."""
+    try:
+        task = fetch_task(task_id)
+    except RuntimeError as exc:
+        return False, f"Could not read task {task_id!r} to check for an authorization-token title: {exc}."
+    if not TOKEN_TITLE_RE.match(task["title"]):
+        return False, None
+    authorities, why = token_authorities()
+    if authorities is None:
+        return False, why
+    creator = task.get("createdBy", "").strip().lower()
+    if creator not in authorities:
+        return False, (f"Task {task_id} carries a token title but was created by {creator or 'nobody readable'!r}, "
+                       f"who is not a token authority ({', '.join(sorted(authorities))}). "
+                       "A title is writable by any station; only the creator decides a token.")
+    return True, None
+
+
+def token_authorities():
+    """(set_of_roles, None) from the data file, or (None, sentence naming what failed). Fail-closed."""
+    path = os.environ.get(AUTHORITIES_ENV) or AUTHORITIES_DEFAULT
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            roles = json.load(handle).get("authorities")
+    except Exception as exc:
+        return None, f"Could not read the token authority list at {path} ({type(exc).__name__}); no exemption is honoured without it."
+    if not isinstance(roles, list) or not roles:
+        return None, f"The token authority list at {path} is empty or malformed; no exemption is honoured without it."
+    return {str(r).strip().lower() for r in roles}, None
+
+
+def note_has_time_line_marker(tool_input):
     return any(
-        "note" in str(key).lower() and isinstance(value, str) and LEADING_EXEMPT_RE.match(value)
+        "note" in str(key).lower() and isinstance(value, str) and TIME_LINE_MARKER_RE.search(value)
         for key, value in tool_input.items()
     )
 
 
-def bulk_refusal(tool_input):
-    """Refusal for a batch closure, or None when its note leads with [META]/[ADMIN].
+def batch_task_ids(tool_input):
+    """Every task id a batch call names: string or {taskId} items under any key naming ids."""
+    ids = []
+    for key, value in tool_input.items():
+        if "task" in str(key).lower() and "id" in str(key).lower() and isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    ids.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("taskId"), str):
+                    ids.append(item["taskId"])
+    return ids
 
-    One flag times one task. A batch can therefore never be timed per task, so a
-    non-exempt batch is refused whatever the elapsed time.
+
+def bulk_refusal(tool_input):
+    """Refusal for a batch closure, or None when every named task is an authorization token.
+
+    One flag times one task, so a batch cannot be timed per task. Only a batch
+    made entirely of token tasks is exempt; an unreadable task is a refusal.
     """
-    if leading_exemption(tool_input):
-        return None
-    return (
+    base = (
         "BLOCKED: bulk_complete_tasks refused — a batch cannot be timed per task "
         "against a single active-task flag.\n\n"
         "Close each task with complete_task when its work ends, so each closure is "
-        "timed by its own start. Exempt: a pure orchestration side-effect whose "
-        "note STARTS with [META] or [ADMIN].\n"
+        "timed by its own start. " + EXEMPT_RULE
     )
+    ids = batch_task_ids(tool_input)
+    if not ids:
+        return base + "No task id could be read from the call, so no task could be judged a token.\n"
+    for task_id in ids:
+        is_token, failure = token_status(task_id)
+        if failure:
+            return base + failure + "\n"
+        if not is_token:
+            return base + f"Task {task_id} is not an authorization token (its title does not start with [<NAME>-AUTHORIZED]).\n"
+    return None
 
 
 def gate_b_refusal(tool_input):
-    """Refusal text for a complete_task with no real elapsed duration, else None.
+    """Refusal text for a closure with no real elapsed duration, else None.
 
-    Class closed here: GATE B must time the flag of the task being CLOSED, held by
-    THIS station. Four outcomes, never two: a real elapsed duration (None), an
-    elapsed time under MIN_REAL_SECONDS, an elapsed time that cannot be read, and
-    a flag that is not the one for this closure (another station's, or another
-    task's). The last two must not fold into a pass — a guard that timed the wrong
-    flag has judged nothing.
+    GATE B times the flag of the task being CLOSED, held by THIS station. The
+    only exemption is an authorization-token task, judged on the task's own
+    title fetched by id (never on a tag in the note or description), and that
+    lookup runs only when the closure would otherwise be refused or carries the
+    reserved `allow-no-time-line` marker. A lookup that fails refuses.
     """
-    if leading_exemption(tool_input):
+    marker = note_has_time_line_marker(tool_input)
+    refusal = _timing_refusal(tool_input)
+    if refusal is None and not marker:
         return None
 
-    exempt = "Exempt: a pure orchestration side-effect whose note STARTS with [META] or [ADMIN].\n"
+    task_id = tool_input.get("taskId")
+    if not isinstance(task_id, str) or not task_id:
+        return (refusal or "BLOCKED: complete_task refused — no taskId in the call.\n") + (
+            "Could not read task: the call names no taskId, so no token title could be checked.\n")
+    is_token, failure = token_status(task_id)
+    if failure:
+        return (refusal or "BLOCKED: complete_task refused — `allow-no-time-line` needs a token task.\n") + failure + "\n"
+    if is_token:
+        return None
+    if refusal is None:
+        return (
+            "BLOCKED: complete_task refused — `allow-no-time-line` is reserved for authorization tokens "
+            f"and task {task_id} is not one.\n\n"
+            "Close a work task when its work ends, timed by its own start_task. " + EXEMPT_RULE
+        )
+    return refusal
+
+
+def _timing_refusal(tool_input):
+    """Refusal text from the timing checks alone (no exemption), else None.
+
+    Four outcomes, never two: a real elapsed duration (None), an elapsed time
+    under MIN_REAL_SECONDS, an elapsed time that cannot be read, and a flag that
+    is not the one for this closure (another station's, or another task's).
+    """
+    exempt = (
+        "Run start_task before working and complete the task when the work ends. " + EXEMPT_RULE
+    )
     start_rule = (
         "Start the task when the work starts; a task opened after the work cannot "
         "be closed. If no real work happened, return the task to todo.\n"
