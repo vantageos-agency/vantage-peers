@@ -1,0 +1,19 @@
+{
+  "sha": "e51637b144cfa3b15502f1ce0c890f19607785e9",
+  "cli_commit": "60780e6",
+  "cli_mode": "npx tsx src/cli.ts (source)",
+  "exit_code": 1,
+  "critical_violations": [
+    "R-10",
+    "R-37",
+    "R-51",
+    "R-6"
+  ],
+  "cr1_doors": [
+    "okfBundleDurable:startOkfBundleExportDurable",
+    "okfBundleNode:exportOkfBundle",
+    "okfBundleNode:importOkfBundle"
+  ],
+  "verdict_line": "VERDICT: revise-mandatory (exit 1) \u2014 4 CRITICAL violation(s) \u2014 revise mandatory, NO bypass. major violations=11, abstentions=16 (critical=6). engine exit=1.",
+  "delta_vs_5e372db": "subset: R-7 and R-50 cleared (#1415, #1413); no new rule"
+}
