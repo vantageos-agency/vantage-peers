@@ -1055,6 +1055,13 @@ export const whoamiOutputSchema = z.object({
 				"Null when no fromAllowList is configured (DCR client-generic or legacy bearer). " +
 				"'master' for master-scope bearers (internal orchestrators only).",
 		),
+	actor: z
+		.object({ agentName: z.string(), orgSlug: z.string() })
+		.nullable()
+		.describe(
+			"The agent verified from the x-vantage-agent-credential header on THIS request " +
+				"({ agentName, orgSlug }); null when no header was presented. Never contains the secret.",
+		),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9751,6 +9758,13 @@ export function registerTools(
 				namespaceReadPrefixes,
 				namespaceWritePrefixes,
 				suggested_orchestrator_id: suggestedOrchestratorId,
+				// Verified actor from the credential header; identifiers only.
+				actor: oauthCtx?.actor
+					? {
+							agentName: oauthCtx.actor.agentName,
+							orgSlug: oauthCtx.actor.orgSlug,
+						}
+					: null,
 			};
 
 			return {

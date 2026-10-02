@@ -64,6 +64,7 @@ jobs:
         env:
           VP_MCP_PROD_URL: ${{ secrets.VP_MCP_PROD_URL }}
           VP_MCP_BEARER_TOKEN: ${{ secrets.VP_MCP_BEARER_TOKEN }}
+          VP_MCP_AGENT_CREDENTIAL: ${{ secrets.VP_MCP_AGENT_CREDENTIAL }}
           CRUD_SMOKE_WRITE_OPS: ${{ github.event_name == 'schedule' && 'off' || 'on' }}
         run: bun run test:e2e:mcp-crud
 
@@ -72,6 +73,7 @@ jobs:
         env:
           VP_MCP_PROD_URL: ${{ secrets.VP_MCP_PROD_URL }}
           VP_MCP_FLEET_BEARER: ${{ secrets.VP_MCP_FLEET_BEARER || secrets.VP_MCP_BEARER_TOKEN }}
+          VP_MCP_AGENT_CREDENTIAL: ${{ secrets.VP_MCP_AGENT_CREDENTIAL }}
         run: |
           # Extract first failing test name + error from the vitest output.
           # GH Actions captures stdout; we truncate to 200 chars as per spec.
@@ -85,6 +87,7 @@ jobs:
           INIT_HEADERS_AND_BODY=$(curl -s -D - -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
+            ${VP_MCP_AGENT_CREDENTIAL:+-H "x-vantage-agent-credential: ${VP_MCP_AGENT_CREDENTIAL}"} \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 1,
@@ -102,6 +105,7 @@ jobs:
           curl -s -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
+            ${VP_MCP_AGENT_CREDENTIAL:+-H "x-vantage-agent-credential: ${VP_MCP_AGENT_CREDENTIAL}"} \
             ${SESSION_ID:+-H "mcp-session-id: ${SESSION_ID}"} \
             -d "{
               \"jsonrpc\": \"2.0\",
@@ -121,6 +125,7 @@ jobs:
           curl -s -X POST "${VP_MCP_PROD_URL%/mcp}/mcp" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${VP_MCP_FLEET_BEARER}" \
+            ${VP_MCP_AGENT_CREDENTIAL:+-H "x-vantage-agent-credential: ${VP_MCP_AGENT_CREDENTIAL}"} \
             ${SESSION_ID:+-H "mcp-session-id: ${SESSION_ID}"} \
             -d "{
               \"jsonrpc\": \"2.0\",

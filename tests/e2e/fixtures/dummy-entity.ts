@@ -58,6 +58,16 @@ export function resolveMcpEnv(): McpEnv | null {
 let _sessionId: string | null = null;
 
 /**
+ * The fleet's master bearer must present its own agent credential on every
+ * acting-name call (MCP strict for fleet callers, task k17573xwj0g0kf1fsfntrn3h2d8d30y8).
+ * CI supplies it as VP_MCP_AGENT_CREDENTIAL; it is never logged.
+ */
+function agentCredentialHeader(): Record<string, string> {
+	const credential = process.env.VP_MCP_AGENT_CREDENTIAL;
+	return credential ? { "x-vantage-agent-credential": credential } : {};
+}
+
+/**
  * Initialize a stateless MCP session (required before tools/call).
  * Returns the mcp-session-id header value for subsequent requests.
  */
@@ -69,6 +79,7 @@ export async function initSession(env: McpEnv): Promise<string> {
 		headers: {
 			"Content-Type": "application/json",
 			Authorization: `Bearer ${env.bearerToken}`,
+			...agentCredentialHeader(),
 		},
 		body: JSON.stringify({
 			jsonrpc: "2.0",
@@ -117,6 +128,7 @@ export async function callTool(
 		headers: {
 			"Content-Type": "application/json",
 			Authorization: `Bearer ${env.bearerToken}`,
+			...agentCredentialHeader(),
 			"mcp-session-id": sessionId,
 		},
 		body: JSON.stringify({

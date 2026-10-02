@@ -194,7 +194,7 @@ const REPRESENTATIVE_RESPONSES: Record<string, unknown> = {
 	remove_deployment: { removed: "my-deployment" },
 	list_errors: [{ _id: "abc123def456abc123def456abc12345", message: "TypeError", count: 3 }],
 	get_error: { _id: "abc123def456abc123def456abc12345", message: "TypeError", stackTrace: "Error: ..." },
-	whoami: { scope_profile_name: "alpha-test-trio", fromAllowList: ["Alpha", "alpha"], namespaceReadPrefixes: ["orchestrator/Alpha"], namespaceWritePrefixes: ["orchestrator/Alpha"], suggested_orchestrator_id: "Alpha" },
+	whoami: { scope_profile_name: "alpha-test-trio", fromAllowList: ["Alpha", "alpha"], namespaceReadPrefixes: ["orchestrator/Alpha"], namespaceWritePrefixes: ["orchestrator/Alpha"], suggested_orchestrator_id: "Alpha", actor: null },
 	validate_task_payload: { valid: true, errors: [], warnings: [] },
 };
 
