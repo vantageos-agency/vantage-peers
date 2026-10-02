@@ -57,12 +57,35 @@ OVERRIDE PROPRE (critere 3) :
     # allow-no-qa: <raison >= 6 caracteres>
 Reserve au hotfix client-impacting documente. Usage unique, puis on corrige la
 cause (la QA manquante doit devenir explicite dans le cycle suivant).
+
+VERSION 4.0.0 — the second pole: dev-activation before prod
+--------------------------------------------------------------
+Before this version a commit could reach production having run NOWHERE: the
+QA breadcrumb only proves *some* QA ran recently, never that THIS commit was
+ever deployed to and read back from a development deployment. This version
+adds that second, independent pole. A production deploy is now refused
+unless BOTH hold:
+
+  1. the QA breadcrumb is fresh (unchanged from v3), AND
+  2. a proof file `/tmp/.convex-dev-activation-<git HEAD sha>.json` exists,
+     names the exact current commit, carries a non-empty development
+     deployment identity and a non-empty SEPARATE read-back against it, and
+     is not older than `DEV_ACTIVATION_MAX_AGE_SECONDS`.
+
+Each pole fails LOUD and NAMES which one failed -- collapsing both into one
+undifferentiated "BLOCKED" message is exactly the defect this version closes.
+Every failure mode on the proof file (absent, unreadable, malformed JSON,
+missing key, wrong commit, empty field, expired) is a NAMED reason, never a
+silent pass: fail-closed on the unknown, per hook-doctrine and
+measurement-integrity.
 """
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -72,17 +95,23 @@ from _lib.command_predicate import (  # noqa: E402
     has_safe_flag,
     head_matches,
     iter_real_commands,
-    raw_carries_action_words,
 )
 
 VERSION = "4.1.0"
 
-# `convex run <module>:<fn>` executes an existing function; it pushes no code.
-# (`run --push` does, and raw_carries_action_words keeps that case closed.)
-NON_DEPLOY_SUBCOMMANDS = frozenset({"run"})
-
 BREADCRUMB = "/tmp/.qa-passed"
-SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+MAX_AGE_SECONDS = 3600  # 1 heure
+
+DEV_ACTIVATION_PATH_TEMPLATE = "/tmp/.convex-dev-activation-{sha}.json"
+DEV_ACTIVATION_MAX_AGE_SECONDS = 24 * 3600  # 24 hours
+
+# A `read_back` that merely echoes the deploy command's own success line
+# (e.g. "Deployed Convex functions to ...", a checkmark-prefixed line) is not
+# a SEPARATE read against the deployment -- it is the same command talking
+# about itself. Anchored at the start of the trimmed string only, so a real
+# read-back mentioning the word deep in a sentence (e.g. "0 rows undeployed")
+# is not falsely rejected.
+DEPLOY_OWN_EXIT_LINE_RE = re.compile(r"^\s*(?:[✔✓]|deployed\b)", re.IGNORECASE)
 
 OVERRIDE_RE = re.compile(r"#\s*allow-no-qa:\s*(\S.{5,})", re.IGNORECASE)
 
@@ -155,6 +184,72 @@ def _warn_unknown_wrapper_flags(piece: str) -> None:
         )
 
 
+# A deploy is NOT production only when the command itself names a development
+# deploy key: a variable one of whose `_`-separated name segments is exactly
+# `DEV` (and none is `PROD`), or a literal value starting `dev:`. Anything else
+# -- no key named, an unrecognised shape, a prod name -- stays production
+# (fail-closed). Without this carve-out a dev deploy, the very act that
+# produces the dev-activation proof, could never be run.
+#
+# The key is read ONLY from the deploy segment itself: an inline prefix
+# (`KEY=v <cmd>`) or `env KEY=v <cmd>`. Nothing is carried across segments --
+# not `export`, not a bare assignment -- because what the deploy process
+# receives is decided by the shell (unset, subshell scope, `env -u`), not by
+# the text of earlier segments, and every form the parser misses would fail
+# open. A development push still goes through `convex dev --once`.
+DEPLOY_KEY_ASSIGN_RE = re.compile(r"^CONVEX_DEPLOY_KEY=(.*)$", re.DOTALL)
+ASSIGN_WORD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+VAR_REF_RE = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
+
+
+def _own_key(piece: str):
+    """Value of CONVEX_DEPLOY_KEY set on THIS segment as an inline prefix (or
+    after a leading `env`), or None. None for `export`, a bare assignment, and
+    any segment where `env` is given an unset flag. Quotes are removed by
+    shlex, `$VAR` stays literal."""
+    try:
+        words = shlex.split(piece)
+    except ValueError:
+        return None
+    i = 0
+    if i < len(words) and words[i] == "env":
+        i += 1
+    value = None
+    while i < len(words) and ASSIGN_WORD_RE.match(words[i]):
+        m = DEPLOY_KEY_ASSIGN_RE.match(words[i])
+        if m:
+            value = m.group(1)
+        i += 1
+    if value is None or i >= len(words):
+        return None  # no key, or a bare assignment with no command after it
+    if any(w.startswith("-u") or w.startswith("--unset") for w in words[i:]):
+        return None
+    return value
+
+
+def _is_dev_key(value) -> bool:
+    if value is None:
+        return False
+    if value.startswith("dev:"):
+        return True
+    m = VAR_REF_RE.match(value)
+    if not m:
+        return False
+    parts = m.group(1).split("_")
+    return "DEV" in parts and "PROD" not in parts
+
+
+def _resolve_dir(arg: str):
+    """`(absolute dir, None)` a `cd <arg>` lands in, or `(None, reason)` when
+    the shell would resolve it by something this guard cannot see."""
+    if arg == "-" or "$" in arg or "`" in arg:
+        return None, f"`cd {arg}` cannot be resolved statically"
+    path = os.path.expanduser(arg)
+    if not os.path.isabs(path):
+        path = os.path.join(os.getcwd(), path)
+    return os.path.normpath(path), None
+
+
 def _segment_is_deploy(tokens) -> bool:
     """TETE == `convex` (basename + version-suffix normalises), sous-commande ==
     `deploy`, sans flag inoffensif. `convex dev` n'est pas un deploy."""
@@ -169,11 +264,20 @@ def _segment_is_deploy(tokens) -> bool:
 
 
 def is_prod_deploy(cmd: str) -> bool:
-    """True SEULEMENT si la commande execute reellement un deploy Convex.
+    return find_prod_deploy(cmd) is not None
+
+
+def find_prod_deploy(cmd: str):
+    """None unless the command really runs a production Convex deploy; then
+    `(cd_arg, None)`: the argument of the last `cd` preceding the deploy in the
+    command (None = no cd, the hook's own cwd applies).
+
+    Reellement execute, au sens des tokens (pas du texte) :
 
     Toute la tokenisation (commentaires, continuations de ligne, decoupage
     quote-aware, prefixes transparents, recursion interpretes) vient de _lib :
     ce hook n'en garde AUCUNE copie."""
+    cd_arg = None
     for piece, tokens in iter_real_commands(cmd):
         _warn_if_uninspectable(piece)
 
@@ -182,17 +286,27 @@ def is_prod_deploy(cmd: str) -> bool:
             # etant quote-aware, un ValueError ici est RARE, donc reellement
             # suspect. On n'ESCALADE en BLOCK que si le texte BRUT porte de
             # facon plausible un deploy (`convex` ET `deploy`) ; sinon fail-open
-            # LOUD. v4.1.0 : ce pre-filtre porte sur des MOTS, plus sur des
-            # sous-chaines -- le NOM de variable CONVEX_DEPLOY_KEY n'est pas un
-            # signal de deploy, et `convex run` (sans --push) non plus.
-            if raw_carries_action_words(piece, "convex", "deploy",
-                                        NON_DEPLOY_SUBCOMMANDS):
+            # LOUD. Ce pre-filtre par sous-chaine est acceptable ICI -- et
+            # seulement ici -- parce qu'il ne peut QUE remonter vers une
+            # decision visible par un humain : il n'autorise rien.
+            # An environment-variable NAME is not a command. `CONVEX_DEPLOY_KEY`
+            # carries both words this prefilter looks for, and it names the
+            # credential that a READ also needs -- so an untokenisable segment
+            # that merely EXPORTS it was escalated to BLOCK and refused
+            # `npx convex data`, a read. Measured 2026-09-30, on a production
+            # read of a single table.
+            # SCREAMING_SNAKE identifiers are erased before the substring test,
+            # never the lowercase `convex deploy` that an actual invocation
+            # carries: `CONVEX_DEPLOY_KEY=x npx convex deploy --yes` still
+            # escalates, because the invocation survives the erasure.
+            low = re.sub(r"\b[A-Z][A-Z0-9_]*[A-Z0-9]\b", " ", piece).lower()
+            if "convex" in low and "deploy" in low:
                 print(
                     "block-deploy-without-qa: segment NON TOKENISABLE contenant "
                     f"'convex'+'deploy' -- traite comme deploy potentiel: {piece!r}",
                     file=sys.stderr,
                 )
-                return True
+                return (cd_arg, None)
             print(
                 "block-deploy-without-qa: segment non tokenisable, AUCUNE trace de "
                 f"deploy Convex -- laisse passer (fail-open explicite): {piece!r}",
@@ -201,11 +315,19 @@ def is_prod_deploy(cmd: str) -> bool:
             continue
 
         _warn_unknown_wrapper_flags(piece)
+
+        dev_key = _is_dev_key(_own_key(piece))
+
         if not tokens:
             continue
 
+        if tokens[0] == "cd" and len(tokens) > 1:
+            cd_arg = tokens[1]
+
         if _segment_is_deploy(tokens):
-            return True
+            if dev_key:
+                continue
+            return (cd_arg, None)
 
         # FAIL-CLOSED SUR L'INCONNU (v3). La tete n'est ni un deploy ni un
         # LECTEUR declare, et l'argv porte quand meme `convex deploy` en deux
@@ -224,110 +346,115 @@ def is_prod_deploy(cmd: str) -> bool:
                 "(.claude/hooks/_lib/command_predicate.py).",
                 file=sys.stderr,
             )
-            return True
+            if dev_key:
+                continue
+            return (cd_arg, None)
 
-    return False
+    return None
 
 
-def shipped_sha(cwd: str | None = None) -> str | None:
-    """Resolve the commit actually being deployed via `git rev-parse HEAD`.
-    Returns None (never raises) if git is unavailable — callers treat None as
-    an instrument failure, not as an automatic pass."""
+def qa_is_fresh() -> bool:
     try:
-        result = subprocess.run(
+        return (time.time() - os.path.getmtime(BREADCRUMB)) <= MAX_AGE_SECONDS
+    except OSError:
+        return False
+
+
+def _git_head(run_dir=None):
+    """Return `(sha, None)` for the 40-char git HEAD of `run_dir` (the hook's
+    cwd when None), or `(None, reason)` on anything short of a clean success
+    (missing dir, not a repo, git absent, timeout, non-hex output). The reason
+    is NAMED and reported LOUD by the caller -- never silently treated as "no
+    proof required"."""
+    where = run_dir if run_dir is not None else os.getcwd()
+    if not os.path.isdir(where):
+        return None, f"the directory the deploy runs in does not exist: {where}"
+    try:
+        proc = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             timeout=5,
-            cwd=cwd,
+            cwd=where,
         )
-        if result.returncode != 0:
-            return None
-        out = result.stdout.strip()
-        return out or None
-    except Exception:
-        return None
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"`git rev-parse HEAD` could not run in {where} ({exc})"
+    if proc.returncode != 0:
+        return None, f"`git rev-parse HEAD` failed in {where} (not a git checkout?)"
+    sha = proc.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return None, f"`git rev-parse HEAD` in {where} did not return a sha"
+    return sha, None
 
 
-def read_qa_breadcrumb() -> tuple[str, str]:
-    """Reads BREADCRUMB (JSON: {"sha": <hex>, "writer": <name>}) and returns
-    (sha, writer). Raises FileNotFoundError / OSError / ValueError on any
-    failure to read or parse — the caller distinguishes ABSENCE from
-    UNREADABILITY from MALFORMED, each a NAMED refusal, never collapsed."""
-    with open(BREADCRUMB, "r", encoding="utf-8") as fh:
-        raw = fh.read()
+def dev_activation_status(run_dir=None, dir_error=None):
+    """Second pole: has THIS commit already been deployed to, and read back
+    from, a development deployment?
+
+    Returns (True, None) when the proof holds, or (False, "<named reason>")
+    for every other case -- absent HEAD, absent file, unreadable/malformed
+    JSON, a missing key, a commit mismatch, an empty deployment/read_back, a
+    read_back indistinguishable from the deploy command's own exit line, or
+    an expired/future timestamp. Fail-closed on the unknown, always LOUD:
+    each case names exactly what it hit, never a generic refusal."""
+    if dir_error is not None:
+        return False, f"could not determine the tree the deploy runs in: {dir_error}"
+    sha, sha_error = _git_head(run_dir)
+    if sha is None:
+        return False, f"could not determine git HEAD: {sha_error}"
+
+    path = DEV_ACTIVATION_PATH_TEMPLATE.format(sha=sha)
     try:
-        data = json.loads(raw)
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError:
+        return False, f"no dev-activation proof for commit {sha} (expected {path})"
+
+    try:
+        proof = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"malformed JSON: {exc}") from exc
-    sha = (data.get("sha") or "").strip()
-    writer = (data.get("writer") or "unknown").strip()
-    if not SHA_RE.match(sha):
-        raise ValueError(f"breadcrumb 'sha' field is not a valid hex SHA: {sha!r}")
-    return sha, writer
+        return False, f"dev-activation proof at {path} is not valid JSON ({exc})"
 
+    if not isinstance(proof, dict):
+        return False, f"dev-activation proof at {path} is not a JSON object"
 
-def qa_pins_shipped_commit(cwd: str | None = None) -> tuple[str, str]:
-    """Returns (verdict, message). verdict in {"pass", "block", "refuse"}.
+    for key in ("commit", "deployment", "read_back", "at"):
+        if key not in proof:
+            return False, f"dev-activation proof at {path} is missing key '{key}'"
 
-    Replaces the age window (v3.0.0 qa_is_fresh) with the property that
-    actually matters: does the QA witness NAME the commit being shipped.
-    Recent evidence pinning ANOTHER commit is a BLOCK, not a silent PASS —
-    that was the wrong-acceptance hole an age window can never close."""
-    try:
-        evidence_sha, writer = read_qa_breadcrumb()
-    except FileNotFoundError:
-        return "refuse", (
-            f"REFUSING TO JUDGE: QA breadcrumb ({BREADCRUMB}) — absent, "
-            "no QA evidence has been written for any commit"
-        )
-    except OSError as exc:
-        return "refuse", (
-            f"REFUSING TO JUDGE: QA breadcrumb ({BREADCRUMB}) — unreadable: {exc}"
-        )
-    except ValueError as exc:
-        return "refuse", (
-            f"REFUSING TO JUDGE: QA breadcrumb ({BREADCRUMB}) — malformed: {exc}"
+    proof_commit = proof["commit"]
+    if proof_commit != sha:
+        return False, (
+            f"dev-activation proof commit mismatch: proof={proof_commit!r} "
+            f"HEAD={sha!r}"
         )
 
-    ship_sha = shipped_sha(cwd=cwd)
-    if not ship_sha:
-        return "refuse", (
-            "REFUSING TO JUDGE: git HEAD — `git rev-parse HEAD` failed, cannot "
-            "resolve the commit being deployed"
+    deployment = proof["deployment"]
+    if not isinstance(deployment, str) or not deployment.strip():
+        return False, "dev-activation proof 'deployment' is empty"
+
+    read_back = proof["read_back"]
+    if not isinstance(read_back, str) or not read_back.strip():
+        return False, "dev-activation proof 'read_back' is empty"
+    if DEPLOY_OWN_EXIT_LINE_RE.match(read_back.strip()):
+        return False, (
+            "dev-activation proof 'read_back' looks like the deploy command's "
+            "own exit line, not a separate read against the deployment"
         )
 
-    match = (
-        evidence_sha.lower() == ship_sha.lower()
-        or ship_sha.lower().startswith(evidence_sha.lower())
-        or evidence_sha.lower().startswith(ship_sha.lower())
-    )
-    if not match:
-        return "block", (
-            f"QA evidence pins commit {evidence_sha} (written by {writer}), but the "
-            f"commit being deployed is {ship_sha}. MISMATCH — this evidence does not "
-            "cover this deploy, however recent it is."
+    at = proof["at"]
+    if isinstance(at, bool) or not isinstance(at, (int, float)):
+        return False, "dev-activation proof 'at' is not a numeric unix timestamp"
+    age = time.time() - at
+    if age < 0:
+        return False, "dev-activation proof 'at' is in the future"
+    if age > DEV_ACTIVATION_MAX_AGE_SECONDS:
+        return False, (
+            f"dev-activation proof expired ({age:.0f}s old, "
+            f"max {DEV_ACTIVATION_MAX_AGE_SECONDS}s)"
         )
-    return "pass", f"QA evidence pins {evidence_sha} (written by {writer}), matches deployed {ship_sha}."
 
-
-def _resolve_deploy_cwd(command: str, data: dict) -> str | None:
-    """Resolve the directory the deploy actually runs in (v4.0.0), same shape
-    as enforce-eta-approval-before-npm-publish.resolve_publish_dir: a leading
-    `cd <abspath>` on the first line wins, else the PreToolUse payload cwd,
-    else the hook process cwd. Needed because `git rev-parse HEAD` run from
-    the hook's OWN cwd (often the session root, not the deploy target) names
-    the wrong commit as "shipped"."""
-    first_line = command.split("\n", 1)[0]
-    m = re.match(r"""^\s*cd\s+(['"]?)([^\s&;|'"]+)\1""", first_line)
-    if m:
-        candidate = m.group(2).strip()
-        if os.path.isabs(candidate) and os.path.isdir(candidate):
-            return candidate
-    payload_cwd = (data.get("cwd") or "").strip()
-    if payload_cwd and os.path.isdir(payload_cwd):
-        return payload_cwd
-    return os.getcwd()
+    return True, None
 
 
 def main() -> int:
@@ -336,7 +463,6 @@ def main() -> int:
         return 0
 
     command = data.get("tool_input", {}).get("command", "") or ""
-    deploy_cwd = _resolve_deploy_cwd(command, data)
 
     # Override documente, lu sur la commande BRUTE : il VIT DANS UN COMMENTAIRE,
     # et le tokenizer retire les commentaires. Le lire apres nettoyage tuerait
@@ -344,46 +470,45 @@ def main() -> int:
     if OVERRIDE_RE.search(command):
         return 0
 
-    if not is_prod_deploy(command):
+    found = find_prod_deploy(command)
+    if found is None:
+        return 0
+    cd_arg, _ = found
+    run_dir, dir_error = None, None
+    if cd_arg is not None:
+        run_dir, dir_error = _resolve_dir(cd_arg)
+
+    qa_ok = qa_is_fresh()
+    dev_ok, dev_reason = dev_activation_status(run_dir, dir_error)
+
+    if qa_ok and dev_ok:
         return 0
 
-    verdict, detail = qa_pins_shipped_commit(cwd=deploy_cwd)
-    if verdict == "pass":
-        return 0
-
-    if verdict == "refuse":
-        print(
-            f"BLOCKED by block-deploy-without-qa: {detail}\n"
-            "  Pour DEV : utilise `npx convex dev --once` (aucun garde prod ne s'applique). "
-            "Le jeton Pi / la preuve QA ne sont requis QUE pour la PROD.\n"
-            "  Passez la QA (T6) — tests + verification SUR CE COMMIT — puis relancez le "
-            "deploiement.\n"
-            "\n"
-            "  Override documente (hotfix client-impacting uniquement) :\n"
-            "    npx convex deploy --yes  # allow-no-qa: <raison >= 6 caracteres>",
-            file=sys.stderr,
-        )
-        return 2
-
-    print(
-        "BLOCKED by block-deploy-without-qa: deploiement Convex vers la production "
-        "sans QA pour CE commit.\n"
-        f"  {detail}\n"
-        "  Pour DEV : utilise `npx convex dev --once` (aucun garde prod ne s'applique). "
-        "Le jeton Pi / la preuve QA ne sont requis QUE pour la PROD.\n"
-        "  Passez la QA (T6) — tests + verification SUR CE COMMIT — puis relancez le "
-        "deploiement.\n"
+    lines = [
+        "BLOCKED by block-deploy-without-qa: production deploy refused -- two "
+        "independent proofs are required, each reported separately below:",
+    ]
+    if qa_ok:
+        lines.append("  [QA] OK -- fresh QA breadcrumb.")
+    else:
+        lines.append(f"  [QA] The QA breadcrumb ({BREADCRUMB}) is absent or stale (> 1h).")
+    if dev_ok:
+        lines.append("  [DEV-ACTIVATION] OK -- this commit was activated and read back in dev.")
+    else:
+        lines.append(f"  [DEV-ACTIVATION] {dev_reason}")
+    lines.append(
         "\n"
-        "  Override documente (hotfix client-impacting uniquement) :\n"
-        "    npx convex deploy --yes  # allow-no-qa: <raison >= 6 caracteres>\n"
+        "  Run QA, then activate this exact commit on a development deployment "
+        "(deploy it, then read its state back with a SEPARATE command) before "
+        "retrying the production deploy.\n"
         "\n"
-        "  Ce hook decide sur l'ACTION, pas sur le texte : ajouter '# convex dev' "
-        "en commentaire ne l'ouvre plus (bypass corrige Day 128). Il decide "
-        "desormais sur le COMMIT PINNE par la preuve QA, pas sur son AGE "
-        "(v4.0.0 — un delai plus large n'aurait jamais ferme le trou de "
-        "l'acceptation a tort).",
-        file=sys.stderr,
+        "  Documented override (client-impacting hotfix only, skips BOTH proofs):\n"
+        "    npx convex deploy --yes  # allow-no-qa: <reason >= 6 characters>\n"
+        "\n"
+        "  This guard decides on the ACTION, never on the raw text: a trailing "
+        "comment cannot open it."
     )
+    print("\n".join(lines), file=sys.stderr)
     return 2
 
 

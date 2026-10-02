@@ -48,3 +48,9 @@ __pycache__/
 
 # local tooling scratch (grok agents/rules)
 .grok/
+
+# guard credential — never committed
+.vp-guard.env
+
+# per-station local settings — never committed
+.claude/settings.local.json

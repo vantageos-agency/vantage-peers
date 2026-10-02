@@ -1,0 +1,17 @@
+{
+ "sha": "2069454a5d19301c356e4cdc53917e2d8c846a77",
+ "cli_commit": "60780e6",
+ "cli_ref": "main",
+ "cli_mode": "npx tsx src/cli.ts (source; the installed dist misclassifies requireServiceAccount declare-then-assign)",
+ "convex_path": "/root/coding/vantage-memory/convex",
+ "exit_code": 1,
+ "checked": 49,
+ "total": 50,
+ "mechanical_violations": 9,
+ "cr1_violations": 0,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) - 3 CRITICAL, major 6, abstentions 30. CR-1 VERDICT: 0 violation(s).",
+ "checked_total_note": "checked/total copied from the 450eed5 report, same CLI; not re-derived",
+ "not_a_clean_bill": "NOT a pass: 9 mechanical violations remain in rules other than CR-1 (Eta one-list: R-6, R-50, R-51 ...).",
+ "what_this_deploy_does": "closes the last CR-1 doors on production: githubRepoMapping:getByRepo, missionTemplates:getByName (still serving anonymously at 353debc), 4 oauth protocol doors, agentCredentials:resolveAgentCredential; kb refusal coded; licence doors justified",
+ "qa": "npx vitest run on clean tree 2069454a: 352 files, 4651 passed, 0 failed"
+}

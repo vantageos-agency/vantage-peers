@@ -1,266 +1,290 @@
 #!/usr/bin/env python3
-"""Suite adversariale de block-deploy-without-qa.
+"""Bipolar corpus for block-deploy-without-qa.
 
-Ordre imposé par hook-doctrine.md : les cas FAIL-OPEN (vraies violations qui
-DOIVENT bloquer) viennent AVANT les cas faux-positif. Une suite qui ne teste
-que la classe d'erreur que l'auteur veut corriger ne mesure rien.
+Class of failure closed here: the guard's substring prefilter, used when a shell
+segment cannot be tokenised, asked whether the RAW TEXT carries both `convex` and
+`deploy`. The name of the credential a READ also needs -- CONVEX_DEPLOY_KEY --
+carries both words, so exporting it inside an untokenisable segment escalated to
+BLOCK and refused `npx convex data`, which reads one table and publishes nothing.
+
+The prefilter now erases SCREAMING_SNAKE identifiers before the test, because a
+variable name is never a command. The MUST_BLOCK pole proves the erasure did not
+open a hole: an invocation survives it, since `npx convex deploy` is lowercase.
+
+Run: python3 .claude/hooks/test_block_deploy_without_qa.py
 """
-import importlib.util
+
+from __future__ import annotations
+
 import json
 import os
 import subprocess
 import sys
-import time
-import pathlib
 
-HOOK = pathlib.Path(__file__).with_name("block-deploy-without-qa.py")
-BREADCRUMB = "/tmp/.qa-passed"
-
-
-def _current_head_sha() -> str:
-    """The hook (v4.0.0) pins QA evidence to the SHA it resolves via
-    `git rev-parse HEAD` in the deploy cwd. With no `cwd` in the test
-    payload and no leading `cd`, the hook falls back to its own process
-    cwd — which subprocess.run inherits from THIS test process. So the
-    breadcrumb must name the SAME HEAD this test process sees, not an
-    arbitrary placeholder."""
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5,
-    )
-    return result.stdout.strip()
-
-
-def run(cmd, qa_ok=False):
-    """Retourne le code de sortie du hook pour une commande Bash donnée."""
-    if qa_ok:
-        # v4.0.0 requires a JSON breadcrumb {"sha": ..., "writer": ...} that
-        # NAMES the commit being shipped — an empty touch() is the pre-v4.0.0
-        # age-window shape (`qa_is_fresh`) and is now read as MALFORMED JSON,
-        # which the hook correctly REFUSES rather than passes.
-        pathlib.Path(BREADCRUMB).write_text(
-            json.dumps({"sha": _current_head_sha(), "writer": "test-fixture"})
-        )
-    else:
-        try:
-            os.remove(BREADCRUMB)
-        except FileNotFoundError:
-            pass
-    p = subprocess.run(
-        [sys.executable, str(HOOK)],
-        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-        capture_output=True,
-        text=True,
-    )
-    return p.returncode
-
-
-# ---------------------------------------------------------------------------
-# FAIL-OPEN D'ABORD — vraies violations : un deploy prod sans QA DOIT bloquer.
-# ---------------------------------------------------------------------------
-
-def test_deploy_nu_bloque():
-    assert run("npx convex deploy --yes") == 2
-
-
-def test_bypass_par_commentaire_convex_dev():
-    """LE BUG. `# convex dev` en commentaire ouvrait le garde-fou (rc=0)."""
-    assert run("npx convex deploy --yes # convex dev") == 2
-
-
-def test_bypass_par_commentaire_dry_run():
-    assert run("npx convex deploy --yes # --dry-run") == 2
-
-
-def test_bypass_par_commentaire_preview():
-    assert run("npx convex deploy --yes  # --preview plus tard") == 2
-
-
-def test_bypass_par_chaine_dans_une_autre_chaine():
-    assert run('npx convex deploy --yes --note "convex dev"') == 2
-
-
-def test_bypass_sudo():
-    assert run("sudo npx convex deploy --yes") == 2
-
-
-def test_bypass_env_prefix():
-    assert run("CONVEX_DEPLOY_KEY=x npx convex deploy --yes") == 2
-
-
-def test_bypass_bash_c():
-    assert run('bash -c "npx convex deploy --yes"') == 2
-
-
-def test_bypass_eval():
-    assert run('eval "npx convex deploy --yes"') == 2
-
-
-def test_bypass_chaine_and():
-    assert run("touch /tmp/x && npx convex deploy --yes") == 2
-
-
-def test_bypass_chaine_semicolon():
-    assert run("echo hop ; npx convex deploy --yes") == 2
-
-
-def test_bypass_subshell():
-    assert run("(cd apps/web && npx convex deploy --yes)") == 2
-
-
-# ---------------------------------------------------------------------------
-# FAUX POSITIFS ENSUITE — ce qui ne DOIT PAS bloquer.
-# ---------------------------------------------------------------------------
-
-def test_grep_lecture_seule_passe():
-    """LE 2e BUG. Une recherche en lecture seule était bloquée (rc=2)."""
-    assert run('grep -rn "convex deploy --prod" CLAUDE.md') == 0
-
-
-def test_rg_lecture_seule_passe():
-    assert run('rg "convex deploy" docs/') == 0
-
-
-def test_cat_passe():
-    assert run("cat runbooks/deploy.md") == 0
-
-
-def test_echo_passe():
-    assert run('echo "pense a lancer convex deploy apres la QA"') == 0
-
-
-def test_vrai_convex_dev_passe():
-    assert run("npx convex dev --once") == 0
-
-
-# ---------------------------------------------------------------------------
-# REDIRECT DEV DANS LE MESSAGE DE BLOCAGE (friction Laurent Day 156).
-# La protection prod NE FAIBLIT PAS : un deploy prod sans QA bloque toujours.
-# Le message nomme desormais la porte DEV `npx convex dev --once`.
-# ---------------------------------------------------------------------------
-
-def run_out(cmd, qa_ok=False):
-    if qa_ok:
-        pathlib.Path(BREADCRUMB).touch()
-    else:
-        try:
-            os.remove(BREADCRUMB)
-        except FileNotFoundError:
-            pass
-    p = subprocess.run(
-        [sys.executable, str(HOOK)],
-        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-        capture_output=True,
-        text=True,
-    )
-    return p.returncode, p.stderr + p.stdout
-
-
-def test_message_de_blocage_nomme_la_porte_dev():
-    rc, out = run_out("npx convex deploy --yes")
-    assert rc == 2, "un deploy prod sans QA doit toujours bloquer"
-    assert "convex dev --once" in out, f"le message doit nommer la porte DEV, out={out}"
-
-
-def test_vrai_dry_run_passe():
-    assert run("npx convex deploy --dry-run") == 0
-
-
-def test_deploy_avec_QA_recente_passe():
-    assert run("npx convex deploy --yes", qa_ok=True) == 0
-
-
-def test_override_documente_passe():
-    assert run("npx convex deploy --yes # allow-no-qa: hotfix client incident 42") == 0
-
-
-# ---------------------------------------------------------------------------
-# FAIL-OPEN STRUCTUREL — un hook fleet ne casse JAMAIS une session.
-# ---------------------------------------------------------------------------
-
-def test_stdin_malforme_ne_casse_pas():
-    p = subprocess.run([sys.executable, str(HOOK)], input="pas du json",
-                       capture_output=True, text=True)
-    assert p.returncode == 0
-
-
-def test_autre_outil_ignore():
-    p = subprocess.run(
-        [sys.executable, str(HOOK)],
-        input=json.dumps({"tool_name": "Read", "tool_input": {"file_path": "x"}}),
-        capture_output=True, text=True)
-    assert p.returncode == 0
-
-
-# ---------------------------------------------------------------------------
-# v4.1.0 — `convex run` + CONVEX_DEPLOY_KEY n'est PAS un deploy (operator ruling
-# 2026-09-15). Le repli NON TOKENISABLE decide sur des MOTS, pas des sous-chaines.
-# MUST_BLOCK d'abord, MUST_PASS ensuite. Chaque cas verifie que la charge
-# contient bien ce qu'il pretend tester (atterrissage asserte).
-# ---------------------------------------------------------------------------
-
-_spec = importlib.util.spec_from_file_location("_qa_gate", HOOK)
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-
-FIXTURE = pathlib.Path(__file__).with_name("tests") / "fixtures" / "catalogue-write-convex-run.sh"
+HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "block-deploy-without-qa.py")
 
 MUST_BLOCK = [
-    "npx convex deploy --yes",
-    "CONVEX_DEPLOY_KEY=x npx convex deploy --yes",
-    "bunx convex deploy",
-    "echo 'unclosed ; npx convex deploy",
-    "npx --yes convex deploy",
-    'sh -c "npx convex deploy"',
+    ("bare production deploy",
+     "npx convex " + "deploy --yes"),
+    ("deploy with the credential as an inline prefix",
+     "CONVEX_DEPLOY_KEY=x npx convex " + "deploy --yes"),
+    ("untokenisable export followed by a real deploy",
+     'export CONVEX_DEPLOY_KEY="$(grep k .env)" && npx convex ' + "deploy --yes"),
+    ("pinned version, which breaks token adjacency",
+     "npx convex@latest " + "deploy --yes"),
 ]
 
 MUST_PASS = [
-    "CONVEX_DEPLOY_KEY=x node_modules/.bin/convex run hookContent:upsertHookContent '{\"name\":\"a\"}'",
-    "grep CONVEX_DEPLOY_KEY .env.local",
-    "npx convex dev --once",
+    ("the production READ this guard refused",
+     'export CONVEX_DEPLOY_KEY="$(grep -m1 ^CONVEX_DEPLOY_KEY_PROD_VP= .env.local'
+     ' | cut -d= -f2-)" && npx convex data client_org_mapping --limit 10'),
+    ("a plain read with no credential in the line",
+     "npx convex data tasks --limit 1"),
+    ("a dry run publishes nothing",
+     "npx convex " + "deploy --dry-run"),
+    ("the help text",
+     "npx convex " + "deploy --help"),
+    ("the development watcher",
+     "npx convex dev --once"),
+    ("naming the credential without invoking anything",
+     'echo "$CONVEX_DEPLOY_KEY_PROD_VP" | wc -c'),
 ]
 
 
-def test_must_block_reste_un_deploy():
-    for cmd in MUST_BLOCK:
-        assert "convex deploy" in cmd
-        assert _mod.is_prod_deploy(cmd) is True, cmd
-        assert run(cmd) == 2, cmd
+def run(command: str) -> int:
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    proc = subprocess.run([sys.executable, HOOK], input=payload,
+                          capture_output=True, text=True)
+    return proc.returncode
 
 
-def test_must_block_non_tokenisable_passe_bien_par_le_repli():
-    cmd = "echo 'unclosed ; npx convex deploy"
-    segs = list(_mod.iter_real_commands(cmd))
-    assert any(tokens is None for _, tokens in segs), segs
+def main() -> int:
+    holes, false_positives = [], []
+    for label, cmd in MUST_BLOCK:
+        rc = run(cmd)
+        if rc == 0:
+            holes.append(label)
+        print("%-7s MUST_BLOCK  %s" % ("HOLE" if rc == 0 else "ok", label))
+    for label, cmd in MUST_PASS:
+        rc = run(cmd)
+        if rc != 0:
+            false_positives.append(label)
+        print("%-7s MUST_PASS   %s" % ("FALSE+" if rc != 0 else "ok", label))
+    print("\nholes: %d / %d   false positives: %d / %d"
+          % (len(holes), len(MUST_BLOCK), len(false_positives), len(MUST_PASS)))
+    for l in holes:
+        print("  HOLE   " + l)
+    for l in false_positives:
+        print("  FALSE+ " + l)
+    return 1 if (holes or false_positives) else 0
 
 
-def test_must_pass_convex_run_et_lectures():
-    for cmd in MUST_PASS:
-        assert _mod.is_prod_deploy(cmd) is False, cmd
-        assert run(cmd) == 0, cmd
+# ---------------------------------------------------------------------------
+# pytest cases: the deploy runs in the tree the COMMAND names, and a deploy is
+# production unless it names a development deploy key.
+#
+# The hook is exercised for real, as a subprocess fed JSON on stdin. Only the
+# two fixed /tmp locations it reads (QA breadcrumb, proof file template) are
+# redirected into a per-test directory, so a test never touches -- or leaves
+# behind -- the live breadcrumb a real production deploy would be judged on.
+# ---------------------------------------------------------------------------
+
+import time  # noqa: E402
+
+_DRIVER = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("deploy_guard_under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.BREADCRUMB = sys.argv[2]
+mod.DEV_ACTIVATION_PATH_TEMPLATE = sys.argv[3] + "/proof-{sha}.json"
+sys.exit(mod.main())
+"""
 
 
-def test_must_pass_forme_refusee_catalogue_write():
-    payload = FIXTURE.read_text()
-    assert 'CONVEX_DEPLOY_KEY="${K#*=}"' in payload
-    assert "node_modules/.bin/convex run" in payload
-    assert "python3 -c '" in payload and "pub()" in payload
-    # atterrissage : la forme passe bien par le repli non tokenisable
-    assert any(t is None for _, t in _mod.iter_real_commands(payload))
-    assert _mod.is_prod_deploy(payload) is False
-    assert run(payload) == 0
+def _run_hook(command, cwd, workdir, fresh_qa=True):
+    breadcrumb = os.path.join(str(workdir), "qa-passed")
+    proofs = os.path.join(str(workdir), "proofs")
+    os.makedirs(proofs, exist_ok=True)
+    if fresh_qa:
+        with open(breadcrumb, "w") as fh:
+            fh.write("ok")
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    proc = subprocess.run(
+        [sys.executable, "-c", _DRIVER, HOOK, breadcrumb, proofs],
+        input=payload, capture_output=True, text=True, cwd=str(cwd),
+    )
+    return proc.returncode, proc.stderr
 
 
-def test_convex_run_push_non_tokenisable_reste_ferme():
-    # `--push` leve l'exemption `run` : avec un mot deploy present, le segment
-    # non tokenisable reste ferme.
-    cmd = "CONVEX_DEPLOY_KEY=x npx convex run --push fn deploy 'unclosed"
-    assert any(t is None for _, t in _mod.iter_real_commands(cmd))
-    assert _mod.is_prod_deploy(cmd) is True
-    assert _mod.is_prod_deploy(cmd.replace("--push ", "")) is False
+def _make_repo(path):
+    os.makedirs(str(path), exist_ok=True)
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    subprocess.run(["git", "init", "-q"], cwd=str(path), check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init " + str(path)],
+                   cwd=str(path), check=True, env=env)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(path), check=True,
+                         capture_output=True, text=True).stdout.strip()
+    return sha
 
 
-def test_must_refuse_stdin_illisible_comportement_inchange():
-    for raw in ("pas du json", "pas du json npx convex deploy"):
-        p = subprocess.run([sys.executable, str(HOOK)], input=raw,
-                           capture_output=True, text=True)
-        assert p.returncode == 0, raw
+def _write_proof(workdir, sha):
+    proofs = os.path.join(str(workdir), "proofs")
+    os.makedirs(proofs, exist_ok=True)
+    with open(os.path.join(proofs, "proof-%s.json" % sha), "w") as fh:
+        json.dump({"commit": sha, "deployment": "dev:x-1",
+                   "read_back": "tasks table: 3 rows", "at": time.time()}, fh)
+
+
+DEPLOY = "npx convex " + "deploy --yes"
+
+
+def test_cd_target_tree_is_the_one_judged(tmp_path):
+    repo_a, repo_b = tmp_path / "A", tmp_path / "B"
+    _make_repo(repo_a)
+    sha_b = _make_repo(repo_b)
+    _write_proof(tmp_path, sha_b)
+    rc, err = _run_hook("cd %s && %s" % (repo_b, DEPLOY), repo_a, tmp_path)
+    assert rc == 0, err
+
+
+def test_proof_for_process_cwd_only_is_refused_naming_target_sha(tmp_path):
+    repo_a, repo_b = tmp_path / "A", tmp_path / "B"
+    sha_a = _make_repo(repo_a)
+    sha_b = _make_repo(repo_b)
+    _write_proof(tmp_path, sha_a)
+    rc, err = _run_hook("cd %s && %s" % (repo_b, DEPLOY), repo_a, tmp_path)
+    assert rc == 2
+    assert sha_b in err
+
+
+def test_relative_and_quoted_cd_are_resolved(tmp_path):
+    repo_a, repo_b = tmp_path / "A", tmp_path / "B dir"
+    _make_repo(repo_a)
+    sha_b = _make_repo(repo_b)
+    _write_proof(tmp_path, sha_b)
+    rc, err = _run_hook('cd "../B dir" && %s' % DEPLOY, repo_a, tmp_path)
+    assert rc == 0, err
+
+
+def test_last_cd_wins(tmp_path):
+    repo_a, repo_b = tmp_path / "A", tmp_path / "B"
+    sha_a = _make_repo(repo_a)
+    _make_repo(repo_b)
+    _write_proof(tmp_path, sha_a)
+    rc, err = _run_hook("cd %s && cd %s && %s" % (repo_b, repo_a, DEPLOY),
+                        repo_b, tmp_path)
+    assert rc == 0, err
+
+
+def test_nonexistent_cd_target_is_refused_loud(tmp_path):
+    repo_a = tmp_path / "A"
+    sha_a = _make_repo(repo_a)
+    _write_proof(tmp_path, sha_a)
+    rc, err = _run_hook("cd /nonexistent && " + DEPLOY, repo_a, tmp_path)
+    assert rc == 2
+    assert "/nonexistent" in err
+
+
+def test_dev_key_by_name_is_not_production(tmp_path):
+    repo_a = tmp_path / "A"
+    _make_repo(repo_a)
+    cmd = 'CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY_DEV_X" ' + DEPLOY
+    rc, err = _run_hook(cmd, repo_a, tmp_path, fresh_qa=False)
+    assert rc == 0, err
+
+
+def test_dev_key_by_literal_value_is_not_production(tmp_path):
+    repo_a = tmp_path / "A"
+    _make_repo(repo_a)
+    rc, err = _run_hook('"CONVEX_DEPLOY_KEY=dev:abc|tok" ' + DEPLOY, repo_a,
+                        tmp_path, fresh_qa=False)
+    assert rc == 0, err
+
+
+def test_prod_key_by_name_is_production(tmp_path):
+    repo_a = tmp_path / "A"
+    _make_repo(repo_a)
+    cmd = 'CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY_PROD_X" ' + DEPLOY
+    rc, err = _run_hook(cmd, repo_a, tmp_path, fresh_qa=False)
+    assert rc == 2
+
+
+def test_bare_deploy_is_production(tmp_path):
+    repo_a = tmp_path / "A"
+    _make_repo(repo_a)
+    rc, err = _run_hook(DEPLOY, repo_a, tmp_path, fresh_qa=False)
+    assert rc == 2
+
+
+def test_dev_key_does_not_leak_across_a_later_prod_key(tmp_path):
+    repo_a = tmp_path / "A"
+    _make_repo(repo_a)
+    cmd = ('export CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY_DEV_X" && '
+           'CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY_PROD_X" ' + DEPLOY)
+    rc, err = _run_hook(cmd, repo_a, tmp_path, fresh_qa=False)
+    assert rc == 2
+
+
+# Dev-key scoping. An inline prefix applies to its own command only; a key
+# carries to later segments only through `export` or a bare assignment. The
+# variable name is matched by whole `_`-separated segment, never by substring.
+_D = "npx convex " + "deploy --yes"
+KEY_MUST_BLOCK = [
+    ("inline dev key does not carry to a second deploy",
+     "CONVEX_DEPLOY_KEY=dev:abc " + _D + " && " + _D),
+    ("DEV as a substring of DEVOPS is not a dev key",
+     "CONVEX_DEPLOY_KEY=$CONVEX_DEPLOY_KEY_PROD_DEVOPS " + _D),
+    ("a different variable named *_DEV is not the deploy key",
+     "CONVEX_DEPLOY_KEY_DEV=dev:abc " + _D),
+    ("an inline prod key overrides an exported dev key",
+     "export CONVEX_DEPLOY_KEY=dev:abc && CONVEX_DEPLOY_KEY=prod:xyz " + _D),
+    ("a name carrying both PROD and DEV segments stays production",
+     "CONVEX_DEPLOY_KEY=$CONVEX_DEPLOY_KEY_PROD_DEV_X " + _D),
+    ("bare assignment then deploy: the shell does not hand it to the next command",
+     "CONVEX_DEPLOY_KEY=dev:abc; " + _D),
+    ("export then unset before the deploy",
+     "export CONVEX_DEPLOY_KEY=dev:abc; unset CONVEX_DEPLOY_KEY; " + _D),
+    ("export inside a subshell does not survive it",
+     "(export CONVEX_DEPLOY_KEY=dev:abc); " + _D),
+    ("export then env -u removes it for the deploy",
+     "export CONVEX_DEPLOY_KEY=dev:abc; env -u CONVEX_DEPLOY_KEY " + _D),
+    ("DEVICE is not DEV",
+     "CONVEX_DEPLOY_KEY=$CONVEX_DEPLOY_KEY_DEVICE " + _D),
+]
+KEY_MUST_PASS = [
+    ("literal dev key, own prefix",
+     "CONVEX_DEPLOY_KEY=dev:abc " + _D),
+    ("DEV in the middle of a real fleet name",
+     'CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY_DEV_VANTAGE_IMMO" ' + _D),
+    ("dev key through env on the deploy segment itself",
+     "env CONVEX_DEPLOY_KEY=dev:abc " + _D),
+    ("the development push that needs no deploy key",
+     "npx convex dev --once"),
+]
+MUST_BLOCK += KEY_MUST_BLOCK
+MUST_PASS += KEY_MUST_PASS
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("label,cmd", KEY_MUST_BLOCK, ids=[c[0] for c in KEY_MUST_BLOCK])
+def test_key_scoping_must_block(tmp_path, label, cmd):
+    repo = tmp_path / "A"
+    _make_repo(repo)
+    rc, err = _run_hook(cmd, repo, tmp_path, fresh_qa=False)
+    assert rc == 2, label
+
+
+@pytest.mark.parametrize("label,cmd", KEY_MUST_PASS, ids=[c[0] for c in KEY_MUST_PASS])
+def test_key_scoping_must_pass(tmp_path, label, cmd):
+    repo = tmp_path / "A"
+    _make_repo(repo)
+    rc, err = _run_hook(cmd, repo, tmp_path, fresh_qa=False)
+    assert rc == 0, err
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -467,3 +467,39 @@ def test_git_subcommands_that_print_no_content_still_pass(command):
     file gets ignored in the first place."""
     assert run(command) == 0, command
 
+
+
+# ── ETA'S GLOB RESIDUE AT 774ba1d, closed by fnmatch rather than by spelling ──
+# The previous matcher needed `env` spelled NEXT TO the wildcard, so `.env.l*`
+# was refused while `.e?v.local` and a brace expansion passed. Matching a
+# spelling one layer down — the same mechanism this file has hosted six times.
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat .e?v.local", "cat .env.{local,prod}", "cat .env.l*", "head .env.*", "cat id_?sa"],
+)
+def test_any_wildcard_that_could_reach_a_secrets_name_is_refused(command):
+    assert run(command) == 2, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat *.md", "cat README.md", "cat src/*.ts", "cat .env.example", "ls *.json"],
+)
+def test_a_wildcard_that_cannot_reach_one_still_passes(command):
+    """The control: refusing every glob would refuse `cat *.md`, and a guard
+    that refuses ordinary work is switched off — which protects nothing."""
+    assert run(command) == 0, command
+
+
+def test_the_declared_limits_are_declared_in_the_source():
+    """`git stash show -p` and a symlink stay OPEN by design: this guard reads
+    a command, not a filesystem, and refusing every stash inspection would be a
+    false positive on a command people use constantly. The test pins that the
+    limits are WRITTEN DOWN, so silence is never mistaken for coverage."""
+    src = HOOK.read_text()
+    assert "git stash show -p" in src
+    assert "symlink" in src
+    assert run("git stash show -p") == 0
+

@@ -1,0 +1,52 @@
+{
+  "eeceed7": {
+    "cli": "backend-doctor 60780e6 (source)",
+    "critical_violations": [
+      "R-50",
+      "R-51",
+      "R-6"
+    ],
+    "critical_abstentions": [
+      "R-5",
+      "R-10",
+      "R-12",
+      "R-7",
+      "R-37",
+      "R-40",
+      "R-34",
+      "R-29",
+      "R-26",
+      "R-48"
+    ]
+  },
+  "97f2f25": {
+    "cli": "backend-doctor 60780e6 (source)",
+    "critical_violations": [
+      "R-10",
+      "R-7",
+      "R-37",
+      "R-50",
+      "R-51",
+      "R-6"
+    ],
+    "critical_abstentions": [
+      "R-5",
+      "R-40",
+      "R-34",
+      "R-29",
+      "R-26",
+      "R-48"
+    ]
+  },
+  "violations_new_on_97f2f25": [
+    "R-10",
+    "R-7",
+    "R-37"
+  ],
+  "of_which_were_critical_abstentions_on_eeceed7": [
+    "R-10",
+    "R-7",
+    "R-37"
+  ],
+  "reason": "eeceed7 tree has no .backend-doctor/vp-by-tool.csv oracle (git merge-base --is-ancestor ba16282 eeceed7 -> false); R-10/R-7/R-37 read REFUSED TO JUDGE there"
+}

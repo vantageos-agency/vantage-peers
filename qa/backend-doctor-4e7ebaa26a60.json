@@ -1,0 +1,20 @@
+{
+  "sha": "4e7ebaa26a605df9299ed0d31e9a57287dc0c898",
+  "cli_commit": "14f35d9",
+  "cli_ref": "main",
+  "cli_entrypoint": "npx tsx src/cli.ts /root/coding/vantage-memory/convex, from a worktree of backend-doctor at main (14f35d9), porcelain 1 (package-lock.json only, from the reinstall after the disk sweep)",
+  "engine_package": "@vantageos/mcp-doctor",
+  "convex_path": "/root/coding/vantage-memory/convex",
+  "exit_code": 1,
+  "checked": 49,
+  "total": 50,
+  "mechanical_violations": 20,
+  "could_not_judge": 17,
+  "present": 13,
+  "coverage_line": "49 CHECKED + 1 NOT_MECHANICALLY_CHECKABLE = 50 of 50 derived rules — COMPLETE (no gap)",
+  "handler_surface_tally": "R-50 non-conforming, R-51 non-conforming; rules abstaining=0, sites abstaining=7",
+  "finding": "FIFTH identical mechanical count today: 20 non-conforming at 0726792, fa83a48d, bd49b4fc, cb2025ca and now 4e7ebaa2. Between the first and this one: the tenant partition, the actor-from-credential boundary, refusal-carries-its-code, the paginated backfill, the type-cycle fix, the two-block bindings guard and the registration counter — seven merged pull requests, eleven insert sites, four read surfaces, the whole MCP bearer-auth boundary, three refusal shapes, a rewritten migration and a corrected generated file. The only column that moved in five measurements is could-not-judge, 18 -> 17. An instrument whose mechanical count is independent of its subject is not judging that subject.",
+  "not_a_clean_bill": "NOT a pass. mechanical_violations is 20 and the deploy gate's condition is 0. This file is the honest score by the published instrument, together with the measured fact that the score does not move with the tree.",
+  "instrument_defect_owner": "task k17at4dj6vgeawsx006wgcya7x8fanx5 — src/oracle.ts pins ORACLE_PATH to the tool's own install directory rather than to the convex path given on the command line, so the oracle-backed rules score a CSV frozen at a past audit. Recorded rather than executed, per the standing order that instrument work does not ship during this campaign.",
+  "consequence_for_this_deploy": "enforce-backend-doctor-before-deploy requires mechanical_violations == 0. With a count that is provably independent of the tree, no amount of work on the tree can satisfy it. The deploy therefore requires the documented operator override, or the instrument defect closed first."
+}

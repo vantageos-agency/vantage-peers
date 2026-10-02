@@ -1,0 +1,18 @@
+{
+ "sha": "9e1413adb61151b91c648ff5379166e25b202545",
+ "cli_commit": "60780e6",
+ "cli_ref": "main",
+ "cli_mode": "npx tsx src/cli.ts (source)",
+ "convex_path": "/root/coding/vantage-memory/convex",
+ "exit_code": 1,
+ "checked": 49,
+ "total": 50,
+ "mechanical_violations": 9,
+ "cr1_violations": 0,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) - 3 CRITICAL, major 6. CR-1 VERDICT: 0 violation(s).",
+ "checked_total_note": "checked/total copied from earlier report, same CLI; not re-derived",
+ "not_a_clean_bill": "NOT a pass: 9 mechanical violations in non-CR-1 rules; triage in progress (which are code, doctor, or documentation).",
+ "what_this_deploy_does": "closes the last CR-1 doors on prod (getByRepo, getByName, 4 oauth protocol doors, resolveAgentCredential) + webhook fail-closed #1395",
+ "qa": "npx vitest run clean tree 9e1413a: 353 files, 4657 passed, 0 failed",
+ "override": "Laurent 2026-10-01: 'fais / deploie, d'abord dev puis prod'"
+}
