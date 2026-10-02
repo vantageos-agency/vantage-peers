@@ -128,6 +128,9 @@ export const childrenOf = query({
 	args: { orgSlug: v.string(), parentName: v.string() },
 	returns: v.array(edgeReturnValidator),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		return await ctx.db
@@ -148,6 +151,9 @@ export const parentsOf = query({
 	args: { orgSlug: v.string(), childName: v.string() },
 	returns: v.array(edgeReturnValidator),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		return await ctx.db
@@ -173,6 +179,9 @@ export const graphByOrg = query({
 		edges: v.array(graphEdgeValidator),
 	}),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const rows = await ctx.db

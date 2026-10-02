@@ -320,6 +320,20 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 		reason:
 			"`fields: \"lite\"|\"full\"` API (documented at the `list` query) — `liteValidator` is the deliberate lite projection; `buObject` (the full shape, in the same union) already COVERS.",
 	},
+	"briefingNotes.list#briefingNoteLiteValidator": {
+		fields: [
+			"content",
+			"decisions",
+			"linkedMemoryIds",
+			"createdAt",
+			"updatedAt",
+			"updatedBy",
+			"orgId",
+			"contentHash",
+		],
+		reason:
+			"`fields: \"lite\"|\"full\"` API — `briefingNoteLiteValidator` is the deliberate lite projection (`projectBriefingNoteLite` maps explicitly, never spreads the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
+	},
 	"githubRepoMapping.list#repoMappingLiteObject": {
 		fields: ["active", "lastDeployedSHA", "lastDeployedAt"],
 		reason:

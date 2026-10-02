@@ -41,6 +41,7 @@ import type { VpToolResult } from "./ui-resources/schemas.js";
 
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
+import { isRefusedEnvelope } from "./refusal.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VP_EMIT_UI_MARKERS gate
@@ -832,16 +833,9 @@ function mcpError(message: string): {
 // derives the door set from convex/*.ts and fails on a reader that does not.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function isRefusedEnvelope(
-	value: unknown,
-): value is { refused: true; items: unknown[] } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		!Array.isArray(value) &&
-		(value as { refused?: unknown }).refused === true
-	);
-}
+// Defined in ./refusal.ts (a leaf module, so a UI primitive can test the
+// envelope without importing this whole file); re-exported here unchanged.
+export { isRefusedEnvelope };
 
 export function mcpRefused(
 	tool: string,
@@ -6413,6 +6407,11 @@ export function registerTools(
 				// so notes the caller participates on but did not create stay
 				// visible, without trusting Convex's decision blindly — real
 				// defense-in-depth, same posture as before this fix.
+				// A refusal is not an absence: say so BEFORE the `Array.isArray`
+				// coalescing below turns the envelope into an empty array.
+				if (isRefusedEnvelope(notes)) {
+					return mcpRefused("list_briefing_notes", "briefingNotes:list");
+				}
 				const rawNotes = Array.isArray(notes) ? notes : [];
 				const scopeFiltered = new Set(
 					scopeFilterList(oauthCtx ?? DENIED_SCOPE_CTX, rawNotes as any[]),

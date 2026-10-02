@@ -16,6 +16,8 @@
  * WCAG AA + bilingual FR+EN labels.
  */
 
+import { isRefusedEnvelope } from "../../refusal.js";
+
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
 	return s.replace(/[&<>"']/g, (c) => {
@@ -131,7 +133,11 @@ export async function renderBriefingNote(
 			const result = (await fetchConvex(
 				"briefingNotes:list",
 				args,
-			)) as BriefingNoteRow[];
+			)) as BriefingNoteRow[] | { refused: true; items: unknown[] };
+			// A refusal is not an absence: never render it as "No briefing notes found."
+			if (isRefusedEnvelope(result)) {
+				return `<div class="vp-briefing-note-error" role="alert">REFUSED (RBAC_DENIED): the backend read "briefingNotes:list" refused this identity. This is NOT an empty result: notes may exist that you cannot see.</div>`;
+			}
 			notes = Array.isArray(result) ? result : [];
 		}
 	} catch (err: unknown) {

@@ -1478,6 +1478,9 @@ export const listClients = query({
 	args: {},
 	returns: v.array(clientPublicShape),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.oauth\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireServiceAccount` throws for any caller other than the fleet service account (the only reader is an imperative service call, never a useQuery), so no render exists for a throw to crash.
 		await requireServiceAccount(ctx, "oauth:listClients");
 		const rows = await ctx.db.query("oauth_clients").order("desc").collect();
 		return rows.map((r) => ({
@@ -1920,6 +1923,9 @@ export const getAccessTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(oauthContextShape, v.null()),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.oauth\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireServiceAccount` throws for any caller other than the fleet service account (the only reader is an imperative service call, never a useQuery), so no render exists for a throw to crash.
 		await requireServiceAccount(ctx, "oauth:getAccessTokenByHash");
 		const row = await ctx.db
 			.query("oauth_access_tokens")
@@ -1992,6 +1998,9 @@ export const getRefreshTokenByHash = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.oauth\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireServiceAccount` throws for any caller other than the fleet service account (the only reader is an imperative service call, never a useQuery), so no render exists for a throw to crash.
 		await requireServiceAccount(ctx, "oauth:getRefreshTokenByHash");
 		const row = await ctx.db
 			.query("oauth_refresh_tokens")

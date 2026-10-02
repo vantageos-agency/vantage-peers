@@ -301,6 +301,9 @@ export const getAgent = query({
 	args: { orgSlug: v.string(), name: v.string() },
 	returns: v.union(agentReturnValidator, v.null()),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agents\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		return await ctx.db
@@ -321,6 +324,9 @@ export const listAgentsByOrg = query({
 	args: { orgSlug: v.string() },
 	returns: v.array(agentReturnValidator),
 	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agents\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		return await ctx.db

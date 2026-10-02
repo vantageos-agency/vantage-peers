@@ -110,7 +110,22 @@ const PROFILE = {
 	dynamic: { lastSeen: 1780000002000, sessionCount: 1 },
 };
 
+const BRIEFING_NOTE = {
+	_id: "briefing-fixture-001",
+	_creationTime: 1780000002000,
+	topic: "update",
+	title: "Fixture note",
+	participants: ["alpha"],
+	createdBy: "alpha",
+};
+
 const READERS = [
+	{
+		tool: "list_briefing_notes",
+		door: "briefingNotes:list",
+		present: [BRIEFING_NOTE],
+		presentNeedle: "briefing-fixture-001",
+	},
 	{
 		tool: "list_mandates",
 		door: "mandates:list",
@@ -197,8 +212,12 @@ const MCP_SRC = load(SRC_DIR, SRC_DIR);
 describe("END TWO sweep — no MCP reader of an envelope-capable door may swallow the marker", () => {
 	const derived = deriveDoors(CONVEX_SRC);
 
-	it("S1a the derived set is the four known envelope doors (a new one must be reviewed here)", () => {
+	it("S1a the derived set is the known envelope doors (a new one must be reviewed here)", () => {
 		expect(derived.doors).toEqual([
+			// Subscribed by components/briefings/briefing-list.tsx; its MCP readers
+			// (tools.ts list_briefing_notes, ui-resources/primitives/briefing-note.ts)
+			// test isRefusedEnvelope. The signed-in-no-organisation caller gets the envelope.
+			"briefingNotes:list",
 			// Dashboard-only project summary (pre-org envelope, #1406); no MCP reader
 			// (grep -rn getProjectSummary mcp-server/src -> 0), so S1b is unchanged.
 			"dashboard:getProjectSummary",
@@ -222,12 +241,12 @@ describe("END TWO sweep — no MCP reader of an envelope-capable door may swallo
 	it("S1b every call site of every envelope door tests the envelope in its own function", () => {
 		const { sites } = sweepCallSites(MCP_SRC, derived.doors);
 		const offenders = sites.filter((s) => !s.ok).map((s) => `${s.file}:${s.line} ${s.why}`);
-		// list_peers and list_mandates are the two known readers: guard the guard
+		// list_peers, list_mandates and list_briefing_notes are the known readers: guard the guard
 		// against a vacuous pass.
 		expect(offenders).toEqual([]);
 		expect(sites.length).toBeGreaterThanOrEqual(2);
 		expect(new Set(sites.map((s) => s.door))).toEqual(
-			new Set(["mandates:list", "profiles:listProfiles"]),
+			new Set(["briefingNotes:list", "mandates:list", "profiles:listProfiles"]),
 		);
 	});
 });

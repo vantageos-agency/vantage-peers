@@ -286,7 +286,7 @@ describe("briefingNotes.list — org-scoped caller sees only its own org's notes
 			fields: "full",
 			master: true,
 		});
-		const titles = notes.map((n: { title: string }) => n.title);
+		const titles = (notes as Array<{ title: string }>).map((n) => n.title);
 		expect(titles).toContain("org-a note");
 		expect(titles).not.toContain("org-b note");
 	});
@@ -328,7 +328,7 @@ describe("briefingNotes.get/list — master/service-account caller keeps today's
 			fields: "full",
 			master: true,
 		});
-		const titles = notes.map((n: { title: string }) => n.title);
+		const titles = (notes as Array<{ title: string }>).map((n) => n.title);
 		expect(titles).toContain("org-a note");
 		expect(titles).toContain("org-b note");
 	});
@@ -371,7 +371,7 @@ describe("briefingNotes.get/list — master/service-account caller keeps today's
 			master: false,
 			callerIdentities: ["seat-a"],
 		});
-		const titles = notes.map((n: { title: string }) => n.title);
+		const titles = (notes as Array<{ title: string }>).map((n) => n.title);
 		expect(titles).toContain("org-a note (seat-a participant)");
 		expect(titles).not.toContain("org-b note (no seat-a)");
 	});
