@@ -171,14 +171,22 @@ function enforceScope(
  * (convex/memberWriterRoles.ts), reached through the service-account query
  * `memberWriterRoles:assertPersonMayWrite`. Fail closed: a lookup that fails,
  * an absent role and a missing list all refuse. A seat token (no `principal`)
- * and a read-only tool never reach it.
+ * and an EXEMPT tool never reach it. A tool is exempt by DECLARATION, in its own
+ * annotations, never by name here and never by role:
+ *   - `readOnlyHint: true`  (checked against the handler by
+ *     test/tool-annotations-agree-with-handlers.test.ts);
+ *   - `ownStateOnly: true`  (Pi ruling): the tool writes only the caller's OWN
+ *     state, and an authority of its own bounds whose state that is (mark_as_read:
+ *     the receipt-owner check, `messages:markAsRead`). It is not a role
+ *     exception; the declaration is a promise that the tool's own door decides
+ *     ownership.
  */
 async function enforcePersonWriterRole(
 	oauthCtx: OAuthContext | undefined,
 	toolName: string,
-	readOnly: boolean,
+	exempt: boolean,
 ): Promise<McpTextResult | null> {
-	if (readOnly || oauthCtx?.principal !== "person") return null;
+	if (exempt || oauthCtx?.principal !== "person") return null;
 	if (!oauthCtx.clerkOrgSlug) {
 		return mcpError(
 			`Forbidden: ${toolName} refused — person token carries no organisation.`,
@@ -349,8 +357,12 @@ export function defineTool(
 	// tool keeps the one `defineTool(...)` registration shape) and is lifted here
 	// into the SDK config. The SDK then REQUIRES the handler to return
 	// `structuredContent` matching it. It is never forwarded as an annotation.
-	const { outputSchema, ...annotations } = (declaredAnnotations ?? {}) as {
+	// `ownStateOnly` is likewise a server-side declaration (read by the
+	// person-token gate), never advertised to a client as a hint.
+	const { outputSchema, ownStateOnly, ...annotations } = (declaredAnnotations ??
+		{}) as {
 		outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
+		ownStateOnly?: boolean;
 	} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
@@ -361,7 +373,7 @@ export function defineTool(
 		const roleDenied = await enforcePersonWriterRole(
 			ctx.oauthCtx,
 			name,
-			annotations?.readOnlyHint === true,
+			annotations.readOnlyHint === true || ownStateOnly === true,
 		);
 		if (roleDenied) return roleDenied;
 		const bound = bindActingNames(

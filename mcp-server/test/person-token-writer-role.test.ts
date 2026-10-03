@@ -336,6 +336,113 @@ describe("person token: the writer-role gate", () => {
 	});
 });
 
+describe("own-state tools: mark_as_read is the receipt owner's, not a role exception", () => {
+	/** Tool set wired to the REAL Convex functions (the receipt-owner check lives there). */
+	function realTools(ctx: OAuthContext) {
+		const tools = new Map<
+			string,
+			(args: Record<string, unknown>) => Promise<unknown>
+		>();
+		const server = {
+			tool() {},
+			registerTool: (
+				name: string,
+				_config: unknown,
+				handler: (args: Record<string, unknown>) => Promise<unknown>,
+			) => {
+				tools.set(name, handler);
+			},
+		} as never;
+		registerTools(
+			server,
+			// biome-ignore lint/suspicious/noExplicitAny: test bridge
+			bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID })) as any,
+			ctx,
+		);
+		return tools;
+	}
+
+	async function seedReceipts() {
+		return await t.run(async (ctx) => {
+			const now = Date.now();
+			const messageId = await ctx.db.insert("messages", {
+				from: "agent-a",
+				tenantId: "org-a",
+				channel: "direct",
+				content: "hello",
+				createdAt: now,
+			});
+			const own = await ctx.db.insert("messageReceipts", {
+				messageId,
+				recipient: "agent-a",
+				tenantId: "org-a",
+			});
+			const other = await ctx.db.insert("messageReceipts", {
+				messageId,
+				recipient: "agent-b",
+				tenantId: "org-a",
+			});
+			return { own: own as string, other: other as string };
+		});
+	}
+
+	const readAt = (id: string) =>
+		t.run(async (ctx) => (await ctx.db.get(id as never))?.readAt);
+
+	it("a viewer marks its OWN receipt read", async () => {
+		const ids = await seedReceipts();
+		const tools = realTools(await contextFor(await personToken("user_viewer")));
+		const r = (await tools.get("mark_as_read")?.({
+			receiptIds: [ids.own],
+			callerOrchestrator: "agent-a",
+		})) as ToolResult;
+		expect(r.isError).toBeUndefined();
+		expect(await readAt(ids.own)).toBeTypeOf("number");
+	});
+
+	it("a viewer cannot mark another member's receipt: the owner check refuses", async () => {
+		const ids = await seedReceipts();
+		const tools = realTools(await contextFor(await personToken("user_viewer")));
+		const r = (await tools.get("mark_as_read")?.({
+			receiptIds: [ids.other],
+			callerOrchestrator: "agent-a",
+		})) as ToolResult;
+		expect(r.isError).toBe(true);
+		expect(await readAt(ids.other)).not.toBeTypeOf("number");
+	});
+
+	it("a viewer cannot name an agent outside the organisation's roster", async () => {
+		const ids = await seedReceipts();
+		const tools = realTools(await contextFor(await personToken("user_viewer")));
+		const r = (await tools.get("mark_as_read")?.({
+			receiptIds: [ids.other],
+			callerOrchestrator: "agent-b-not-in-roster",
+		})) as ToolResult;
+		expect(r.isError).toBe(true);
+		expect(await readAt(ids.other)).not.toBeTypeOf("number");
+	});
+
+	it("generate_upload_url stays refused for a viewer", async () => {
+		const { tools } = toolsFor(
+			await contextFor(await personToken("user_viewer")),
+		);
+		const r = (await tools.get("generate_upload_url")?.({})) as ToolResult;
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain("role-not-writer");
+	});
+
+	it("the exemption is the declaration: without ownStateOnly the same viewer call is refused by the role gate", async () => {
+		// delete_message is also bounded by an owner check, but declares no
+		// ownStateOnly, so a viewer is refused before that check is reached.
+		const { tools } = toolsFor(
+			await contextFor(await personToken("user_viewer")),
+		);
+		const r = (await tools.get("delete_message")?.({})) as ToolResult;
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain("role-not-writer");
+	});
+});
+
 describe("a seat token (not a person) is unchanged", () => {
 	const seat: OAuthContext = {
 		clientId: "seat-client",
