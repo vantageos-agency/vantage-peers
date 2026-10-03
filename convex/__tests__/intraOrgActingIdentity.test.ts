@@ -42,12 +42,18 @@ async function fixture() {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		// Admin CRUD B2: a member without callerOrchestrator is the human path
+		// (writer role from the allowlist), so this member carries one.
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: Date.now(),
+		});
 	});
 	return t;
 }
 
 const member = (t: T) =>
-	t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b" } as Identity);
+	t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_role: "org:editor" } as Identity);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
 

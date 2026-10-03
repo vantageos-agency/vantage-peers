@@ -32,6 +32,9 @@ delete_message,memberWriterRoles+messageReceipts+messages,DELETE,org-member,orgR
 add_task_dependency,memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
 fail_task,memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
+create_mission,memberWriterRoles+missions,CREATE,org-member,orgResolver,missions:create=orgResolver
+update_mission,memberWriterRoles+missions,UPDATE,org-member,orgResolver,missions:update=orgResolver
+update_mission_status,memberWriterRoles+missions,TRANSITION,org-member,orgResolver,missions:updateStatus=orgResolver
 delete_task,memberWriterRoles+tasks,DELETE,org-member,orgResolver,tasks:deleteTask=orgResolver
 pause_task,memberWriterRoles+tasks,TRANSITION,org-member,orgResolver,tasks:pause=orgResolver
 resume_task,memberWriterRoles+tasks,TRANSITION,org-member,orgResolver,tasks:resume=orgResolver
@@ -40,9 +43,6 @@ soft_delete_document,memories,UPDATE,org-member,orgResolver,kb:softDeleteDocumen
 store_episode,memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
 store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
 mark_as_read,messageReceipts,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
-create_mission,missions,CREATE,org-member,orgResolver,missions:create=orgResolver
-update_mission,missions,UPDATE,org-member,orgResolver,missions:update=orgResolver
-update_mission_status,missions,TRANSITION,org-member,orgResolver,missions:updateStatus=orgResolver
 soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTemplates:softDelete=masterOnly
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
 instantiate_template_into_mission,missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver

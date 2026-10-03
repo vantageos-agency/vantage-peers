@@ -82,6 +82,7 @@ const asMember = (t: T) =>
 		subject: MEMBER,
 		organizationId: "org-a",
 		organizationSlug: "org-a",
+		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const seedOrgMapping = (t: T) =>
@@ -93,6 +94,11 @@ const seedOrgMapping = (t: T) =>
 			displayName: "org-a",
 			isActive: true,
 			createdAt: Date.now(),
+		});
+		// Admin CRUD B2: a member write with no caller argument is the human path.
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: Date.now(),
 		});
 	});
 
