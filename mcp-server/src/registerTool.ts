@@ -151,6 +151,14 @@ function enforceScope(
 		}
 		case "from": {
 			const from = args[scope.fromArg];
+			// No claim made by a master caller: nothing to verify, nothing to
+			// refuse. (A claim is handled by bindActingNames + checkActorBinding;
+			// feeding String(undefined) to the binder would invent one.)
+			if (
+				(from === undefined || from === null) &&
+				isMasterScope(ctx.oauthCtx)
+			)
+				return null;
 			const err = checkFromAllowed(ctx.oauthCtx, String(from));
 			return err ? mcpError(err) : null;
 		}

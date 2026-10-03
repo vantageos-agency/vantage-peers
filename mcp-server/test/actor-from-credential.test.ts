@@ -966,7 +966,7 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 		expect(unattributedClaimCounts()).toEqual([]);
 	});
 
-	it("PIN (not a pole — master is the maintenance identity, named in the header): a master bearer declaring a name is NOT counted as an unattributed agent", async () => {
+	it("PIN (not a pole): a master bearer declaring a name WITHOUT the header is REFUSED (strict for fleet callers, k17573xwj0g0kf1fsfntrn3h2d8d30y8) and is still NOT counted as an unattributed agent", async () => {
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
@@ -979,7 +979,14 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 			body: JSON.stringify({ ...COMPLETE, callerOrchestrator: "alice" }),
 		});
 		expect(res.status).toBe(200);
-		expect(calls.mutations).toHaveLength(1);
+		const body = (await res.json()) as {
+			result?: { isError?: boolean; content?: Array<{ text?: string }> };
+		};
+		expect(body.result?.isError).toBe(true);
+		expect(body.result?.content?.[0]?.text).toContain(
+			"AGENT_CREDENTIAL_REQUIRED",
+		);
+		expect(calls.mutations).toHaveLength(0);
 		expect(unattributedClaimCounts()).toEqual([]);
 		expect(
 			stderrLines(spy).filter((l) => l.includes("actor.unattributed")),

@@ -59,6 +59,15 @@ export type OAuthContext = {
 	/** True when this request came in on the master bearer token (admin path). */
 	isMaster: boolean;
 	/**
+	 * True ONLY on auth branch (1): the request presented the HTTP master bearer
+	 * (the fleet service account). Distinguishes it from LOCAL_STDIO_TRUST_CTX
+	 * (also master scope, but no network bearer and no header to present).
+	 * checkActorBinding is STRICT for this population whatever
+	 * VANTAGE_ACTOR_CREDENTIAL_MODE says: a fleet caller that types an acting
+	 * name must present the per-agent credential header.
+	 */
+	viaMasterBearer?: true;
+	/**
 	 * The raw, already-verified Clerk session JWT presented by the caller —
 	 * set ONLY on the Clerk-team path (2.5, tryVerifyClerkJwt succeeded).
 	 * server-http.ts forwards this exact token to Convex via
@@ -408,8 +417,16 @@ export function checkActorBinding(
 			"own resolved identity. Omit the name to act as the resolved agent."
 		);
 	}
+	// Fleet callers (HTTP master bearer) are strict regardless of the env mode —
+	// a fail-closed default lives in code, never in a Railway variable
+	// (railway-mcp-redeploy.md). The stdio trust context is NOT this population.
+	if (ctx.viaMasterBearer) return agentCredentialRequired(claimedName);
 	if (isMasterScope(ctx)) return null;
 	if (actorCredentialMode() === "permissive") return null;
+	return agentCredentialRequired(claimedName);
+}
+
+function agentCredentialRequired(claimedName: string): string {
 	return (
 		`AGENT_CREDENTIAL_REQUIRED: this call names "${claimedName}" but the ` +
 		`request carried no per-agent credential (header ${AGENT_CREDENTIAL_HEADER}) — ` +
@@ -1117,6 +1134,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 					namespaceWritePrefixes: ["*"],
 					expiresAt: Date.now() + 3600 * 1000,
 					isMaster: true,
+					viaMasterBearer: true,
 				},
 				null,
 			);
