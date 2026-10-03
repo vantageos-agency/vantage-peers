@@ -1003,7 +1003,7 @@ export const markAsRead = mutation({
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("messages:markAsRead", …) at mcp-server/src/tools.ts:3393 (imperative), never a subscribing pre-org client shell; the org/RBAC-keyed throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
+		// write-contract: two imperative callers — MCP: mcp-server client.mutation("messages:markAsRead", …) at mcp-server/src/tools.ts:3423; dashboard: components/messages/message-timeline.tsx:75 useMutation(api.messages.markAsRead) (dashboard origin/main 00a43cf, an event-handler call, never a subscription; measured 2026-10-03 with `grep -rn "messages:markAsRead" mcp-server/src` and `git -C <dashboard> grep -n "api.messages.markAsRead" origin/main -- app components hooks lib contexts providers`). The org/RBAC-keyed throw is an R-16 refusal at an imperative call that the caller catches, not an uncaught Server Error.
 		//
 		// Fail-closed multi-tenant fix (defect class: authority attached to an
 		// anonymously-registered object — see

@@ -229,9 +229,11 @@ export const storeDocumentChunked = action({
 		// `for` loop below. The dedup/supersede is keyed on the STABLE namespace
 		// team/<orgId>/<docId>, and the writes CONVERGE: a re-ingest of the same docId
 		// re-supersedes (a no-op when already isLatest=false) and the loop re-creates the
-		// full current set, so a mid-loop failure is a transient (the doc briefly has no
-		// isLatest chunks) that self-heals on re-ingest — orphaned isLatest=false rows are
-		// bloat, not corruption. Forcing one batched mutation over an unbounded chunk set
+		// full current set, so a mid-loop failure is a transient (the doc holds a PARTIAL
+		// set of new isLatest chunks — the prior set is already superseded and only the
+		// first k of n new chunks were inserted) that self-heals on re-ingest — orphaned
+		// isLatest=false rows are bloat, not corruption. Pinned by the multi-chunk
+		// re-ingest poles in convex/__tests__/kb-ingest.test.ts. Forcing one batched mutation over an unbounded chunk set
 		// would trade this self-healing transient for a per-transaction-limit failure on a
 		// large document. (backend-doctor R-29 shape 3, Eta-ruled 2026-08-31.)
 		// 1. Auth — orgId + namespace come from the MCP layer (oauthCtx→args pattern,

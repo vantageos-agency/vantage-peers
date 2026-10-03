@@ -648,3 +648,95 @@ describe("B5 KB ingest — idempotent re-ingest", () => {
 		expect(hasV2Content).toBe(true);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-chunk re-ingest — pins the convergence claim of the atomicity-exception
+// marker in convex/kb.ts (R-29 shape 3): a re-ingest supersedes EVERY prior
+// isLatest chunk, not just the first one listChunkIdsForDoc returns.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("B5 KB ingest — multi-chunk re-ingest converges", () => {
+	// Each paragraph is 1500 chars so each one lands in its own chunk (target 2000).
+	function multiChunkText(tag: string, paragraphs: number): string {
+		return Array.from(
+			{ length: paragraphs },
+			(_, i) => `${tag} paragraph ${i} ${"x".repeat(1500)}`,
+		).join("\n\n");
+	}
+
+	async function setup() {
+		const t = createT();
+		await seedOrgMapping(t, "team-a");
+		const tA = withTeamIdentity(t, "team-a");
+		const docId = "test-multichunk-doc-001";
+		async function ingest(text: string) {
+			const bytes = textToArrayBuffer(text);
+			const storageId = await t.run(async (ctx) => {
+				return await ctx.storage.store(
+					new Blob([new Uint8Array(bytes)], { type: "text/plain" }),
+				);
+			});
+			return tA.action(KB_ACTION_REF, {
+				storageId,
+				mimeType: "text/plain",
+				filename: "multi.txt",
+				docId,
+				orgId: "team-a",
+				namespace: "team/team-a",
+			});
+		}
+		return { t, docId, ingest };
+	}
+
+	test(">=3-chunk doc ingested twice under one docId → exactly the second set is isLatest, none of the first", async () => {
+		const { t, docId, ingest } = await setup();
+
+		const r1 = await ingest(multiChunkText("first", 4));
+		const r2 = await ingest(multiChunkText("second", 5));
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		expect(r1.chunkCount).toBeGreaterThanOrEqual(3);
+		expect(r2.chunkCount).toBeGreaterThanOrEqual(3);
+
+		const active = await getChunksForDoc(t, "team-a", docId);
+		expect(active.length).toBe(r2.chunkCount);
+		expect(active.filter((c) => c.content.includes("first")).length).toBe(0);
+		expect(active.every((c) => c.content.includes("second"))).toBe(true);
+
+		const superseded = await t.run(async (ctx) => {
+			return await ctx.db
+				.query("memories")
+				.withIndex("by_namespace", (q) =>
+					q.eq("namespace", `team/team-a/${docId}`).eq("isLatest", false),
+				)
+				.collect();
+		});
+		expect(superseded.length).toBe(r1.chunkCount);
+	});
+
+	test("partial first ingest (k < n isLatest rows) then full re-ingest → exactly n isLatest rows", async () => {
+		const { t, docId, ingest } = await setup();
+
+		// Simulate a mid-loop failure: a full ingest, then drop all but k=2 of its rows.
+		const r1 = await ingest(multiChunkText("partial", 4));
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+		expect(r1.chunkCount).toBeGreaterThanOrEqual(3);
+		await t.run(async (ctx) => {
+			const rows = await ctx.db
+				.query("memories")
+				.withIndex("by_namespace", (q) =>
+					q.eq("namespace", `team/team-a/${docId}`).eq("isLatest", true),
+				)
+				.collect();
+			for (const row of rows.slice(2)) await ctx.db.delete(row._id);
+		});
+		expect((await getChunksForDoc(t, "team-a", docId)).length).toBe(2);
+
+		const r2 = await ingest(multiChunkText("full", 4));
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+		const active = await getChunksForDoc(t, "team-a", docId);
+		expect(active.length).toBe(r2.chunkCount);
+		expect(active.every((c) => c.content.includes("full"))).toBe(true);
+	});
+});

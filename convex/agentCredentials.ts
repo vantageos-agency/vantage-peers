@@ -78,7 +78,7 @@ export const mintAgentCredential = mutation({
 	},
 	returns: mintResultValidator,
 	handler: async (ctx, args) => {
-		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentCredentials:mintAgentCredential" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render. Operator-run via `convex run` per docs/cloud/protocol/deployment-runbook.md:24 (imperative).
+		// write-contract: operator script only — scripts/mint-station-agents.mjs:153 calls client.mutation(api.agentCredentials.mintAgentCredential) (imperative); 0 call sites in mcp-server/src and mcp-server/server-http.ts and 0 dashboard hits for api.agentCredentials.mintAgentCredential (measured 2026-10-03 with `grep -rn "mintAgentCredential" scripts mcp-server/src mcp-server/server-http.ts` and `git -C <dashboard> grep -n "mintAgentCredential" origin/main -- app components hooks lib contexts providers`, dashboard origin/main 00a43cf); also convex/__tests__. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render. Operator-run via `convex run` per docs/cloud/protocol/deployment-runbook.md:24 (imperative).
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const agent = await findAgentByName(ctx, args.orgSlug, args.agentName);
@@ -264,7 +264,7 @@ export const getAgentCredentialStatus = query({
 		activeRows: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		// isolation-contract: server-side only, no reactive subscriber — enumerated 2026-09-30 with: grep -rnE "agentCredentials|resolveAgentCredential" /root/coding/vantage-peers-dashboard --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git -> 0 hits. R-50 declared divergence.
+		// isolation-contract: no reactive subscriber — enumerated 2026-10-03 with: `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the only reader is components/agents/agents-admin.tsx:68, an imperative convex.query (no useQuery/useSubscription); server-side callers: grep -rnE "agentCredentials|resolveAgentCredential" convex mcp-server/src scripts. R-50 declared divergence.
 		await requireOrgAdmin(ctx, args.orgSlug);
 		const agent = await findAgentByName(ctx, args.orgSlug, args.agentName);
 		const rows = agent ? await credentialRowsOfAgent(ctx, agent) : [];
