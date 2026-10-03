@@ -25,6 +25,7 @@
 3. [Smoke test cheatsheet post-onboarding / Antisèche de tests post-intégration](#3-smoke-test-cheatsheet-post-onboarding)
 4. [Credentials lifecycle doctrine / Doctrine cycle de vie des identifiants](#4-credentials-lifecycle-doctrine)
 5. [Troubleshooting / Dépannage](#5-troubleshooting)
+6. [Connecting as a person: sign in, pick the organisation, approve / Connexion en tant que personne : se connecter, choisir l'organisation, approuver](#6-connecting-as-a-person-sign-in-pick-the-organisation-approve)
 
 ---
 
@@ -357,6 +358,61 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 | Le connecteur affiche `Déconnecté` dans ChatGPT après une démo | La session a été interrompue lors d'une tentative de swap d'identifiants | Ré-autorisez avec les identifiants d'intégration d'origine. Ne générez pas de nouveaux identifiants — les originaux restent valides. |
 
 **Chemin d'escalade :** si aucune des résolutions ci-dessus ne s'applique, capturez le message d'erreur exact et la sortie de `whoami`, et transmettez les deux à votre opérateur. Ne partagez pas votre `client_secret` ou votre bearer token par e-mail ou messagerie instantanée.
+
+---
+
+## 6. Connecting as a person: sign in, pick the organisation, approve
+
+### EN
+
+Claude.ai, ChatGPT, Claude Code, Codex and any MCP client connect to VantagePeers Cloud through the same OAuth flow. The connection belongs to the PERSON who signs in and to ONE organisation that person belongs to. It never belongs to the client application.
+
+**What the user sees**
+
+1. Add the connector with the MCP endpoint `https://<your-deployment>/mcp`. The client discovers the server and registers itself.
+2. The browser opens VantagePeers **sign-in** (Clerk). Sign in with your own account. If you are already signed in, this step is skipped.
+3. A **consent page** lists only the organisations you are a member of. Choose the organisation this connection may reach.
+4. Press **Approve**. (**Deny** ends the request and issues nothing.) The page is required even when you belong to one organisation: it is what stops a client from obtaining access for someone who merely followed its link.
+5. The browser returns to the client, which is now connected. Run `whoami`: it shows your organisation, not an anonymous app.
+
+**What is guaranteed**
+
+- No code is issued without a signed-in person, a chosen organisation of theirs, and an explicit approval.
+- Only organisations the operator has provisioned (an active organisation mapping) are offered. An organisation that is not provisioned yields "no organisation": ask your operator.
+- The access token lasts one hour and names you and the organisation. There is no refresh token on this flow; the client sends you through the same three steps again (the sign-in step is silent while your session lasts).
+- A client that replays an authorization code is refused and the token its first redemption issued is revoked.
+
+**Operator prerequisites (Railway, set from the dashboard; names only)**
+
+`AUTHORIZE_STATE_SECRET` (at least 32 random characters), `CLERK_DOMAIN` (the Clerk frontend API URL), `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL` (`https://<your-deployment>/authorize/callback`), `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY`; optionally `AUTHORIZE_AUTHORIZED_PARTIES` (extra allowed origins, comma separated). While any required value is missing, `/authorize` answers **503** and issues nothing; it never falls back to approving. The sign-in page and this server must share a registrable domain so the Clerk `__session` cookie reaches `/authorize`.
+
+| Symptom | Cause | Resolution |
+|---|---|---|
+| `/authorize` shows `temporarily_unavailable` | A required environment value is missing on the server | Operator sets the values listed above |
+| `access_denied` / `no-organization` | None of your organisations is provisioned | Operator provisions the organisation (§ operator provision above) |
+| `access_denied` / `org-not-a-member` | The organisation chosen is not one of yours | Pick an organisation from the list |
+| `invalid_target` | The client sent a `resource` that is not this server's `/mcp` URL | Reconnect using the exact endpoint URL |
+
+### FR
+
+Claude.ai, ChatGPT, Claude Code, Codex et tout client MCP se connectent à VantagePeers Cloud par le même flux OAuth. La connexion appartient à la PERSONNE qui se connecte et à UNE organisation dont elle est membre. Elle n'appartient jamais à l'application cliente.
+
+**Ce que voit l'utilisateur**
+
+1. Ajouter le connecteur avec l'adresse MCP `https://<votre-déploiement>/mcp`. Le client découvre le serveur et s'enregistre.
+2. Le navigateur ouvre la **connexion** VantagePeers (Clerk). Se connecter avec son propre compte ; l'étape est sautée si la session est déjà ouverte.
+3. Une **page de consentement** ne liste que les organisations dont vous êtes membre. Choisir celle que cette connexion peut atteindre.
+4. Cliquer **Approve**. (**Deny** met fin à la demande sans rien émettre.) La page est exigée même avec une seule organisation : c'est elle qui empêche un client d'obtenir l'accès de quelqu'un qui a simplement suivi son lien.
+5. Le navigateur revient au client, désormais connecté. Lancer `whoami` : il affiche votre organisation, pas une application anonyme.
+
+**Garanties**
+
+- Aucun code n'est émis sans personne connectée, sans organisation choisie parmi les siennes, et sans approbation explicite.
+- Seules les organisations provisionnées par l'opérateur (mapping actif) sont proposées. Une organisation non provisionnée donne « no organization » : contacter l'opérateur.
+- Le jeton d'accès dure une heure et vous nomme avec l'organisation. Ce flux n'émet pas de refresh token : le client vous refait passer par les trois étapes (la connexion est silencieuse tant que la session dure).
+- Un client qui rejoue un code d'autorisation est refusé et le jeton émis par la première utilisation est révoqué.
+
+**Prérequis opérateur (Railway, à définir depuis le dashboard ; noms seulement)** : `AUTHORIZE_STATE_SECRET` (au moins 32 caractères aléatoires), `CLERK_DOMAIN`, `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL`, `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY` ; en option `AUTHORIZE_AUTHORIZED_PARTIES`. Tant qu'une valeur requise manque, `/authorize` répond **503** et n'émet rien ; il ne retombe jamais sur une approbation automatique.
 
 ---
 

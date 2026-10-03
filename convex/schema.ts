@@ -1096,6 +1096,31 @@ export default defineSchema({
 		expiresAt: v.number(),
 	}).index("by_code", ["code"]),
 
+	// ── oauth_person_codes ───────────────────────────────────────────────────
+	// Authorization codes of the PERSON flow (GET /authorize -> Clerk sign-in ->
+	// org picker -> consent). Only the SHA-256 digest of the code is stored.
+	// The code is bound to the verified Clerk user and a membership that user
+	// holds; nothing here comes from a client-registration profile.
+	// `usedAt` is set by the one atomic `oauth:consumePersonCode`; a second
+	// consume answers "already-used" so the HTTP layer can revoke what the first
+	// redemption issued. Purged by cron (oauth:purgeExpiredPersonCodes).
+	oauth_person_codes: defineTable({
+		codeHash: v.string(),
+		clerkUserId: v.string(),
+		orgId: v.string(),
+		orgSlug: v.union(v.string(), v.null()),
+		orgRole: v.string(),
+		clientId: v.string(),
+		redirectUri: v.string(),
+		codeChallenge: v.string(),
+		resource: v.string(),
+		scope: v.string(),
+		expiresAt: v.number(),
+		usedAt: v.optional(v.number()),
+	})
+		.index("by_codeHash", ["codeHash"])
+		.index("by_expiresAt", ["expiresAt"]),
+
 	// ── oauth_access_tokens ──────────────────────────────────────────────────
 	// Issued access tokens. tokenHash = SHA-256 hex of the raw token (raw never
 	// stored). The HTTP bearer middleware hashes the incoming Authorization
@@ -1117,10 +1142,14 @@ export default defineSchema({
 		// Org claim snapshotted at mint (same class as fromAllowList).
 		// Missing → provisioned client cannot belong to an organisation (#1215 refuse).
 		clerkOrgSlug: v.optional(v.string()),
+		// Digest of the authorization code this token was minted from (person
+		// flow only). Lets a replayed code revoke what its first redemption issued.
+		codeHash: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
-		.index("by_scopeProfile", ["scopeProfile"]),
+		.index("by_scopeProfile", ["scopeProfile"])
+		.index("by_codeHash", ["codeHash"]),
 
 	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
 	// Refresh tokens for renewing expired access tokens. Same hashing rules.
