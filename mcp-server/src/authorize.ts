@@ -304,9 +304,9 @@ export function buildAuthorizeRuntime(
 		stateSecret: settings.stateSecret,
 		signInUrl: settings.signInUrl,
 		callbackUrl: settings.callbackUrl,
-		// A client may name either the MCP endpoint or the base URL the
-		// protected-resource metadata publishes; both are this server.
-		allowedResources: [`${settings.baseUrl}/mcp`, settings.baseUrl],
+		// The protected-resource metadata publishes `resource: <base>/mcp`, the
+		// URL a client configures and sends back (RFC 8707). Only that value.
+		allowedResources: [`${settings.baseUrl}/mcp`],
 		defaultScope: DEFAULT_AUTHORIZE_SCOPE,
 		session: {
 			issuer: settings.issuer,

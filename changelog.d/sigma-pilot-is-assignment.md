@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **An agent credential binds the acting name only, never the names it assigns work to.** `create_mission` and `update_mission` refused a `pilot` other than the caller (`AGENT_IDENTITY_MISMATCH`), and `update_mission` silently set the pilot to the caller because it declared `pilot` as its acting name. `pilot`, `create_mandate.fulfilledBy` and `update_bu.orchestratorId` now go through `guardAssignee`: the caller naming itself passes, any other name must be on the caller's own org roster (the gate `create_task` already applies to `assignedTo`). `createdBy` / `from` / `callerOrchestrator` stay bound. Evidence: `mcp-server/test/actor-from-credential.test.ts` S2 assignment block and `mcp-server/test/acting-name-split-sweep.test.ts` (derived from each tool's declaration), 77/77, red 8/12 on the previous head.

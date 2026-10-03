@@ -286,14 +286,32 @@ app.use(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RFC 9728 — OAuth 2.0 Protected Resource Metadata
-app.get("/.well-known/oauth-protected-resource", (c) => {
-	const issuer = resolveIssuer(c.req.raw);
-	return c.json({
-		resource: issuer,
+//
+// `resource` is the URL the client actually configures and calls — `<base>/mcp`
+// — not the bare origin. MCP authorization (2025-06-18+) has the client compare
+// the `resource` it discovers against the server URL it was given, and send it
+// back as the RFC 8707 `resource` parameter. The document is served at BOTH the
+// bare well-known URL and the RFC 9728 §3.1 path-inserted URL for `/mcp`
+// (`/.well-known/oauth-protected-resource/mcp`), which is the one the 401 from
+// /mcp points at (see bearerAuthMiddleware in src/auth.ts).
+export const MCP_RESOURCE_PATH = "/mcp";
+
+function protectedResourceMetadata(req: Request) {
+	const issuer = resolveIssuer(req);
+	return {
+		resource: `${issuer}${MCP_RESOURCE_PATH}`,
 		authorization_servers: [issuer],
 		scopes_supported: ["mcp:full"],
-	});
-});
+		bearer_methods_supported: ["header"],
+	};
+}
+
+app.get("/.well-known/oauth-protected-resource", (c) =>
+	c.json(protectedResourceMetadata(c.req.raw)),
+);
+app.get(`/.well-known/oauth-protected-resource${MCP_RESOURCE_PATH}`, (c) =>
+	c.json(protectedResourceMetadata(c.req.raw)),
+);
 
 // RFC 8414 — OAuth 2.0 Authorization Server Metadata
 app.get("/.well-known/oauth-authorization-server", (c) => {
@@ -306,35 +324,127 @@ app.get("/.well-known/oauth-authorization-server", (c) => {
 		response_types_supported: ["code"],
 		grant_types_supported: ["authorization_code", "refresh_token"],
 		code_challenge_methods_supported: ["S256"],
+		// "none" = public client: DCR accepts token_endpoint_auth_method "none"
+		// and /token then relies on PKCE alone (D6 branch below).
 		token_endpoint_auth_methods_supported: [
+			"none",
 			"client_secret_basic",
 			"client_secret_post",
 		],
 		scopes_supported: ["mcp:full"],
+		// RFC 9207 — /authorize appends `iss` to every authorization response.
+		authorization_response_iss_parameter_supported: true,
+		// Client ID Metadata Documents (URL-shaped client_id) are deliberately
+		// NOT advertised: /authorize and /token resolve client_id only against
+		// registered rows. Never advertise `client_id_metadata_document_supported`
+		// until both endpoints fetch and validate the document (SSRF-safe).
 	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S2: In-memory rate limiter for POST /register (5 req/min/IP, DoS mitigation)
+// S2: In-memory rate limiter for POST /register — two tiers (DoS mitigation)
+//
+// A single per-IP bucket (formerly 5/min) throttles every client behind a shared
+// egress IP as one — all Claude.ai or ChatGPT connector registrations leaving
+// the same provider NAT competed for five slots a minute. Two tiers instead:
+//   - per (IP, client fingerprint): REGISTER_RATE_LIMIT_PER_CLIENT / minute.
+//     Fingerprint = sha256(client_name + sorted redirect_uris). Stops a single
+//     client stuck in a registration loop.
+//   - per IP: REGISTER_RATE_LIMIT_PER_IP / minute. The abuse ceiling — bounds
+//     how many deny-by-default client rows one source can create.
+// Both buckets are consumed on every attempt (valid or not) once the IP tier
+// admits it. Buckets are swept when the map grows past REGISTER_BUCKET_SWEEP_AT.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type RateBucket = { count: number; windowStart: number };
 const registerRateBuckets = new Map<string, RateBucket>();
-const REGISTER_RATE_LIMIT = 5; // maxPerWindow: 5
-const REGISTER_RATE_WINDOW_MS = 60_000; // windowMs: 60_000
+export const REGISTER_RATE_LIMIT_PER_CLIENT = 10;
+export const REGISTER_RATE_LIMIT_PER_IP = 60;
+const REGISTER_RATE_WINDOW_MS = 60_000;
+const REGISTER_BUCKET_SWEEP_AT = 10_000;
 
-function checkRegisterRateLimit(ip: string): boolean {
-	const now = Date.now();
-	const bucket = registerRateBuckets.get(ip);
+function consumeRateBucket(key: string, limit: number, now: number): boolean {
+	const bucket = registerRateBuckets.get(key);
 	if (!bucket || now - bucket.windowStart >= REGISTER_RATE_WINDOW_MS) {
-		registerRateBuckets.set(ip, { count: 1, windowStart: now });
+		registerRateBuckets.set(key, { count: 1, windowStart: now });
 		return true;
 	}
-	if (bucket.count < REGISTER_RATE_LIMIT) {
+	if (bucket.count < limit) {
 		bucket.count++;
 		return true;
 	}
 	return false;
+}
+
+function sweepRateBuckets(now: number): void {
+	if (registerRateBuckets.size < REGISTER_BUCKET_SWEEP_AT) return;
+	for (const [key, bucket] of registerRateBuckets) {
+		if (now - bucket.windowStart >= REGISTER_RATE_WINDOW_MS) {
+			registerRateBuckets.delete(key);
+		}
+	}
+}
+
+async function registrationFingerprint(
+	body: Record<string, unknown>,
+): Promise<string> {
+	const name = typeof body.client_name === "string" ? body.client_name : "";
+	const uris = Array.isArray(body.redirect_uris)
+		? (body.redirect_uris as unknown[]).map((u) => String(u)).sort()
+		: [];
+	return sha256Hex(JSON.stringify([name, uris]));
+}
+
+/** Returns null when admitted, or the tier that refused. */
+async function checkRegisterRateLimit(
+	ip: string,
+	body: Record<string, unknown>,
+): Promise<"ip" | "client" | null> {
+	const now = Date.now();
+	sweepRateBuckets(now);
+	if (!consumeRateBucket(`ip:${ip}`, REGISTER_RATE_LIMIT_PER_IP, now)) {
+		return "ip";
+	}
+	const fp = await registrationFingerprint(body);
+	if (
+		!consumeRateBucket(
+			`client:${ip}:${fp}`,
+			REGISTER_RATE_LIMIT_PER_CLIENT,
+			now,
+		)
+	) {
+		return "client";
+	}
+	return null;
+}
+
+/**
+ * The client address a rate limiter may key on: the one the TRUSTED edge
+ * observed, never a value the client wrote.
+ *
+ * 1. `x-real-ip` — the Railway edge sets it "for identifying client's remote
+ *    IP" (docs.railway.com/networking/public-networking/specs-and-limits).
+ * 2. else the RIGHTMOST `x-forwarded-for` entry — a proxy appends the address
+ *    it observed; every entry to its left is client-supplied. The first entry
+ *    is attacker-controlled and must never be the key (rotating it bypassed
+ *    the per-IP ceiling).
+ * 3. else `"unknown"` — one shared bucket, as before.
+ */
+export function clientIpForRateLimit(
+	header: (name: string) => string | undefined,
+): string {
+	const realIp = header("x-real-ip")?.trim();
+	if (realIp) return realIp;
+	const entries = (header("x-forwarded-for") ?? "")
+		.split(",")
+		.map((e) => e.trim())
+		.filter(Boolean);
+	return entries.at(-1) ?? "unknown";
+}
+
+/** Test-only: clear every DCR rate-limit bucket. */
+export function _resetRegisterRateLimitForTest(): void {
+	registerRateBuckets.clear();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,27 +454,30 @@ function checkRegisterRateLimit(ip: string): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.post("/register", async (c) => {
-	// S2: rate limit by IP — 5 req/min
-	const clientIp =
-		c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
-		c.req.header("x-real-ip") ??
-		"unknown";
-	if (!checkRegisterRateLimit(clientIp)) {
+	const clientIp = clientIpForRateLimit((n) => c.req.header(n));
+	let body: Record<string, unknown> = {};
+	try {
+		const parsed: unknown = await c.req.json();
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			body = parsed as Record<string, unknown>;
+		}
+	} catch {
+		// allow empty body — Claude sometimes posts nothing
+	}
+	// S2: two-tier rate limit — per (IP, client fingerprint) and per IP.
+	const refusedTier = await checkRegisterRateLimit(clientIp, body);
+	if (refusedTier !== null) {
 		c.header("Retry-After", "60");
 		return c.json(
 			{
 				error: "too_many_requests",
 				error_description:
-					"Rate limit exceeded. Max 5 registrations per minute per IP.",
+					refusedTier === "ip"
+						? `Rate limit exceeded. Max ${REGISTER_RATE_LIMIT_PER_IP} registrations per minute per IP.`
+						: `Rate limit exceeded. Max ${REGISTER_RATE_LIMIT_PER_CLIENT} registrations per minute for the same client from one IP.`,
 			},
 			429,
 		);
-	}
-	let body: Record<string, unknown> = {};
-	try {
-		body = await c.req.json();
-	} catch {
-		// allow empty body — Claude sometimes posts nothing
 	}
 	// RFC 7591 §2: redirect_uris is REQUIRED for authorization_code grant.
 	// RFC 7591 §3.2.2: invalid_redirect_uri is the canonical error code for
@@ -545,8 +658,14 @@ async function respondToOutcome(
 	c.header("Referrer-Policy", "no-referrer");
 	switch (outcome.kind) {
 		case "redirect-to-sign-in":
-		case "redirect-to-client":
 			return c.redirect(outcome.url, 302);
+		case "redirect-to-client": {
+			// RFC 9207 section 2: identify the issuer in the authorization
+			// response (advertised as authorization_response_iss_parameter_supported).
+			const back = new URL(outcome.url);
+			back.searchParams.set("iss", resolveIssuer(c.req.raw));
+			return c.redirect(back.toString(), 302);
+		}
 		case "org-picker":
 			c.header("Content-Security-Policy", await pickerContentSecurityPolicy());
 			return c.html(renderOrgPicker(outcome.model));

@@ -452,6 +452,40 @@ describe("consent and organisation choice", () => {
 		expect(r.code).toBeUndefined();
 	});
 
+	it("the code redirect carries iss (RFC 9207), equal to the metadata issuer", async () => {
+		const r = await authorizeAsPerson(app, {
+			clientId: CLIENT_ID,
+			redirectUri: REDIRECT,
+			challenge,
+			sessionToken: await harness.session("user_1"),
+			orgId: "org_A",
+			state: "xyz",
+		});
+		const meta = (await (
+			await app.request(
+				"http://localhost:3000/.well-known/oauth-authorization-server",
+			)
+		).json()) as { issuer: string };
+		expect(new URL(r.location as string).searchParams.get("iss")).toBe(
+			meta.issuer,
+		);
+	});
+
+	it("the bare base URL is no longer an accepted resource (PRM publishes <base>/mcp)", async () => {
+		const r = await getAuthorize(
+			app,
+			authorizeUrl({
+				clientId: CLIENT_ID,
+				redirectUri: REDIRECT,
+				challenge,
+				resource: "http://localhost:3000",
+			}),
+			await harness.session("user_1"),
+		);
+		expect(r.status).toBe(400);
+		expect(r.json?.error).toBe("invalid_target");
+	});
+
 	it("a resource this server does not own is refused", async () => {
 		const r = await getAuthorize(
 			app,
