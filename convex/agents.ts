@@ -96,7 +96,7 @@ export const registerAgent = mutation({
 	},
 	returns: v.id("agents"),
 	handler: async (ctx, args) => {
-		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agents:registerAgent" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/register-agent-form.tsx:30 (useMutation(api.agents.registerAgent), invoked from an event handler, never a render subscription); operator script scripts/mint-station-agents.mjs:147 client.mutation(api.agents.registerAgent) (imperative); 0 call sites in mcp-server/src and mcp-server/server-http.ts. Measured 2026-10-03 with `grep -rn "agents:registerAgent\|agents\.registerAgent" mcp-server/src mcp-server/server-http.ts scripts` -> scripts/mint-station-agents.mjs:147 only and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. No subscribing pre-org client shell can reach it at render time; the no-org throw is a refusal at an imperative call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		assertAgentNameUsable(args.name);
@@ -159,7 +159,7 @@ export const setAgentAddress = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agents:setAgentAddress" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:122 (useMutation(api.agents.setAgentAddress), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:setAgentAddress\|agents\.setAgentAddress" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. No subscribing pre-org client shell can reach it at render time; the no-org throw is a refusal at an imperative call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await findAgentByName(ctx, args.orgSlug, args.name);
@@ -203,7 +203,7 @@ export const deactivateAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string() },
 	returns: v.object({ deactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
-		// write-contract: no caller exists outside convex-test — measured 2026-10-01 with `grep -rnE "deactivateAgent|reactivateAgent|revokeAgentCredential" /root/coding/vantage-peers-dashboard mcp-server/src --include=*.ts --include=*.tsx --exclude-dir=node_modules --exclude-dir=.next` -> 0 hits. No subscribing pre-org client shell can reach this retire write; a signed-in caller with no organisation is refused RBAC_DENIED by requireOrgAdmin, an R-16 refusal thrown at an imperative SDK call, never at a render.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:123 (useMutation(api.agents.deactivateAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:deactivateAgent\|agents\.deactivateAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. A signed-in caller with no organisation is refused RBAC_DENIED by requireOrgAdmin, an R-16 refusal thrown at an imperative call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await findAgentByName(ctx, args.orgSlug, args.name);
@@ -262,7 +262,7 @@ export const reactivateAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string() },
 	returns: v.object({ reactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
-		// write-contract: no caller exists outside convex-test (same grep as deactivateAgent, 0 hits in the dashboard and mcp-server/src). This is the way BACK for a retired identity and also sweeps credentials, so it is a deliberately chosen admin act: a pre-organisation client has no render path to it, and requireOrgAdmin refuses it RBAC_DENIED at an imperative call, an R-16 refusal rather than an uncaught Server Error.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:124 (useMutation(api.agents.reactivateAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:reactivateAgent\|agents\.reactivateAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. This is the way BACK for a retired identity and also sweeps credentials, so it is a deliberately chosen admin act; requireOrgAdmin refuses it RBAC_DENIED at an imperative call, an R-16 refusal rather than an uncaught Server Error.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		const existing = await findAgentByName(ctx, args.orgSlug, args.name);
@@ -314,7 +314,7 @@ export const renameAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string(), newName: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		// write-contract: no caller outside convex-test — 0 call sites in mcp-server/src and the dashboard (new door, measured 2026-10-03 with `grep -rn "agents:renameAgent" mcp-server/src` -> 0 hits). A pre-organisation client has no render path to it; requireOrgAdmin refuses it RBAC_DENIED at an imperative call, never at a render.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:121 (useMutation(api.agents.renameAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:renameAgent\|agents\.renameAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. requireOrgAdmin refuses it RBAC_DENIED at an imperative call, never at a render.
 		await requireOrgAdmin(ctx, args.orgSlug);
 		assertAgentNameUsable(args.newName);
 
@@ -373,9 +373,9 @@ export const getAgent = query({
 	args: { orgSlug: v.string(), name: v.string() },
 	returns: v.union(agentReturnValidator, v.null()),
 	handler: async (ctx, args) => {
-		// isolation-contract: NO reactive subscriber — enumerated with
-		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agents\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
-		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		// isolation-contract: NO reactive subscriber — enumerated 2026-10-03 with
+		// `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the dashboard calls it imperatively (components/agents/agents-admin.tsx:60, convex.query), no useQuery. Zero `useQuery` hits.
+		// The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		return await findAgentByName(ctx, args.orgSlug, args.name);
@@ -391,9 +391,9 @@ export const listAgentsByOrg = query({
 	args: { orgSlug: v.string() },
 	returns: v.array(agentReturnValidator),
 	handler: async (ctx, args) => {
-		// isolation-contract: NO reactive subscriber — enumerated with
-		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agents\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
-		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		// isolation-contract: NO reactive subscriber — enumerated 2026-10-03 with
+		// `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the dashboard calls it imperatively (components/agents/agents-admin.tsx:60, convex.query), no useQuery. Zero `useQuery` hits.
+		// The refusal stays a RAISE: `requireOrgAdmin` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
 		return await ctx.db
