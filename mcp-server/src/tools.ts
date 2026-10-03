@@ -6006,12 +6006,12 @@ export function registerTools(
 	// ── list_diaries ────────────────────────────────────────────────────────────
 
 	// oracle-justified: list vs get_diary differ by design on verb and on isolation: get_diary is a one-row
-	//   `.unique()` on (orchestrator, date) behind requireResolvedCaller, while diary:list drains many
-	//   rows (`.take(fetchCap)`, bounded per rostered orchestrator through by_orchestrator_date for a
-	//   member). Both now refuse an unresolved caller by RAISING RBAC_DENIED (the open anonymous
-	//   empty-success gap and the table-before-roster-filter read were closed by task
-	//   k17066vn8kh5v1a8xkgsx0bnxs8fjre5); the remaining asymmetry is the many-row read and its
-	//   signed-in-no-organisation refusal envelope, tested below via isRefusedEnvelope.
+	//   `.unique()` on (orchestrator, date) (convex/diary.ts:142-145) behind requireResolvedCaller
+	//   (diary.ts:138), while diary:list drains many rows, bounded per rostered orchestrator through
+	//   by_orchestrator_date (`.take(fetchCap)`, diary.ts:236-265) and resolves its caller at diary.ts:224.
+	//   The refusal gap (an anonymous caller answered an empty success, and the table taken before the
+	//   roster filter) is closed by task k17066vn8kh5v1a8xkgsx0bnxs8fjre5; the remaining asymmetry is the
+	//   many-row read and its signed-in-no-organisation refusal envelope, tested via isRefusedEnvelope.
 	defineTool(
 		server,
 		authCtx,
