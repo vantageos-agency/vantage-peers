@@ -70,7 +70,7 @@ function assertAgentNameUsable(name: string): void {
  * Idempotent on (orgSlug, name): a second call with the same pair UPDATES
  * the existing row (description/outboundAuthRef) rather than creating a
  * duplicate. A name is unique per org UNDER `normalizeOrchestratorId`: a
- * different spelling of a name already taken (`Clio` vs `clio`) is REFUSED with
+ * different spelling of a name already taken (`Ada` vs `ada`) is REFUSED with
  * `AGENT_NAME_TAKEN`; the same name in another org is a different agent.
  *
  * INACTIVE ROWS ARE NOT SILENTLY REVIVED. This branch used to patch
@@ -102,8 +102,8 @@ export const registerAgent = mutation({
 		assertAgentNameUsable(args.name);
 		const existing = await findAgentByName(ctx, args.orgSlug, args.name);
 
-		// Names are unique per org under normalizeOrchestratorId. `Clio` then
-		// `clio` is a DIFFERENT spelling of a name already taken: refused, never
+		// Names are unique per org under normalizeOrchestratorId. `Ada` then
+		// `ada` is a DIFFERENT spelling of a name already taken: refused, never
 		// a second row and never a silent update of the first.
 		if (existing && existing.name !== args.name) {
 			throw new ConvexError(
@@ -306,7 +306,7 @@ export const reactivateAgent = mutation({
  * never orphans a credential. Gated like `registerAgent` (`requireOrgAdmin`, no
  * master carve-out). The new name must be free in this org under
  * `normalizeOrchestratorId` (`AGENT_NAME_TAKEN` otherwise); renaming to another
- * spelling of the agent's OWN name (`clio` -> `Clio`) is allowed. Unknown name
+ * spelling of the agent's OWN name (`ada` -> `Ada`) is allowed. Unknown name
  * raises `AGENT_NOT_FOUND`. `agent_relations` edges name agents by label, so the
  * agent's edges are rewritten to the new label in the same transaction.
  */

@@ -331,7 +331,7 @@ def test_ci_mode_resolves_via_hash_secret_with_no_host_file(tmp_path, monkeypatc
     )
     migrations_dir = perimeter_dir / "migrations"
     migrations_dir.mkdir()
-    (migrations_dir / "patch_marie_iris_rh_scope.ts").write_text(
+    (migrations_dir / "seed_client_scope_profiles.ts").write_text(
         "// clean\n", encoding="utf-8"
     )
     (tmp_path / "scripts").mkdir()

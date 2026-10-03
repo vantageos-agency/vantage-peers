@@ -146,8 +146,8 @@ export const bindScopeProfileToOrg = internalMutation({
 //   mcp-server/src/auth.ts:652   roster.includes(assignedTo)
 //   convex/messages.ts:43
 //   convex/tasks.ts:203
-// so a roster folded to ["hélios"] refuses a caller whose profile allows
-// "helios" or "Helios". The first version of this function folded eight
+// so a roster folded to ["élan"] refuses a caller whose profile allows
+// "elan" or "Elan". The first version of this function folded eight
 // allowed spellings down to three, which reads as tidy and is a WITHHELD
 // GRANT: the caller is refused on delegation and reads nothing on messages.
 //

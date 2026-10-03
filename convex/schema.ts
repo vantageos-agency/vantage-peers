@@ -15,7 +15,7 @@ export const memoryTypeValidator = v.union(
 
 // Open validator — any orchestrator name is accepted.
 // Known defaults: pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda,
-// victor, proxima, theta, xi, epsilon, omicron, upsilon, system.
+// proxima, theta, xi, epsilon, omicron, upsilon, system.
 // New orchestrators can be added without schema changes (see issue #132).
 export const creatorValidator = v.string();
 
@@ -1440,11 +1440,11 @@ export default defineSchema({
 	// isActive: false = org is disabled (returns Forbidden) without deleting the row.
 	//
 	// Seed rows (post-merge, Sigma runs npx convex run):
-	//   acme-hr   → allowedOrchestrators=["victor"], scopes=["view-own-tasks","view-own-missions","view-orchestrator-summary"]
+	//   acme-hr   → allowedOrchestrators=["orch-a"], scopes=["view-own-tasks","view-own-missions","view-orchestrator-summary"]
 	//   <redacted-client> → allowedOrchestrators=["phi"],    scopes=["view-own-tasks","view-own-missions"]
 	client_org_mapping: defineTable({
 		clerkOrgSlug: v.string(), // "acme-hr"
-		allowedOrchestrators: v.array(v.string()), // ["victor"] or ["*"] for master sentinel
+		allowedOrchestrators: v.array(v.string()), // ["orch-a"] or ["*"] for master sentinel
 		scopes: v.array(v.string()), // ["view-own-tasks", "view-own-missions", ...]
 		displayName: v.string(), // "<redacted-client>"
 		isActive: v.boolean(),

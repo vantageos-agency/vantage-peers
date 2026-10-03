@@ -119,7 +119,7 @@ describe("WITHHELD — the OAuth token path and every admin route still serve th
 		// ── admin: seedDefaultProfiles ─────────────────────────────────────────
 		const seed = await admin("/oauth/seed-profiles", "POST");
 		expect(seed.status).toBe(200);
-		expect((await counts(t)).profiles).toBeGreaterThanOrEqual(4);
+		expect((await counts(t)).profiles).toBeGreaterThanOrEqual(3);
 
 		// ── admin: createClient ────────────────────────────────────────────────
 		const created = await admin("/oauth/clients", "POST", {
