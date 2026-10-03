@@ -1212,6 +1212,9 @@ describe("Diary", () => {
 		// List by orchestrator
 		const piEntries = await t
 		.query(api.diary.list, { orchestrator: "pi" });
+		if (!Array.isArray(piEntries)) {
+			throw new Error("the fleet master must be served the bare array");
+		}
 		expect(piEntries).toHaveLength(2);
 		expect(piEntries.every((e) => e.orchestrator === "pi")).toBe(true);
 	});

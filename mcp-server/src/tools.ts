@@ -6006,12 +6006,12 @@ export function registerTools(
 	// ── list_diaries ────────────────────────────────────────────────────────────
 
 	// oracle-justified: list vs get_diary differ by design on verb and on isolation: get_diary is a one-row
-	//   `.unique()` on (orchestrator, date) (convex/diary.ts:140-145) behind requireResolvedCaller
-	//   (diary.ts:138), while diary:list drains many rows (`.take(fetchCap)`, diary.ts:216-221) and
-	//   resolves its caller with withOrgScope only (diary.ts:204): it never calls requireResolvedCaller,
-	//   so an unresolved caller is answered an empty success, a known open refusal gap (the
-	//   no-credential reads list in .claude/rules/refusal-is-distinguishable-from-absence.md names
-	//   diary:list), and with no orchestrator argument it takes the table before the roster filter.
+	//   `.unique()` on (orchestrator, date) behind requireResolvedCaller, while diary:list drains many
+	//   rows (`.take(fetchCap)`, bounded per rostered orchestrator through by_orchestrator_date for a
+	//   member). Both now refuse an unresolved caller by RAISING RBAC_DENIED (the open anonymous
+	//   empty-success gap and the table-before-roster-filter read were closed by task
+	//   k17066vn8kh5v1a8xkgsx0bnxs8fjre5); the remaining asymmetry is the many-row read and its
+	//   signed-in-no-organisation refusal envelope, tested below via isRefusedEnvelope.
 	defineTool(
 		server,
 		authCtx,
@@ -6101,6 +6101,12 @@ export function registerTools(
 					fields: fields ?? "lite",
 					createdBefore,
 				});
+
+				// A refusal is not an absence: say so BEFORE the `Array.isArray`
+				// coalescing below turns the envelope into an empty array.
+				if (isRefusedEnvelope(entries)) {
+					return mcpRefused("list_diaries", "diary:list");
+				}
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
