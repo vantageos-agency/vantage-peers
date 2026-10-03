@@ -269,6 +269,16 @@ function assertTaskVisibleToCaller(
 	}
 }
 
+// memberActorOf — how a HUMAN org member is written down as "who did it".
+// A distinct field (`lastActedBy`) AND a "user:" prefix: the value can never be
+// read as an orchestrator name (names are bare slugs; the Clerk subject is
+// `user_…`, so the stored form is `user:user_…`). Derived from the verified
+// identity subject (`scope.userId`), never from an argument.
+const MEMBER_ACTOR_PREFIX = "user:";
+function memberActorOf(scope: OrgScope): string {
+	return `${MEMBER_ACTOR_PREFIX}${scope.userId}`;
+}
+
 function assertTaskCallerAuthorized(
 	task: {
 		orgId?: string;
@@ -280,8 +290,31 @@ function assertTaskCallerAuthorized(
 	callerOrchestrator: string | undefined,
 	taskId: string,
 	callerScope: OrgScope,
-): void {
+	// Opt-in, per door: ONLY start / complete / blockTask pass `allowOrgMember`
+	// (Pi ruling (B), task k170mdh8em4vdt2fztcejhz2618fkpm0). Every other caller
+	// of this helper keeps refusing an omitted callerOrchestrator.
+	opts?: { allowOrgMember?: boolean },
+): string | undefined {
 	if (callerOrchestrator === undefined) {
+		// MEMBER-ACTING PATH — a resolved, NON-master member of an organisation
+		// acts in its OWN name. It is never given an agent's name: it carries no
+		// orchestrator authority (creator/assignee rules bind agents only) and is
+		// bounded by the tenant gate alone — the row's `orgId` must equal the
+		// member's resolved org (assertTaskVisibleToCaller, the same predicate the
+		// readers use). Master (incl. the operator human) is NOT admitted here:
+		// unchanged. An unresolved caller never reaches this point —
+		// requireAuthenticatedCaller already refused no-identity (AUTH_REQUIRED)
+		// and signed-in-no-org (RBAC_DENIED); `orgSlug === null` is re-checked
+		// here so the door fails closed on its own.
+		if (
+			opts?.allowOrgMember === true &&
+			!callerScope.isMaster &&
+			callerScope.orgSlug !== null &&
+			callerScope.refused !== true
+		) {
+			assertTaskVisibleToCaller(task, callerScope, taskId);
+			return memberActorOf(callerScope);
+		}
 		throw new ConvexError(
 			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId })}`,
 		);
@@ -310,6 +343,7 @@ function assertTaskCallerAuthorized(
 			`RBAC_DENIED: ${callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, taskId })}`,
 		);
 	}
+	return undefined;
 }
 
 function expandTaskStatuses(
@@ -399,6 +433,7 @@ const taskFullValidator = v.object({
 	reviewArtifactRef: v.optional(v.string()),
 	reviewArtifactAttachedBy: v.optional(creatorValidator),
 	lastAssignedTo: v.optional(v.string()),
+	lastActedBy: v.optional(v.string()), // human actor "user:<subject>" (memberActorOf)
 	isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
@@ -672,6 +707,7 @@ export const get = query({
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
 			lastAssignedTo: v.optional(v.string()),
+			lastActedBy: v.optional(v.string()), // human actor "user:<subject>" (memberActorOf)
 			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
@@ -781,6 +817,7 @@ export const getById = query({
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
 			lastAssignedTo: v.optional(v.string()),
+			lastActedBy: v.optional(v.string()), // human actor "user:<subject>" (memberActorOf)
 			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
 			contentHash: v.optional(v.string()),
@@ -2040,7 +2077,7 @@ export const blockTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, { allowOrgMember: true });
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
 		// check: blockedCause="peer_task" literally means "waiting on a peer
@@ -2063,6 +2100,7 @@ export const blockTask = mutation({
 			blockedOnNobodyReason: undefined,
 			blockedCause: args.blockedCause ?? "other",
 		};
+		if (memberActor !== undefined) patch.lastActedBy = memberActor;
 
 		// Blocking is an exit like any other; the open segment closes here.
 		const closedSegmentsOnBlock = closeTrailingSegmentOnExit(
@@ -2216,7 +2254,7 @@ export const complete = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, { allowOrgMember: true });
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
 			throw new ConvexError(
@@ -2248,6 +2286,7 @@ export const complete = mutation({
 			completedAt: now,
 			updatedAt: now,
 		};
+		if (memberActor !== undefined) patch.lastActedBy = memberActor;
 
 		if (args.completionNote !== undefined) {
 			patch.completionNote = args.completionNote;
@@ -2618,7 +2657,7 @@ export const start = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, { allowOrgMember: true });
 
 		// Block if any dependsOn tasks are not yet done.
 		if (task.dependsOn && task.dependsOn.length > 0) {
@@ -2661,6 +2700,7 @@ export const start = mutation({
 			updatedAt: now,
 			pausedAt: undefined,
 		};
+		if (memberActor !== undefined) patch.lastActedBy = memberActor;
 		if (hasSegments) {
 			// Resume — original startedAt is never overwritten, just a new
 			// segment opened on top of the existing history.
