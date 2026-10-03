@@ -1031,8 +1031,8 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// widening protects nothing — and once the table holds more than
 		// TASK_LIST_SCAN_CAP rows it threw SCAN_CAP_EXCEEDED at every such caller.
 		// The newest `limit` rows of the whole table are exactly `.take(limit)` for
-		// a master (scope filter is a no-op); a non-master reads its OWN org through
-		// `by_orgId` below, so the cap bounds the org's rows, never the fleet's.
+		// a master (scope filter is a no-op); a non-master reads the newest `limit`
+		// rows of its OWN org through `by_orgId` below (no scan cap involved).
 		const isUnfilteredRead =
 			statuses === undefined &&
 			assignedToInstance === undefined &&
@@ -1041,7 +1041,12 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			createdBy === undefined &&
 			updatedSince === undefined &&
 			before === undefined;
-		const unfilteredNeedsNoWidening = isUnfilteredRead && scope.isMaster;
+		// Holds for a member too: the roster narrowing (filterByOrgScope) runs
+		// AFTER the re-bound to `limit`, so fetching the newest `limit` rows of
+		// the member's own org (by_orgId, newest-first) yields the same page as
+		// fetching the cap and slicing. Widening there only manufactured a throw
+		// for any org holding more than the cap.
+		const unfilteredNeedsNoWidening = isUnfilteredRead;
 		const needsWideScan =
 			createdBy !== undefined ||
 			updatedSince !== undefined ||
@@ -1562,9 +1567,51 @@ export const listPaginated = query({
 
 		type TaskRow = Doc<"tasks">;
 
+		// Org member: the tenant is the LEADING equality of the index, so a page
+		// holds the member's OWN rows. Paging a fleet-wide index and dropping
+		// foreign rows afterwards returned short or empty non-final pages (the
+		// board stalled on "load more") while own rows existed. Rows with no
+		// `orgId` never match `eq("orgId", slug)`: unstamped rows stay
+		// master-only. filterByOrgScope below still applies the roster narrowing.
+		const memberOrg =
+			!scope.isMaster && scope.orgSlug !== null ? scope.orgSlug : null;
+
 		// Select the most specific index available for the paginated scan.
 		let baseQuery;
-		if (args.assignedTo !== undefined && args.status !== undefined) {
+		if (memberOrg !== null) {
+			const assignedTo = args.assignedTo;
+			const status = args.status;
+			if (assignedTo !== undefined && status !== undefined) {
+				baseQuery = ctx.db
+					.query("tasks")
+					.withIndex("by_orgId_assignee_status", (q) =>
+						q
+							.eq("orgId", memberOrg)
+							.eq("assignedTo", assignedTo)
+							.eq("status", status),
+					)
+					.order("desc");
+			} else if (assignedTo !== undefined) {
+				baseQuery = ctx.db
+					.query("tasks")
+					.withIndex("by_orgId_assignee_status", (q) =>
+						q.eq("orgId", memberOrg).eq("assignedTo", assignedTo),
+					)
+					.order("desc");
+			} else if (status !== undefined) {
+				baseQuery = ctx.db
+					.query("tasks")
+					.withIndex("by_orgId_status", (q) =>
+						q.eq("orgId", memberOrg).eq("status", status),
+					)
+					.order("desc");
+			} else {
+				baseQuery = ctx.db
+					.query("tasks")
+					.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
+					.order("desc");
+			}
+		} else if (args.assignedTo !== undefined && args.status !== undefined) {
 			const assignedTo = args.assignedTo;
 			const status = args.status;
 			baseQuery = ctx.db
@@ -3190,7 +3237,44 @@ export const listByMission = query({
 
 		let allRows: TaskRow[];
 
-		if (statuses !== undefined && statuses.length === 1) {
+		// Org member: ORG-KEYED index, never the fleet-wide by_mission. The tenant
+		// is the leading equality, so another org's rows of this mission id are
+		// never fetched and the scan cap bounds the member's own mission. Rows
+		// with no `orgId` never match `eq("orgId", slug)`: unstamped rows stay
+		// master-only. One query per status bucket (newest-first because `status`
+		// is pinned), each bounded by the cursor inside the index range; merged
+		// by creation time below, so the page is the true newest `limit` of the
+		// status union.
+		const memberOrg = !scope.isMaster ? scope.orgSlug : null;
+		if (memberOrg !== null) {
+			const statusList: TaskStatus[] =
+				statuses !== undefined ? statuses : [...TASK_STATUSES];
+			const memberWide = createdBy !== undefined || updatedSince !== undefined;
+			const memberFetch = memberWide ? TASK_LIST_SCAN_CAP + 1 : limit;
+			const upper = before ?? Number.MAX_VALUE;
+			const buckets = await Promise.all(
+				statusList.map(
+					async (status) =>
+						await ctx.db
+							.query("tasks")
+							.withIndex("by_orgId_mission_status", (i) =>
+								i
+									.eq("orgId", memberOrg)
+									.eq("missionId", missionId)
+									.eq("status", status)
+									.lt("_creationTime", upper),
+							)
+							.order("desc")
+							.take(memberFetch),
+				),
+			);
+			if (memberWide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
+				throw new ConvexError(
+					`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
+				);
+			}
+			allRows = buckets.flat();
+		} else if (statuses !== undefined && statuses.length === 1) {
 			allRows = await ctx.db
 				.query("tasks")
 				.withIndex("by_mission", (q) => {
@@ -3216,7 +3300,7 @@ export const listByMission = query({
 		// fixed-size widened scan and "shrink the updatedSince window" would be
 		// a false remedy (narrowing the window doesn't change what got fetched).
 		// Left out of the message on purpose.
-		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+		if (memberOrg === null && needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
 			throw new ConvexError(
 				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
 			);

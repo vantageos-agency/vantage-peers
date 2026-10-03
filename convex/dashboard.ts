@@ -92,10 +92,20 @@ export const getDashboardSummary = query({
 		const orgSlug = scope.orgSlug;
 
 		// Tasks in progress — uses index, bounded
-		const inProgressTasksAll = await ctx.db
-			.query("tasks")
-			.withIndex("by_status", (q) => q.eq("status", "in_progress"))
-			.take(DASHBOARD_SCAN_CAP);
+		// Member: the tenant index is bound BEFORE the cap (a fleet-wide index
+		// capped first and dropped foreign rows after, undercounting the member).
+		const inProgressTasksAll =
+			scope.isMaster || orgSlug === null
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_status", (q) => q.eq("status", "in_progress"))
+						.take(DASHBOARD_SCAN_CAP)
+				: await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_status", (q) =>
+							q.eq("orgId", orgSlug).eq("status", "in_progress"),
+						)
+						.take(DASHBOARD_SCAN_CAP);
 		const inProgressTasks = filterByOrgScope(inProgressTasksAll, scope);
 
 		// Open mandates — fleet-internal, no tenant column: master only. A member
@@ -126,7 +136,14 @@ export const getDashboardSummary = query({
 
 		// Recent activity — fetch bounded slices of each entity
 		// Fetch more tasks before filtering so client-orgs still get 20 items.
-		const recentTasksAll = await ctx.db.query("tasks").order("desc").take(100);
+		const recentTasksAll =
+			scope.isMaster || orgSlug === null
+				? await ctx.db.query("tasks").order("desc").take(100)
+				: await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
+						.order("desc")
+						.take(100);
 		const recentTasks = filterByOrgScope(recentTasksAll, scope).slice(0, 20);
 		const recentMessages =
 			scope.isMaster || orgSlug === null
@@ -229,10 +246,22 @@ export const getProjectSummary = query({
 			requireScope(scope, "view-stats-aggregated");
 		}
 
-		const allTasks = await ctx.db.query("tasks").take(DASHBOARD_WIDE_SCAN_CAP);
-		const allMissions = await ctx.db
-			.query("missions")
-			.take(DASHBOARD_WIDE_SCAN_CAP);
+		// Member: tenant index bound BEFORE the cap, for tasks and missions alike.
+		const memberOrg = !scope.isMaster ? scope.orgSlug : null;
+		const allTasks =
+			memberOrg !== null
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
+						.take(DASHBOARD_WIDE_SCAN_CAP)
+				: await ctx.db.query("tasks").take(DASHBOARD_WIDE_SCAN_CAP);
+		const allMissions =
+			memberOrg !== null
+				? await ctx.db
+						.query("missions")
+						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
+						.take(DASHBOARD_WIDE_SCAN_CAP)
+				: await ctx.db.query("missions").take(DASHBOARD_WIDE_SCAN_CAP);
 		const tasks = filterByOrgScope(allTasks, scope);
 		const missions = filterByOrgScope(allMissions, scope);
 

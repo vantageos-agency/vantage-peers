@@ -180,6 +180,71 @@ describe("tasks.list — member of org A", () => {
 	});
 });
 
+describe("tasks.list — member cursor walk (Eta #1430 mutant C1)", () => {
+	// Own rows interleaved across two status buckets (each holding MORE than
+	// `limit` rows, else take(limit) swallows the bucket whole and hides the
+	// defect) and with foreign rows, so a bucket that loses its `.lt("_creationTime", before)` bound returns
+	// rows at/after the cursor, which the post-merge cursor filter then drops:
+	// page 2 comes back short or empty while older rows exist.
+	test.each([
+		["by_orgId_assignee_status", { assignedTo: "sigma" }],
+		["by_orgId_status", {}],
+		["by_orgId_project_status", { project: "p" }],
+		["by_orgId_assignee_project_status", { assignedTo: "sigma", project: "p" }],
+		["by_orgId_instance_status", { assignedToInstance: "i1" }],
+		["by_orgId_instance_project_status", { assignedToInstance: "i1", project: "p" }],
+	] as const)("a member walks 3x limit own rows across status buckets by createdBefore (%s): every row once, in order", async (_index, filter) => {
+		const LIMIT = 4;
+		const OWN = 3 * LIMIT;
+		const t = createT();
+		await seedOrgs(t);
+		const statuses = ["todo", "in_progress"] as const;
+		await t.run(async (ctx) => {
+			for (let i = 0; i < OWN; i++) {
+				const base = {
+					assignedTo: "sigma",
+					assignedToInstance: "i1",
+					project: "p",
+					priority: "medium",
+					createdBy: "sigma",
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				};
+				await ctx.db.insert("tasks", {
+					...base,
+					title: `own-${i}`,
+					status: statuses[i % 2],
+					orgId: FLEET,
+				} as never);
+				await ctx.db.insert("tasks", {
+					...base,
+					title: `foreign-${i}`,
+					status: statuses[i % 2],
+					orgId: OTHER,
+				} as never);
+			}
+		});
+		const m = asMember(t, FLEET);
+		const seen: string[] = [];
+		let cursor: number | undefined;
+		for (let page = 0; page < 6; page++) {
+			const rows = (await m.query(api.tasks.list, {
+				...filter,
+				status: [...statuses],
+				limit: LIMIT,
+				...(cursor !== undefined ? { createdBefore: cursor } : {}),
+			})) as Array<{ title: string; _creationTime: number }>;
+			if (rows.length === 0) break;
+			seen.push(...rows.map((r) => r.title));
+			cursor = rows[rows.length - 1]._creationTime;
+		}
+		// newest first == reverse insertion order
+		expect(seen).toEqual(
+			Array.from({ length: OWN }, (_, i) => `own-${OWN - 1 - i}`),
+		);
+	});
+});
+
 describe("missions.list / messages.listByChannel — member poles (already org-keyed, pinned)", () => {
 	test("missions: own stamped only", async () => {
 		const t = createT();

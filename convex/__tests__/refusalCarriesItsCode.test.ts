@@ -918,6 +918,116 @@ describe("refusal vs absence, ADJACENT — an ordinary member and a reader of an
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// diary:list — the four callers (task k17066vn8kh5v1a8xkgsx0bnxs8fjre5).
+//
+// A SUBSCRIBED list read (components/activity/unified-activity-feed.tsx:158,
+// components/diary/diary-feed.tsx:67; both read the result through `readList`,
+// dashboard @34f6d22). diary has no orgId column: the tenant key is the roster
+// (`allowedOrchestrators`), read through by_orchestrator_date.
+//
+//   anonymous          -> RAISES RBAC_DENIED naming diary:list
+//   signed in, no org  -> { refused: true, items: [] }
+//   org member         -> its OWN roster's rows, bounded; empty table = empty SUCCESS
+//   fleet master       -> the bare array
+// Every DENY pole is an ORDINARY caller; asMaster appears only in ALLOW poles.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const seedDiary = (
+	t: T,
+	orchestrator: string,
+	date = "2026-10-01",
+	content = `entry of ${orchestrator}`,
+) =>
+	t.run(async (ctx) => {
+		await ctx.db.insert("diary", {
+			date,
+			orchestrator,
+			content,
+			createdAt: now(),
+		});
+	});
+
+describe("diary:list — four callers", () => {
+	test("REFUSED — an anonymous caller is RAISED at, carrying RBAC_DENIED and naming diary:list (table SEEDED)", async () => {
+		const t = createT();
+		await seedDiary(t, "sigma");
+
+		await expectRefusalCarryingItsCode(
+			() => t.query(api.diary.list, {}),
+			"diary:list",
+		);
+	});
+
+	test("ABSENT — a scoped member reading an EMPTY table gets an empty SUCCESS, not a refusal", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-a", ["sigma"]);
+
+		const r = await asOrgMember(t, "org-a").query(api.diary.list, {});
+		expect(r).toEqual([]);
+		expect((r as { refused?: unknown }).refused).toBeUndefined();
+	});
+
+	test("PRESENT — a member is served its own roster's rows, and another org's rows are ABSENT", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-a", ["sigma"]);
+		await seedDiary(t, "sigma", "2026-10-01", "own entry");
+		await seedDiary(t, "dummy-b", "2026-10-02", "other org entry");
+
+		const r = await asOrgMember(t, "org-a").query(api.diary.list, {});
+		if (!Array.isArray(r)) throw new Error("a member must be served an array");
+		expect(r.map((e) => e.content)).toEqual(["own entry"]);
+	});
+
+	test("BOUNDED — another org's newer volume cannot starve or leak into a member's page (no table-before-roster read)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-a", ["sigma"]);
+		await seedDiary(t, "sigma", "2026-10-01", "own entry");
+		for (let i = 0; i < 5; i++) {
+			await seedDiary(t, "dummy-b", `2026-10-0${i + 2}`, `foreign ${i}`);
+		}
+
+		const r = await asOrgMember(t, "org-a").query(api.diary.list, {
+			limit: 2,
+		});
+		if (!Array.isArray(r)) throw new Error("a member must be served an array");
+		expect(r.map((e) => e.content)).toEqual(["own entry"]);
+	});
+
+	test("an out-of-roster `orchestrator` argument returns nothing of that orchestrator", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-a", ["sigma"]);
+		await seedDiary(t, "dummy-b");
+
+		expect(
+			await asOrgMember(t, "org-a").query(api.diary.list, {
+				orchestrator: "dummy-b",
+			}),
+		).toEqual([]);
+	});
+
+	test("R-50 NARROWED — a signed-in caller with NO organisation gets the typed envelope, never a throw, never the bytes of an absence (consumers read via readList)", async () => {
+		const t = createT();
+		await seedDiary(t, "sigma");
+
+		const refused = await asNoOrg(t).query(api.diary.list, {});
+		expect(refused).toEqual({ refused: true, items: [] });
+
+		const absent = await asMaster(createT()).query(api.diary.list, {});
+		expect(JSON.stringify(refused)).not.toBe(JSON.stringify(absent));
+	});
+
+	test("the fleet master is served the bare array (rows), and a bare [] with no refused key on an empty table", async () => {
+		const t = createT();
+		await seedDiary(t, "sigma");
+		const rows = await asMaster(t).query(api.diary.list, {});
+		expect(Array.isArray(rows) && rows.length === 1).toBe(true);
+
+		const absent = await asMaster(createT()).query(api.diary.list, {});
+		expect(JSON.stringify(absent)).toBe("[]");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE SWEEP — derived from the EXPOSED SURFACE, not from the table above.
 //
 // The table above can go stale; this cannot. It walks every public query

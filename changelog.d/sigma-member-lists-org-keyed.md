@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **An org member's task lists, board, mission read and dashboard aggregates are served from org-keyed indexes.** `tasks.listPaginated`, `tasks.listByMission`, `stats.orchestratorStats`, `dashboard.getDashboardSummary` and `dashboard.getProjectSummary` paged or capped a fleet-wide index and dropped foreign rows afterwards, so a member saw short or empty pages, undercounts and `SCAN_CAP_EXCEEDED`. The tenant is now the leading equality of the index (new additive index `tasks.by_orgId_mission_status`); roster narrowing and unstamped-rows-master-only are unchanged. The unfiltered `tasks.list {}` member read no longer throws `SCAN_CAP_EXCEEDED` for an org holding more than 2000 rows. Pinned by `convex/__tests__/memberListsOrgKeyed.test.ts` (including a roster pole per path) and a cursor-walk pole in `memberReadsOrgKeyed.test.ts`.
