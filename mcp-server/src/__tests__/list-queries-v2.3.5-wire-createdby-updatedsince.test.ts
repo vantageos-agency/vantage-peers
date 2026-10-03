@@ -18,7 +18,7 @@
  * Predecessor v2.3.3 PR #539 (k1796s5j6jfkvkx0tn5n926ftd87jx9p).
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
 import { registerTools } from "../tools.js";

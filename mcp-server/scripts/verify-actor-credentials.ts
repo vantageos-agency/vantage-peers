@@ -608,11 +608,9 @@ async function main(): Promise<number> {
 			}
 		}
 
-		const { Client } = await import(
-			"@modelcontextprotocol/sdk/client/index.js"
-		);
+		const { Client } = await import("@modelcontextprotocol/client");
 		const { StreamableHTTPClientTransport } = await import(
-			"@modelcontextprotocol/sdk/client/streamableHttp.js"
+			"@modelcontextprotocol/client"
 		);
 		const connect: Connect = async (agentCredential) => {
 			const headers: Record<string, string> = {

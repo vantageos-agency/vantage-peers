@@ -19,7 +19,7 @@
  * computed by the SAME function the wrapper uses (actingNameKeys).
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import type { OAuthContext } from "../src/auth.js";

@@ -11,7 +11,7 @@
  * touched: no header -> served under the existing org-scoped rules.
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -149,8 +149,7 @@ afterEach(() => {
 describe("master bearer is strict for acting names, whatever the env mode", () => {
 	for (const mode of [undefined, "permissive", "strict"]) {
 		it(`REFUSED: master bearer + acting name + NO header (mode=${mode ?? "unset"}), coded, names the header, nothing dispatched`, async () => {
-			if (mode !== undefined)
-				vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", mode);
+			if (mode !== undefined) vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", mode);
 			const { convex, mutations } = buildConvex();
 			const { status, json } = await post(buildApp(convex), "complete_task", {
 				bearer: MASTER,

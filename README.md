@@ -821,7 +821,7 @@ You have access to VantagePeers via MCP tools.
 
 - **Convex** — real-time database, serverless functions, vector search
 - **@convex-dev/rag** — embedding generation, indexing, hybrid search
-- **@modelcontextprotocol/sdk** — MCP server runtime
+- **@modelcontextprotocol/server** 2.x — MCP server runtime; serves protocol 2026-07-28 (`server/discover`) and the 2025 era (`initialize`) from one entry
 - **OpenAI `text-embedding-3-small`** — 1536-dim embeddings via AI Gateway or direct OpenAI
 - **TypeScript** — end-to-end, both server and Convex functions
 - **Bun** — TypeScript runtime for the MCP server

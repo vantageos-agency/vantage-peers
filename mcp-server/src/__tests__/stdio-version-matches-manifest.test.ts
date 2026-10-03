@@ -30,7 +30,7 @@ vi.mock("convex/browser", () => {
 	return { ConvexHttpClient: FakeConvexHttpClient };
 });
 
-vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
+vi.mock("@modelcontextprotocol/server", () => ({
 	McpServer: class {
 		constructor(options: { version?: string }) {
 			capturedOptions.current = options;
@@ -39,8 +39,13 @@ vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
 	},
 }));
 
-vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
-	StdioServerTransport: class {},
+// serveStdio builds the pinned instance when a client opens the connection;
+// the stub opens one immediately so server.ts's factory runs at import.
+vi.mock("@modelcontextprotocol/server/stdio", () => ({
+	serveStdio: (factory: (ctx: { era: "legacy" | "modern" }) => unknown) => {
+		factory({ era: "legacy" });
+		return { close: async () => {} };
+	},
 }));
 
 vi.mock("../tools.js", () => ({

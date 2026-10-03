@@ -14,7 +14,7 @@
  * annotations?, handler). `scope` (3rd arg) is required by the type.
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";

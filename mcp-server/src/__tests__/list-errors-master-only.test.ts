@@ -20,7 +20,7 @@
  * tool is disqualified from being read as "denied".
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
 import type { OAuthContext } from "../auth.js";

@@ -19,7 +19,7 @@
  *   server.tool(name, description, paramsSchema, annotations, cb)
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
 import { registerTools } from "../tools.js";

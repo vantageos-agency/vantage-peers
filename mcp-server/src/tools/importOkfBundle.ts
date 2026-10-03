@@ -31,8 +31,8 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-20
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
@@ -120,14 +120,14 @@ export function registerImportOkfBundle(
 					],
 				};
 			} catch (error: unknown) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[import_okf_bundle] action failed", {
 					targetNamespace,
 					mode,
 					errorMessage: message,
 				});
-				throw new McpError(ErrorCode.InternalError, message);
+				throw new ProtocolError(ProtocolErrorCode.InternalError, message);
 			}
 		},
 	);

@@ -20,11 +20,11 @@
 // the mock convex client returns the real object shape (not an array).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import { registerTools } from "../tools.js";
 import type { OAuthContext } from "../auth.js";
+import { registerTools } from "../tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
 	content: Array<{ type: string; text: string }>;
@@ -78,7 +78,9 @@ const REAL_STATUS_OBJECT = {
 	truncated: false,
 };
 
-function buildMockConvex(response: unknown = REAL_STATUS_OBJECT): ConvexHttpClient {
+function buildMockConvex(
+	response: unknown = REAL_STATUS_OBJECT,
+): ConvexHttpClient {
 	return {
 		query: vi.fn().mockResolvedValue(response),
 		mutation: vi.fn().mockResolvedValue(null),

@@ -6,9 +6,8 @@
  * validates `structuredContent` against the declared outputSchema.
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools, whoamiOutputSchema } from "../src/tools.js";
@@ -56,7 +55,10 @@ async function callWhoami(oauthCtx: OAuthContext) {
 	return { tools: tools.tools, res };
 }
 
-const saved = { w: process.env.WHOAMI_ID_SECRET, b: process.env.BEARER_SECRET_MASTER };
+const saved = {
+	w: process.env.WHOAMI_ID_SECRET,
+	b: process.env.BEARER_SECRET_MASTER,
+};
 beforeEach(() => {
 	process.env.WHOAMI_ID_SECRET = SECRET;
 });
@@ -141,7 +143,9 @@ describe("whoami opaque id: stable, distinct, never the raw id", () => {
 	});
 
 	it("a different server secret -> a different id (HMAC, not a bare hash)", () => {
-		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "1".repeat(32) })).not.toBe(
+		expect(
+			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "1".repeat(32) }),
+		).not.toBe(
 			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "2".repeat(32) }),
 		);
 	});
@@ -160,7 +164,9 @@ describe("whoami opaque id: stable, distinct, never the raw id", () => {
 		expect(a).toMatch(/^vpu_[0-9a-f]{32}$/);
 		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: ok })).toBe(a);
 		const short = "s".repeat(MIN_WHOAMI_SECRET_LENGTH - 1);
-		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: short })).toBeNull();
+		expect(
+			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: short }),
+		).toBeNull();
 		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "" })).toBeNull();
 		expect(deriveOpaqueCallerId(ctx({}), {})).toBeNull();
 	});
@@ -200,7 +206,13 @@ describe("whoami never returns a secret", () => {
 			expect(all).not.toContain(secret);
 		}
 		const keys = Object.keys(res.structuredContent as object);
-		for (const forbidden of ["clerkJwt", "accessTokenHash", "token", "secret", "userId"]) {
+		for (const forbidden of [
+			"clerkJwt",
+			"accessTokenHash",
+			"token",
+			"secret",
+			"userId",
+		]) {
 			expect(keys).not.toContain(forbidden);
 		}
 	});
