@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import { resolveHumanRowActor } from "./lib/rowHumanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -328,6 +329,21 @@ export const deleteDiary = mutation({
 
 		const entry = await ctx.db.get(args.diaryId);
 		if (!entry) throw new Error("Diary entry not found");
+
+		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard
+			// org:admin deletes an entry of its OWN organisation. diary has no org
+			// column, so the tenant key is the roster, the same key diary:list reads
+			// by: the entry's `orchestrator` must be on the caller's roster.
+			await resolveHumanRowActor(ctx, scope, {
+				door: "diary:deleteDiary",
+				subject: `diary entry ${args.diaryId}`,
+				tenant: { kind: "roster", owner: entry.orchestrator },
+				adminOnly: true,
+			});
+			await ctx.db.delete(args.diaryId);
+			return { deleted: true };
+		}
 
 		if (!isOrchestratorAllowedForScope(scope, entry.orchestrator)) {
 			throw new ConvexError(

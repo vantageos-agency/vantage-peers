@@ -1,18 +1,21 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, internalMutation } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
+	type OrgScope,
 	requireResolvedCaller,
 	withOrgScope,
 	requireOrchestratorOnRoster,
 } from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
+import { resolveHumanRowActor } from "./lib/rowHumanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -182,7 +185,9 @@ export const create = mutation({
 		project: v.optional(v.string()),
 		tags: v.optional(v.array(v.string())),
 		cronExpression: v.string(),
-		createdBy: creatorValidator,
+		// OPTIONAL: omitting it is the HUMAN path (a dashboard org member creating a
+		// schedule in its own name, recorded "user:<Clerk subject>").
+		createdBy: v.optional(creatorValidator),
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
@@ -196,6 +201,18 @@ export const create = mutation({
 		const scope = await requireAuthenticatedCaller(ctx, args.createdBy, undefined);
 		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
 
+		// HUMAN path: the schedule is authored as "user:<subject>" (a colon-prefixed
+		// value no roster slug can equal, so it grants no creator authority to any
+		// agent). processDueTasks copies it to the generated tasks' createdBy and
+		// inherits the org stamp below, so the materialised task stays in this org.
+		const createdBy =
+			args.createdBy !== undefined
+				? args.createdBy
+				: await resolveHumanRowActor(ctx, scope, {
+						door: "recurringTasks:create",
+						subject: "recurring task",
+						tenant: { kind: "create" },
+					});
 
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
@@ -211,7 +228,7 @@ export const create = mutation({
 			lastCreatedAt: undefined,
 			nextRunAt,
 			active: true,
-			createdBy: args.createdBy,
+			createdBy,
 			// TENANT of the schedule, from the scope resolved above — never an
 			// argument. Every task this schedule later generates inherits it.
 			orgId: scope.isMaster ? undefined : (scope.orgSlug ?? undefined),
@@ -400,6 +417,29 @@ export const update = mutation({
 	},
 });
 
+// authorizeHumanScheduleAct — the HUMAN path shared by pause / resume / remove
+// (task k17d5k5bw741p3681bc0pq76ah8fk4sn). These three used to be master-only
+// (cron infrastructure); a dashboard org member now acts on a schedule stamped
+// with its OWN org, in its own name, writer role from memberWriterRoles, and
+// org:admin for the destructive remove. A non-master with no organisation, or a
+// token with no writer role claim, is refused with the same RBAC_DENIED code.
+async function authorizeHumanScheduleAct(
+	ctx: MutationCtx,
+	scope: OrgScope,
+	taskId: Id<"recurringTasks">,
+	door: string,
+	opts?: { adminOnly?: boolean },
+): Promise<void> {
+	const row = await ctx.db.get(taskId);
+	if (!row) throw new Error("Recurring task not found");
+	await resolveHumanRowActor(ctx, scope, {
+		door,
+		subject: `recurring task ${taskId}`,
+		tenant: { kind: "stamp", row },
+		adminOnly: opts?.adminOnly,
+	});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // pause — set active=false
 // ─────────────────────────────────────────────────────────────────────────────
@@ -415,11 +455,6 @@ export const pause = mutation({
 		// (.claude/rules/http-boundary-derives-from-principal.md: "a guard in
 		// the MCP server is NOT a defence").
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: pause_recurring_task is a master-only cron-infrastructure operation",
-			);
-		}
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -427,6 +462,11 @@ export const pause = mutation({
 			"taskId",
 			RECURRING_TASK_ID_HINT,
 		);
+		if (!scope.isMaster) {
+			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard org
+			// member with a writer role, on a schedule stamped with its OWN org.
+			await authorizeHumanScheduleAct(ctx, scope, taskId, "recurringTasks:pause");
+		}
 		await ctx.db.patch(taskId, { active: false, updatedAt: Date.now() });
 		return { taskId, active: false };
 	},
@@ -447,11 +487,6 @@ export const resume = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:resume", …) at mcp-server/src/tools.ts:6836 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only — see pause's identical rationale above.
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: resume_recurring_task is a master-only cron-infrastructure operation",
-			);
-		}
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -459,6 +494,9 @@ export const resume = mutation({
 			"taskId",
 			RECURRING_TASK_ID_HINT,
 		);
+		if (!scope.isMaster) {
+			await authorizeHumanScheduleAct(ctx, scope, taskId, "recurringTasks:resume");
+		}
 		const task = await ctx.db.get(taskId);
 		if (!task) throw new Error("Recurring task not found");
 
@@ -483,11 +521,6 @@ export const remove = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:remove", …) at mcp-server/src/tools.ts:6873 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only — see pause's identical rationale above.
 		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: delete_recurring_task is a master-only cron-infrastructure operation",
-			);
-		}
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -495,6 +528,12 @@ export const remove = mutation({
 			"taskId",
 			RECURRING_TASK_ID_HINT,
 		);
+		if (!scope.isMaster) {
+			// Destructive: org:admin only.
+			await authorizeHumanScheduleAct(ctx, scope, taskId, "recurringTasks:remove", {
+				adminOnly: true,
+			});
+		}
 		await ctx.db.delete(taskId);
 		return { deleted: true };
 	},

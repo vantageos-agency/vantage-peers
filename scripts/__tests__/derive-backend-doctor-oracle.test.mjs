@@ -244,7 +244,7 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 				r.rbac_coherence_table.startsWith("INCOHERENT"),
 			);
 			expect(incoherent.map((r) => r.table)).toEqual(
-				expect.arrayContaining(["businessUnits", "profiles"]),
+				expect.arrayContaining(["profiles"]),
 			);
 			for (const r of incoherent)
 				expect(r.rbac_adjustment_needed, r.outil).toMatch(/^JUSTIFIED: \S/);
@@ -328,17 +328,18 @@ const WRITE_VERBS = new Set([
 	"BULK-WRITE",
 ]);
 const BU_DOOR_GATE =
-	"\t\tconst scope = await withOrgScope(ctx);\n\t\tif (!scope.isMaster) {\n\t\t\tthrow new ConvexError(\n\t\t\t\t`RBAC_DENIED: business unit deletion";
+	"\t\tconst scope = await withOrgScope(ctx);\n\t\tif (!scope.isMaster) {\n\t\t\tthrow new ConvexError(\n\t\t\t\t\"RBAC_DENIED: soft-deleting a mission template";
 const BU_DOOR_REST =
-	"\n\t\t\tthrow new ConvexError(\n\t\t\t\t`RBAC_DENIED: business unit deletion";
-const MASTER_TOOL_SCOPE = '\t\t{ kind: "master" },\n\t\t"delete_bu",';
+	"\n\t\t\tthrow new ConvexError(\n\t\t\t\t\"RBAC_DENIED: soft-deleting a mission template";
+const MASTER_TOOL_SCOPE = '\t\t{ kind: "master" },\n\t\t"soft_delete_mission_template",';
 
-/** delete_bu's writer tier after rewriting its Convex door's gate. */
-function deleteBuWriter(gateLines, { mcp = false } = {}) {
+/** soft_delete_mission_template's writer tier after rewriting its Convex door's gate
+ * (the fixture door: master-only at its Convex door, 1:1 with a master-scope tool). */
+function softDeleteWriter(gateLines, { mcp = false } = {}) {
 	const root = copyTree();
 	mutate(
 		root,
-		"convex/businessUnits.ts",
+		"convex/missionTemplates.ts",
 		BU_DOOR_GATE,
 		`${gateLines}${BU_DOOR_REST}`,
 	);
@@ -347,13 +348,13 @@ function deleteBuWriter(gateLines, { mcp = false } = {}) {
 			root,
 			"mcp-server/src/tools.ts",
 			MASTER_TOOL_SCOPE,
-			'\t\t{ kind: "public", reason: "test" },\n\t\t"delete_bu",',
+			'\t\t{ kind: "public", reason: "test" },\n\t\t"soft_delete_mission_template",',
 		);
 	const r = derive(root);
 	expect(r.status, r.stderr).toBe(0);
 	return {
 		root,
-		row: rowsOf(writerOut(root)).find((x) => x.outil === "delete_bu"),
+		row: rowsOf(writerOut(root)).find((x) => x.outil === "soft_delete_mission_template"),
 	};
 }
 
@@ -361,9 +362,15 @@ function deleteBuWriter(gateLines, { mcp = false } = {}) {
  * that mislabels any of them is red here. */
 function assertWriterTiers(rows) {
 	const tier = (name) => rows.find((x) => x.outil === name);
-	expect(tier("delete_bu")).toMatchObject({
+	expect(tier("soft_delete_mission_template")).toMatchObject({
 		writer_tier: "master",
 		writer_gate: "masterOnly",
+	});
+	// A door that serves a human org:admin of its own org (Admin CRUD B2) is an
+	// org-member door at the Convex layer, whatever its MCP scope.
+	expect(tier("delete_bu")).toMatchObject({
+		writer_tier: "org-member",
+		writer_gate: "orgResolver",
 	});
 	expect(tier("update_profile")).toMatchObject({
 		writer_tier: "master",
@@ -413,8 +420,8 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			writeFileSync(
 				writerOut(root),
 				readFileSync(writerOut(root), "utf8").replace(
-					"delete_bu,businessUnits,DELETE,master",
-					"delete_bu,businessUnits,DELETE,org-member",
+					"soft_delete_mission_template,missionTemplates,UPDATE,master",
+					"soft_delete_mission_template,missionTemplates,UPDATE,org-member",
 				),
 			);
 			const r = derive(root, "--check");
@@ -430,7 +437,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		"TIER master — the unmodified door (`if (!scope.isMaster)` refusal)",
 		() => {
 			expect(
-				rowsOf(COMMITTED_WRITER_CSV).find((x) => x.outil === "delete_bu"),
+				rowsOf(COMMITTED_WRITER_CSV).find((x) => x.outil === "soft_delete_mission_template"),
 			).toMatchObject({ writer_tier: "master", writer_gate: "masterOnly" });
 		},
 		TIMEOUT,
@@ -438,7 +445,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER org-member — the same door with its master refusal removed",
 		() => {
-			const { row } = deleteBuWriter(OPEN_MASTER_GATE);
+			const { row } = softDeleteWriter(OPEN_MASTER_GATE);
 			expect(row).toMatchObject({
 				writer_tier: "org-member",
 				writer_gate: "orgResolver",
@@ -449,7 +456,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER org-admin — the same door gated by requireOrgAdmin",
 		() => {
-			const { row } = deleteBuWriter(
+			const { row } = softDeleteWriter(
 				OPEN_MASTER_GATE.replace(
 					"\n",
 					'\n\t\tawait requireOrgAdmin(ctx, "acme");\n',
@@ -465,10 +472,10 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER fleet-internal — the same door gated by requireResolvedCaller({ mcpBoundOnly: true })",
 		() => {
-			const { row } = deleteBuWriter(
+			const { row } = softDeleteWriter(
 				OPEN_MASTER_GATE.replace(
 					"\n",
-					'\n\t\trequireResolvedCaller(scope, "businessUnits:remove", { mcpBoundOnly: true });\n',
+					'\n\t\trequireResolvedCaller(scope, "missionTemplates:softDelete", { mcpBoundOnly: true });\n',
 				),
 			);
 			expect(row).toMatchObject({
@@ -481,7 +488,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER public — no Convex gate and a public MCP scope",
 		() => {
-			const { row } = deleteBuWriter(
+			const { row } = softDeleteWriter(
 				"\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tif (scope.isMaster === undefined) {",
 				{ mcp: true },
 			);
@@ -495,7 +502,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"FALLBACK — no Convex gate keeps the MCP-scope tier (master scope -> fleet-internal)",
 		() => {
-			const { row } = deleteBuWriter(
+			const { row } = softDeleteWriter(
 				"\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tif (scope.isMaster === undefined) {",
 			);
 			expect(row).toMatchObject({
@@ -527,7 +534,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			});
 			expect(r.status, r.stderr).toBe(0);
 			const mutated = rowsOf(writerOut(root));
-			expect(mutated.find((x) => x.outil === "delete_bu").writer_tier).toBe(
+			expect(mutated.find((x) => x.outil === "soft_delete_mission_template").writer_tier).toBe(
 				"org-member",
 			);
 			// the pole that passes on the real derivation fails on the mutant
