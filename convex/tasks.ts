@@ -2093,6 +2093,7 @@ export const complete = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: a user-initiated click, never a render-time call, and unreachable pre-org — issued by (a) the dashboard components/tasks/task-detail-sheet.tsx:124 (useMutation(api.tasks.complete), called only inside the handleComplete click handler, try/finally with no catch), reachable only from the task board behind clerkMiddleware + lib/auth/dashboardGate.ts, which admits a session only on a served NON-EMPTY orgRoster so a signed-in no-organisation shell never mounts it; and (b) the imperative MCP client.mutation("tasks:complete") at mcp-server/src/tools.ts:4733. Measured 2026-10-03: `grep -rnE "api\.tasks\.(start|complete)\b" --include=*.ts --include=*.tsx .` in a fresh clone of elpiarthera/vantage-peers-dashboard at origin/main 34f6d22 -> task-detail-sheet.tsx:99,100 only. The AUTH_REQUIRED / org throw is the R-16 coded refusal of an unauthorised write at a click, never a render crash.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
@@ -2494,6 +2495,7 @@ export const start = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// write-contract: a user-initiated click, never a render-time call, and unreachable pre-org — issued by (a) the dashboard components/tasks/task-detail-sheet.tsx:113 (useMutation(api.tasks.start), called only inside the handleStart click handler, try/finally with no catch), reachable only from the task board behind clerkMiddleware + lib/auth/dashboardGate.ts, which admits a session only on a served NON-EMPTY orgRoster so a signed-in no-organisation shell never mounts it; and (b) the imperative MCP client.mutation("tasks:start") at mcp-server/src/tools.ts:4843. Measured 2026-10-03: `grep -rnE "api\.tasks\.(start|complete)\b" --include=*.ts --include=*.tsx .` in a fresh clone of elpiarthera/vantage-peers-dashboard at origin/main 34f6d22 -> task-detail-sheet.tsx:99,100 only. The AUTH_REQUIRED / org throw is the R-16 coded refusal of an unauthorised write at a click, never a render crash.
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
