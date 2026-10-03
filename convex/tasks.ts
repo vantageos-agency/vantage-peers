@@ -1020,6 +1020,13 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				? !unfilteredNeedsNoWidening
 				: statuses.length > 1);
 		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
+		// Non-master caller with a resolved org and a filtered read: served from
+		// the org-keyed indexes (see the member branch below). The unfiltered
+		// member read keeps its own by_orgId branch at the end of the chain.
+		const memberOrg =
+			!scope.isMaster && scope.orgSlug !== null && !isUnfilteredRead
+				? scope.orgSlug
+				: null;
 
 		// Preferred fix (Pi): push the cursor bound into the index RANGE
 		// instead of filtering in-memory. Every Convex index implicitly ends
@@ -1066,9 +1073,112 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			);
 		}
 
+		// ── Org member: ORG-KEYED index, never the fleet-wide one ───────────────
+		// The branches below read fleet-wide indexes (by_assignee, by_project, …)
+		// that carry NO tenant field, and `filterByOrgScope` drops foreign rows
+		// only AFTER the fetch. For a member that meant the widened scan
+		// (multi-status / no-status / createdBy / updatedSince) read the FLEET's
+		// rows for that assignee, hit TASK_LIST_SCAN_CAP, and threw
+		// SCAN_CAP_EXCEEDED although the member's own org held a handful of
+		// rows (measured on prod: tasks:list {assignedTo:"sigma", limit:5}).
+		// Here the tenant is the leading equality of the index, so the cap
+		// bounds the member's own org. Rows with no `orgId` never match
+		// `eq("orgId", slug)`: unstamped rows stay master-only (same verdict as
+		// filterByOrgScope's tenant gate). One query per status bucket (each
+		// newest-first because `status` is pinned), merged by creation time
+		// below, so the page is the true newest `limit` of the status union.
+		if (memberOrg !== null) {
+			const statusList: TaskStatus[] =
+				statuses !== undefined ? statuses : [...TASK_STATUSES];
+			const memberWide = createdBy !== undefined || updatedSince !== undefined;
+			const memberFetch = memberWide ? TASK_LIST_SCAN_CAP + 1 : limit;
+			const upper = before ?? Number.MAX_VALUE;
+			const buckets = await Promise.all(
+				statusList.map(async (status) => {
+					const q = ctx.db.query("tasks");
+					if (assignedToInstance !== undefined && project !== undefined) {
+						return await q
+							.withIndex("by_orgId_instance_project_status", (i) =>
+								i
+									.eq("orgId", memberOrg)
+									.eq("assignedToInstance", assignedToInstance)
+									.eq("project", project)
+									.eq("status", status)
+									.lt("_creationTime", upper),
+							)
+							.order("desc")
+							.take(memberFetch);
+					}
+					if (assignedToInstance !== undefined) {
+						return await q
+							.withIndex("by_orgId_instance_status", (i) =>
+								i
+									.eq("orgId", memberOrg)
+									.eq("assignedToInstance", assignedToInstance)
+									.eq("status", status)
+									.lt("_creationTime", upper),
+							)
+							.order("desc")
+							.take(memberFetch);
+					}
+					if (assignedTo !== undefined && project !== undefined) {
+						return await q
+							.withIndex("by_orgId_assignee_project_status", (i) =>
+								i
+									.eq("orgId", memberOrg)
+									.eq("assignedTo", assignedTo)
+									.eq("project", project)
+									.eq("status", status)
+									.lt("_creationTime", upper),
+							)
+							.order("desc")
+							.take(memberFetch);
+					}
+					if (assignedTo !== undefined) {
+						return await q
+							.withIndex("by_orgId_assignee_status", (i) =>
+								i
+									.eq("orgId", memberOrg)
+									.eq("assignedTo", assignedTo)
+									.eq("status", status)
+									.lt("_creationTime", upper),
+							)
+							.order("desc")
+							.take(memberFetch);
+					}
+					if (project !== undefined) {
+						return await q
+							.withIndex("by_orgId_project_status", (i) =>
+								i
+									.eq("orgId", memberOrg)
+									.eq("project", project)
+									.eq("status", status)
+									.lt("_creationTime", upper),
+							)
+							.order("desc")
+							.take(memberFetch);
+					}
+					return await q
+						.withIndex("by_orgId_status", (i) =>
+							i
+								.eq("orgId", memberOrg)
+								.eq("status", status)
+								.lt("_creationTime", upper),
+						)
+						.order("desc")
+						.take(memberFetch);
+				}),
+			);
+			if (memberWide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
+				throw new ConvexError(
+					`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status.`,
+				);
+			}
+			allRows = buckets.flat();
+		}
 		// Filter by instance + project together — matching compound index,
 		// so BOTH filters are applied, never one silently dropped.
-		if (assignedToInstance !== undefined && project !== undefined) {
+		else if (assignedToInstance !== undefined && project !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
 				allRows = await ctx.db
 					.query("tasks")
@@ -1259,7 +1369,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// Refuse to return a silently-incomplete page: if the widened scan
 		// itself hit its cap, there may be matching rows we never looked at.
 		// "I couldn't measure" must never render identically to "complete".
-		if (needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+		if (memberOrg === null && needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
 			// "shrink the updatedSince window" is only offered when it can
 			// actually change the candidate count: on the assignedTo (+status)
 			// branch the bound is now pushed into the index, so narrowing the
