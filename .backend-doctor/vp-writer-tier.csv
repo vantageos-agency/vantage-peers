@@ -18,7 +18,7 @@ add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:add
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
 validate_fix,fixPatterns,UPDATE,master,masterOnly,fixPatterns:validate=masterOnly
-complete_task,fixPatterns+githubRepoMapping+issues+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
+complete_task,fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 add_repo_mapping,githubRepoMapping,UPSERT,master,masterOnly,githubRepoMapping:add=masterOnly
 remove_repo_mapping,githubRepoMapping,DELETE,master,masterOnly,githubRepoMapping:remove=masterOnly
 link_commit_to_issue,issues,UPDATE,master,masterOnly,issues:linkCommit=masterOnly
@@ -28,13 +28,14 @@ accept_mandate,mandates,TRANSITION,master,masterOnly,mandates:accept=masterOnly
 create_mandate,mandates,CREATE,master,masterOnly,mandates:create=masterOnly
 settle_mandate,mandates,TRANSITION,master,masterOnly,mandates:settle=masterOnly
 update_mandate,mandates+tasks,UPDATE,master,masterOnly,mandates:update=masterOnly
+block_task,memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
+start_task,memberWriterRoles+tasks,UPDATE,org-member,orgResolver,tasks:start=orgResolver
 soft_delete_document,memories,UPDATE,org-member,orgResolver,kb:softDeleteDocument=orgResolver
 store_episode,memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
 store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
 mark_as_read,messageReceipts,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
 delete_message,messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
 add_task_dependency,messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
-block_task,messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
 fail_task,messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
 create_mission,missions,CREATE,org-member,orgResolver,missions:create=orgResolver
 update_mission,missions,UPDATE,org-member,orgResolver,missions:update=orgResolver
@@ -52,4 +53,3 @@ checkout_task,tasks,TRANSITION,org-member,orgResolver,tasks:checkout=orgResolver
 delete_task,tasks,DELETE,org-member,orgResolver,tasks:deleteTask=orgResolver
 pause_task,tasks,TRANSITION,org-member,orgResolver,tasks:pause=orgResolver
 resume_task,tasks,TRANSITION,org-member,orgResolver,tasks:resume=orgResolver
-start_task,tasks,UPDATE,org-member,orgResolver,tasks:start=orgResolver
