@@ -174,7 +174,7 @@ const scopeProfileShape = v.object({
 // Rows present in the DB but NOT in the catalog (operator-created profiles,
 // post-D9 rename survivors) are PRESERVED — this seed mutation is never
 // destructive. This obsoletes the bespoke catalog-drift migration pattern
-// shown in `convex/migrations/patch_marie_iris_rh_scope.ts`.
+// that used to be needed for catalog edits.
 //
 // Return shape: `{ inserted, updated, skipped }` arrays of profileId strings.
 // The service account preserves the full-access semantics of the former master path.
@@ -194,16 +194,11 @@ export const seedDefaultProfiles = mutation({
 			"oauth:seedDefaultProfiles",
 		);
 
-		// SCOPE NOTICE (PR #1120): `profileId` / `fromAllowList` /
-		// `namespaceReadPrefixes` / `namespaceWritePrefixes` below carry the
-		// client slug in CLEARTEXT in this PUBLIC repo, on purpose -- they
-		// are the blocking authorization control, not decoration.
-		// `scripts/source_prose_identity_guard.py` is GREEN on this file's
-		// PROSE (comments/description) but never scans these arrays (class 2
-		// of its declared scope, by construction) -- a green guard here does
-		// NOT mean this file is clean of client identity; these arrays still
-		// spell it in cleartext. Open, tracked to close by moving these
-		// profiles from CODE to DATA: k170xwqveg15kzrqwvfq5ynqd58b263s.
+		// Only GENERIC profiles live in code (full-admin, deny-by-default
+		// template, anonymous read-only). Client-specific profiles are DATA rows
+		// in `oauth_scope_profiles`, written by an operator migration
+		// (`migrations/seed_client_scope_profiles`) or `upsertScopeProfile`, and
+		// are preserved by this seed (it never touches rows outside this list).
 		const defaults = [
 			{
 				profileId: "master",
@@ -211,104 +206,6 @@ export const seedDefaultProfiles = mutation({
 				fromAllowList: ["*"],
 				namespaceReadPrefixes: ["*"],
 				namespaceWritePrefixes: ["*"],
-			},
-			{
-				profileId: "marie-iris-rh",
-				description:
-					"Marie (the onboarding client) — send_message as 'marie' only; read/write bounded to her own organisation's namespaces: orchestrator/marie + orchestrator/victor (her own second orchestrator seat) + project/marie. Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7, reworked per operator countermand): removed only the fleet-common `global` prefix — VantagePeers is sold multi-organisation and a client profile must never read/write the shared global namespace. `orchestrator/victor` is KEPT — it is this same client's own orchestrator seat, not another org's namespace, and removing it would have cut the client from their own orchestrator.",
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-				],
-			},
-			// <redacted-client> trio (Clio + Hélios + Victor) — 3 dual-host
-			// orchestrator personas sharing a project workspace; each profile
-			// lists the other two's case variants in
-			// `fromAllowList` + their orchestrator namespaces in both prefix
-			// arrays so each persona can switch hosts and continue the
-			// conversation without re-paste of credentials. The
-			// `recipient ∈ fromAllowList` doctrine (commit 24b39c5) gives
-			// each persona symmetric read access to the others' inbox.
-			{
-				profileId: "clio-iris-rh",
-				description:
-					"Clio (the onboarding client's ChatGPT orchestrator persona) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write the shared project workspace + the other two personas' orchestrator namespaces.",
-				fromAllowList: [
-					"Clio",
-					"clio",
-					"Hélios",
-					"Helios",
-					"helios",
-					"hélios",
-					"Victor",
-					"victor",
-				],
-				namespaceReadPrefixes: [
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
-			},
-			{
-				profileId: "helios-iris-rh",
-				description:
-					"Hélios (the onboarding client's Claude.ai orchestrator persona) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write the shared project workspace + the other two personas' orchestrator namespaces.",
-				fromAllowList: [
-					"Hélios",
-					"Helios",
-					"helios",
-					"hélios",
-					"Clio",
-					"clio",
-					"Victor",
-					"victor",
-				],
-				namespaceReadPrefixes: [
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/Hélios",
-					"orchestrator/Helios",
-					"orchestrator/helios",
-					"orchestrator/hélios",
-					"orchestrator/Clio",
-					"orchestrator/clio",
-					"orchestrator/Victor",
-					"orchestrator/victor",
-					"project/iris-rh",
-				],
 			},
 			{
 				profileId: "client-generic",
@@ -2094,7 +1991,7 @@ async function sha256Hex(input: string): Promise<string> {
 //   - Append-only audit log: previousState + newState + actorTokenHash + reason
 //
 // Day 90 use-case: drops `global` from the onboarding-client scope profile,
-// renamed per D9 workspace-level naming (see patch_marie_iris_rh_scope.ts).
+// renamed per D9 workspace-level naming (see the operator profile migrations).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Max token rows deleted per table, per profile name, per transaction by the

@@ -9,22 +9,22 @@
  *
  * WHAT IT COLLAPSES, and what it does NOT. It folds CASE and COMPOSITION FORM,
  * and it does NOT fold ACCENTS. Measured in node rather than reasoned:
- *   "hélios"  "Hélios"  "HÉLIOS"  -> "hélios"
- *   "helios"  "Helios"  "HELIOS"  -> "helios"
- *   distinct results: TWO. The NFD form of "hélios" equals its NFC form.
+ *   "élan"  "Élan"  "ÉLAN"  -> "élan"
+ *   "elan"  "Elan"  "ELAN"  -> "elan"
+ *   distinct results: TWO. The NFD form of "élan" equals its NFC form.
  *
  * This paragraph previously claimed all six collapse to ONE, and that was
  * FALSE for the three unaccented spellings. The false claim travelled: it was
  * quoted as settled authority in a task brief, and the brief's whole argument
- * was that claims must be measured rather than quoted. `helios` is now pinned
- * as REFUSED against a credential for `hélios` in
+ * was that claims must be measured rather than quoted. `elan` is now pinned
+ * as REFUSED against a credential for `élan` in
  * mcp-server/test/actor-from-credential.test.ts, so this correction is an
  * assertion rather than a comment.
  *
  * NOT folding accents is a RULING, not an omission. Folding would collapse
  * names that are genuinely different on an IDENTITY gate, and today
  * `registerAgent` (convex/agents.ts) enforces no uniqueness under this
- * function — `Clio` and `clio` can coexist as two rows. One normalised name
+ * function — `Ada` and `ada` can coexist as two rows. One normalised name
  * resolving to two rows, at a gate that cannot say which it matched, is worse
  * than a strict comparison. Uniqueness is enforced first; any widening only
  * after.

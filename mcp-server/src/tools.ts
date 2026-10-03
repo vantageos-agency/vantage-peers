@@ -32,6 +32,7 @@ import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { defineTool, type ToolAuthContext } from "./registerTool.js";
+import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
@@ -250,7 +251,7 @@ const memoryTypeSchema = z
 export const creatorSchema = z
 	.string()
 	.describe(
-		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, laurent, or any custom client role (lowercase string)). " +
+		"Orchestrator role name (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
@@ -599,7 +600,7 @@ export const updateBriefingNoteSchema = z.object({
 const assigneeSchema = z
 	.string()
 	.describe(
-		"Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, laurent, or any custom client role (lowercase string)). " +
+		"Orchestrator to assign to (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, laurent, or any custom client role (lowercase string)). " +
 			"New internal orchestrators use Greek letters (lowercase); external client orchestrators use free lowercase strings.",
 	);
 
@@ -1061,6 +1062,31 @@ export const whoamiOutputSchema = z.object({
 		.describe(
 			"The agent verified from the x-vantage-agent-credential header on THIS request " +
 				"({ agentName, orgSlug }); null when no header was presented. Never contains the secret.",
+		),
+	caller_id: z
+		.string()
+		.nullable()
+		.describe(
+			"Stable OPAQUE id of the caller (vpu_ + 32 hex): an HMAC of the verified principal under a server secret. " +
+				"Identical for the same identity across sessions and tokens, different for two identities, " +
+				"never the raw Clerk user id and never an agent name. Null when the server has no id secret configured.",
+		),
+	org_slug: z
+		.string()
+		.nullable()
+		.describe(
+			"Slug of the organisation the caller is bound to (verified org claim or token row); null for master/legacy.",
+		),
+	role: z
+		.enum(["master", "org-member", "oauth-client", "legacy"])
+		.describe(
+			"How the caller authenticated: master bearer, Clerk-verified organisation member, VantagePeers OAuth client, or legacy (no context).",
+		),
+	acting_name: z
+		.string()
+		.nullable()
+		.describe(
+			"The acting agent name verified from the agent credential on THIS request; null when none was presented.",
 		),
 });
 
@@ -3030,7 +3056,7 @@ export function registerTools(
 			"EXAMPLE: send_message from='alpha' channel='beta' content='C3 descriptions PR ready for review'.",
 		{
 			from: creatorSchema.describe(
-				"Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)",
+				"Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, or any custom role)",
 			),
 			fromInstanceId: z
 				.string()
@@ -3214,7 +3240,7 @@ export function registerTools(
 			"EXAMPLE: check_messages recipient='gamma' recipientInstanceId='gamma-vps'.",
 		{
 			recipient: creatorSchema.describe(
-				"Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, victor, epsilon, omicron, upsilon, or any custom role)",
+				"Orchestrator role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, or any custom role)",
 			),
 			recipientInstanceId: z
 				.string()
@@ -3262,8 +3288,8 @@ export function registerTools(
 				// is empty (e.g. minted token without explicit allow list).
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
 					// C2 (Day 92): NFC + case-insensitive comparison per B2 §6+§7.
-					// Raw .includes() was exact-match only, rejecting "HELIOS" when
-					// fromAllowList contained "Helios". Now both sides are normalized.
+					// Raw .includes() was exact-match only, rejecting "ELAN" when
+					// fromAllowList contained "Elan". Now both sides are normalized.
 					const normRecipient = normalizeOrchestratorId(recipient);
 					const allowed =
 						(oauthCtx.fromAllowList?.length ?? 0) > 0
@@ -4201,8 +4227,8 @@ export function registerTools(
 			try {
 				// Non-master: filter must name an identity in the bearer's
 				// fromAllowList (case-insensitive). Using userId was wrong —
-				// orchestrators identify as "Helios"/"Clio"/etc., never as the
-				// profile name "helios-acme-hr". Fix mirrors check_messages
+				// orchestrators identify as "Elan"/"Ada"/etc., never as the
+				// profile name "elan-acme-hr". Fix mirrors check_messages
 				// L1383-1399 pattern (commit 24b39c5). Regression: 28db616.
 				{
 					const gateErr = listTasksGate(oauthCtx, assignedTo, createdBy);
@@ -9740,6 +9766,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Who am I (identity introspection)",
+			outputSchema: whoamiOutputSchema,
 		},
 		async () => {
 			// Derive suggested_orchestrator_id:
@@ -9779,6 +9806,7 @@ export function registerTools(
 					fromAllowList.length > 0 ? fromAllowList[0] : null;
 			}
 
+			const identity = resolveWhoamiIdentity(oauthCtx, process.env);
 			const result = {
 				scope_profile_name: scopeProfileName,
 				fromAllowList,
@@ -9792,12 +9820,27 @@ export function registerTools(
 							orgSlug: oauthCtx.actor.orgSlug,
 						}
 					: null,
+				caller_id: identity.caller_id,
+				org_slug: identity.org_slug,
+				role: identity.role,
+				acting_name: identity.acting_name,
 			};
 
 			return {
 				content: [
 					{ type: "text" as const, text: JSON.stringify(result, null, 2) },
 				],
+				structuredContent: result,
+				// Profile block for ChatGPT-style hosts, beside the standard fields.
+				// Same non-secret values as above, nothing more.
+				_meta: {
+					"openai/profile": {
+						id: identity.caller_id,
+						org_slug: identity.org_slug,
+						role: identity.role,
+						name: identity.acting_name,
+					},
+				},
 			};
 		},
 	);

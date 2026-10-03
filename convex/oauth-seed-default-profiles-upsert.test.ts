@@ -13,9 +13,10 @@
  *   - Returns a structured summary `{ inserted, updated, skipped }` for caller
  *     visibility (previously returned a flat string array of inserted IDs).
  *
- * Motivation: eliminate the bespoke catalog-drift migration pattern shown in
- * `convex/migrations/patch_marie_iris_rh_scope.ts` — future catalog edits
- * propagate cleanly on deploy via the seed mutation itself.
+ * Motivation: eliminate bespoke catalog-drift migrations — future catalog
+ * edits propagate cleanly on deploy via the seed mutation itself. The code
+ * catalog holds ONLY generic profiles (master, client-generic, public-readonly);
+ * client profiles are data rows (see migrations/seed_client_scope_profiles).
  */
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -74,14 +75,8 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 				skipped: expect.any(Array),
 			}),
 		);
-		// Catalog now contains 6 seed profiles (clio-iris-rh + helios-iris-rh added
-		// for Marie's Iris RH trio). The 4 original profiles must all be present.
 		const inserted = (summary.inserted as string[]).sort();
-		expect(inserted).toContain("master");
-		expect(inserted).toContain("marie-iris-rh");
-		expect(inserted).toContain("client-generic");
-		expect(inserted).toContain("public-readonly");
-		expect(inserted.length).toBeGreaterThanOrEqual(4);
+		expect(inserted).toEqual(["client-generic", "master", "public-readonly"]);
 		expect(summary.updated).toEqual([]);
 		expect(summary.skipped).toEqual([]);
 	});
@@ -97,29 +92,22 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 
 		expect(second.inserted).toEqual([]);
 		expect(second.updated).toEqual([]);
-		// All catalog profiles must appear in skipped (≥4 originals).
 		const skipped = (second.skipped as string[]).sort();
-		expect(skipped).toContain("master");
-		expect(skipped).toContain("marie-iris-rh");
-		expect(skipped).toContain("client-generic");
-		expect(skipped).toContain("public-readonly");
-		expect(skipped.length).toBeGreaterThanOrEqual(4);
+		expect(skipped).toEqual(["client-generic", "master", "public-readonly"]);
 	});
 
 	test("T3: existing row drifted from catalog → UPDATES the row (not skip)", async () => {
 		const t = createTestConvex();
 
-		// Seed an outdated `marie-iris-rh` row directly into the DB to simulate
-		// a pre-catalog-edit production state (e.g. missing the Day 88 victor
-		// orchestrator prefix).
+		// Drifted generic row: a stale pre-catalog-edit production state.
 		await t.run(async (ctx) => {
 			const now = Date.now();
 			await ctx.db.insert("oauth_scope_profiles", {
-				profileId: "marie-iris-rh",
+				profileId: "client-generic",
 				description: "old description",
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: ["orchestrator/marie", "global"],
-				namespaceWritePrefixes: ["orchestrator/marie"],
+				fromAllowList: ["someone"],
+				namespaceReadPrefixes: ["orchestrator/leak", "global"],
+				namespaceWritePrefixes: ["orchestrator/leak"],
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -130,22 +118,15 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 			{},
 		);
 
-		expect(summary.updated as string[]).toContain("marie-iris-rh");
-		expect(summary.inserted as string[]).not.toContain("marie-iris-rh");
+		expect(summary.updated as string[]).toContain("client-generic");
+		expect(summary.inserted as string[]).not.toContain("client-generic");
 
-		// Verify the row now matches the catalog. Leak fix (task
-		// k173wamy80xmz2z9761d616ybh87zhf7): the catalog no longer carries
-		// `global` for marie-iris-rh, but orchestrator/victor (this client's
-		// own second orchestrator seat) is preserved alongside
-		// orchestrator/marie + project/marie.
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "marie-iris-rh",
+			profileId: "client-generic",
 		});
-		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/marie");
-		expect(profile?.namespaceReadPrefixes).toContain("project/marie");
-		expect(profile?.namespaceReadPrefixes).toContain("orchestrator/victor");
-		expect(profile?.namespaceReadPrefixes).not.toContain("global");
-		expect(profile?.namespaceWritePrefixes).toContain("orchestrator/victor");
+		expect(profile?.fromAllowList).toEqual([]);
+		expect(profile?.namespaceReadPrefixes).toEqual([]);
+		expect(profile?.namespaceWritePrefixes).toEqual([]);
 	});
 
 	test("T4: preserves rows NOT in catalog (no destructive sync)", async () => {
@@ -194,14 +175,13 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 	test("T5: upsert preserves _creationTime and patches diff fields only", async () => {
 		const t = createTestConvex();
 
-		// Insert an outdated row with a known creation time.
 		const originalCreationTime = await t.run(async (ctx) => {
 			const id = await ctx.db.insert("oauth_scope_profiles", {
-				profileId: "marie-iris-rh",
+				profileId: "client-generic",
 				description: "old description",
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: ["orchestrator/marie"],
-				namespaceWritePrefixes: ["orchestrator/marie"],
+				fromAllowList: [],
+				namespaceReadPrefixes: ["orchestrator/leak"],
+				namespaceWritePrefixes: [],
 				createdAt: 1000,
 				updatedAt: 1000,
 			});
@@ -217,19 +197,13 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		const row = await t.run(async (ctx) => {
 			return await ctx.db
 				.query("oauth_scope_profiles")
-				.withIndex("by_profileId", (q) => q.eq("profileId", "marie-iris-rh"))
+				.withIndex("by_profileId", (q) => q.eq("profileId", "client-generic"))
 				.unique();
 		});
 
 		expect(row).not.toBeNull();
 		expect(row?._creationTime).toBe(originalCreationTime);
-		// Catalog content propagated. Leak fix (task
-		// k173wamy80xmz2z9761d616ybh87zhf7): the only leak was the
-		// fleet-common `global` prefix — orchestrator/victor is this same
-		// client's own second orchestrator seat and stays granted.
-		expect(row?.namespaceReadPrefixes).toContain("orchestrator/marie");
-		expect(row?.namespaceReadPrefixes).toContain("orchestrator/victor");
-		expect(row?.namespaceReadPrefixes).not.toContain("global");
+		expect(row?.namespaceReadPrefixes).toEqual([]);
 		// updatedAt bumped to the patch wall-clock.
 		expect(row?.updatedAt).toBeGreaterThan(1000);
 	});
@@ -240,11 +214,11 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		await t.run(async (ctx) => {
 			const now = Date.now();
 			await ctx.db.insert("oauth_scope_profiles", {
-				profileId: "marie-iris-rh",
+				profileId: "client-generic",
 				description: "drifted",
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: ["orchestrator/marie"],
-				namespaceWritePrefixes: ["orchestrator/marie"],
+				fromAllowList: [],
+				namespaceReadPrefixes: ["orchestrator/leak"],
+				namespaceWritePrefixes: [],
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -261,22 +235,13 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		);
 		expect(seedUpsertRows).toHaveLength(1);
 		const row = seedUpsertRows[0] as Record<string, unknown>;
-		expect(row.targetProfileId).toBe("marie-iris-rh");
+		expect(row.targetProfileId).toBe("client-generic");
 		const prev = row.previousState as Record<string, unknown>;
 		const next = row.newState as Record<string, unknown>;
 		expect(prev.namespaceReadPrefixes as string[]).toEqual([
-			"orchestrator/marie",
+			"orchestrator/leak",
 		]);
-		// Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7): the catalog no
-		// longer propagates `global` for marie-iris-rh, but orchestrator/victor
-		// (this client's own second orchestrator seat) is preserved.
-		expect(next.namespaceReadPrefixes as string[]).toContain(
-			"orchestrator/marie",
-		);
-		expect(next.namespaceReadPrefixes as string[]).toContain(
-			"orchestrator/victor",
-		);
-		expect(next.namespaceReadPrefixes as string[]).not.toContain("global");
+		expect(next.namespaceReadPrefixes as string[]).toEqual([]);
 	});
 
 	test("T6b: no audit log entry for no-op idempotent runs", async () => {
@@ -307,11 +272,11 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		// Seed an outdated row so the first run produces ONE update.
 		await t.run(async (ctx) => {
 			await ctx.db.insert("oauth_scope_profiles", {
-				profileId: "marie-iris-rh",
+				profileId: "client-generic",
 				description: "drifted",
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: ["orchestrator/marie"],
-				namespaceWritePrefixes: ["orchestrator/marie"],
+				fromAllowList: [],
+				namespaceReadPrefixes: ["orchestrator/leak"],
+				namespaceWritePrefixes: [],
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			});

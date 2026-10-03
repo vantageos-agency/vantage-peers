@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
+import { seedLegacyClientProfiles } from "../tests/fixtures/legacyScopeProfiles";
 import schema from "./schema";
 
 // Load all convex modules except RAG/search/backfill (same exclusion as tests.test.ts)
@@ -39,21 +40,17 @@ function asServiceAccount(t: ReturnType<typeof createTestConvex>) {
 }
 
 describe("oauth.seedDefaultProfiles", () => {
-	test("seeds master, marie-iris-rh, client-generic, public-readonly on first run", async () => {
+	test("seeds master, client-generic, public-readonly on first run (no client profile in code)", async () => {
 		const t = createTestConvex();
 		const summary = await asServiceAccount(t).mutation(
 			api.oauth.seedDefaultProfiles,
 			{},
 		);
-		// S3.4 B4: return shape now `{ inserted, updated, skipped }`.
-		// Catalog now contains 6 seed profiles (clio-iris-rh + helios-iris-rh added
-		// for Marie's Iris RH trio). All 4 original profiles must still be present.
+		// S3.4 B4: return shape `{ inserted, updated, skipped }`. The code catalog
+		// holds ONLY the generic profiles; client profiles are data rows seeded by
+		// migrations/seed_client_scope_profiles.
 		const inserted = (summary.inserted as string[]).sort();
-		expect(inserted).toContain("master");
-		expect(inserted).toContain("marie-iris-rh");
-		expect(inserted).toContain("client-generic");
-		expect(inserted).toContain("public-readonly");
-		expect(inserted.length).toBeGreaterThanOrEqual(4);
+		expect(inserted).toEqual(["client-generic", "master", "public-readonly"]);
 		expect(summary.updated).toEqual([]);
 		expect(summary.skipped).toEqual([]);
 	});
@@ -70,11 +67,7 @@ describe("oauth.seedDefaultProfiles", () => {
 		expect(secondRun.inserted).toEqual([]);
 		expect(secondRun.updated).toEqual([]);
 		const skipped = (secondRun.skipped as string[]).sort();
-		expect(skipped).toContain("master");
-		expect(skipped).toContain("marie-iris-rh");
-		expect(skipped).toContain("client-generic");
-		expect(skipped).toContain("public-readonly");
-		expect(skipped.length).toBeGreaterThanOrEqual(4);
+		expect(skipped).toEqual(["client-generic", "master", "public-readonly"]);
 	});
 
 	test("refuses an anonymous caller", async () => {
@@ -89,6 +82,7 @@ describe("oauth.getScopeProfile", () => {
 	test("returns the Marie scope profile after seeding", async () => {
 		const t = createTestConvex();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: "marie-iris-rh",
@@ -119,6 +113,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 	test("admin creates a client and lists it", async () => {
 		const t = createTestConvex();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 
 		const clientId = "test-client-uuid";
 		await asServiceAccount(t).mutation(api.oauth.createClient, {
@@ -151,6 +146,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 	test("rejects duplicate clientId", async () => {
 		const t = createTestConvex();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const args = {
 			clientId: "dup",
 			clientSecretHash: "a".repeat(64),
@@ -167,6 +163,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 	test("deleteClient revokes client + all its tokens", async () => {
 		const t = createTestConvex();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const clientId = "client-for-delete";
 		await asServiceAccount(t).mutation(api.oauth.createClient, {
 			clientId,
@@ -256,6 +253,7 @@ describe("oauth.registerPublicClient (DCR default-profile binding)", () => {
 		// namespaceWritePrefixes=[], so any write attempt fails scope checks.
 		const t = createTestConvex();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const clientId = "anon-dcr-client";
 		await asServiceAccount(t).mutation(api.oauth.registerPublicClient, {
 			clientId,
@@ -370,6 +368,7 @@ describe("oauth.patchClientScopeAndRefreshTokens (prometheus TDD)", () => {
 		const t = createTestConvex();
 		const master = "test-master-token-deadbeef";
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 
 		await t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: {

@@ -71,11 +71,10 @@ import type * as migrations_backfill_review_task_origin from "../migrations/back
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
 import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_stale_deploy_tasks.js";
 import type * as migrations_diary_backfill_createdBy from "../migrations/diary_backfill_createdBy.js";
-import type * as migrations_drop_client_scope_global_prefix from "../migrations/drop_client_scope_global_prefix.js";
 import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_fleetOrgStamp from "../migrations/fleetOrgStamp.js";
-import type * as migrations_patch_marie_iris_rh_scope from "../migrations/patch_marie_iris_rh_scope.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
+import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
@@ -170,11 +169,10 @@ declare const fullApi: ApiFromModules<{
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;
   "migrations/dedup_stale_deploy_tasks": typeof migrations_dedup_stale_deploy_tasks;
   "migrations/diary_backfill_createdBy": typeof migrations_diary_backfill_createdBy;
-  "migrations/drop_client_scope_global_prefix": typeof migrations_drop_client_scope_global_prefix;
   "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/fleetOrgStamp": typeof migrations_fleetOrgStamp;
-  "migrations/patch_marie_iris_rh_scope": typeof migrations_patch_marie_iris_rh_scope;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
+  "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
