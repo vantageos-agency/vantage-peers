@@ -106,7 +106,7 @@ describe("CI invariant — provisioned client org-binding", () => {
 		);
 		expect(oauth).toMatch(/export const provisionOrganization = mutation/);
 		const start = oauth.indexOf("export const provisionOrganization");
-		const fn = oauth.slice(start, start + 8000);
+		const fn = oauth.slice(start, start + 12000);
 		expect(fn).toMatch(/clerkOrgSlug: slug/);
 		expect(fn).toMatch(/fromAllowList: \[name\]/);
 	});

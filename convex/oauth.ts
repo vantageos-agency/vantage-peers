@@ -26,7 +26,15 @@ import {
 	query,
 } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
-import { isMcpBoundMaster, requireOrgAdmin, withOrgScope } from "./lib/auth";
+import {
+	isMcpBoundMaster,
+	lookupOrgMapping,
+	requireOperatorAdminToCreateOrg,
+	requireResolvedCaller,
+	resolveOperatorAdmin,
+	requireOrgAdmin,
+	withOrgScope,
+} from "./lib/auth";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 
@@ -794,6 +802,33 @@ export async function findSeatNameCollision(
 	return false;
 }
 
+// canCreateOrganization -- drives the dashboard "New organisation" affordance.
+// Same predicate as the provisionOrganization operator-create branch
+// (`resolveOperatorAdmin`, convex/lib/auth.ts); the new-slug checks do not
+// apply. isolation-contract: a dashboard `useQuery` SUBSCRIBES to this read, so
+// a signed-in caller (any org, no org, non-admin) is answered `{ allowed:
+// false }` and NEVER a throw (R-50: a throw would crash a mounted render); only
+// an ANONYMOUS caller, who has no render to crash, is refused by RAISING
+// RBAC_DENIED via requireResolvedCaller. No cross-tenant data is read or leaked:
+// the answer concerns the caller's own verified claims only.
+export const canCreateOrganization = query({
+	args: {},
+	returns: v.object({ allowed: v.boolean() }),
+	handler: async (ctx) => {
+		if (!(await ctx.auth.getUserIdentity())) {
+			requireResolvedCaller(
+				await withOrgScope(ctx),
+				"oauth:canCreateOrganization",
+			);
+			// requireResolvedCaller raises for an anonymous caller; this is
+			// unreachable but keeps the contract fail-closed.
+			return { allowed: false };
+		}
+		const verdict = await resolveOperatorAdmin(ctx);
+		return { allowed: verdict.ok };
+	},
+});
+
 // D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr): ADDITIVE org-admin authorization
 // path. `callerToken` is now OPTIONAL — when present (non-empty), the
 // pre-existing master path runs UNCHANGED (`requireMasterAuth`, byte-
@@ -831,7 +866,7 @@ export const provisionOrganization = mutation({
 		),
 	}),
 	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:provisionOrganization", …) at mcp-server/server-http.ts:1103 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:provisionOrganization", …) at mcp-server/server-http.ts:1103 (imperative), and from the dashboard operator console imperatively via useMutation(api.oauth.provisionOrganization) in a click handler (no subscription; dashboard callsite lands with the dashboard PR for task k17fbbq8z7rs1bgd06gmb88x8s8fkpm3, 0 hits before it as measured 2026-10-01 at origin/main e2dc58f); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative call, never at a render.
 		const slug = args.clerkOrgSlug.trim();
 		if (!slug) {
 			throw new Error("clerkOrgSlug is required");
@@ -843,8 +878,20 @@ export const provisionOrganization = mutation({
 		// scoped to `slug` (never widened by a caller-supplied value —
 		// `requireOrgAdmin` derives the caller's own org from their verified
 		// identity and asserts it equals `slug`).
+		let operatorCreate: { subject: string; operatorOrgSlug: string } | null =
+			null;
 		if (args.callerToken && args.callerToken.length > 0) {
 			await requireMasterAuth(args.callerToken);
+		} else if (
+			// OPERATOR CREATE (task k17fbbq8z7rs1bgd06gmb88x8s8fkpm3): no mapping
+			// yet for this slug -> only the operator org's verified org:admin may
+			// create it (requireOperatorAdminToCreateOrg refuses everyone else with
+			// a reason). An EXISTING slug keeps the pre-existing requireOrgAdmin
+			// path byte-for-byte (admin of THIS org only; replay returns null
+			// secrets), so another org's slug can never be hijacked.
+			(await lookupOrgMapping(ctx, slug)) === null
+		) {
+			operatorCreate = await requireOperatorAdminToCreateOrg(ctx, slug);
 		} else {
 			await requireOrgAdmin(ctx, slug);
 		}
@@ -970,6 +1017,9 @@ export const provisionOrganization = mutation({
 			scopes,
 			isActive: true,
 			createdAt: now,
+			// Operator-created orgs are ALWAYS "client", never "operator". The
+			// master path leaves the field unset exactly as before.
+			...(operatorCreate ? { orgKind: "client" as const } : {}),
 		});
 
 		// Audit actor: hash the master token when present (unchanged), else

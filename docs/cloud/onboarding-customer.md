@@ -2,11 +2,19 @@
 
 **Scope:** VantagePeers **Cloud** (multi-tenant). Self-host is a separate product documented under `docs/getting-started/`. Do not cross-apply these instructions.
 
-**Operator provision (replaces the hand chain):** `POST /admin/organizations` (master bearer) → `oauth:provisionOrganization`. One call creates the org mapping and each orchestrator seat (`client_id` / `client_secret` / access token returned **once**). DCR self-registration does not attach an organisation.
+**Operator provision (replaces the hand chain):** `oauth:provisionOrganization` creates the org mapping and each orchestrator seat (`client_id` / `client_secret` / access + refresh token returned **once**). DCR self-registration does not attach an organisation.
+
+1. **Primary: the operator, from the dashboard, with his own verified Clerk session.** The signed-in caller must be `org:admin` of the operator organisation (the active mapping with `orgKind: "operator"`). The dashboard calls `useMutation(api.oauth.provisionOrganization)` from a click handler with `{ clerkOrgSlug, displayName, orchestrators: [{ name }] }` and **no `callerToken`**. The "New organisation" button is shown only when `oauth:canCreateOrganization` answers `{ allowed: true }`. It creates a new org with `orgKind: "client"` only when no mapping exists yet for that slug; it never re-provisions or touches an existing org, and the operator org's own slug is not creatable. The returned one-time secrets are shown once for the operator to hand to the client; never log them. Refusals are `RBAC_DENIED` with a `reason` (`anonymous`, `no-organisation`, `caller-org-not-operator`, `operator-member-not-admin`, `slug-is-operator-org`, `slug-already-mapped`).
+2. **Fallback: master bearer** (`POST /admin/organizations`, or `callerToken`), unchanged.
+3. **Existing org:** an `org:admin` of that same org may re-provision (replay returns null secrets); any other caller is refused.
 
 **Produit concerné :** VantagePeers **Cloud** (multi-tenant). Le self-host est un produit séparé documenté sous `docs/getting-started/`. Ne pas appliquer ces instructions au self-host.
 
-**Operator provision (replaces the hand chain):** `POST /admin/organizations` (master bearer) → `oauth:provisionOrganization`. One call creates the org mapping and each orchestrator seat (`client_id` / `client_secret` / access token returned **once**). DCR self-registration does not attach an organisation.
+**Provisionnement opérateur (remplace la chaîne manuelle) :** `oauth:provisionOrganization` crée le mapping d'organisation et chaque seat d'orchestrateur (`client_id` / `client_secret` / access token + refresh token renvoyés **une seule fois**). L'auto-enregistrement DCR ne rattache aucune organisation.
+
+1. **Voie principale : l'opérateur, depuis le dashboard, avec sa propre session Clerk vérifiée.** L'appelant connecté doit être `org:admin` de l'organisation opérateur (le mapping actif avec `orgKind: "operator"`). Le dashboard appelle `useMutation(api.oauth.provisionOrganization)` depuis un gestionnaire de clic avec `{ clerkOrgSlug, displayName, orchestrators: [{ name }] }` et **sans `callerToken`**. Le bouton « Nouvelle organisation » n'est affiché que si `oauth:canCreateOrganization` répond `{ allowed: true }`. L'appel crée une nouvelle organisation avec `orgKind: "client"` uniquement si aucun mapping n'existe encore pour ce slug ; il ne re-provisionne ni ne touche jamais une organisation existante, et le slug de l'organisation opérateur n'est pas créable. Les secrets à usage unique renvoyés sont affichés une fois pour que l'opérateur les remette au client ; ne jamais les journaliser. Les refus sont des `RBAC_DENIED` avec un `reason` (`anonymous`, `no-organisation`, `caller-org-not-operator`, `operator-member-not-admin`, `slug-is-operator-org`, `slug-already-mapped`).
+2. **Repli : bearer master** (`POST /admin/organizations`, ou `callerToken`), inchangé.
+3. **Organisation existante :** un `org:admin` de cette même organisation peut la re-provisionner (le rejeu renvoie des secrets nuls) ; tout autre appelant est refusé.
 
 ---
 
