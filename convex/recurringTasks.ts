@@ -187,7 +187,13 @@ export const create = mutation({
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:create", …) at mcp-server/src/tools.ts:6638 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		// `createdBy` is the acting identity this schedule (and every task it later
+		// spawns) is authored as. It is bound to the caller's own roster through the
+		// same resolver `tasks:create` uses (CALLER_IDENTITY_MISMATCH), so a member of
+		// one organisation cannot author a schedule as another's orchestrator.
+		// `assignedTo` is a different claim (the target of the work) and is bound
+		// separately below. Master is unchanged.
+		const scope = await requireAuthenticatedCaller(ctx, args.createdBy, undefined);
 		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
 
 
