@@ -319,7 +319,7 @@ function assertTaskCallerAuthorized(
 		// orchestrator authority (creator/assignee rules bind agents only) and is
 		// bounded by the tenant gate alone — the row's `orgId` must equal the
 		// member's resolved org (assertTaskVisibleToCaller, the same predicate the
-		// readers use). Master (incl. the operator human) is NOT admitted here:
+		// readers use). The operator human (Pi ruling (a)) is served HERE as a member: in a mutation ctx withOrgScope never grants its read-only operator-master scope (isReadOnlyCtx), so it arrives as an ordinary member of the operator org — own org only, same writer-role gate. Any master scope (service account, internal) is NOT admitted here:
 		// unchanged. An unresolved caller never reaches this point —
 		// requireAuthenticatedCaller already refused no-identity (AUTH_REQUIRED)
 		// and signed-in-no-org (RBAC_DENIED); `orgSlug === null` is re-checked

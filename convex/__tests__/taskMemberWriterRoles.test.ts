@@ -227,3 +227,104 @@ describe("setMemberWriterRoles", () => {
 		).rejects.toThrow(/INVALID_ROLE/);
 	});
 });
+
+// Pi ruling (a), receipt k978m7ys3xt27qgtpwjq21bvns8fkq3m: the operator-admin
+// human (verified org:admin of the orgKind "operator" org) acts in its OWN name,
+// OWN ORG ONLY, under the same writer-role allowlist. In a MUTATION ctx
+// withOrgScope resolves that human as an ordinary member (the operator-master
+// grant is read-only-ctx only), so no master power applies on this path. The
+// service account keeps the agent path (name required).
+const SERVICE_ACCOUNT_SUBJECT = "test-service-account-user-id";
+const operator = (subject: string, role = "org:admin") =>
+	({
+		subject,
+		organizationSlug: "op-org",
+		org_role: role,
+	}) as Parameters<T["withIdentity"]>[0];
+
+async function setupOperator(): Promise<T> {
+	const t = await setup();
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "op-org",
+			allowedOrchestrators: ["sigma"],
+			scopes: ["view-own-tasks"],
+			displayName: "operator",
+			isActive: true,
+			createdAt: Date.now(),
+			orgKind: "operator",
+		});
+	});
+	return t;
+}
+
+async function seedOrgTask(
+	t: T,
+	orgId: string | undefined,
+	status: "todo" | "in_progress",
+) {
+	return await t.run(async (ctx) =>
+		ctx.db.insert("tasks", {
+			title: "Operator-acting seed",
+			assignedTo: "sigma",
+			priority: "medium",
+			status,
+			createdBy: "sigma",
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			...(orgId !== undefined ? { orgId } : {}),
+			...(status === "in_progress"
+				? { startedAt: Date.now(), workSegments: [{ start: Date.now() }] }
+				: {}),
+		}),
+	);
+}
+
+describe.each(doors)("operator-admin acting — $name", (door) => {
+	test("own-org task -> served; actor is user:<subject>", async () => {
+		const t = await setupOperator();
+		const id = await seedOrgTask(t, "op-org", door.seedStatus);
+		await door.call(t.withIdentity(operator("user_op")), id);
+		const row = await t.run(async (ctx) => ctx.db.get(id));
+		expect(row?.lastActedBy).toBe("user:user_op");
+	});
+
+	test("another org's task -> refused with the cross-org code, row untouched", async () => {
+		const t = await setupOperator();
+		const id = await seedOrgTask(t, "org-a", door.seedStatus);
+		await expect(
+			door.call(t.withIdentity(operator("user_op")), id),
+		).rejects.toThrow(/RBAC_DENIED.*outside the caller's organisation/);
+		await untouched(t, id, door);
+	});
+
+	test("unstamped task -> refused", async () => {
+		const t = await setupOperator();
+		const id = await seedOrgTask(t, undefined, door.seedStatus);
+		await expect(
+			door.call(t.withIdentity(operator("user_op")), id),
+		).rejects.toThrow(/RBAC_DENIED/);
+		await untouched(t, id, door);
+	});
+
+	test("service-account master with no name -> still refused", async () => {
+		const t = await setupOperator();
+		const id = await seedOrgTask(t, "op-org", door.seedStatus);
+		await expect(
+			door.call(t.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT }), id),
+		).rejects.toThrow(/callerOrchestrator is required/);
+		await untouched(t, id, door);
+	});
+
+	test("org:admin removed from the list in data -> operator refused", async () => {
+		const t = await setupOperator();
+		await t.mutation(internal.memberWriterRoles.setMemberWriterRoles, {
+			roles: ["org:editor"],
+		});
+		const id = await seedOrgTask(t, "op-org", door.seedStatus);
+		await expect(
+			door.call(t.withIdentity(operator("user_op")), id),
+		).rejects.toThrow(/role-not-writer.*org:admin/);
+		await untouched(t, id, door);
+	});
+});
