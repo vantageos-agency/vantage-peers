@@ -17,6 +17,9 @@ name: MCP CRUD Baseline Smoke Matrix
 #   VP_MCP_BEARER_TOKEN   — Master bearer token for the Railway HTTP transport
 #   VP_MCP_FLEET_BEARER   — (Optional) separate fleet-alert bearer; falls back
 #                           to VP_MCP_BEARER_TOKEN when absent
+#   VP_MCP_AGENT_CREDENTIAL — the acting station's own agent credential; the
+#                           master bearer is refused without it (#1420)
+#   A run missing any required secret FAILS, naming it — never a skip-as-pass.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -51,6 +54,25 @@ jobs:
 
       - name: Install dependencies (repo root)
         run: bun install --frozen-lockfile
+
+      # A run without its PROD secrets measures nothing: the spec skips all 25
+      # cells, and a skip must never be reported as a pass. In CI the absence is
+      # a refusal that names each missing secret (task k179dxe91pmdh0qw669s23qh8s8fja60).
+      # A local run without credentials still skips, by design of the spec.
+      - name: Refuse when PROD secrets are absent
+        env:
+          VP_MCP_PROD_URL: ${{ secrets.VP_MCP_PROD_URL }}
+          VP_MCP_BEARER_TOKEN: ${{ secrets.VP_MCP_BEARER_TOKEN }}
+          VP_MCP_AGENT_CREDENTIAL: ${{ secrets.VP_MCP_AGENT_CREDENTIAL }}
+        run: |
+          missing=""
+          for name in VP_MCP_PROD_URL VP_MCP_BEARER_TOKEN VP_MCP_AGENT_CREDENTIAL; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::CRUD baseline cannot measure PROD — repository secret(s) not set:$missing"
+            exit 1
+          fi
 
       - name: Run CRUD baseline smoke matrix
         id: smoke
