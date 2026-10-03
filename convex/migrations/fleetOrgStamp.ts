@@ -5,34 +5,38 @@
 // WHY. An org member reads through org-keyed indexes (`by_orgId*` on tasks and
 // missions, `by_tenant*` on messages). A row with no `orgId`/`tenantId` never
 // matches `eq(<org field>, slug)`, so the fleet's legacy rows are invisible to
-// the fleet org's own dashboard members until they are stamped. The general
-// tenant backfill (`backfillOrgIds`) deliberately derives only task -> mission
-// and refuses to map orchestrator NAMES to an org, because two orgs can share a
-// name. This function adds the one name-based derivation that is not a guess:
+// the fleet org's own dashboard members until they are stamped.
 //
-//   A row is attributable to the fleet org iff its orchestrator field
-//     tasks.assignedTo | missions.pilot | messages.from
-//   names a member of the fleet (operator) org's roster
-//   (`client_org_mapping.allowedOrchestrators` of the orgKind="operator" row,
-//   the "*" sentinel excluded) AND that name appears in NO other organisation's
-//   roster. A name rostered in two orgs is ambiguous and is NOT stamped.
-//   A task whose parent mission is stamped for a DIFFERENT org is not stamped
-//   either (the parent's stated tenant contradicts the name).
+// THE RULE (operator ruling 2026-10-03, relayed by pi, receipt
+// k97eb7pbjh6xvknp32y1eg7ks18fk9sa): a NAME IS A LABEL, NEVER AN IDENTITY. A
+// name-based backfill is a ONE-TIME BRIDGE, bounded so that it cannot assign a
+// row to the wrong organisation. A row is stamped by name ONLY when
+//   the orchestrator field  tasks.assignedTo | missions.pilot | messages.from
+// resolves, under `normalizeOrchestratorId` (NFC + lowercase + trim), to
+// EXACTLY ONE row of the `agents` table across ALL organisations (any
+// isActive state: a deactivated namesake still makes the label ambiguous), AND
+// that one agent belongs to the operator org (client_org_mapping
+// orgKind="operator", derived, never typed). The operator ROSTER is not
+// consulted: a roster entry is a string, an `agents` row is an identity.
+// Every other row STAYS UNSTAMPED, is never guessed, and is LISTED BY ID in the
+// result (bounded per page by the page size), in one bucket:
+//   ambiguous       the name matches 2+ agent rows (two orgs, or twice in one)
+//   unknown         the name matches NO agent row (even if some roster lists it)
+//   otherOrg        exactly one agent, but it is not in the operator org
+//   parentOtherOrg  (tasks) the parent mission is stamped for another org
+// A task whose parent mission is stamped for a different org is never stamped,
+// whatever its name resolves to.
 //
-// Everything else is COUNTED, never guessed: `unprovable` is split into
-// `notFleetRoster`, `ambiguousName`, `parentOtherOrg`.
-//
-// SHAPE. One page of one table per call, newest-last by index order, with a
-// cursor returned for the next call. DRY RUN BY DEFAULT: nothing is written
-// unless `apply: true`. Idempotent: it reads only UNSTAMPED rows (index
-// equality on `undefined`), so a stamped row is never read, re-stamped or
-// overwritten, and a re-run after a full pass finds `examined: 0`.
+// SHAPE. One page of one table per call, with a cursor returned for the next
+// call. DRY RUN BY DEFAULT: nothing is written unless `apply: true`.
+// Idempotent: it reads only UNSTAMPED rows (index equality on `undefined`), so a
+// stamped row is never read, re-stamped or overwritten.
 //
 // OPERATING (internal — `convex run`, deployment admin credential; not
 // reachable from any client, hence no per-caller auth check):
-//   fleetOrgStamp:run {"table":"tasks"}                       dry run, page 1
+//   fleetOrgStamp:run {"table":"tasks"}                        dry run, page 1
 //   fleetOrgStamp:run {"table":"tasks","cursor":"<nextCursor>"} next page
-//   fleetOrgStamp:run {"table":"tasks","apply":true,...}       after reading counts
+//   fleetOrgStamp:run {"table":"tasks","apply":true,...}        after reading it
 // NOT RUN AGAINST ANY DEPLOYMENT BY ITS AUTHOR.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -40,6 +44,7 @@ import { ConvexError, v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
@@ -51,22 +56,22 @@ const tableValidator = v.union(
 	v.literal("messages"),
 );
 
-type Roster = {
+const AGENT_READ_CAP = 5000;
+
+type Resolver = {
 	orgSlug: string;
-	// names attributable to the fleet org: rostered there and nowhere else
-	provable: Set<string>;
-	// names rostered in the fleet org AND in another org
-	ambiguous: Set<string>;
+	// normalized name -> orgSlugs of every agent row carrying it (one entry per row)
+	agentOrgsByName: Map<string, string[]>;
 };
 
-async function loadFleetRoster(
+async function loadResolver(
 	db: DatabaseReader,
 	requestedSlug: string | undefined,
-): Promise<Roster> {
+): Promise<Resolver> {
 	const mappings = await db.query("client_org_mapping").take(MAPPING_READ_CAP + 1);
 	if (mappings.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
-			`fleetOrgStamp: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to derive a roster from a truncated read.`,
+			`fleetOrgStamp: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to derive the operator org from a truncated read.`,
 		);
 	}
 	const operators = mappings.filter(
@@ -85,20 +90,21 @@ async function loadFleetRoster(
 				: `fleetOrgStamp: expected exactly one active operator organisation, found ${operators.length}; pass orgSlug explicitly.`,
 		);
 	}
-	const elsewhere = new Set<string>();
-	for (const m of mappings) {
-		if (m._id === fleet._id) continue;
-		for (const name of m.allowedOrchestrators) {
-			if (name !== "*") elsewhere.add(name);
-		}
+	const agents = await db.query("agents").take(AGENT_READ_CAP + 1);
+	if (agents.length > AGENT_READ_CAP) {
+		throw new ConvexError(
+			`fleetOrgStamp: agents holds more than ${AGENT_READ_CAP} rows; refusing to resolve names from a truncated read.`,
+		);
 	}
-	const provable = new Set<string>();
-	const ambiguous = new Set<string>();
-	for (const name of fleet.allowedOrchestrators) {
-		if (name === "*") continue;
-		(elsewhere.has(name) ? ambiguous : provable).add(name);
+	const agentOrgsByName = new Map<string, string[]>();
+	for (const a of agents) {
+		// Legacy rows may lack normalizedName: derive it, never skip the row.
+		const key = a.normalizedName ?? normalizeOrchestratorId(a.name);
+		const list = agentOrgsByName.get(key) ?? [];
+		list.push(a.orgSlug);
+		agentOrgsByName.set(key, list);
 	}
-	return { orgSlug: fleet.clerkOrgSlug, provable, ambiguous };
+	return { orgSlug: fleet.clerkOrgSlug, agentOrgsByName };
 }
 
 export const run = internalMutation({
@@ -116,10 +122,16 @@ export const run = internalMutation({
 		examined: v.number(),
 		stampable: v.number(),
 		stamped: v.number(),
-		unprovable: v.object({
-			notFleetRoster: v.number(),
-			ambiguousName: v.number(),
-			parentOtherOrg: v.number(),
+		ambiguous: v.number(),
+		unknown: v.number(),
+		otherOrg: v.number(),
+		parentOtherOrg: v.number(),
+		// Row ids left UNSTAMPED on this page, by bucket (bounded by pageSize).
+		unstampedIds: v.object({
+			ambiguous: v.array(v.string()),
+			unknown: v.array(v.string()),
+			otherOrg: v.array(v.string()),
+			parentOtherOrg: v.array(v.string()),
 		}),
 		isDone: v.boolean(),
 		nextCursor: v.union(v.string(), v.null()),
@@ -136,22 +148,28 @@ export const run = internalMutation({
 				`fleetOrgStamp: pageSize = ${pageSize} is out of expected range 1-${MAX_PAGE_SIZE}.`,
 			);
 		}
-		const roster = await loadFleetRoster(ctx.db, args.orgSlug);
+		const resolver = await loadResolver(ctx.db, args.orgSlug);
 
 		let examined = 0;
 		let stampable = 0;
 		let stamped = 0;
-		const unprovable = { notFleetRoster: 0, ambiguousName: 0, parentOtherOrg: 0 };
+		const unstampedIds = {
+			ambiguous: [] as string[],
+			unknown: [] as string[],
+			otherOrg: [] as string[],
+			parentOtherOrg: [] as string[],
+		};
 
-		// Classify one row from its orchestrator name. Returns true when stampable.
-		const classify = (name: string | undefined): boolean => {
-			if (name !== undefined && roster.provable.has(name)) return true;
-			if (name !== undefined && roster.ambiguous.has(name)) {
-				unprovable.ambiguousName++;
-			} else {
-				unprovable.notFleetRoster++;
-			}
-			return false;
+		// Resolve a row's orchestrator label to a bucket. "stamp" only when the
+		// label is exactly one agent row and that agent is in the operator org.
+		const resolve = (
+			name: string | undefined,
+		): "stamp" | "ambiguous" | "unknown" | "otherOrg" => {
+			if (name === undefined) return "unknown";
+			const orgs = resolver.agentOrgsByName.get(normalizeOrchestratorId(name));
+			if (orgs === undefined || orgs.length === 0) return "unknown";
+			if (orgs.length > 1) return "ambiguous";
+			return orgs[0] === resolver.orgSlug ? "stamp" : "otherOrg";
 		};
 
 		let isDone: boolean;
@@ -164,7 +182,11 @@ export const run = internalMutation({
 				.paginate({ cursor: args.cursor ?? null, numItems: pageSize });
 			for (const row of page.page) {
 				examined++;
-				if (!classify(row.assignedTo)) continue;
+				const verdict = resolve(row.assignedTo);
+				if (verdict !== "stamp") {
+					unstampedIds[verdict].push(row._id);
+					continue;
+				}
 				if (row.missionId !== undefined) {
 					const parent: { orgId?: string } | null = await ctx.db.get(
 						row.missionId as Id<"missions">,
@@ -172,15 +194,15 @@ export const run = internalMutation({
 					if (
 						parent !== null &&
 						parent.orgId !== undefined &&
-						parent.orgId !== roster.orgSlug
+						parent.orgId !== resolver.orgSlug
 					) {
-						unprovable.parentOtherOrg++;
+						unstampedIds.parentOtherOrg.push(row._id);
 						continue;
 					}
 				}
 				stampable++;
 				if (apply) {
-					await ctx.db.patch(row._id, { orgId: roster.orgSlug });
+					await ctx.db.patch(row._id, { orgId: resolver.orgSlug });
 					stamped++;
 				}
 			}
@@ -193,10 +215,14 @@ export const run = internalMutation({
 				.paginate({ cursor: args.cursor ?? null, numItems: pageSize });
 			for (const row of page.page) {
 				examined++;
-				if (!classify(row.pilot)) continue;
+				const verdict = resolve(row.pilot);
+				if (verdict !== "stamp") {
+					unstampedIds[verdict].push(row._id);
+					continue;
+				}
 				stampable++;
 				if (apply) {
-					await ctx.db.patch(row._id, { orgId: roster.orgSlug });
+					await ctx.db.patch(row._id, { orgId: resolver.orgSlug });
 					stamped++;
 				}
 			}
@@ -209,10 +235,14 @@ export const run = internalMutation({
 				.paginate({ cursor: args.cursor ?? null, numItems: pageSize });
 			for (const row of page.page) {
 				examined++;
-				if (!classify(row.from)) continue;
+				const verdict = resolve(row.from);
+				if (verdict !== "stamp") {
+					unstampedIds[verdict].push(row._id);
+					continue;
+				}
 				stampable++;
 				if (apply) {
-					await ctx.db.patch(row._id, { tenantId: roster.orgSlug });
+					await ctx.db.patch(row._id, { tenantId: resolver.orgSlug });
 					stamped++;
 				}
 			}
@@ -222,12 +252,16 @@ export const run = internalMutation({
 
 		return {
 			table: args.table,
-			orgSlug: roster.orgSlug,
+			orgSlug: resolver.orgSlug,
 			apply,
 			examined,
 			stampable,
 			stamped,
-			unprovable,
+			ambiguous: unstampedIds.ambiguous.length,
+			unknown: unstampedIds.unknown.length,
+			otherOrg: unstampedIds.otherOrg.length,
+			parentOtherOrg: unstampedIds.parentOtherOrg.length,
+			unstampedIds,
 			isDone,
 			nextCursor,
 		};

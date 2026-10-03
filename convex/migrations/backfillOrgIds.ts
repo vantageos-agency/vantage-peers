@@ -62,6 +62,17 @@
 //   removes, and would silently misattribute one tenant's rows to another.
 //   Orphan rows are therefore left UNSTAMPED and counted, never assigned.
 //
+//   THE SINGLE BOUNDED EXCEPTION (operator ruling 2026-10-03, relayed by pi,
+//   receipt k97eb7pbjh6xvknp32y1eg7ks18fk9sa): `migrations/fleetOrgStamp:run`.
+//   A name is a label, never an identity, so this file still never derives by
+//   name. That function is a ONE-TIME BRIDGE for the operator org's legacy rows
+//   and stamps by name only when the name resolves, under
+//   normalizeOrchestratorId, to EXACTLY ONE `agents` row across ALL
+//   organisations AND that agent belongs to the operator org. The roster is not
+//   consulted. Ambiguous, unknown and other-org names stay unstamped and are
+//   listed by id. It is bounded so it cannot assign a row to the wrong org;
+//   nothing else in this file may follow it.
+//
 // AN UNSTAMPED ROW AFTER THIS RUNS is readable by master only. That is a
 // deliberate, stated disposition: master-owned fleet rows are already correct
 // as unstamped, and a genuinely org-owned orphan is withheld from its org until

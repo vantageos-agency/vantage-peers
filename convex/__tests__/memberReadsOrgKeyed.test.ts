@@ -50,7 +50,7 @@ async function seedOrgs(t: T) {
 			clerkOrgSlug: FLEET,
 			displayName: FLEET,
 			orgKind: "operator",
-			allowedOrchestrators: ["sigma", "eta", "shared"],
+			allowedOrchestrators: ["sigma", "eta", "shared", "ghost"],
 		});
 		await ctx.db.insert("client_org_mapping", {
 			...base,
@@ -222,10 +222,28 @@ describe("missions.list / messages.listByChannel — member poles (already org-k
 	});
 });
 
-describe("migrations/fleetOrgStamp:run", () => {
+describe("migrations/fleetOrgStamp:run — a name is a label, never an identity", () => {
+	// Agent rows decide identity, NOT the roster:
+	//   eta    -> one agent, in FLEET            => stamp
+	//   sigma  -> agents in FLEET and OTHER      => ambiguous
+	//   ghost  -> on the FLEET roster, NO agent  => unknown
+	//   victor -> one agent, in OTHER            => otherOrg
+	//   nobody -> no agent anywhere              => unknown
 	async function seedMixed(t: T) {
 		await seedOrgs(t);
 		await t.run(async (ctx) => {
+			const agent = (orgSlug: string, name: string) =>
+				ctx.db.insert("agents", {
+					orgSlug,
+					name,
+					normalizedName: name.toLowerCase(),
+					isActive: true,
+					createdAt: 1,
+				});
+			await agent(FLEET, "eta");
+			await agent(FLEET, "sigma");
+			await agent(OTHER, "sigma");
+			await agent(OTHER, "victor");
 			const task = (title: string, assignedTo: string, extra: object = {}) =>
 				ctx.db.insert("tasks", {
 					title,
@@ -237,37 +255,29 @@ describe("migrations/fleetOrgStamp:run", () => {
 					updatedAt: 1,
 					...extra,
 				} as never);
-			await task("provable-sigma", "sigma"); // rostered in BOTH orgs -> ambiguous (name kept for the assertion map)
-			await task("provable-eta", "eta"); // fleet-only -> provable
-			await task("ambiguous-shared", "shared");
-			await task("stranger", "nobody");
+			await task("stamp-eta", "eta");
+			await task("ambiguous-sigma", "sigma");
+			await task("unknown-ghost", "ghost");
+			await task("otherorg-victor", "victor");
+			await task("unknown-nobody", "nobody");
 			await task("already", "eta", { orgId: OTHER });
-			const m = await ctx.db.insert("missions", {
-				name: "m-other",
-				description: "d",
-				status: "execute",
-				priority: "medium",
-				pilot: "eta",
-				project: "p",
-				agents: [],
-				createdBy: "eta",
-				createdAt: 1,
-				updatedAt: 1,
-				orgId: OTHER,
-			} as never);
+			const mission = (name: string, extra: object = {}) =>
+				ctx.db.insert("missions", {
+					name,
+					description: "d",
+					status: "execute",
+					priority: "medium",
+					pilot: "eta",
+					project: "p",
+					agents: [],
+					createdBy: "eta",
+					createdAt: 1,
+					updatedAt: 1,
+					...extra,
+				} as never);
+			const m = await mission("m-other", { orgId: OTHER });
 			await task("parent-other-org", "eta", { missionId: m });
-			await ctx.db.insert("missions", {
-				name: "m-eta",
-				description: "d",
-				status: "execute",
-				priority: "medium",
-				pilot: "eta",
-				project: "p",
-				agents: [],
-				createdBy: "eta",
-				createdAt: 1,
-				updatedAt: 1,
-			} as never);
+			await mission("m-eta");
 			await ctx.db.insert("messages", {
 				from: "eta",
 				channel: "broadcast",
@@ -281,8 +291,17 @@ describe("migrations/fleetOrgStamp:run", () => {
 			const rows = await ctx.db.query("tasks").collect();
 			return Object.fromEntries(rows.map((r) => [r.title, r.orgId ?? null]));
 		});
+	const titleOf = (t: T, ids: string[]) =>
+		t.run(async (ctx) => {
+			const out: string[] = [];
+			for (const id of ids) {
+				const row = await ctx.db.get(id as never);
+				out.push((row as { title: string }).title);
+			}
+			return out.sort();
+		});
 
-	test("dry run counts and writes nothing", async () => {
+	test("dry run: counts, lists each unstamped id by bucket, writes nothing", async () => {
 		const t = createT();
 		await seedMixed(t);
 		const before = await orgIds(t);
@@ -291,16 +310,26 @@ describe("migrations/fleetOrgStamp:run", () => {
 		});
 		expect(r).toMatchObject({
 			apply: false,
-			examined: 5,
+			examined: 6,
 			stampable: 1,
 			stamped: 0,
-			unprovable: { notFleetRoster: 1, ambiguousName: 2, parentOtherOrg: 1 },
+			ambiguous: 1,
+			unknown: 2,
+			otherOrg: 1,
+			parentOtherOrg: 1,
 			isDone: true,
 		});
+		expect(await titleOf(t, r.unstampedIds.ambiguous)).toEqual(["ambiguous-sigma"]);
+		expect(await titleOf(t, r.unstampedIds.unknown)).toEqual([
+			"unknown-ghost",
+			"unknown-nobody",
+		]);
+		expect(await titleOf(t, r.unstampedIds.otherOrg)).toEqual(["otherorg-victor"]);
+		expect(await titleOf(t, r.unstampedIds.parentOtherOrg)).toEqual(["parent-other-org"]);
 		expect(await orgIds(t)).toEqual(before);
 	});
 
-	test("apply stamps only the provable row; re-run is idempotent", async () => {
+	test("apply stamps only the single-agent operator-org name; re-run is idempotent", async () => {
 		const t = createT();
 		await seedMixed(t);
 		const r = await t.mutation(internal.migrations.fleetOrgStamp.run, {
@@ -310,10 +339,11 @@ describe("migrations/fleetOrgStamp:run", () => {
 		expect(r.stamped).toBe(1);
 		const after = await orgIds(t);
 		expect(after).toEqual({
-			"provable-sigma": null,
-			"provable-eta": FLEET,
-			"ambiguous-shared": null,
-			stranger: null,
+			"stamp-eta": FLEET,
+			"ambiguous-sigma": null,
+			"unknown-ghost": null,
+			"otherorg-victor": null,
+			"unknown-nobody": null,
 			already: OTHER,
 			"parent-other-org": null,
 		});
@@ -321,7 +351,7 @@ describe("migrations/fleetOrgStamp:run", () => {
 			table: "tasks",
 			apply: true,
 		});
-		expect(again).toMatchObject({ examined: 4, stamped: 0, stampable: 0 });
+		expect(again).toMatchObject({ examined: 5, stamped: 0, stampable: 0 });
 		expect(await orgIds(t)).toEqual(after);
 	});
 
@@ -348,11 +378,11 @@ describe("migrations/fleetOrgStamp:run", () => {
 			if (r.isDone) break;
 			cursor = r.nextCursor;
 		}
-		expect(examined).toBe(5);
+		expect(examined).toBe(6);
 		expect(stamped).toBe(1);
 	});
 
-	test("missions and messages stamp by pilot / sender; then the member is served them", async () => {
+	test("missions and messages stamp by the same rule; then the member is served them", async () => {
 		const t = createT();
 		await seedMixed(t);
 		for (const table of ["missions", "messages"] as const) {
