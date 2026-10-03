@@ -401,6 +401,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"reviewArtifactRef",
 			"reviewArtifactAttachedBy",
 			"lastAssignedTo",
+			"lastActedBy",
 			"isReviewTask",
 			"contentHash",
 			// Same deliberate narrowing as every other field here.

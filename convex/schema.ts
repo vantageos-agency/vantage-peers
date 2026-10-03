@@ -417,6 +417,14 @@ export default defineSchema({
 		// decided from a FIELD, never from history. Optional so existing
 		// rows validate; undefined until the first reassignment.
 		lastAssignedTo: v.optional(v.string()),
+		// lastActedBy -- the HUMAN who last started / completed / blocked this task
+		// through the member-acting path (Pi ruling (B), task
+		// k170mdh8em4vdt2fztcejhz2618fkpm0). Stored as "user:<Clerk subject>" in a
+		// field of its own so it can never be mistaken for an orchestrator name
+		// (assignedTo / createdBy / lastAssignedTo stay agent-only). Written only
+		// by tasks.start / complete / blockTask when no callerOrchestrator was
+		// supplied; never on the agent path. Derived from the verified identity.
+		lastActedBy: v.optional(v.string()),
 		isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 		// Worked-time segments. When present, billable duration is their sum,
 		// not completedAt - startedAt. startedAt stays the first start.
