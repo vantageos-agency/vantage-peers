@@ -37,7 +37,7 @@ Before using VantagePeers Cloud through ChatGPT, the connector must be authorize
 **Step 1 — Add the connector**
 
 1. In ChatGPT, navigate to **Settings → Apps → Add connector**.
-2. Search for **vantage-peers** or paste the MCP endpoint URL provided during onboarding.
+2. Search for **vantage-peers** or paste the MCP endpoint URL provided during onboarding. The URL ends in `/mcp` (for example `https://vantage-peers-production.up.railway.app/mcp`); paste it exactly, not the bare host.
 3. Authenticate with the OAuth flow. Use the credentials (client ID / client secret) provided by your operator at onboarding — do not create new ones.
 
 **Step 2 — Allow batch ECRITURE tools**
@@ -75,7 +75,7 @@ Avant d'utiliser VantagePeers Cloud via ChatGPT, le connecteur doit être autori
 **Étape 1 — Ajouter le connecteur**
 
 1. Dans ChatGPT, accédez à **Paramètres → Applications → Ajouter un connecteur**.
-2. Recherchez **vantage-peers** ou collez l'URL de l'endpoint MCP fournie lors de l'intégration.
+2. Recherchez **vantage-peers** ou collez l'URL de l'endpoint MCP fournie lors de l'intégration. L'URL se termine par `/mcp` (par exemple `https://vantage-peers-production.up.railway.app/mcp`) ; collez-la telle quelle, pas l'hôte seul.
 3. Authentifiez-vous via le flux OAuth. Utilisez les identifiants (client ID / client secret) fournis par votre opérateur lors de l'intégration — ne créez pas de nouveaux identifiants.
 
 **Étape 2 — Autoriser les outils ECRITURE en lot**
@@ -115,7 +115,7 @@ VantagePeers Cloud integrates with Claude.ai via a custom skill. The critical de
 **Step 1 — Define the custom skill in Claude.ai**
 
 1. In Claude.ai, open **Settings → Integrations → Add MCP connector**.
-2. Enter the VantagePeers MCP endpoint URL provided during onboarding.
+2. Enter the VantagePeers MCP endpoint URL provided during onboarding. The URL ends in `/mcp` (for example `https://vantage-peers-production.up.railway.app/mcp`); enter it exactly, not the bare host.
 3. Authenticate with the OAuth flow using your onboarding credentials.
 
 **Step 2 — Bake identity into the skill at creation**
@@ -172,7 +172,7 @@ VantagePeers Cloud s'intègre à Claude.ai via une skill personnalisée. Le prin
 **Étape 1 — Définir la skill personnalisée dans Claude.ai**
 
 1. Dans Claude.ai, ouvrez **Paramètres → Intégrations → Ajouter un connecteur MCP**.
-2. Saisissez l'URL de l'endpoint MCP VantagePeers fournie lors de l'intégration.
+2. Saisissez l'URL de l'endpoint MCP VantagePeers fournie lors de l'intégration. L'URL se termine par `/mcp` (par exemple `https://vantage-peers-production.up.railway.app/mcp`) ; saisissez-la telle quelle, pas l'hôte seul.
 3. Authentifiez-vous via le flux OAuth avec vos identifiants d'intégration.
 
 **Étape 2 — Intégrer l'identité dans la skill à la création**

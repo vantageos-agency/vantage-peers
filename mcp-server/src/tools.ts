@@ -8,13 +8,13 @@
  * duplicated.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
 	checkDelegationAllowed,
@@ -31,6 +31,7 @@ import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
+import { isRefusedEnvelope } from "./refusal.js";
 import { defineTool, type ToolAuthContext } from "./registerTool.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
@@ -39,10 +40,8 @@ import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
-
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
-import { isRefusedEnvelope } from "./refusal.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VP_EMIT_UI_MARKERS gate
@@ -1925,25 +1924,42 @@ export function registerTools(
 	// for a provisioned OAuth token — org derived from the token row, never
 	// an org argument), never a list hard-coded here. Master scope
 	// short-circuits inside checkDelegationAllowed without querying Convex.
-	const guardDelegation = async (assignedTo: string) => {
-		const err = await checkDelegationAllowed(oauthCtx, assignedTo, async () => {
-			if (oauthCtx?.clerkJwt) {
-				return convex.query(
-					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-					"orgRoster:getMyOrgRoster" as any,
-					{},
-				) as Promise<string[]>;
-			}
-			if (oauthCtx?.accessTokenHash) {
-				return convex.query(
-					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-					"orgRoster:getForAccessToken" as any,
-					{ tokenHash: oauthCtx.accessTokenHash },
-				) as Promise<string[]>;
-			}
-			return [];
-		});
+	const guardDelegation = async (assignedTo: string, field = "assignedTo") => {
+		const err = await checkDelegationAllowed(
+			oauthCtx,
+			assignedTo,
+			async () => {
+				if (oauthCtx?.clerkJwt) {
+					return convex.query(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"orgRoster:getMyOrgRoster" as any,
+						{},
+					) as Promise<string[]>;
+				}
+				if (oauthCtx?.accessTokenHash) {
+					return convex.query(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"orgRoster:getForAccessToken" as any,
+						{ tokenHash: oauthCtx.accessTokenHash },
+					) as Promise<string[]>;
+				}
+				return [];
+			},
+			field,
+		);
 		return err ? mcpError(err) : null;
+	};
+	// Assignment guard — for a name that ASSIGNS work to someone (pilot,
+	// fulfilledBy, a BU's new lead), as opposed to the ACTING name a credential
+	// binds (callerOrchestrator / the scope's fromArg, see registerTool.ts
+	// actingNameKeys). An assignee is not an identity claim, so it is never
+	// refused as AGENT_IDENTITY_MISMATCH (task k1748jbt7yfgrv747p8gky1f358fk1r5).
+	// The caller naming itself passes exactly as guardFrom always let it; any
+	// other name must be a member of the caller's OWN organisation roster —
+	// the same delegation gate create_task applies to assignedTo.
+	const guardAssignee = async (field: string, name: string) => {
+		if (guardFrom(name) === null) return null;
+		return guardDelegation(name, field);
 	};
 	const guardRead = (namespace: string | undefined) => {
 		const err = checkNamespaceRead(oauthCtx, namespace);
@@ -5006,17 +5022,31 @@ export function registerTools(
 			"EXAMPLE: correct_task_segment taskId='k178d3ns...' segmentIndex=0 start=1767250800000 " +
 			"end=1767268800000 reason='unrecorded break, real work was 5 hours' callerOrchestrator='gamma'.",
 		{
-			taskId: taskIdSchema.describe("Convex document ID of the task whose segment is being corrected"),
+			taskId: taskIdSchema.describe(
+				"Convex document ID of the task whose segment is being corrected",
+			),
 			segmentIndex: z
 				.number()
 				.int()
 				.min(0)
-				.describe("Index into the task's workSegments array of the segment to correct"),
-			start: z.number().describe("Corrected segment start, ms since epoch — must be >= the recorded start"),
-			end: z.number().describe("Corrected segment end, ms since epoch — must be <= the recorded end (or now, if still open)"),
+				.describe(
+					"Index into the task's workSegments array of the segment to correct",
+				),
+			start: z
+				.number()
+				.describe(
+					"Corrected segment start, ms since epoch — must be >= the recorded start",
+				),
+			end: z
+				.number()
+				.describe(
+					"Corrected segment end, ms since epoch — must be <= the recorded end (or now, if still open)",
+				),
 			reason: z
 				.string()
-				.describe("Why the correction is honest — at least 12 non-space characters"),
+				.describe(
+					"Why the correction is honest — at least 12 non-space characters",
+				),
 			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
@@ -5028,7 +5058,14 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Correct task segment",
 		},
-		async ({ taskId, segmentIndex, start, end, reason, callerOrchestrator }) => {
+		async ({
+			taskId,
+			segmentIndex,
+			start,
+			end,
+			reason,
+			callerOrchestrator,
+		}) => {
 			try {
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
@@ -5048,7 +5085,11 @@ export function registerTools(
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ taskId, segmentIndex, corrected: true }, null, 2),
+							text: JSON.stringify(
+								{ taskId, segmentIndex, corrected: true },
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -5534,7 +5575,7 @@ export function registerTools(
 			try {
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
-				const pilotDenied = guardFrom(pilot);
+				const pilotDenied = await guardAssignee("pilot", pilot);
 				if (pilotDenied) return pilotDenied;
 
 				const missionId = await convex.mutation("missions:create" as any, {
@@ -5757,7 +5798,9 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "from", fromArg: "pilot" },
+		// The acting name is callerOrchestrator; `pilot` is an ASSIGNMENT, never
+		// bound to (or derived from) the caller's credential.
+		{ kind: "from", fromArg: "callerOrchestrator" },
 		"update_mission",
 		"Update any mutable field on a mission; only provided fields are patched, updatedAt auto-set. " +
 			"WHEN: use to advance status, update progress percentage, or change pilot/agents mid-flight. " +
@@ -5815,7 +5858,7 @@ export function registerTools(
 		}) => {
 			try {
 				if (pilot) {
-					const pilotDenied = guardFrom(pilot);
+					const pilotDenied = await guardAssignee("pilot", pilot);
 					if (pilotDenied) return pilotDenied;
 				}
 				if (callerOrchestrator) {
@@ -7130,7 +7173,7 @@ export function registerTools(
 			try {
 				const fromDenied = guardFrom(requestedBy);
 				if (fromDenied) return fromDenied;
-				const fulfillerDenied = guardFrom(fulfilledBy);
+				const fulfillerDenied = await guardAssignee("fulfilledBy", fulfilledBy);
 				if (fulfillerDenied) return fulfillerDenied;
 
 				const mandateId = await convex.mutation("mandates:create" as any, {
@@ -7684,8 +7727,11 @@ export function registerTools(
 				const callerDenied = guardFrom(callerOrchestrator);
 				if (callerDenied) return callerDenied;
 				if (orchestratorId) {
-					const fromDenied = guardFrom(orchestratorId);
-					if (fromDenied) return fromDenied;
+					const leadDenied = await guardAssignee(
+						"orchestratorId",
+						orchestratorId,
+					);
+					if (leadDenied) return leadDenied;
 				}
 
 				await convex.mutation("businessUnits:update" as any, {

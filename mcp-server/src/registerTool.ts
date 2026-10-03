@@ -154,10 +154,7 @@ function enforceScope(
 			// No claim made by a master caller: nothing to verify, nothing to
 			// refuse. (A claim is handled by bindActingNames + checkActorBinding;
 			// feeding String(undefined) to the binder would invent one.)
-			if (
-				(from === undefined || from === null) &&
-				isMasterScope(ctx.oauthCtx)
-			)
+			if ((from === undefined || from === null) && isMasterScope(ctx.oauthCtx))
 				return null;
 			const err = checkFromAllowed(ctx.oauthCtx, String(from));
 			return err ? mcpError(err) : null;
@@ -172,7 +169,10 @@ function enforceScope(
  * under another spelling. Derived from the tool's own declaration, so a tool
  * added tomorrow that declares either is bound without anyone remembering to.
  */
-function actingNameKeys(scope: ToolScope, schema: z.ZodRawShape): string[] {
+export function actingNameKeys(
+	scope: ToolScope,
+	schema: z.ZodRawShape,
+): string[] {
 	const keys = new Set<string>();
 	if ("callerOrchestrator" in schema) keys.add("callerOrchestrator");
 	if (scope.kind === "from") keys.add(scope.fromArg);
