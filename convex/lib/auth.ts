@@ -32,6 +32,14 @@ export interface OrgScope {
 	scopes: string[];
 	isMaster: boolean;
 	/**
+	 * The caller's VERIFIED Clerk org role claim, verbatim ("org:admin"). Set
+	 * ONLY on the ordinary member scope (the final return of `withOrgScope`),
+	 * and only when the claim is a string; absent otherwise. Read by the
+	 * member-acting writer-role gate (`convex/memberWriterRoles.ts`); it grants
+	 * nothing by itself.
+	 */
+	orgRole?: string;
+	/**
 	 * WHICH grant made this scope master. Set in EACH master branch of
 	 * `withOrgScope` and nowhere else; absent on every non-master scope.
 	 *
@@ -351,6 +359,7 @@ export async function withOrgScope(
 		};
 	}
 
+	const memberRoleRaw = readOrgRole(identity).roleRaw;
 	return {
 		userId: identity.subject,
 		orgSlug,
@@ -365,6 +374,7 @@ export async function withOrgScope(
 		// via membership of a wildcard org. The ONE membership-derived master is
 		// the operator-org admin branch above (orgKind + verified admin role).
 		isMaster: false,
+		...(memberRoleRaw !== null ? { orgRole: memberRoleRaw } : {}),
 	};
 }
 
