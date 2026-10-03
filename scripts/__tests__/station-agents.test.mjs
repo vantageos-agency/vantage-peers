@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -91,6 +91,19 @@ describe("secrets handling", () => {
 		expect(() => assertSecretPathOutsideRepo("/repo", "/repo")).toThrow(/inside the repository/);
 		expect(assertSecretPathOutsideRepo("/secure/x", "/repo")).toBe("/secure/x");
 		expect(assertSecretPathOutsideRepo("/repo-other/x", "/repo")).toBe("/repo-other/x");
+	});
+	it("refuses a dir whose first segment only starts with '..' (repo/..secrets) and a symlink into the repo", () => {
+		// Eta REVISE on #1424: both landed a plaintext secret inside the work tree.
+		const base = mkdtempSync(join(tmpdir(), "stn-guard-"));
+		const repo = join(base, "repo");
+		mkdirSync(join(repo, "sub"), { recursive: true });
+		const outside = join(base, "outside");
+		mkdirSync(outside);
+		symlinkSync(repo, join(outside, "link-to-repo"));
+		expect(() => assertSecretPathOutsideRepo(join(repo, "..secrets"), repo)).toThrow(/inside the repository/);
+		expect(() => assertSecretPathOutsideRepo(join(outside, "link-to-repo", "s"), repo)).toThrow(/inside the repository/);
+		expect(() => assertSecretPathOutsideRepo(join(repo, "sub"), repo)).toThrow(/inside the repository/);
+		expect(assertSecretPathOutsideRepo(join(outside, "s"), repo)).toBe(join(outside, "s"));
 	});
 	it("writeSecretFile writes mode 0600 and returns only the path", () => {
 		const dir = join(mkdtempSync(join(tmpdir(), "stn-")), "out");

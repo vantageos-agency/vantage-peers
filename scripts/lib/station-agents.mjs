@@ -7,8 +7,8 @@
  * are unit-testable without Clerk or Convex.
  */
 
-import { chmodSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** Roles that must never be minted by this tool (BU excluded by the roster). */
 export const EXCLUDED_ROLES = Object.freeze(["victor", "marie", "iris", "iris-rh"]);
@@ -154,12 +154,28 @@ export function orgSlugFromClaims(payload) {
  */
 export function assertSecretPathOutsideRepo(secretsDir, repoRoot) {
 	const abs = resolve(secretsDir);
-	const rel = relative(resolve(repoRoot), abs);
-	const inside = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+	// Compare REAL paths, so a symlink outside the repo that points into it is
+	// still inside; and test the first SEGMENT, so "repo/..secrets" (a name that
+	// merely starts with "..") is inside.
+	const rel = relative(realpathOfNearestExisting(resolve(repoRoot)), realpathOfNearestExisting(abs));
+	const inside = rel === "" || (rel.split(sep)[0] !== ".." && !isAbsolute(rel));
 	if (inside) {
 		throw new Error(`--secrets-dir ${abs} is inside the repository ${resolve(repoRoot)}. Name a path outside the work tree.`);
 	}
 	return abs;
+}
+
+/** realpath of the deepest existing ancestor, with the not-yet-created remainder re-appended. */
+function realpathOfNearestExisting(p) {
+	let head = p;
+	const tail = [];
+	while (!existsSync(head)) {
+		const parent = dirname(head);
+		if (parent === head) break;
+		tail.unshift(basename(head));
+		head = parent;
+	}
+	return join(existsSync(head) ? realpathSync(head) : head, ...tail);
 }
 
 /** The ONLY function that handles plaintext: writes it 0600 and returns the path. */
