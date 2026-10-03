@@ -1363,6 +1363,25 @@ export default defineSchema({
 		updatedAt: v.number(),
 	}).index("by_key", ["key"]),
 
+	// ── memberWriterRoles ────────────────────────────────────────────────────
+	// The ALLOWLIST OF WRITER ROLES for the member-acting path on tasks.start /
+	// complete / blockTask (Pi ruling, task k170hs77p7me28wr7xfqgntm0x8fkzxc).
+	// Held as DATA, never as a constant in code. `roles` holds Clerk role keys
+	// exactly as the verified `org_role` claim spells them ("org:admin",
+	// "org:editor"). A role not in the list is refused, never inherited.
+	//
+	// orgSlug present = the override for that org (an EMPTY list is an explicit
+	// "nobody writes" and is honoured as a refusal). orgSlug ABSENT = the one
+	// fleet-level default row, consulted only when the org has no row of its own.
+	// No row at all, or no default row = refuse (fail closed, never "all roles").
+	// Written ONLY by the internalMutation `memberWriterRoles:setMemberWriterRoles`
+	// (operator path: `npx convex run`), never wired to a client-facing surface.
+	memberWriterRoles: defineTable({
+		orgSlug: v.optional(v.string()),
+		roles: v.array(v.string()),
+		updatedAt: v.number(),
+	}).index("by_org", ["orgSlug"]),
+
 	// ── client_org_mapping ───────────────────────────────────────────────────
 	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
 	// granted dashboard access. Provisioned manually by Pi / Laurent via Convex

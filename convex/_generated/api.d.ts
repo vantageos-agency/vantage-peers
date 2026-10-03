@@ -59,6 +59,7 @@ import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as licenses from "../licenses.js";
 import type * as mandates from "../mandates.js";
 import type * as memberScopesMigration from "../memberScopesMigration.js";
+import type * as memberWriterRoles from "../memberWriterRoles.js";
 import type * as memories from "../memories.js";
 import type * as memoriesScoped from "../memoriesScoped.js";
 import type * as messages from "../messages.js";
@@ -156,6 +157,7 @@ declare const fullApi: ApiFromModules<{
   licenses: typeof licenses;
   mandates: typeof mandates;
   memberScopesMigration: typeof memberScopesMigration;
+  memberWriterRoles: typeof memberWriterRoles;
   memories: typeof memories;
   memoriesScoped: typeof memoriesScoped;
   messages: typeof messages;

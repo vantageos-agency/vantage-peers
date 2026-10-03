@@ -34,8 +34,12 @@ const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 type Caller = ReturnType<T["withIdentity"]>;
 
-const idOf = (subject: string, org?: string) =>
-	({ subject, ...(org ? { organizationSlug: org } : {}) }) as Parameters<
+const idOf = (subject: string, org?: string, role?: string) =>
+	({
+		subject,
+		...(org ? { organizationSlug: org } : {}),
+		...(role ? { org_role: role } : {}),
+	}) as Parameters<
 		T["withIdentity"]
 	>[0];
 
@@ -82,7 +86,19 @@ async function setup() {
 	const t = createT();
 	await seedOrg(t, "org-a");
 	await seedOrg(t, "org-b");
-	return { t, member: t.withIdentity(idOf(MEMBER_A, "org-a")) };
+	// Writer-role allowlist is DATA (memberWriterRoles): the fleet default row.
+	// The member carries a LISTED role (org:editor) — the only change the
+	// member-acting poles needed when the writer-role gate landed.
+	await t.run(async (ctx) => {
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: Date.now(),
+		});
+	});
+	return {
+		t,
+		member: t.withIdentity(idOf(MEMBER_A, "org-a", "org:editor")),
+	};
 }
 
 type Door = {

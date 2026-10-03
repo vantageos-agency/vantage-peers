@@ -19,6 +19,7 @@ import {
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
+import { assertMemberMayWrite, loadMemberWriterRoles } from "./memberWriterRoles";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
@@ -279,6 +280,21 @@ function memberActorOf(scope: OrgScope): string {
 	return `${MEMBER_ACTOR_PREFIX}${scope.userId}`;
 }
 
+// Loads the writer-role list ONLY on the member-acting path (no
+// callerOrchestrator); the agent path pays no read.
+async function memberActingOpts(
+	ctx: QueryCtx | MutationCtx,
+	callerOrchestrator: string | undefined,
+	callerScope: OrgScope,
+	door: string,
+): Promise<{ allowOrgMember: true; writerRoles: readonly string[]; door: string }> {
+	const writerRoles =
+		callerOrchestrator === undefined && callerScope.orgSlug !== null
+			? await loadMemberWriterRoles(ctx, callerScope.orgSlug)
+			: [];
+	return { allowOrgMember: true, writerRoles, door };
+}
+
 function assertTaskCallerAuthorized(
 	task: {
 		orgId?: string;
@@ -293,7 +309,9 @@ function assertTaskCallerAuthorized(
 	// Opt-in, per door: ONLY start / complete / blockTask pass `allowOrgMember`
 	// (Pi ruling (B), task k170mdh8em4vdt2fztcejhz2618fkpm0). Every other caller
 	// of this helper keeps refusing an omitted callerOrchestrator.
-	opts?: { allowOrgMember?: boolean },
+	// `writerRoles` is the org's writer-role allowlist, loaded as DATA by
+	// `memberActingOpts` (convex/memberWriterRoles.ts). Absent = refuse.
+	opts?: { allowOrgMember?: boolean; writerRoles?: readonly string[]; door?: string },
 ): string | undefined {
 	if (callerOrchestrator === undefined) {
 		// MEMBER-ACTING PATH — a resolved, NON-master member of an organisation
@@ -301,7 +319,7 @@ function assertTaskCallerAuthorized(
 		// orchestrator authority (creator/assignee rules bind agents only) and is
 		// bounded by the tenant gate alone — the row's `orgId` must equal the
 		// member's resolved org (assertTaskVisibleToCaller, the same predicate the
-		// readers use). Master (incl. the operator human) is NOT admitted here:
+		// readers use). The operator human (Pi ruling (a)) is served HERE as a member: in a mutation ctx withOrgScope never grants its read-only operator-master scope (isReadOnlyCtx), so it arrives as an ordinary member of the operator org — own org only, same writer-role gate. Any master scope (service account, internal) is NOT admitted here:
 		// unchanged. An unresolved caller never reaches this point —
 		// requireAuthenticatedCaller already refused no-identity (AUTH_REQUIRED)
 		// and signed-in-no-org (RBAC_DENIED); `orgSlug === null` is re-checked
@@ -313,6 +331,10 @@ function assertTaskCallerAuthorized(
 			callerScope.refused !== true
 		) {
 			assertTaskVisibleToCaller(task, callerScope, taskId);
+			// WRITER-ROLE GATE (Pi ruling, k170hs77p7me28wr7xfqgntm0x8fkzxc): the
+			// verified org_role must be on the allowlist held as data. An absent
+			// list refuses (fail closed), as does an absent or unlisted role.
+			assertMemberMayWrite(callerScope, opts.writerRoles ?? [], opts.door ?? "tasks");
 			return memberActorOf(callerScope);
 		}
 		throw new ConvexError(
@@ -2124,7 +2146,7 @@ export const blockTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, { allowOrgMember: true });
+		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, await memberActingOpts(ctx, args.callerOrchestrator, callerScope, "tasks:blockTask"));
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
 		// check: blockedCause="peer_task" literally means "waiting on a peer
@@ -2301,7 +2323,7 @@ export const complete = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, { allowOrgMember: true });
+		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, await memberActingOpts(ctx, args.callerOrchestrator, callerScope, "tasks:complete"));
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
 			throw new ConvexError(
@@ -2704,7 +2726,7 @@ export const start = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, { allowOrgMember: true });
+		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, await memberActingOpts(ctx, args.callerOrchestrator, callerScope, "tasks:start"));
 
 		// Block if any dependsOn tasks are not yet done.
 		if (task.dependsOn && task.dependsOn.length > 0) {
