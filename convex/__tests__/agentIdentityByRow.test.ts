@@ -554,4 +554,50 @@ describe("LEGACY credential (agentId undefined) follows the ROW across rename an
 		await seedOrg(t, "org-b");
 		await register(t, "org-b", "clio");
 	});
+	// An orphan: a legacy credential row (no agentId) carrying a label no live
+	// agent holds.
+	async function seedOrphan(t: T, label: string, isActive: boolean) {
+		await t.run(async (ctx) => {
+			await ctx.db.insert("agent_credentials", {
+				orgSlug: "org-a",
+				agentName: label,
+				secretHash: `orphan-${label}-${isActive}`,
+				isActive,
+				createdAt: Date.now(),
+			});
+		});
+	}
+	const rename = (t: T, name: string, newName: string) =>
+		adminOf(t, "org-a").mutation(api.agents.renameAgent, {
+			orgSlug: "org-a",
+			name,
+			newName,
+		});
+
+	test("ORPHAN (rename side): renameAgent b -> x is refused while an ACTIVE orphan carries x", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		const id = await register(t, "org-a", "b");
+		await seedOrphan(t, "x", true);
+		expect(await codeOf(rename(t, "b", "x"))).toMatch(
+			/^AGENT_LEGACY_CREDENTIAL_ORPHANED/,
+		);
+		const row = await t.run(async (ctx) => ctx.db.get(id));
+		expect(row?.name).toBe("b");
+	});
+
+	test("ORPHAN (revoked): a REVOKED orphan on x blocks neither registerAgent x nor renameAgent b -> x; an active one still does", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await register(t, "org-a", "b");
+		await seedOrphan(t, "x", false);
+		await seedOrphan(t, "y", false);
+		expect(await codeOf(rename(t, "b", "x"))).toBe("NO_ERROR");
+		expect(await codeOf(register(t, "org-a", "y"))).toBe("NO_ERROR");
+		await seedOrphan(t, "z", true);
+		expect(await codeOf(register(t, "org-a", "z"))).toMatch(
+			/^AGENT_LEGACY_CREDENTIAL_ORPHANED/,
+		);
+	});
+
 });
