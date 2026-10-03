@@ -23,7 +23,10 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { _setInternalClientForTest, bearerAuthMiddleware } from "../src/auth.js";
+import {
+	_setInternalClientForTest,
+	bearerAuthMiddleware,
+} from "../src/auth.js";
 
 const SIGMA_CLOUD_URL = "vantage-peers-production.up.railway.app";
 
@@ -61,7 +64,7 @@ describe("bearerAuthMiddleware publicBaseUrl derive-from-request (#875)", () => 
 		expect(res.status).toBe(401);
 		const header = res.headers.get("WWW-Authenticate");
 		expect(header).toContain(
-			'resource_metadata="https://selfhost.example.com/.well-known/oauth-protected-resource"',
+			'resource_metadata="https://selfhost.example.com/.well-known/oauth-protected-resource/mcp"',
 		);
 		// CRITICAL: must NOT leak Sigma's Cloud URL.
 		expect(header).not.toContain(SIGMA_CLOUD_URL);
