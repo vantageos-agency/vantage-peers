@@ -479,6 +479,33 @@ export default defineSchema({
 		.index("by_mission", ["missionId", "status"])
 		.index("by_instance", ["assignedToInstance", "status"])
 		.index("by_orgId", ["orgId"])
+		// Org-keyed list reads (tasks.list for non-master callers): the tenant
+		// predicate is the LEADING equality of every index, so a member's
+		// `take(limit)` pages its OWN org's rows and the scan cap bounds the
+		// org, never the fleet. Every index ends in `status` then the implicit
+		// `_creationTime`, so a pinned status allows `.lt("_creationTime", …)`
+		// and each status bucket is newest-first. Additive: no existing index
+		// or field changes.
+		.index("by_orgId_status", ["orgId", "status"])
+		.index("by_orgId_assignee_status", ["orgId", "assignedTo", "status"])
+		.index("by_orgId_project_status", ["orgId", "project", "status"])
+		.index("by_orgId_assignee_project_status", [
+			"orgId",
+			"assignedTo",
+			"project",
+			"status",
+		])
+		.index("by_orgId_instance_status", [
+			"orgId",
+			"assignedToInstance",
+			"status",
+		])
+		.index("by_orgId_instance_project_status", [
+			"orgId",
+			"assignedToInstance",
+			"project",
+			"status",
+		])
 		// Compound indexes added to close the silent-filter-drop defect in
 		// convex/tasks.ts `list`: when a caller supplies assignedTo/assignedToInstance
 		// TOGETHER with project, the query must apply BOTH filters via a matching
