@@ -6,6 +6,7 @@ import { creatorValidator } from "./schema";
 import { withOrgScope, requireScope, requireOrchestratorOnRoster, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
+import { resolveHumanActor } from "./lib/humanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // participant-visibility helpers (Day 165 fix — task
@@ -157,7 +158,8 @@ export const create = mutation({
 		content: v.string(),
 		decisions: v.optional(v.array(v.string())),
 		linkedMemoryIds: v.optional(v.array(v.id("memories"))),
-		createdBy: creatorValidator,
+		// Absent = the HUMAN path (a dashboard org member acting in its own name).
+		createdBy: v.optional(creatorValidator),
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
@@ -187,9 +189,22 @@ export const create = mutation({
 		// Acting identity derives from the verified caller: a member may author
 		// a note only as an orchestrator on its OWN resolved roster (the MCP-layer
 		// gate is bypassed by the service-account path). Master unchanged.
-		requireOrchestratorOnRoster(scope, args.createdBy, "briefingNotes:create", "actor");
+		// HUMAN path (no createdBy): the actor is the verified Clerk subject, the
+		// writer-role allowlist decides, createdBy is "user:<subject>". A
+		// client-supplied createdBy is never an identity here: with one present the
+		// unchanged agent path runs and the roster refuses any name that is not an
+		// orchestrator of the caller's own org (e.g. "team/<org>/user").
+		const { createdBy: claimedCreator, ...rest } = args;
+		let createdBy: string;
+		if (claimedCreator === undefined) {
+			createdBy = await resolveHumanActor(ctx, scope, { door: "briefingNotes:create" });
+		} else {
+			requireOrchestratorOnRoster(scope, claimedCreator, "briefingNotes:create", "actor");
+			createdBy = claimedCreator;
+		}
 		const noteId = await ctx.db.insert("briefingNotes", {
-			...args,
+			...rest,
+			createdBy,
 			createdAt: Date.now(),
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 		});
@@ -757,6 +772,23 @@ export const deleteBriefingNote = mutation({
 			);
 		}
 
+		// HUMAN path: a non-master caller with no callerOrchestrator is a dashboard
+		// org member acting in its own name; deleting is destructive -> org:admin.
+		// A briefing note carries no orchestrator field, so the tenant stamp alone
+		// decides (tenantOnly). Master with no caller is still refused below.
+		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+			await resolveHumanActor(ctx, scope, {
+				door: "briefingNotes:deleteBriefingNote",
+				row: note,
+				rowKind: "briefing note",
+				rowId: args.noteId,
+				tenantOnly: true,
+				adminOnly: true,
+			});
+			await ctx.db.delete(args.noteId);
+			await syncParticipantIndex(ctx, args.noteId, []);
+			return { deleted: true };
+		}
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to delete a briefing note — omitting it is refused, not exempted — ${JSON.stringify({ registration: "briefingNotes:deleteBriefingNote", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
@@ -785,7 +817,10 @@ export const deleteBriefingNote = mutation({
 export const update = mutation({
 	args: {
 		noteId: v.id("briefingNotes"),
-		callerOrchestrator: creatorValidator, // REQUIRED — deny-by-default per memory j573cwcs3znp0xsvtg34x435jh84b0eg
+		// Agent path: the creator (or fleet system) — deny-by-default per memory
+		// j573cwcs3znp0xsvtg34x435jh84b0eg. Absent = the HUMAN path (a dashboard org
+		// member acting in its own name); master with no caller is refused below.
+		callerOrchestrator: v.optional(creatorValidator),
 		title: v.optional(v.string()),
 		topic: v.optional(v.string()),
 		participants: v.optional(v.array(v.string())),
@@ -833,7 +868,22 @@ export const update = mutation({
 			);
 		}
 
+		// HUMAN path: writer role from the allowlist, tenant stamp only (a note has
+		// no orchestrator field), actor recorded in updatedBy as "user:<subject>".
+		let actor: string;
+		if (callerOrchestrator === undefined) {
+			actor = await resolveHumanActor(ctx, scope, {
+				door: "briefingNotes:update",
+				row: note,
+				rowKind: "briefing note",
+				rowId: noteId,
+				tenantOnly: true,
+			});
+		} else {
+			actor = callerOrchestrator;
+		}
 		const isAuthorized =
+			callerOrchestrator === undefined ||
 			note.createdBy === callerOrchestrator ||
 			isFleetSystemCaller(scope, callerOrchestrator);
 		if (!isAuthorized) {
@@ -843,7 +893,7 @@ export const update = mutation({
 		}
 		const patch: Record<string, unknown> = {
 			updatedAt: Date.now(),
-			updatedBy: callerOrchestrator,
+			updatedBy: actor,
 		};
 		for (const [key, value] of Object.entries(fields)) {
 			if (value !== undefined) {

@@ -268,6 +268,14 @@ export default defineSchema({
 		// Never counted as done/complete; excluded from open/active aliases.
 		cancelledBy: v.optional(creatorValidator),
 		cancelReason: v.optional(v.string()),
+		// lastActedBy -- the HUMAN who last created / edited / cancelled this
+		// mission through the member-acting path (Admin CRUD B2, task
+		// k17d5k5bw741p3681bc0pq76ah8fk4sn). "user:<Clerk subject>" in a field of
+		// its own so it is never mistaken for an orchestrator name (pilot /
+		// createdBy / cancelledBy stay agent-only on the agent path). Written only
+		// when no createdBy / callerOrchestrator was supplied; derived from the
+		// verified identity (memberActorOf), never from an argument.
+		lastActedBy: v.optional(v.string()),
 	})
 		.index("by_project", ["project", "status"])
 		.index("by_pilot", ["pilot", "status"])

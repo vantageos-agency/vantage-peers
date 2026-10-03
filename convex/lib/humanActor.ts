@@ -11,7 +11,7 @@ import { isRowVisibleToScope } from "./auth";
 // resolveHumanActor — the ONE decision "may this human act on this door, and
 // under what name". Used by every task door a dashboard human reaches
 // (start / complete / blockTask / create / update / pause / resume / failTask /
-// deleteTask). No door carries its own copy of this logic.
+// deleteTask) and by the mission and briefing-note doors (`row`). No door carries its own copy of this logic.
 //
 // Pi rulings: a human acts in its OWN name, never under an agent's name; own
 // organisation only, never across orgs; write access comes from the writer-role
@@ -45,9 +45,31 @@ export function assertTaskVisibleToCaller(
 	callerScope: OrgScope,
 	taskId: string,
 ): void {
-	if (!isRowVisibleToScope(callerScope, task)) {
+	assertRowVisibleToCaller(task, callerScope, "task", taskId);
+}
+
+/**
+ * Row-generic TENANT compare (tasks, missions, briefing notes). Default: the
+ * same predicate as the readers (`isRowVisibleToScope`: tenant gate, then the
+ * roster as a narrowing intersect). `tenantOnly` is for a row that carries no
+ * orchestrator field at all (a briefing note): the roster leg has nothing to
+ * compare and would refuse every row, so only the tenant stamp decides — an
+ * absent `orgId` still never equals a resolved org slug, so an unstamped row
+ * is refused.
+ */
+export function assertRowVisibleToCaller(
+	row: { orgId?: string; assignedTo?: string; pilot?: string },
+	callerScope: OrgScope,
+	kind: string,
+	rowId: string,
+	tenantOnly = false,
+): void {
+	const visible = tenantOnly
+		? callerScope.orgSlug !== null && row.orgId === callerScope.orgSlug
+		: isRowVisibleToScope(callerScope, row);
+	if (!visible) {
 		throw new ConvexError(
-			`RBAC_DENIED: task ${taskId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ taskId, callerOrg: callerScope.orgSlug })}`,
+			`RBAC_DENIED: ${kind} ${rowId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ rowId, kind, callerOrg: callerScope.orgSlug })}`,
 		);
 	}
 }
@@ -78,6 +100,12 @@ export async function resolveHumanActor(
 		/** Absent for create (the tenant is stamped from the scope, not compared). */
 		task?: { orgId?: string; assignedTo?: string; pilot?: string };
 		taskId?: string;
+		/** Row-generic form of `task`/`taskId` for missions and briefing notes. */
+		row?: { orgId?: string; assignedTo?: string; pilot?: string };
+		rowKind?: string;
+		rowId?: string;
+		/** The row has no orchestrator field (briefing note): tenant stamp only. */
+		tenantOnly?: boolean;
 		adminOnly?: boolean;
 	},
 ): Promise<string> {
@@ -88,6 +116,15 @@ export async function resolveHumanActor(
 	}
 	if (opts.task !== undefined) {
 		assertTaskVisibleToCaller(opts.task, scope, opts.taskId ?? "");
+	}
+	if (opts.row !== undefined) {
+		assertRowVisibleToCaller(
+			opts.row,
+			scope,
+			opts.rowKind ?? "row",
+			opts.rowId ?? "",
+			opts.tenantOnly === true,
+		);
 	}
 	const writerRoles = await loadMemberWriterRoles(ctx, scope.orgSlug);
 	assertMemberMayWrite(scope, writerRoles, opts.door);
