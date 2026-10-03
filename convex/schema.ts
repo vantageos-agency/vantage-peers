@@ -1545,7 +1545,15 @@ export default defineSchema({
 	// the relation lives in a separate layer, not inside this entity).
 	agents: defineTable({
 		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org that owns this agent
-		name: v.string(), // agent's declared name, unique within its org (see by_org_name)
+		// IDENTITY IS THIS ROW'S `_id`, never the name. `name` is a display LABEL, renamable;
+		// it is unique within its org UNDER `normalizeOrchestratorId` (NFC + lowercase + trim),
+		// enforced at write time (`assertAgentNameFree`, convex/lib/agentIdentity.ts), because a
+		// Convex index is never a uniqueness constraint. `by_org_name` is a lookup index on the
+		// RAW label only (and finds legacy rows); the uniqueness key is `normalizedName`.
+		name: v.string(),
+		// normalizeOrchestratorId(name). Optional ONLY for the rollout of rows written before
+		// this field existed (backfilled by migrations/agentIdentityRows:backfillAgentNormalizedNames).
+		normalizedName: v.optional(v.string()),
 		description: v.optional(v.string()),
 		// `address` is the write-back target used AFTER an agent deploys — the
 		// emitter's source for a parent's remote-agent declaration (P-T3). Not
@@ -1556,7 +1564,8 @@ export default defineSchema({
 		createdAt: v.number(),
 	})
 		.index("by_org", ["orgSlug"])
-		.index("by_org_name", ["orgSlug", "name"]),
+		.index("by_org_name", ["orgSlug", "name"])
+		.index("by_org_normalized_name", ["orgSlug", "normalizedName"]),
 
 	// ── agent_relations ──────────────────────────────────────────────────────
 	// [P-T3] the parent-child edge — the graph P-T2's `agents` entity table
@@ -1590,21 +1599,31 @@ export default defineSchema({
 	// this codebase (convex/credentials.ts's `sha256Hex`, convex/oauth.ts's
 	// local mirror of the same helper).
 	//
-	// Rotation: a second `mintAgentCredential` call for the same (orgSlug,
-	// agentName) sets every PRIOR row's `isActive` to false before inserting
+	// Rotation: a second `mintAgentCredential` call for the same agent (same
+	// `agentId`) sets every PRIOR row's `isActive` to false before inserting
 	// the new active row — the old plaintext stops resolving, never deleted
 	// (audit trail of past mints is preserved).
 	//
 	// `secretHash` is the resolution key (`by_secret_hash`): P-T5's lock
-	// resolves a PRESENTED credential to (orgSlug, agentName) via this index,
+	// resolves a PRESENTED credential to its `agents` ROW via this index,
 	// never by trusting a caller-declared name.
 	agent_credentials: defineTable({
 		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this credential's agent belongs to
-		agentName: v.string(), // agents.name within orgSlug — the credential's OWN identity, never caller-declared
+		// IDENTITY: the `agents` row this credential was minted for. Resolution and rotation key
+		// on this, so renaming the agent never orphans or re-targets the credential. Optional ONLY
+		// for the rollout of rows minted before this field existed; such rows resolve through the
+		// (orgSlug, agentName) fallback until migrations/agentIdentityRows:backfillCredentialAgentIds
+		// has set it. Every new mint sets it.
+		agentId: v.optional(v.id("agents")),
+		// DENORMALISED LABEL (kept, not dropped): the agent's name AT MINT TIME, for audit reports
+		// and for the legacy fallback above. It is NOT the identity and may go stale after a
+		// rename; the agent row's current `name` is what resolution reports.
+		agentName: v.string(),
 		secretHash: v.string(), // sha256 hex of the minted secret — raw secret NEVER stored
 		isActive: v.boolean(), // false once rotated out by a later mint
 		createdAt: v.number(),
 	})
 		.index("by_org_agent", ["orgSlug", "agentName"])
+		.index("by_agent", ["agentId"])
 		.index("by_secret_hash", ["secretHash"]),
 });
