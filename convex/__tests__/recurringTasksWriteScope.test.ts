@@ -42,6 +42,7 @@ const createT = () => convexTest(schema, modules);
 
 async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: Date.now() });
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
 			allowedOrchestrators: ["seat-a"],
@@ -70,6 +71,8 @@ function asOrgA(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		// the human path (no caller arg on update) needs a writer role (memberWriterRoles)
+		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

@@ -4,7 +4,7 @@ import { mutation, query } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { resolveHumanRowActor } from "./lib/rowHumanActor";
+import { resolveHumanActor } from "./lib/humanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -335,10 +335,11 @@ export const deleteDiary = mutation({
 			// org:admin deletes an entry of its OWN organisation. diary has no org
 			// column, so the tenant key is the roster, the same key diary:list reads
 			// by: the entry's `orchestrator` must be on the caller's roster.
-			await resolveHumanRowActor(ctx, scope, {
+			await resolveHumanActor(ctx, scope, {
 				door: "diary:deleteDiary",
-				subject: `diary entry ${args.diaryId}`,
-				tenant: { kind: "roster", owner: entry.orchestrator },
+				rowKind: "diary entry",
+				rowId: args.diaryId,
+				rosterOwner: entry.orchestrator,
 				adminOnly: true,
 			});
 			await ctx.db.delete(args.diaryId);

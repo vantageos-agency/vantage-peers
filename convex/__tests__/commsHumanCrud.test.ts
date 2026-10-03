@@ -219,6 +219,14 @@ const rowDoors: RowDoor[] = [
 		served: (_b, a) => a === null,
 	},
 	{
+		name: "recurringTasks:update",
+		adminOnly: false,
+		seed: (t, o) => seedRecurring(t, o),
+		call: (c, id) => c.mutation(api.recurringTasks.update, { recurringTaskId: id, title: "Renamed by the human" }),
+		read: readRow("recurringTasks"),
+		served: (_b, a) => a?.title === "Renamed by the human",
+	},
+	{
 		name: "recurringTasks:pause",
 		adminOnly: false,
 		seed: (t, o) => seedRecurring(t, o, true),
@@ -344,6 +352,32 @@ describe("human CRUD — businessUnits:update reassignment", () => {
 			.withIdentity(as("user_m", "org:editor"))
 			.mutation(api.businessUnits.update, { buId: id, orchestratorId: "pi" });
 		expect((await readRow("businessUnits")(t, id))?.orchestratorId).toBe("pi");
+	});
+});
+
+describe("human CRUD — recurringTasks:update assignee and cron", () => {
+	test("reassigning to an orchestrator off the org roster -> refused, assignee unchanged", async () => {
+		const t = await setup();
+		const id = await seedRecurring(t, "own");
+		await expect(
+			t.withIdentity(as("user_m", "org:editor")).mutation(api.recurringTasks.update, { recurringTaskId: id, assignedTo: "eta" }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect((await readRow("recurringTasks")(t, id))?.assignedTo).toBe("sigma");
+	});
+
+	test("reassigning to another roster orchestrator -> served", async () => {
+		const t = await setup();
+		const id = await seedRecurring(t, "own");
+		await t.withIdentity(as("user_m", "org:editor")).mutation(api.recurringTasks.update, { recurringTaskId: id, assignedTo: "pi" });
+		expect((await readRow("recurringTasks")(t, id))?.assignedTo).toBe("pi");
+	});
+
+	test("a role-less org token is refused (no agent door without a caller arg on update)", async () => {
+		const t = await setup();
+		const id = await seedRecurring(t, "own");
+		await expect(
+			t.withIdentity(as("agent_token")).mutation(api.recurringTasks.update, { recurringTaskId: id, title: "x" }),
+		).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
 	});
 });
 

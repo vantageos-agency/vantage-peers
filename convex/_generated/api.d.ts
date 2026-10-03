@@ -54,7 +54,6 @@ import type * as lib_humanActor from "../lib/humanActor.js";
 import type * as lib_ids from "../lib/ids.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
-import type * as lib_rowHumanActor from "../lib/rowHumanActor.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
@@ -154,7 +153,6 @@ declare const fullApi: ApiFromModules<{
   "lib/ids": typeof lib_ids;
   "lib/license": typeof lib_license;
   "lib/memberScopes": typeof lib_memberScopes;
-  "lib/rowHumanActor": typeof lib_rowHumanActor;
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
   "lib/tenantSlug": typeof lib_tenantSlug;

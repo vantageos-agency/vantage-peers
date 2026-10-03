@@ -7,9 +7,9 @@ delete_bu,businessUnits+memberWriterRoles,DELETE,org-member,orgResolver,business
 update_bu,businessUnits+memberWriterRoles,UPDATE,org-member,orgResolver,businessUnits:update=orgResolver
 update_task,client_org_mapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 send_message,client_org_mapping+memberWriterRoles+messageReceipts+messages+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
+update_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 create_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
 create_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
-update_recurring_task,client_org_mapping+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 write_diary,diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly

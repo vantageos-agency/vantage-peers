@@ -17,7 +17,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { resolveHumanRowActor } from "./lib/rowHumanActor";
+import { resolveHumanActor } from "./lib/humanActor";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -396,11 +396,8 @@ async function sendAsHuman(
 			`RBAC_DENIED: a human sender (no \`from\`) may not present an agent credential, a verified actor or an instance label — ${JSON.stringify({ reason: "agent-proof-on-human-path", door })}`,
 		);
 	}
-	const actor = await resolveHumanRowActor(ctx, scope, {
-		door,
-		subject: "message",
-		tenant: { kind: "create" },
-	});
+	// create mode: no row — the tenant is stamped from the scope by the core.
+	const actor = await resolveHumanActor(ctx, scope, { door });
 	if (args.channel !== "broadcast") {
 		const parts = args.channel
 			.split(",")
@@ -1116,10 +1113,12 @@ export const deleteMessage = mutation({
 			// org:admin deletes a message of its OWN organisation (the row's
 			// tenantId stamp equals the verified org; an unstamped row is refused)
 			// whatever its sender — an agent's or a human's. Destructive: admin only.
-			await resolveHumanRowActor(ctx, scope, {
+			await resolveHumanActor(ctx, scope, {
 				door: "messages:deleteMessage",
-				subject: `message ${args.messageId}`,
-				tenant: { kind: "stamp", row: { orgId: message.tenantId } },
+				row: { orgId: message.tenantId },
+				rowKind: "message",
+				rowId: args.messageId,
+				tenantOnly: true,
 				adminOnly: true,
 			});
 			const humanReceipts = await ctx.db

@@ -9,7 +9,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { resolveHumanRowActor } from "./lib/rowHumanActor";
+import { resolveHumanActor } from "./lib/humanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -170,7 +170,7 @@ export const update = mutation({
 		// Authorization must be derived from the row being targeted
 		// (bu.orchestratorId), never from a value the caller supplies.
 		// OPTIONAL: omitting it is the HUMAN path (a dashboard org member editing
-		// its own org's unit in its own name; see resolveHumanRowActor).
+		// its own org's unit in its own name; see resolveHumanActor).
 		callerOrchestrator: v.optional(v.string()),
 		name: v.optional(v.string()),
 		description: v.optional(v.string()),
@@ -220,10 +220,11 @@ export const update = mutation({
 			// member with a writer role. The table has no org column, so the tenant
 			// key is the roster (as `list`/`get` read it): the unit's CURRENT owner
 			// must be on the caller's roster, and a reassignment must land on it too.
-			await resolveHumanRowActor(ctx, scope, {
+			await resolveHumanActor(ctx, scope, {
 				door: "businessUnits:update",
-				subject: `business unit ${args.buId}`,
-				tenant: { kind: "roster", owner: bu.orchestratorId },
+				rowKind: "business unit",
+				rowId: args.buId,
+				rosterOwner: bu.orchestratorId,
 			});
 			if (
 				args.orchestratorId !== undefined &&
@@ -331,10 +332,11 @@ export const remove = mutation({
 			}
 			const target = await ctx.db.get(args.buId);
 			if (!target) throw new Error("Business unit not found");
-			await resolveHumanRowActor(ctx, scope, {
+			await resolveHumanActor(ctx, scope, {
 				door: "businessUnits:remove",
-				subject: `business unit ${args.buId}`,
-				tenant: { kind: "roster", owner: target.orchestratorId },
+				rowKind: "business unit",
+				rowId: args.buId,
+				rosterOwner: target.orchestratorId,
 				adminOnly: true,
 			});
 			await ctx.db.delete(args.buId);
