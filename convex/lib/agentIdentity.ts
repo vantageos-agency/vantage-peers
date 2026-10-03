@@ -158,8 +158,31 @@ export async function resolveAgentCredentialCore(
 }
 
 /**
+ * legacyCredentialRowsByLabel — credential rows with NO `agentId` (minted before
+ * the field existed) whose label names `name` under `normalizeOrchestratorId`,
+ * the same comparison `findAgentByName` uses to resolve them. Scans the org's
+ * credential rows (bounded per org).
+ */
+async function legacyCredentialRowsByLabel(
+	ctx: QueryCtx | MutationCtx,
+	orgSlug: string,
+	name: string,
+): Promise<Doc<"agent_credentials">[]> {
+	const normalized = normalizeOrchestratorId(name);
+	const rows = await ctx.db
+		.query("agent_credentials")
+		.withIndex("by_org_agent", (q) => q.eq("orgSlug", orgSlug))
+		.collect();
+	return rows.filter(
+		(row) =>
+			row.agentId === undefined &&
+			normalizeOrchestratorId(row.agentName) === normalized,
+	);
+}
+
+/**
  * credentialRowsOfAgent — every credential row of ONE agent: by `agentId`, plus
- * legacy rows (no `agentId` yet) matched on the agent's (orgSlug, name) label.
+ * legacy rows (no `agentId` yet) matched on the agent's label.
  */
 export async function credentialRowsOfAgent(
 	ctx: QueryCtx | MutationCtx,
@@ -169,15 +192,49 @@ export async function credentialRowsOfAgent(
 		.query("agent_credentials")
 		.withIndex("by_agent", (q) => q.eq("agentId", agent._id))
 		.collect();
-	const legacy = (
-		await ctx.db
-			.query("agent_credentials")
-			.withIndex("by_org_agent", (q) =>
-				q.eq("orgSlug", agent.orgSlug).eq("agentName", agent.name),
-			)
-			.collect()
-	).filter((row) => row.agentId === undefined);
+	const legacy = await legacyCredentialRowsByLabel(ctx, agent.orgSlug, agent.name);
 	return [...byId, ...legacy];
+}
+
+/**
+ * bindLegacyCredentials — sets `agentId` on every legacy credential row that
+ * names this agent by label. MUST run in the same transaction and BEFORE any
+ * write that changes the label: an unbound row follows the NAME, so a rename
+ * would lock the agent out and a later registration of the old name would take
+ * the credential over. Returns the number of rows bound.
+ */
+export async function bindLegacyCredentials(
+	ctx: MutationCtx,
+	agent: Doc<"agents">,
+): Promise<number> {
+	const legacy = await legacyCredentialRowsByLabel(ctx, agent.orgSlug, agent.name);
+	for (const row of legacy) {
+		await ctx.db.patch(row._id, { agentId: agent._id });
+	}
+	return legacy.length;
+}
+
+/**
+ * assertNoOrphanLegacyCredentials — refuses (AGENT_LEGACY_CREDENTIAL_ORPHANED)
+ * giving a label to an agent row while unbound legacy credential rows still
+ * carry that label. Called only once the name is known to be free, so any such
+ * row belongs to no live agent; letting the new row take the label would hand
+ * it a credential minted for someone else. The operator revokes or deletes the
+ * orphan rows first.
+ */
+export async function assertNoOrphanLegacyCredentials(
+	ctx: QueryCtx | MutationCtx,
+	orgSlug: string,
+	name: string,
+): Promise<void> {
+	const orphans = await legacyCredentialRowsByLabel(ctx, orgSlug, name);
+	if (orphans.length > 0) {
+		throw new ConvexError(
+			`AGENT_LEGACY_CREDENTIAL_ORPHANED: ${orphans.length} credential row(s) in org "${orgSlug}" still carry the label "${name}" with no agent id and no live agent holds it; registering it would hand them to a different agent — ${JSON.stringify(
+				{ orgSlug, name, credentialIds: orphans.map((r) => r._id) },
+			)}`,
+		);
+	}
 }
 
 /**

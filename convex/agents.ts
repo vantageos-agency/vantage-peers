@@ -4,6 +4,8 @@ import { mutation, query } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	assertAgentNameFree,
+	assertNoOrphanLegacyCredentials,
+	bindLegacyCredentials,
 	findAgentByName,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
@@ -128,6 +130,8 @@ export const registerAgent = mutation({
 			});
 			return existing._id;
 		}
+
+		await assertNoOrphanLegacyCredentials(ctx, args.orgSlug, args.name);
 
 		return await ctx.db.insert("agents", {
 			orgSlug: args.orgSlug,
@@ -323,6 +327,12 @@ export const renameAgent = mutation({
 			);
 		}
 		await assertAgentNameFree(ctx, args.orgSlug, args.newName, existing._id);
+
+		// Bind unbound (legacy) credential rows to THIS row BEFORE the label
+		// changes: they follow the name otherwise, locking this agent out and
+		// handing the credential to whoever registers the old name next.
+		await bindLegacyCredentials(ctx, existing);
+		await assertNoOrphanLegacyCredentials(ctx, args.orgSlug, args.newName);
 
 		const oldName = existing.name;
 		await ctx.db.patch(existing._id, {
