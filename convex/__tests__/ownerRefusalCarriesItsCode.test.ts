@@ -134,10 +134,14 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		const missing = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.briefingNotes.deleteBriefingNote, { noteId }),
 		);
+		// Admin CRUD B2: an omitted caller from a non-master member is the HUMAN
+		// path; this member carries no writer role, so it is refused as such (still
+		// coded, still naming its door).
 		expect(missing.payload).toEqual({
-			registration: "briefingNotes:deleteBriefingNote",
+			reason: "role-not-writer",
+			door: "briefingNotes:deleteBriefingNote",
+			role: null,
 			orgSlug: "org-a",
-			reason: "caller-orchestrator-required",
 		});
 		const stranger = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.briefingNotes.deleteBriefingNote, {

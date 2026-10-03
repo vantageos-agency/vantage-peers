@@ -14,6 +14,7 @@ import {
 import type { OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
+import { resolveHumanActor } from "./lib/humanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -156,13 +157,16 @@ export const create = mutation({
 		project: v.string(),
 		status: missionStatusValidator,
 		priority: priorityValidator,
-		pilot: creatorValidator,
+		// pilot is required on BOTH paths (checked at runtime below): optional
+		// only so the dashboard's human path shares one args shape.
+		pilot: v.optional(creatorValidator),
 		agents: v.array(v.string()),
 		brief: v.optional(v.string()),
 		startDate: v.optional(v.number()),
 		targetDate: v.optional(v.number()),
 		progress: v.optional(v.number()),
-		createdBy: creatorValidator,
+		// Absent = the HUMAN path (a dashboard org member acting in its own name).
+		createdBy: v.optional(creatorValidator),
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
@@ -185,11 +189,31 @@ export const create = mutation({
 		// Acting identity and pilot derive from the verified caller: a member
 		// may create only as, and assign the pilot role only to, an orchestrator
 		// on its OWN resolved roster. Master unchanged.
-		requireOrchestratorOnRoster(scope, args.createdBy, "missions:create", "actor");
-		requireOrchestratorOnRoster(scope, args.pilot, "missions:create", "assignee");
+		if (args.pilot === undefined) {
+			throw new ConvexError(
+				`PILOT_REQUIRED: a mission needs a pilot — ${JSON.stringify({ door: "missions:create" })}`,
+			);
+		}
+		const { pilot, createdBy: claimedCreator, ...rest } = args;
+		// HUMAN path (no createdBy): the actor is the verified Clerk subject, the
+		// writer-role allowlist decides, createdBy/lastActedBy are "user:<subject>".
+		// A client-supplied createdBy is never an identity on this path: with one
+		// present the unchanged agent path below runs and the roster refuses any
+		// name that is not an orchestrator of the caller's own org.
+		const actor =
+			claimedCreator === undefined
+				? await resolveHumanActor(ctx, scope, { door: "missions:create" })
+				: undefined;
+		if (claimedCreator !== undefined) {
+			requireOrchestratorOnRoster(scope, claimedCreator, "missions:create", "actor");
+		}
+		requireOrchestratorOnRoster(scope, pilot, "missions:create", "assignee");
 		const now = Date.now();
 		return await ctx.db.insert("missions", {
-			...args,
+			...rest,
+			pilot,
+			createdBy: (claimedCreator ?? actor) as string,
+			...(actor !== undefined ? { lastActedBy: actor } : {}),
 			createdAt: now,
 			updatedAt: now,
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
@@ -226,6 +250,8 @@ export const get = query({
 			// Day 157 — terminal cancelled status (see schema.ts).
 			cancelledBy: v.optional(creatorValidator),
 			cancelReason: v.optional(v.string()),
+			// Admin CRUD B2 — human actor "user:<subject>" (memberActorOf).
+			lastActedBy: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -615,6 +641,23 @@ export const update = mutation({
 			);
 		}
 
+		// HUMAN path: a non-master caller with no callerOrchestrator is a dashboard
+		// org member acting in its own name. Writer role from the allowlist;
+		// cancelling (and reopening a cancelled mission, which undoes a cancel)
+		// is destructive and needs org:admin. Master / agent paths unchanged.
+		const isCancel = fields.status === "cancelled";
+		const humanActor =
+			!scope.isMaster && callerOrchestrator === undefined
+				? await resolveHumanActor(ctx, scope, {
+						door: "missions:update",
+						row: mission,
+						rowKind: "mission",
+						rowId: missionId,
+						adminOnly:
+							isCancel || (mission.status === "cancelled" && fields.status !== undefined),
+					})
+				: undefined;
+
 		// A pilot reassignment must land on the caller's own roster — a member
 		// cannot hand a mission to an orchestrator of another organisation.
 		if (fields.pilot !== undefined) {
@@ -628,6 +671,7 @@ export const update = mutation({
 				patch[key] = value;
 			}
 		}
+		if (humanActor !== undefined) patch.lastActedBy = humanActor;
 
 		// Day 157 — cancelled is a terminal status, settable only by the
 		// mission's CREATOR, and requires a non-empty reason. Mirrors the
@@ -641,12 +685,15 @@ export const update = mutation({
 					`CANNOT_CANCEL_DONE: mission ${missionId} is already complete — a completed mission cannot be cancelled — ${JSON.stringify({ missionId })}`,
 				);
 			}
-			if (callerOrchestrator === undefined) {
+			if (callerOrchestrator === undefined && humanActor === undefined) {
 				throw new ConvexError(
 					`RBAC_DENIED: callerOrchestrator is required to cancel mission ${missionId} — omitting it is refused, not exempted — ${JSON.stringify({ missionId })}`,
 				);
 			}
+			// The human path replaced the creator-only rule with org:admin above
+			// (resolveHumanActor adminOnly); the creator rule binds the agent path.
 			if (
+				callerOrchestrator !== undefined &&
 				!isFleetSystemCaller(scope, callerOrchestrator) &&
 				mission.createdBy !== callerOrchestrator
 			) {
@@ -659,7 +706,7 @@ export const update = mutation({
 					`CANCEL_REASON_REQUIRED: cancelReason is required to cancel mission ${missionId} — ${JSON.stringify({ missionId })}`,
 				);
 			}
-			patch.cancelledBy = callerOrchestrator;
+			patch.cancelledBy = callerOrchestrator ?? humanActor;
 			patch.cancelReason = cancelReason;
 		}
 
@@ -702,9 +749,30 @@ export const updateStatus = mutation({
 			);
 		}
 
+		// HUMAN path: this door has no agent identity argument, so every
+		// non-master caller is a dashboard org member — writer role required and
+		// recorded. Cancelling is not done here (it needs a reason and org:admin:
+		// use `update`), and a cancelled mission is reopened only by an admin.
+		// Master unchanged.
+		let humanActor: string | undefined;
+		if (!scope.isMaster) {
+			if (args.status === "cancelled") {
+				throw new ConvexError(
+					`CANCEL_REASON_REQUIRED: cancel a mission through missions:update with a cancelReason — ${JSON.stringify({ missionId: args.missionId })}`,
+				);
+			}
+			humanActor = await resolveHumanActor(ctx, scope, {
+				door: "missions:updateStatus",
+				row: mission,
+				rowKind: "mission",
+				rowId: args.missionId,
+				adminOnly: mission.status === "cancelled",
+			});
+		}
 		await ctx.db.patch(args.missionId, {
 			status: args.status,
 			updatedAt: Date.now(),
+			...(humanActor !== undefined ? { lastActedBy: humanActor } : {}),
 		});
 		return null;
 	},
@@ -744,9 +812,19 @@ export const updateProgress = mutation({
 			);
 		}
 
+		// HUMAN path (see updateStatus): non-master = org member, writer role.
+		const humanActor = !scope.isMaster
+			? await resolveHumanActor(ctx, scope, {
+					door: "missions:updateProgress",
+					row: mission,
+					rowKind: "mission",
+					rowId: args.missionId,
+				})
+			: undefined;
 		await ctx.db.patch(args.missionId, {
 			progress: args.progress,
 			updatedAt: Date.now(),
+			...(humanActor !== undefined ? { lastActedBy: humanActor } : {}),
 		});
 		return null;
 	},

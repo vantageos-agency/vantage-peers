@@ -43,6 +43,11 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		// Admin CRUD B2: org-a writes with no callerOrchestrator are the human path.
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: Date.now(),
+		});
 	});
 }
 
@@ -63,6 +68,7 @@ function asOrgA(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
