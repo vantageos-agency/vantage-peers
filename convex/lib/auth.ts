@@ -1,4 +1,5 @@
 import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
 import { findAgentByName, resolveAgentCredentialCore } from "./agentIdentity";
@@ -750,6 +751,112 @@ export async function requireOrgAdmin(
 }
 
 /**
+ * verifiedActor — the SECOND proof carrier beside `agentCredentialSecret`
+ * (design note js76m7pxnvkbvgx7d5w7w9me358fgy69, step i). It is the MCP's own
+ * result of verifying the caller's agent header: the agents ROW id and the org
+ * that row was verified in. Every door that accepts `agentCredentialSecret`
+ * accepts it too (`verifiedActorValidator`).
+ */
+export const verifiedActorValidator = v.object({
+	agentId: v.id("agents"),
+	orgSlug: v.string(),
+});
+
+export type VerifiedActor = { agentId: Id<"agents">; orgSlug: string };
+
+/**
+ * What `requireAgentCredentialMatch` needs to decide whether a `verifiedActor`
+ * may be believed. `scope` is the caller's resolved scope: the argument is a
+ * claim made BY the transport, so it is only as good as the transport's own
+ * authentication. `declaredOrgSlug` is an org the call itself names (a
+ * `sendMessage` `tenantId`), consulted ONLY on the verifiedActor path, because
+ * the service account's scope carries no org of its own.
+ */
+export interface VerifiedActorProof {
+	scope: { isMaster: boolean; masterSource?: MasterSource };
+	verifiedActor: VerifiedActor | undefined;
+	declaredOrgSlug?: string;
+}
+
+/**
+ * The verifiedActor branch of requireAgentCredentialMatch (one helper, one
+ * entry point — this is only its body, never called elsewhere).
+ *
+ *   a) trusted from the SERVICE ACCOUNT ONLY (`masterSource "service-account"`).
+ *      NOT `isMcpBoundMaster`: that admits "internal" (the no-identity opt-in)
+ *      and R3 ruled it out; "operator-admin" is a human, also out. Anyone else
+ *      is refused RBAC_DENIED `verified-actor-not-trusted`, never ignored.
+ *   c) one proof per call: a secret AND a verifiedActor -> AGENT_PROOF_CONFLICT.
+ *   b) the row is loaded BY ID: it must exist (VERIFIED_ACTOR_UNKNOWN), be
+ *      active (VERIFIED_ACTOR_INACTIVE) and sit in the org the proof claims
+ *      (ORG_MISMATCH); that org must be the call's target org when the call
+ *      names one (ORG_MISMATCH); and the asserted name must resolve, in that
+ *      org, to THAT SAME row (AGENT_IDENTITY_MISMATCH). Identity is the row id,
+ *      never the name string, so a rename after verification keeps the proof
+ *      valid for the new label and invalid for the old.
+ */
+async function requireVerifiedActorMatch(
+	ctx: QueryCtx | MutationCtx,
+	agentCredentialSecret: string | undefined,
+	assertedName: string | undefined,
+	targetOrgSlug: string | null,
+	verified: VerifiedActorProof,
+): Promise<void> {
+	const actor = verified.verifiedActor;
+	if (actor === undefined) return;
+
+	if (
+		!(verified.scope.isMaster && verified.scope.masterSource === "service-account")
+	) {
+		throw new ConvexError(
+			`RBAC_DENIED: verifiedActor is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify(
+				{
+					reason: "verified-actor-not-trusted",
+					masterSource: verified.scope.masterSource ?? null,
+				},
+			)}`,
+		);
+	}
+
+	if (agentCredentialSecret !== undefined) {
+		throw new ConvexError(
+			`AGENT_PROOF_CONFLICT: a call carries ONE proof of the acting agent — agentCredentialSecret or verifiedActor, never both — ${JSON.stringify({ assertedName: assertedName ?? null })}`,
+		);
+	}
+
+	const row = await ctx.db.get(actor.agentId);
+	if (!row) {
+		throw new ConvexError(
+			`VERIFIED_ACTOR_UNKNOWN: verifiedActor names agent ${actor.agentId} and no such agent exists — ${JSON.stringify({ agentId: actor.agentId, orgSlug: actor.orgSlug })}`,
+		);
+	}
+	if (!row.isActive) {
+		throw new ConvexError(
+			`VERIFIED_ACTOR_INACTIVE: verifiedActor names agent "${row.name}" (${row._id}) which is deactivated — ${JSON.stringify({ agentId: row._id, orgSlug: row.orgSlug })}`,
+		);
+	}
+	if (row.orgSlug !== actor.orgSlug) {
+		throw new ConvexError(
+			`ORG_MISMATCH: verifiedActor claims org "${actor.orgSlug}" but agent ${row._id} belongs to org "${row.orgSlug}" — ${JSON.stringify({ agentId: row._id, claimedOrgSlug: actor.orgSlug, rowOrgSlug: row.orgSlug })}`,
+		);
+	}
+	const callOrg = targetOrgSlug ?? verified.declaredOrgSlug ?? null;
+	if (callOrg !== null && callOrg !== actor.orgSlug) {
+		throw new ConvexError(
+			`ORG_MISMATCH: verifiedActor was verified in org "${actor.orgSlug}" but this call targets org "${callOrg}" — ${JSON.stringify({ agentId: row._id, verifiedOrgSlug: actor.orgSlug, targetOrgSlug: callOrg })}`,
+		);
+	}
+
+	if (assertedName === undefined) return;
+	const assertedAgent = await findAgentByName(ctx, row.orgSlug, assertedName);
+	if (!assertedAgent || assertedAgent._id !== row._id) {
+		throw new ConvexError(
+			`AGENT_IDENTITY_MISMATCH: verifiedActor is agent "${row.name}" but the call asserts name "${assertedName}" — a verified actor may only act under its own identity — ${JSON.stringify({ verifiedAgentId: row._id, verifiedAgentName: row.name, assertedName })}`,
+		);
+	}
+}
+
+/**
  * requireAgentCredentialMatch — [P-T5] THE LOCK. Cap analysis/le-cap/le-cap.md
  * @ e3c1ffd6 §6 VP.4 (second half): the ACTING AGENT is derived from the
  * per-agent CREDENTIAL presented on the call (P-T4's
@@ -817,7 +924,18 @@ export async function requireAgentCredentialMatch(
 	agentCredentialSecret: string | undefined,
 	assertedName: string | undefined,
 	targetOrgSlug: string | null,
+	verified: VerifiedActorProof,
 ): Promise<void> {
+	if (verified.verifiedActor !== undefined) {
+		await requireVerifiedActorMatch(
+			ctx,
+			agentCredentialSecret,
+			assertedName,
+			targetOrgSlug,
+			verified,
+		);
+		return;
+	}
 	if (assertedName === undefined) return;
 
 	if (agentCredentialSecret === undefined) {

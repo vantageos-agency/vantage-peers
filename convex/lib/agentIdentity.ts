@@ -161,12 +161,15 @@ export async function resolveAgentCredentialCore(
  * legacyCredentialRowsByLabel — credential rows with NO `agentId` (minted before
  * the field existed) whose label names `name` under `normalizeOrchestratorId`,
  * the same comparison `findAgentByName` uses to resolve them. Scans the org's
- * credential rows (bounded per org).
+ * credential rows (bounded per org). `activeOnly` drops revoked rows: binding
+ * and revocation want ALL rows of an agent (a revoked row of its own is still
+ * its own), the orphan check wants only rows that could still resolve.
  */
 async function legacyCredentialRowsByLabel(
 	ctx: QueryCtx | MutationCtx,
 	orgSlug: string,
 	name: string,
+	opts?: { activeOnly?: boolean },
 ): Promise<Doc<"agent_credentials">[]> {
 	const normalized = normalizeOrchestratorId(name);
 	const rows = await ctx.db
@@ -176,6 +179,7 @@ async function legacyCredentialRowsByLabel(
 	return rows.filter(
 		(row) =>
 			row.agentId === undefined &&
+			(!opts?.activeOnly || row.isActive) &&
 			normalizeOrchestratorId(row.agentName) === normalized,
 	);
 }
@@ -219,18 +223,22 @@ export async function bindLegacyCredentials(
  * giving a label to an agent row while unbound legacy credential rows still
  * carry that label. Called only once the name is known to be free, so any such
  * row belongs to no live agent; letting the new row take the label would hand
- * it a credential minted for someone else. The operator revokes or deletes the
- * orphan rows first.
+ * it a credential minted for someone else. Only ACTIVE rows count: a revoked
+ * row can never resolve, so it cannot be taken over. (Binding, by contrast,
+ * covers revoked rows of the agent itself.) No door revokes an orphan —
+ * `revokeAgentCredential` needs a live agent — so the remedy is a data repair.
  */
 export async function assertNoOrphanLegacyCredentials(
 	ctx: QueryCtx | MutationCtx,
 	orgSlug: string,
 	name: string,
 ): Promise<void> {
-	const orphans = await legacyCredentialRowsByLabel(ctx, orgSlug, name);
+	const orphans = await legacyCredentialRowsByLabel(ctx, orgSlug, name, {
+		activeOnly: true,
+	});
 	if (orphans.length > 0) {
 		throw new ConvexError(
-			`AGENT_LEGACY_CREDENTIAL_ORPHANED: ${orphans.length} credential row(s) in org "${orgSlug}" still carry the label "${name}" with no agent id and no live agent holds it; registering it would hand them to a different agent — ${JSON.stringify(
+			`AGENT_LEGACY_CREDENTIAL_ORPHANED: ${orphans.length} ACTIVE credential row(s) in org "${orgSlug}" still carry the label "${name}" with no agent id and no live agent holds it; registering it would hand them to a different agent. agentCredentials:revokeAgentCredential cannot reach them (it needs a live agent holding the label), so the operator must set isActive=false on those rows directly (data repair); a revoked row no longer blocks the label — ${JSON.stringify(
 				{ orgSlug, name, credentialIds: orphans.map((r) => r._id) },
 			)}`,
 		);
