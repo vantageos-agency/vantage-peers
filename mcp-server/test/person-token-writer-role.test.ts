@@ -18,7 +18,7 @@
 import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
 import { app } from "../server-http.js";
 import {
@@ -117,7 +117,33 @@ beforeEach(async () => {
 afterEach(() => {
 	harness.restore();
 	_setInternalClientForTest(null);
+	vi.unstubAllEnvs();
 });
+
+/**
+ * A REAL per-agent credential for org-a's roster agent "agent-a", minted the
+ * way an org admin mints it (agents:registerAgent + agentCredentials:mintAgentCredential).
+ * Strict is the default (k175v22zc52w1cbvq1d1qps50d8fccpg): a person naming an
+ * agent must present it.
+ */
+async function agentCredential(): Promise<string> {
+	const admin = bridge(
+		t.withIdentity({
+			subject: "admin-of-org-a",
+			org_slug: "org-a",
+			org_role: "org:admin",
+		} as never),
+	);
+	await admin.mutation("agents:registerAgent", {
+		orgSlug: "org-a",
+		name: "agent-a",
+	});
+	const minted = (await admin.mutation("agentCredentials:mintAgentCredential", {
+		orgSlug: "org-a",
+		agentName: "agent-a",
+	})) as { secret: string };
+	return minted.secret;
+}
 
 /** Signs the person in through the real flow and returns the raw access token. */
 async function personToken(userId: string): Promise<string> {
@@ -148,13 +174,17 @@ async function personToken(userId: string): Promise<string> {
 }
 
 /** The OAuthContext the bearer middleware attaches for `token` (real middleware). */
-async function contextFor(token: string): Promise<OAuthContext> {
+async function contextFor(
+	token: string,
+	credential?: string,
+): Promise<OAuthContext> {
 	const probe = new Hono();
 	probe.use("*", bearerAuthMiddleware());
 	probe.get("/ctx", (c) => c.json(c.get("oauthContext")));
-	const res = await probe.request("http://localhost:3000/ctx", {
-		headers: { authorization: `Bearer ${token}` },
-	});
+	const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+	if (credential !== undefined)
+		headers["x-vantage-agent-credential"] = credential;
+	const res = await probe.request("http://localhost:3000/ctx", { headers });
 	expect(res.status).toBe(200);
 	return (await res.json()) as OAuthContext;
 }
@@ -236,17 +266,23 @@ describe("person token: the writer-role gate", () => {
 		expect(called.mutations).toEqual([]);
 	});
 
-	it("an editor's write is accepted", async () => {
+	it("an editor's write is accepted (presenting agent-a's credential)", async () => {
 		const { result, called } = await write(
-			await contextFor(await personToken("user_editor")),
+			await contextFor(
+				await personToken("user_editor"),
+				await agentCredential(),
+			),
 		);
 		expect(result.isError).toBeUndefined();
 		expect(called.mutations).toEqual(["memories:storeMemory"]);
 	});
 
-	it("an admin's write is accepted", async () => {
+	it("an admin's write is accepted (presenting agent-a's credential)", async () => {
 		const { result, called } = await write(
-			await contextFor(await personToken("user_admin")),
+			await contextFor(
+				await personToken("user_admin"),
+				await agentCredential(),
+			),
 		);
 		expect(result.isError).toBeUndefined();
 		expect(called.mutations).toEqual(["memories:storeMemory"]);
@@ -389,9 +425,14 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 	const readAt = (id: string) =>
 		t.run(async (ctx) => (await ctx.db.get(id as never))?.readAt);
 
-	it("a viewer marks its OWN receipt read", async () => {
+	it("a viewer marks its OWN receipt read (presenting agent-a's credential)", async () => {
 		const ids = await seedReceipts();
-		const tools = realTools(await contextFor(await personToken("user_viewer")));
+		const tools = realTools(
+			await contextFor(
+				await personToken("user_viewer"),
+				await agentCredential(),
+			),
+		);
 		const r = (await tools.get("mark_as_read")?.({
 			receiptIds: [ids.own],
 			callerOrchestrator: "agent-a",
@@ -402,7 +443,12 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 
 	it("a viewer cannot mark another member's receipt: the owner check refuses", async () => {
 		const ids = await seedReceipts();
-		const tools = realTools(await contextFor(await personToken("user_viewer")));
+		const tools = realTools(
+			await contextFor(
+				await personToken("user_viewer"),
+				await agentCredential(),
+			),
+		);
 		const r = (await tools.get("mark_as_read")?.({
 			receiptIds: [ids.other],
 			callerOrchestrator: "agent-a",
@@ -455,6 +501,9 @@ describe("a seat token (not a person) is unchanged", () => {
 		expiresAt: Date.now() + 3_600_000,
 		isMaster: false,
 		clerkOrgSlug: "org-a",
+		// A seat reaches the tools through its OAuth token row (auth path 2),
+		// which is what the strict-mode seat exemption reads.
+		accessTokenHash: "seat-token-hash",
 	};
 
 	it("writes with no writer-roles table consulted, even with no row at all", async () => {
@@ -464,6 +513,70 @@ describe("a seat token (not a person) is unchanged", () => {
 			}
 		});
 		const { result, called } = await write(seat);
+		expect(result.isError).toBeUndefined();
+		expect(called.mutations).toEqual(["memories:storeMemory"]);
+	});
+});
+
+describe("strict default composes with the writer-role gate (person token)", () => {
+	// Env unset = strict. Gate order in defineTool: writer-role gate, then the
+	// acting-name binder (checkActorBinding), then the tool's scope check.
+	const UNSET = undefined as unknown as string;
+	const textOf = (r: ToolResult) => r.content[0].text;
+
+	it("POLE 4 — a REAL person token (principal 'person', single-name roster ['agent-a']) naming agent-a with NO credential: editor passes the role gate and is refused AGENT_CREDENTIAL_REQUIRED, nothing written", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", UNSET);
+		const ctx = await contextFor(await personToken("user_editor"));
+		expect(ctx.principal).toBe("person");
+		expect(ctx.fromAllowList).toEqual(["agent-a"]);
+		expect(ctx.accessTokenHash).toBeDefined();
+		const { result, called } = await write(ctx);
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toMatch(/^AGENT_CREDENTIAL_REQUIRED/);
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("a viewer naming agent-a with no credential is refused by the ROLE gate first (role-not-writer)", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", UNSET);
+		const { result, called } = await write(
+			await contextFor(await personToken("user_viewer")),
+		);
+		expect(result.isError).toBe(true);
+		expect(textOf(result)).toContain("role-not-writer");
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("a person naming NO agent: reads are served (viewer and editor)", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", UNSET);
+		for (const user of ["user_viewer", "user_editor"]) {
+			const { tools, called } = toolsFor(
+				await contextFor(await personToken(user)),
+			);
+			const r = (await tools.get("list_memories")?.(READ)) as ToolResult;
+			expect(r.isError, user).toBeUndefined();
+			expect(called.queries.length, user).toBeGreaterThan(0);
+		}
+	});
+
+	it("a person editor naming NO agent on a from-kind write is refused by the roster check (no acting name to verify), nothing written", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", UNSET);
+		const { tools, called } = toolsFor(
+			await contextFor(await personToken("user_editor")),
+		);
+		const { createdBy: _omitted, ...noName } = WRITE;
+		const r = (await tools.get("store_memory")?.(noName)) as ToolResult;
+		expect(r.isError).toBe(true);
+		expect(textOf(r)).toContain(
+			"from='undefined' is not in this client's allowlist",
+		);
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("explicit permissive keeps today's behaviour: the editor naming agent-a without a credential is served", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
+		const { result, called } = await write(
+			await contextFor(await personToken("user_editor")),
+		);
 		expect(result.isError).toBeUndefined();
 		expect(called.mutations).toEqual(["memories:storeMemory"]);
 	});

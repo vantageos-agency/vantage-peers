@@ -7,8 +7,9 @@
  * acting agent (callerOrchestrator / from / createdBy ...) MUST present the
  * per-agent credential header: the master bearer authenticates the fleet, not
  * an agent, so a typed name is only a claim. This holds regardless of
- * VANTAGE_ACTOR_CREDENTIAL_MODE. Customer OAuth clients (non-master) are NOT
- * touched: no header -> served under the existing org-scoped rules.
+ * VANTAGE_ACTOR_CREDENTIAL_MODE. Customer OAuth clients (non-master) follow the
+ * switch: strict by default, served without a header only when it is set to
+ * "permissive" explicitly.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -149,8 +150,7 @@ afterEach(() => {
 describe("master bearer is strict for acting names, whatever the env mode", () => {
 	for (const mode of [undefined, "permissive", "strict"]) {
 		it(`REFUSED: master bearer + acting name + NO header (mode=${mode ?? "unset"}), coded, names the header, nothing dispatched`, async () => {
-			if (mode !== undefined)
-				vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", mode);
+			if (mode !== undefined) vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", mode);
 			const { convex, mutations } = buildConvex();
 			const { status, json } = await post(buildApp(convex), "complete_task", {
 				bearer: MASTER,
@@ -239,7 +239,8 @@ describe("master bearer is strict for acting names, whatever the env mode", () =
 });
 
 describe("customer OAuth client (non-master) is unchanged", () => {
-	it("SERVED: OAuth client + no header + acting name (permissive default) -> served as today", async () => {
+	it("SERVED: OAuth client + no header + acting name, switch explicitly permissive -> served", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const { convex, mutations } = buildConvex();
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const { json } = await post(buildApp(convex), "complete_task", {
@@ -250,15 +251,27 @@ describe("customer OAuth client (non-master) is unchanged", () => {
 		expect(mutations).toHaveLength(1);
 	});
 
-	it("env mode still governs non-master: strict -> OAuth client + no header REFUSED", async () => {
+	it("env mode still governs non-master: strict -> OAuth client + no header naming ANOTHER agent REFUSED", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "strict");
+		const { convex, mutations } = buildConvex();
+		const { json } = await post(buildApp(convex), "complete_task", {
+			bearer: OAUTH_TOKEN,
+			body: { ...COMPLETE, callerOrchestrator: "bob" },
+		});
+		expect(refused(json)).toBe(true);
+		expect(textOf(json)).toContain("AGENT_CREDENTIAL_REQUIRED");
+		expect(mutations).toHaveLength(0);
+	});
+
+	it("strict: this client's row is a single-name seat (['alice']) naming ITSELF -> SERVED by the seat exemption", async () => {
 		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "strict");
 		const { convex, mutations } = buildConvex();
 		const { json } = await post(buildApp(convex), "complete_task", {
 			bearer: OAUTH_TOKEN,
 			body: { ...COMPLETE, callerOrchestrator: "alice" },
 		});
-		expect(refused(json)).toBe(true);
-		expect(mutations).toHaveLength(0);
+		expect(refused(json)).toBe(false);
+		expect(mutations).toHaveLength(1);
 	});
 });
 

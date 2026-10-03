@@ -15,7 +15,7 @@
  * MUTANT (not committed): make `checkFromAllowed` return null for non-master
  * and the REFUSED poles go RED.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
@@ -80,7 +80,15 @@ const masterCtx: OAuthContext = {
 };
 
 describe("send_message — sender bound to the verified caller (MCP layer)", () => {
+	// The roster poles exercise the uncredentialed path, which is reachable only
+	// with the switch set to "permissive" explicitly (strict is the default since
+	// k175v22zc52w1cbvq1d1qps50d8fccpg; under strict the binder refuses first).
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("REFUSED: from='eta' / 'pi' outside the roster; nothing dispatched", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const { send, mutations } = harness(memberCtx());
 		for (const from of ["eta", "pi", "ETA"]) {
 			const r = await send({ from, channel: "bob", content: "x" });
@@ -91,6 +99,7 @@ describe("send_message — sender bound to the verified caller (MCP layer)", () 
 	});
 
 	it("SERVED: from on the roster is forwarded to messages:sendMessage", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const { send, mutations } = harness(memberCtx());
 		const r = await send({ from: "bob", channel: "bea", content: "x" });
 		expect(r.isError).toBeFalsy();

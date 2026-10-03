@@ -1,16 +1,16 @@
 /**
  * /health publishes the ACTIVE actor-credential mode AND where it came from.
  *
- * Bare "permissive" is ambiguous: an operator chose it, or nobody set the
- * variable. `source` separates a configuration from an absence. Publication
+ * Bare "strict" is ambiguous: an operator chose it, or nobody set the
+ * variable (absence is strict since k175v22zc52w1cbvq1d1qps50d8fccpg). `source` separates a configuration from an absence. Publication
  * only: the mode decision itself is unchanged (controls 7 and 8 pin that).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../server-http.js";
 import {
+	_resetUnattributedClaimsForTest,
 	ACTOR_CREDENTIAL_MODE_ENV,
 	actorCredentialMode,
-	_resetUnattributedClaimsForTest,
 } from "../src/auth.js";
 
 const SEVEN = [
@@ -35,7 +35,10 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-async function health(): Promise<{ body: Record<string, unknown>; raw: string }> {
+async function health(): Promise<{
+	body: Record<string, unknown>;
+	raw: string;
+}> {
 	const res = await app.request("/health");
 	expect(res.status).toBe(200);
 	const raw = await res.text();
@@ -48,10 +51,15 @@ function setEnv(v: string | undefined) {
 
 describe("/health actor_credential", () => {
 	const cases: [string, string | undefined, string, string][] = [
-		["1 unset", undefined, "permissive", "unset"],
+		["1 unset", undefined, "strict", "unset"],
 		["2 strict", "strict", "strict", "configured"],
-		["3 permissive (configured, same mode bytes as case 1)", "permissive", "permissive", "configured"],
-		["4 whitespace", "  ", "permissive", "empty"],
+		[
+			"3 permissive (configured, explicit opt-in)",
+			"permissive",
+			"permissive",
+			"configured",
+		],
+		["4 whitespace", "  ", "strict", "empty"],
 		["5 banana", "banana", "strict", "coerced"],
 	];
 	for (const [name, env, mode, source] of cases) {
@@ -62,11 +70,17 @@ describe("/health actor_credential", () => {
 		});
 	}
 
-	it("3 vs 1: identical mode, different source (the field earns its place)", async () => {
+	it("2 vs 1: identical mode, different source (the field earns its place)", async () => {
 		setEnv(undefined);
-		const a = (await health()).body.actor_credential as { mode: string; source: string };
-		setEnv("permissive");
-		const b = (await health()).body.actor_credential as { mode: string; source: string };
+		const a = (await health()).body.actor_credential as {
+			mode: string;
+			source: string;
+		};
+		setEnv("strict");
+		const b = (await health()).body.actor_credential as {
+			mode: string;
+			source: string;
+		};
 		expect(a.mode).toBe(b.mode);
 		expect(a.source).not.toBe(b.source);
 	});
@@ -77,12 +91,12 @@ describe("/health actor_credential", () => {
 		expect(raw).not.toContain("banana");
 	});
 
-	it("7 (control) actorCredentialMode() unchanged across all five cases", () => {
+	it("7 actorCredentialMode() agrees with /health across all five cases (absence is strict)", () => {
 		const table: [string | undefined, string][] = [
-			[undefined, "permissive"],
+			[undefined, "strict"],
 			["strict", "strict"],
 			["permissive", "permissive"],
-			["  ", "permissive"],
+			["  ", "strict"],
 			["banana", "strict"],
 		];
 		for (const [env, mode] of table) {
