@@ -761,6 +761,106 @@ export async function requireOrgAdmin(
 }
 
 /**
+ * requireOperatorAdminToCreateOrg -- the ONE authorization branch that lets the
+ * OPERATOR onboard a brand-new client org from the dashboard with his own
+ * verified Clerk session (no master bearer through his hands).
+ *
+ * ALLOW only when ALL hold, each read from the VERIFIED identity or the DB
+ * (never an argument except `targetOrgSlug`, which is the thing being created):
+ *   1. an authenticated identity with an org slug claim;
+ *   2. its role claim normalizes to "admin";
+ *   3. that org is an ACTIVE `client_org_mapping` row with `orgKind: "operator"`;
+ *   4. NO mapping row (active or not) exists for `targetOrgSlug` -- this
+ *      branch can only CREATE, never re-provision or touch an existing org
+ *      (an existing slug goes through `requireOrgAdmin`, which refuses an admin
+ *      of a different org).
+ * Every refusal is `RBAC_DENIED` carrying a machine-readable `reason`.
+ * Returns the verified admin's subject for the audit row.
+ */
+export type OperatorAdminVerdict =
+	| { ok: true; subject: string; operatorOrgSlug: string }
+	| { ok: false; reason: string; detail: string };
+
+/**
+ * resolveOperatorAdmin -- the ONE predicate "the verified caller is org:admin of
+ * an ACTIVE operator-kind mapping". Shared by the mutation guard below and the
+ * `oauth:canCreateOrganization` query, so the UI affordance and the door can
+ * never disagree. Reads the verified org claim and role directly (never the
+ * resolved scope: a query ctx grants the operator admin a read-only master
+ * scope that would make every check here vacuous). Never throws.
+ */
+export async function resolveOperatorAdmin(
+	ctx: QueryCtx | MutationCtx,
+): Promise<OperatorAdminVerdict> {
+	const identity = await ctx.auth.getUserIdentity();
+	if (!identity) {
+		return {
+			ok: false,
+			reason: "anonymous",
+			detail: "no authenticated identity presented",
+		};
+	}
+	const rec = identity as Record<string, unknown>;
+	const callerOrgSlug =
+		(rec.organizationSlug as string | undefined) ??
+		(rec.org_slug as string | undefined) ??
+		null;
+	if (!callerOrgSlug) {
+		return {
+			ok: false,
+			reason: "no-organisation",
+			detail: "identity has no organisation attached",
+		};
+	}
+	const callerMapping = await lookupOrgMapping(ctx, callerOrgSlug);
+	if (!callerMapping?.isActive || callerMapping.orgKind !== "operator") {
+		return {
+			ok: false,
+			reason: "caller-org-not-operator",
+			detail: `organisation "${callerOrgSlug}" is not the operator organisation; only the operator may create a new organisation`,
+		};
+	}
+	if (readOrgRole(identity).role !== "admin") {
+		return {
+			ok: false,
+			reason: "operator-member-not-admin",
+			detail: `caller is not an org-admin of the operator organisation "${callerOrgSlug}"`,
+		};
+	}
+	return {
+		ok: true,
+		subject: identity.subject,
+		operatorOrgSlug: callerOrgSlug,
+	};
+}
+
+export async function requireOperatorAdminToCreateOrg(
+	ctx: QueryCtx | MutationCtx,
+	targetOrgSlug: string,
+): Promise<{ subject: string; operatorOrgSlug: string }> {
+	const deny = (reason: string, detail: string): never => {
+		throw new ConvexError(
+			`RBAC_DENIED: ${detail} -- ${JSON.stringify({ door: "oauth:provisionOrganization", reason, targetOrgSlug })}`,
+		);
+	};
+	const v = await resolveOperatorAdmin(ctx);
+	if (!v.ok) return deny(v.reason, v.detail);
+	if (v.operatorOrgSlug === targetOrgSlug) {
+		return deny(
+			"slug-is-operator-org",
+			"target slug is the operator organisation itself",
+		);
+	}
+	if (await lookupOrgMapping(ctx, targetOrgSlug)) {
+		return deny(
+			"slug-already-mapped",
+			`org "${targetOrgSlug}" already exists; an operator admin may only create, never re-provision another organisation`,
+		);
+	}
+	return { subject: v.subject, operatorOrgSlug: v.operatorOrgSlug };
+}
+
+/**
  * verifiedActor — the SECOND proof carrier beside `agentCredentialSecret`
  * (design note js76m7pxnvkbvgx7d5w7w9me358fgy69, step i). It is the MCP's own
  * result of verifying the caller's agent header: the agents ROW id and the org
