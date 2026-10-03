@@ -12,9 +12,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools, whoamiOutputSchema } from "../src/tools.js";
-import { deriveOpaqueCallerId } from "../src/whoamiIdentity.js";
+import {
+	deriveOpaqueCallerId,
+	MIN_WHOAMI_SECRET_LENGTH,
+	type WhoamiEnv,
+} from "../src/whoamiIdentity.js";
 
-const SECRET = "test-whoami-secret-not-a-real-credential";
+const SECRET = "test-whoami-secret-not-a-real-credential"; // >= 32 chars
 const CLERK_SUB = "user_2abcDEFghiJKLmno";
 
 function ctx(over: Partial<OAuthContext>): OAuthContext {
@@ -137,17 +141,36 @@ describe("whoami opaque id: stable, distinct, never the raw id", () => {
 	});
 
 	it("a different server secret -> a different id (HMAC, not a bare hash)", () => {
-		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "s1" })).not.toBe(
-			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "s2" }),
+		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "1".repeat(32) })).not.toBe(
+			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "2".repeat(32) }),
 		);
 	});
 
-	it("falls back to the master secret only when WHOAMI_ID_SECRET is unset; null with neither", () => {
-		const viaMaster = deriveOpaqueCallerId(ctx({}), {
-			BEARER_SECRET_MASTER: "m",
-		});
-		expect(viaMaster).toMatch(/^vpu_/);
+	it("master bearer ALONE -> caller_id null (no fallback to the master secret)", () => {
+		expect(
+			deriveOpaqueCallerId(ctx({}), {
+				BEARER_SECRET_MASTER: "m".repeat(64),
+			} as WhoamiEnv),
+		).toBeNull();
+	});
+
+	it("secret present -> stable id; too short or empty secret -> null (min 32)", () => {
+		const ok = "s".repeat(MIN_WHOAMI_SECRET_LENGTH);
+		const a = deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: ok });
+		expect(a).toMatch(/^vpu_[0-9a-f]{32}$/);
+		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: ok })).toBe(a);
+		const short = "s".repeat(MIN_WHOAMI_SECRET_LENGTH - 1);
+		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: short })).toBeNull();
+		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "" })).toBeNull();
 		expect(deriveOpaqueCallerId(ctx({}), {})).toBeNull();
+	});
+
+	it("through the tool: master bearer set, WHOAMI_ID_SECRET unset -> caller_id null", async () => {
+		delete process.env.WHOAMI_ID_SECRET;
+		process.env.BEARER_SECRET_MASTER = "m".repeat(64);
+		const { res } = await callWhoami(ctx({}));
+		const p = whoamiOutputSchema.parse(res.structuredContent);
+		expect(p.caller_id).toBeNull();
 	});
 
 	it("the id contains neither the raw subject nor the agent name", async () => {

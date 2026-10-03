@@ -12,10 +12,14 @@
  *     JWT was verified, "vp-oauth" for a VantagePeers-issued OAuth token,
  *     "vp-master" for the master bearer), so the same string from two issuers
  *     can never collide;
- *   - key = HMAC-SHA256(server secret, "vp-whoami-key-v1"). The server secret is
- *     `WHOAMI_ID_SECRET` when set, otherwise `BEARER_SECRET_MASTER`; the second
- *     derivation step means the id never exposes, and cannot be used to
- *     brute-force-check, the master bearer itself.
+ *   - key = HMAC-SHA256(WHOAMI_ID_SECRET, "vp-whoami-key-v1"). WHOAMI_ID_SECRET
+ *     is a DEDICATED secret used for nothing else. It must be at least
+ *     MIN_WHOAMI_SECRET_LENGTH (32) characters.
+ *
+ * There is deliberately NO fallback to BEARER_SECRET_MASTER or any other
+ * secret. A derived key is a public function of its parent secret, so a caller
+ * holding its own id could test candidate parent secrets offline. With no
+ * dedicated secret (or one shorter than 32 chars) the id is `null`.
  *
  * Stable across sessions because none of its inputs is per-session: not the
  * token, not the clientId (a client re-registers), not the expiry. The same
@@ -25,8 +29,8 @@
  * key. Rotating the secret rotates every id: set `WHOAMI_ID_SECRET` once and do
  * not rotate it if consumers store the id.
  *
- * When neither secret is configured the id is `null`. It is never derived from
- * a public constant, because that would be a reversible, guessable id.
+ * Without a valid dedicated secret the id is `null`, never derived from a
+ * public constant or another secret.
  */
 
 import { createHmac } from "node:crypto";
@@ -34,11 +38,13 @@ import { isMasterScope, type OAuthContext } from "./auth.js";
 
 export type WhoamiEnv = {
 	WHOAMI_ID_SECRET?: string | undefined;
-	BEARER_SECRET_MASTER?: string | undefined;
 	CLERK_DOMAIN?: string | undefined;
 };
 
 const DEFAULT_CLERK_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
+
+/** Minimum length of WHOAMI_ID_SECRET; shorter (or unset) => caller_id null. */
+export const MIN_WHOAMI_SECRET_LENGTH = 32;
 
 export type WhoamiRole = "master" | "org-member" | "oauth-client" | "legacy";
 
@@ -62,8 +68,8 @@ export function deriveOpaqueCallerId(
 	env: WhoamiEnv,
 ): string | null {
 	if (!ctx) return null;
-	const secret = env.WHOAMI_ID_SECRET || env.BEARER_SECRET_MASTER;
-	if (!secret) return null;
+	const secret = env.WHOAMI_ID_SECRET;
+	if (!secret || secret.length < MIN_WHOAMI_SECRET_LENGTH) return null;
 	if (!ctx.userId) return null;
 	const key = createHmac("sha256", secret).update("vp-whoami-key-v1").digest();
 	const digest = createHmac("sha256", key)
