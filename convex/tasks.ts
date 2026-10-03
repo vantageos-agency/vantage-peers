@@ -11,12 +11,13 @@ import {
 	filterByOrgScope,
 	isRowVisibleToScope,
 	requireAgentCredentialMatch,
+	verifiedActorValidator,
 	requireResolvedCaller,
 	requireScope,
 	withOrgScope,
 	requireOrchestratorOnRoster,
 } from "./lib/auth";
-import type { OrgScope } from "./lib/auth";
+import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
@@ -160,6 +161,7 @@ export async function requireAuthenticatedCaller(
 	ctx: MutationCtx,
 	callerOrchestrator: string | undefined,
 	agentCredentialSecret?: string,
+	verifiedActor?: VerifiedActor,
 ): Promise<OrgScope> {
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity === null) {
@@ -176,6 +178,8 @@ export async function requireAuthenticatedCaller(
 	// sites (see convex/lib/auth.ts doc comment), not this public surface.
 	const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
 
+	// [verifiedActor, step i] the second proof carrier rides the same lock: it is
+	// believed only from the service account (see requireAgentCredentialMatch).
 	// [P-T5] THE LOCK — when a per-agent credential is presented, the
 	// asserted `callerOrchestrator` MUST equal the agent identity the
 	// credential resolves to (see requireAgentCredentialMatch). No-op when
@@ -190,6 +194,7 @@ export async function requireAuthenticatedCaller(
 		agentCredentialSecret,
 		callerOrchestrator,
 		scope.orgSlug,
+		{ scope, verifiedActor },
 	);
 
 	// LIMIT of this reconciliation (containment scope only — removed by T2
@@ -473,6 +478,7 @@ const createTaskArgsValidator = {
 const createTaskArgsValidatorWithCredential = {
 	...createTaskArgsValidator,
 	agentCredentialSecret: v.optional(v.string()),
+	verifiedActor: v.optional(verifiedActorValidator),
 };
 
 interface CreateTaskArgs {
@@ -567,7 +573,7 @@ export const create = mutation({
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:create", …) at mcp-server/src/tools.ts:4117 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const { agentCredentialSecret, ...taskArgs } = args;
+		const { agentCredentialSecret, verifiedActor, ...taskArgs } = args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
@@ -575,6 +581,7 @@ export const create = mutation({
 			ctx,
 			args.createdBy,
 			agentCredentialSecret,
+			verifiedActor,
 		);
 		// createdBy is already bound to the roster inside requireAuthenticatedCaller
 		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
@@ -1492,15 +1499,24 @@ export const update = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:update", …) at mcp-server/src/tools.ts:4586,4950,5022 (imperative), never a subscribing pre-org client shell; the AUTH_REQUIRED/RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
-		const { taskId, callerOrchestrator, cancelReason, agentCredentialSecret, ...fields } = args;
+		const {
+			taskId,
+			callerOrchestrator,
+			cancelReason,
+			agentCredentialSecret,
+			verifiedActor,
+			...fields
+		} = args;
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			callerOrchestrator,
 			agentCredentialSecret,
+			verifiedActor,
 		);
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
@@ -1694,6 +1710,7 @@ export const attachReviewArtifact = mutation({
 		// `reviewArtifactAttachedBy`) must equal the resolved agent identity;
 		// no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1709,6 +1726,7 @@ export const attachReviewArtifact = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
@@ -1895,6 +1913,7 @@ export const blockTask = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1903,6 +1922,7 @@ export const blockTask = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2069,6 +2089,7 @@ export const complete = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2076,6 +2097,7 @@ export const complete = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2339,6 +2361,7 @@ export const failTask = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2347,6 +2370,7 @@ export const failTask = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2466,6 +2490,7 @@ export const start = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2473,6 +2498,7 @@ export const start = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2548,6 +2574,7 @@ export const pause = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2556,6 +2583,7 @@ export const pause = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2605,6 +2633,7 @@ export const resume = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2613,6 +2642,7 @@ export const resume = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2672,6 +2702,7 @@ export const correctSegment = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2680,6 +2711,7 @@ export const correctSegment = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2803,6 +2835,7 @@ export const checkout = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
@@ -2811,6 +2844,7 @@ export const checkout = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
@@ -2871,6 +2905,7 @@ export const deleteTask = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
@@ -2879,6 +2914,7 @@ export const deleteTask = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
@@ -3673,6 +3709,7 @@ export const bulkComplete = mutation({
 		// `callerOrchestrator` (the asserted actor) must equal the resolved
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({
 		count: v.number(),
@@ -3695,6 +3732,7 @@ export const bulkComplete = mutation({
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
+			args.verifiedActor,
 		);
 
 		// Default dryRun to true (safety).

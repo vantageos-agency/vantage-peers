@@ -7,6 +7,7 @@ import type { MutationCtx } from "./_generated/server";
 import {
 	lookupOrgMapping,
 	requireAgentCredentialMatch,
+	verifiedActorValidator,
 	requireResolvedCaller,
 	requireScope,
 	requireOrchestratorOnRoster,
@@ -362,6 +363,9 @@ export const sendMessage = mutation({
 		// than the resolved identity is refused with AGENT_IDENTITY_MISMATCH.
 		// Omitted entirely, this is a no-op — pre-P-T5 callers are unchanged.
 		agentCredentialSecret: v.optional(v.string()),
+		// verifiedActor: the MCP's own header-verification result, the second proof
+		// carrier. Trusted ONLY from the service account; one proof per call.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
@@ -377,6 +381,7 @@ export const sendMessage = mutation({
 			args.agentCredentialSecret,
 			args.from,
 			scope.orgSlug,
+			{ scope, verifiedActor: args.verifiedActor, declaredOrgSlug: args.tenantId },
 		);
 
 		// The sender derives from the verified caller: a member of an org may

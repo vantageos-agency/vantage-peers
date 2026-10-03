@@ -104,6 +104,12 @@ async function rawRename(t: T, id: Id<"agents">, name: string) {
 	});
 }
 
+// Neither proof carrier but a secret: today's direct-caller shape.
+const NO_VERIFIED_ACTOR = {
+	scope: { isMaster: false },
+	verifiedActor: undefined,
+} as const;
+
 async function codeOf(p: Promise<unknown>): Promise<string> {
 	try {
 		await p;
@@ -227,11 +233,11 @@ describe("ORG — one org's credential never acts for another org's same-named a
 		const secretA = await mint(t, "org-a", "clio");
 
 		const code = await t.run(async (ctx) =>
-			codeOf(requireAgentCredentialMatch(ctx, secretA, "clio", "org-b")),
+			codeOf(requireAgentCredentialMatch(ctx, secretA, "clio", "org-b", NO_VERIFIED_ACTOR)),
 		);
 		expect(code).toMatch(/^ORG_MISMATCH/);
 		const allowed = await t.run(async (ctx) =>
-			codeOf(requireAgentCredentialMatch(ctx, secretA, "clio", "org-a")),
+			codeOf(requireAgentCredentialMatch(ctx, secretA, "clio", "org-a", NO_VERIFIED_ACTOR)),
 		);
 		expect(allowed).toBe("NO_ERROR");
 	});
