@@ -6005,6 +6005,13 @@ export function registerTools(
 
 	// ── list_diaries ────────────────────────────────────────────────────────────
 
+	// oracle-justified: list vs get_diary differ by design on verb and on isolation: get_diary is a one-row
+	//   `.unique()` on (orchestrator, date) (convex/diary.ts:140-145) behind requireResolvedCaller
+	//   (diary.ts:138), while diary:list drains many rows (`.take(fetchCap)`, diary.ts:216-221) and
+	//   resolves its caller with withOrgScope only (diary.ts:204): it never calls requireResolvedCaller,
+	//   so an unresolved caller is answered an empty success, a known open refusal gap (the
+	//   no-credential reads list in .claude/rules/refusal-is-distinguishable-from-absence.md names
+	//   diary:list), and with no orchestrator argument it takes the table before the roster filter.
 	defineTool(
 		server,
 		authCtx,
@@ -6522,6 +6529,12 @@ export function registerTools(
 	// BM25 keyword search over briefing note content. Backed by Convex
 	// `briefingNotes:searchBriefingNotesByKeyword` using the `search_content` searchIndex.
 
+	// oracle-justified: SEARCH vs list_briefing_notes' READ-LIST by design: this is a BM25 search_content searchIndex
+	//   read with the tenant as an index predicate (convex/briefingNotes.ts:898-908) and an
+	//   additional requireScope("view-own-tasks") gate (briefingNotes.ts:891), where
+	//   briefingNotes:list drains the by_orgId / by_orgId_topic index range (briefingNotes.ts:598-607)
+	//   with no requireScope. A keyword search is not a listing, so the verb, the retrieval mechanism and
+	//   the extra gate are the real difference between the two tools.
 	defineTool(
 		server,
 		authCtx,

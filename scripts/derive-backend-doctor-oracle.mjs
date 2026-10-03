@@ -66,6 +66,22 @@
  *   table_conserver_supprimer  a disposition decision, no code source => "".
  *   statut_suppression  a current tool is not removed => "".
  *
+ * Writer authority (backend-standard R-10) has NO column in the 18-column
+ * oracle the doctor parses, and cannot be given one: a 19th cell makes every row
+ * `malformed` and every oracle-backed rule could-not-judge (backend-doctor
+ * src/oracle.ts toRows, measured: 108 of 108 rows). It is therefore derived to
+ * a SIDE-CAR, `.backend-doctor/vp-writer-tier.csv`, one row per write tool:
+ *   writer_tier  public / org-member / org-admin / fleet-internal / master, from
+ *                the gates of the mutation/action doors the handler reaches
+ *                (writerGateOf: mcpBoundOnly -> fleet-internal, masterOnly ->
+ *                master, requireOrgAdmin -> org-admin, a GUARDS resolver ->
+ *                org-member); the most permissive reachable door decides; a
+ *                tool with no gated write door keeps its MCP-scope tier,
+ *                collapsed as the doctor's collapseTier collapses rbac_qui.
+ *   writer_gate  the gate that decided it, or `mcp-scope:<tier>`.
+ *   write_doors  every reached write door and its gate.
+ * The doctor does not read this file; R-10 stays red until it does.
+ *
  * Population guard (refuses, never shrinks). The AST enumeration of tools is
  * cross-checked BEFORE any row is written, in both modes, against sources that
  * do not share its walker:
@@ -87,7 +103,8 @@
  *
  * Usage: node scripts/derive-backend-doctor-oracle.mjs [--check] [--root <dir>]
  *   default: writes .backend-doctor/vp-by-tool.csv and prints a summary.
- *   --check: exits 1 when the committed CSV differs from a fresh derivation.
+ *   --check: exits 1 when a committed CSV (oracle or writer side-car) differs
+ *            from a fresh derivation.
  *   --root:  derive from another tree (tests run against temp copies);
  *            defaults to the repository containing this script.
  *   exit 2:  the population guard refused (see above), in either mode.
@@ -116,6 +133,7 @@ const ROOT =
 const MCP_SRC = join(ROOT, "mcp-server", "src");
 const CONVEX = join(ROOT, "convex");
 const OUT = join(ROOT, ".backend-doctor", "vp-by-tool.csv");
+const WRITER_OUT = join(ROOT, ".backend-doctor", "vp-writer-tier.csv");
 const UNKNOWN = "?";
 
 /** Exit 2 with a named population failure; nothing is written. */
@@ -438,7 +456,17 @@ function convexFacts(fnKeys) {
 		idTables: new Set(),
 		writes: new Set(),
 		statusPatch: false,
-		reads: { list: false, get: false, indexedChains: 0, unindexedChains: 0 },
+		reads: {
+			list: false,
+			get: false,
+			// get evidence split: `db.get(id)` (a by-id fetch) vs a table's
+			// `.first()`/`.unique()` chain; and the tables a list chain drains.
+			getById: false,
+			probeTables: new Set(),
+			listTables: new Set(),
+			indexedChains: 0,
+			unindexedChains: 0,
+		},
 		search: new Set(),
 		paginate: false,
 		external: false,
@@ -447,6 +475,9 @@ function convexFacts(fnKeys) {
 		// data door (see convexTierOf) — the coherence flag compares THESE, not
 		// the MCP transport label.
 		tiers: new Set(),
+		// per reached mutation/action: the writer gate its own code enforces
+		// (see writerGateOf) — what writerTierOf reads.
+		writeDoors: [],
 		text: "",
 		resolved: [],
 		unresolved: [],
@@ -468,12 +499,15 @@ function convexFacts(fnKeys) {
 		let fnText = "";
 		for (const [, node] of nodes) {
 			const text = node.getText();
+			// Guard and tier detection read CODE only: a helper named in a comment
+			// ("filterByOrgScope() does not fit") is not a call the handler makes.
+			const code = withoutComments(text);
 			facts.text += `\n${text}`;
-			fnText += `\n${text}`;
+			fnText += `\n${code}`;
 			for (const m of text.matchAll(/searchType\s*:\s*"(vector|text|hybrid)"/g))
 				facts.search.add(m[1]);
 			for (const g of GUARDS)
-				if (new RegExp(`\\b${g}\\s*\\(`).test(text)) {
+				if (new RegExp(`\\b${g}\\s*\\(`).test(code)) {
 					facts.guards.add(g);
 					fnGuards.add(g);
 				}
@@ -518,12 +552,17 @@ function convexFacts(fnKeys) {
 						chain.some(
 							(c) => c === "collect" || c === "take" || c === "paginate",
 						)
-					)
+					) {
 						facts.reads.list = true;
-					if (chain.some((c) => c === "first" || c === "unique"))
+						facts.reads.listTables.add(litTable);
+					}
+					if (chain.some((c) => c === "first" || c === "unique")) {
 						facts.reads.get = true;
+						facts.reads.probeTables.add(litTable);
+					}
 				} else if (method === "get") {
 					facts.reads.get = true;
+					facts.reads.getById = true;
 					if (litTable && n.arguments.length > 1)
 						facts.tablesNamed.add(litTable);
 				} else if (method === "insert") {
@@ -553,6 +592,8 @@ function convexFacts(fnKeys) {
 			});
 		}
 		facts.tiers.add(convexTierOf(fnText, fnGuards));
+		if (fn.kind !== "query")
+			facts.writeDoors.push({ key, gate: writerGateOf(fnText, fnGuards) });
 	}
 	return facts;
 }
@@ -589,6 +630,68 @@ function effectiveTier(mcpTier, cf) {
 	return cf.tiers.has("org") ? "org" : "master";
 }
 
+/**
+ * The WRITER gate ONE reached mutation/action enforces, read from its own code
+ * (comments removed), most restrictive gate first:
+ *   mcpBoundOnly  requireResolvedCaller(..., { mcpBoundOnly: true }): only the
+ *                 MCP-bound service account is admitted      -> fleet-internal
+ *   masterOnly    convexTierOf() === "master" (masterOnly: true, or an
+ *                 `if (!scope.isMaster)` refusal)             -> master
+ *   orgAdmin      requireOrgAdmin(...)                        -> org-admin
+ *   orgResolver   a GUARDS resolver, no gate above            -> org-member
+ *   none          no resolver at all                          -> (MCP layer)
+ */
+function writerGateOf(code, guards) {
+	if (/mcpBoundOnly\s*:\s*true/.test(code)) return "mcpBoundOnly";
+	if (convexTierOf(code, guards) === "master") return "masterOnly";
+	if (/\brequireOrgAdmin\s*\(/.test(code)) return "orgAdmin";
+	return guards.size > 0 ? "orgResolver" : "none";
+}
+
+const WRITER_TIER_OF_GATE = {
+	mcpBoundOnly: "fleet-internal",
+	masterOnly: "master",
+	orgAdmin: "org-admin",
+	orgResolver: "org-member",
+};
+/** Most restrictive first: the most permissive reachable write door decides
+ * (the same rule effectiveTier applies to coherence). */
+const GATE_OPENNESS = [
+	"masterOnly",
+	"mcpBoundOnly",
+	"orgAdmin",
+	"orgResolver",
+	"none",
+];
+/** The MCP-layer tier a write with no Convex gate falls back to, collapsed to
+ * the five standard tiers the way the doctor's collapseTier collapses `rbac_qui`. */
+const MCP_TIER_AS_WRITER_TIER = {
+	master: "fleet-internal",
+	identite: "org-member",
+	ns: "org-member",
+	org: "org-member",
+	public: "public",
+};
+
+/**
+ * The writer authority of a write tool: one of public / org-member / org-admin /
+ * fleet-internal / master (standard §2, R-10), DERIVED from the gates of the
+ * mutation/action doors the handler reaches. A tool that reaches no write door,
+ * or only ungated ones, keeps its MCP-layer tier. Returns the tier and the gate
+ * that decided it.
+ */
+function writerTierOf(mcpTier, cf) {
+	const fallback = {
+		tier: MCP_TIER_AS_WRITER_TIER[mcpTier] ?? UNKNOWN,
+		gate: `mcp-scope:${mcpTier}`,
+	};
+	if (cf.writeDoors.length === 0) return fallback;
+	const gate = cf.writeDoors
+		.map((d) => d.gate)
+		.sort((a, b) => GATE_OPENNESS.indexOf(b) - GATE_OPENNESS.indexOf(a))[0];
+	return gate === "none" ? fallback : { tier: WRITER_TIER_OF_GATE[gate], gate };
+}
+
 /** Closed verb (backend-doctor src/detectors/predicates.ts:39-51) or `?`. */
 function verbOf(f) {
 	// No Convex function reached from the handler: the tool performs no data
@@ -609,6 +712,18 @@ function verbOf(f) {
 	if (f.external && !f.reads.list && !f.reads.get) return "EXTERNAL-EFFECT";
 	if (f.reads.list && !f.reads.get) return "READ-LIST";
 	if (f.reads.get && !f.reads.list) return "READ-GET";
+	// list + get: a list tool that also does a per-row existence/visibility probe
+	// (`.first()`/`.unique()`) on a table it does NOT itself list — e.g.
+	// briefingNotes:list probing briefingNoteParticipants for each note — is still
+	// a READ-LIST. Any `db.get(id)` by id, or a `.first()`/`.unique()` on a table
+	// the same handler lists, keeps the mix undecidable (`?`).
+	if (
+		f.reads.list &&
+		f.reads.get &&
+		!f.reads.getById &&
+		[...f.reads.probeTables].every((t) => !f.reads.listTables.has(t))
+	)
+		return "READ-LIST";
 	return UNKNOWN; // no effect seen, or list+get mixed
 }
 
@@ -675,7 +790,10 @@ function justificationOf(file, call) {
 		);
 	const at = lines.findLastIndex((l) => l.startsWith("oracle-justified:"));
 	if (at < 0) return null;
-	const reason = [lines[at].slice("oracle-justified:".length), ...lines.slice(at + 1)]
+	const reason = [
+		lines[at].slice("oracle-justified:".length),
+		...lines.slice(at + 1),
+	]
 		.join(" ")
 		.replace(/\s+/g, " ")
 		.trim();
@@ -715,7 +833,9 @@ for (const file of mcpFiles) {
 		const handler = a[a.length - 1];
 		const justification = justificationOf(file, n);
 		if (justification?.empty)
-			astSkipped.push(`${where} oracle-justified marker carries no reason text`);
+			astSkipped.push(
+				`${where} oracle-justified marker carries no reason text`,
+			);
 		tools.push({
 			justification: justification?.reason ?? "",
 			file,
@@ -1017,6 +1137,16 @@ function schemaPurposes() {
 	return purposes;
 }
 
+const READS = new Set(["READ-LIST", "READ-GET", "SEARCH", "AGGREGATE"]);
+const WRITES = new Set([
+	"CREATE",
+	"UPDATE",
+	"DELETE",
+	"TRANSITION",
+	"UPSERT",
+	"BULK-WRITE",
+]);
+
 const purposes = schemaPurposes();
 const rows = [];
 for (const t of tools) {
@@ -1043,7 +1173,9 @@ for (const t of tools) {
 	const reason =
 		[
 			t.justification ? `JUSTIFIED: ${t.justification}` : "",
-			t.scope.reason ? `source reason (${t.scope.kind}): ${t.scope.reason}` : "",
+			t.scope.reason
+				? `source reason (${t.scope.kind}): ${t.scope.reason}`
+				: "",
 		]
 			.filter(Boolean)
 			.join(" | ") || UNKNOWN;
@@ -1064,6 +1196,8 @@ for (const t of tools) {
 	rows.push({
 		_tier: effectiveTier(auth.tier, cf),
 		_verb: verb,
+		_writer: WRITES.has(verb) ? writerTierOf(auth.tier, cf) : null,
+		_doors: cf.writeDoors.map((d) => `${d.key}=${d.gate}`).join("; "),
 		_src: `${relative(ROOT, t.file)}:${t.line}`,
 		table,
 		outil: t.name ?? UNKNOWN,
@@ -1087,15 +1221,6 @@ for (const t of tools) {
 }
 
 // rbac_coherence_table — read tiers vs write tiers, per exact table group.
-const READS = new Set(["READ-LIST", "READ-GET", "SEARCH", "AGGREGATE"]);
-const WRITES = new Set([
-	"CREATE",
-	"UPDATE",
-	"DELETE",
-	"TRANSITION",
-	"UPSERT",
-	"BULK-WRITE",
-]);
 const groups = new Map();
 for (const r of rows) {
 	if (!r.table) continue;
@@ -1129,24 +1254,49 @@ rows.sort(
 );
 
 const cell = (v) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+/** The writer-authority side-car (see header): one row per write tool. */
+const WRITER_COLUMNS = [
+	"outil",
+	"table",
+	"crud",
+	"writer_tier",
+	"writer_gate",
+	"write_doors",
+];
+const writerCsv = `${[
+	WRITER_COLUMNS.join(","),
+	...rows
+		.filter((r) => r._writer)
+		.map((r) =>
+			[r.outil, r.table, r.crud, r._writer.tier, r._writer.gate, r._doors]
+				.map(cell)
+				.join(","),
+		),
+].join("\n")}\n`;
 const csv = `${[COLUMNS.join(","), ...rows.map((r) => COLUMNS.map((c) => cell(r[c] ?? "")).join(","))].join("\n")}\n`;
 
 if (process.argv.includes("--check")) {
-	const current = existsSync(OUT) ? readFileSync(OUT, "utf8") : "";
-	if (current !== csv) {
-		console.error(
-			`${relative(ROOT, OUT)} is stale: re-run node scripts/derive-backend-doctor-oracle.mjs`,
-		);
-		process.exit(1);
+	for (const [file, fresh] of [
+		[OUT, csv],
+		[WRITER_OUT, writerCsv],
+	]) {
+		const current = existsSync(file) ? readFileSync(file, "utf8") : "";
+		if (current !== fresh) {
+			console.error(
+				`${relative(ROOT, file)} is stale: re-run node scripts/derive-backend-doctor-oracle.mjs`,
+			);
+			process.exit(1);
+		}
 	}
 	console.log(
-		`${relative(ROOT, OUT)} matches a fresh derivation (${rows.length} rows)`,
+		`${relative(ROOT, OUT)} matches a fresh derivation (${rows.length} rows); ${relative(ROOT, WRITER_OUT)} too`,
 	);
 	process.exit(0);
 }
 
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, csv);
+writeFileSync(WRITER_OUT, writerCsv);
 const count = (pred) => rows.filter(pred).length;
 console.log(
 	`wrote ${relative(ROOT, OUT)}: ${rows.length} rows (one per defineTool registration)`,
