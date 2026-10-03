@@ -16,6 +16,8 @@
  * WCAG AA + bilingual FR+EN labels.
  */
 
+import { isRefusedEnvelope } from "../../refusal.js";
+
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
 	return s.replace(/[&<>"']/g, (c) => {
@@ -113,7 +115,13 @@ export async function renderDiaryEntry(
 			// List mode
 			const args: Record<string, unknown> = { limit };
 			if (orchestrator) args.orchestrator = orchestrator;
-			const result = (await fetchConvex("diary:list", args)) as DiaryRow[];
+			const result = (await fetchConvex("diary:list", args)) as
+				| DiaryRow[]
+				| { refused: true; items: unknown[] };
+			// A refusal is not an absence: never render it as "No diary entry found."
+			if (isRefusedEnvelope(result)) {
+				return `<div class="vp-diary-entry-error" role="alert">REFUSED (RBAC_DENIED): the backend read "diary:list" refused this identity. This is NOT an empty result: entries may exist that you cannot see.</div>`;
+			}
 			entries = Array.isArray(result) ? result : [];
 		}
 	} catch (err: unknown) {

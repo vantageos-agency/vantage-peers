@@ -366,7 +366,7 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 	});
 
 	describe("diary.list", () => {
-		test("typed empty array, not a throw, even with rows present for another org", async () => {
+		test("typed refusal envelope, not a throw, even with rows present for another org", async () => {
 			const t = createT();
 			await seedOrgAMapping(t);
 			await t.run(async (ctx) => {
@@ -380,7 +380,7 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 
 			await expect(
 				asNoOrg(t).query(api.diary.list, {}),
-			).resolves.toEqual([]);
+			).resolves.toEqual({ refused: true, items: [] });
 		});
 	});
 });

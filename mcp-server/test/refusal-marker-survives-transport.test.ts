@@ -119,6 +119,15 @@ const BRIEFING_NOTE = {
 	createdBy: "alpha",
 };
 
+const DIARY_ENTRY = {
+	_id: "diary-fixture-001",
+	_creationTime: 1780000003000,
+	date: "2026-10-01",
+	orchestrator: "client-fixture-alpha",
+	content: "Fixture entry",
+	createdAt: 1780000003000,
+};
+
 const READERS = [
 	{
 		tool: "list_briefing_notes",
@@ -138,14 +147,22 @@ const READERS = [
 		present: [PROFILE],
 		presentNeedle: "alpha",
 	},
+	{
+		tool: "list_diaries",
+		door: "diary:list",
+		present: [DIARY_ENTRY],
+		presentNeedle: "diary-fixture-001",
+		args: { orchestrator: "user-fixture-alpha" },
+	},
 ] as const;
 
 describe("END TWO — the MCP reader says it was refused (ordinary organisation member)", () => {
 	for (const r of READERS) {
 		it(`${r.tool} — REFUSED / ABSENT / PRESENT, refused and absent asserted ADJACENT`, async () => {
-			const refused = await call(r.tool, ENVELOPE);
-			const absent = await call(r.tool, []);
-			const present = await call(r.tool, r.present);
+			const args = (r as { args?: Record<string, unknown> }).args ?? {};
+			const refused = await call(r.tool, ENVELOPE, args);
+			const absent = await call(r.tool, [], args);
+			const present = await call(r.tool, r.present, args);
 
 			// ABSENT: a plain empty result, exactly what an empty list always was.
 			expect(absent.isError).toBe(false);
@@ -221,6 +238,10 @@ describe("END TWO sweep — no MCP reader of an envelope-capable door may swallo
 			// Dashboard-only project summary (pre-org envelope, #1406); no MCP reader
 			// (grep -rn getProjectSummary mcp-server/src -> 0), so S1b is unchanged.
 			"dashboard:getProjectSummary",
+			// Subscribed by components/diary/diary-feed.tsx:67 and
+			// components/activity/unified-activity-feed.tsx:158; its MCP reader
+			// (tools.ts list_diaries) tests isRefusedEnvelope.
+			"diary:list",
 			"mandates:list",
 			"messages:getUnreadCount",
 			"messages:listByChannel",
@@ -246,7 +267,12 @@ describe("END TWO sweep — no MCP reader of an envelope-capable door may swallo
 		expect(offenders).toEqual([]);
 		expect(sites.length).toBeGreaterThanOrEqual(2);
 		expect(new Set(sites.map((s) => s.door))).toEqual(
-			new Set(["briefingNotes:list", "mandates:list", "profiles:listProfiles"]),
+			new Set([
+				"briefingNotes:list",
+				"diary:list",
+				"mandates:list",
+				"profiles:listProfiles",
+			]),
 		);
 	});
 });
