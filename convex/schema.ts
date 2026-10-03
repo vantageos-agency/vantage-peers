@@ -514,6 +514,10 @@ export default defineSchema({
 			"project",
 			"status",
 		])
+		// tasks.listByMission for non-master callers: the tenant is the leading
+		// equality, so a member's mission read never touches another org's rows
+		// and the scan cap bounds the member's own mission. Additive.
+		.index("by_orgId_mission_status", ["orgId", "missionId", "status"])
 		// Compound indexes added to close the silent-filter-drop defect in
 		// convex/tasks.ts `list`: when a caller supplies assignedTo/assignedToInstance
 		// TOGETHER with project, the query must apply BOTH filters via a matching
