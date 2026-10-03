@@ -9,8 +9,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../server-http.js";
 import {
-	ACTOR_CREDENTIAL_MODE_ENV,
 	_resetUnattributedClaimsForTest,
+	ACTOR_CREDENTIAL_MODE_ENV,
 	checkActorBinding,
 	isUnattributedClaim,
 	type OAuthContext,
@@ -111,7 +111,7 @@ describe("/health unattributed_claims", () => {
 		expect(body.oauth).toBe("supported");
 		expect(body.scopes).toEqual(["mcp:full"]);
 		expect(body.actor_credential).toEqual({
-			mode: "permissive",
+			mode: "strict",
 			source: "unset",
 		});
 	});
@@ -119,8 +119,14 @@ describe("/health unattributed_claims", () => {
 
 describe("5 (control) checkActorBinding unchanged in both modes", () => {
 	const ctx = orgCtx("client-a");
-	it("permissive: typed name accepted", () => {
+	it("default (unset) is strict: typed name refused AGENT_CREDENTIAL_REQUIRED", () => {
 		delete process.env[ACTOR_CREDENTIAL_MODE_ENV];
+		expect(checkActorBinding(ctx, "alice")).toMatch(
+			/^AGENT_CREDENTIAL_REQUIRED/,
+		);
+	});
+	it("explicit permissive: typed name accepted", () => {
+		process.env[ACTOR_CREDENTIAL_MODE_ENV] = "permissive";
 		expect(checkActorBinding(ctx, "alice")).toBeNull();
 	});
 	it("strict: typed name refused AGENT_CREDENTIAL_REQUIRED", () => {

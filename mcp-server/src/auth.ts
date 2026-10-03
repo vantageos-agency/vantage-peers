@@ -94,6 +94,13 @@ export type OAuthContext = {
 	 */
 	clerkOrgSlug?: string;
 	/**
+	 * Who the token row was minted for, when the row says so (PR #1444 mints
+	 * `"person"` for a signed-in human). Absent on a seat token. Read by
+	 * {@link isSeatActingAsItself}: ANY present value withholds the seat
+	 * exemption, so a principal kind added later is not exempt by default.
+	 */
+	principal?: string;
+	/**
 	 * The ACTING AGENT, resolved ONCE at the bearer-auth boundary from the
 	 * per-agent credential presented in {@link AGENT_CREDENTIAL_HEADER}, via
 	 * `agentCredentials:resolveAgentCredential` (the Convex core in
@@ -302,21 +309,22 @@ export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
 /**
  * The ONE switch for the credential cutover (two deployments, never one).
  *
- *   permissive (DEFAULT, Deployment A) — a typed acting name from a caller with
- *     NO presented credential is accepted exactly as before and RECORDED as
- *     unattributed (see {@link recordUnattributedClaim}) so the cutover can be
- *     measured. A presented credential is still authoritative: a typed name
- *     that disagrees with it is AGENT_IDENTITY_MISMATCH in both modes.
- *   strict (Deployment B) — that same call is REFUSED with
- *     AGENT_CREDENTIAL_REQUIRED.
+ *   strict (DEFAULT) — a typed acting name from a non-master caller with NO
+ *     presented credential is REFUSED with AGENT_CREDENTIAL_REQUIRED, except
+ *     a seat token naming itself ({@link isSeatActingAsItself}).
+ *   permissive (explicit opt-in only) — that same call is accepted and
+ *     RECORDED as unattributed (see {@link recordUnattributedClaim}). A
+ *     presented credential is still authoritative: a typed name that disagrees
+ *     with it is AGENT_IDENTITY_MISMATCH in both modes.
  *
  * Read in exactly ONE place ({@link resolveActorCredentialMode}), shared by
  * {@link actorCredentialMode} — which {@link checkActorBinding} calls to
  * ENFORCE — and by /health, which only PUBLISHES it. One read, so the mode
  * that is published can never disagree with the mode that is applied.
- * There is no per-tool flag. Unset or empty means
- * permissive. Any value other than "permissive" / "strict" fails CLOSED to
- * strict and is logged once, so a typo can only tighten, never silently loosen.
+ * There is no per-tool flag. Unset or empty means STRICT (a fail-closed
+ * default lives in code, railway-mcp-redeploy.md): permissive is reached only
+ * by writing "permissive". Any other value also fails CLOSED to strict and is
+ * logged once, so a typo can only tighten, never silently loosen.
  */
 export const ACTOR_CREDENTIAL_MODE_ENV = "VANTAGE_ACTOR_CREDENTIAL_MODE";
 export type ActorCredentialMode = "permissive" | "strict";
@@ -327,10 +335,10 @@ let warnedUnknownMode: string | null = null;
  * Where the effective mode came from. A CLASSIFICATION of the variable, never
  * an echo of its value (the /health document is unauthenticated):
  *   configured — set to a value this file recognises ("permissive" | "strict")
- *   unset      — the variable is absent (the state nobody ever chose)
- *   empty      — set, but empty after trimming
+ *   unset      — the variable is absent; resolves to strict
+ *   empty      — set, but empty after trimming; resolves to strict
  *   coerced    — set to an unrecognised value; failed CLOSED to strict
- * "permissive"+configured and "permissive"+unset are the same behaviour and
+ * "strict"+configured and "strict"+unset are the same behaviour and
  * different facts; publishing only the mode collapses them.
  */
 export type ActorCredentialModeSource =
@@ -355,9 +363,9 @@ export interface ActorCredentialResolution {
  */
 export function resolveActorCredentialMode(): ActorCredentialResolution {
 	const raw = process.env[ACTOR_CREDENTIAL_MODE_ENV];
-	if (raw === undefined) return { mode: "permissive", source: "unset" };
+	if (raw === undefined) return { mode: "strict", source: "unset" };
 	const t = raw.trim();
-	if (t === "") return { mode: "permissive", source: "empty" };
+	if (t === "") return { mode: "strict", source: "empty" };
 	if (t === "permissive") return { mode: "permissive", source: "configured" };
 	if (t === "strict") return { mode: "strict", source: "configured" };
 	return { mode: "strict", source: "coerced", unrecognisedRaw: raw };
@@ -399,7 +407,9 @@ export function actorCredentialMode(): ActorCredentialMode {
  *                               permissive → accepted (the caller then records
  *                               it unattributed, see registerTool's
  *                               bindActingNames); strict → REFUSED
- *                               (AGENT_CREDENTIAL_REQUIRED).
+ *                               (AGENT_CREDENTIAL_REQUIRED), except a seat
+ *                               token naming its own single allowlisted name
+ *                               ({@link isSeatActingAsItself}).
  *   - no ctx at all           → REFUSED (absence is never authority).
  */
 export function checkActorBinding(
@@ -426,7 +436,36 @@ export function checkActorBinding(
 	if (ctx.viaMasterBearer) return agentCredentialRequired(claimedName);
 	if (isMasterScope(ctx)) return null;
 	if (actorCredentialMode() === "permissive") return null;
+	if (isSeatActingAsItself(ctx, claimedName)) return null;
 	return agentCredentialRequired(claimedName);
+}
+
+/**
+ * The ONE strict-mode exemption: a SEAT token acting as itself. Every input is
+ * read from the token row the bearer resolved to, never from a tool argument
+ * except the claim being tested:
+ *   - the context came from an OAuth token row (`accessTokenHash` set), so a
+ *     Clerk-JWT session, the master bearer and the stdio trust context never
+ *     qualify;
+ *   - the row carries no `principal` (a person token, or any principal kind
+ *     added later, is NOT exempt by default);
+ *   - its `fromAllowList` holds exactly ONE name and that name is not `"*"`;
+ *   - the claimed name equals that one name (normalizeOrchestratorId on both
+ *     sides).
+ * Such a row can only ever name itself, so the typed name adds nothing the
+ * token does not already grant: serving it widens nothing.
+ */
+export function isSeatActingAsItself(
+	ctx: OAuthContext,
+	claimedName: string,
+): boolean {
+	if (ctx.isMaster || ctx.viaMasterBearer) return false;
+	if (ctx.accessTokenHash === undefined) return false;
+	if (ctx.principal !== undefined) return false;
+	if (ctx.fromAllowList.length !== 1) return false;
+	const only = normalizeOrchestratorId(ctx.fromAllowList[0]);
+	if (only === "" || only === "*") return false;
+	return normalizeOrchestratorId(claimedName) === only;
 }
 
 function agentCredentialRequired(claimedName: string): string {
@@ -440,8 +479,9 @@ function agentCredentialRequired(claimedName: string): string {
 
 /**
  * True when a call is served on a TYPED name alone: a real (non-master) caller,
- * no resolved actor, and a name it typed. Exactly the population that strict
- * mode would refuse — so counting it is the measurement of the cutover.
+ * no resolved actor, a name it typed, and not a seat naming itself
+ * ({@link isSeatActingAsItself}). Exactly the population that strict mode
+ * would refuse — so counting it is the measurement of the cutover.
  */
 export function isUnattributedClaim(
 	ctx: OAuthContext | undefined,
@@ -451,7 +491,8 @@ export function isUnattributedClaim(
 		ctx !== undefined &&
 		!ctx.actor &&
 		!isMasterScope(ctx) &&
-		claimedName.trim() !== ""
+		claimedName.trim() !== "" &&
+		!isSeatActingAsItself(ctx, claimedName)
 	);
 }
 

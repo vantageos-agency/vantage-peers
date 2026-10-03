@@ -107,13 +107,13 @@ export const seedClientScopeProfiles = internalMutation({
 			]) {
 				if (prefix === "*" || prefix === "global") {
 					throw new ConvexError(
-						`seedClientScopeProfiles: D4 violation, prefix "${prefix}" is forbidden for client profile "${p.profileId}"`,
+						`AUTH_NAMESPACE_DENIED: seedClientScopeProfiles: D4 violation, prefix "${prefix}" is forbidden for client profile "${p.profileId}"`,
 					);
 				}
 			}
 			if (p.fromAllowList.includes("*")) {
 				throw new ConvexError(
-					`seedClientScopeProfiles: wildcard sender is forbidden for client profile "${p.profileId}"`,
+					`AUTH_SENDER_WILDCARD_DENIED: seedClientScopeProfiles: wildcard sender is forbidden for client profile "${p.profileId}"`,
 				);
 			}
 		}
@@ -190,9 +190,7 @@ export const seedClientScopeProfiles = internalMutation({
 			if (!sameList(existing.fromAllowList, p.fromAllowList)) {
 				driftedFields.push("fromAllowList");
 			}
-			if (
-				!sameList(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)
-			) {
+			if (!sameList(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)) {
 				driftedFields.push("namespaceReadPrefixes");
 			}
 			if (

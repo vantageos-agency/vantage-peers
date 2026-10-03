@@ -48,7 +48,8 @@ const createT = () => convexTest(schema, modules);
 const asServiceAccount = (t: ReturnType<typeof createT>) =>
 	t.withIdentity({ subject: "test-service-account-user-id" });
 
-const seed = internal.migrations.seed_client_scope_profiles.seedClientScopeProfiles;
+const seed =
+	internal.migrations.seed_client_scope_profiles.seedClientScopeProfiles;
 
 type Resolved = {
 	profileId: string;
@@ -246,9 +247,9 @@ describe("MIGRATION seed_client_scope_profiles: dry-run / apply poles", () => {
 
 		const kept = await t.mutation(seed, { profiles: [target], apply: true });
 		expect(kept.report[0].action).toBe("drift-kept");
-		expect(
-			(await resolve(t, target.profileId)).namespaceReadPrefixes,
-		).toEqual(["orchestrator/someone-else"]);
+		expect((await resolve(t, target.profileId)).namespaceReadPrefixes).toEqual([
+			"orchestrator/someone-else",
+		]);
 
 		const patched = await t.mutation(seed, {
 			profiles: [target],
@@ -272,14 +273,18 @@ describe("MIGRATION seed_client_scope_profiles: dry-run / apply poles", () => {
 		[
 			"AUTH_NAMESPACE_DENIED: global read prefix",
 			{ namespaceReadPrefixes: ["global"] },
-			/D4 violation/,
+			/^AUTH_NAMESPACE_DENIED: seedClientScopeProfiles: D4 violation/,
 		],
 		[
 			"AUTH_NAMESPACE_DENIED: wildcard write prefix",
 			{ namespaceWritePrefixes: ["*"] },
-			/D4 violation/,
+			/^AUTH_NAMESPACE_DENIED: seedClientScopeProfiles: D4 violation/,
 		],
-		["wildcard sender", { fromAllowList: ["*"] }, /wildcard sender/],
+		[
+			"AUTH_SENDER_WILDCARD_DENIED: wildcard sender",
+			{ fromAllowList: ["*"] },
+			/^AUTH_SENDER_WILDCARD_DENIED: seedClientScopeProfiles: wildcard sender/,
+		],
 		["selfRegistrable", { selfRegistrable: true }, /selfRegistrable/],
 		["empty profileId", { profileId: " " }, /empty profileId/],
 	];
@@ -292,7 +297,9 @@ describe("MIGRATION seed_client_scope_profiles: dry-run / apply poles", () => {
 			}),
 		).rejects.toThrow(re);
 		expect(
-			await t.run(async (ctx) => ctx.db.query("oauth_scope_profiles").collect()),
+			await t.run(async (ctx) =>
+				ctx.db.query("oauth_scope_profiles").collect(),
+			),
 		).toHaveLength(0);
 	});
 
@@ -300,15 +307,22 @@ describe("MIGRATION seed_client_scope_profiles: dry-run / apply poles", () => {
 		const t = createT();
 		await expect(
 			t.mutation(seed, {
-				profiles: [base, { ...base, profileId: "x", namespaceReadPrefixes: ["global"] }],
+				profiles: [
+					base,
+					{ ...base, profileId: "x", namespaceReadPrefixes: ["global"] },
+				],
 				apply: true,
 			}),
-		).rejects.toThrow(/D4 violation/);
+		).rejects.toThrow(
+			/^AUTH_NAMESPACE_DENIED: seedClientScopeProfiles: D4 violation/,
+		);
 		await expect(
 			t.mutation(seed, { profiles: [base, base], apply: true }),
 		).rejects.toThrow(/duplicate/);
 		expect(
-			await t.run(async (ctx) => ctx.db.query("oauth_scope_profiles").collect()),
+			await t.run(async (ctx) =>
+				ctx.db.query("oauth_scope_profiles").collect(),
+			),
 		).toHaveLength(0);
 	});
 });
