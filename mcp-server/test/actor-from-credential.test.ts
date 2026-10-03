@@ -245,7 +245,12 @@ function buildFakeServer(): {
 
 type ConvexCalls = { mutations: Array<{ name: string; args: unknown }> };
 
-function buildToolConvex(rows: { getById?: unknown; list?: unknown[] }): {
+function buildToolConvex(rows: {
+	getById?: unknown;
+	list?: unknown[];
+	/** What orgRoster:getMyOrgRoster answers — the caller org's own roster. */
+	roster?: string[];
+}): {
 	convex: unknown;
 	calls: ConvexCalls;
 } {
@@ -253,6 +258,7 @@ function buildToolConvex(rows: { getById?: unknown; list?: unknown[] }): {
 	const convex = {
 		query: vi.fn(async (name: string, args?: { fields?: string }) => {
 			if (name === "tasks:getById") return rows.getById ?? null;
+			if (name === "orgRoster:getMyOrgRoster") return rows.roster ?? [];
 			// Faithful to convex/tasks.ts: the "lite" projection is
 			// {_id,_creationTime,title,status,priority,assignedTo,missionId} — it
 			// STRIPS orgId and createdBy. A caller that needs the tenant stamp must
@@ -638,6 +644,178 @@ describe("S2 acting — callerOrchestrator is a claim the credential verifies, n
 			escaped,
 			`tools that let alice act as bob: ${escaped.join(", ")}`,
 		).toEqual([]);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// task k1748jbt7yfgrv747p8gky1f358fk1r5 — a credential binds the ACTING name
+// only. A name that ASSIGNS work to someone else (pilot, agents, assignedTo,
+// fulfilledBy, a BU's new lead) is not an identity claim: binding it to the
+// caller made create_mission refuse "pilot: theta" from Pi's credential while
+// create_task "assignedTo: theta" was accepted. The assignee stays checked
+// against the caller organisation's roster (guardDelegation) — never loosened.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("S2 assignment — a name that assigns work is not an identity claim", () => {
+	const ROSTER_A = ["alice", "bob"];
+	async function call(
+		tool: string,
+		body: Record<string, unknown>,
+	): Promise<{ json: Wire; calls: ConvexCalls }> {
+		const { convex, calls } = buildToolConvex({ roster: ROSTER_A });
+		const app = buildApp(() => convex);
+		const { json } = await send(app, `/tool/${tool}`, {
+			orgId: "org-a",
+			credential: SECRET_ALICE_A,
+			body,
+		});
+		return { json, calls };
+	}
+	const MISSION = {
+		name: "m",
+		project: "p",
+		status: "brainstorm",
+		priority: "high",
+		agents: ["alice"],
+	};
+
+	it("KEY RED: create_mission with a pilot other than the caller is ACCEPTED, the actor is still the creator", async () => {
+		const { json, calls } = await call("create_mission", {
+			...MISSION,
+			pilot: "bob",
+		});
+		expect(resultText(json)).not.toContain("AGENT_IDENTITY_MISMATCH");
+		expect(isRefused(json)).toBe(false);
+		expect(calls.mutations).toHaveLength(1);
+		expect(calls.mutations[0].args).toMatchObject({
+			pilot: "bob",
+			createdBy: "alice",
+		});
+	});
+
+	it("create_mission with agents other than the caller is ACCEPTED", async () => {
+		const { json, calls } = await call("create_mission", {
+			...MISSION,
+			pilot: "alice",
+			agents: ["bob"],
+		});
+		expect(isRefused(json)).toBe(false);
+		expect(calls.mutations[0].args).toMatchObject({ agents: ["bob"] });
+	});
+
+	it("ACTING pole: create_mission with createdBy other than the caller is still AGENT_IDENTITY_MISMATCH, nothing dispatched", async () => {
+		const { json, calls } = await call("create_mission", {
+			...MISSION,
+			pilot: "bob",
+			createdBy: "bob",
+		});
+		expect(isRefused(json)).toBe(true);
+		expect(resultText(json)).toContain("AGENT_IDENTITY_MISMATCH");
+		expect(calls.mutations).toHaveLength(0);
+	});
+
+	it("ROSTER pole: create_mission with a pilot OUTSIDE the caller's org roster is still refused (not loosened)", async () => {
+		const { json, calls } = await call("create_mission", {
+			...MISSION,
+			pilot: "zed",
+		});
+		expect(isRefused(json)).toBe(true);
+		expect(calls.mutations).toHaveLength(0);
+	});
+
+	it("update_mission reassigning the pilot to another org member is ACCEPTED, the actor is the caller", async () => {
+		const { json, calls } = await call("update_mission", {
+			missionId: "m1",
+			pilot: "bob",
+		});
+		expect(isRefused(json)).toBe(false);
+		expect(calls.mutations[0].args).toMatchObject({
+			pilot: "bob",
+			callerOrchestrator: "alice",
+		});
+	});
+
+	it("update_mission WITHOUT a pilot never writes the caller in as pilot (an omitted assignee is not derived)", async () => {
+		const { json, calls } = await call("update_mission", {
+			missionId: "m1",
+			progress: 50,
+		});
+		expect(isRefused(json)).toBe(false);
+		expect(
+			(calls.mutations[0].args as Record<string, unknown>).pilot,
+		).toBeUndefined();
+	});
+
+	it("ACTING pole: update_mission with callerOrchestrator other than the caller is still AGENT_IDENTITY_MISMATCH", async () => {
+		const { json, calls } = await call("update_mission", {
+			missionId: "m1",
+			pilot: "bob",
+			callerOrchestrator: "bob",
+		});
+		expect(resultText(json)).toContain("AGENT_IDENTITY_MISMATCH");
+		expect(calls.mutations).toHaveLength(0);
+	});
+
+	it("CONTROL: create_task with assignedTo other than the caller is ACCEPTED, createdBy other than the caller is refused", async () => {
+		const ok = await call("create_task", {
+			title: "t",
+			description: "d",
+			project: "p",
+			assignedTo: "bob",
+			priority: "high",
+		});
+		expect(isRefused(ok.json)).toBe(false);
+		expect(ok.calls.mutations[0].args).toMatchObject({
+			assignedTo: "bob",
+			createdBy: "alice",
+		});
+		const ko = await call("create_task", {
+			title: "t",
+			description: "d",
+			project: "p",
+			assignedTo: "bob",
+			priority: "high",
+			createdBy: "bob",
+		});
+		expect(resultText(ko.json)).toContain("AGENT_IDENTITY_MISMATCH");
+		expect(ko.calls.mutations).toHaveLength(0);
+	});
+
+	it("create_mandate with fulfilledBy another org member is ACCEPTED; requestedBy another name is refused", async () => {
+		const base = { service: "review", budget: 10 };
+		const ok = await call("create_mandate", { ...base, fulfilledBy: "bob" });
+		expect(isRefused(ok.json)).toBe(false);
+		expect(ok.calls.mutations[0].args).toMatchObject({
+			requestedBy: "alice",
+			fulfilledBy: "bob",
+		});
+		const ko = await call("create_mandate", {
+			...base,
+			fulfilledBy: "bob",
+			requestedBy: "bob",
+		});
+		expect(resultText(ko.json)).toContain("AGENT_IDENTITY_MISMATCH");
+		expect(ko.calls.mutations).toHaveLength(0);
+		const outside = await call("create_mandate", {
+			...base,
+			fulfilledBy: "zed",
+		});
+		expect(isRefused(outside.json)).toBe(true);
+		expect(outside.calls.mutations).toHaveLength(0);
+	});
+
+	it("update_bu handing the BU to another org member is ACCEPTED; a lead outside the roster is refused", async () => {
+		const ok = await call("update_bu", { buId: "b1", orchestratorId: "bob" });
+		expect(isRefused(ok.json)).toBe(false);
+		expect(ok.calls.mutations[0].args).toMatchObject({
+			callerOrchestrator: "alice",
+			orchestratorId: "bob",
+		});
+		const outside = await call("update_bu", {
+			buId: "b1",
+			orchestratorId: "zed",
+		});
+		expect(isRefused(outside.json)).toBe(true);
+		expect(outside.calls.mutations).toHaveLength(0);
 	});
 });
 
@@ -1489,8 +1667,12 @@ describe("S2 identity binding — the credential binding compares through normal
 	// This assertion is what makes the docstring correction true rather than
 	// cosmetic, and it kills the accent-folding mutant.
 	it("credential hélios REFUSES the UNACCENTED helios — accents are not folded, by ruling", () => {
-		expect(checkActorBinding(ctx, "helios")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
-		expect(checkActorBinding(ctx, "HELIOS")).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+		expect(checkActorBinding(ctx, "helios")).toMatch(
+			/^AGENT_IDENTITY_MISMATCH/,
+		);
+		expect(checkActorBinding(ctx, "HELIOS")).toMatch(
+			/^AGENT_IDENTITY_MISMATCH/,
+		);
 	});
 
 	// POLE 3 — BOTH SIDES, not just the claim. The reviewer's mutant A left the
