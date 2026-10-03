@@ -12,10 +12,16 @@
  * access_tokens, refresh_tokens — only the rows the tests exercise.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { timingSafeEqual } from "@vantageos/cloud-identity";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app, parseBasicAuthSecret } from "../server-http.js";
 import { _setInternalClientForTest, sha256Hex } from "../src/auth.js";
-import { timingSafeEqual } from "@vantageos/cloud-identity";
+import {
+	authorizeAsPerson,
+	type Harness,
+	installAuthorizeHarness,
+	membership,
+} from "./lib/authorizeHarness.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture state — reset before each test
@@ -39,21 +45,41 @@ type ScopeProfile = {
 	namespaceWritePrefixes: string[];
 };
 
-type AuthCode = {
-	code: string;
+type PersonCode = {
+	codeHash: string;
+	clerkUserId: string;
+	orgId: string;
+	orgSlug: string | null;
+	orgRole: string;
 	clientId: string;
 	redirectUri: string;
 	codeChallenge: string;
+	resource: string;
 	scope: string;
-	userId: string;
 	expiresAt: number;
+	used: boolean;
+};
+
+type IssuedAccessToken = {
+	tokenHash: string;
+	clientId: string;
+	userId: string;
+	scopeProfile: string;
+	fromAllowList: string[];
+	clerkOrgSlug?: string;
+	codeHash?: string;
+	revoked: boolean;
 };
 
 const state: {
 	clients: Map<string, ClientRow>;
 	profiles: Map<string, ScopeProfile>;
-	authCodes: Map<string, AuthCode>;
-	accessTokens: Array<{ tokenHash: string; clientId: string }>;
+	personCodes: Map<string, PersonCode>;
+	mappings: Map<
+		string,
+		{ allowedOrchestrators: string[]; scopes: string[]; isActive: boolean }
+	>;
+	accessTokens: IssuedAccessToken[];
 	refreshTokens: Map<
 		string,
 		{
@@ -66,7 +92,8 @@ const state: {
 } = {
 	clients: new Map(),
 	profiles: new Map(),
-	authCodes: new Map(),
+	personCodes: new Map(),
+	mappings: new Map(),
 	accessTokens: [],
 	refreshTokens: new Map(),
 };
@@ -84,6 +111,9 @@ function makeFakeConvex() {
 			}
 			if (name === "oauth:getScopeProfile") {
 				return state.profiles.get(args.profileId as string) ?? null;
+			}
+			if (name === "clientOrgMapping:getByClerkSlug") {
+				return state.mappings.get(args.orgSlug as string) ?? null;
 			}
 			if (name === "oauth:getRefreshTokenByHash") {
 				const r = state.refreshTokens.get(args.tokenHash as string);
@@ -106,28 +136,39 @@ function makeFakeConvex() {
 				state.clients.set(row.clientId, row);
 				return "fake-id";
 			}
-			if (name === "oauth:createAuthorizationCode") {
-				state.authCodes.set(args.code as string, {
-					code: args.code as string,
-					clientId: args.clientId as string,
-					redirectUri: args.redirectUri as string,
-					codeChallenge: args.codeChallenge as string,
-					scope: args.scope as string,
-					userId: args.userId as string,
-					expiresAt: args.expiresAt as number,
-				});
-				return "fake-id";
+			if (name === "oauth:putPersonCode") {
+				const r = args.record as Omit<PersonCode, "used">;
+				state.personCodes.set(r.codeHash, { ...r, used: false });
+				return null;
 			}
-			if (name === "oauth:consumeAuthorizationCode") {
-				const c = state.authCodes.get(args.code as string);
-				if (!c) return null;
-				state.authCodes.delete(args.code as string);
-				return c;
+			if (name === "oauth:consumePersonCode") {
+				const c = state.personCodes.get(args.codeHash as string);
+				if (!c) return { status: "unknown" };
+				if (c.used) return { status: "already-used" };
+				c.used = true;
+				const { used: _used, ...record } = c;
+				return { status: "ok", record };
+			}
+			if (name === "oauth:revokeAccessTokensForCode") {
+				let revoked = 0;
+				for (const t of state.accessTokens) {
+					if (t.codeHash === args.codeHash && !t.revoked) {
+						t.revoked = true;
+						revoked++;
+					}
+				}
+				return { revoked };
 			}
 			if (name === "oauth:createAccessToken") {
 				state.accessTokens.push({
 					tokenHash: args.tokenHash as string,
 					clientId: args.clientId as string,
+					userId: args.userId as string,
+					scopeProfile: args.scopeProfile as string,
+					fromAllowList: args.fromAllowList as string[],
+					clerkOrgSlug: args.clerkOrgSlug as string | undefined,
+					codeHash: args.codeHash as string | undefined,
+					revoked: false,
 				});
 				return "fake-id";
 			}
@@ -174,12 +215,34 @@ const ALPHA_SECRET = "alpha-raw-secret-xxx";
 const BETA_SECRET = "beta-raw-secret-yyy";
 const PUBLIC_SECRET = "public-raw-secret-zzz";
 
+let harness: Harness;
+
+afterEach(() => {
+	harness.restore();
+});
+
 beforeEach(async () => {
 	state.clients.clear();
 	state.profiles.clear();
-	state.authCodes.clear();
+	state.personCodes.clear();
+	state.mappings.clear();
 	state.accessTokens.length = 0;
 	state.refreshTokens.clear();
+
+	// The person who authorizes: a Clerk user in org-alpha, one in org-beta.
+	harness = await installAuthorizeHarness();
+	harness.setMemberships("user_alpha", [membership("org_alpha", "org-alpha")]);
+	harness.setMemberships("user_beta", [membership("org_beta", "org-beta")]);
+	state.mappings.set("org-alpha", {
+		allowedOrchestrators: ["mapped-alpha"],
+		scopes: ["vantage:read", "vantage:write"],
+		isActive: true,
+	});
+	state.mappings.set("org-beta", {
+		allowedOrchestrators: ["mapped-beta"],
+		scopes: ["vantage:read", "vantage:write"],
+		isActive: true,
+	});
 
 	// Inject fake convex
 	_setInternalClientForTest(
@@ -248,23 +311,20 @@ async function authorizeAndGetCode(
 	clientId: string,
 	redirectUri: string,
 	challenge: string,
+	person: { userId: string; orgId: string } = {
+		userId: "user_alpha",
+		orgId: "org_alpha",
+	},
 ): Promise<{ status: number; code?: string; body?: unknown }> {
-	const url = new URL("http://localhost/authorize");
-	url.searchParams.set("client_id", clientId);
-	url.searchParams.set("redirect_uri", redirectUri);
-	url.searchParams.set("code_challenge", challenge);
-	url.searchParams.set("code_challenge_method", "S256");
-	url.searchParams.set("response_type", "code");
-	const res = await app.request(url.toString(), {
-		method: "GET",
-		redirect: "manual",
+	const r = await authorizeAsPerson(app, {
+		clientId,
+		redirectUri,
+		challenge,
+		sessionToken: await harness.session(person.userId),
+		orgId: person.orgId,
 	});
-	if (res.status === 302) {
-		const loc = res.headers.get("location") ?? "";
-		const code = new URL(loc).searchParams.get("code") ?? undefined;
-		return { status: 302, code };
-	}
-	return { status: res.status, body: await res.json().catch(() => null) };
+	if (r.status === 302) return { status: 302, code: r.code };
+	return { status: r.status, body: r.json };
 }
 
 async function postToken(
@@ -326,7 +386,7 @@ describe("D7 — /authorize redirect_uri exact-match", () => {
 			challenge,
 		);
 		expect(r.status).toBe(302);
-		expect(r.code).toMatch(/^[0-9a-f]{64}$/);
+		expect(r.code).toMatch(/^[A-Za-z0-9_-]{43}$/);
 	});
 
 	it("T2 — second registered URI also accepted", async () => {
@@ -513,26 +573,21 @@ describe("D6 — /token confidential client_secret validation", () => {
 		expect(r.status).toBe(200);
 	});
 
-	it("T6d — refresh_token grant: missing client_secret → 401", async () => {
-		// First mint tokens via auth_code with valid secret
-		const { code, verifier } = await mintCode(
-			"client-confidential",
-			"https://app.alpha.example/cb",
-		);
-		const issued = await postToken(
-			{
-				grant_type: "authorization_code",
-				code,
-				code_verifier: verifier,
-				redirect_uri: "https://app.alpha.example/cb",
-				client_id: "client-confidential",
-			},
-			basicAuth("client-confidential", ALPHA_SECRET),
-		);
-		expect(issued.status).toBe(200);
-		const refresh = issued.body.refresh_token as string;
+	// The person flow issues no refresh token; the refresh grant is for the
+	// clients that already hold one, so these seed one directly.
+	async function seedRefreshToken(clientId: string): Promise<string> {
+		const raw = `refresh-${clientId}-raw`;
+		state.refreshTokens.set(await sha256Hex(raw), {
+			clientId,
+			userId: "seat-user",
+			scopeProfile: state.clients.get(clientId)?.scopeProfile ?? "",
+			expiresAt: Date.now() + 3_600_000,
+		});
+		return raw;
+	}
 
-		// Now refresh without secret
+	it("T6d — refresh_token grant: missing client_secret → 401", async () => {
+		const refresh = await seedRefreshToken("client-confidential");
 		const r = await postToken({
 			grant_type: "refresh_token",
 			refresh_token: refresh,
@@ -542,21 +597,7 @@ describe("D6 — /token confidential client_secret validation", () => {
 	});
 
 	it("T6e — refresh_token grant: valid Basic secret → 200", async () => {
-		const { code, verifier } = await mintCode(
-			"client-confidential",
-			"https://app.alpha.example/cb",
-		);
-		const issued = await postToken(
-			{
-				grant_type: "authorization_code",
-				code,
-				code_verifier: verifier,
-				redirect_uri: "https://app.alpha.example/cb",
-				client_id: "client-confidential",
-			},
-			basicAuth("client-confidential", ALPHA_SECRET),
-		);
-		const refresh = issued.body.refresh_token as string;
+		const refresh = await seedRefreshToken("client-confidential");
 		const r = await postToken(
 			{
 				grant_type: "refresh_token",
@@ -567,14 +608,34 @@ describe("D6 — /token confidential client_secret validation", () => {
 		expect(r.status).toBe(200);
 		expect(typeof r.body.access_token).toBe("string");
 	});
+
+	it("T6f — the authorization_code grant issues no refresh token", async () => {
+		const { code, verifier } = await mintCode(
+			"client-confidential",
+			"https://app.alpha.example/cb",
+		);
+		const r = await postToken(
+			{
+				grant_type: "authorization_code",
+				code,
+				code_verifier: verifier,
+				redirect_uri: "https://app.alpha.example/cb",
+				client_id: "client-confidential",
+			},
+			basicAuth("client-confidential", ALPHA_SECRET),
+		);
+		expect(r.status).toBe(200);
+		expect(r.body.refresh_token).toBeUndefined();
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Multi-tenant T11-T13 — minimal stubs at handler layer (decision #5)
 // We do NOT call /mcp here — instead we verify the issued access_token row
-// carries the right scopeProfile / fromAllowList / namespaceReadPrefixes by
-// inspecting the accessTokens fixture, and simulate a small wrapper that
-// mirrors the planned D2 getEffectiveTenantId() rejection logic.
+// carries the PERSON's organisation (clerkOrgSlug), the roster of that
+// organisation's client_org_mapping row, and none of the client's scope
+// profile, by inspecting the accessTokens fixture, and simulate a small
+// wrapper that mirrors the planned D2 getEffectiveTenantId() rejection logic.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Multi-tenant T11-T13 (stubbed handler layer)", () => {
@@ -582,9 +643,15 @@ describe("Multi-tenant T11-T13 (stubbed handler layer)", () => {
 		clientId: string,
 		redirectUri: string,
 		secret: string,
-	): Promise<{ access_token: string; scopeProfile: string }> {
+		person: { userId: string; orgId: string },
+	): Promise<IssuedAccessToken> {
 		const { verifier, challenge } = await pkcePair();
-		const auth = await authorizeAndGetCode(clientId, redirectUri, challenge);
+		const auth = await authorizeAndGetCode(
+			clientId,
+			redirectUri,
+			challenge,
+			person,
+		);
 		expect(auth.status).toBe(302);
 		if (!auth.code) throw new Error("authorize did not return a code");
 		const r = await postToken(
@@ -598,36 +665,36 @@ describe("Multi-tenant T11-T13 (stubbed handler layer)", () => {
 			basicAuth(clientId, secret),
 		);
 		expect(r.status).toBe(200);
-		const client = state.clients.get(clientId);
-		if (!client) throw new Error("missing client");
-		return {
-			access_token: r.body.access_token as string,
-			scopeProfile: client.scopeProfile,
-		};
+		const hash = await sha256Hex(r.body.access_token as string);
+		const issued = state.accessTokens.find((t) => t.tokenHash === hash);
+		if (!issued) throw new Error("no access token row was written");
+		return issued;
 	}
 
-	it("T11 — alpha token resolves to tenant-alpha profile (fromAllowList + namespaceReadPrefixes)", async () => {
+	it("T11 — alpha person's token carries org-alpha's mapping roster, not the client's profile", async () => {
 		const t = await issueFor(
 			"client-confidential",
 			"https://app.alpha.example/cb",
 			ALPHA_SECRET,
+			{ userId: "user_alpha", orgId: "org_alpha" },
 		);
-		expect(t.scopeProfile).toBe("tenant-alpha");
-		const profile = state.profiles.get(t.scopeProfile);
-		expect(profile?.fromAllowList).toEqual(["agent-alpha"]);
-		expect(profile?.namespaceReadPrefixes).toEqual(["alpha/"]);
+		expect(t.userId).toBe("user_alpha");
+		expect(t.clerkOrgSlug).toBe("org-alpha");
+		expect(t.fromAllowList).toEqual(["mapped-alpha"]);
+		expect(t.scopeProfile).not.toBe("tenant-alpha");
 	});
 
-	it("T11b — beta token resolves to tenant-beta profile", async () => {
+	it("T11b — beta person's token carries org-beta's mapping roster", async () => {
 		const t = await issueFor(
 			"client-legacy",
 			"https://app.beta.example/cb",
 			BETA_SECRET,
+			{ userId: "user_beta", orgId: "org_beta" },
 		);
-		expect(t.scopeProfile).toBe("tenant-beta");
-		const profile = state.profiles.get(t.scopeProfile);
-		expect(profile?.fromAllowList).toEqual(["agent-beta"]);
-		expect(profile?.namespaceReadPrefixes).toEqual(["beta/"]);
+		expect(t.userId).toBe("user_beta");
+		expect(t.clerkOrgSlug).toBe("org-beta");
+		expect(t.fromAllowList).toEqual(["mapped-beta"]);
+		expect(t.scopeProfile).not.toBe("tenant-beta");
 	});
 
 	it("T12 — cross-tenant override rejected (body.workspaceId mismatches token tenant)", async () => {
@@ -635,20 +702,21 @@ describe("Multi-tenant T11-T13 (stubbed handler layer)", () => {
 			"client-legacy",
 			"https://app.beta.example/cb",
 			BETA_SECRET,
+			{ userId: "user_beta", orgId: "org_beta" },
 		);
 		// Simulate planned D2 getEffectiveTenantId(ctx, body) — reject when the
 		// body claims an alpha workspace while the token is bound to beta.
 		function getEffectiveTenantId(
-			tokenScopeProfile: string,
+			tokenOrgSlug: string | undefined,
 			bodyWorkspaceId: string | undefined,
 		): { ok: true; tenantId: string } | { ok: false; status: number } {
-			const tokenTenant = tokenScopeProfile; // 1:1 with profileId in this fixture
+			const tokenTenant = tokenOrgSlug ?? "";
 			if (bodyWorkspaceId && bodyWorkspaceId !== tokenTenant) {
 				return { ok: false, status: 403 };
 			}
 			return { ok: true, tenantId: tokenTenant };
 		}
-		const res = getEffectiveTenantId(beta.scopeProfile, "tenant-alpha");
+		const res = getEffectiveTenantId(beta.clerkOrgSlug, "org-alpha");
 		expect(res.ok).toBe(false);
 		if (!res.ok) expect(res.status).toBe(403);
 	});

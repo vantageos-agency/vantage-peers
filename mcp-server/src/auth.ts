@@ -94,6 +94,18 @@ export type OAuthContext = {
 	 */
 	clerkOrgSlug?: string;
 	/**
+	 * Verified Clerk org role the PERSON token was minted with (OAuth person
+	 * flow, token-row path only). Read by the writer-role gate in defineTool
+	 * (src/registerTool.ts). Absent on a seat token.
+	 */
+	orgRole?: string;
+	/**
+	 * "person" when this token acts for a signed-in person (set at mint from
+	 * the authorization-code flow); absent on a seat token. A person token's
+	 * WRITES pass the writer-role gate; a seat token's do not change.
+	 */
+	principal?: "person";
+	/**
 	 * The ACTING AGENT, resolved ONCE at the bearer-auth boundary from the
 	 * per-agent credential presented in {@link AGENT_CREDENTIAL_HEADER}, via
 	 * `agentCredentials:resolveAgentCredential` (the Convex core in
@@ -178,6 +190,8 @@ type OAuthLookupResult = {
 	expiresAt: number;
 	/** Org slug snapshotted onto the token row at mint (see OAuthContext). */
 	clerkOrgSlug?: string;
+	orgRole?: string;
+	principal?: "person";
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────

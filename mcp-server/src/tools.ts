@@ -33,7 +33,6 @@ import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { isRefusedEnvelope } from "./refusal.js";
 import { defineTool, type ToolAuthContext } from "./registerTool.js";
-import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
@@ -42,6 +41,7 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
+import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VP_EMIT_UI_MARKERS gate
@@ -3443,6 +3443,10 @@ export function registerTools(
 			readOnlyHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
+			// Own-state write: the receipt-owner check (callerOrchestrator must be
+			// the receipt's recipient, messages:markAsRead) is the authority, so a
+			// viewer person may mark its own receipts read (Pi ruling).
+			ownStateOnly: true,
 			title: "Mark messages as read",
 		},
 		async ({ receiptIds, callerOrchestrator }) => {

@@ -20,6 +20,15 @@ crons.interval(
 	internal.recurringTasks.processDueTasks,
 );
 
+// Purge person-flow authorization codes two hours past their expiry
+// (oauth.purgeExpiredPersonCodes: bounded take(500) per run, by_expiresAt).
+crons.interval( // allow-time-estimate: polling interval — cron config
+	"purge expired oauth person codes",
+	{ hours: 1 },
+	internal.oauth.purgeExpiredPersonCodes,
+	{},
+);
+
 // Poll monitored deployments for errors every 5 minutes
 crons.interval(
 	"error monitor",

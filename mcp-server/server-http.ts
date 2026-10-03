@@ -27,6 +27,9 @@
  *   BEARER_SECRET_MASTER  — master admin token
  *   PUBLIC_BASE_URL       — public URL of this server (for OAuth discovery)
  *   PORT                  — HTTP port (default 3000)
+ *   AUTHORIZE_STATE_SECRET, CLERK_DOMAIN, AUTHORIZE_SIGN_IN_URL,
+ *   AUTHORIZE_CALLBACK_URL, CLERK_SECRET_KEY — person authorization
+ *                           (/authorize); any missing => 503, never auto-approve
  *   NODE_ENV              — set to "production" on Railway
  */
 
@@ -36,8 +39,17 @@ import {
 	ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { timingSafeEqual } from "@vantageos/cloud-identity";
-import { Hono } from "hono";
+import {
+	type AuthorizeOutcome,
+	buildDiscoveryDocument,
+	buildUserInfo,
+	exchangeAuthorizationCode,
+	oauthErrorFor,
+	resumeAuthorize,
+	startAuthorize,
+	timingSafeEqual,
+} from "@vantageos/cloud-identity";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import {
 	bearerAuthMiddleware,
@@ -45,12 +57,24 @@ import {
 	isMasterScope,
 	masterOnlyMiddleware,
 	resolveActorCredentialMode,
-	sha256Base64Url,
 	sha256Hex,
 	unattributedClaimCounts,
 	unattributedClaimSummary,
 } from "./src/auth.js";
 import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
+import {
+	buildAuthorizeRuntime,
+	convexCodeStore,
+	currentAuthorizeOverrides,
+	getClerkUser,
+	lookupOrgMapping,
+	orgKeyOf,
+	pickerContentSecurityPolicy,
+	readAuthorizeSettings,
+	redirectUriInState,
+	renderOrgPicker,
+	sessionTokenFrom,
+} from "./src/authorize.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -82,7 +106,6 @@ const PUBLIC_BASE_URL_FALLBACK: string | null =
 
 const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600; // 30 days
-const AUTH_CODE_TTL_SECONDS = 600; // 10 minutes
 
 // Default profile for anonymous DCR (Claude.ai connector without pre-provisioning).
 // Deny-by-default; Pi must manually elevate a client post-registration via the
@@ -594,106 +617,242 @@ app.post("/register", async (c) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /authorize — auto-approve, no user consent UI (MVP, scoped)
+// Person authorization — GET /authorize, GET /authorize/callback,
+// POST /authorize/org. A code is issued ONLY to a signed-in Clerk person who
+// picked one of their own organisations and approved the request on the picker
+// page (consent is ON). There is no auto-approve path and no fallback: when the
+// configuration is incomplete every route answers 503.
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.get("/authorize", async (c) => {
-	const q = c.req.query();
-	const clientId = q.client_id;
-	const redirectUri = q.redirect_uri;
-	const codeChallenge = q.code_challenge;
-	const codeChallengeMethod = q.code_challenge_method ?? "S256";
-	const state = q.state;
-	// SC: standardize scope — always mcp:full regardless of requested value
-	const scope = "mcp:full";
-	const responseType = q.response_type;
+const PERSON_TOKEN_SCOPE_PROFILE = "team-member";
 
-	if (!clientId || !redirectUri || !codeChallenge) {
-		return c.json(
-			{
-				error: "invalid_request",
-				error_description: "missing client_id, redirect_uri, or code_challenge",
-			},
-			400,
-		);
-	}
-	if (responseType && responseType !== "code") {
-		return c.json({ error: "unsupported_response_type" }, 400);
-	}
-	if (codeChallengeMethod !== "S256") {
-		return c.json(
-			{ error: "invalid_request", error_description: "only S256 supported" },
-			400,
-		);
-	}
-
-	// Verify the client exists and is not revoked
-	const client = (await internalClient().query(
-		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		"oauth:getClientByClientId" as any,
-		{ clientId },
-	)) as {
-		revokedAt?: number;
-		scopeProfile: string;
-		redirectUris?: string[];
-		clientSecretHash?: string;
-		tokenEndpointAuthMethod?: string;
-	} | null;
-	if (!client) {
-		return c.json(
-			{ error: "invalid_client", error_description: "unknown client_id" },
-			400,
-		);
-	}
-	if (client.revokedAt !== undefined) {
-		return c.json(
-			{ error: "invalid_client", error_description: "client revoked" },
-			400,
-		);
-	}
-
-	// D7 — RFC 6749 §3.1.2.3/§3.1.2.4: redirect_uri MUST exact-match a
-	// registered URI. Defense against open-redirect / token-exfiltration via
-	// attacker-controlled redirect. No partial / prefix / wildcard match.
-	const registeredUris = client.redirectUris ?? [];
-	if (
-		registeredUris.length === 0 ||
-		!redirectUriMatchesAny(registeredUris, redirectUri)
-	) {
-		return c.json(
-			{
-				error: "invalid_request",
-				error_description:
-					"redirect_uri does not match a registered redirect URI for this client",
-			},
-			400,
-		);
-	}
-
-	const code = randomOpaqueToken();
-	await internalClient().mutation(
-		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		"oauth:createAuthorizationCode" as any,
-		{
-			code,
-			clientId,
-			redirectUri,
-			codeChallenge,
-			scope,
-			// userId defaults to the scope profile (1:1 with the client by default).
-			// When future multi-user consent UI ships, this resolves to the Clerk user.
-			userId: client.scopeProfile,
-			expiresAt: Date.now() + AUTH_CODE_TTL_SECONDS * 1000,
-		},
+function authorizeUnavailable(c: Context, missing: string[]): Response {
+	// Names only, never values.
+	console.error(
+		`[oauth] /authorize refused: missing configuration ${missing.join(", ")}`,
 	);
+	c.header("Cache-Control", "no-store");
+	return c.json(
+		{
+			error: "temporarily_unavailable",
+			error_description: "authorization is not configured on this server",
+		},
+		503,
+	);
+}
 
-	const redirect = new URL(redirectUri);
-	redirect.searchParams.set("code", code);
-	if (state) redirect.searchParams.set("state", state);
-	// RFC 9207 §2 — identify the issuer in the authorization response so the
-	// client can detect a mix-up attack. Same value as the metadata `issuer`.
-	redirect.searchParams.set("iss", resolveIssuer(c.req.raw));
-	return c.redirect(redirect.toString(), 302);
+function expanderFor(
+	presented: string | null | undefined,
+): (registered: string[]) => readonly string[] {
+	return (registered) =>
+		presented && redirectUriMatchesAny(registered, presented)
+			? [...registered, presented]
+			: registered;
+}
+
+async function respondToOutcome(
+	c: Context,
+	outcome: AuthorizeOutcome,
+): Promise<Response> {
+	c.header("Cache-Control", "no-store");
+	c.header("Referrer-Policy", "no-referrer");
+	switch (outcome.kind) {
+		case "redirect-to-sign-in":
+			return c.redirect(outcome.url, 302);
+		case "redirect-to-client": {
+			// RFC 9207 section 2: identify the issuer in the authorization
+			// response (advertised as authorization_response_iss_parameter_supported).
+			const back = new URL(outcome.url);
+			back.searchParams.set("iss", resolveIssuer(c.req.raw));
+			return c.redirect(back.toString(), 302);
+		}
+		case "org-picker":
+			c.header("Content-Security-Policy", await pickerContentSecurityPolicy());
+			return c.html(renderOrgPicker(outcome.model));
+		case "refused": {
+			const mapped = oauthErrorFor(outcome.refusal);
+			return c.json(
+				{ error: mapped.error, error_description: outcome.refusal.reason },
+				mapped.status as 400 | 403 | 500 | 503,
+			);
+		}
+	}
+}
+
+app.get("/authorize", async (c) => {
+	const settings = readAuthorizeSettings(
+		process.env,
+		currentAuthorizeOverrides(),
+	);
+	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
+	const query = c.req.query();
+	const { cfg, deps } = buildAuthorizeRuntime(
+		settings.settings,
+		expanderFor(query.redirect_uri),
+	);
+	return respondToOutcome(
+		c,
+		await startAuthorize(query, sessionTokenFrom(c), cfg, deps),
+	);
+});
+
+// The return from Clerk sign-in. The request is rebuilt only from the signed
+// `authorize_state`; no other query parameter is read.
+app.get("/authorize/callback", async (c) => {
+	const settings = readAuthorizeSettings(
+		process.env,
+		currentAuthorizeOverrides(),
+	);
+	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
+	const state = c.req.query("authorize_state");
+	const { cfg, deps } = buildAuthorizeRuntime(
+		settings.settings,
+		expanderFor(redirectUriInState(state)),
+	);
+	return respondToOutcome(
+		c,
+		await resumeAuthorize(
+			{ state: state ?? "", sessionToken: sessionTokenFrom(c) },
+			cfg,
+			deps,
+		),
+	);
+});
+
+// The picker's form post. `consentToken` is the CSRF protection: a cross-site
+// form cannot know it, and resumeAuthorize refuses `approved` without it.
+app.post("/authorize/org", async (c) => {
+	const settings = readAuthorizeSettings(
+		process.env,
+		currentAuthorizeOverrides(),
+	);
+	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
+	let form: Record<string, string | File>;
+	try {
+		form = await c.req.parseBody();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", error_description: "unreadable form" },
+			400,
+		);
+	}
+	const field = (name: string): string | undefined =>
+		typeof form[name] === "string" ? (form[name] as string) : undefined;
+	const state = field("state");
+	if (field("approved") === "false") {
+		c.header("Cache-Control", "no-store");
+		return c.json(
+			{
+				error: "access_denied",
+				error_description: "the request was denied; close this window",
+			},
+			403,
+		);
+	}
+	const { cfg, deps } = buildAuthorizeRuntime(
+		settings.settings,
+		expanderFor(redirectUriInState(state)),
+	);
+	return respondToOutcome(
+		c,
+		await resumeAuthorize(
+			{
+				state: state ?? "",
+				sessionToken: sessionTokenFrom(c),
+				orgId: field("orgId"),
+				approved: field("approved") === "true",
+				consentToken: field("consentToken"),
+			},
+			cfg,
+			deps,
+		),
+	);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OIDC discovery + UserInfo (Clerk is the identity provider)
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get("/.well-known/openid-configuration", (c) => {
+	const settings = readAuthorizeSettings(
+		process.env,
+		currentAuthorizeOverrides(),
+	);
+	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
+	const issuer = resolveIssuer(c.req.raw);
+	const result = buildDiscoveryDocument({
+		issuer,
+		authorizationEndpoint: `${issuer}/authorize`,
+		tokenEndpoint: `${issuer}/token`,
+		jwksUri: `${settings.settings.issuer}/.well-known/jwks.json`,
+		userinfoEndpoint: `${issuer}/userinfo`,
+		registrationEndpoint: `${issuer}/register`,
+		scopesSupported: ["mcp:full", "openid", "email"],
+	});
+	if (!result.ok) {
+		const mapped = oauthErrorFor(result.refusal);
+		return c.json(
+			{ error: mapped.error, error_description: result.refusal.reason },
+			mapped.status as 400 | 500,
+		);
+	}
+	// Client-authentication methods this server implements at /token.
+	return c.json({
+		...result.document,
+		token_endpoint_auth_methods_supported: [
+			"client_secret_basic",
+			"client_secret_post",
+			"none",
+		],
+	});
+});
+
+app.get("/userinfo", async (c) => {
+	const header = c.req.header("authorization") ?? "";
+	const token = header.toLowerCase().startsWith("bearer ")
+		? header.slice("bearer ".length).trim()
+		: "";
+	const invalidToken = () => {
+		c.header("WWW-Authenticate", 'Bearer error="invalid_token"');
+		return c.json({ error: "invalid_token" }, 401);
+	};
+	if (!token) return invalidToken();
+	let row: { userId: string; scopes: string[] } | null;
+	try {
+		row = (await internalClient().query(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:getAccessTokenByHash" as any,
+			{ tokenHash: await sha256Hex(token) },
+		)) as { userId: string; scopes: string[] } | null;
+	} catch (err: unknown) {
+		console.error("[oauth] /userinfo token lookup failed:", err);
+		return c.json({ error: "temporarily_unavailable" }, 503);
+	}
+	if (!row) return invalidToken();
+	if (!row.scopes.includes("openid")) {
+		c.header("WWW-Authenticate", 'Bearer error="insufficient_scope"');
+		return c.json({ error: "insufficient_scope" }, 403);
+	}
+	let user: Awaited<ReturnType<typeof getClerkUser>>;
+	try {
+		user = await getClerkUser(row.userId);
+	} catch (err: unknown) {
+		console.error("[oauth] /userinfo Clerk user lookup failed:", err);
+		return c.json({ error: "temporarily_unavailable" }, 503);
+	}
+	const info = buildUserInfo(
+		{ sub: row.userId, scope: row.scopes.join(" ") },
+		user,
+	);
+	if (!info.ok) {
+		const mapped = oauthErrorFor(info.refusal);
+		return c.json(
+			{ error: mapped.error, error_description: info.refusal.reason },
+			mapped.status as 400 | 403 | 500,
+		);
+	}
+	c.header("Cache-Control", "no-store");
+	return c.json(info.userinfo);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -720,84 +879,41 @@ app.post("/token", async (c) => {
 	const grantType = body.grant_type;
 
 	// ── authorization_code grant ────────────────────────────────────────────
+	// The code was issued to a verified Clerk person for one of their own
+	// organisations (see /authorize). The access token is minted from the
+	// claims bound to that code: {sub, org_id, org_slug, org_role, aud,
+	// client_id}. The client's scopeProfile is never read here.
 	if (grantType === "authorization_code") {
 		const {
 			code,
 			code_verifier: codeVerifier,
 			redirect_uri: redirectUri,
-			client_id: clientId,
 		} = body;
-		if (!code || !codeVerifier) {
+		if (!code || !codeVerifier || !redirectUri) {
 			return c.json(
 				{
 					error: "invalid_request",
-					error_description: "missing code or code_verifier",
+					error_description: "missing code, code_verifier or redirect_uri",
 				},
 				400,
 			);
 		}
-
-		// Consume code (atomic: delete + return)
-		const record = (await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:consumeAuthorizationCode" as any,
-			{ code },
-		)) as {
-			clientId: string;
-			redirectUri: string;
-			codeChallenge: string;
-			scope: string;
-			userId: string;
-			expiresAt: number;
-		} | null;
-
-		if (!record) {
+		const basic = parseBasicAuthSecret(c.req.header("authorization"), body);
+		const presentedClientId = body.client_id ?? basic.clientId;
+		if (!presentedClientId) {
 			return c.json(
-				{ error: "invalid_grant", error_description: "unknown code" },
-				400,
-			);
-		}
-		if (Date.now() > record.expiresAt) {
-			return c.json(
-				{ error: "invalid_grant", error_description: "code expired" },
-				400,
-			);
-		}
-		if (redirectUri && !redirectUriMatches(record.redirectUri, redirectUri)) {
-			return c.json(
-				{
-					error: "invalid_grant",
-					error_description: "redirect_uri mismatch",
-				},
-				400,
-			);
-		}
-		if (clientId && clientId !== record.clientId) {
-			return c.json(
-				{ error: "invalid_grant", error_description: "client_id mismatch" },
+				{ error: "invalid_request", error_description: "missing client_id" },
 				400,
 			);
 		}
 
-		// PKCE: base64url(SHA256(code_verifier)) === code_challenge
-		const challengeCheck = await sha256Base64Url(codeVerifier);
-		if (challengeCheck !== record.codeChallenge) {
-			return c.json(
-				{
-					error: "invalid_grant",
-					error_description: "PKCE verification failed",
-				},
-				400,
-			);
-		}
-
-		// Resolve the client's scope profile (materialised into the token row)
+		// D6 — authenticate the client BEFORE the code is touched, so an
+		// unauthenticated caller cannot burn someone else's code.
 		const client = (await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:getClientByClientId" as any,
-			{ clientId: record.clientId },
+			{ clientId: presentedClientId },
 		)) as {
-			scopeProfile: string;
 			revokedAt?: number;
 			clientSecretHash?: string;
 			tokenEndpointAuthMethod?: string;
@@ -805,18 +921,9 @@ app.post("/token", async (c) => {
 		if (!client || client.revokedAt !== undefined) {
 			return c.json({ error: "invalid_client" }, 400);
 		}
-
-		// D6 — RFC 6749 §4.1.3 + §6: confidential clients MUST authenticate at
-		// /token. Default (absent) treated as confidential for backward compat.
-		// Public clients (token_endpoint_auth_method="none") skip the check —
-		// PKCE provides the binding (already verified above).
 		const authMethod = client.tokenEndpointAuthMethod ?? "client_secret_basic";
 		if (authMethod !== "none") {
-			const { clientSecret } = parseBasicAuthSecret(
-				c.req.header("authorization"),
-				body,
-			);
-			if (!clientSecret) {
+			if (!basic.clientSecret) {
 				c.header("WWW-Authenticate", 'Basic realm="oauth"');
 				return c.json(
 					{
@@ -827,7 +934,7 @@ app.post("/token", async (c) => {
 					401,
 				);
 			}
-			const presentedHash = await sha256Hex(clientSecret);
+			const presentedHash = await sha256Hex(basic.clientSecret);
 			const _enc = new TextEncoder();
 			if (
 				!client.clientSecretHash ||
@@ -846,57 +953,94 @@ app.post("/token", async (c) => {
 			}
 		}
 
-		const profile = await loadScopeProfile(client.scopeProfile);
-		if (!profile) {
-			console.error(
-				"[oauth] scope_profile not found during token issue:",
-				client.scopeProfile,
+		const exchanged = await exchangeAuthorizationCode(
+			{
+				code,
+				codeVerifier,
+				redirectUri,
+				clientId: presentedClientId,
+				...(body.resource ? { resource: body.resource } : {}),
+			},
+			{ codeStore: convexCodeStore() },
+		);
+		const codeHash = await sha256Hex(code);
+		if (!exchanged.ok) {
+			if (exchanged.refusal.reason === "code-reused") {
+				// A replayed code: what its first redemption issued is revoked.
+				try {
+					await internalClient().mutation(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"oauth:revokeAccessTokensForCode" as any,
+						{ codeHash },
+					);
+				} catch (err: unknown) {
+					console.error("[oauth] revoke-on-code-reuse failed:", err);
+				}
+			}
+			const mapped = oauthErrorFor(exchanged.refusal);
+			return c.json(
+				{ error: mapped.error, error_description: exchanged.refusal.reason },
+				mapped.status as 400 | 403 | 500 | 503,
 			);
-			return c.json({ error: "server_error" }, 500);
+		}
+		const claims = exchanged.claims;
+
+		// Authority comes from client_org_mapping, joined on the org the person
+		// chose; a missing or inactive row refuses (never a populated default).
+		const orgKey = orgKeyOf({ id: claims.org_id, slug: claims.org_slug });
+		let mapping: Awaited<ReturnType<typeof lookupOrgMapping>>;
+		try {
+			mapping = await lookupOrgMapping(orgKey);
+		} catch (err: unknown) {
+			console.error("[oauth] client_org_mapping lookup failed at /token:", err);
+			return c.json({ error: "temporarily_unavailable" }, 503);
+		}
+		if (!mapping?.isActive) {
+			return c.json(
+				{
+					error: "access_denied",
+					error_description: "organisation is not provisioned",
+				},
+				403,
+			);
 		}
 
-		// Issue access_token + refresh_token
 		const accessToken = randomOpaqueToken();
-		const refreshToken = randomOpaqueToken();
-		const accessTokenHash = await sha256Hex(accessToken);
-		const refreshTokenHash = await sha256Hex(refreshToken);
-		const now = Date.now();
-
 		await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
-				tokenHash: accessTokenHash,
-				clientId: record.clientId,
-				userId: record.userId,
-				scopes: record.scope.split(/\s+/).filter(Boolean),
-				scopeProfile: profile.profileId,
-				fromAllowList: profile.fromAllowList,
-				namespaceReadPrefixes: profile.namespaceReadPrefixes,
-				namespaceWritePrefixes: profile.namespaceWritePrefixes,
-				expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
-				refreshTokenHash,
-				clerkOrgSlug: profile.clerkOrgSlug,
-			},
-		);
-		await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:createRefreshToken" as any,
-			{
-				tokenHash: refreshTokenHash,
-				clientId: record.clientId,
-				userId: record.userId,
-				scopeProfile: profile.profileId,
-				expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
+				tokenHash: await sha256Hex(accessToken),
+				clientId: claims.client_id,
+				userId: claims.sub,
+				scopes: [
+					...new Set([
+						...mapping.scopes,
+						...claims.scope.split(/\s+/).filter(Boolean),
+					]),
+				],
+				scopeProfile: PERSON_TOKEN_SCOPE_PROFILE,
+				fromAllowList: mapping.allowedOrchestrators,
+				namespaceReadPrefixes: [`team/${orgKey}`],
+				namespaceWritePrefixes: [`team/${orgKey}`],
+				expiresAt: Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000,
+				clerkOrgSlug: orgKey,
+				codeHash,
+				// The verified role the code was bound to, and the person marker the
+				// MCP write gate keys on (src/registerTool.ts).
+				orgRole: claims.org_role,
+				principal: "person",
 			},
 		);
 
+		// No refresh token: the refresh grant re-resolves authority from a scope
+		// profile, which a person token must never be bound to.
+		c.header("Cache-Control", "no-store");
 		return c.json({
 			access_token: accessToken,
 			token_type: "Bearer",
 			expires_in: ACCESS_TOKEN_TTL_SECONDS,
-			refresh_token: refreshToken,
-			scope: record.scope,
+			scope: claims.scope,
 		});
 	}
 
