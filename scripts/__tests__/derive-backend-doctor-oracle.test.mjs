@@ -8,9 +8,11 @@
 import { spawnSync } from "node:child_process";
 import {
 	cpSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +23,11 @@ import { afterEach, describe, expect, it } from "vitest";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = join(REPO, "scripts", "derive-backend-doctor-oracle.mjs");
 const COMMITTED_CSV = join(REPO, ".backend-doctor", "vp-by-tool.csv");
+const COMMITTED_WRITER_CSV = join(
+	REPO,
+	".backend-doctor",
+	"vp-writer-tier.csv",
+);
 const TIMEOUT = 120_000;
 
 const temps = [];
@@ -38,6 +45,7 @@ function copyTree() {
 		"mcp-server/tool-exposure.json",
 		"convex",
 		".backend-doctor/vp-by-tool.csv",
+		".backend-doctor/vp-writer-tier.csv",
 	])
 		cpSync(join(REPO, rel), join(dir, rel), { recursive: true, filter: skip });
 	return dir;
@@ -261,7 +269,9 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			const committed = rowsOf(COMMITTED_CSV).find(
 				(x) => x.outil === "delete_bu",
 			);
-			expect(committed.rbac_adjustment_needed).toMatch(/^JUSTIFIED: master-only/);
+			expect(committed.rbac_adjustment_needed).toMatch(
+				/^JUSTIFIED: master-only/,
+			);
 		},
 		TIMEOUT,
 	);
@@ -278,8 +288,12 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			);
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
-			const get = rowsOf(outOf(root)).find((x) => x.outil === "get_repo_mapping");
-			expect(get.rbac_coherence_table).toBe("INCOHERENT read=master+org write=master");
+			const get = rowsOf(outOf(root)).find(
+				(x) => x.outil === "get_repo_mapping",
+			);
+			expect(get.rbac_coherence_table).toBe(
+				"INCOHERENT read=master+org write=master",
+			);
 		},
 		TIMEOUT,
 	);
@@ -296,7 +310,328 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			);
 			const r = derive(root);
 			expect(r.status).toBe(2);
-			expect(r.stderr).toContain("oracle-justified marker carries no reason text");
+			expect(r.stderr).toContain(
+				"oracle-justified marker carries no reason text",
+			);
+		},
+		TIMEOUT,
+	);
+});
+
+const writerOut = (root) => join(root, ".backend-doctor", "vp-writer-tier.csv");
+const WRITE_VERBS = new Set([
+	"CREATE",
+	"UPDATE",
+	"DELETE",
+	"TRANSITION",
+	"UPSERT",
+	"BULK-WRITE",
+]);
+const BU_DOOR_GATE =
+	"\t\tconst scope = await withOrgScope(ctx);\n\t\tif (!scope.isMaster) {\n\t\t\tthrow new ConvexError(\n\t\t\t\t`RBAC_DENIED: business unit deletion";
+const BU_DOOR_REST =
+	"\n\t\t\tthrow new ConvexError(\n\t\t\t\t`RBAC_DENIED: business unit deletion";
+const MASTER_TOOL_SCOPE = '\t\t{ kind: "master" },\n\t\t"delete_bu",';
+
+/** delete_bu's writer tier after rewriting its Convex door's gate. */
+function deleteBuWriter(gateLines, { mcp = false } = {}) {
+	const root = copyTree();
+	mutate(
+		root,
+		"convex/businessUnits.ts",
+		BU_DOOR_GATE,
+		`${gateLines}${BU_DOOR_REST}`,
+	);
+	if (mcp)
+		mutate(
+			root,
+			"mcp-server/src/tools.ts",
+			MASTER_TOOL_SCOPE,
+			'\t\t{ kind: "public", reason: "test" },\n\t\t"delete_bu",',
+		);
+	const r = derive(root);
+	expect(r.status, r.stderr).toBe(0);
+	return {
+		root,
+		row: rowsOf(writerOut(root)).find((x) => x.outil === "delete_bu"),
+	};
+}
+
+/** The committed side-car must carry these exact derived tiers; a derivation
+ * that mislabels any of them is red here. */
+function assertWriterTiers(rows) {
+	const tier = (name) => rows.find((x) => x.outil === name);
+	expect(tier("delete_bu")).toMatchObject({
+		writer_tier: "master",
+		writer_gate: "masterOnly",
+	});
+	expect(tier("update_profile")).toMatchObject({
+		writer_tier: "master",
+		writer_gate: "masterOnly",
+	});
+	expect(tier("create_bu")).toMatchObject({
+		writer_tier: "org-member",
+		writer_gate: "orgResolver",
+	});
+	expect(tier("send_message")).toMatchObject({
+		writer_tier: "org-member",
+		writer_gate: "orgResolver",
+	});
+}
+
+describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => {
+	it(
+		"PRESENT — one row per write tool of the oracle, byte-identical to the committed side-car, derived tiers as measured",
+		() => {
+			const oracle = rowsOf(COMMITTED_CSV);
+			const writes = oracle.filter((r) => WRITE_VERBS.has(r.crud));
+			const side = rowsOf(COMMITTED_WRITER_CSV);
+			expect(side.map((r) => r.outil).sort()).toEqual(
+				writes.map((r) => r.outil).sort(),
+			);
+			expect(side).toHaveLength(54);
+			for (const r of side)
+				expect(r.writer_tier, r.outil).toMatch(
+					/^(public|org-member|org-admin|fleet-internal|master)$/,
+				);
+			assertWriterTiers(side);
+			const root = copyTree();
+			rmSync(writerOut(root));
+			const d = derive(root);
+			expect(d.status, d.stderr).toBe(0);
+			expect(readFileSync(writerOut(root), "utf8")).toBe(
+				readFileSync(COMMITTED_WRITER_CSV, "utf8"),
+			);
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"REFUSED — a stale side-car fails --check",
+		() => {
+			const root = copyTree();
+			writeFileSync(
+				writerOut(root),
+				readFileSync(writerOut(root), "utf8").replace(
+					"delete_bu,businessUnits,DELETE,master",
+					"delete_bu,businessUnits,DELETE,org-member",
+				),
+			);
+			const r = derive(root, "--check");
+			expect(r.status).toBe(1);
+			expect(r.stderr).toContain("vp-writer-tier.csv is stale");
+		},
+		TIMEOUT,
+	);
+
+	const OPEN_MASTER_GATE =
+		"\t\tconst scope = await withOrgScope(ctx);\n\t\tif (scope.isMaster === undefined) {";
+	it(
+		"TIER master — the unmodified door (`if (!scope.isMaster)` refusal)",
+		() => {
+			expect(
+				rowsOf(COMMITTED_WRITER_CSV).find((x) => x.outil === "delete_bu"),
+			).toMatchObject({ writer_tier: "master", writer_gate: "masterOnly" });
+		},
+		TIMEOUT,
+	);
+	it(
+		"TIER org-member — the same door with its master refusal removed",
+		() => {
+			const { row } = deleteBuWriter(OPEN_MASTER_GATE);
+			expect(row).toMatchObject({
+				writer_tier: "org-member",
+				writer_gate: "orgResolver",
+			});
+		},
+		TIMEOUT,
+	);
+	it(
+		"TIER org-admin — the same door gated by requireOrgAdmin",
+		() => {
+			const { row } = deleteBuWriter(
+				OPEN_MASTER_GATE.replace(
+					"\n",
+					'\n\t\tawait requireOrgAdmin(ctx, "acme");\n',
+				),
+			);
+			expect(row).toMatchObject({
+				writer_tier: "org-admin",
+				writer_gate: "orgAdmin",
+			});
+		},
+		TIMEOUT,
+	);
+	it(
+		"TIER fleet-internal — the same door gated by requireResolvedCaller({ mcpBoundOnly: true })",
+		() => {
+			const { row } = deleteBuWriter(
+				OPEN_MASTER_GATE.replace(
+					"\n",
+					'\n\t\trequireResolvedCaller(scope, "businessUnits:remove", { mcpBoundOnly: true });\n',
+				),
+			);
+			expect(row).toMatchObject({
+				writer_tier: "fleet-internal",
+				writer_gate: "mcpBoundOnly",
+			});
+		},
+		TIMEOUT,
+	);
+	it(
+		"TIER public — no Convex gate and a public MCP scope",
+		() => {
+			const { row } = deleteBuWriter(
+				"\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tif (scope.isMaster === undefined) {",
+				{ mcp: true },
+			);
+			expect(row).toMatchObject({
+				writer_tier: "public",
+				writer_gate: "mcp-scope:public",
+			});
+		},
+		TIMEOUT,
+	);
+	it(
+		"FALLBACK — no Convex gate keeps the MCP-scope tier (master scope -> fleet-internal)",
+		() => {
+			const { row } = deleteBuWriter(
+				"\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tif (scope.isMaster === undefined) {",
+			);
+			expect(row).toMatchObject({
+				writer_tier: "fleet-internal",
+				writer_gate: "mcp-scope:master",
+			});
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"MUTANT — a derivation that mislabels a tier turns the committed-tier pole red",
+		() => {
+			const root = copyTree();
+			// the mutated copy resolves `typescript` through a link to the repo's
+			const dir = mkdtempSync(join(tmpdir(), "oracle-mutant-"));
+			temps.push(dir);
+			mkdirSync(join(dir, "scripts"));
+			symlinkSync(join(REPO, "node_modules"), join(dir, "node_modules"));
+			const mutantScript = join(dir, "scripts", "derive.mjs");
+			const text = readFileSync(SCRIPT, "utf8");
+			expect(text).toContain('\tmasterOnly: "master",');
+			writeFileSync(
+				mutantScript,
+				text.replace('\tmasterOnly: "master",', '\tmasterOnly: "org-member",'),
+			);
+			const r = spawnSync(process.execPath, [mutantScript, "--root", root], {
+				encoding: "utf8",
+			});
+			expect(r.status, r.stderr).toBe(0);
+			const mutated = rowsOf(writerOut(root));
+			expect(mutated.find((x) => x.outil === "delete_bu").writer_tier).toBe(
+				"org-member",
+			);
+			// the pole that passes on the real derivation fails on the mutant
+			expect(() => assertWriterTiers(mutated)).toThrow();
+			expect(() =>
+				assertWriterTiers(rowsOf(COMMITTED_WRITER_CSV)),
+			).not.toThrow();
+		},
+		TIMEOUT,
+	);
+});
+
+describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)", () => {
+	const committed = (name) =>
+		rowsOf(COMMITTED_CSV).find((x) => x.outil === name);
+
+	it(
+		"PRESENT — a list that probes another table per row (`.first()` on briefingNoteParticipants) is READ-LIST, not `?`",
+		() => {
+			expect(committed("list_briefing_notes").crud).toBe("READ-LIST");
+			expect(committed("get_briefing_note").crud).toBe("READ-GET");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a `db.get(id)` added to the same list handler makes the mix undecidable again",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/briefingNotes.ts",
+				"// v2.3.3 — auto-clamp limit when fields=full + no explicit limit",
+				'// v2.3.3 — auto-clamp limit when fields=full + no explicit limit\n\t\tawait ctx.db.get("x" as never);',
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find((x) => x.outil === "list_briefing_notes").crud,
+			).toBe("?");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"PRESENT — a helper named only in a comment is not a guard the handler calls",
+		() => {
+			const search = committed("search_briefing_notes_by_keyword");
+			expect(search.scope_enforcement).not.toContain("convex:filterByOrgScope");
+			expect(search.scope_enforcement).toContain("requireScope");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a real call to the helper IS recorded",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/briefingNotes.ts",
+				'requireScope(scope, "view-own-tasks");\n\n\t\tconst limit = Math.min(Math.max(args.limit ?? 20, 1), 200);',
+				'requireScope(scope, "view-own-tasks");\n\t\tfilterByOrgScope(scope, []);\n\n\t\tconst limit = Math.min(Math.max(args.limit ?? 20, 1), 200);',
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find(
+					(x) => x.outil === "search_briefing_notes_by_keyword",
+				).scope_enforcement,
+			).toContain("convex:filterByOrgScope/requireScope");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"PRESENT — the two real asymmetries carry a JUSTIFIED reason citing the code",
+		() => {
+			expect(committed("list_diaries").rbac_adjustment_needed).toMatch(
+				/^JUSTIFIED: .*convex\/diary\.ts:\d+/,
+			);
+			expect(
+				committed("search_briefing_notes_by_keyword").rbac_adjustment_needed,
+			).toMatch(/^JUSTIFIED: .*briefingNotes\.ts:\d+/);
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"ABSENT — without its source marker list_diaries carries no JUSTIFIED token",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"mcp-server/src/tools.ts",
+				"// oracle-justified: list vs get_diary differ by design",
+				"// note: list vs get_diary differ by design",
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find((x) => x.outil === "list_diaries")
+					.rbac_adjustment_needed,
+			).not.toMatch(/JUSTIFIED/);
 		},
 		TIMEOUT,
 	);
