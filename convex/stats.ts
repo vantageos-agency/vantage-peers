@@ -120,7 +120,18 @@ export const orchestratorStats = query({
 		// No index needed here since we aggregate across ALL orchestrators.
 		// The by_assignee index would require N separate index scans (one per
 		// orchestrator), which is worse than one linear pass when N > 2.
-		const allTasks = await ctx.db.query("tasks").take(TASK_CAP);
+		// Org member: read the member's OWN org through the tenant index so the cap
+		// bounds the org, never the fleet (a fleet-wide take(TASK_CAP) returned the
+		// oldest rows of every tenant and silently dropped a young org's rows).
+		// Unstamped rows never match `eq("orgId", slug)`: master-only.
+		const memberOrg = !scope.isMaster ? scope.orgSlug : null;
+		const allTasks =
+			memberOrg !== null
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
+						.take(TASK_CAP)
+				: await ctx.db.query("tasks").take(TASK_CAP);
 		// Apply org scope filter before aggregation
 		const tasks = filterByOrgScope(allTasks, scope);
 

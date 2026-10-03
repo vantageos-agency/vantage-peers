@@ -15,7 +15,12 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
-type ListDiaryRow = FunctionReturnType<typeof api.diary.list>[number];
+// The fleet master is served the bare array; the refusal envelope is for a
+// signed-in caller with no organisation.
+type ListDiaryRow = Extract<
+	FunctionReturnType<typeof api.diary.list>,
+	unknown[]
+>[number];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -62,11 +67,15 @@ describe("diary.list pagination — createdBefore applied after unbounded take",
 
 		while (pages < MAX_PAGES) {
 			pages++;
-			const page: ListDiaryRow[] = await tInternal.query(api.diary.list, {
+			const result = await tInternal.query(api.diary.list, {
 				orchestrator: "sigma",
 				limit: PAGE_LIMIT,
 				createdBefore,
 			});
+			if (!Array.isArray(result)) {
+				throw new Error("the fleet master must be served the bare array");
+			}
+			const page: ListDiaryRow[] = result;
 			const relevant = page.filter((r: ListDiaryRow) =>
 				seededDates.includes(r.date),
 			);

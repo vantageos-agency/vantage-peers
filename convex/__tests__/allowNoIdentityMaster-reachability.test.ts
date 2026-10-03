@@ -155,7 +155,7 @@ describe("allowNoIdentityMaster — anonymous (no Clerk identity) direct caller 
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
-	test("diary.list — anonymous caller must not receive cross-tenant diary content", async () => {
+	test("diary.list — anonymous caller must be refused", async () => {
 		const t = createT();
 		await t.run(async (ctx) => {
 			await ctx.db.insert("diary", {
@@ -166,8 +166,12 @@ describe("allowNoIdentityMaster — anonymous (no Clerk identity) direct caller 
 			});
 		});
 
-		const result = await t.query(api.diary.list, { orchestrator: "dummy-b" });
-		expect(result.length).toBe(0);
+		// diary:list refuses an unresolved caller by RAISING (task
+		// k17066vn8kh5v1a8xkgsx0bnxs8fjre5): an empty success was the same bytes as
+		// an absence.
+		await expect(
+			t.query(api.diary.list, { orchestrator: "dummy-b" }),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("briefingNotes.searchBriefingNotesByKeyword — anonymous caller must be refused", async () => {

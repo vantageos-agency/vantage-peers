@@ -157,6 +157,19 @@ export const get = query({
 // mission k574p02m DEFECT 2, lot 2.
 export const DIARY_LIST_SCAN_CAP = 2000;
 
+const DIARY_LIST_ROW = v.object({
+	_id: v.id("diary"),
+	_creationTime: v.number(),
+	date: v.string(),
+	orchestrator: creatorValidator,
+	instanceId: v.optional(v.string()),
+	content: v.string(),
+	highlights: v.optional(v.array(v.string())),
+	blockers: v.optional(v.array(v.string())),
+	createdBy: v.optional(creatorValidator),
+	createdAt: v.number(),
+});
+
 export const list = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -168,19 +181,12 @@ export const list = query({
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
 		createdBefore: v.optional(v.number()),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("diary"),
-			_creationTime: v.number(),
-			date: v.string(),
-			orchestrator: creatorValidator,
-			instanceId: v.optional(v.string()),
-			content: v.string(),
-			highlights: v.optional(v.array(v.string())),
-			blockers: v.optional(v.array(v.string())),
-			createdBy: v.optional(creatorValidator),
-			createdAt: v.number(),
-		}),
+	// The envelope arm is the refusal contract for the signed-in-no-organisation
+	// caller (a mounted, subscribed render: never a throw, never the bytes of an
+	// absence). An array is a served result.
+	returns: v.union(
+		v.array(DIARY_LIST_ROW),
+		v.object({ refused: v.literal(true), items: v.array(DIARY_LIST_ROW) }),
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
@@ -199,9 +205,27 @@ export const list = query({
 		// list comes entirely from the caller's resolved OrgScope.
 		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
 		// the signed-in-no-org branch to a typed refused scope (empty
-		// allowedOrchestrators); the filtering below already renders that as a
-		// typed-empty result, never a throw.
+		// allowedOrchestrators), answered below with the refusal envelope, never a
+		// throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+
+		// REFUSAL SHAPE (task k17066vn8kh5v1a8xkgsx0bnxs8fjre5; four callers, see
+		// .claude/rules/refusal-is-distinguishable-from-absence.md):
+		//   anonymous          -> RAISES RBAC_DENIED naming "diary:list". No
+		//     mounted render exists for a throw to crash (every dashboard route sits
+		//     behind clerkMiddleware); an empty success was the defect.
+		//   signed-in, no org  -> `{ refused: true, items: [] }`. Subscribed by
+		//     components/activity/unified-activity-feed.tsx:158 and
+		//     components/diary/diary-feed.tsx:67, both of which read the result
+		//     through `readList` (bare array | envelope | refusal), so the envelope
+		//     renders empty AND says it was refused. A throw would crash that render.
+		//   org member         -> served its own roster's rows (below).
+		//   fleet master       -> the bare array, unchanged.
+		requireResolvedCaller(scope, "diary:list");
+		if (!scope.isMaster && scope.orgSlug === null) {
+			return { refused: true as const, items: [] };
+		}
+
 		if (!scope.isMaster && args.orchestrator !== undefined) {
 			if (!scope.allowedOrchestrators.includes(args.orchestrator)) {
 				return [];
@@ -209,26 +233,44 @@ export const list = query({
 		}
 
 		const orchestrator = args.orchestrator;
-		const allRows =
-			orchestrator !== undefined
-				? await ctx.db
+		let rows: Doc<"diary">[];
+		if (orchestrator !== undefined) {
+			rows = await ctx.db
+				.query("diary")
+				.withIndex("by_orchestrator_date", (q) =>
+					q.eq("orchestrator", orchestrator),
+				)
+				.order("desc")
+				.take(fetchCap);
+		} else if (scope.isMaster) {
+			rows = await ctx.db.query("diary").order("desc").take(fetchCap);
+		} else {
+			// Member, no `orchestrator` argument. diary has no orgId column, so the
+			// tenant key is the roster: read each rostered orchestrator through
+			// by_orchestrator_date (bounded `fetchCap` per orchestrator) instead of
+			// taking the whole table and filtering afterwards, which both read other
+			// tenants' rows and let their volume starve the member's page. Merged
+			// newest-first by _creationTime, the order the table read used.
+			const roster = [...new Set(scope.allowedOrchestrators)];
+			const perOrchestrator = await Promise.all(
+				roster.map((name) =>
+					ctx.db
 						.query("diary")
 						.withIndex("by_orchestrator_date", (q) =>
-							q.eq("orchestrator", orchestrator),
+							q.eq("orchestrator", name),
 						)
 						.order("desc")
-						.take(fetchCap)
-				: await ctx.db.query("diary").order("desc").take(fetchCap);
+						.take(fetchCap),
+				),
+			);
+			rows = perOrchestrator
+				.flat()
+				.sort((a, b) => b._creationTime - a._creationTime);
+		}
 
 		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
 		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
 		// (oauthCtx.userId from MCP layer), client cannot spoof.
-		let rows = allRows;
-		// No-orchestrator-filter path: non-master scope still must not see other
-		// orgs' diary entries when listing without an `orchestrator` arg.
-		if (!scope.isMaster && args.orchestrator === undefined) {
-			rows = rows.filter((r) => scope.allowedOrchestrators.includes(r.orchestrator));
-		}
 		if (args.createdBy !== undefined) {
 			rows = rows.filter((r) => r.createdBy === args.createdBy);
 		}

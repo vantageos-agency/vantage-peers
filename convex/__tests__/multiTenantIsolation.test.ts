@@ -252,6 +252,8 @@ describe("diary.list cross-tenant isolation (RED — handler is unscoped, table 
 			orchestrator: "dummy-b",
 		});
 
-		expect(result.length).toBe(0);
+		// An out-of-roster `orchestrator` argument yields a bare empty array (the
+		// caller is a resolved, scoped member; this is not the refusal envelope).
+		expect(result).toEqual([]);
 	});
 });
