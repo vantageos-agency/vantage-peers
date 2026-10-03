@@ -1145,6 +1145,11 @@ export default defineSchema({
 		// Digest of the authorization code this token was minted from (person
 		// flow only). Lets a replayed code revoke what its first redemption issued.
 		codeHash: v.optional(v.string()),
+		// Person flow only: the verified Clerk org role the code was bound to, and
+		// the marker that this token acts for a PERSON (a seat token has neither).
+		// The MCP write gate reads both (src/registerTool.ts -> memberWriterRoles).
+		orgRole: v.optional(v.string()),
+		principal: v.optional(v.literal("person")),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])

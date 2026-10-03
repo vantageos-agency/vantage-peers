@@ -35,6 +35,7 @@ import {
 	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
+	internalClient,
 	isMasterScope,
 	isUnattributedClaim,
 	type OAuthContext,
@@ -159,6 +160,53 @@ function enforceScope(
 			const err = checkFromAllowed(ctx.oauthCtx, String(from));
 			return err ? mcpError(err) : null;
 		}
+	}
+}
+
+/**
+ * Writer-role gate for a PERSON token, applied once in defineTool to every tool
+ * that is not declared read-only. A person (signed in through /authorize) holds
+ * a verified org role; a viewer may read and may not write. The decision is
+ * Convex's existing pair `loadMemberWriterRoles` + `assertMemberMayWrite`
+ * (convex/memberWriterRoles.ts), reached through the service-account query
+ * `memberWriterRoles:assertPersonMayWrite`. Fail closed: a lookup that fails,
+ * an absent role and a missing list all refuse. A seat token (no `principal`)
+ * and a read-only tool never reach it.
+ */
+async function enforcePersonWriterRole(
+	oauthCtx: OAuthContext | undefined,
+	toolName: string,
+	readOnly: boolean,
+): Promise<McpTextResult | null> {
+	if (readOnly || oauthCtx?.principal !== "person") return null;
+	if (!oauthCtx.clerkOrgSlug) {
+		return mcpError(
+			`Forbidden: ${toolName} refused — person token carries no organisation.`,
+		);
+	}
+	try {
+		await internalClient().query(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"memberWriterRoles:assertPersonMayWrite" as any,
+			{
+				orgSlug: oauthCtx.clerkOrgSlug,
+				...(oauthCtx.orgRole !== undefined ? { role: oauthCtx.orgRole } : {}),
+				door: `mcp:${toolName}`,
+			},
+		);
+		return null;
+	} catch (err: unknown) {
+		// A ConvexError carries its payload in `.data`; the message is opaque.
+		const data = (err as { data?: unknown }).data;
+		const message = `${err instanceof Error ? err.message : String(err)} ${
+			typeof data === "string" ? data : JSON.stringify(data ?? "")
+		}`;
+		const denied = message.includes("role-not-writer");
+		return mcpError(
+			denied
+				? `Forbidden: ${toolName} is a write and the organisation role "${oauthCtx.orgRole ?? "none"}" is not a writer role (RBAC_DENIED role-not-writer).`
+				: `Forbidden: ${toolName} refused — the writer-role check could not be completed (fail closed).`,
+		);
 	}
 }
 
@@ -301,6 +349,14 @@ export function defineTool(
 	const actingKeys = actingNameKeys(scope, schema);
 
 	const guardedHandler: ToolHandler = async (args, extra) => {
+		// First, before any argument is read: a person whose role may not write
+		// is refused on every non-read-only tool.
+		const roleDenied = await enforcePersonWriterRole(
+			ctx.oauthCtx,
+			name,
+			annotations?.readOnlyHint === true,
+		);
+		if (roleDenied) return roleDenied;
 		const bound = bindActingNames(
 			ctx.oauthCtx,
 			actingKeys,

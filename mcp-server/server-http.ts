@@ -1026,6 +1026,10 @@ app.post("/token", async (c) => {
 				expiresAt: Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000,
 				clerkOrgSlug: orgKey,
 				codeHash,
+				// The verified role the code was bound to, and the person marker the
+				// MCP write gate keys on (src/registerTool.ts).
+				orgRole: claims.org_role,
+				principal: "person",
 			},
 		);
 

@@ -2039,6 +2039,8 @@ export const createAccessToken = mutation({
 		refreshTokenHash: v.optional(v.string()),
 		clerkOrgSlug: v.optional(v.string()),
 		codeHash: v.optional(v.string()),
+		orgRole: v.optional(v.string()),
+		principal: v.optional(v.literal("person")),
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
@@ -2060,6 +2062,8 @@ export const createAccessToken = mutation({
 				? { clerkOrgSlug: args.clerkOrgSlug }
 				: {}),
 			...(args.codeHash !== undefined ? { codeHash: args.codeHash } : {}),
+			...(args.orgRole !== undefined ? { orgRole: args.orgRole } : {}),
+			...(args.principal !== undefined ? { principal: args.principal } : {}),
 		});
 	},
 });
@@ -2075,6 +2079,8 @@ const oauthContextShape = v.object({
 	namespaceWritePrefixes: v.array(v.string()),
 	expiresAt: v.number(),
 	clerkOrgSlug: v.optional(v.string()),
+	orgRole: v.optional(v.string()),
+	principal: v.optional(v.literal("person")),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2119,6 +2125,8 @@ export const getAccessTokenByHash = query({
 			...(row.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: row.clerkOrgSlug }
 				: {}),
+			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
+			...(row.principal !== undefined ? { principal: row.principal } : {}),
 		};
 	},
 });

@@ -1,0 +1,376 @@
+/**
+ * PERSON_TOKEN_WRITER_ROLE — a person who signs in through /authorize keeps the
+ * org role Clerk verified, and a viewer may read but not write.
+ *
+ * Before this change the minted token dropped `orgRole`: a viewer acted with the
+ * whole organisation roster (a granted read became an inferred write).
+ *
+ * The gate lives ONCE, in defineTool (src/registerTool.ts), for every tool not
+ * declared `readOnlyHint: true`, and reuses Convex's existing writer-role pair
+ * (`loadMemberWriterRoles` + `assertMemberMayWrite`) through
+ * `memberWriterRoles:assertPersonMayWrite`.
+ *
+ * Harness: the real Hono app and real Convex functions (convex-test). The token
+ * is minted by the real authorize flow; the tool context is built from the row
+ * the bearer middleware reads (`oauth:getAccessTokenByHash`).
+ */
+
+import { makeFunctionReference } from "convex/server";
+import { convexTest } from "convex-test";
+import { Hono } from "hono";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import schema from "../../convex/schema";
+import { app } from "../server-http.js";
+import {
+	_setInternalClientForTest,
+	bearerAuthMiddleware,
+	type OAuthContext,
+	sha256Base64Url,
+	sha256Hex,
+} from "../src/auth.js";
+import { registerTools } from "../src/tools.js";
+import {
+	authorizeAsPerson,
+	type Harness,
+	installAuthorizeHarness,
+	membership,
+} from "./lib/authorizeHarness.js";
+
+const modules = Object.fromEntries(
+	Object.entries(import.meta.glob("../../convex/**/*.ts")).filter(
+		([path]) =>
+			!path.includes("ragSync") &&
+			!path.includes("search") &&
+			!path.includes("backfill") &&
+			!path.includes("Backfill") &&
+			!path.includes("__tests__") &&
+			!path.endsWith(".test.ts"),
+	),
+);
+
+const SERVICE_ACCOUNT_ID = process.env.CLERK_SERVICE_ACCOUNT_USER_ID as string;
+const REDIRECT = "https://client.example/callback";
+const CLIENT_ID = "client-claude";
+const CLIENT_SECRET = "client-secret-raw";
+const VERIFIER = "role-test-verifier-0123456789-0123456789-0123456789";
+
+type T = ReturnType<typeof convexTest<typeof schema>>;
+
+function bridge(t: T) {
+	return {
+		query: (name: string, args: Record<string, unknown>) =>
+			t.query(makeFunctionReference<"query">(name) as never, args as never),
+		mutation: (name: string, args: Record<string, unknown>) =>
+			t.mutation(
+				makeFunctionReference<"mutation">(name) as never,
+				args as never,
+			),
+	};
+}
+
+let t: T;
+let harness: Harness;
+let challenge: string;
+
+beforeEach(async () => {
+	harness = await installAuthorizeHarness();
+	challenge = await sha256Base64Url(VERIFIER);
+	t = convexTest(schema, modules);
+	_setInternalClientForTest(
+		// biome-ignore lint/suspicious/noExplicitAny: test bridge
+		bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID })) as any,
+	);
+	const now = Date.now();
+	await t.run(async (ctx) => {
+		await ctx.db.insert("oauth_clients", {
+			clientId: CLIENT_ID,
+			clientSecretHash: await sha256Hex(CLIENT_SECRET),
+			redirectUris: [REDIRECT],
+			name: "Claude",
+			scopeProfile: "client-generic",
+			createdAt: now,
+			tokenEndpointAuthMethod: "client_secret_basic",
+		});
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "org-a",
+			allowedOrchestrators: ["agent-a"],
+			scopes: ["vantage:read", "vantage:write"],
+			displayName: "a",
+			isActive: true,
+			createdAt: now,
+		});
+		// fleet default writer roles (the same row an operator sets)
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: now,
+		});
+	});
+	for (const [user, role] of [
+		["user_viewer", "org:viewer"],
+		["user_editor", "org:editor"],
+		["user_admin", "org:admin"],
+	] as const) {
+		harness.setMemberships(user, [membership("org_A", "org-a", role)]);
+	}
+});
+
+afterEach(() => {
+	harness.restore();
+	_setInternalClientForTest(null);
+});
+
+/** Signs the person in through the real flow and returns the raw access token. */
+async function personToken(userId: string): Promise<string> {
+	const r = await authorizeAsPerson(app, {
+		clientId: CLIENT_ID,
+		redirectUri: REDIRECT,
+		challenge,
+		sessionToken: await harness.session(userId),
+		orgId: "org_A",
+	});
+	expect(r.code).toBeTruthy();
+	const res = await app.request("http://localhost:3000/token", {
+		method: "POST",
+		headers: {
+			"content-type": "application/x-www-form-urlencoded",
+			authorization: `Basic ${btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)}`,
+		},
+		body: new URLSearchParams({
+			grant_type: "authorization_code",
+			code: r.code as string,
+			code_verifier: VERIFIER,
+			redirect_uri: REDIRECT,
+			client_id: CLIENT_ID,
+		}).toString(),
+	});
+	expect(res.status).toBe(200);
+	return ((await res.json()) as { access_token: string }).access_token;
+}
+
+/** The OAuthContext the bearer middleware attaches for `token` (real middleware). */
+async function contextFor(token: string): Promise<OAuthContext> {
+	const probe = new Hono();
+	probe.use("*", bearerAuthMiddleware());
+	probe.get("/ctx", (c) => c.json(c.get("oauthContext")));
+	const res = await probe.request("http://localhost:3000/ctx", {
+		headers: { authorization: `Bearer ${token}` },
+	});
+	expect(res.status).toBe(200);
+	return (await res.json()) as OAuthContext;
+}
+
+type Called = { mutations: string[]; queries: string[] };
+
+function toolsFor(ctx: OAuthContext) {
+	const tools = new Map<
+		string,
+		(args: Record<string, unknown>) => Promise<unknown>
+	>();
+	const server = {
+		tool() {},
+		registerTool: (
+			name: string,
+			_config: unknown,
+			handler: (args: Record<string, unknown>) => Promise<unknown>,
+		) => {
+			tools.set(name, handler);
+		},
+	} as never;
+	const called: Called = { mutations: [], queries: [] };
+	const convex = {
+		query: async (name: string) => {
+			called.queries.push(name);
+			return [];
+		},
+		mutation: async (name: string) => {
+			called.mutations.push(name);
+			return "mem-id";
+		},
+		action: async () => null,
+	} as never;
+	registerTools(server, convex, ctx);
+	return { tools, called };
+}
+
+const WRITE = {
+	namespace: "team/org-a",
+	type: "project",
+	content: "a note",
+	createdBy: "agent-a",
+};
+const READ = { namespace: "team/org-a" };
+
+type ToolResult = { isError?: boolean; content: { text: string }[] };
+
+async function write(ctx: OAuthContext) {
+	const { tools, called } = toolsFor(ctx);
+	const result = (await tools.get("store_memory")?.(WRITE)) as ToolResult;
+	return { result, called };
+}
+
+describe("the role is carried from the verified membership into the token and the context", () => {
+	it("the token row carries orgRole and the person marker", async () => {
+		await personToken("user_viewer");
+		const row = (
+			await t.run(async (ctx) => ctx.db.query("oauth_access_tokens").collect())
+		)[0];
+		expect(row.orgRole).toBe("org:viewer");
+		expect(row.principal).toBe("person");
+	});
+
+	it("the bearer middleware attaches orgRole and principal to the oauthContext", async () => {
+		const ctx = await contextFor(await personToken("user_editor"));
+		expect(ctx.orgRole).toBe("org:editor");
+		expect(ctx.principal).toBe("person");
+		expect(ctx.clerkOrgSlug).toBe("org-a");
+	});
+});
+
+describe("person token: the writer-role gate", () => {
+	it("a viewer's write is refused and nothing is written", async () => {
+		const { result, called } = await write(
+			await contextFor(await personToken("user_viewer")),
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("role-not-writer");
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("an editor's write is accepted", async () => {
+		const { result, called } = await write(
+			await contextFor(await personToken("user_editor")),
+		);
+		expect(result.isError).toBeUndefined();
+		expect(called.mutations).toEqual(["memories:storeMemory"]);
+	});
+
+	it("an admin's write is accepted", async () => {
+		const { result, called } = await write(
+			await contextFor(await personToken("user_admin")),
+		);
+		expect(result.isError).toBeUndefined();
+		expect(called.mutations).toEqual(["memories:storeMemory"]);
+	});
+
+	it("no writer-roles row for the org and no fleet default: even an admin is refused", async () => {
+		await t.run(async (ctx) => {
+			for (const row of await ctx.db.query("memberWriterRoles").collect()) {
+				await ctx.db.delete(row._id);
+			}
+		});
+		const { result, called } = await write(
+			await contextFor(await personToken("user_admin")),
+		);
+		expect(result.isError).toBe(true);
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("an org row with an empty list means nobody writes (never all)", async () => {
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memberWriterRoles", {
+				orgSlug: "org-a",
+				roles: [],
+				updatedAt: Date.now(),
+			});
+		});
+		const { result } = await write(
+			await contextFor(await personToken("user_admin")),
+		);
+		expect(result.isError).toBe(true);
+	});
+
+	it("a person token with no role is refused (never inherited)", async () => {
+		const ctx = await contextFor(await personToken("user_editor"));
+		const { orgRole: _dropped, ...noRole } = ctx;
+		const { result, called } = await write(noRole as OAuthContext);
+		expect(result.isError).toBe(true);
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("a role check that cannot be completed refuses the write (fail closed)", async () => {
+		const ctx = await contextFor(await personToken("user_editor"));
+		_setInternalClientForTest({
+			query: async () => {
+				throw new Error("convex unreachable");
+			},
+			mutation: async () => null,
+			// biome-ignore lint/suspicious/noExplicitAny: test fake
+		} as any);
+		const { result, called } = await write(ctx);
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("fail closed");
+		expect(called.mutations).toEqual([]);
+	});
+
+	it("a viewer's READ is served", async () => {
+		const { tools, called } = toolsFor(
+			await contextFor(await personToken("user_viewer")),
+		);
+		const result = (await tools.get("list_memories")?.(READ)) as ToolResult;
+		expect(result.isError).toBeUndefined();
+		expect(called.queries.length).toBeGreaterThan(0);
+	});
+
+	it("every tool that is not read-only passes the gate: a viewer is refused on a sample of other writes", async () => {
+		const { tools } = toolsFor(
+			await contextFor(await personToken("user_viewer")),
+		);
+		for (const name of [
+			"create_task",
+			"update_task",
+			"complete_task",
+			"delete_task",
+			"create_mission",
+			"send_message",
+			"delete_message",
+			"create_briefing_note",
+			"create_recurring_task",
+			"write_diary",
+		]) {
+			const handler = tools.get(name);
+			expect(handler, name).toBeDefined();
+			const r = (await handler?.({})) as ToolResult;
+			expect(r.isError, name).toBe(true);
+			expect(r.content[0].text, name).toContain("role-not-writer");
+		}
+	});
+});
+
+describe("a seat token (not a person) is unchanged", () => {
+	const seat: OAuthContext = {
+		clientId: "seat-client",
+		userId: "seat-user",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "seat-profile",
+		fromAllowList: ["agent-a"],
+		namespaceReadPrefixes: ["team/org-a"],
+		namespaceWritePrefixes: ["team/org-a"],
+		expiresAt: Date.now() + 3_600_000,
+		isMaster: false,
+		clerkOrgSlug: "org-a",
+	};
+
+	it("writes with no writer-roles table consulted, even with no row at all", async () => {
+		await t.run(async (ctx) => {
+			for (const row of await ctx.db.query("memberWriterRoles").collect()) {
+				await ctx.db.delete(row._id);
+			}
+		});
+		const { result, called } = await write(seat);
+		expect(result.isError).toBeUndefined();
+		expect(called.mutations).toEqual(["memories:storeMemory"]);
+	});
+});
+
+describe("the Convex door admits the service account only", () => {
+	it("an ordinary caller cannot ask the role question", async () => {
+		const other = bridge(t.withIdentity({ subject: "somebody-else" }));
+		await expect(
+			other.query("memberWriterRoles:assertPersonMayWrite", {
+				orgSlug: "org-a",
+				role: "org:admin",
+				door: "x",
+			}),
+		).rejects.toThrow();
+	});
+});

@@ -381,6 +381,7 @@ Claude.ai, ChatGPT, Claude Code, Codex and any MCP client connect to VantagePeer
 - Only organisations the operator has provisioned (an active organisation mapping) are offered. An organisation that is not provisioned yields "no organisation": ask your operator.
 - The access token lasts one hour and names you and the organisation. There is no refresh token on this flow; the client sends you through the same three steps again (the sign-in step is silent while your session lasts).
 - A client that replays an authorization code is refused and the token its first redemption issued is revoked.
+- Your organisation role travels with the token: a viewer can read but every write tool is refused unless the role is on the organisation's writer-role list (or the fleet default list).
 
 **Operator prerequisites (Railway, set from the dashboard; names only)**
 
@@ -411,6 +412,7 @@ Claude.ai, ChatGPT, Claude Code, Codex et tout client MCP se connectent à Vanta
 - Seules les organisations provisionnées par l'opérateur (mapping actif) sont proposées. Une organisation non provisionnée donne « no organization » : contacter l'opérateur.
 - Le jeton d'accès dure une heure et vous nomme avec l'organisation. Ce flux n'émet pas de refresh token : le client vous refait passer par les trois étapes (la connexion est silencieuse tant que la session dure).
 - Un client qui rejoue un code d'autorisation est refusé et le jeton émis par la première utilisation est révoqué.
+- Votre rôle d'organisation voyage avec le jeton : un lecteur (viewer) peut lire, mais tout outil d'écriture est refusé tant que le rôle n'est pas dans la liste des rôles écrivains de l'organisation (ou la liste par défaut de la flotte).
 
 **Prérequis opérateur (Railway, à définir depuis le dashboard ; noms seulement)** : `AUTHORIZE_STATE_SECRET` (au moins 32 caractères aléatoires), `CLERK_DOMAIN`, `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL`, `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY` ; en option `AUTHORIZE_AUTHORIZED_PARTIES`. Tant qu'une valeur requise manque, `/authorize` répond **503** et n'émet rien ; il ne retombe jamais sur une approbation automatique.
 
