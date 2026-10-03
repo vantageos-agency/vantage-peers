@@ -252,27 +252,16 @@ describe("member acting — door-specific requirements still bind a member", () 
 	});
 });
 
-// The opt-in is PER DOOR. Every other caller of assertTaskCallerAuthorized
-// (update, failTask, pause, resume, correctSegment — enumerated by
-// `grep -n "assertTaskCallerAuthorized(" convex/tasks.ts`) keeps refusing a
-// member with no callerOrchestrator. Pins the `opts?.allowOrgMember === true`
-// guard: replacing it with `true` opens every door and turns these red.
+// The opt-in is PER DOOR. update / failTask / pause / resume / create /
+// deleteTask were opened in task k1720hwydrrkteacm02ma78j5d8fkpe6 (pinned in
+// taskHumanCrud.test.ts). Every other caller of assertTaskCallerAuthorized
+// (enumerated by `grep -n "assertTaskCallerAuthorized(" convex/tasks.ts`, e.g.
+// correctSegment) keeps refusing a member with no callerOrchestrator: only a
+// door that calls authorizeTaskActor reaches the human path.
 const otherDoors: {
 	name: string;
 	call: (c: Caller, taskId: Id<"tasks">) => Promise<unknown>;
 }[] = [
-	{
-		name: "update",
-		call: (c, taskId) =>
-			c.mutation(api.tasks.update, { taskId, title: "renamed by member" }),
-	},
-	{
-		name: "failTask",
-		call: (c, taskId) =>
-			c.mutation(api.tasks.failTask, { taskId, failureNote: NOTE }),
-	},
-	{ name: "pause", call: (c, taskId) => c.mutation(api.tasks.pause, { taskId }) },
-	{ name: "resume", call: (c, taskId) => c.mutation(api.tasks.resume, { taskId }) },
 	{
 		name: "correctSegment",
 		call: (c, taskId) =>
