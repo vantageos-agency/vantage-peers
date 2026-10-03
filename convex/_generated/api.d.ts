@@ -63,6 +63,7 @@ import type * as memories from "../memories.js";
 import type * as memoriesScoped from "../memoriesScoped.js";
 import type * as messages from "../messages.js";
 import type * as migrations from "../migrations.js";
+import type * as migrations_agentIdentityRows from "../migrations/agentIdentityRows.js";
 import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_backfill_review_task_origin from "../migrations/backfill_review_task_origin.js";
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
@@ -158,6 +159,7 @@ declare const fullApi: ApiFromModules<{
   memoriesScoped: typeof memoriesScoped;
   messages: typeof messages;
   migrations: typeof migrations;
+  "migrations/agentIdentityRows": typeof migrations_agentIdentityRows;
   "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/backfill_review_task_origin": typeof migrations_backfill_review_task_origin;
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;

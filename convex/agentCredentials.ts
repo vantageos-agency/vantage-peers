@@ -7,6 +7,8 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import {
+	credentialRowsOfAgent,
+	findAgentByName,
 	revokeActiveCredentialRows,
 	resolveAgentCredentialCore,
 	sha256Hex,
@@ -64,7 +66,7 @@ const resolvedIdentityValidator = v.object({
  * no `agents` row in this org (AGENT_NOT_FOUND) — a credential is issued to
  * an agent that already EXISTS as an entity, never to an arbitrary string.
  *
- * ROTATION: every prior row for (orgSlug, agentName) is marked
+ * ROTATION: every prior row of the agent (by `agentId`) is marked
  * `isActive: false` (never deleted — audit trail preserved) before the new
  * active row is inserted. Only the LATEST mint's plaintext resolves
  * afterward; the previous plaintext stops authenticating immediately.
@@ -79,12 +81,7 @@ export const mintAgentCredential = mutation({
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentCredentials:mintAgentCredential" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render. Operator-run via `convex run` per docs/cloud/protocol/deployment-runbook.md:24 (imperative).
 		await requireOrgAdmin(ctx, args.orgSlug);
 
-		const agent = await ctx.db
-			.query("agents")
-			.withIndex("by_org_name", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("name", args.agentName),
-			)
-			.unique();
+		const agent = await findAgentByName(ctx, args.orgSlug, args.agentName);
 
 		if (!agent) {
 			throw new ConvexError(
@@ -97,12 +94,7 @@ export const mintAgentCredential = mutation({
 		// Rotation: invalidate every PRIOR row for this agent before minting the
 		// new one. Rows are patched, never deleted — the audit trail of past
 		// mints is preserved.
-		const priorRows = await ctx.db
-			.query("agent_credentials")
-			.withIndex("by_org_agent", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("agentName", args.agentName),
-			)
-			.collect();
+		const priorRows = await credentialRowsOfAgent(ctx, agent);
 		for (const row of priorRows) {
 			if (row.isActive) {
 				await ctx.db.patch(row._id, { isActive: false });
@@ -121,8 +113,9 @@ export const mintAgentCredential = mutation({
 		const mintedAt = Date.now();
 
 		await ctx.db.insert("agent_credentials", {
-			orgSlug: args.orgSlug,
-			agentName: args.agentName,
+			orgSlug: agent.orgSlug,
+			agentId: agent._id,
+			agentName: agent.name,
 			secretHash,
 			isActive: true,
 			createdAt: mintedAt,
@@ -164,12 +157,7 @@ export const revokeAgentCredential = mutation({
 		// write-contract: no mcp-server/src/tools.ts wiring and no dashboard reference exists for "agentCredentials:revokeAgentCredential" (same grep, 0 hits). Its only callers are convex-test direct mutations; a pre-organisation client has no render path to a credential revoke, and requireOrgAdmin refuses it RBAC_DENIED at an imperative call, an R-16 refusal, never an uncaught Server Error.
 		await requireOrgAdmin(ctx, args.orgSlug);
 
-		const agent = await ctx.db
-			.query("agents")
-			.withIndex("by_org_name", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("name", args.agentName),
-			)
-			.unique();
+		const agent = await findAgentByName(ctx, args.orgSlug, args.agentName);
 		if (!agent) {
 			throw new ConvexError(
 				`AGENT_NOT_FOUND: no agent "${args.agentName}" in org "${args.orgSlug}" — ${JSON.stringify(
@@ -178,18 +166,15 @@ export const revokeAgentCredential = mutation({
 			);
 		}
 
-		const revoked = await revokeActiveCredentialRows(
-			ctx,
-			args.orgSlug,
-			args.agentName,
-		);
+		const revoked = await revokeActiveCredentialRows(ctx, agent);
 		return { revoked };
 	},
 });
 
 /**
- * resolveAgentCredential — resolves a PRESENTED secret to its (orgSlug,
- * agentName), or REFUSES it with a code. It never answers "no match" with
+ * resolveAgentCredential — resolves a PRESENTED secret to its agent's (orgSlug,
+ * current agentName) — read off the agents ROW the credential belongs to, so it
+ * follows a rename — or REFUSES it with a code. It never answers "no match" with
  * `null`.
  *
  * THE SHAPE, AND WHY. This read used to return `null` for a wrong secret — the
@@ -259,7 +244,7 @@ export const resolveAgentCredential = query({
 				"credential-not-recognised",
 			);
 		}
-		return resolved;
+		return { orgSlug: resolved.agent.orgSlug, agentName: resolved.agent.name };
 	},
 });
 
@@ -281,12 +266,8 @@ export const getAgentCredentialStatus = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only, no reactive subscriber — enumerated 2026-09-30 with: grep -rnE "agentCredentials|resolveAgentCredential" /root/coding/vantage-peers-dashboard --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git -> 0 hits. R-50 declared divergence.
 		await requireOrgAdmin(ctx, args.orgSlug);
-		const rows = await ctx.db
-			.query("agent_credentials")
-			.withIndex("by_org_agent", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("agentName", args.agentName),
-			)
-			.collect();
+		const agent = await findAgentByName(ctx, args.orgSlug, args.agentName);
+		const rows = agent ? await credentialRowsOfAgent(ctx, agent) : [];
 		const activeRows = rows.filter((r) => r.isActive).length;
 		return {
 			orgSlug: args.orgSlug,

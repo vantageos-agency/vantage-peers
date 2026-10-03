@@ -1,7 +1,7 @@
 import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
 import { ConvexError, v } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
-import { resolveAgentCredentialCore } from "./agentIdentity";
+import { findAgentByName, resolveAgentCredentialCore } from "./agentIdentity";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -825,12 +825,7 @@ export async function requireAgentCredentialMatch(
 		// RESOLVES to an existing `agents` row for the target org must present
 		// a credential; a sender that does not resolve keeps the legacy no-op.
 		if (targetOrgSlug === null) return;
-		const declaredAgent = await ctx.db
-			.query("agents")
-			.withIndex("by_org_name", (q) =>
-				q.eq("orgSlug", targetOrgSlug).eq("name", assertedName),
-			)
-			.unique();
+		const declaredAgent = await findAgentByName(ctx, targetOrgSlug, assertedName);
 		if (declaredAgent) {
 			throw new ConvexError(
 				`AGENT_CREDENTIAL_REQUIRED: sender "${assertedName}" resolves to a registered agent in org "${targetOrgSlug}" — this surface requires a per-agent credential (agentCredentialSecret) once the sender is a known agent identity, no fallback — ${JSON.stringify({ assertedName, targetOrgSlug })}`,
@@ -847,15 +842,25 @@ export async function requireAgentCredentialMatch(
 		);
 	}
 
-	if (resolved.agentName !== assertedName) {
+	// IDENTITY IS THE ROW, not the string. The asserted name is a label: look it
+	// up in the credential's OWN org and require the row it names to be the row
+	// the credential resolved to. A rename therefore keeps the credential
+	// working (the new label names the same row), and the old label stops
+	// matching. A name that names no agent there matches nothing.
+	const assertedAgent = await findAgentByName(
+		ctx,
+		resolved.agent.orgSlug,
+		assertedName,
+	);
+	if (!assertedAgent || assertedAgent._id !== resolved.agent._id) {
 		throw new ConvexError(
-			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agentName}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agentName, assertedName })}`,
+			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agent.name}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agent.name, resolvedAgentId: resolved.agent._id, assertedName })}`,
 		);
 	}
 
-	if (targetOrgSlug !== null && resolved.orgSlug !== targetOrgSlug) {
+	if (targetOrgSlug !== null && resolved.agent.orgSlug !== targetOrgSlug) {
 		throw new ConvexError(
-			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agentName}" in org "${resolved.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agentName, resolvedOrgSlug: resolved.orgSlug, targetOrgSlug })}`,
+			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agent.name}" in org "${resolved.agent.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agent.name, resolvedOrgSlug: resolved.agent.orgSlug, targetOrgSlug })}`,
 		);
 	}
 }
