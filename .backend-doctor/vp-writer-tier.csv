@@ -3,8 +3,8 @@ import_okf_bundle,_storage+briefingNotes+memories+tasks,CREATE,org-member,orgRes
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
-delete_bu,businessUnits+memberWriterRoles,DELETE,org-member,orgResolver,businessUnits:remove=orgResolver
-update_bu,businessUnits+memberWriterRoles,UPDATE,org-member,orgResolver,businessUnits:update=orgResolver
+delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
+update_bu,businessUnits,UPDATE,org-member,orgResolver,businessUnits:update=orgResolver
 update_task,client_org_mapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 send_message,client_org_mapping+memberWriterRoles+messageReceipts+messages+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
 update_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver

@@ -5,7 +5,7 @@ import {
 	loadMemberWriterRoles,
 } from "../memberWriterRoles";
 import type { OrgScope } from "./auth";
-import { isOrchestratorOnOrgRoster, isRowVisibleToScope } from "./auth";
+import { isRowVisibleToScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveHumanActor — the ONE decision "may this human act on this door, and
@@ -26,8 +26,6 @@ import { isOrchestratorOnOrgRoster, isRowVisibleToScope } from "./auth";
 //     required" (the human path admits only a resolved NON-master org member);
 //   - `task` given and not visible to the member's org (other org, or unstamped)
 //     -> tenant-boundary RBAC_DENIED;
-//   - `row` + `tenantOnly` (stamp compare) / `rosterOwner` (roster compare) for
-//     messages, recurring tasks, diary and business units; neither = create;
 //   - verified org_role not on the writer list -> reason "role-not-writer";
 //   - `adminOnly` and role !== "org:admin" -> reason "role-not-admin".
 // Order: eligibility, tenant, writer role, admin role (as the original gate).
@@ -76,26 +74,6 @@ export function assertRowVisibleToCaller(
 	}
 }
 
-/**
- * ROSTER tenant compare, for a row whose table has NO org column (diary,
- * business units): the row's owner name must be on the caller's own roster
- * (normalised, "*" names nobody) — the key those tables' readers use.
- * DECLARED LIMIT: a roster is a NAME membership test; two orgs whose rosters
- * carry the same name are not told apart by it.
- */
-export function assertOwnerOnCallerRoster(
-	owner: string,
-	callerScope: OrgScope,
-	kind: string,
-	rowId: string,
-): void {
-	if (callerScope.orgSlug === null || !isOrchestratorOnOrgRoster(callerScope, owner)) {
-		throw new ConvexError(
-			`RBAC_DENIED: ${kind} ${rowId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ rowId, kind, callerOrg: callerScope.orgSlug, reason: "owner-not-on-roster" })}`,
-		);
-	}
-}
-
 /** Refuse a member whose verified role is not org:admin (delete / cancel). */
 export function assertMemberIsAdmin(
 	scope: Pick<OrgScope, "orgRole" | "orgSlug">,
@@ -128,8 +106,6 @@ export async function resolveHumanActor(
 		rowId?: string;
 		/** The row has no orchestrator field (briefing note): tenant stamp only. */
 		tenantOnly?: boolean;
-		/** The row has no org column (diary, business unit): its owner name must be on the caller's roster. */
-		rosterOwner?: string;
 		adminOnly?: boolean;
 	},
 ): Promise<string> {
@@ -149,9 +125,6 @@ export async function resolveHumanActor(
 			opts.rowId ?? "",
 			opts.tenantOnly === true,
 		);
-	}
-	if (opts.rosterOwner !== undefined) {
-		assertOwnerOnCallerRoster(opts.rosterOwner, scope, opts.rowKind ?? "row", opts.rowId ?? "");
 	}
 	const writerRoles = await loadMemberWriterRoles(ctx, scope.orgSlug);
 	assertMemberMayWrite(scope, writerRoles, opts.door);

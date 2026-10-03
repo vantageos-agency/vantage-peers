@@ -1070,6 +1070,24 @@ export const markAsRead = mutation({
 // to bypass the check (server-to-server / admin use).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// cascadeDeleteMessage — the ONE receipt cascade shared by the agent and the
+// human branch of deleteMessage: delete every receipt of the message, then the
+// message; returns how many receipts went.
+async function cascadeDeleteMessage(
+	ctx: MutationCtx,
+	messageId: Doc<"messages">["_id"],
+): Promise<number> {
+	const receipts = await ctx.db
+		.query("messageReceipts")
+		.withIndex("by_message", (q) => q.eq("messageId", messageId))
+		.collect();
+	for (const receipt of receipts) {
+		await ctx.db.delete(receipt._id);
+	}
+	await ctx.db.delete(messageId);
+	return receipts.length;
+}
+
 export const deleteMessage = mutation({
 	args: {
 		messageId: v.id("messages"),
@@ -1121,15 +1139,7 @@ export const deleteMessage = mutation({
 				tenantOnly: true,
 				adminOnly: true,
 			});
-			const humanReceipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_message", (q) => q.eq("messageId", args.messageId))
-				.collect();
-			for (const receipt of humanReceipts) {
-				await ctx.db.delete(receipt._id);
-			}
-			await ctx.db.delete(args.messageId);
-			return { deleted: true, receiptsDeleted: humanReceipts.length };
+			return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
 		}
 
 		if (!isOrchestratorAllowedForScope(scope, message.from)) {
@@ -1163,20 +1173,8 @@ export const deleteMessage = mutation({
 			);
 		}
 
-		// Cascade: delete all receipts for this message
-		const receipts = await ctx.db
-			.query("messageReceipts")
-			.withIndex("by_message", (q) => q.eq("messageId", args.messageId))
-			.collect();
-
-		for (const receipt of receipts) {
-			await ctx.db.delete(receipt._id);
-		}
-
-		// Delete the message
-		await ctx.db.delete(args.messageId);
-
-		return { deleted: true, receiptsDeleted: receipts.length };
+		// Cascade: delete all receipts for this message, then the message.
+		return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
 	},
 });
 

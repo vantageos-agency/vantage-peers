@@ -194,31 +194,6 @@ const rowDoors: RowDoor[] = [
 		served: (_b, a) => a === null,
 	},
 	{
-		name: "diary:deleteDiary",
-		adminOnly: true,
-		seed: (t, o) => seedDiary(t, o),
-		call: (c, id) => c.mutation(api.diary.deleteDiary, { diaryId: id as Id<"diary"> }),
-		read: readRow("diary"),
-		served: (_b, a) => a === null,
-	},
-	{
-		name: "businessUnits:update",
-		adminOnly: false,
-		seed: (t, o) => seedBu(t, o),
-		call: (c, id) =>
-			c.mutation(api.businessUnits.update, { buId: id as Id<"businessUnits">, name: "Renamed by the human" }),
-		read: readRow("businessUnits"),
-		served: (_b, a) => a?.name === "Renamed by the human",
-	},
-	{
-		name: "businessUnits:remove",
-		adminOnly: true,
-		seed: (t, o) => seedBu(t, o),
-		call: (c, id) => c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> }),
-		read: readRow("businessUnits"),
-		served: (_b, a) => a === null,
-	},
-	{
 		name: "recurringTasks:update",
 		adminOnly: false,
 		seed: (t, o) => seedRecurring(t, o),
@@ -333,51 +308,109 @@ describe.each(rowDoors)("human CRUD — $name", (door) => {
 });
 
 
-describe("human CRUD — businessUnits:update reassignment", () => {
-	test("reassigning to an orchestrator outside the org roster -> refused, owner unchanged", async () => {
-		const t = await setup();
-		const id = await seedBu(t, "own");
-		await expect(
-			t
-				.withIdentity(as("user_m", "org:editor"))
-				.mutation(api.businessUnits.update, { buId: id, orchestratorId: "eta" }),
-		).rejects.toThrow(/RBAC_DENIED.*reassign/);
-		expect((await readRow("businessUnits")(t, id))?.orchestratorId).toBe("sigma");
-	});
+// ── businessUnits and diary: NO human path (Pi ruling (b), PR #1437) ────────
+// Neither table carries an org stamp; the only tenant key is a roster NAME that
+// two orgs can share. A human admin of the owning org is therefore refused too,
+// and so is the colliding org's admin: no human may act on these rows until the
+// tables are stamped. The agent / master paths are unchanged.
 
-	test("reassigning to another orchestrator on the roster -> served", async () => {
-		const t = await setup();
-		const id = await seedBu(t, "own");
-		await t
-			.withIdentity(as("user_m", "org:editor"))
-			.mutation(api.businessUnits.update, { buId: id, orchestratorId: "pi" });
-		expect((await readRow("businessUnits")(t, id))?.orchestratorId).toBe("pi");
-	});
-});
+describe("businessUnits and diary — master/agent only, no human path", () => {
+	const master = (t: T) =>
+		t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<T["withIdentity"]>[0]);
+	const orgC = (t: T) =>
+		t.withIdentity({ subject: "user_c", organizationSlug: "org-c", org_role: "org:admin" } as Parameters<T["withIdentity"]>[0]);
+	const addOrgC = (t: T) =>
+		t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "org-c",
+				allowedOrchestrators: ["sigma"], // the SAME roster name as org-a's
+				scopes: ["view-own-tasks"],
+				displayName: "org-c",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
 
-describe("human CRUD — recurringTasks:update assignee and cron", () => {
-	test("reassigning to an orchestrator off the org roster -> refused, assignee unchanged", async () => {
-		const t = await setup();
-		const id = await seedRecurring(t, "own");
-		await expect(
-			t.withIdentity(as("user_m", "org:editor")).mutation(api.recurringTasks.update, { recurringTaskId: id, assignedTo: "eta" }),
-		).rejects.toThrow(/RBAC_DENIED/);
-		expect((await readRow("recurringTasks")(t, id))?.assignedTo).toBe("sigma");
-	});
+	type Door = {
+		name: string;
+		seed: (t: T) => Promise<string>;
+		humanCall: (c: Caller, id: string) => Promise<unknown>;
+		/** how the human call is refused (update: `callerOrchestrator` is required again, so the argument validator refuses first). */
+		refusal: RegExp;
+		agentCall: (c: Caller, id: string) => Promise<unknown>;
+		read: (t: T, id: string) => Promise<Record<string, unknown> | null>;
+		agentServed: (row: Record<string, unknown> | null) => boolean;
+	};
+	const doors: Door[] = [
+		{
+			name: "businessUnits:update",
+			refusal: /callerOrchestrator|ArgumentValidationError/,
+			seed: (t) => seedBu(t, "own"),
+			humanCall: (c, id) => // callerOrchestrator is required again, so a human call omits it against the type on purpose.
+				c.mutation(api.businessUnits.update, { buId: id as Id<"businessUnits">, name: "Renamed" } as never),
+			agentCall: (c, id) =>
+				c.mutation(api.businessUnits.update, { buId: id as Id<"businessUnits">, callerOrchestrator: "sigma", name: "Renamed" }),
+			read: readRow("businessUnits"),
+			agentServed: (r) => r?.name === "Renamed",
+		},
+		{
+			name: "businessUnits:remove",
+			refusal: /RBAC_DENIED/,
+			seed: (t) => seedBu(t, "own"),
+			humanCall: (c, id) => c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> }),
+			agentCall: (c, id) => c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> }),
+			read: readRow("businessUnits"),
+			agentServed: (r) => r === null,
+		},
+		{
+			name: "diary:deleteDiary",
+			refusal: /RBAC_DENIED/,
+			seed: (t) => seedDiary(t, "own"),
+			humanCall: (c, id) => c.mutation(api.diary.deleteDiary, { diaryId: id as Id<"diary"> }),
+			agentCall: (c, id) =>
+				c.mutation(api.diary.deleteDiary, { diaryId: id as Id<"diary">, callerOrchestrator: "sigma" }),
+			read: readRow("diary"),
+			agentServed: (r) => r === null,
+		},
+	];
 
-	test("reassigning to another roster orchestrator -> served", async () => {
-		const t = await setup();
-		const id = await seedRecurring(t, "own");
-		await t.withIdentity(as("user_m", "org:editor")).mutation(api.recurringTasks.update, { recurringTaskId: id, assignedTo: "pi" });
-		expect((await readRow("recurringTasks")(t, id))?.assignedTo).toBe("pi");
-	});
+	describe.each(doors)("$name", (door) => {
+		test.each(["org:admin", "org:editor", "org:viewer"])(
+			"%s of the OWNING org with no caller name -> refused, row unchanged",
+			async (role) => {
+				const t = await setup();
+				const id = await door.seed(t);
+				const before = await door.read(t, id);
+				await expect(door.humanCall(t.withIdentity(as("user_m", role)), id)).rejects.toThrow(door.refusal);
+				expect(await door.read(t, id)).toEqual(before);
+			},
+		);
 
-	test("a role-less org token is refused (no agent door without a caller arg on update)", async () => {
-		const t = await setup();
-		const id = await seedRecurring(t, "own");
-		await expect(
-			t.withIdentity(as("agent_token")).mutation(api.recurringTasks.update, { recurringTaskId: id, title: "x" }),
-		).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
+		test("an admin of a COLLIDING org (same roster name) -> refused, row unchanged", async () => {
+			const t = await setup();
+			await addOrgC(t);
+			const id = await door.seed(t);
+			const before = await door.read(t, id);
+			await expect(door.humanCall(orgC(t), id)).rejects.toThrow(door.refusal);
+			expect(await door.read(t, id)).toEqual(before);
+		});
+
+		test("no identity -> refused, row unchanged", async () => {
+			const t = await setup();
+			const id = await door.seed(t);
+			const before = await door.read(t, id);
+			await expect(door.humanCall(t as unknown as Caller, id)).rejects.toThrow(/AUTH_REQUIRED|RBAC_DENIED|Unauthenticated|callerOrchestrator|ArgumentValidationError/);
+			expect(await door.read(t, id)).toEqual(before);
+		});
+
+		test("the agent / master path is still served", async () => {
+			const t = await setup();
+			const id = await door.seed(t);
+			// remove is master-only; update and deleteDiary take the owning agent's name.
+			const caller = door.name === "businessUnits:remove" ? master(t) : t.withIdentity(as("user_m", "org:viewer"));
+			await door.agentCall(caller, id);
+			expect(door.agentServed(await door.read(t, id))).toBe(true);
+		});
 	});
 });
 

@@ -184,17 +184,8 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		const missing = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.diary.deleteDiary, { diaryId }),
 		);
-		// Omitting the caller from an org member is now the HUMAN path (task
-		// k17d5k5bw741p3681bc0pq76ah8fk4sn): a member with no writer role claim is
-		// refused role-not-writer, naming its door. The MASTER omitting it is still
-		// refused caller-orchestrator-required.
-		expect((missing.payload as unknown as { door: string }).door).toBe("diary:deleteDiary");
-		expect(missing.payload.reason).toBe("role-not-writer");
-		const masterMissing = await refusalOf(
-			asMaster(t).mutation(api.diary.deleteDiary, { diaryId }),
-		);
-		expect(masterMissing.payload.registration).toBe("diary:deleteDiary");
-		expect(masterMissing.payload.reason).toBe("caller-orchestrator-required");
+		expect(missing.payload.registration).toBe("diary:deleteDiary");
+		expect(missing.payload.reason).toBe("caller-orchestrator-required");
 		const stranger = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.diary.deleteDiary, {
 				diaryId,

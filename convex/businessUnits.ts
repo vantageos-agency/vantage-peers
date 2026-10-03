@@ -3,13 +3,11 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import {
-	isOrchestratorOnOrgRoster,
 	requireResolvedCaller,
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { resolveHumanActor } from "./lib/humanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -169,9 +167,7 @@ export const update = mutation({
 		// caller could claim its own identity and still rewrite anyone's BU.
 		// Authorization must be derived from the row being targeted
 		// (bu.orchestratorId), never from a value the caller supplies.
-		// OPTIONAL: omitting it is the HUMAN path (a dashboard org member editing
-		// its own org's unit in its own name; see resolveHumanActor).
-		callerOrchestrator: v.optional(v.string()),
+		callerOrchestrator: v.string(),
 		name: v.optional(v.string()),
 		description: v.optional(v.string()),
 		purpose: v.optional(v.string()),
@@ -215,34 +211,6 @@ export const update = mutation({
 			throw new Error(`Business unit ${args.buId} not found`);
 		}
 
-		if (args.callerOrchestrator === undefined && !scope.isMaster) {
-			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard org
-			// member with a writer role. The table has no org column, so the tenant
-			// key is the roster (as `list`/`get` read it): the unit's CURRENT owner
-			// must be on the caller's roster, and a reassignment must land on it too.
-			await resolveHumanActor(ctx, scope, {
-				door: "businessUnits:update",
-				rowKind: "business unit",
-				rowId: args.buId,
-				rosterOwner: bu.orchestratorId,
-			});
-			if (
-				args.orchestratorId !== undefined &&
-				!isOrchestratorOnOrgRoster(scope, args.orchestratorId)
-			) {
-				throw new ConvexError(
-					`RBAC_DENIED: caller may not reassign business unit ${args.buId} to orchestrator "${args.orchestratorId}" — ${JSON.stringify({ reason: "owner-not-on-roster", orgSlug: scope.orgSlug })}`,
-				);
-			}
-			const humanPatch: Record<string, unknown> = { updatedAt: Date.now() };
-			for (const [key, value] of Object.entries(args)) {
-				if (key === "buId" || key === "callerOrchestrator") continue;
-				if (value !== undefined) humanPatch[key] = value;
-			}
-			await ctx.db.patch(args.buId, humanPatch);
-			return null;
-		}
-
 		// The TARGET ROW's current owner must be within the caller's scope —
 		// authorization is derived from bu.orchestratorId (what is actually
 		// being written to), never from the caller-supplied
@@ -268,11 +236,6 @@ export const update = mutation({
 		// Legacy ownership-string check, kept for backward behaviour — now
 		// harmless as a standalone bypass since the scope gate above already
 		// proved the caller's org covers bu.orchestratorId.
-		if (args.callerOrchestrator === undefined) {
-			throw new ConvexError(
-				`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ registration: "businessUnits:update", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
-			);
-		}
 		if (
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
 			bu.orchestratorId !== args.callerOrchestrator
@@ -320,27 +283,9 @@ export const remove = mutation({
 		// never breaks the live "delete_bu" caller.
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster) {
-			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard
-			// org:admin removes a unit of its OWN organisation (roster is the tenant
-			// key; destructive, so admin only). Anything that is not a resolved org
-			// member — anonymous, no organisation — is refused by the resolver with
-			// the same RBAC_DENIED code, before the row is read.
-			if (scope.orgSlug === null || scope.refused === true) {
-				throw new ConvexError(
-					`RBAC_DENIED: business unit deletion is master-scope only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-				);
-			}
-			const target = await ctx.db.get(args.buId);
-			if (!target) throw new Error("Business unit not found");
-			await resolveHumanActor(ctx, scope, {
-				door: "businessUnits:remove",
-				rowKind: "business unit",
-				rowId: args.buId,
-				rosterOwner: target.orchestratorId,
-				adminOnly: true,
-			});
-			await ctx.db.delete(args.buId);
-			return { deleted: true };
+			throw new ConvexError(
+				`RBAC_DENIED: business unit deletion is master-scope only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+			);
 		}
 
 		const bu = await ctx.db.get(args.buId);
