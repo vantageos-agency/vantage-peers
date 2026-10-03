@@ -365,7 +365,10 @@ export function resolveActorCredentialMode(): ActorCredentialResolution {
 
 export function actorCredentialMode(): ActorCredentialMode {
 	const r = resolveActorCredentialMode();
-	if (r.unrecognisedRaw !== undefined && warnedUnknownMode !== r.unrecognisedRaw) {
+	if (
+		r.unrecognisedRaw !== undefined &&
+		warnedUnknownMode !== r.unrecognisedRaw
+	) {
 		warnedUnknownMode = r.unrecognisedRaw;
 		console.error(
 			`[auth] ${ACTOR_CREDENTIAL_MODE_ENV} has an unrecognised value; ` +
@@ -1056,7 +1059,9 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				500,
 			);
 		}
-		const wwwAuthHeader = `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource"`;
+		// RFC 9728 §3.1 path-inserted metadata URL for the /mcp resource — the
+		// only route this middleware guards (server-http.ts serves both forms).
+		const wwwAuthHeader = `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource/mcp"`;
 
 		// THE one place the acting agent is resolved. Every branch that attaches
 		// an oauthContext below ends here — no branch sets the context itself, and

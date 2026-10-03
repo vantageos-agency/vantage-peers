@@ -69,8 +69,8 @@ Then sign in with `codex mcp login vantage-peers`, using your onboarding credent
 
 Any client that supports remote MCP servers over Streamable HTTP can connect:
 
-- **URL:** the endpoint URL from onboarding.
-- **Authentication:** OAuth 2.1. The server publishes its metadata at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`, so a client that supports MCP authorization discovers the rest by itself.
+- **URL:** the endpoint URL from onboarding. It always ends in `/mcp` (for example `https://<your-host>/mcp`); enter it exactly, not the bare host.
+- **Authentication:** OAuth 2.1. The server publishes its metadata at `/.well-known/oauth-protected-resource/mcp` (also at `/.well-known/oauth-protected-resource`) and `/.well-known/oauth-authorization-server`, so a client that supports MCP authorization discovers the rest by itself. The protected-resource `resource` value is the `/mcp` URL itself.
 - A client that cannot run OAuth can send an access token as `Authorization: Bearer <token>`. Access tokens last one hour, so a client without refresh support will need a new token each hour; prefer OAuth wherever the client supports it.
 
 ### Check the connection
@@ -93,10 +93,11 @@ OAuth endpoints:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/.well-known/oauth-protected-resource` | Protected resource metadata (RFC 9728) |
-| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414) |
-| `POST` | `/register` | Dynamic client registration (RFC 7591), rate-limited |
-| `GET` | `/authorize` | Authorization endpoint (authorization code with PKCE) |
+| `GET` | `/.well-known/oauth-protected-resource/mcp` | Protected resource metadata (RFC 9728) for the `/mcp` resource; the 401 from `/mcp` points here |
+| `GET` | `/.well-known/oauth-protected-resource` | Same document, at the bare well-known path |
+| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414). Advertises `none` (public clients with PKCE) and RFC 9207 `iss`. Client ID Metadata Documents are not supported. |
+| `POST` | `/register` | Dynamic client registration (RFC 7591). Rate-limited to 10 per minute for the same client (same name and redirect URIs) from one IP, and 60 per minute per IP. The IP is `X-Real-IP` from the edge, else the rightmost `X-Forwarded-For` entry |
+| `GET` | `/authorize` | Authorization endpoint (authorization code with PKCE); the redirect carries `iss` (RFC 9207) |
 | `POST` | `/token` | Token endpoint (`authorization_code`, `refresh_token`) |
 | `GET` | `/health` | Public status document: version, transport, agent-identity mode |
 
