@@ -50,6 +50,7 @@ import type * as kbShared from "../kbShared.js";
 import type * as lib_agentIdentity from "../lib/agentIdentity.js";
 import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_humanActor from "../lib/humanActor.js";
 import type * as lib_ids from "../lib/ids.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
@@ -148,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   "lib/agentIdentity": typeof lib_agentIdentity;
   "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;
+  "lib/humanActor": typeof lib_humanActor;
   "lib/ids": typeof lib_ids;
   "lib/license": typeof lib_license;
   "lib/memberScopes": typeof lib_memberScopes;

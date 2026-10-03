@@ -5086,6 +5086,10 @@ export function registerTools(
 
 	// ── delete_task ─────────────────────────────────────────────────────────────
 
+	// oracle-justified: a hard DELETE where pause_task is a status TRANSITION on the same row; both doors
+	//   read memberWriterRoles through resolveHumanActor (convex/lib/humanActor.ts), but deleteTask also
+	//   requires org:admin for a human (adminOnly) and creator-or-system for an agent (convex/tasks.ts
+	//   deleteTask), because a deleted row cannot be restored or carry its actor.
 	defineTool(
 		server,
 		authCtx,

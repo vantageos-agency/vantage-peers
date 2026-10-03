@@ -19,7 +19,11 @@ import {
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
-import { assertMemberMayWrite, loadMemberWriterRoles } from "./memberWriterRoles";
+import {
+	assertMemberIsAdmin,
+	assertTaskVisibleToCaller,
+	resolveHumanActor,
+} from "./lib/humanActor";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
@@ -252,47 +256,26 @@ function isReviewTask(task: { isReviewTask?: boolean }): boolean {
 // isFleetSystemCaller — the ONLY way the word "system" carries authority — lives in
 // convex/lib/systemCaller.ts so every site that reads the word shares ONE predicate.
 
-// assertTaskVisibleToCaller — the TENANT compare, shared by every write site.
-// It is `isRowVisibleToScope`, the SAME predicate the readers apply, so the
-// compare a reader performs is the one a writer performs: an ordinary member
-// of org-B cannot change (or delete) a row stamped org-A, and a row that
-// states no `orgId` is not writable by an org-scoped caller either (absence
-// asserts nothing and grants nothing). Master is unchanged.
-function assertTaskVisibleToCaller(
-	task: { orgId?: string; assignedTo?: string; pilot?: string },
-	callerScope: OrgScope,
-	taskId: string,
-): void {
-	if (!isRowVisibleToScope(callerScope, task)) {
-		throw new ConvexError(
-			`RBAC_DENIED: task ${taskId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ taskId, callerOrg: callerScope.orgSlug })}`,
-		);
-	}
-}
+// assertTaskVisibleToCaller / memberActorOf / resolveHumanActor live in
+// convex/lib/humanActor.ts — ONE decision shared by every door a dashboard
+// human reaches (no per-door copies).
 
-// memberActorOf — how a HUMAN org member is written down as "who did it".
-// A distinct field (`lastActedBy`) AND a "user:" prefix: the value can never be
-// read as an orchestrator name (names are bare slugs; the Clerk subject is
-// `user_…`, so the stored form is `user:user_…`). Derived from the verified
-// identity subject (`scope.userId`), never from an argument.
-const MEMBER_ACTOR_PREFIX = "user:";
-function memberActorOf(scope: OrgScope): string {
-	return `${MEMBER_ACTOR_PREFIX}${scope.userId}`;
-}
-
-// Loads the writer-role list ONLY on the member-acting path (no
-// callerOrchestrator); the agent path pays no read.
-async function memberActingOpts(
+// authorizeTaskActor — the door-facing gate. `callerOrchestrator` present: the
+// agent path, assertTaskCallerAuthorized unchanged. Absent: the HUMAN path
+// (resolveHumanActor), returning the "user:<subject>" actor to record.
+async function authorizeTaskActor(
 	ctx: QueryCtx | MutationCtx,
+	task: Parameters<typeof assertTaskCallerAuthorized>[0],
 	callerOrchestrator: string | undefined,
+	taskId: string,
 	callerScope: OrgScope,
 	door: string,
-): Promise<{ allowOrgMember: true; writerRoles: readonly string[]; door: string }> {
-	const writerRoles =
-		callerOrchestrator === undefined && callerScope.orgSlug !== null
-			? await loadMemberWriterRoles(ctx, callerScope.orgSlug)
-			: [];
-	return { allowOrgMember: true, writerRoles, door };
+	opts?: { adminOnly?: boolean },
+): Promise<string | undefined> {
+	if (callerOrchestrator === undefined) {
+		return await resolveHumanActor(ctx, callerScope, { door, task, taskId, adminOnly: opts?.adminOnly });
+	}
+	return assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope);
 }
 
 function assertTaskCallerAuthorized(
@@ -306,37 +289,10 @@ function assertTaskCallerAuthorized(
 	callerOrchestrator: string | undefined,
 	taskId: string,
 	callerScope: OrgScope,
-	// Opt-in, per door: ONLY start / complete / blockTask pass `allowOrgMember`
-	// (Pi ruling (B), task k170mdh8em4vdt2fztcejhz2618fkpm0). Every other caller
-	// of this helper keeps refusing an omitted callerOrchestrator.
-	// `writerRoles` is the org's writer-role allowlist, loaded as DATA by
-	// `memberActingOpts` (convex/memberWriterRoles.ts). Absent = refuse.
-	opts?: { allowOrgMember?: boolean; writerRoles?: readonly string[]; door?: string },
-): string | undefined {
+): undefined {
 	if (callerOrchestrator === undefined) {
-		// MEMBER-ACTING PATH — a resolved, NON-master member of an organisation
-		// acts in its OWN name. It is never given an agent's name: it carries no
-		// orchestrator authority (creator/assignee rules bind agents only) and is
-		// bounded by the tenant gate alone — the row's `orgId` must equal the
-		// member's resolved org (assertTaskVisibleToCaller, the same predicate the
-		// readers use). The operator human (Pi ruling (a)) is served HERE as a member: in a mutation ctx withOrgScope never grants its read-only operator-master scope (isReadOnlyCtx), so it arrives as an ordinary member of the operator org — own org only, same writer-role gate. Any master scope (service account, internal) is NOT admitted here:
-		// unchanged. An unresolved caller never reaches this point —
-		// requireAuthenticatedCaller already refused no-identity (AUTH_REQUIRED)
-		// and signed-in-no-org (RBAC_DENIED); `orgSlug === null` is re-checked
-		// here so the door fails closed on its own.
-		if (
-			opts?.allowOrgMember === true &&
-			!callerScope.isMaster &&
-			callerScope.orgSlug !== null &&
-			callerScope.refused !== true
-		) {
-			assertTaskVisibleToCaller(task, callerScope, taskId);
-			// WRITER-ROLE GATE (Pi ruling, k170hs77p7me28wr7xfqgntm0x8fkzxc): the
-			// verified org_role must be on the allowlist held as data. An absent
-			// list refuses (fail closed), as does an absent or unlisted role.
-			assertMemberMayWrite(callerScope, opts.writerRoles ?? [], opts.door ?? "tasks");
-			return memberActorOf(callerScope);
-		}
+		// Omitting the caller REFUSES here. The human member-acting path is not
+		// this function: doors that admit it call authorizeTaskActor.
 		throw new ConvexError(
 			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId })}`,
 		);
@@ -534,6 +490,9 @@ const createTaskArgsValidator = {
 // omitted.
 const createTaskArgsValidatorWithCredential = {
 	...createTaskArgsValidator,
+	// Optional on the PUBLIC door only: omitted = a dashboard human creating in
+	// its own name (recorded "user:<subject>"). The webhook door keeps it required.
+	createdBy: v.optional(creatorValidator),
 	agentCredentialSecret: v.optional(v.string()),
 	verifiedActor: v.optional(verifiedActorValidator),
 };
@@ -552,6 +511,7 @@ interface CreateTaskArgs {
 	estimatedMinutes?: number;
 	dueDate?: number;
 	createdBy: string;
+	lastActedBy?: string;
 }
 
 // Shared insert body for `create` (public, identity-gated) and
@@ -647,7 +607,18 @@ export const create = mutation({
 		requireOrchestratorOnRoster(scope, args.assignedTo, "tasks:create", "assignee");
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
-		return await insertTask(ctx, taskArgs, orgIdForWrite(scope, "task"));
+		if (taskArgs.createdBy === undefined) {
+			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
+			// string; the prefix means it can never equal a roster slug, so it grants
+			// no creator authority to any agent) and lastActedBy records the same.
+			const actor = await resolveHumanActor(ctx, scope, { door: "tasks:create" });
+			return await insertTask(
+				ctx,
+				{ ...taskArgs, createdBy: actor, lastActedBy: actor },
+				orgIdForWrite(scope, "task"),
+			);
+		}
+		return await insertTask(ctx, { ...taskArgs, createdBy: taskArgs.createdBy }, orgIdForWrite(scope, "task"));
 	},
 });
 
@@ -1740,7 +1711,7 @@ export const update = mutation({
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope);
+		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update");
 
 		// An ASSIGNMENT target is not an asserted caller name, so the caller
 		// lock above does not cover it: without this, the cross-org assignment
@@ -1757,6 +1728,7 @@ export const update = mutation({
 				patch[key] = value;
 			}
 		}
+		if (memberActor !== undefined) patch.lastActedBy = memberActor;
 
 		// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — whenever
 		// assignedTo CHANGES, capture the OLD (pre-change) value into
@@ -1808,7 +1780,10 @@ export const update = mutation({
 					`CANNOT_CANCEL_DONE: task ${taskId} is already done — a completed task cannot be cancelled — ${JSON.stringify({ taskId })}`,
 				);
 			}
-			if (
+			if (memberActor !== undefined) {
+				// HUMAN path: cancelling is terminal like delete — org:admin only.
+				assertMemberIsAdmin(callerScope, "tasks:update");
+			} else if (
 				!isFleetSystemCaller(callerScope, callerOrchestrator) &&
 				task.createdBy !== callerOrchestrator
 			) {
@@ -1821,7 +1796,7 @@ export const update = mutation({
 					`CANCEL_REASON_REQUIRED: cancelReason is required to cancel task ${taskId} — ${JSON.stringify({ taskId })}`,
 				);
 			}
-			patch.cancelledBy = callerOrchestrator;
+			patch.cancelledBy = memberActor ?? callerOrchestrator;
 			patch.cancelReason = cancelReason;
 		} else if (cancelReason !== undefined) {
 			// MINOR #6 (convex-reviewer REVISE) — cancelReason must never be
@@ -2146,7 +2121,7 @@ export const blockTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, await memberActingOpts(ctx, args.callerOrchestrator, callerScope, "tasks:blockTask"));
+		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:blockTask");
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
 		// check: blockedCause="peer_task" literally means "waiting on a peer
@@ -2323,7 +2298,7 @@ export const complete = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, await memberActingOpts(ctx, args.callerOrchestrator, callerScope, "tasks:complete"));
+		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:complete");
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
 			throw new ConvexError(
@@ -2597,7 +2572,7 @@ export const failTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:failTask");
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
 			throw new ConvexError(
@@ -2635,6 +2610,7 @@ export const failTask = mutation({
 			completedAt: now,
 			updatedAt: now,
 		};
+		if (memberActor !== undefined) patch.lastActedBy = memberActor;
 
 		// Terminal exit: nothing later would ever close this segment.
 		const closedSegmentsOnFail = closeTrailingSegmentOnExit(
@@ -2726,7 +2702,7 @@ export const start = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		const memberActor = assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope, await memberActingOpts(ctx, args.callerOrchestrator, callerScope, "tasks:start"));
+		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:start");
 
 		// Block if any dependsOn tasks are not yet done.
 		if (task.dependsOn && task.dependsOn.length > 0) {
@@ -2812,7 +2788,7 @@ export const pause = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:pause");
 
 		const segments = task.workSegments ?? [];
 		const lastIndex = segments.length - 1;
@@ -2836,6 +2812,7 @@ export const pause = mutation({
 			pausedAt: now,
 			workSegments: closedSegments,
 			updatedAt: now,
+			...(memberActor !== undefined ? { lastActedBy: memberActor } : {}),
 		});
 		return null;
 	},
@@ -2871,7 +2848,7 @@ export const resume = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:resume");
 
 		if (task.pausedAt === undefined) {
 			throw new ConvexError(
@@ -2894,6 +2871,7 @@ export const resume = mutation({
 			pausedAt: undefined,
 			workSegments: segments,
 			updatedAt: now,
+			...(memberActor !== undefined ? { lastActedBy: memberActor } : {}),
 		});
 		return null;
 	},
@@ -3147,9 +3125,17 @@ export const deleteTask = mutation({
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 
 		if (args.callerOrchestrator === undefined) {
-			throw new ConvexError(
-				`RBAC_DENIED: callerOrchestrator is required to delete task ${args.taskId} — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
-			);
+			// HUMAN path: own-org task (checked above and again in the helper),
+			// writer role AND org:admin. The actor is recorded by the helper's
+			// contract; a hard delete leaves no row to carry it.
+			await resolveHumanActor(ctx, callerScope, {
+				door: "tasks:deleteTask",
+				task,
+				taskId: args.taskId,
+				adminOnly: true,
+			});
+			await ctx.db.delete(args.taskId);
+			return { deleted: true };
 		}
 		if (
 			!isFleetSystemCaller(callerScope, args.callerOrchestrator) &&
