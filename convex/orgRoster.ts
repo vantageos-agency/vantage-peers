@@ -26,6 +26,19 @@ export const getMyOrgRoster = query({
 		// reactively-subscribed one) — refuseWithoutThrow narrows the
 		// signed-in-no-org branch to a typed-empty roster instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// The operator's own org admin is a read-only MASTER in a query
+		// (masterSource "operator-admin", roster ["*"]) but an ORDINARY MEMBER in
+		// tasks:create, which holds the real mapping roster and treats "*" as
+		// naming nobody. The picker must list what the write will accept, so
+		// re-resolve as the member the write sees. "*" is dropped: it is never an
+		// assignable name, and nothing is listed that the write would refuse.
+		if (scope.masterSource === "operator-admin") {
+			const member = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				operatorAsMember: true,
+			});
+			return member.allowedOrchestrators.filter((entry) => entry !== "*");
+		}
 		if (!scope.isMaster && scope.orgSlug === null) return [];
 		return scope.allowedOrchestrators;
 	},
