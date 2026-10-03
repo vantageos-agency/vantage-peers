@@ -365,7 +365,10 @@ export function resolveActorCredentialMode(): ActorCredentialResolution {
 
 export function actorCredentialMode(): ActorCredentialMode {
 	const r = resolveActorCredentialMode();
-	if (r.unrecognisedRaw !== undefined && warnedUnknownMode !== r.unrecognisedRaw) {
+	if (
+		r.unrecognisedRaw !== undefined &&
+		warnedUnknownMode !== r.unrecognisedRaw
+	) {
 		warnedUnknownMode = r.unrecognisedRaw;
 		console.error(
 			`[auth] ${ACTOR_CREDENTIAL_MODE_ENV} has an unrecognised value; ` +
@@ -705,13 +708,15 @@ export async function checkDelegationAllowed(
 	ctx: OAuthContext | undefined,
 	assignedTo: string,
 	getOrgRoster: () => Promise<string[]>,
+	/** The argument name quoted in the refusal (pilot, fulfilledBy, ...). */
+	field = "assignedTo",
 ): Promise<string | null> {
 	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (isMasterScope(ctx)) return null;
 	if (!ctx.clerkJwt) {
 		if (!ctx.accessTokenHash || !ctx.clerkOrgSlug) {
 			return (
-				`Forbidden: cannot authorize delegation to assignedTo='${assignedTo}' ` +
+				`Forbidden: cannot authorize delegation to ${field}='${assignedTo}' ` +
 				`(scope_profile=${ctx.scopeProfile}) — this caller has no verified ` +
 				"Clerk session attached, so its own organisation cannot be resolved " +
 				"from data. Refusing rather than granting an unresolved roster " +
@@ -730,7 +735,7 @@ export async function checkDelegationAllowed(
 		roster.length === 0
 			? "(none — this client's organisation has no roster on record)"
 			: roster.join(", ");
-	return `Forbidden: assignedTo='${assignedTo}' is not a member of the caller's organisation (scope_profile=${ctx.scopeProfile}). Org roster: ${allowed}.`;
+	return `Forbidden: ${field}='${assignedTo}' is not a member of the caller's organisation (scope_profile=${ctx.scopeProfile}). Org roster: ${allowed}.`;
 }
 
 /**
