@@ -23,12 +23,24 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
+import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import schema from "../../convex/schema";
 import { app } from "../server-http.js";
-import { _setInternalClientForTest, sha256Base64Url } from "../src/auth.js";
+import {
+	_setInternalClientForTest,
+	sha256Base64Url,
+	sha256Hex,
+} from "../src/auth.js";
+import {
+	authorizeAsPerson,
+	authorizeUrl,
+	getAuthorize,
+	type Harness,
+	installAuthorizeHarness,
+	membership,
+} from "./lib/authorizeHarness.js";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../../convex/**/*.ts")).filter(
@@ -62,13 +74,16 @@ function bridge(t: T) {
 }
 
 let masterBearer: string;
+let harness: Harness;
 
-beforeEach(() => {
+beforeEach(async () => {
 	masterBearer = process.env.BEARER_SECRET_MASTER as string;
+	harness = await installAuthorizeHarness();
 });
 afterEach(() => {
 	process.env.BEARER_SECRET_MASTER = masterBearer;
 	_setInternalClientForTest(null);
+	harness.restore();
 });
 
 function admin(path: string, method: string, body?: unknown) {
@@ -86,7 +101,7 @@ async function counts(t: T) {
 	return await t.run(async (ctx) => ({
 		clients: (await ctx.db.query("oauth_clients").collect()).length,
 		profiles: (await ctx.db.query("oauth_scope_profiles").collect()).length,
-		codes: (await ctx.db.query("oauth_authorization_codes").collect()).length,
+		codes: (await ctx.db.query("oauth_person_codes").collect()).length,
 		access: (await ctx.db.query("oauth_access_tokens").collect()).length,
 		refresh: (await ctx.db.query("oauth_refresh_tokens").collect()).length,
 		audit: (await ctx.db.query("oauth_audit_log").collect()).length,
@@ -127,20 +142,37 @@ describe("WITHHELD — the OAuth token path and every admin route still serve th
 		// ── the OAuth path, WITHOUT the master secret in the environment ────────
 		delete process.env.BEARER_SECRET_MASTER;
 
-		// createAuthorizationCode
+		// putPersonCode (GET /authorize -> picker -> POST /authorize/org): a signed-in
+		// person of an organisation that has an active client_org_mapping row.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "org-e2e",
+				allowedOrchestrators: ["e2e-seat"],
+				scopes: ["vantage:read", "vantage:write"],
+				displayName: "e2e",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		harness.setMemberships("user_e2e", [membership("org_e2e", "org-e2e")]);
 		const verifier = "e2e-code-verifier-0123456789-0123456789-0123456789";
 		const challenge = await sha256Base64Url(verifier);
-		const authorize = await app.request(
-			`/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT)}&code_challenge=${challenge}&code_challenge_method=S256&state=xyz`,
-		);
+		const authorize = await authorizeAsPerson(app, {
+			clientId,
+			redirectUri: REDIRECT,
+			challenge,
+			sessionToken: await harness.session("user_e2e"),
+			orgId: "org_e2e",
+			state: "xyz",
+		});
 		expect(authorize.status).toBe(302);
-		const location = new URL(authorize.headers.get("location") as string);
+		const location = new URL(authorize.location as string);
 		const code = location.searchParams.get("code") as string;
 		expect(code).toBeTruthy();
 		expect(location.searchParams.get("state")).toBe("xyz");
 		expect((await counts(t)).codes).toBe(1);
 
-		// createAccessToken + createRefreshToken (authorization_code grant)
+		// consumePersonCode + createAccessToken (authorization_code grant)
 		const basic = `Basic ${btoa(`${clientId}:${clientSecret}`)}`;
 		const exchanged = await app.request("/token", {
 			method: "POST",
@@ -159,16 +191,31 @@ describe("WITHHELD — the OAuth token path and every admin route still serve th
 		expect(exchanged.status).toBe(200);
 		const tokens = (await exchanged.json()) as {
 			access_token: string;
-			refresh_token: string;
+			refresh_token?: string;
 		};
 		expect(tokens.access_token).toBeTruthy();
-		expect(tokens.refresh_token).toBeTruthy();
+		// the person flow issues no refresh token
+		expect(tokens.refresh_token).toBeUndefined();
 		const afterExchange = await counts(t);
 		expect(afterExchange.access).toBe(1);
-		expect(afterExchange.refresh).toBe(1);
-		expect(afterExchange.codes).toBe(0);
+		expect(afterExchange.refresh).toBe(0);
+		// the code is consumed (marked used), not left redeemable
+		expect(afterExchange.codes).toBe(1);
 
-		// createRefreshToken + createAccessToken (refresh_token grant)
+		// createRefreshToken + createAccessToken (refresh_token grant) — for the
+		// clients that already hold a refresh token, seeded through the service
+		// account's own registration.
+		const refreshRaw = "e2e-refresh-token-raw";
+		await bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID })).mutation(
+			"oauth:createRefreshToken",
+			{
+				tokenHash: await sha256Hex(refreshRaw),
+				clientId,
+				userId: "e2e-user",
+				scopeProfile: "client-generic",
+				expiresAt: Date.now() + 3_600_000,
+			},
+		);
 		const refreshed = await app.request("/token", {
 			method: "POST",
 			headers: {
@@ -177,7 +224,7 @@ describe("WITHHELD — the OAuth token path and every admin route still serve th
 			},
 			body: new URLSearchParams({
 				grant_type: "refresh_token",
-				refresh_token: tokens.refresh_token,
+				refresh_token: refreshRaw,
 				client_id: clientId,
 			}).toString(),
 		});
@@ -277,10 +324,20 @@ describe("LEAK — a Convex caller that is not the service account mints nothing
 		expect(seed.status).toBeGreaterThanOrEqual(500);
 		const list = await admin("/oauth/clients", "GET");
 		expect(list.status).toBeGreaterThanOrEqual(500);
-		const authorize = await app.request(
-			`/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT)}&code_challenge=abc&code_challenge_method=S256`,
+		const authorize = await getAuthorize(
+			app,
+			authorizeUrl({
+				clientId,
+				redirectUri: REDIRECT,
+				challenge: await sha256Base64Url(
+					"leak-verifier-0123456789-0123456789-0123456789",
+				),
+			}),
+			await harness.session("somebody-else"),
 		);
-		expect(authorize.status).toBeGreaterThanOrEqual(500);
+		// the client registry is unreadable to a non-service caller: 503, not a code
+		expect(authorize.status).toBe(503);
+		expect(authorize.json?.error_description).toBe("client-lookup-unavailable");
 		expect(await counts(t)).toEqual(before);
 	});
 });

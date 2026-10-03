@@ -94,12 +94,20 @@ export type OAuthContext = {
 	 */
 	clerkOrgSlug?: string;
 	/**
-	 * Who the token row was minted for, when the row says so (PR #1444 mints
-	 * `"person"` for a signed-in human). Absent on a seat token. Read by
-	 * {@link isSeatActingAsItself}: ANY present value withholds the seat
-	 * exemption, so a principal kind added later is not exempt by default.
+	 * Verified Clerk org role the PERSON token was minted with (OAuth person
+	 * flow, token-row path only). Read by the writer-role gate in defineTool
+	 * (src/registerTool.ts). Absent on a seat token.
 	 */
-	principal?: string;
+	orgRole?: string;
+	/**
+	 * "person" when this token acts for a signed-in person (set at mint from
+	 * the authorization-code flow); absent on a seat token. A person token's
+	 * WRITES pass the writer-role gate; a seat token's do not change.
+	 * Also read by {@link isSeatActingAsItself}: ANY present value withholds
+	 * the seat exemption, so a principal kind added later is not exempt by
+	 * default.
+	 */
+	principal?: "person";
 	/**
 	 * The ACTING AGENT, resolved ONCE at the bearer-auth boundary from the
 	 * per-agent credential presented in {@link AGENT_CREDENTIAL_HEADER}, via
@@ -185,6 +193,8 @@ type OAuthLookupResult = {
 	expiresAt: number;
 	/** Org slug snapshotted onto the token row at mint (see OAuthContext). */
 	clerkOrgSlug?: string;
+	orgRole?: string;
+	principal?: "person";
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────

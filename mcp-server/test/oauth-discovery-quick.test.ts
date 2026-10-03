@@ -21,9 +21,15 @@
  * oauth-d6-d7.test.ts). No network, no Convex process.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as serverHttp from "../server-http.js";
 import { _setInternalClientForTest } from "../src/auth.js";
+import {
+	authorizeAsPerson,
+	type Harness,
+	installAuthorizeHarness,
+	membership,
+} from "./lib/authorizeHarness.js";
 
 // Namespace import so each pole fails on its own assertion (not on a missing
 // export at module load) when run against the pre-fix server.
@@ -48,6 +54,9 @@ function makeFakeConvex() {
 			if (name === "oauth:getClientByClientId") {
 				return clients.get(args.clientId as string) ?? null;
 			}
+			if (name === "clientOrgMapping:getByClerkSlug") {
+				return { allowedOrchestrators: [], scopes: [], isActive: true };
+			}
 			// bearerAuthMiddleware lookups on an absent/unknown token resolve to null
 			return null;
 		},
@@ -60,16 +69,25 @@ function makeFakeConvex() {
 				});
 				return "fake-id";
 			}
-			if (name === "oauth:createAuthorizationCode") {
-				authCodes.set(args.code as string, args);
-				return "fake-id";
+			if (name === "oauth:putPersonCode") {
+				const record = args.record as Record<string, unknown>;
+				authCodes.set(record.codeHash as string, record);
+				return null;
 			}
 			throw new Error(`unmocked mutation: ${name}`);
 		},
 	};
 }
 
-beforeEach(() => {
+let harness: Harness;
+
+afterEach(() => {
+	harness.restore();
+});
+
+beforeEach(async () => {
+	harness = await installAuthorizeHarness();
+	harness.setMemberships("user_1", [membership("org_A", "org-a")]);
 	clients.clear();
 	authCodes.clear();
 	serverHttp._resetRegisterRateLimitForTest?.();
@@ -170,20 +188,23 @@ describe("item 3 — authorization response carries iss (RFC 9207)", () => {
 			redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
 			scopeProfile: "client-generic",
 		});
-		const qs = new URLSearchParams({
-			client_id: "client-a",
-			redirect_uri: "https://claude.ai/api/mcp/auth_callback",
-			code_challenge: "abc",
-			code_challenge_method: "S256",
-			response_type: "code",
+		// The person flow (no auto-approve): signed-in person picks org-a and
+		// approves; the final 302 to the client must carry iss.
+		const res = await authorizeAsPerson(app, {
+			clientId: "client-a",
+			redirectUri: "https://claude.ai/api/mcp/auth_callback",
+			challenge: "A".repeat(43),
+			sessionToken: await harness.session("user_1"),
+			orgId: "org_A",
 			state: "st-1",
 		});
-		const res = await app.request(`http://localhost/authorize?${qs}`, {
-			headers: HOST_HEADERS,
-		});
 		expect(res.status).toBe(302);
-		const location = new URL(res.headers.get("location") ?? "");
-		expect(location.searchParams.get("iss")).toBe(BASE);
+		const location = new URL(res.location ?? "");
+		const meta = await app.request(
+			"http://localhost:3000/.well-known/oauth-authorization-server",
+		);
+		const issuer = ((await meta.json()) as { issuer: string }).issuer;
+		expect(location.searchParams.get("iss")).toBe(issuer);
 		expect(location.searchParams.get("state")).toBe("st-1");
 		expect(location.searchParams.get("code")).toBeTruthy();
 	});

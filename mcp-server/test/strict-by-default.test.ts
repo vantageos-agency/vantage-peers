@@ -14,6 +14,8 @@
  *   2 single-name seat naming itself              -> SERVED
  *   3 single-name seat naming another             -> REFUSED
  *   4 person token (principal on the row)         -> REFUSED
+ *     (end to end on a REAL #1444 person token: person-token-writer-role.test.ts,
+ *      "strict default composes with the writer-role gate"; unit pin below)
  *   5 ["*"] allowlist is never single-name        -> REFUSED
  * Plus: a valid agent credential naming its own agent -> SERVED.
  */
@@ -41,7 +43,6 @@ const HEADER = "x-vantage-agent-credential";
 const SECRET_ALICE = "secret-alice-acme";
 const TEAM_TOKEN = "team-member-token";
 const SEAT_TOKEN = "seat-alice-token";
-const PERSON_TOKEN = "person-alice-token";
 const STAR_TOKEN = "star-allowlist-token";
 const COMPLETE = { taskId: "k1", completionNote: "done" };
 
@@ -171,12 +172,6 @@ beforeEach(async () => {
 		namespaceReadPrefixes: ["orchestrator/alice", "project/acme"],
 		namespaceWritePrefixes: ["orchestrator/alice", "project/acme"],
 	};
-	// The same single-name row, minted for a PERSON (PR #1444's marker).
-	OAUTH_ROWS[await sha256Hex(PERSON_TOKEN)] = {
-		...OAUTH_ROWS[await sha256Hex(SEAT_TOKEN)],
-		clientId: "person-client",
-		principal: "person",
-	};
 	// A one-element allowlist that is the wildcard, on a non-master profile.
 	OAUTH_ROWS[await sha256Hex(STAR_TOKEN)] = {
 		...base,
@@ -247,12 +242,11 @@ async function ctxOf(bearer: string): Promise<OAuthContext> {
 
 describe("the five poles — scoped non-master identity, env unset", () => {
 	it("every bearer here resolves to a NON-master context", async () => {
-		for (const t of [TEAM_TOKEN, SEAT_TOKEN, PERSON_TOKEN]) {
+		for (const t of [TEAM_TOKEN, SEAT_TOKEN]) {
 			const ctx = await ctxOf(t);
 			expect(ctx.isMaster).toBe(false);
 			expect(isMasterScope(ctx)).toBe(false);
 		}
-		expect((await ctxOf(PERSON_TOKEN)).principal).toBe("person");
 	});
 
 	it("POLE 1 — multi-name bearer naming an allowlisted agent, no credential -> AGENT_CREDENTIAL_REQUIRED", async () => {
@@ -289,16 +283,6 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		const r = await post("complete_task", {
 			bearer: SEAT_TOKEN,
 			body: { ...COMPLETE, callerOrchestrator: "bob" },
-		});
-		expect(r.refused).toBe(true);
-		expect(r.text).toMatch(/^AGENT_CREDENTIAL_REQUIRED/);
-		expect(r.mutations).toHaveLength(0);
-	});
-
-	it("POLE 4 — person token (same single-name row, principal 'person'), no credential -> AGENT_CREDENTIAL_REQUIRED", async () => {
-		const r = await post("complete_task", {
-			bearer: PERSON_TOKEN,
-			body: { ...COMPLETE, callerOrchestrator: "alice" },
 		});
 		expect(r.refused).toBe(true);
 		expect(r.text).toMatch(/^AGENT_CREDENTIAL_REQUIRED/);
@@ -352,8 +336,14 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 			isSeatActingAsItself({ ...row, accessTokenHash: undefined }, "alice"),
 		).toBe(false);
 		// Any principal on the row withholds it, including a kind added later.
-		for (const principal of ["person", "service", "agent"]) {
-			expect(isSeatActingAsItself({ ...row, principal }, "alice")).toBe(false);
+		expect(isSeatActingAsItself({ ...row, principal: "person" }, "alice")).toBe(
+			false,
+		);
+		// A principal kind that does not exist yet: the type admits only
+		// "person" today, so the future value is forced through a cast on purpose.
+		for (const future of ["service", "agent"]) {
+			const ctx = { ...row, principal: future } as unknown as OAuthContext;
+			expect(isSeatActingAsItself(ctx, "alice")).toBe(false);
 		}
 		expect(isSeatActingAsItself({ ...row, fromAllowList: [""] }, "")).toBe(
 			false,
@@ -395,7 +385,7 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 });
 
 describe("strict_would_refuse counts only what strict refuses under the seat rule", () => {
-	it("permissive: seat-self is served and NOT counted; multi-name and person claims are counted", async () => {
+	it("permissive: seat-self is served and NOT counted; a multi-name claim is counted", async () => {
 		setEnv("permissive");
 		await post("complete_task", {
 			bearer: SEAT_TOKEN,
@@ -406,16 +396,12 @@ describe("strict_would_refuse counts only what strict refuses under the seat rul
 			bearer: TEAM_TOKEN,
 			body: { ...COMPLETE, callerOrchestrator: "bob" },
 		});
-		await post("complete_task", {
-			bearer: PERSON_TOKEN,
-			body: { ...COMPLETE, callerOrchestrator: "alice" },
-		});
 		const total = unattributedClaimCounts().reduce((n, r) => n + r.count, 0);
-		expect(total).toBe(2);
+		expect(total).toBe(1);
 		const res = await healthApp.request("/health");
 		const body = (await res.json()) as {
 			unattributed_claims: { strict_would_refuse: number };
 		};
-		expect(body.unattributed_claims.strict_would_refuse).toBe(2);
+		expect(body.unattributed_claims.strict_would_refuse).toBe(1);
 	});
 });
