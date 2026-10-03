@@ -6912,6 +6912,10 @@ export function registerTools(
 
 	// ── delete_recurring_task ───────────────────────────────────────────────────
 
+	// oracle-justified: a hard DELETE where pause_recurring_task is an active=false TRANSITION on the same row;
+	//   both doors read memberWriterRoles through resolveHumanActor (convex/lib/humanActor.ts), but
+	//   recurringTasks:remove also requires org:admin for a human (adminOnly) and stays master-only for the
+	//   MCP caller, because a deleted schedule cannot be restored and stops all future task generation.
 	defineTool(
 		server,
 		authCtx,

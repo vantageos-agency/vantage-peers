@@ -17,6 +17,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import { resolveHumanActor } from "./lib/humanActor";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -348,9 +349,85 @@ async function sendMessageCore(
 	return messageId;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// sendAsHuman — the HUMAN path of sendMessage (task
+// k17d5k5bw741p3681bc0pq76ah8fk4sn, Admin CRUD B2). A dashboard org member with a
+// writer role (data: memberWriterRoles) sends in its OWN name: the sender is
+// "user:<Clerk subject>" — a colon-prefixed value no roster slug can equal, so a
+// human can never pose as an orchestrator — to a channel made only of its OWN
+// org's roster (or "broadcast", which the core already bounds to that roster).
+// The tenant is derived from the scope by sendMessageCore, as for any member.
+// An agent proof (credential / verifiedActor) or an instance label on this path
+// is a contradiction (they assert an agent identity this path does not have):
+// refused, not ignored.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isRecipientOnRoster(scope: OrgScope, part: string): boolean {
+	if (isOrchestratorOnOrgRoster(scope, part)) return true;
+	// An instance id is "<role>" or "<role>-<suffix>": a roster entry owns it.
+	const instance = normalizeOrchestratorId(part);
+	return scope.allowedOrchestrators.some(
+		(entry) =>
+			entry !== "*" &&
+			instance.startsWith(`${normalizeOrchestratorId(entry)}-`),
+	);
+}
+
+async function sendAsHuman(
+	ctx: MutationCtx,
+	args: {
+		fromInstanceId?: string;
+		channel: string;
+		content: string;
+		sessionDay?: number;
+		tenantId?: string;
+		agentCredentialSecret?: string;
+		verifiedActor?: unknown;
+	},
+	scope: OrgScope,
+): Promise<Doc<"messages">["_id"]> {
+	const door = "messages:sendMessage";
+	if (
+		args.agentCredentialSecret !== undefined ||
+		args.verifiedActor !== undefined ||
+		args.fromInstanceId !== undefined
+	) {
+		throw new ConvexError(
+			`RBAC_DENIED: a human sender (no \`from\`) may not present an agent credential, a verified actor or an instance label — ${JSON.stringify({ reason: "agent-proof-on-human-path", door })}`,
+		);
+	}
+	// create mode: no row — the tenant is stamped from the scope by the core.
+	const actor = await resolveHumanActor(ctx, scope, { door });
+	if (args.channel !== "broadcast") {
+		const parts = args.channel
+			.split(",")
+			.map((s) => s.trim())
+			.filter((s) => s.length > 0);
+		if (parts.length === 0 || !parts.every((p) => isRecipientOnRoster(scope, p))) {
+			throw new ConvexError(
+				`RBAC_DENIED: a human may message only its own organisation's orchestrators — ${JSON.stringify({ reason: "recipient-not-on-roster", door, channel: args.channel, orgSlug: scope.orgSlug })}`,
+			);
+		}
+	}
+	return await sendMessageCore(
+		ctx,
+		{
+			from: actor,
+			channel: args.channel,
+			content: args.content,
+			sessionDay: args.sessionDay,
+			tenantId: args.tenantId,
+		},
+		scope,
+	);
+}
+
 export const sendMessage = mutation({
 	args: {
-		from: creatorValidator,
+		// OPTIONAL: omitting `from` is the HUMAN path (a dashboard org member
+		// speaking in its own name). The sender is then derived from the verified
+		// identity as "user:<Clerk subject>", never taken from the client.
+		from: v.optional(creatorValidator),
 		fromInstanceId: v.optional(v.string()),
 		channel: v.string(),
 		content: v.string(),
@@ -376,10 +453,15 @@ export const sendMessage = mutation({
 		// (reused below by sendMessageCore — never re-derived).
 		const scope = await withOrgScope(ctx);
 
+		if (args.from === undefined) {
+			return await sendAsHuman(ctx, args, scope);
+		}
+		const from = args.from;
+
 		await requireAgentCredentialMatch(
 			ctx,
 			args.agentCredentialSecret,
-			args.from,
+			from,
 			scope.orgSlug,
 			{ scope, verifiedActor: args.verifiedActor, declaredOrgSlug: args.tenantId },
 		);
@@ -387,17 +469,17 @@ export const sendMessage = mutation({
 		// The sender derives from the verified caller: a member of an org may
 		// only speak as an orchestrator on its own roster (see
 		// requireOrchestratorOnRoster). Master/service account is unchanged here.
-		requireOrchestratorOnRoster(scope, args.from, "messages:sendMessage");
+		requireOrchestratorOnRoster(scope, from, "messages:sendMessage");
 		// ...and may only label the message with an instance of that sender.
 		// The stored label is the NORMALISED form that was checked.
 		const fromInstanceId = requireSenderInstanceOfSender(
 			scope,
-			args.from,
+			from,
 			args.fromInstanceId,
 			"messages:sendMessage",
 		);
 
-		return await sendMessageCore(ctx, { ...args, fromInstanceId }, scope);
+		return await sendMessageCore(ctx, { ...args, from, fromInstanceId }, scope);
 	},
 });
 
@@ -988,6 +1070,24 @@ export const markAsRead = mutation({
 // to bypass the check (server-to-server / admin use).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// cascadeDeleteMessage — the ONE receipt cascade shared by the agent and the
+// human branch of deleteMessage: delete every receipt of the message, then the
+// message; returns how many receipts went.
+async function cascadeDeleteMessage(
+	ctx: MutationCtx,
+	messageId: Doc<"messages">["_id"],
+): Promise<number> {
+	const receipts = await ctx.db
+		.query("messageReceipts")
+		.withIndex("by_message", (q) => q.eq("messageId", messageId))
+		.collect();
+	for (const receipt of receipts) {
+		await ctx.db.delete(receipt._id);
+	}
+	await ctx.db.delete(messageId);
+	return receipts.length;
+}
+
 export const deleteMessage = mutation({
 	args: {
 		messageId: v.id("messages"),
@@ -1026,6 +1126,22 @@ export const deleteMessage = mutation({
 		const message = await ctx.db.get(args.messageId);
 		if (!message) throw new Error("Message not found");
 
+		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard
+			// org:admin deletes a message of its OWN organisation (the row's
+			// tenantId stamp equals the verified org; an unstamped row is refused)
+			// whatever its sender — an agent's or a human's. Destructive: admin only.
+			await resolveHumanActor(ctx, scope, {
+				door: "messages:deleteMessage",
+				row: { orgId: message.tenantId },
+				rowKind: "message",
+				rowId: args.messageId,
+				tenantOnly: true,
+				adminOnly: true,
+			});
+			return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
+		}
+
 		if (!isOrchestratorAllowedForScope(scope, message.from)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} (sender "${message.from}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
@@ -1057,20 +1173,8 @@ export const deleteMessage = mutation({
 			);
 		}
 
-		// Cascade: delete all receipts for this message
-		const receipts = await ctx.db
-			.query("messageReceipts")
-			.withIndex("by_message", (q) => q.eq("messageId", args.messageId))
-			.collect();
-
-		for (const receipt of receipts) {
-			await ctx.db.delete(receipt._id);
-		}
-
-		// Delete the message
-		await ctx.db.delete(args.messageId);
-
-		return { deleted: true, receiptsDeleted: receipts.length };
+		// Cascade: delete all receipts for this message, then the message.
+		return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
 	},
 });
 

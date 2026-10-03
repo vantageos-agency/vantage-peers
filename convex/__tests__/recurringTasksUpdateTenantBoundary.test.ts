@@ -37,6 +37,7 @@ const SHARED_SEAT = "seat-shared";
 
 async function seedBothOrgsWithSameRoster(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: Date.now() });
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
@@ -54,6 +55,8 @@ function asMember(t: ReturnType<typeof createT>, org: "org-a" | "org-b") {
 	return t.withIdentity({
 		subject: `member-of-${org}`,
 		organizationId: org,
+		// the human path (no caller arg on update) needs a writer role (memberWriterRoles)
+		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

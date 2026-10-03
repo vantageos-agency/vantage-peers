@@ -1,18 +1,15 @@
 outil,table,crud,writer_tier,writer_gate,write_doors
 import_okf_bundle,_storage+briefingNotes+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
-delete_recurring_task,,DELETE,master,masterOnly,recurringTasks:remove=masterOnly
-pause_recurring_task,,UPDATE,master,masterOnly,recurringTasks:pause=masterOnly
-resume_recurring_task,,UPDATE,master,masterOnly,recurringTasks:resume=masterOnly
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
 update_bu,businessUnits,UPDATE,org-member,orgResolver,businessUnits:update=orgResolver
 update_task,client_org_mapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
+send_message,client_org_mapping+memberWriterRoles+messageReceipts+messages+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
+update_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
+create_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
 create_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
-send_message,client_org_mapping+messageReceipts+messages+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
-update_recurring_task,client_org_mapping+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
-create_recurring_task,client_org_mapping+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
 write_diary,diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
@@ -28,6 +25,10 @@ accept_mandate,mandates,TRANSITION,master,masterOnly,mandates:accept=masterOnly
 create_mandate,mandates,CREATE,master,masterOnly,mandates:create=masterOnly
 settle_mandate,mandates,TRANSITION,master,masterOnly,mandates:settle=masterOnly
 update_mandate,mandates+tasks,UPDATE,master,masterOnly,mandates:update=masterOnly
+delete_recurring_task,memberWriterRoles,DELETE,org-member,orgResolver,recurringTasks:remove=orgResolver
+pause_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:pause=orgResolver
+resume_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:resume=orgResolver
+delete_message,memberWriterRoles+messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
 add_task_dependency,memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
 fail_task,memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
@@ -42,7 +43,6 @@ soft_delete_document,memories,UPDATE,org-member,orgResolver,kb:softDeleteDocumen
 store_episode,memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
 store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
 mark_as_read,messageReceipts,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
-delete_message,messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
 soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTemplates:softDelete=masterOnly
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
 instantiate_template_into_mission,missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
