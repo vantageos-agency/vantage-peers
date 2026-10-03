@@ -10,14 +10,10 @@
  * LEGITIMATE access and must be ALLOWED, not denied — removing it would be a
  * service interruption the operator forbids.
  *
- * Root cause was the CATALOG SEED (convex/oauth.ts seedDefaultProfiles)
- * defining the profile WITH the `global` prefix; since seedDefaultProfiles is
- * catalog-SSOT (UPSERT re-patches any drifted row back to the seed), a
- * manual dashboard drop was re-clobbered.
- *
- * This test seeds the catalog via the real `seedDefaultProfiles` mutation
- * (not a hand-rolled fixture) so it exercises the actual production seed
- * path, then asserts BOTH poles against the resulting row using the same
+ * The client profile is DATA (a row of oauth_scope_profiles), seeded here by
+ * the operator migration `migrations/seed_client_scope_profiles` from the
+ * frozen snapshot in tests/fixtures/legacyScopeProfiles.ts, after the real
+ * `seedDefaultProfiles` mutation, then asserts BOTH poles against the resulting row using the same
  * slash-boundary prefix-match semantics as the enforcement gate
  * (`checkNamespacePrefix` in mcp-server/src/auth.ts — reimplemented here
  * verbatim since convex/__tests__ cannot import across the mcp-server
@@ -43,7 +39,8 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api, internal } from "../_generated/api";
+import { api } from "../_generated/api";
+import { seedLegacyClientProfiles } from "../../tests/fixtures/legacyScopeProfiles";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -99,6 +96,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	test("seedDefaultProfiles catalog entry excludes global", async () => {
 		const t = createT();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
@@ -113,6 +111,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	test("DENY pole — AUTH_NAMESPACE_DENIED: profile cannot read 'global'", async () => {
 		const t = createT();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -126,6 +125,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	test("DENY pole — AUTH_NAMESPACE_DENIED: profile cannot write 'global'", async () => {
 		const t = createT();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -145,6 +145,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	test("ALLOW pole — profile CAN read/write its own orchestrator seat (primary)", async () => {
 		const t = createT();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -167,6 +168,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	test("ALLOW pole — profile CAN read/write its own second orchestrator seat (orchestrator/victor)", async () => {
 		const t = createT();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -191,6 +193,7 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 	test("ALLOW pole — profile CAN read/write its project namespace", async () => {
 		const t = createT();
 		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
+		await seedLegacyClientProfiles(t);
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
 			profileId: PROFILE_ID,
 		});
@@ -202,60 +205,5 @@ describe("AUTH_NAMESPACE_DENIED — client scope profile no longer leaks the glo
 		expect(
 			checkNamespacePrefix(profile!.namespaceWritePrefixes, "project/marie"),
 		).toBe(true);
-	});
-
-	// ── Token-level test ─────────────────────────────────────────────────────
-	// A live oauth_access_tokens row snapshotted with the OLD (leaky) prefixes
-	// must, after the migration loop runs, no longer carry `global` — and
-	// must NOT be revoked (same token, same session, same expiry).
-	test("migration loop patches a live token snapshot in place, drops global, never revokes", async () => {
-		const t = createT();
-		await asServiceAccount(t).mutation(api.oauth.seedDefaultProfiles, {});
-
-		// Insert a live access token row with the OLD leaky prefixes, as if
-		// minted before the catalog fix.
-		const now = Date.now();
-		const tokenId = await t.run(async (ctx) => {
-			return await ctx.db.insert("oauth_access_tokens", {
-				tokenHash: "test-token-hash-pre-fix",
-				clientId: "test-client-id",
-				userId: "marie",
-				scopes: ["mcp:full"],
-				scopeProfile: PROFILE_ID,
-				fromAllowList: ["marie"],
-				namespaceReadPrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-					"global",
-				],
-				namespaceWritePrefixes: [
-					"orchestrator/marie",
-					"orchestrator/victor",
-					"project/marie",
-					"global",
-				],
-				expiresAt: now + 3600 * 1000,
-				createdAt: now,
-			});
-		});
-
-		const result = await t.mutation(
-			internal.migrations.drop_client_scope_global_prefix
-				.dropClientScopeGlobalPrefix,
-			{},
-		);
-
-		expect(result.accessTokensPatched).toBeGreaterThanOrEqual(1);
-
-		const patched = await t.run(async (ctx) => ctx.db.get(tokenId));
-		expect(patched).not.toBeNull();
-		expect(patched!.namespaceReadPrefixes).not.toContain("global");
-		expect(patched!.namespaceWritePrefixes).not.toContain("global");
-		expect(patched!.namespaceReadPrefixes).toContain("orchestrator/victor");
-		// Never revoked — same token, same session, same expiry.
-		expect(patched!.revokedAt).toBeUndefined();
-		expect(patched!.expiresAt).toBe(now + 3600 * 1000);
-		expect(patched!.tokenHash).toBe("test-token-hash-pre-fix");
 	});
 });

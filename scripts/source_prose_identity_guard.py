@@ -105,7 +105,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PERIMETER_FILES: list[str] = [
     "convex/oauth.ts",
     "convex/schema.ts",
-    "convex/migrations/patch_marie_iris_rh_scope.ts",
+    "convex/migrations/seed_client_scope_profiles.ts",
     "scripts/source_prose_identity_guard.py",
 ]
 

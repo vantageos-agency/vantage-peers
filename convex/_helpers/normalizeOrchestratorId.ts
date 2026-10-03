@@ -6,8 +6,8 @@
  *   pilot, fulfilledBy, orchestratorId, requestedBy, fulfilledBy, etc.
  *
  * Rule: NFC normalize → lowercase → trim.
- * This makes "Hélios" (composed), "Hélios" (decomposed NFD), "HELIOS",
- * "Helios", "helios", "hélios" all collapse to "hélios".
+ * This makes "Élan" (composed), "Élan" (decomposed NFD), "ELAN",
+ * "Elan", "elan", "élan" all collapse to "élan".
  *
  * Usage at write: store normalize(input).
  * Usage at compare: normalize(allowed) === normalize(presented).

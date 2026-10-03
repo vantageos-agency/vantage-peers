@@ -295,8 +295,15 @@ export function defineTool(
 		| [annotations: ToolAnnotations, handler: ToolHandler]
 ): void {
 	const handler = rest[rest.length - 1] as ToolHandler;
-	const annotations =
+	const declaredAnnotations =
 		rest.length === 2 ? (rest[0] as ToolAnnotations) : undefined;
+	// `outputSchema` rides in the annotations object at the call site (so every
+	// tool keeps the one `defineTool(...)` registration shape) and is lifted here
+	// into the SDK config. The SDK then REQUIRES the handler to return
+	// `structuredContent` matching it. It is never forwarded as an annotation.
+	const { outputSchema, ...annotations } = (declaredAnnotations ?? {}) as {
+		outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
+	} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
 
@@ -329,7 +336,12 @@ export function defineTool(
 	const registerTool = server.registerTool.bind(server) as any;
 	registerTool(
 		name,
-		{ description, inputSchema: strictSchema, annotations },
+		{
+			description,
+			inputSchema: strictSchema,
+			annotations: declaredAnnotations === undefined ? undefined : annotations,
+			...(outputSchema !== undefined ? { outputSchema } : {}),
+		},
 		guardedHandler,
 	);
 }
