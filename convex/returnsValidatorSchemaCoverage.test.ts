@@ -335,7 +335,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"`fields: \"lite\"|\"full\"` API — `briefingNoteLiteValidator` is the deliberate lite projection (`projectBriefingNoteLite` maps explicitly, never spreads the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
 	},
 	"githubRepoMapping.list#repoMappingLiteObject": {
-		fields: ["active", "lastDeployedSHA", "lastDeployedAt"],
+		fields: ["active", "lastDeployedSHA", "lastDeployedAt", "reviewer", "fallbackReviewer"],
 		reason:
 			"Same `fields: \"lite\"|\"full\"` API — `repoMappingLiteObject` is the deliberate lite projection; `repoMappingFullObject` (in the same union) already COVERS.",
 	},

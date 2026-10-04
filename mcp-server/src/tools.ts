@@ -8088,6 +8088,18 @@ export function registerTools(
 				.optional()
 				.default(true)
 				.describe("Whether this mapping is active (default true)"),
+			reviewer: z
+				.string()
+				.optional()
+				.describe(
+					"Optional per-repo reviewer of PR review tasks; absent = fleet default (taskClosureConfig reviewerDefault)",
+				),
+			fallbackReviewer: z
+				.string()
+				.optional()
+				.describe(
+					"Optional per-repo fallback reviewer used when the reviewer is stopped; absent = fleet default",
+				),
 		},
 		{
 			readOnlyHint: false,
@@ -8095,7 +8107,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Add repo mapping",
 		},
-		async ({ repo, orchestrator, project, active }) => {
+		async ({ repo, orchestrator, project, active, reviewer, fallbackReviewer }) => {
 			// C0.3: infra webhook routing config — master scope only
 			const masterDenied = guardMasterOnly("add_repo_mapping");
 			if (masterDenied) return masterDenied;
@@ -8105,6 +8117,8 @@ export function registerTools(
 					orchestrator,
 					project,
 					active,
+					reviewer,
+					fallbackReviewer,
 				});
 
 				return {
@@ -8112,7 +8126,7 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ id, repo, orchestrator, project, active },
+								{ id, repo, orchestrator, project, active, reviewer, fallbackReviewer },
 								null,
 								2,
 							),

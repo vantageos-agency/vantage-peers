@@ -55,7 +55,20 @@ function makeTask(overrides?: {
 }
 
 function makeTestConvex() {
-	return convexTest(schema, modules);
+	const t = convexTest(schema, modules);
+	// The approver set is configured data (reviewerDefault), not the constant
+	// "eta": seed it so the corpus keeps exercising the same scenarios.
+	// convex-test runs the seed lazily on first use via t.run below.
+	return Object.assign(t, {
+		seedReviewer: () =>
+			t.run(async (ctx) => {
+				await ctx.db.insert("taskClosureConfig", {
+					key: "reviewerDefault",
+					value: ["eta"],
+					updatedAt: Date.now(),
+				});
+			}),
+	});
 }
 
 // ─── Setup / Teardown ─────────────────────────────────────────────────────────
@@ -108,6 +121,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("1. APPROVED task + correct SHA → valid:true, returns taskId/completedAt/noteExcerpt", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		const taskId = await t.run(async (ctx) => {
 			return await ctx.db.insert("tasks", makeTask());
@@ -132,6 +146,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("2. APPROVED task + wrong SHA → valid:false, reason:sha-not-in-note, hint present", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		const taskId = await t.run(async (ctx) => {
 			return await ctx.db.insert("tasks", makeTask());
@@ -155,6 +170,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("3. nonexistent task ID → valid:false, reason:task-not-found", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		// Insert then delete to get a well-formed-but-gone ID
 		const taskId = await t.run(async (ctx) => {
@@ -180,6 +196,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("4. task.assignedTo=sigma → valid:false, reason:wrong-assignee, got:sigma", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		const taskId = await t.run(async (ctx) => {
 			return await ctx.db.insert(
@@ -208,6 +225,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("5. task.status=todo → valid:false, reason:wrong-status, got:todo", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		const taskId = await t.run(async (ctx) => {
 			return await ctx.db.insert(
@@ -236,6 +254,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("6. no Authorization header → HTTP 401, body: missing-bearer", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		const taskId = await t.run(async (ctx) => {
 			return await ctx.db.insert("tasks", makeTask());
@@ -253,6 +272,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	test("7. wrong bearer secret → valid:false, reason:bearer-invalid", async () => {
 		const t = makeTestConvex();
+		await t.seedReviewer();
 
 		const taskId = await t.run(async (ctx) => {
 			return await ctx.db.insert("tasks", makeTask());
