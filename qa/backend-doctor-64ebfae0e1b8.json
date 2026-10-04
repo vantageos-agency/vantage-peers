@@ -1,0 +1,10 @@
+{
+ "sha": "64ebfae0e1b858aeab045559a84a953f9d959b8b",
+ "cli_commit": "0cd45e2",
+ "cli_mode": "npx tsx src/cli.ts (source)",
+ "convex_path": "git archive origin/main convex .backend-doctor",
+ "exit_code": 1,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) \u2014 8 CRITICAL abstention(s) \u2014 a human verdict is owed; approve is blocked. major violations=10, abstentions=19 (critical=8). engine exit=1.",
+ "critical_violations": [],
+ "delta_vs_fcf0385": "critical violations 4 (R-10,R-37,R-51,R-6) -> 0; 8 critical abstentions remain (R-5,R-6,R-26,R-29,R-34,R-40,R-48,R-51), each with an owner in message jn742kz2yqdnkyfxw8bpkasjfs8fjyhn"
+}

@@ -1,0 +1,19 @@
+{
+ "sha": "fcf03854062c77d8af8a171e212f933e512334ee",
+ "cli_commit": "60780e6",
+ "cli_mode": "npx tsx src/cli.ts (source)",
+ "exit_code": 1,
+ "critical_violations": [
+  "R-10",
+  "R-37",
+  "R-51",
+  "R-6"
+ ],
+ "cr1_doors": [
+  "okfBundleDurable:startOkfBundleExportDurable",
+  "okfBundleNode:exportOkfBundle",
+  "okfBundleNode:importOkfBundle"
+ ],
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) \u2014 4 CRITICAL violation(s) \u2014 revise mandatory, NO bypass. major violations=11, abstentions=16 (critical=6). engine exit=1.",
+ "delta_vs_e51637b": "verdict line identical (4 CRITICAL, major 11, abstentions 16); CR-1 FAIL-OPEN 3 unchanged = shape miss decided in task k17de04zbbxssq6rsf0nq316hs8fjwcj (bipolar 50/50, mutant 7 red); R-31 names agents.ts:343/352 renameAgent (#1421) \u2014 index-bounded by_parent/by_child (orgSlug,name), follow-up not a gate"
+}
