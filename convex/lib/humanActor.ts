@@ -1,6 +1,11 @@
+import {
+	isPersonActorName,
+	PERSON_ACTOR_PREFIX,
+	personActorName,
+	resolvePersonTenantAccess,
+} from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	assertMemberMayWrite,
 	loadMemberWriterRoles,
@@ -32,7 +37,8 @@ import { isRowVisibleToScope } from "./auth";
 // Order: eligibility, tenant, writer role, admin role (as the original gate).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const MEMBER_ACTOR_PREFIX = "user:";
+// The spelling and the reservation belong to @vantageos/cloud-identity.
+export const MEMBER_ACTOR_PREFIX = PERSON_ACTOR_PREFIX;
 export const ADMIN_ROLE = "org:admin";
 
 /**
@@ -43,12 +49,12 @@ export const ADMIN_ROLE = "org:admin";
  * agent can never be named so as to read as a person.
  */
 export function isHumanActorName(name: string): boolean {
-	return normalizeOrchestratorId(name).startsWith(MEMBER_ACTOR_PREFIX);
+	return isPersonActorName(name);
 }
 
 /** How a HUMAN org member is written down as "who did it" (verified subject only). */
 export function memberActorOf(scope: OrgScope): string {
-	return `${MEMBER_ACTOR_PREFIX}${scope.userId}`;
+	return personActorName(scope.userId);
 }
 
 /** The TENANT compare shared by every task write site (same predicate as the readers). */
@@ -76,8 +82,20 @@ export function assertRowVisibleToCaller(
 	rowId: string,
 	tenantOnly = false,
 ): void {
+	// tenantOnly: the organisation compare is the package's; the roster leg of
+	// `isRowVisibleToScope` is this backend's own and has nothing to compare on
+	// a row without an orchestrator field.
 	const visible = tenantOnly
-		? callerScope.orgSlug !== null && row.orgId === callerScope.orgSlug
+		? callerScope.orgSlug !== null &&
+			resolvePersonTenantAccess({
+				principal: {
+					subject: callerScope.userId,
+					orgSlug: callerScope.orgSlug,
+					actor: memberActorOf(callerScope),
+				},
+				rowOrgId: row.orgId,
+				door: kind,
+			}).ok
 		: isRowVisibleToScope(callerScope, row);
 	if (!visible) {
 		throw new ConvexError(

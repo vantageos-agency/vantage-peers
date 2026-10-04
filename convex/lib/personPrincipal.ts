@@ -1,3 +1,8 @@
+import {
+	checkPersonCallShape,
+	type PersonRefusal,
+	resolvePersonPrincipal,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { lookupOrgMapping, type OrgScope } from "./auth";
@@ -46,6 +51,15 @@ function refuse(reason: string, door: string, detail: string): never {
 	);
 }
 
+// The package's typed refusal, said in this backend's wire shape. The DECISION
+// is @vantageos/cloud-identity's; only the transport (a ConvexError carrying
+// its code as the prefix and {reason, door} as the payload) is local.
+function refuseWith(r: PersonRefusal): never {
+	throw new ConvexError(
+		`${r.code}: ${r.detail} — ${JSON.stringify({ reason: r.reason, door: r.door })}`,
+	);
+}
+
 /**
  * Returns `transportScope` unchanged when no `verifiedPerson` is carried.
  * Otherwise returns the PERSON's scope or throws RBAC_DENIED. Checks, in order:
@@ -77,63 +91,46 @@ export async function resolveVerifiedPerson(
 			"verifiedPerson is a transport-verified claim and is accepted only from the fleet service account",
 		);
 	}
-	if (opts.agentProof === true) {
-		refuse(
-			"agent-proof-on-person-path",
-			door,
-			"a person's call carries no agent credential and no verified actor",
-		);
-	}
-	if (opts.assertedName !== undefined) {
-		throw new ConvexError(
-			`PERSON_ACTS_AS_ITSELF: a person acts only in its own name; this call also names "${opts.assertedName}" — ${JSON.stringify({ reason: "person-acts-as-itself", door })}`,
-		);
-	}
+	const shape = checkPersonCallShape({
+		door,
+		...(opts.agentProof === true ? { agentProof: true } : {}),
+		...(opts.assertedName !== undefined
+			? { actingName: opts.assertedName }
+			: {}),
+	});
+	if (shape !== null) refuseWith(shape);
 
 	const row = await ctx.db
 		.query("oauth_access_tokens")
 		.withIndex("by_tokenHash", (q) => q.eq("tokenHash", proof.accessTokenHash))
 		.unique();
-	if (
-		row === null ||
-		row.revokedAt !== undefined ||
-		row.expiresAt < Date.now()
-	) {
-		refuse(
-			"person-token-not-live",
-			door,
-			"verifiedPerson names no live access token",
-		);
-	}
-	if (row.principal !== "person") {
-		refuse(
-			"not-a-person-token",
-			door,
-			"verifiedPerson names a token that does not act for a person",
-		);
-	}
-	const orgSlug = row.clerkOrgSlug;
-	if (orgSlug === undefined) {
-		refuse(
-			"person-token-no-org",
-			door,
-			"the person's token is bound to no organisation",
-		);
-	}
-	const mapping = await lookupOrgMapping(ctx, orgSlug);
-	if (mapping === null || !mapping.isActive) {
-		refuse(
-			"org-not-active",
-			door,
-			`Org "${orgSlug}" not in client_org_mapping or inactive`,
-		);
-	}
+	const resolved = await resolvePersonPrincipal(
+		row === null
+			? null
+			: {
+					subject: row.userId,
+					expiresAt: row.expiresAt,
+					...(row.principal !== undefined ? { principal: row.principal } : {}),
+					...(row.clerkOrgSlug !== undefined
+						? { orgSlug: row.clerkOrgSlug }
+						: {}),
+					...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
+					...(row.revokedAt !== undefined ? { revokedAt: row.revokedAt } : {}),
+				},
+		{
+			now: Date.now(),
+			lookupOrganisation: (slug) => lookupOrgMapping(ctx, slug),
+		},
+		door,
+	);
+	if (!resolved.ok) refuseWith(resolved.refusal);
+	const { principal, organisation: mapping } = resolved;
 	return {
-		userId: row.userId,
-		orgSlug,
+		userId: principal.subject,
+		orgSlug: principal.orgSlug,
 		allowedOrchestrators: mapping.allowedOrchestrators,
 		scopes: mapping.scopes,
 		isMaster: false,
-		...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
+		...(principal.orgRole !== undefined ? { orgRole: principal.orgRole } : {}),
 	};
 }

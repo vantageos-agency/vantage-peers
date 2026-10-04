@@ -28,8 +28,10 @@
  */
 
 import {
+	PERSON_ACTOR_PREFIX as CI_PERSON_ACTOR_PREFIX,
 	type OAuthCtx as PackageOAuthCtx,
 	isMasterScope as packageIsMasterScope,
+	personActorName,
 	validateMasterBearer,
 } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
@@ -484,7 +486,7 @@ export function isSeatActingAsItself(
  * (convex/lib/humanActor.ts MEMBER_ACTOR_PREFIX). Agent registration and seat
  * provisioning refuse a name with this prefix, so it never names an agent.
  */
-export const PERSON_ACTOR_PREFIX = "user:";
+export const PERSON_ACTOR_PREFIX = CI_PERSON_ACTOR_PREFIX;
 
 /**
  * The acting identity of a PERSON token, read from the token row the bearer
@@ -498,7 +500,7 @@ export function personActorOf(
 ): string | undefined {
 	if (ctx?.principal !== "person" || ctx.actor !== undefined) return undefined;
 	if (ctx.accessTokenHash === undefined || ctx.userId === "") return undefined;
-	return `${PERSON_ACTOR_PREFIX}${ctx.userId}`;
+	return personActorName(ctx.userId);
 }
 
 function agentCredentialRequired(claimedName: string): string {

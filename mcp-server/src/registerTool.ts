@@ -29,6 +29,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/server";
+import { resolvePersonActingName } from "@vantageos/cloud-identity";
 import { z } from "zod";
 import {
 	checkActorBinding,
@@ -39,11 +40,9 @@ import {
 	isMasterScope,
 	isUnattributedClaim,
 	type OAuthContext,
-	PERSON_ACTOR_PREFIX,
 	personActorOf,
 	recordUnattributedClaim,
 } from "./auth.js";
-import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scope declaration — a discriminated union. Every registration MUST pick one.
@@ -319,12 +318,21 @@ function bindPersonActingNames(
 	for (const key of keys) {
 		const claimed = args[key];
 		if (claimed === undefined || claimed === null) continue;
-		const name = normalizeOrchestratorId(String(claimed));
-		if (name === normalizeOrchestratorId(self)) {
+		// The own-name rule is @vantageos/cloud-identity's. No agent credential
+		// is passed: personActorOf is undefined for a person that presented one.
+		const decision = resolvePersonActingName({
+			principal: { actor: self },
+			claimedName: String(claimed),
+			door: toolName,
+		});
+		if (decision.ok) {
 			bound = { ...bound, [key]: undefined };
 			continue;
 		}
-		if (!name.startsWith(PERSON_ACTOR_PREFIX)) return null;
+		// An AGENT name: the agent rules decide (bindActingNames: the cutover
+		// mode, the seat exemption, AGENT_CREDENTIAL_REQUIRED) - they are this
+		// server's own and stay here.
+		if (decision.refusal.code !== "PERSON_ACTS_AS_ITSELF") return null;
 		return {
 			denied: mcpError(
 				`PERSON_ACTS_AS_ITSELF: ${toolName} names "${String(claimed)}" in ${key}, but this token acts for ${self} — a person acts only in its own name. Omit ${key} to act as yourself.`,
