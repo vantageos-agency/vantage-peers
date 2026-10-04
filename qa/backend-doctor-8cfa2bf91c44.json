@@ -1,0 +1,12 @@
+{
+ "sha": "8cfa2bf91c44379196bf00f99c686945da43812c",
+ "cli_commit": "npm @vantageos/backend-doctor@0.2.0",
+ "cli_mode": "published package (.bin)",
+ "convex_path": "git archive 8cfa2bf (full tree)",
+ "exit_code": 1,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) — 1 CRITICAL violation(s) — revise mandatory, NO bypass. major violations=9, abstentions=16 (critical=6). engine exit=1.",
+ "critical_violations": [
+  "R-6 convex/tasks.ts:2351 — authorizeTaskActor read gap, k17bsb5byvtr31vhk53v2pv8gx8fk0a4 (R-6 conform 68 / nc 1 / cnj 13; R-34 conform 2 / 0)"
+ ],
+ "operator_override": "Laurent direct order 2026-10-03: deploy dev, verify, then prod"
+}

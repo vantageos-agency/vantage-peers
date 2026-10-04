@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """enforce-work-under-task.py — no work without an active task; real durations.
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 Class of failure: work is driven through instruction-messages instead of tasks,
 so effort leaves no trace and no billable record; and where tasks exist, their
@@ -116,7 +116,7 @@ import re
 import sys
 import time
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 
 def workspace_root(start):
@@ -357,8 +357,43 @@ def _mcp_server_config():
     for servers in sources:
         server = servers.get(MCP_SERVER_NAME)
         if isinstance(server, dict) and server.get("url"):
-            return server["url"], dict(server.get("headers") or {})
+            headers = dict(server.get("headers") or {})
+            if server.get("headersHelper"):
+                headers.update(_run_headers_helper(server["headersHelper"], server["url"], root))
+            return server["url"], headers
     raise RuntimeError(f"no `{MCP_SERVER_NAME}` MCP server with a url in ~/.claude.json or .mcp.json")
+
+
+def _run_headers_helper(command, url, root):
+    """Headers produced by the server entry's `headersHelper`, the way Claude Code runs it.
+
+    The station's own helper is the only credential resolver: it is run through the
+    shell from the workspace root and its stdout must be a JSON object of string
+    headers. Any failure (missing, non-zero exit, timeout, not a JSON object) raises
+    RuntimeError naming the cause, so the caller refuses loudly instead of making an
+    unauthenticated call. Neither the output nor any header value is ever reported.
+    """
+    import subprocess
+
+    env = dict(os.environ, CLAUDE_CODE_MCP_SERVER_NAME=MCP_SERVER_NAME,
+               CLAUDE_CODE_MCP_SERVER_URL=url)
+    try:
+        proc = subprocess.run(command, shell=True, cwd=root, env=env, capture_output=True,
+                              text=True, timeout=FETCH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"headersHelper timed out after {FETCH_TIMEOUT_SECONDS}s")
+    except OSError as exc:
+        raise RuntimeError(f"headersHelper could not run: {type(exc).__name__}")
+    if proc.returncode != 0:
+        raise RuntimeError(f"headersHelper exited {proc.returncode}")
+    try:
+        produced = json.loads(proc.stdout)
+    except ValueError:
+        raise RuntimeError("headersHelper output is not JSON")
+    if not isinstance(produced, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in produced.items()):
+        raise RuntimeError("headersHelper output is not a JSON object of string headers")
+    return produced
 
 
 def fetch_task(task_id):

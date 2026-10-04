@@ -1,0 +1,12 @@
+{
+ "sha": "30e821b3d58f28212f97ff54e1bc7e51100dccdd",
+ "cli_commit": "0cd45e2",
+ "cli_mode": "npx tsx src/cli.ts (source)",
+ "convex_path": "git archive 30e821b convex .backend-doctor",
+ "exit_code": 1,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) — 1 CRITICAL violation(s) — revise mandatory, NO bypass. major violations=10, abstentions=18 (critical=7). engine exit=1.",
+ "critical_violations": [
+  "R-6 tasks.ts:2351 — authorizeTaskActor read gap, task k17bsb5byvtr31vhk53v2pv8gx8fk0a4"
+ ],
+ "operator_override": "Laurent direct order 2026-10-03: deploy dev, verify, then prod"
+}
