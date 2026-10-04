@@ -28,7 +28,7 @@
  * handler still runs).
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
 	checkActorBinding,
@@ -348,12 +348,12 @@ function bindPersonActingNames(
  * after the Day-159 revert of #1189/#1191): the MCP SDK parses
  * `request.params.arguments` against the tool's declared input schema in its
  * default (non-strict) mode BEFORE our handler ever runs
- * (@modelcontextprotocol/sdk server/mcp.js `validateToolInput` ->
- * `safeParseAsync`). Zod's default object mode silently STRIPS any key not
+ * (@modelcontextprotocol/server McpServer `validateToolInput` ->
+ * `validateStandardSchema`). Zod's default object mode silently STRIPS any key not
  * declared in the shape — an unrecognized parameter from a stale/frozen
  * client tool-list (or a typo) vanishes with zero signal, and the call still
  * returns success. `.strict()` makes zod reject the parse instead, and the
- * SDK surfaces that as a loud `McpError(InvalidParams, ...)` — before our
+ * SDK surfaces that as a loud `ProtocolError(InvalidParams, ...)` — before our
  * handler, before Convex — naming every unrecognized key by name (zod's
  * `unrecognized_keys` issue lists them verbatim).
  *
@@ -384,14 +384,13 @@ export function buildStrictInputSchema(
  * mis-parses it as `ToolAnnotations` and throws
  * `Tool <name> expected a Zod schema or ToolAnnotations, but received an
  * unrecognized object` at registration time — the server cannot boot. The
- * SDK's non-deprecated `server.registerTool(name, config, cb)` API accepts
- * `config.inputSchema` as EITHER a raw shape OR a full Zod schema instance
- * (see node_modules/@modelcontextprotocol/sdk dist server/mcp.js
- * `getZodSchemaObject`, which returns a schema instance as-is instead of
- * routing it through the raw-shape/annotations disambiguation). Handing the
- * strict schema to `registerTool` therefore both boots successfully AND
- * gets the strict validation applied by the SDK's own `validateToolInput`
- * before our handler runs.
+ * config-object `server.registerTool(name, config, cb)` API accepts
+ * `config.inputSchema` as a full schema instance. Since the move to
+ * @modelcontextprotocol/server 2.x the positional `.tool()` overload no longer
+ * exists at all and `registerTool` takes a Standard Schema object (a zod >= 4.2
+ * object qualifies). Handing the strict schema to `registerTool` therefore
+ * boots AND gets the strict validation applied by the SDK's own
+ * `validateToolInput` before our handler runs.
  */
 export function defineTool(
 	server: McpServer,
@@ -486,7 +485,16 @@ export function defineTool(
 			description,
 			inputSchema: strictSchema,
 			annotations: declaredAnnotations === undefined ? undefined : annotations,
-			...(outputSchema !== undefined ? { outputSchema } : {}),
+			// @modelcontextprotocol/server 2.x takes a Standard Schema object for
+			// outputSchema (raw shapes are not auto-wrapped there): wrap one here.
+			...(outputSchema !== undefined
+				? {
+						outputSchema:
+							outputSchema instanceof z.ZodType
+								? outputSchema
+								: z.object(outputSchema),
+					}
+				: {}),
 		},
 		guardedHandler,
 	);

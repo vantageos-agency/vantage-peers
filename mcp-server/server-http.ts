@@ -35,10 +35,10 @@
 
 import { readFileSync } from "node:fs";
 import {
+	createMcpHandler,
 	McpServer,
 	ResourceTemplate,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+} from "@modelcontextprotocol/server";
 import {
 	type AuthorizeOutcome,
 	buildDiscoveryDocument,
@@ -1854,54 +1854,62 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	// rationale per auth path.
 	const convex = selectConvexClientForRequest(tenant.convexUrl, oauthCtx);
 
-	// Fresh McpServer per request — stateless mode, no session leakage
-	const server = new McpServer({
-		name: "vantage-peers",
-		version: pkg.version,
-	});
+	// Fresh McpServer per request — stateless, no session leakage. The factory
+	// closes over THIS request's verified caller (oauthCtx) and its Convex
+	// client, so an instance never serves anyone else.
+	const buildServer = (): McpServer => {
+		const server = new McpServer({
+			name: "vantage-peers",
+			version: pkg.version,
+		});
 
-	registerTools(server, convex, oauthCtx);
+		registerTools(server, convex, oauthCtx);
 
-	// SEP-1865 ui:// resources for Generative UI primitives
-	// Uses McpServer.resource() high-level API with a ResourceTemplate so that
-	// resources/list (via listCallback) and resources/read both work.
-	// URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
-	const uiResourceTemplate = new ResourceTemplate("ui://vp/v1/{primitive}", {
-		list: async () => ({ resources: listUiResources() }),
-	});
-	server.resource(
-		"vp-ui",
-		uiResourceTemplate,
-		{
-			description:
-				"SEP-1865 VantagePeers Generative UI primitives (HTML inline, Shadow DOM scoped)",
-		},
-		async (uri) => {
-			const fetchConvex = async (
-				functionName: string,
-				args: Record<string, unknown>,
-			) => {
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				return convex.query(functionName as any, args as any);
-			};
-			// Day-165-parity — thread the caller identity into the ui-resource
-			// primitives the same way tools.ts does (mirrors the
-			// master/callerIdentities computation at tools.ts:5712/5808/5934), so
-			// briefingNotes:get/list resolve visibility inside Convex instead of
-			// falling into the `callerIdentities === undefined` legacy-open branch.
-			const master = oauthCtx === undefined || isMasterScope(oauthCtx);
-			const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
-			return await readUiResource(uri.toString(), fetchConvex, {
-				master,
-				callerIdentities,
-			});
-		},
-	);
+		// SEP-1865 ui:// resources for Generative UI primitives
+		// Registered with a ResourceTemplate so that resources/list (via
+		// listCallback) and resources/read both work.
+		// URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
+		const uiResourceTemplate = new ResourceTemplate("ui://vp/v1/{primitive}", {
+			list: async () => ({ resources: listUiResources() }),
+		});
+		server.registerResource(
+			"vp-ui",
+			uiResourceTemplate,
+			{
+				description:
+					"SEP-1865 VantagePeers Generative UI primitives (HTML inline, Shadow DOM scoped)",
+			},
+			async (uri) => {
+				const fetchConvex = async (
+					functionName: string,
+					args: Record<string, unknown>,
+				) => {
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					return convex.query(functionName as any, args as any);
+				};
+				// Day-165-parity — thread the caller identity into the ui-resource
+				// primitives the same way tools.ts does (mirrors the
+				// master/callerIdentities computation at tools.ts:5712/5808/5934), so
+				// briefingNotes:get/list resolve visibility inside Convex instead of
+				// falling into the `callerIdentities === undefined` legacy-open branch.
+				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+				return await readUiResource(uri.toString(), fetchConvex, {
+					master,
+					callerIdentities,
+				});
+			},
+		);
+		return server;
+	};
 
-	const transport = new WebStandardStreamableHTTPServerTransport();
-	await server.connect(transport);
-
-	return transport.handleRequest(c.req.raw);
+	// createMcpHandler (@modelcontextprotocol/server) serves BOTH protocol eras
+	// from the one factory: a 2026-07-28 request (per-request `_meta` envelope,
+	// `server/discover`) on the modern leg, and a 2025-era request (`initialize`,
+	// then plain JSON-RPC) through its default `legacy: "stateless"` leg — the
+	// same stateless streamable-HTTP serving this route did before. The handler
+	// is per request because the factory is: it carries this caller only.
+	return createMcpHandler(buildServer).fetch(c.req.raw);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

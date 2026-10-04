@@ -11,14 +11,14 @@
  *   - 1,000 bytes           → pass (baseline)
  *   - 899,999 bytes         → pass (edge, one below the ceiling)
  *   - 900,000 bytes         → pass (edge, exactly at the ceiling — inclusive)
- *   - 900,001 bytes         → fail with specific InvalidParams McpError
- *   - 1,500,000 bytes       → fail with specific InvalidParams McpError
+ *   - 900,001 bytes         → fail with specific InvalidParams ProtocolError
+ *   - 1,500,000 bytes       → fail with specific InvalidParams ProtocolError
  *
  * We also verify the error message shape (byte count + remediation hint +
  * InvalidParams error code) because the MCP client relies on it for triage.
  */
 
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { assertContentSize, MAX_CONTENT_BYTES } from "../tools.js";
 
@@ -69,17 +69,17 @@ describe("assertContentSize — accept path", () => {
 });
 
 describe("assertContentSize — reject path", () => {
-	it("rejects 900,001 bytes with InvalidParams McpError", () => {
+	it("rejects 900,001 bytes with InvalidParams ProtocolError", () => {
 		const content = "a".repeat(900_001);
 		expect(() => assertContentSize(content, "create_briefing_note")).toThrow(
-			McpError,
+			ProtocolError,
 		);
 		try {
 			assertContentSize(content, "create_briefing_note");
 		} catch (error) {
-			expect(error).toBeInstanceOf(McpError);
-			const mcpErr = error as McpError;
-			expect(mcpErr.code).toBe(ErrorCode.InvalidParams);
+			expect(error).toBeInstanceOf(ProtocolError);
+			const mcpErr = error as ProtocolError;
+			expect(mcpErr.code).toBe(ProtocolErrorCode.InvalidParams);
 			expect(mcpErr.message).toContain("900001 bytes");
 			expect(mcpErr.message).toContain("max 900000 bytes");
 			expect(mcpErr.message).toContain("create_briefing_note");
@@ -87,17 +87,17 @@ describe("assertContentSize — reject path", () => {
 		}
 	});
 
-	it("rejects 1,500,000 bytes (extreme oversize) with InvalidParams McpError", () => {
+	it("rejects 1,500,000 bytes (extreme oversize) with InvalidParams ProtocolError", () => {
 		const content = "a".repeat(1_500_000);
 		expect(() => assertContentSize(content, "create_briefing_note")).toThrow(
-			McpError,
+			ProtocolError,
 		);
 		try {
 			assertContentSize(content, "create_briefing_note");
 		} catch (error) {
-			expect(error).toBeInstanceOf(McpError);
-			const mcpErr = error as McpError;
-			expect(mcpErr.code).toBe(ErrorCode.InvalidParams);
+			expect(error).toBeInstanceOf(ProtocolError);
+			const mcpErr = error as ProtocolError;
+			expect(mcpErr.code).toBe(ProtocolErrorCode.InvalidParams);
 			expect(mcpErr.message).toContain("1500000 bytes");
 		}
 	});
@@ -105,12 +105,14 @@ describe("assertContentSize — reject path", () => {
 	it("rejects oversized UTF-8 content based on byte count, not char count", () => {
 		// 450_001 × "é" = 900_002 bytes, just over the ceiling.
 		const content = "é".repeat(450_001);
-		expect(() => assertContentSize(content, "write_diary")).toThrow(McpError);
+		expect(() => assertContentSize(content, "write_diary")).toThrow(
+			ProtocolError,
+		);
 		try {
 			assertContentSize(content, "write_diary");
 		} catch (error) {
-			const mcpErr = error as McpError;
-			expect(mcpErr.code).toBe(ErrorCode.InvalidParams);
+			const mcpErr = error as ProtocolError;
+			expect(mcpErr.code).toBe(ProtocolErrorCode.InvalidParams);
 			expect(mcpErr.message).toContain("900002 bytes");
 			expect(mcpErr.message).toContain("write_diary");
 		}
@@ -129,8 +131,8 @@ describe("assertContentSize — reject path", () => {
 				assertContentSize(content, tool);
 				throw new Error("expected assertContentSize to throw");
 			} catch (error) {
-				expect(error).toBeInstanceOf(McpError);
-				expect((error as McpError).message).toContain(tool);
+				expect(error).toBeInstanceOf(ProtocolError);
+				expect((error as ProtocolError).message).toContain(tool);
 			}
 		}
 	});

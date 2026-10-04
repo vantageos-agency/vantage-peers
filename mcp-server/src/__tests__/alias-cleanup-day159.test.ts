@@ -16,7 +16,7 @@
 //   S1-arbitrated-pairs-day159.md
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it } from "vitest";
 import { registerTools } from "../tools.js";

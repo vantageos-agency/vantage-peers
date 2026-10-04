@@ -19,13 +19,10 @@
 // Mission: k571gcctka8mq5jbkgpj0a0b2n892ctg (Bloc A, audit section 27)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import {
-	RECALL_TOOL_DESCRIPTION,
-	registerTools,
-} from "../tools.js";
+import { RECALL_TOOL_DESCRIPTION, registerTools } from "../tools.js";
 
 // ─── Harness ─────────────────────────────────────────────────────────────────
 // Reuses the same fake-server pattern from chatgpt-tool-annotations.test.ts.

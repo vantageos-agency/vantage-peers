@@ -31,8 +31,8 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-27
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
@@ -154,15 +154,15 @@ export function registerKbIngestTools(
 	const resolveOrgContext = (): { orgId: string; namespacePrefix: string } => {
 		if (!oauthCtx || oauthCtx.isMaster) {
 			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
-			throw new McpError(
-				ErrorCode.InvalidRequest,
+			throw new ProtocolError(
+				ProtocolErrorCode.InvalidRequest,
 				"AUTH_NO_ORG_ID: store_document_chunked requires a Clerk JWT with org_id claim (team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.",
 			);
 		}
 		const prefix = oauthCtx.namespaceWritePrefixes[0];
 		if (!prefix || !/^team\/[^/]+$/.test(prefix)) {
-			throw new McpError(
-				ErrorCode.InvalidRequest,
+			throw new ProtocolError(
+				ProtocolErrorCode.InvalidRequest,
 				`AUTH_NO_ORG_ID: oauthCtx.namespaceWritePrefixes[0] = '${prefix ?? ""}' does not match ^team\\/[^/]+$ — cannot derive orgId for KB ingest.`,
 			);
 		}
@@ -219,7 +219,7 @@ export function registerKbIngestTools(
 					],
 				};
 			} catch (error: unknown) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[store_document_chunked] action failed", {
 					storageId,
@@ -227,7 +227,7 @@ export function registerKbIngestTools(
 					filename,
 					errorMessage: message,
 				});
-				throw new McpError(ErrorCode.InternalError, message);
+				throw new ProtocolError(ProtocolErrorCode.InternalError, message);
 			}
 		},
 	);
@@ -268,13 +268,13 @@ export function registerKbIngestTools(
 					],
 				};
 			} catch (error: unknown) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[soft_delete_document] action failed", {
 					docId,
 					errorMessage: message,
 				});
-				throw new McpError(ErrorCode.InternalError, message);
+				throw new ProtocolError(ProtocolErrorCode.InternalError, message);
 			}
 		},
 	);
@@ -311,12 +311,12 @@ export function registerKbIngestTools(
 					],
 				};
 			} catch (error: unknown) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[generate_upload_url] mutation failed", {
 					errorMessage: message,
 				});
-				throw new McpError(ErrorCode.InternalError, message);
+				throw new ProtocolError(ProtocolErrorCode.InternalError, message);
 			}
 		},
 	);

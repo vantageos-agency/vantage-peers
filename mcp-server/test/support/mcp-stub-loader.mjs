@@ -8,7 +8,7 @@
 // mcp-server/test/tool-exposure.test.ts.
 
 const STUBS = {
-	"@modelcontextprotocol/sdk/server/mcp.js": `
+	"@modelcontextprotocol/server": `
 		globalThis.__VP_TOOLS__ = globalThis.__VP_TOOLS__ || [];
 		export class McpServer {
 			constructor() {}
@@ -38,9 +38,29 @@ const STUBS = {
 			}
 			async connect() {}
 		}
+		// tools.ts and the OKF/KB tool modules import the error class + codes
+		// from the same package; registration never throws them.
+		export class ProtocolError extends Error {
+			constructor(code, message, data) {
+				super(message);
+				this.code = code;
+				this.data = data;
+			}
+		}
+		export const ProtocolErrorCode = {
+			InvalidRequest: -32600,
+			InvalidParams: -32602,
+			InternalError: -32603,
+		};
+		export class ResourceTemplate {}
 	`,
-	"@modelcontextprotocol/sdk/server/stdio.js": `
-		export class StdioServerTransport {}
+	// serveStdio builds the pinned instance when a client opens the
+	// connection; the stub opens one immediately so registration is recorded.
+	"@modelcontextprotocol/server/stdio": `
+		export function serveStdio(factory) {
+			factory({ era: "legacy" });
+			return { close: async () => {} };
+		}
 	`,
 	"convex/browser": `
 		export class ConvexHttpClient {
@@ -53,7 +73,7 @@ const STUBS = {
 };
 
 export async function resolve(specifier, context, nextResolve) {
-	if (Object.prototype.hasOwnProperty.call(STUBS, specifier)) {
+	if (Object.hasOwn(STUBS, specifier)) {
 		return { url: `vp-stub:${specifier}`, shortCircuit: true };
 	}
 	return nextResolve(specifier, context);

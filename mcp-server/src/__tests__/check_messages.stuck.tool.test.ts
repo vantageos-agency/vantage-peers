@@ -14,11 +14,11 @@
  *   - not revive pendingOnYou
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ConvexHttpClient } from "convex/browser";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { McpServer } from "@modelcontextprotocol/server";
+import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
 import type { OAuthContext } from "../auth.js";
 import { asCappedStuckList, registerTools } from "../tools.js";
@@ -143,7 +143,12 @@ describe("asCappedStuckList", () => {
 	it("object truncated with empty entries is still a cap signal", () => {
 		expect(
 			asCappedStuckList({ entries: [], total: 0, truncated: true }),
-		).toEqual({ entries: [], total: 0, truncated: true, actionableStuckCount: 0 });
+		).toEqual({
+			entries: [],
+			total: 0,
+			truncated: true,
+			actionableStuckCount: 0,
+		});
 	});
 
 	it("object shape carries actionableStuckCount through when present", () => {

@@ -18,8 +18,8 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
@@ -156,7 +156,7 @@ export function registerExportOkfBundle(
 					],
 				};
 			} catch (error: unknown) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				const message = error instanceof Error ? error.message : String(error);
 				// Surface structured OKF_* error codes verbatim — the action emits
 				// them as prefix tokens in the Error message.
@@ -165,7 +165,7 @@ export function registerExportOkfBundle(
 					format,
 					errorMessage: message,
 				});
-				throw new McpError(ErrorCode.InternalError, message);
+				throw new ProtocolError(ProtocolErrorCode.InternalError, message);
 			}
 		},
 	);

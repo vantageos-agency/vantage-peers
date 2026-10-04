@@ -25,7 +25,7 @@
  * VP task k1794r6q329q1s36pz4zzjnpvd87zfbn, mission k57c7s478gw1a3e5gmhdeptg5n87z78n.
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
 import { LOCAL_STDIO_TRUST_CTX } from "../src/auth.js";

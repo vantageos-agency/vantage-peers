@@ -11,8 +11,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
@@ -121,7 +121,7 @@ function appendMarkerIfEnabled(
 export const MAX_CONTENT_BYTES = 900_000;
 
 /**
- * Measure a string's UTF-8 byte length and throw an McpError if it exceeds
+ * Measure a string's UTF-8 byte length and throw an ProtocolError if it exceeds
  * MAX_CONTENT_BYTES. Returns the byte count on success so callers can reuse
  * it for observability in the catch path.
  *
@@ -131,8 +131,8 @@ export const MAX_CONTENT_BYTES = 900_000;
 export function assertContentSize(content: string, toolName: string): number {
 	const contentBytes = new TextEncoder().encode(content).length;
 	if (contentBytes > MAX_CONTENT_BYTES) {
-		throw new McpError(
-			ErrorCode.InvalidParams,
+		throw new ProtocolError(
+			ProtocolErrorCode.InvalidParams,
 			`[${toolName}] Content too large: ${contentBytes} bytes, max ${MAX_CONTENT_BYTES} bytes (~${Math.floor(
 				MAX_CONTENT_BYTES / 6,
 			)} words). Use deliverable .md file pattern for large content (commit to repo + reference from ${toolName}).`,
@@ -1851,22 +1851,15 @@ export function registerTools(
 	convex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
 ): void {
-	// Intercept EVERY server.tool(...) / server.registerTool(...) call made
-	// below (directly or through defineTool()/registerExportOkfBundle()/
-	// registerImportOkfBundle()/registerKbIngestTools()/
-	// registerValidateOkfBundle() — they all receive this same `server`
-	// instance) so only CORE names are actually advertised.
+	// Intercept EVERY server.registerTool(...) call made below (directly or
+	// through defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
+	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive
+	// this same `server` instance) so only CORE names are actually advertised.
 	//
-	// Both entry points are intercepted because defineTool() registers
-	// through `server.registerTool(name, config, cb)` (the config-object API,
-	// not the deprecated positional `server.tool(...)` overload) — this is
-	// the Day-159 incident fix: a `.strict()` Zod schema instance fails the
-	// legacy `tool()` overload's raw-shape/annotations disambiguation and
-	// crashes the server at boot (see registerTool.ts `defineTool` doc
-	// comment). `registerTool` accepts a schema instance directly. Any
-	// call site still using the legacy `.tool(...)` overload is masked too,
-	// so this interception layer holds regardless of which entry point a
-	// given registration helper uses.
+	// registerTool is the only registration entry: defineTool() registers
+	// through the config-object API (the Day-159 incident fix, see
+	// registerTool.ts `defineTool` doc comment), and @modelcontextprotocol/server
+	// 2.x removed the positional `server.tool(...)` overload altogether.
 	//
 	// The registration itself always goes through — the tool stays fully
 	// present in the code + handler wiring (masking ≠ deletion; a non-CORE
@@ -1890,13 +1883,6 @@ export function registerTools(
 			(registered as { disable: () => void }).disable();
 		}
 		return registered;
-	};
-	const realTool = server.tool.bind(server);
-	// biome-ignore lint/suspicious/noExplicitAny: narrowing the overloaded McpServer#tool signature for interception.
-	(server as any).tool = (name: string, ...rest: unknown[]) => {
-		// @ts-expect-error — forwarding to the real overloaded signature.
-		const registered = realTool(name, ...rest);
-		return maskIfNotCore(name, registered);
 	};
 	const realRegisterTool = server.registerTool.bind(server);
 	// biome-ignore lint/suspicious/noExplicitAny: narrowing the overloaded McpServer#registerTool signature for interception.
@@ -2093,7 +2079,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				console.error("[store_memory] mutation failed", {
 					contentBytes,
 					namespace,
@@ -3168,8 +3154,8 @@ export function registerTools(
 					});
 				} catch (tokenError) {
 					if (tokenError instanceof StateTokenError) {
-						throw new McpError(
-							ErrorCode.InvalidParams,
+						throw new ProtocolError(
+							ProtocolErrorCode.InvalidParams,
 							`ÉTAT NON RÉSOLU — send_message aborted, nothing was sent: ${tokenError.message}`,
 						);
 					}
@@ -3206,8 +3192,8 @@ export function registerTools(
 					});
 				} catch (guardError) {
 					if (guardError instanceof FreshStateGuardError) {
-						throw new McpError(
-							ErrorCode.InvalidParams,
+						throw new ProtocolError(
+							ProtocolErrorCode.InvalidParams,
 							`ÉTAT PÉRIMÉ — send_message aborted, nothing was sent: ${guardError.message}`,
 						);
 					}
@@ -3263,7 +3249,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				console.error("[send_message] mutation failed", {
 					contentBytes,
 					from,
@@ -6063,7 +6049,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				console.error("[write_diary] mutation failed", {
 					contentBytes,
 					date,
@@ -6354,7 +6340,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				console.error("[create_briefing_note] mutation failed", {
 					contentBytes,
 					fromOrchestrator: createdBy,
@@ -6424,7 +6410,7 @@ export function registerTools(
 					],
 				};
 			} catch (error: any) {
-				if (error instanceof McpError) throw error;
+				if (error instanceof ProtocolError) throw error;
 				console.error("[update_briefing_note] mutation failed", {
 					contentBytes,
 					callerOrchestrator,

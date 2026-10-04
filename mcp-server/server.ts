@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * VantagePeers MCP Server — stdio transport (Self-host / local Claude Code path).
  *
@@ -19,12 +20,12 @@
  * See README.md for the full tool reference.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
+import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
 import { registerTools } from "./src/tools.js";
 
 // Advertised version is derived from the manifest, same pattern as
@@ -83,22 +84,28 @@ const convexUrl = loadConvexUrl();
 // the local-trust posture claimed below, now backed by an actual identity.
 const convex = createServiceAccountConvexClient(convexUrl);
 
-const server = new McpServer({
-	name: "vantage-peers",
-	version: pkg.version,
-});
-
 // stdio runs on the operator's own machine against their own CONVEX_URL, so it
 // is trusted with full LOCAL authority. That authority is now PRESENTED as an
 // explicit, named context (LOCAL_STDIO_TRUST_CTX) rather than inferred from an
 // absent oauthCtx — the scope guards in registerTools refuse on undefined, so
 // the missing-argument path is no longer a max-authority backdoor
 // (.claude/rules/one-identity-layer.md clause 3).
-registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
+function buildServer(): McpServer {
+	const server = new McpServer({
+		name: "vantage-peers",
+		version: pkg.version,
+	});
+	registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
+	return server;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Start server on stdio transport
+// Start server on stdio
 // ─────────────────────────────────────────────────────────────────────────────
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+// serveStdio (@modelcontextprotocol/server/stdio) owns the era decision for the
+// connection: a 2026-07-28 client opens with `server/discover`, a 2025-era
+// client with `initialize`, and ONE instance from buildServer() is pinned for
+// the connection either way. A hand-wired `server.connect(StdioServerTransport)`
+// would serve the 2025 era only.
+serveStdio(buildServer);
