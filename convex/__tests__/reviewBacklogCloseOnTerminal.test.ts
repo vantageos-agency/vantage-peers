@@ -187,6 +187,7 @@ describe("GREEN — closeReviewTasksForPr closes the automation-lineage row, key
 			internal.tasks.createOrUpdateReviewTask,
 			reviewArgs("elpiarthera/vantage-memory", 2006, "hand-closed"),
 		);
+		if (taskId === null) throw new Error("reviewer unresolved in fixture");
 		await t.run(async (ctx) =>
 			ctx.db.patch(taskId, {
 				status: "done" as const,

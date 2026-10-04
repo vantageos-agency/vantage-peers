@@ -29,6 +29,7 @@ import {
 	assertTaskVisibleToCaller,
 	resolveHumanActor,
 } from "./lib/humanActor";
+import { mayReassignReviewTask, repoOwner, resolveReviewer } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
@@ -294,12 +295,12 @@ async function authorizeTaskActor(
 	taskId: string,
 	callerScope: OrgScope,
 	door: string,
-	opts?: { adminOnly?: boolean },
+	opts?: { adminOnly?: boolean; reviewReassignGranted?: boolean },
 ): Promise<string | undefined> {
 	if (callerOrchestrator === undefined) {
 		return await resolveHumanActor(ctx, callerScope, { door, task, taskId, adminOnly: opts?.adminOnly });
 	}
-	return assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope);
+	return assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope, opts?.reviewReassignGranted);
 }
 
 function assertTaskCallerAuthorized(
@@ -313,6 +314,7 @@ function assertTaskCallerAuthorized(
 	callerOrchestrator: string | undefined,
 	taskId: string,
 	callerScope: OrgScope,
+	reviewReassignGranted?: boolean,
 ): undefined {
 	if (callerOrchestrator === undefined) {
 		// Omitting the caller REFUSES here. The human member-acting path is not
@@ -339,7 +341,8 @@ function assertTaskCallerAuthorized(
 		task.createdBy === callerOrchestrator ||
 		task.assignedTo === callerOrchestrator ||
 		isFleetSystemCaller(callerScope, callerOrchestrator) ||
-		isReviewerReclaim;
+		isReviewerReclaim ||
+		reviewReassignGranted === true;
 	if (!isAuthorized) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, taskId })}`,
@@ -1742,7 +1745,38 @@ export const update = mutation({
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
-		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update");
+		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
+		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
+		// creator, so nobody could move it off a stopped reviewer. The coordinator
+		// (taskClosureConfig "reviewCoordinators") or the repo's owner orchestrator
+		// may change ONLY assignedTo (and its instance pin) on such a row. Every
+		// other task, every other field, every other caller: unchanged.
+		const nonReassignFields = Object.entries(fields).filter(
+			([k, val]) => val !== undefined && k !== "assignedTo" && k !== "assignedToInstance",
+		);
+		const reviewReassignGranted =
+			callerOrchestrator !== undefined &&
+			task.origin === "automation" &&
+			task.isReviewTask === true &&
+			fields.assignedTo !== undefined &&
+			nonReassignFields.length === 0 &&
+			(await mayReassignReviewTask(ctx, callerOrchestrator, task.reviewPrRepoFullName));
+		// A delivery is never reviewed by its author: the grant refuses a target
+		// equal to the repo's own orchestrator, for every caller (coordinator
+		// included). The row's own creator/assignee keep the ordinary path.
+		if (
+			reviewReassignGranted &&
+			fields.assignedTo !== undefined &&
+			callerOrchestrator !== task.assignedTo &&
+			callerOrchestrator !== task.createdBy &&
+			(await repoOwner(ctx, task.reviewPrRepoFullName)) ===
+				fields.assignedTo.trim().toLowerCase()
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: ${callerOrchestrator} may not assign review task ${taskId} to ${fields.assignedTo} — it is the repo's own orchestrator (the author); a delivery is never reviewed by its author — ${JSON.stringify({ caller: callerOrchestrator, taskId, assignedTo: fields.assignedTo })}`,
+			);
+		}
+		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", { reviewReassignGranted });
 
 		// An ASSIGNMENT target is not an asserted caller name, so the caller
 		// lock above does not cover it: without this, the cross-org assignment
@@ -4658,13 +4692,17 @@ export const createOrUpdateReviewTask = internalMutation({
 		prNumber: v.number(),
 		prTitle: v.string(),
 		description: v.optional(v.string()),
-		assignedTo: assigneeValidator,
+		// Optional explicit override. Absent (the webhook path) = the reviewer is
+		// resolved from data, liveness-aware (convex/lib/reviewRouting.ts).
+		assignedTo: v.optional(assigneeValidator),
 		project: v.optional(v.string()),
 		priority: priorityValidator,
 		createdBy: creatorValidator,
 		tags: v.optional(v.array(v.string())),
 	},
-	returns: v.id("tasks"),
+	// null = REVIEWER_UNRESOLVED: nothing was inserted (see resolveReviewer).
+	// An already-open task is still updated in place and its id returned.
+	returns: v.union(v.id("tasks"), v.null()),
 	handler: async (ctx, args) => {
 		const title = `[Review] ${args.repoFullName} PR #${args.prNumber}: ${args.prTitle}`;
 		const now = Date.now();
@@ -4701,11 +4739,17 @@ export const createOrUpdateReviewTask = internalMutation({
 			return target._id;
 		}
 
+		const assignedTo =
+			args.assignedTo ?? (await resolveReviewer(ctx, args.repoFullName)).assignee;
+		// REVIEWER_UNRESOLVED: no task is created — never one on the author.
+		// The caller (convex/http.ts) surfaces it to the coordinator channel(s).
+		if (assignedTo === null) return null;
+
 		return await ctx.db.insert("tasks", {
 			title,
 			description: args.description,
 			project: args.project,
-			assignedTo: args.assignedTo,
+			assignedTo,
 			priority: args.priority,
 			status: "todo" as const,
 			createdBy: args.createdBy,

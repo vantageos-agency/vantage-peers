@@ -47,7 +47,13 @@ const createT = async () => {
 			project: "vantage-peers",
 			active: true,
 		});
-		// The PR opened/synchronize handler notifies "eta" (hardcoded, http.ts)
+		// The reviewer is DATA (reviewRouting): the fleet default is eta.
+		await ctx.db.insert("taskClosureConfig", {
+			key: "reviewerDefault",
+			value: ["eta"],
+			updatedAt: Date.now(),
+		});
+		// The PR opened/synchronize handler notifies the resolved reviewer, eta here
 		// and the merged-PR path notifies "sigma" (the mapped orchestrator) via
 		// messages.sendMessage — real recipients are now derived from the
 		// `profiles` table (task k17dr97dwpe07n9zfgzzypkfm18bv6ws bounce fix).

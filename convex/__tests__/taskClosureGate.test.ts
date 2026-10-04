@@ -304,6 +304,7 @@ describe("task closure gate — automation-created tasks exempt (Day 130 follow-
 			priority: "high" as const,
 			createdBy: "system",
 		});
+		if (taskId === null) throw new Error("reviewer unresolved in fixture");
 
 		await t.mutation(api.tasks.complete, {
 			taskId,
@@ -328,6 +329,7 @@ describe("task closure gate — automation-created tasks exempt (Day 130 follow-
 			priority: "high" as const,
 			createdBy: "system",
 		});
+		if (taskId === null) throw new Error("reviewer unresolved in fixture");
 
 		await t.mutation(api.tasks.update, {
 			taskId,

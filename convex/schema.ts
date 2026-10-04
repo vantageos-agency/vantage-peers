@@ -817,6 +817,12 @@ export default defineSchema({
 		active: v.boolean(),
 		lastDeployedSHA: v.optional(v.string()), // Day 98 — most recent prod-deployed commit OID
 		lastDeployedAt: v.optional(v.number()), // Day 98 — Unix ms timestamp of that deploy
+		// Review routing (k17b5btg6cr9t9824tndte3w2s8fmzx1) — who reviews this
+		// repo's PRs, as DATA. Both optional; absent = the fleet default in
+		// taskClosureConfig ("reviewerDefault"/"reviewerFallback"). See
+		// convex/lib/reviewRouting.ts.
+		reviewer: v.optional(v.string()),
+		fallbackReviewer: v.optional(v.string()),
 	})
 		.index("by_repo", ["repo"])
 		// Issue #1276 fix — `resolveStaleDeployTasks` (convex/tasks.ts) used to

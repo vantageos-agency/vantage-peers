@@ -18,15 +18,9 @@ type CreatorLiteral =
 	| "eta"
 	| "system";
 
-type AssigneeLiteral =
-	| "pi"
-	| "tau"
-	| "phi"
-	| "sigma"
-	| "omega"
-	| "zeta"
-	| "eta"
-	| "laurent";
+// Open string: assignees are DATA (roster / reviewer config), never a closed
+// list of names in routing code.
+type AssigneeLiteral = string;
 
 const http = httpRouter();
 
@@ -98,6 +92,25 @@ http.route({
 		const orchestrator = mapping.orchestrator as CreatorLiteral;
 		const orchestratorAssignee = mapping.orchestrator as AssigneeLiteral;
 		const project = mapping.project;
+
+		// REVIEWER_UNRESOLVED surfacing: system message to each coordinator in
+		// taskClosureConfig "reviewCoordinators"; with none configured, console.error
+		// only (no hardcoded channel).
+		const notifyReviewerUnresolved = async (subject: string): Promise<void> => {
+			const text = `REVIEWER_UNRESOLVED: no usable reviewer for ${subject} (none configured, or the reviewer is the repo's own orchestrator). No review task was created. Set githubRepoMapping.reviewer or taskClosureConfig reviewerDefault.`;
+			const coordinators = await ctx.runQuery(internal.reviewRouting.coordinators, {});
+			if (coordinators.length === 0) {
+				console.error(text);
+				return;
+			}
+			for (const channel of coordinators) {
+				await ctx.runMutation(internal.messages.sendMessageInternal, {
+					from: "system",
+					channel,
+					content: text,
+				});
+			}
+		};
 
 		// 5. Handle events
 
@@ -237,7 +250,22 @@ http.route({
 				for (let i = 0; i < template.steps.length; i++) {
 					const step = template.steps[i];
 					const isLastStep = i === template.steps.length - 1;
-					const assignee: AssigneeLiteral = isLastStep ? "eta" : orchestratorAssignee;
+					// The last step is the review step: its assignee is the configured
+					// reviewer (liveness-aware), never a constant.
+					let assignee: AssigneeLiteral = orchestratorAssignee;
+					if (isLastStep) {
+						const reviewer = await ctx.runQuery(internal.reviewRouting.resolveForRepo, {
+							repo: repoFullName,
+						});
+						if (reviewer === null) {
+							// REVIEWER_UNRESOLVED: no review step is created on the author.
+							await notifyReviewerUnresolved(
+								`${repoFullName} issue #${issue.number as number} (review step T${i})`,
+							);
+							continue;
+						}
+						assignee = reviewer;
+					}
 
 					await ctx.runMutation(internal.tasks.createForWebhook, {
 						title: `[#${issue.number as number}] T${i} — ${step.title}`,
@@ -461,22 +489,32 @@ http.route({
 			// UPDATES the existing open review task in place instead of spawning
 			// a duplicate (measured live: PR #1073 had 4 copies from 1 open + 3
 			// pushes before this fix).
-			await ctx.runMutation(internal.tasks.createOrUpdateReviewTask, {
+			// Reviewer + liveness are resolved from data inside the mutation
+			// (convex/lib/reviewRouting.ts) — no assignee is passed from here.
+			const reviewTaskId: Id<"tasks"> | null = await ctx.runMutation(internal.tasks.createOrUpdateReviewTask, {
 				repoFullName,
 				prNumber: pr.number as number,
 				prTitle: pr.title as string,
 				description: `${actionLabel} by ${(pr.user as Record<string, unknown>)?.login as string ?? "unknown"}.\n\nBranch: ${(pr.head as Record<string, unknown>)?.ref as string}\nDiff: ${pr.html_url as string}/files\nURL: ${pr.html_url as string}\n\nReview required: check for bugs, conventions, test coverage, security.`,
-				assignedTo: "eta",
 				project,
 				priority: "high",
 				createdBy: "system",
 				tags: ["github", "pr-review", action as string],
 			});
 
-			// Notify Eta
+			if (reviewTaskId === null) {
+				// REVIEWER_UNRESOLVED: nothing was created; say so, visibly.
+				await notifyReviewerUnresolved(`${repoFullName} PR #${pr.number as number}`);
+				return new Response("OK - reviewer unresolved", { status: 200 });
+			}
+
+			// Notify the reviewer the task actually landed on.
+			const reviewTask = await ctx.runQuery(internal.tasks.getByIdForWebhook, {
+				taskId: reviewTaskId,
+			});
 			await ctx.runMutation(internal.messages.sendMessageInternal, {
 				from: "system",
-				channel: "eta",
+				channel: reviewTask?.assignedTo ?? orchestrator,
 				content: `[GitHub] ${actionLabel}: ${repoFullName} PR #${pr.number as number} by ${(pr.user as Record<string, unknown>)?.login as string ?? "unknown"}: ${pr.title as string} — ${pr.html_url as string}`,
 			});
 		}
@@ -684,7 +722,7 @@ http.route({
 // Response 200 {valid: true, taskId, completedAt, noteExcerpt} when:
 //   - master bearer valid (constant-time compare)
 //   - task exists
-//   - task.assignedTo === "eta"
+//   - task.assignedTo is in the configured reviewer set (reviewer + fallback)
 //   - task.status === "done"
 //   - task.completionNote contains expectedSha (case-insensitive substring)
 //
@@ -763,7 +801,12 @@ http.route({
 		if (!task) {
 			return Response.json({ valid: false, reason: "task-not-found" });
 		}
-		if (task.assignedTo !== "eta") {
+		// Approver must be in the CONFIGURED reviewer set (reviewer + fallback,
+		// fleet and per-repo). Empty set (nothing configured) refuses: fail closed.
+		const acceptedReviewers = await ctx.runQuery(internal.reviewRouting.acceptedForRepo, {
+			repo: task.reviewPrRepoFullName,
+		});
+		if (!acceptedReviewers.includes((task.assignedTo ?? "").trim().toLowerCase())) {
 			return Response.json({
 				valid: false,
 				reason: "wrong-assignee",
