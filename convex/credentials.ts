@@ -26,6 +26,7 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import type { ActionCtx } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { clientIpFromHeaders } from "./lib/clientIp";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Function references (avoids circular _generated/api dependency)
@@ -558,10 +559,7 @@ export async function handleIssueBearerFromClerk(
 	});
 
 	// ── 7. Audit log ──────────────────────────────────────────────────────────
-	const ip =
-		request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-		request.headers.get("x-real-ip") ??
-		undefined;
+	const ip = clientIpFromHeaders(request.headers);
 	const userAgent = request.headers.get("user-agent") ?? undefined;
 
 	await ctx.runMutation(_auditLogRef, {
