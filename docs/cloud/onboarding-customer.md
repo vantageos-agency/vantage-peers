@@ -383,6 +383,16 @@ Claude.ai, ChatGPT, Claude Code, Codex and any MCP client connect to VantagePeer
 - A client that replays an authorization code is refused and the token its first redemption issued is revoked.
 - Your organisation role travels with the token: a viewer can read but every write tool is refused unless the role is on the organisation's writer-role list (or the fleet default list).
 
+**Writing in your own name**
+
+A connected person writes as itself. Leave the acting field empty (`createdBy`, `from`, `callerOrchestrator`): the call acts as `user:<your account id>`, read from your connection, inside the organisation you approved. The same name is recorded when you act from the dashboard.
+
+- Covered tools: `create_task`, `update_task`, `start_task`, `complete_task`, `send_message`, `create_mission`, `update_mission`.
+- Your role must be on the writer-role list; a viewer is refused `role-not-writer`.
+- Naming an agent needs that agent's credential (`AGENT_CREDENTIAL_REQUIRED` without it). Naming another person is refused `PERSON_ACTS_AS_ITSELF`.
+- Every other write tool that takes an acting name has no door for a person and answers `PERSON_NO_HUMAN_DOOR`.
+- Cancelling or deleting stays reserved to `org:admin`, as on the dashboard.
+
 **Operator prerequisites (Railway, set from the dashboard; names only)**
 
 `AUTHORIZE_STATE_SECRET` (at least 32 random characters), `CLERK_DOMAIN` (the Clerk frontend API URL), `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL` (`https://<your-deployment>/authorize/callback`), `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY`; optionally `AUTHORIZE_AUTHORIZED_PARTIES` (extra allowed origins, comma separated). While any required value is missing, `/authorize` answers **503** and issues nothing; it never falls back to approving. The sign-in page and this server must share a registrable domain so the Clerk `__session` cookie reaches `/authorize`.
@@ -413,6 +423,16 @@ Claude.ai, ChatGPT, Claude Code, Codex et tout client MCP se connectent à Vanta
 - Le jeton d'accès dure une heure et vous nomme avec l'organisation. Ce flux n'émet pas de refresh token : le client vous refait passer par les trois étapes (la connexion est silencieuse tant que la session dure).
 - Un client qui rejoue un code d'autorisation est refusé et le jeton émis par la première utilisation est révoqué.
 - Votre rôle d'organisation voyage avec le jeton : un lecteur (viewer) peut lire, mais tout outil d'écriture est refusé tant que le rôle n'est pas dans la liste des rôles écrivains de l'organisation (ou la liste par défaut de la flotte).
+
+**Écrire en son propre nom**
+
+Une personne connectée écrit en son nom. Laisser vide le champ d'acteur (`createdBy`, `from`, `callerOrchestrator`) : l'appel agit comme `user:<identifiant de votre compte>`, lu depuis votre connexion, dans l'organisation approuvée. C'est le même nom que celui enregistré depuis le dashboard.
+
+- Outils couverts : `create_task`, `update_task`, `start_task`, `complete_task`, `send_message`, `create_mission`, `update_mission`.
+- Votre rôle doit figurer dans la liste des rôles écrivains ; un lecteur est refusé `role-not-writer`.
+- Nommer un agent exige l'identifiant de cet agent (`AGENT_CREDENTIAL_REQUIRED` sinon). Nommer une autre personne est refusé `PERSON_ACTS_AS_ITSELF`.
+- Les autres outils d'écriture qui prennent un nom d'acteur n'ont pas de porte pour une personne et répondent `PERSON_NO_HUMAN_DOOR`.
+- Annuler ou supprimer reste réservé à `org:admin`, comme sur le dashboard.
 
 **Prérequis opérateur (Railway, à définir depuis le dashboard ; noms seulement)** : `AUTHORIZE_STATE_SECRET` (au moins 32 caractères aléatoires), `CLERK_DOMAIN`, `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL`, `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY` ; en option `AUTHORIZE_AUTHORIZED_PARTIES`. Tant qu'une valeur requise manque, `/authorize` répond **503** et n'émet rien ; il ne retombe jamais sur une approbation automatique.
 

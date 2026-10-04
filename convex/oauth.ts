@@ -35,6 +35,7 @@ import {
 	requireOrgAdmin,
 	withOrgScope,
 } from "./lib/auth";
+import { isHumanActorName } from "./lib/humanActor";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 
@@ -815,7 +816,11 @@ export const provisionOrganization = mutation({
 		const names = args.orchestrators.map((o) => o.name.trim());
 		const seen = new Set<string>();
 		for (const name of names) {
-			if (RESERVED_ORCH_NAMES.has(name) || name.toLowerCase() === "master") {
+			if (
+				RESERVED_ORCH_NAMES.has(name) ||
+				name.toLowerCase() === "master" ||
+				isHumanActorName(name)
+			) {
 				throw new Error(`reserved orchestrator name: ${name}`);
 			}
 			// SEAT_NAME_NOT_CANONICAL — a stored seat name must already be its

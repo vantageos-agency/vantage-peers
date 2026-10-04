@@ -478,6 +478,29 @@ export function isSeatActingAsItself(
 	return normalizeOrchestratorId(claimedName) === only;
 }
 
+/**
+ * The prefix that records a PERSON as the actor of a row ("user:<Clerk
+ * subject>"), the same prefix the Convex human doors write
+ * (convex/lib/humanActor.ts MEMBER_ACTOR_PREFIX). Agent registration and seat
+ * provisioning refuse a name with this prefix, so it never names an agent.
+ */
+export const PERSON_ACTOR_PREFIX = "user:";
+
+/**
+ * The acting identity of a PERSON token, read from the token row the bearer
+ * resolved (`userId` is the verified Clerk subject the token was minted for).
+ * `undefined` for every other caller (seat, master, Clerk-JWT session) and for
+ * a person that presented an agent credential (it then acts as that agent).
+ * Never derived from a tool argument.
+ */
+export function personActorOf(
+	ctx: OAuthContext | undefined,
+): string | undefined {
+	if (ctx?.principal !== "person" || ctx.actor !== undefined) return undefined;
+	if (ctx.accessTokenHash === undefined || ctx.userId === "") return undefined;
+	return `${PERSON_ACTOR_PREFIX}${ctx.userId}`;
+}
+
 function agentCredentialRequired(claimedName: string): string {
 	return (
 		`AGENT_CREDENTIAL_REQUIRED: this call names "${claimedName}" but the ` +

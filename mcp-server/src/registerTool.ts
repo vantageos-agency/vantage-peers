@@ -39,8 +39,11 @@ import {
 	isMasterScope,
 	isUnattributedClaim,
 	type OAuthContext,
+	PERSON_ACTOR_PREFIX,
+	personActorOf,
 	recordUnattributedClaim,
 } from "./auth.js";
+import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scope declaration — a discriminated union. Every registration MUST pick one.
@@ -288,6 +291,57 @@ function bindActingNames(
 }
 
 /**
+ * bindPersonActingNames — a PERSON (OAuth person token, #1444) acts in its OWN
+ * name, "user:<subject>" read from the token row (personActorOf), never from an
+ * argument. Task k176ch9tamzab3dnhye94kga1d8fkbhm. Runs only for a person with
+ * no agent credential, on a tool that declares acting-name arguments and is not
+ * exempt (read-only / own-state). Returns:
+ *   - `null`: not this caller, or an acting name names an AGENT: the agent rules
+ *     decide unchanged (bindActingNames -> AGENT_CREDENTIAL_REQUIRED without a
+ *     credential);
+ *   - `{ denied }`: an acting name names ANOTHER user (PERSON_ACTS_AS_ITSELF),
+ *     or every name is omitted and the tool has no human door
+ *     (PERSON_NO_HUMAN_DOOR, by declaration: `personDoor: true`);
+ *   - `{ args }`: the person acts as itself. Its own "user:<subject>", if typed,
+ *     is removed: the handler forwards no name, and the token-hash proof
+ *     (`verifiedPerson`) instead, from which the Convex door re-reads the person.
+ */
+function bindPersonActingNames(
+	oauthCtx: OAuthContext | undefined,
+	toolName: string,
+	keys: readonly string[],
+	personDoor: boolean,
+	args: Record<string, unknown>,
+): { denied: McpTextResult } | { args: Record<string, unknown> } | null {
+	const self = personActorOf(oauthCtx);
+	if (self === undefined || keys.length === 0) return null;
+	let bound = args;
+	for (const key of keys) {
+		const claimed = args[key];
+		if (claimed === undefined || claimed === null) continue;
+		const name = normalizeOrchestratorId(String(claimed));
+		if (name === normalizeOrchestratorId(self)) {
+			bound = { ...bound, [key]: undefined };
+			continue;
+		}
+		if (!name.startsWith(PERSON_ACTOR_PREFIX)) return null;
+		return {
+			denied: mcpError(
+				`PERSON_ACTS_AS_ITSELF: ${toolName} names "${String(claimed)}" in ${key}, but this token acts for ${self} — a person acts only in its own name. Omit ${key} to act as yourself.`,
+			),
+		};
+	}
+	if (!personDoor) {
+		return {
+			denied: mcpError(
+				`PERSON_NO_HUMAN_DOOR: ${toolName} has no door through which a person acts in its own name — it needs an agent name and that agent's credential (${keys.join(", ")}).`,
+			),
+		};
+	}
+	return { args: bound };
+}
+
+/**
  * Wraps a tool's raw zod shape in a STRICT object schema.
  *
  * Root cause fixed here (mission k17at41v7e6re4ht9wbf3cvdah8cepjc, restored
@@ -359,23 +413,47 @@ export function defineTool(
 	// `structuredContent` matching it. It is never forwarded as an annotation.
 	// `ownStateOnly` is likewise a server-side declaration (read by the
 	// person-token gate), never advertised to a client as a hint.
-	const { outputSchema, ownStateOnly, ...annotations } = (declaredAnnotations ??
-		{}) as {
-		outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
-		ownStateOnly?: boolean;
-	} & ToolAnnotations;
+	// `personDoor` too: the tool's Convex door admits a person acting in its own
+	// name (bindPersonActingNames), a server-side declaration, never a hint.
+	const { outputSchema, ownStateOnly, personDoor, ...annotations } =
+		(declaredAnnotations ?? {}) as {
+			outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
+			ownStateOnly?: boolean;
+			personDoor?: boolean;
+		} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
 
 	const guardedHandler: ToolHandler = async (args, extra) => {
 		// First, before any argument is read: a person whose role may not write
 		// is refused on every non-read-only tool.
+		const exempt = annotations.readOnlyHint === true || ownStateOnly === true;
 		const roleDenied = await enforcePersonWriterRole(
 			ctx.oauthCtx,
 			name,
-			annotations.readOnlyHint === true || ownStateOnly === true,
+			exempt,
 		);
 		if (roleDenied) return roleDenied;
+		// A person acting in its own name: no acting name reaches the handler, so
+		// the `from` kind's name check has nothing to check; every other declared
+		// scope still applies.
+		const person = exempt
+			? null
+			: bindPersonActingNames(
+					ctx.oauthCtx,
+					name,
+					actingKeys,
+					personDoor === true,
+					(args ?? {}) as Record<string, unknown>,
+				);
+		if (person && "denied" in person) return person.denied;
+		if (person) {
+			if (scope.kind !== "from") {
+				const denied = enforceScope(scope, ctx, person.args);
+				if (denied) return denied;
+			}
+			return handler(person.args, extra);
+		}
 		const bound = bindActingNames(
 			ctx.oauthCtx,
 			actingKeys,

@@ -558,7 +558,10 @@ describe("strict default composes with the writer-role gate (person token)", () 
 		}
 	});
 
-	it("a person editor naming NO agent on a from-kind write is refused by the roster check (no acting name to verify), nothing written", async () => {
+	// k176ch9tamzab3dnhye94kga1d8fkbhm: store_memory has no door through which a
+	// person acts in its own name, so the refusal is now the declared one
+	// (PERSON_NO_HUMAN_DOOR) instead of the roster check reading "undefined".
+	it("a person editor naming NO agent on a write with no human door is refused PERSON_NO_HUMAN_DOOR, nothing written", async () => {
 		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", UNSET);
 		const { tools, called } = toolsFor(
 			await contextFor(await personToken("user_editor")),
@@ -566,9 +569,7 @@ describe("strict default composes with the writer-role gate (person token)", () 
 		const { createdBy: _omitted, ...noName } = WRITE;
 		const r = (await tools.get("store_memory")?.(noName)) as ToolResult;
 		expect(r.isError).toBe(true);
-		expect(textOf(r)).toContain(
-			"from='undefined' is not in this client's allowlist",
-		);
+		expect(textOf(r)).toContain("PERSON_NO_HUMAN_DOOR");
 		expect(called.mutations).toEqual([]);
 	});
 

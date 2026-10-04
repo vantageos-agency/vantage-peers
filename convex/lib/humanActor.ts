@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	assertMemberMayWrite,
 	loadMemberWriterRoles,
@@ -33,6 +34,17 @@ import { isRowVisibleToScope } from "./auth";
 
 export const MEMBER_ACTOR_PREFIX = "user:";
 export const ADMIN_ROLE = "org:admin";
+
+/**
+ * True when `name` is spelled like a human actor ("user:<subject>", after
+ * normalizeOrchestratorId). Such a name is RESERVED: agent registration, agent
+ * rename and seat provisioning refuse it, so a stored actor "user:..." can only
+ * ever have been written by `memberActorOf` from a verified subject, and an
+ * agent can never be named so as to read as a person.
+ */
+export function isHumanActorName(name: string): boolean {
+	return normalizeOrchestratorId(name).startsWith(MEMBER_ACTOR_PREFIX);
+}
 
 /** How a HUMAN org member is written down as "who did it" (verified subject only). */
 export function memberActorOf(scope: OrgScope): string {
