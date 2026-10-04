@@ -10,8 +10,10 @@
  * minted by the real /authorize + /token flow, through the official v2 client,
  * on 2026-07-28 AND 2025-11-25:
  *
- *   - DENY:  a viewer person's write is refused `role-not-writer`, nothing sent;
- *   - ALLOW: an editor person's write is served and reaches Convex once, under
+ *   - DENY:  a viewer person's write is refused `role-not-writer`, nothing sent
+ *            (agent-a's credential IS presented, so only the role gate refuses);
+ *   - ALLOW: an editor person's write, presenting agent-a's credential (strict
+ *            by default, #1445), is served and reaches Convex once, under
  *            the MCP server's service-account identity (mint stubbed);
  *   - NONE:  a request with no bearer is answered 401 before any MCP layer.
  *
@@ -97,6 +99,9 @@ const REDIRECT = "https://client.example/callback";
 const CLIENT_ID = "client-claude";
 const CLIENT_SECRET = "client-secret-raw";
 const VERIFIER = "route-test-verifier-0123456789-0123456789-0123456789";
+// agent-a's own credential. Strict by default (#1445): a person token naming
+// an agent is served only when that agent's credential is presented.
+const AGENT_A_SECRET = "agent-a-route-test-secret";
 const WRITE = {
 	namespace: "team/org-a",
 	type: "project",
@@ -158,6 +163,20 @@ beforeEach(async () => {
 			isActive: true,
 			createdAt: now,
 		});
+		const agentId = await ctx.db.insert("agents", {
+			orgSlug: "org-a",
+			name: "agent-a",
+			isActive: true,
+			createdAt: now,
+		});
+		await ctx.db.insert("agent_credentials", {
+			orgSlug: "org-a",
+			agentId,
+			agentName: "agent-a",
+			secretHash: await sha256Hex(AGENT_A_SECRET),
+			isActive: true,
+			createdAt: now,
+		});
 		await ctx.db.insert("memberWriterRoles", {
 			roles: ["org:admin", "org:editor"],
 			updatedAt: now,
@@ -207,10 +226,13 @@ async function personToken(userId: string): Promise<string> {
 }
 
 /** In-process fetch into the real Hono app carrying `token` as the bearer. */
-function shimFor(token: string) {
+function shimFor(token: string, credential?: string) {
 	return async (url: string | URL, init?: RequestInit): Promise<Response> => {
 		const headers = new Headers(init?.headers);
 		headers.set("Authorization", `Bearer ${token}`);
+		if (credential !== undefined) {
+			headers.set("x-vantage-agent-credential", credential);
+		}
 		return app.fetch(new Request(url, { ...init, headers }));
 	};
 }
@@ -220,14 +242,18 @@ const ERAS = [
 	{ era: "legacy", version: "2025-11-25" },
 ] as const;
 
-async function connectAs(token: string, era: "modern" | "legacy") {
+async function connectAs(
+	token: string,
+	era: "modern" | "legacy",
+	credential?: string,
+) {
 	const client = new Client(
 		{ name: "route-scoped-test", version: "0.0.0" },
 		era === "modern" ? { versionNegotiation: { mode: "auto" } } : {},
 	);
 	await client.connect(
 		new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
-			fetch: shimFor(token),
+			fetch: shimFor(token, credential),
 		}),
 	);
 	return client;
@@ -240,7 +266,11 @@ describe.each(ERAS)("/mcp under a scoped person token ($era era)", ({
 	version,
 }) => {
 	it("a viewer's write is refused role-not-writer and nothing reaches Convex", async () => {
-		const client = await connectAs(await personToken("user_viewer"), era);
+		const client = await connectAs(
+			await personToken("user_viewer"),
+			era,
+			AGENT_A_SECRET,
+		);
 		expect(client.getNegotiatedProtocolVersion()).toBe(version);
 		const r = (await client.callTool({
 			name: "store_memory",
@@ -253,7 +283,11 @@ describe.each(ERAS)("/mcp under a scoped person token ($era era)", ({
 	});
 
 	it("an editor's write is served and reaches Convex once, as the service account", async () => {
-		const client = await connectAs(await personToken("user_editor"), era);
+		const client = await connectAs(
+			await personToken("user_editor"),
+			era,
+			AGENT_A_SECRET,
+		);
 		expect(client.getNegotiatedProtocolVersion()).toBe(version);
 		const r = (await client.callTool({
 			name: "store_memory",
