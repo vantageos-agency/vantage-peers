@@ -442,41 +442,27 @@ describe("issueBearerFromClerk: audit log", () => {
 	});
 });
 
-describe("issueBearerFromClerk: audit-log client IP is edge-observed", () => {
-	async function auditIpFor(headers: Record<string, string>) {
+describe("issueBearerFromClerk: audit log does not store a client IP", () => {
+	test("row has no ip even when x-forwarded-for / x-real-ip are sent", async () => {
 		const t = createT();
 		await handleIssueBearerFromClerk(
 			makeCtx(t),
-			makeRequest({ clerkJwt: MOCK_JWT, extId: VALID_EXT_ID }, headers),
+			makeRequest(
+				{ clerkJwt: MOCK_JWT, extId: VALID_EXT_ID },
+				{
+					"x-forwarded-for": "6.6.6.6, 203.0.113.9",
+					"x-real-ip": "198.51.100.7",
+					"user-agent": "Chrome/130.0",
+				},
+			),
 			makeVerifyStub(),
 		);
 		const rows = await t.run(async (ctx) =>
 			ctx.db.query("credentialsAuditLog").collect(),
 		);
 		expect(rows).toHaveLength(1);
-		return rows[0]?.ip;
-	}
-
-	test("spoofed first x-forwarded-for entry + real last entry -> the real (rightmost) one", async () => {
-		expect(
-			await auditIpFor({ "x-forwarded-for": "6.6.6.6, 203.0.113.9" }),
-		).toBe("203.0.113.9");
-	});
-
-	test("single x-forwarded-for entry -> that entry", async () => {
-		expect(await auditIpFor({ "x-forwarded-for": "203.0.113.9" })).toBe(
-			"203.0.113.9",
-		);
-	});
-
-	test("no headers -> undefined (existing fallback unchanged)", async () => {
-		expect(await auditIpFor({})).toBeUndefined();
-	});
-
-	test("x-real-ip alone is still the fallback when no x-forwarded-for", async () => {
-		expect(await auditIpFor({ "x-real-ip": "198.51.100.7" })).toBe(
-			"198.51.100.7",
-		);
+		expect(rows[0]).not.toHaveProperty("ip");
+		expect(rows[0]?.userAgent).toBe("Chrome/130.0");
 	});
 });
 
