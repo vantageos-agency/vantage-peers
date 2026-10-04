@@ -29,7 +29,7 @@ import {
 	assertTaskVisibleToCaller,
 	resolveHumanActor,
 } from "./lib/humanActor";
-import { mayReassignReviewTask, resolveReviewer } from "./lib/reviewRouting";
+import { mayReassignReviewTask, repoOwner, resolveReviewer } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
@@ -1761,6 +1761,21 @@ export const update = mutation({
 			fields.assignedTo !== undefined &&
 			nonReassignFields.length === 0 &&
 			(await mayReassignReviewTask(ctx, callerOrchestrator, task.reviewPrRepoFullName));
+		// A delivery is never reviewed by its author: the grant refuses a target
+		// equal to the repo's own orchestrator, for every caller (coordinator
+		// included). The row's own creator/assignee keep the ordinary path.
+		if (
+			reviewReassignGranted &&
+			fields.assignedTo !== undefined &&
+			callerOrchestrator !== task.assignedTo &&
+			callerOrchestrator !== task.createdBy &&
+			(await repoOwner(ctx, task.reviewPrRepoFullName)) ===
+				fields.assignedTo.trim().toLowerCase()
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: ${callerOrchestrator} may not assign review task ${taskId} to ${fields.assignedTo} — it is the repo's own orchestrator (the author); a delivery is never reviewed by its author — ${JSON.stringify({ caller: callerOrchestrator, taskId, assignedTo: fields.assignedTo })}`,
+			);
+		}
 		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", { reviewReassignGranted });
 
 		// An ASSIGNMENT target is not an asserted caller name, so the caller
@@ -4685,7 +4700,9 @@ export const createOrUpdateReviewTask = internalMutation({
 		createdBy: creatorValidator,
 		tags: v.optional(v.array(v.string())),
 	},
-	returns: v.id("tasks"),
+	// null = REVIEWER_UNRESOLVED: nothing was inserted (see resolveReviewer).
+	// An already-open task is still updated in place and its id returned.
+	returns: v.union(v.id("tasks"), v.null()),
 	handler: async (ctx, args) => {
 		const title = `[Review] ${args.repoFullName} PR #${args.prNumber}: ${args.prTitle}`;
 		const now = Date.now();
@@ -4724,11 +4741,9 @@ export const createOrUpdateReviewTask = internalMutation({
 
 		const assignedTo =
 			args.assignedTo ?? (await resolveReviewer(ctx, args.repoFullName)).assignee;
-		if (assignedTo === null) {
-			throw new ConvexError(
-				`REVIEWER_UNRESOLVED: no reviewer configured for ${args.repoFullName} — set githubRepoMapping.reviewer or taskClosureConfig "reviewerDefault" — ${JSON.stringify({ repo: args.repoFullName })}`,
-			);
-		}
+		// REVIEWER_UNRESOLVED: no task is created — never one on the author.
+		// The caller (convex/http.ts) surfaces it to the coordinator channel(s).
+		if (assignedTo === null) return null;
 
 		return await ctx.db.insert("tasks", {
 			title,

@@ -137,14 +137,14 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 		const t = await createT();
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", stopped: ["eta"] });
 		const id = await openReview(t);
-		expect(await assigneeOf(t, id)).toBe("argus");
+		expect(await assigneeOf(t, id!)).toBe("argus");
 	});
 
 	test("running configured reviewer still receives the task (no needless fallback)", async () => {
 		const t = await createT();
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", stopped: [] });
 		const id = await openReview(t);
-		expect(await assigneeOf(t, id)).toBe("eta");
+		expect(await assigneeOf(t, id!)).toBe("eta");
 	});
 
 	test("per-repo reviewer on the mapping row overrides the fleet default", async () => {
@@ -155,7 +155,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 			await ctx.db.patch(row!._id, { reviewer: "omega" });
 		});
 		const id = await openReview(t);
-		expect(await assigneeOf(t, id)).toBe("omega");
+		expect(await assigneeOf(t, id!)).toBe("omega");
 	});
 
 	test("webhook notification goes to the resolved assignee, not eta", async () => {
@@ -168,10 +168,64 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 		expect(channels).not.toContain("eta");
 	});
 
-	test("no reviewer configured anywhere: the repo's own orchestrator, never a baked-in name", async () => {
+	const reviewTasksOf = (t: T) =>
+		t.run(async (ctx) =>
+			(await ctx.db.query("tasks").collect()).filter((x) => x.title.startsWith("[Review] ")),
+		);
+
+	test("no reviewer configured: NO task is created (never on the repo owner), mutation returns null", async () => {
 		const t = await createT();
 		const id = await openReview(t);
-		expect(await assigneeOf(t, id)).toBe("sigma");
+		expect(id).toBeNull();
+		expect(await reviewTasksOf(t)).toHaveLength(0);
+	});
+
+	test("REVIEWER_UNRESOLVED is surfaced to the configured coordinator channel (webhook path)", async () => {
+		const t = await createT();
+		await seedConfig(t, { coordinators: ["pi"] });
+		await postPrOpened(t);
+		expect(await reviewTasksOf(t)).toHaveLength(0);
+		const msgs = await t.run((ctx) => ctx.db.query("messages").collect());
+		const hit = msgs.filter((m) => m.content.includes("REVIEWER_UNRESOLVED"));
+		expect(hit).toHaveLength(1);
+		expect(hit[0].channel).toBe("pi");
+		expect(hit[0].content).toContain(REPO);
+		expect(hit[0].content).toContain(`PR #${PR_NUMBER}`);
+		// nothing went to the author either
+		expect(msgs.some((m) => m.channel === "sigma")).toBe(false);
+	});
+
+	test("unresolved with no coordinator configured: console.error, no throw, no task, no message", async () => {
+		const t = await createT();
+		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		const res = await postPrOpened(t);
+		expect(res.status).toBe(200);
+		expect(err.mock.calls.some((c) => String(c[0]).includes("REVIEWER_UNRESOLVED"))).toBe(true);
+		expect(await reviewTasksOf(t)).toHaveLength(0);
+		expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(0);
+		err.mockRestore();
+	});
+
+	test("reviewer == repo owner (author) is unresolved too, even with a fallback that is stopped", async () => {
+		const t = await createT();
+		await seedConfig(t, { reviewer: "sigma" });
+		expect(await openReview(t)).toBeNull();
+		const t2 = await createT();
+		await seedConfig(t2, { reviewer: "eta", fallback: "sigma", stopped: ["eta"] });
+		expect(await openReview(t2)).toBeNull();
+		expect(await reviewTasksOf(t2)).toHaveLength(0);
+	});
+
+	test("an already-open review task is still updated in place when the reviewer becomes unresolved", async () => {
+		const t = await createT();
+		await seedConfig(t, { reviewer: "eta" });
+		const first = await openReview(t);
+		expect(first).not.toBeNull();
+		await t.run(async (ctx) => {
+			const row = await ctx.db.query("taskClosureConfig").withIndex("by_key", (q) => q.eq("key", "reviewerDefault")).unique();
+			await ctx.db.delete(row!._id);
+		});
+		expect(await openReview(t)).toBe(first);
 	});
 });
 
@@ -179,7 +233,7 @@ describe("review task reassignment RBAC", () => {
 	const setup = async () => {
 		const t = await createT();
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", coordinators: ["pi"] });
-		const id = await openReview(t, "eta");
+		const id = (await openReview(t, "eta"))!;
 		return { t, id };
 	};
 
@@ -251,10 +305,38 @@ describe("review task reassignment RBAC", () => {
 		expect(err).toBeInstanceOf(ConvexError);
 	});
 
+	test("NEGATIVE: the owner (author) cannot reassign the review onto itself", async () => {
+		const { t, id } = await setup();
+		const err = await svc(t)
+			.mutation(api.tasks.update, { taskId: id, callerOrchestrator: "sigma", assignedTo: "sigma" })
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(ConvexError);
+		expect((err as ConvexError<string>).message).toContain("RBAC_DENIED");
+		expect((err as ConvexError<string>).message).toContain("never reviewed by its author");
+		expect(await assigneeOf(t, id)).toBe("eta");
+	});
+
+	test("NEGATIVE: the coordinator cannot reassign the review onto the owner (author)", async () => {
+		const { t, id } = await setup();
+		const err = await svc(t)
+			.mutation(api.tasks.update, { taskId: id, callerOrchestrator: "pi", assignedTo: "sigma" })
+			.catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(ConvexError);
+		expect((err as ConvexError<string>).message).toContain("RBAC_DENIED");
+		expect((err as ConvexError<string>).message).toContain("never reviewed by its author");
+		expect(await assigneeOf(t, id)).toBe("eta");
+	});
+
+	test("the coordinator reassigning onto argus is still allowed", async () => {
+		const { t, id } = await setup();
+		await svc(t).mutation(api.tasks.update, { taskId: id, callerOrchestrator: "pi", assignedTo: "argus" });
+		expect(await assigneeOf(t, id)).toBe("argus");
+	});
+
 	test("fail-closed: no coordinator configured -> pi is refused", async () => {
 		const t = await createT();
 		await seedConfig(t, { reviewer: "eta" });
-		const id = await openReview(t, "eta");
+		const id = (await openReview(t, "eta"))!;
 		const err = await svc(t)
 			.mutation(api.tasks.update, { taskId: id, callerOrchestrator: "pi", assignedTo: "argus" })
 			.catch((e: unknown) => e);

@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
-import { acceptedReviewers, resolveReviewer } from "./lib/reviewRouting";
+import {
+	acceptedReviewers,
+	reviewCoordinators,
+	resolveReviewer,
+} from "./lib/reviewRouting";
 
 // Internal doors for convex/http.ts (HMAC / master-bearer authenticated; no Clerk
 // identity). Not reachable from the public API.
@@ -10,6 +14,12 @@ export const resolveForRepo = internalQuery({
 	returns: v.union(v.string(), v.null()),
 	handler: async (ctx, args) =>
 		(await resolveReviewer(ctx, args.repo)).assignee,
+});
+
+export const coordinators = internalQuery({
+	args: {},
+	returns: v.array(v.string()),
+	handler: async (ctx) => await reviewCoordinators(ctx),
 });
 
 export const acceptedForRepo = internalQuery({

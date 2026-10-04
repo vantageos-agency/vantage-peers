@@ -254,6 +254,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 			priority: "medium",
 			createdBy: "system",
 		});
+		if (taskId === null) throw new Error("reviewer unresolved in fixture");
 		// stamped at create from the automation-built title.
 		const created = await t.query(api.tasks.get, { taskId });
 		expect(created?.isReviewTask).toBe(true);

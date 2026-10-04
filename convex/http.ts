@@ -93,6 +93,25 @@ http.route({
 		const orchestratorAssignee = mapping.orchestrator as AssigneeLiteral;
 		const project = mapping.project;
 
+		// REVIEWER_UNRESOLVED surfacing: system message to each coordinator in
+		// taskClosureConfig "reviewCoordinators"; with none configured, console.error
+		// only (no hardcoded channel).
+		const notifyReviewerUnresolved = async (subject: string): Promise<void> => {
+			const text = `REVIEWER_UNRESOLVED: no usable reviewer for ${subject} (none configured, or the reviewer is the repo's own orchestrator). No review task was created. Set githubRepoMapping.reviewer or taskClosureConfig reviewerDefault.`;
+			const coordinators = await ctx.runQuery(internal.reviewRouting.coordinators, {});
+			if (coordinators.length === 0) {
+				console.error(text);
+				return;
+			}
+			for (const channel of coordinators) {
+				await ctx.runMutation(internal.messages.sendMessageInternal, {
+					from: "system",
+					channel,
+					content: text,
+				});
+			}
+		};
+
 		// 5. Handle events
 
 		// Helper: extract issue fields for upsert
@@ -233,11 +252,20 @@ http.route({
 					const isLastStep = i === template.steps.length - 1;
 					// The last step is the review step: its assignee is the configured
 					// reviewer (liveness-aware), never a constant.
-					const assignee: AssigneeLiteral = isLastStep
-						? ((await ctx.runQuery(internal.reviewRouting.resolveForRepo, {
-								repo: repoFullName,
-							})) ?? orchestratorAssignee)
-						: orchestratorAssignee;
+					let assignee: AssigneeLiteral = orchestratorAssignee;
+					if (isLastStep) {
+						const reviewer = await ctx.runQuery(internal.reviewRouting.resolveForRepo, {
+							repo: repoFullName,
+						});
+						if (reviewer === null) {
+							// REVIEWER_UNRESOLVED: no review step is created on the author.
+							await notifyReviewerUnresolved(
+								`${repoFullName} issue #${issue.number as number} (review step T${i})`,
+							);
+							continue;
+						}
+						assignee = reviewer;
+					}
 
 					await ctx.runMutation(internal.tasks.createForWebhook, {
 						title: `[#${issue.number as number}] T${i} — ${step.title}`,
@@ -463,7 +491,7 @@ http.route({
 			// pushes before this fix).
 			// Reviewer + liveness are resolved from data inside the mutation
 			// (convex/lib/reviewRouting.ts) — no assignee is passed from here.
-			const reviewTaskId = await ctx.runMutation(internal.tasks.createOrUpdateReviewTask, {
+			const reviewTaskId: Id<"tasks"> | null = await ctx.runMutation(internal.tasks.createOrUpdateReviewTask, {
 				repoFullName,
 				prNumber: pr.number as number,
 				prTitle: pr.title as string,
@@ -473,6 +501,12 @@ http.route({
 				createdBy: "system",
 				tags: ["github", "pr-review", action as string],
 			});
+
+			if (reviewTaskId === null) {
+				// REVIEWER_UNRESOLVED: nothing was created; say so, visibly.
+				await notifyReviewerUnresolved(`${repoFullName} PR #${pr.number as number}`);
+				return new Response("OK - reviewer unresolved", { status: 200 });
+			}
 
 			// Notify the reviewer the task actually landed on.
 			const reviewTask = await ctx.runQuery(internal.tasks.getByIdForWebhook, {

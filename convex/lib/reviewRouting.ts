@@ -7,8 +7,7 @@ import type { QueryCtx } from "../_generated/server";
 // Sources, in precedence order:
 //   reviewer        githubRepoMapping.reviewer          (per-repo)
 //                   taskClosureConfig "reviewerDefault"  (fleet default)
-//                   githubRepoMapping.orchestrator       (the repo's own owner —
-//                                                         never a baked-in name)
+//                   (NO owner fallback: a delivery is never reviewed by its author)
 //   fallback        githubRepoMapping.fallbackReviewer  (per-repo)
 //                   taskClosureConfig "reviewerFallback" (fleet default)
 //   stopped         taskClosureConfig "stoppedOrchestrators" (operator-maintained)
@@ -55,9 +54,14 @@ async function mappingFor(ctx: QueryCtx, repo: string) {
 		.unique();
 }
 
+export const REVIEWER_UNRESOLVED = "REVIEWER_UNRESOLVED";
+
 export type ResolvedReviewer = {
-	/** Who the task goes to; null only when nothing at all is configured. */
+	/** Who the task goes to; null exactly when `unresolved`. */
 	assignee: string | null;
+	/** True when no usable reviewer exists: nothing configured, or the resolved
+	 *  reviewer is the repo's own orchestrator (the author). Code: REVIEWER_UNRESOLVED. */
+	unresolved: boolean;
 	/** The configured primary, before liveness. */
 	reviewer: string | null;
 	fallback: string | null;
@@ -69,26 +73,26 @@ export async function resolveReviewer(
 	repo: string,
 ): Promise<ResolvedReviewer> {
 	const mapping = await mappingFor(ctx, repo);
-	const configuredReviewer =
-		mapping?.reviewer ?? (await readConfigOne(ctx, REVIEWER_DEFAULT_KEY));
 	const reviewerRaw =
-		configuredReviewer ?? (mapping?.active ? mapping.orchestrator : null);
+		mapping?.reviewer ?? (await readConfigOne(ctx, REVIEWER_DEFAULT_KEY));
 	const reviewer = reviewerRaw === null ? null : norm(reviewerRaw);
+	const owner = mapping === null ? null : norm(mapping.orchestrator);
 	const fallbackRaw =
 		mapping?.fallbackReviewer ??
 		(await readConfigOne(ctx, REVIEWER_FALLBACK_KEY));
 	const fallback = fallbackRaw === null ? null : norm(fallbackRaw);
 	const stopped = new Set(await readConfigList(ctx, STOPPED_ORCHESTRATORS_KEY));
 
-	if (
+	const usedFallback =
 		reviewer !== null &&
 		stopped.has(reviewer) &&
 		fallback !== null &&
-		!stopped.has(fallback)
-	) {
-		return { assignee: fallback, reviewer, fallback, usedFallback: true };
+		!stopped.has(fallback);
+	const picked = usedFallback ? fallback : reviewer;
+	if (picked === null || picked === owner) {
+		return { assignee: null, unresolved: true, reviewer, fallback, usedFallback };
 	}
-	return { assignee: reviewer, reviewer, fallback, usedFallback: false };
+	return { assignee: picked, unresolved: false, reviewer, fallback, usedFallback };
 }
 
 /**
@@ -110,6 +114,21 @@ export async function acceptedReviewers(
 		if (mapping?.fallbackReviewer) out.add(norm(mapping.fallbackReviewer));
 	}
 	return [...out];
+}
+
+/** The repo's own orchestrator (the author side), lower-cased; null if unmapped. */
+export async function repoOwner(
+	ctx: QueryCtx,
+	repo: string | undefined,
+): Promise<string | null> {
+	if (repo === undefined) return null;
+	const mapping = await mappingFor(ctx, repo);
+	return mapping === null ? null : norm(mapping.orchestrator);
+}
+
+/** Coordinator channels from data; empty when none configured. */
+export async function reviewCoordinators(ctx: QueryCtx): Promise<string[]> {
+	return await readConfigList(ctx, REVIEW_COORDINATORS_KEY);
 }
 
 /**
