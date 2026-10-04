@@ -330,6 +330,8 @@ export const _issueToken = internalMutation({
 	},
 });
 
+// credentialsAuditLog.ip is legacy and no longer written: the client IP is not
+// observable on Convex and the headers that carry it are client-declared.
 export const _auditLog = internalMutation({
 	args: {
 		clerkUserId: v.string(),
@@ -337,7 +339,6 @@ export const _auditLog = internalMutation({
 		extId: v.string(),
 		extVersion: v.optional(v.string()),
 		issuedAt: v.number(),
-		ip: v.optional(v.string()),
 		userAgent: v.optional(v.string()),
 	},
 	returns: v.null(),
@@ -348,7 +349,6 @@ export const _auditLog = internalMutation({
 			extId: args.extId,
 			extVersion: args.extVersion,
 			issuedAt: args.issuedAt,
-			ip: args.ip,
 			userAgent: args.userAgent,
 		});
 		return null;
@@ -558,10 +558,6 @@ export async function handleIssueBearerFromClerk(
 	});
 
 	// ── 7. Audit log ──────────────────────────────────────────────────────────
-	const ip =
-		request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-		request.headers.get("x-real-ip") ??
-		undefined;
 	const userAgent = request.headers.get("user-agent") ?? undefined;
 
 	await ctx.runMutation(_auditLogRef, {
@@ -570,7 +566,6 @@ export async function handleIssueBearerFromClerk(
 		extId,
 		extVersion: typeof extVersion === "string" ? extVersion : undefined,
 		issuedAt: Date.now(),
-		ip,
 		userAgent,
 	});
 

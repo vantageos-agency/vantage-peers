@@ -442,6 +442,30 @@ describe("issueBearerFromClerk: audit log", () => {
 	});
 });
 
+describe("issueBearerFromClerk: audit log does not store a client IP", () => {
+	test("row has no ip even when x-forwarded-for / x-real-ip are sent", async () => {
+		const t = createT();
+		await handleIssueBearerFromClerk(
+			makeCtx(t),
+			makeRequest(
+				{ clerkJwt: MOCK_JWT, extId: VALID_EXT_ID },
+				{
+					"x-forwarded-for": "6.6.6.6, 203.0.113.9",
+					"x-real-ip": "198.51.100.7",
+					"user-agent": "Chrome/130.0",
+				},
+			),
+			makeVerifyStub(),
+		);
+		const rows = await t.run(async (ctx) =>
+			ctx.db.query("credentialsAuditLog").collect(),
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).not.toHaveProperty("ip");
+		expect(rows[0]?.userAgent).toBe("Chrome/130.0");
+	});
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Test 8: OPTIONS preflight → 204 with CORS headers
 // ─────────────────────────────────────────────────────────────────────────────
