@@ -1,0 +1,12 @@
+{
+ "sha": "65e517e850afe5d21987225a9a41f55f54cde980",
+ "cli_commit": "npm @vantageos/backend-doctor@0.2.0",
+ "convex_path": "git archive 65e517e (full tree)",
+ "exit_code": 1,
+ "verdict_line": "VERDICT: revise-mandatory (exit 1) — 1 CRITICAL violation(s)",
+ "critical_violations": [
+  "R-6 tasks.ts:2384 complete read gap, pre-existing on prod (k17bsb5byvtr31vhk53v2pv8gx8fk0a4)",
+  "R-6 missions.ts:232 doctor multi-line-RHS false positive (k17arraztchzdpw0qbzj6tmmf58fjdbv)"
+ ],
+ "operator_override": "Laurent, this session 2026-10-04: 'je t'autorise a deployer 65e517e en prod Convex avec la derogation du controle R-6'"
+}

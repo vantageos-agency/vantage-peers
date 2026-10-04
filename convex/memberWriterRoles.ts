@@ -1,3 +1,4 @@
+import { resolveWriterRole } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, query } from "./_generated/server";
@@ -34,23 +35,30 @@ export async function loadMemberWriterRoles(
 }
 
 /**
- * Refuse a member whose verified role is not on the allowlist. Pure: the list
- * is passed in, so an empty/missing list refuses (fail closed).
+ * Refuse a member whose verified role is not on the allowlist. The decision is
+ * @vantageos/cloud-identity's `resolveWriterRole` (fail closed: an absent role,
+ * an absent list and an empty list all refuse); this adapter only says it in
+ * the backend's wire shape.
  */
 export function assertMemberMayWrite(
 	scope: Pick<OrgScope, "orgRole" | "orgSlug">,
 	writerRoles: readonly string[],
 	door: string,
 ): void {
-	const role = scope.orgRole ?? null;
-	const allowed = role !== null && writerRoles.includes(role);
-	if (!allowed) {
+	const decision = resolveWriterRole({
+		role: scope.orgRole,
+		writerRoles,
+		door,
+		orgSlug: scope.orgSlug,
+	});
+	if (!decision.ok) {
+		const r = decision.refusal;
 		throw new ConvexError(
-			`RBAC_DENIED: member role is not a writer role — ${JSON.stringify({
-				reason: "role-not-writer",
-				door,
-				role,
-				orgSlug: scope.orgSlug,
+			`${r.code}: member role is not a writer role — ${JSON.stringify({
+				reason: r.reason,
+				door: r.door,
+				role: r.role,
+				orgSlug: r.orgSlug,
 			})}`,
 		);
 	}
