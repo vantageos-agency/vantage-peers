@@ -971,7 +971,8 @@ describe("S2 acting — the wrapper itself derives a `from`-kind argument the ca
 // ─────────────────────────────────────────────────────────────────────────────
 // DEPLOYMENT A — the boundary accepts BOTH a presented credential and a typed
 // name; the refusal path is behind ONE switch (VANTAGE_ACTOR_CREDENTIAL_MODE),
-// default permissive. Deployment B flips it to strict.
+// default STRICT (k175v22zc52w1cbvq1d1qps50d8fccpg); permissive is reached
+// only by setting the switch to "permissive" explicitly, as these poles do.
 //
 // Every pole runs over the Clerk-JWT branch as an ORDINARY org member
 // (isMaster:false, asserted per pole through /echo). None runs under the
@@ -1035,7 +1036,8 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 		}
 	});
 
-	it("POLE 3 — NO credential, typed name, default switch: served exactly as before AND recorded unattributed (no secret in the record)", async () => {
+	it("POLE 3 — NO credential, typed name, switch explicitly permissive: served AND recorded unattributed (no secret in the record)", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
@@ -1088,6 +1090,7 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 	});
 
 	it("the switch is read at CALL time: one process, flipped between two identical calls, yields served then refused", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
@@ -1132,6 +1135,7 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 	});
 
 	it("the org roster still narrows on the compatibility path: a typed name the roster does not admit is refused although the switch is permissive", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
 		const { json } = await send(app, "/tool/complete_task", {
@@ -1172,6 +1176,7 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 	});
 
 	it("a `from`-kind key (store_memory createdBy) is recorded under ITS argument name when served on a typed name", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
