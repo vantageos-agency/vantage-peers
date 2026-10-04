@@ -35,10 +35,10 @@ resume_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringT
 delete_message,memberWriterRoles+messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
 fail_task,memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
 update_mission_status,memberWriterRoles+missions,TRANSITION,org-member,orgResolver,missions:updateStatus=orgResolver
+resume_task,memberWriterRoles+taskClosureConfig+tasks,TRANSITION,org-member,orgResolver,tasks:resume=orgResolver
+start_task,memberWriterRoles+taskClosureConfig+tasks,UPDATE,org-member,orgResolver,tasks:start=orgResolver
 delete_task,memberWriterRoles+tasks,DELETE,org-member,orgResolver,tasks:deleteTask=orgResolver
 pause_task,memberWriterRoles+tasks,TRANSITION,org-member,orgResolver,tasks:pause=orgResolver
-resume_task,memberWriterRoles+tasks,TRANSITION,org-member,orgResolver,tasks:resume=orgResolver
-start_task,memberWriterRoles+tasks,UPDATE,org-member,orgResolver,tasks:start=orgResolver
 soft_delete_document,memories,UPDATE,org-member,orgResolver,kb:softDeleteDocument=orgResolver
 store_episode,memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
 store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
