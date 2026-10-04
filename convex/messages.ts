@@ -459,9 +459,13 @@ export const sendMessage = mutation({
 		// against the SAME `orgSlug` the rest of this handler already derives
 		// (reused below by sendMessageCore — never re-derived).
 		const { verifiedPerson, ...sendArgs } = args;
+		// The transport's own scope is bound first (the service account, or the
+		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
+		// person is carried (convex/lib/personPrincipal.ts).
+		const transportScope = await withOrgScope(ctx);
 		const scope = await resolveVerifiedPerson(
 			ctx,
-			await withOrgScope(ctx),
+			transportScope,
 			verifiedPerson,
 			{
 				door: "messages:sendMessage",

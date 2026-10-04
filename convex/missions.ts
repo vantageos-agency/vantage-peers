@@ -186,9 +186,13 @@ export const create = mutation({
 		// resolved scope, never a client-supplied argument (there is no
 		// `orgId` in this mutation's args) — an org caller may create only
 		// for an owner (org) inside its own scope, by construction.
+		// The transport's own scope is bound first (the service account, or the
+		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
+		// person is carried (convex/lib/personPrincipal.ts).
+		const transportScope = await withOrgScope(ctx);
 		const scope = await resolveVerifiedPerson(
 			ctx,
-			await withOrgScope(ctx),
+			transportScope,
 			args.verifiedPerson,
 			{ door: "missions:create", assertedName: args.createdBy },
 		);
@@ -643,9 +647,13 @@ export const update = mutation({
 		// anonymous caller must get RBAC_DENIED, never "Mission ... not
 		// found" — a get-then-scope order lets missionId existence act as an
 		// unauthenticated existence oracle.
+		// The transport's own scope is bound first (the service account, or the
+		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
+		// person is carried (convex/lib/personPrincipal.ts).
+		const transportScope = await withOrgScope(ctx);
 		const scope = await resolveVerifiedPerson(
 			ctx,
-			await withOrgScope(ctx),
+			transportScope,
 			verifiedPerson,
 			{ door: "missions:update", assertedName: callerOrchestrator },
 		);
