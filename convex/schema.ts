@@ -26,7 +26,15 @@ export const creatorValidator = v.string();
 // argument on any public mutation — only the internal webhook path
 // (createOrUpdateReviewTask) writes it. The closure gate reads `origin`,
 // never `createdBy`, to decide whether a task is automation-created.
-export const taskOriginValidator = v.literal("automation");
+// "automation": the PR-sync review tasks (createOrUpdateReviewTask).
+// "automation-webhook": every other task the GitHub webhook mints through
+// createForWebhook (incident chain T0..TN, Bridge, mention/assignment tasks).
+// Kept a SEPARATE literal so the billing closure gate (which reads exactly
+// "automation") is not widened to real chain work.
+export const taskOriginValidator = v.union(
+	v.literal("automation"),
+	v.literal("automation-webhook"),
+);
 
 export const relationTypeValidator = v.union(
 	v.literal("updates"),
