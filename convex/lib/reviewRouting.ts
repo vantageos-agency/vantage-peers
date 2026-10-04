@@ -25,6 +25,7 @@ export const REVIEWER_DEFAULT_KEY = "reviewerDefault";
 export const REVIEWER_FALLBACK_KEY = "reviewerFallback";
 export const STOPPED_ORCHESTRATORS_KEY = "stoppedOrchestrators";
 export const REVIEW_COORDINATORS_KEY = "reviewCoordinators";
+export const AUTOMATION_TASK_CANCELLERS_KEY = "automationTaskCancellers";
 
 const norm = (s: string): string => s.trim().toLowerCase();
 
@@ -148,4 +149,26 @@ export async function mayReassignReviewTask(
 	if (repo === undefined) return false;
 	const mapping = await mappingFor(ctx, repo);
 	return mapping !== null && norm(mapping.orchestrator) === who;
+}
+
+/**
+ * Is `origin` an automation-minted task? `origin` is written only by internal
+ * webhook mutations, never accepted as an argument on a public one.
+ */
+export function isAutomationOrigin(origin: string | undefined): boolean {
+	return origin === "automation" || origin === "automation-webhook";
+}
+
+/**
+ * May `caller` cancel an automation-created task it did not create? Only a
+ * caller listed (data) under taskClosureConfig "automationTaskCancellers".
+ * Key absent, empty or unreadable -> false (fail closed).
+ */
+export async function mayCancelAutomationTask(
+	ctx: QueryCtx,
+	caller: string,
+): Promise<boolean> {
+	return (await readConfigList(ctx, AUTOMATION_TASK_CANCELLERS_KEY)).includes(
+		norm(caller),
+	);
 }

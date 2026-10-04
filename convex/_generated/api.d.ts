@@ -70,6 +70,7 @@ import type * as migrations from "../migrations.js";
 import type * as migrations_agentIdentityRows from "../migrations/agentIdentityRows.js";
 import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_backfill_review_task_origin from "../migrations/backfill_review_task_origin.js";
+import type * as migrations_backfill_webhook_task_origin from "../migrations/backfill_webhook_task_origin.js";
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
 import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_stale_deploy_tasks.js";
 import type * as migrations_diary_backfill_createdBy from "../migrations/diary_backfill_createdBy.js";
@@ -171,6 +172,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/agentIdentityRows": typeof migrations_agentIdentityRows;
   "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/backfill_review_task_origin": typeof migrations_backfill_review_task_origin;
+  "migrations/backfill_webhook_task_origin": typeof migrations_backfill_webhook_task_origin;
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;
   "migrations/dedup_stale_deploy_tasks": typeof migrations_dedup_stale_deploy_tasks;
   "migrations/diary_backfill_createdBy": typeof migrations_diary_backfill_createdBy;

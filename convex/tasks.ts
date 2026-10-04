@@ -29,7 +29,13 @@ import {
 	assertTaskVisibleToCaller,
 	resolveHumanActor,
 } from "./lib/humanActor";
-import { mayReassignReviewTask, repoOwner, resolveReviewer } from "./lib/reviewRouting";
+import {
+	isAutomationOrigin,
+	mayCancelAutomationTask,
+	mayReassignReviewTask,
+	repoOwner,
+	resolveReviewer,
+} from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
@@ -559,6 +565,9 @@ async function insertTask(
 	// org by construction — see each call site's own justification. It is never
 	// the result of forgetting.
 	orgId: string | undefined,
+	// Server-only automation stamp: only internal callers pass it, never a
+	// public argument (createTaskArgsValidator has no `origin`).
+	origin?: "automation-webhook",
 ): Promise<import("./_generated/dataModel").Id<"tasks">> {
 	// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
 	// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
@@ -586,6 +595,7 @@ async function insertTask(
 		// `isRowVisibleToScope` leg 3 reads this and nothing else; a row that
 		// reaches the database unstamped is readable by no org caller at all.
 		orgId,
+		...(origin !== undefined ? { origin } : {}),
 		createdAt: now,
 		updatedAt: now,
 	});
@@ -671,7 +681,12 @@ export const createForWebhook = internalMutation({
 		// this repo's own PRs). They are readable by master via
 		// `isRowVisibleToScope` leg 1 — the CALLER's verified master scope —
 		// and by no client org, which is correct: no client owns them.
-		return await insertTask(ctx, args, undefined);
+		// ORIGIN: "automation-webhook", server-stamped — the unforgeable signal
+		// that lets a configured canceller close the incident-chain tasks no
+		// station may cancel as their creator (taskClosureConfig
+		// "automationTaskCancellers"). Deliberately NOT "automation": that
+		// literal exempts a row from the billing closure gate.
+		return await insertTask(ctx, args, undefined, "automation-webhook");
 	},
 });
 
@@ -1777,7 +1792,25 @@ export const update = mutation({
 				`RBAC_DENIED: ${callerOrchestrator} may not assign review task ${taskId} to ${fields.assignedTo} — it is the repo's own orchestrator (the author); a delivery is never reviewed by its author — ${JSON.stringify({ caller: callerOrchestrator, taskId, assignedTo: fields.assignedTo })}`,
 			);
 		}
-		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", { reviewReassignGranted });
+		// Automation-task cancel grant (k17d351cphxtad91yqeqrhmhqx8fnktg): an
+		// automation-minted task has no station creator, so none could cancel
+		// it. A caller listed under taskClosureConfig "automationTaskCancellers"
+		// may set status="cancelled" WITH a non-empty cancelReason on such a row
+		// and change nothing else. Key absent/empty -> refused, as before.
+		const nonCancelFields = Object.entries(fields).filter(
+			([k, val]) => val !== undefined && k !== "status",
+		);
+		const automationCancelGranted =
+			callerOrchestrator !== undefined &&
+			isAutomationOrigin(task.origin) &&
+			fields.status === "cancelled" &&
+			cancelReason !== undefined &&
+			cancelReason.trim() !== "" &&
+			nonCancelFields.length === 0 &&
+			(await mayCancelAutomationTask(ctx, callerOrchestrator));
+		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", {
+			reviewReassignGranted: reviewReassignGranted || automationCancelGranted,
+		});
 
 		// An ASSIGNMENT target is not an asserted caller name, so the caller
 		// lock above does not cover it: without this, the cross-org assignment
@@ -1850,6 +1883,7 @@ export const update = mutation({
 				// HUMAN path: cancelling is terminal like delete — org:admin only.
 				assertMemberIsAdmin(callerScope, "tasks:update");
 			} else if (
+				!automationCancelGranted &&
 				!isFleetSystemCaller(callerScope, callerOrchestrator) &&
 				task.createdBy !== callerOrchestrator
 			) {
