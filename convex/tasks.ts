@@ -20,6 +20,11 @@ import {
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import {
+	resolveVerifiedPerson,
+	type VerifiedPerson,
+	verifiedPersonValidator,
+} from "./lib/personPrincipal";
+import {
 	assertMemberIsAdmin,
 	assertTaskVisibleToCaller,
 	resolveHumanActor,
@@ -167,6 +172,7 @@ export async function requireAuthenticatedCaller(
 	callerOrchestrator: string | undefined,
 	agentCredentialSecret?: string,
 	verifiedActor?: VerifiedActor,
+	verifiedPerson?: { proof: VerifiedPerson | undefined; door: string },
 ): Promise<OrgScope> {
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity === null) {
@@ -181,7 +187,25 @@ export async function requireAuthenticatedCaller(
 	// but this call site must never silently upgrade a no-identity call to
 	// master; that fail-open path is reserved for pre-audited internal call
 	// sites (see convex/lib/auth.ts doc comment), not this public surface.
-	const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+	const transportScope = await withOrgScope(ctx, {
+		allowNoIdentityMaster: false,
+	});
+	// verifiedPerson (k176ch9tamzab3dnhye94kga1d8fkbhm): a PERSON reached through
+	// the MCP service account. Believed from the service account only; the
+	// person's scope is rebuilt from its token row (convex/lib/personPrincipal.ts)
+	// and every check below then runs on the PERSON, never on the service account.
+	// Absent, the scope is the transport's, byte-unchanged.
+	const scope = await resolveVerifiedPerson(
+		ctx,
+		transportScope,
+		verifiedPerson?.proof,
+		{
+			door: verifiedPerson?.door ?? "tasks",
+			assertedName: callerOrchestrator,
+			agentProof:
+				agentCredentialSecret !== undefined || verifiedActor !== undefined,
+		},
+	);
 
 	// [verifiedActor, step i] the second proof carrier rides the same lock: it is
 	// believed only from the service account (see requireAgentCredentialMatch).
@@ -495,6 +519,8 @@ const createTaskArgsValidatorWithCredential = {
 	createdBy: v.optional(creatorValidator),
 	agentCredentialSecret: v.optional(v.string()),
 	verifiedActor: v.optional(verifiedActorValidator),
+	// A person reached through the MCP service account (convex/lib/personPrincipal.ts).
+	verifiedPerson: v.optional(verifiedPersonValidator),
 };
 
 interface CreateTaskArgs {
@@ -590,7 +616,8 @@ export const create = mutation({
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:create", …) at mcp-server/src/tools.ts:4117 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const { agentCredentialSecret, verifiedActor, ...taskArgs } = args;
+		const { agentCredentialSecret, verifiedActor, verifiedPerson, ...taskArgs } =
+			args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
@@ -599,6 +626,7 @@ export const create = mutation({
 			args.createdBy,
 			agentCredentialSecret,
 			verifiedActor,
+			{ proof: verifiedPerson, door: "tasks:create" },
 		);
 		// createdBy is already bound to the roster inside requireAuthenticatedCaller
 		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
@@ -1687,6 +1715,7 @@ export const update = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1697,6 +1726,7 @@ export const update = mutation({
 			cancelReason,
 			agentCredentialSecret,
 			verifiedActor,
+			verifiedPerson,
 			...fields
 		} = args;
 		const callerScope = await requireAuthenticatedCaller(
@@ -1704,6 +1734,7 @@ export const update = mutation({
 			callerOrchestrator,
 			agentCredentialSecret,
 			verifiedActor,
+			{ proof: verifiedPerson, door: "tasks:update" },
 		);
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
@@ -2282,6 +2313,7 @@ export const complete = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2291,6 +2323,7 @@ export const complete = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			{ proof: args.verifiedPerson, door: "tasks:complete" },
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
@@ -2686,6 +2719,7 @@ export const start = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2695,6 +2729,7 @@ export const start = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			{ proof: args.verifiedPerson, door: "tasks:start" },
 		);
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {

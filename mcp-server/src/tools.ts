@@ -25,6 +25,7 @@ import {
 	filterRowsToActorTenant,
 	isMasterScope,
 	type OAuthContext,
+	personActorOf,
 	rowVisibleToActorTenant,
 } from "./auth.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
@@ -1917,6 +1918,22 @@ export function registerTools(
 		const err = checkFromAllowed(oauthCtx, from);
 		return err ? mcpError(err) : null;
 	};
+	// A PERSON acting in its own name (k176ch9tamzab3dnhye94kga1d8fkbhm): when
+	// no acting name reaches the handler, the Convex door is handed the hash of
+	// the bearer this person presented, and nothing else. The door believes it
+	// from the service account only and re-reads subject, org and role from the
+	// token row (convex/lib/personPrincipal.ts). Every other caller, and a
+	// person acting as an agent, forwards nothing.
+	const personDoorArgs = (
+		actingName: string | undefined,
+	): { verifiedPerson?: { accessTokenHash: string } } =>
+		actingName === undefined &&
+		personActorOf(oauthCtx) !== undefined &&
+		oauthCtx?.accessTokenHash !== undefined
+			? { verifiedPerson: { accessTokenHash: oauthCtx.accessTokenHash } }
+			: {};
+	const PERSON_DOOR_NOTE =
+		" A person signed in to its organisation omits it and acts in its own name.";
 	// Delegation guard — distinct question from guardFrom (identity CLAIM).
 	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
 	// member of the CALLER's own organisation? Membership is read from DATA
@@ -3071,9 +3088,11 @@ export function registerTools(
 			"WHEN: use to notify peers of task completion, handoff, or decision; creates one receipt per recipient. " +
 			"EXAMPLE: send_message from='alpha' channel='beta' content='C3 descriptions PR ready for review'.",
 		{
-			from: creatorSchema.describe(
-				"Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, or any custom role)",
-			),
+			from: creatorSchema
+				.optional()
+				.describe(
+					`Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, or any custom role).${PERSON_DOOR_NOTE}`,
+				),
 			fromInstanceId: z
 				.string()
 				.optional()
@@ -3102,6 +3121,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Send message",
+			personDoor: true,
 		},
 		async ({
 			from,
@@ -3113,14 +3133,21 @@ export function registerTools(
 		}) => {
 			let contentBytes = 0;
 			try {
-				const fromDenied = guardFrom(from);
-				if (fromDenied) return fromDenied;
-				const instanceCheck = checkInstanceOfSender(
-					oauthCtx,
-					from,
-					fromInstanceId,
-				);
-				if (instanceCheck.error) return mcpError(instanceCheck.error);
+				// No sender named: a person acting in its own name (personDoorArgs).
+				// An instance label, if typed, is forwarded and refused by the
+				// Convex human door (a person has no instance).
+				let senderInstance: string | undefined = fromInstanceId;
+				if (from !== undefined) {
+					const fromDenied = guardFrom(from);
+					if (fromDenied) return fromDenied;
+					const instanceCheck = checkInstanceOfSender(
+						oauthCtx,
+						from,
+						fromInstanceId,
+					);
+					if (instanceCheck.error) return mcpError(instanceCheck.error);
+					senderInstance = instanceCheck.instance;
+				}
 
 				// State tokens (Day 128 brief, k... — "un état tapé à la main
 				// est un mensonge en sursis"): {{pr:owner/repo#N}} /
@@ -3199,19 +3226,22 @@ export function registerTools(
 				// `channel` may be "broadcast", a role name, or "pi,tau" CSV —
 				// only normalize non-broadcast single-role values to preserve CSV
 				// splitting behaviour in the Convex layer.
-				const normFrom = normalizeOrchestratorId(from);
+				const normFrom =
+					from === undefined ? undefined : normalizeOrchestratorId(from);
 				const normChannel =
 					channel === "broadcast" || channel.includes(",")
 						? channel
 						: normalizeOrchestratorId(channel);
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from: normFrom,
-					fromInstanceId: instanceCheck.instance,
+					fromInstanceId: senderInstance,
 					channel: normChannel,
 					content: resolvedContent,
 					sessionDay: derivedSessionDay,
 					tenantId,
+					...personDoorArgs(from),
 				});
+				const sender = from ?? personActorOf(oauthCtx);
 
 				return {
 					content: [
@@ -3219,8 +3249,13 @@ export function registerTools(
 							type: "text",
 							text: JSON.stringify(
 								unverified.length > 0
-									? { messageId, from, channel, stateUnverified: unverified }
-									: { messageId, from, channel },
+									? {
+											messageId,
+											from: sender,
+											channel,
+											stateUnverified: unverified,
+										}
+									: { messageId, from: sender, channel },
 								null,
 								2,
 							),
@@ -4149,13 +4184,16 @@ export function registerTools(
 				.number()
 				.optional()
 				.describe("Optional due date as Unix timestamp (ms)"),
-			createdBy: creatorSchema,
+			createdBy: creatorSchema
+				.optional()
+				.describe(`${creatorSchema.description}${PERSON_DOOR_NOTE}`),
 		},
 		{
 			readOnlyHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create task",
+			personDoor: true,
 		},
 		async ({
 			title,
@@ -4173,8 +4211,10 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
+				if (createdBy !== undefined) {
+					const fromDenied = guardFrom(createdBy);
+					if (fromDenied) return fromDenied;
+				}
 				const assigneeDenied = await guardDelegation(assignedTo);
 				if (assigneeDenied) return assigneeDenied;
 
@@ -4192,7 +4232,11 @@ export function registerTools(
 					missionId: missionId as any,
 					estimatedMinutes,
 					dueDate,
-					createdBy: normalizeOrchestratorId(createdBy),
+					createdBy:
+						createdBy === undefined
+							? undefined
+							: normalizeOrchestratorId(createdBy),
+					...personDoorArgs(createdBy),
 				});
 
 				return {
@@ -4677,6 +4721,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update task",
+			personDoor: true,
 		},
 		async ({
 			taskId,
@@ -4725,6 +4770,7 @@ export function registerTools(
 					dueDate,
 					callerOrchestrator,
 					cancelReason,
+					...personDoorArgs(callerOrchestrator),
 				});
 
 				return {
@@ -4768,6 +4814,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Complete task",
+			personDoor: true,
 		},
 		async ({ taskId, completionNote, callerOrchestrator }) => {
 			try {
@@ -4780,6 +4827,7 @@ export function registerTools(
 					taskId: taskId as any,
 					completionNote,
 					callerOrchestrator,
+					...personDoorArgs(callerOrchestrator),
 				});
 
 				return {
@@ -4878,6 +4926,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Start task",
+			personDoor: true,
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
@@ -4889,6 +4938,7 @@ export function registerTools(
 				await convex.mutation("tasks:start" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
+					...personDoorArgs(callerOrchestrator),
 				});
 
 				return {
@@ -5554,13 +5604,16 @@ export function registerTools(
 				.optional()
 				.describe("Target completion date (Unix ms)"),
 			progress: z.number().optional().describe("Progress percentage (0-100)"),
-			createdBy: creatorSchema,
+			createdBy: creatorSchema
+				.optional()
+				.describe(`${creatorSchema.description}${PERSON_DOOR_NOTE}`),
 		},
 		{
 			readOnlyHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create mission",
+			personDoor: true,
 		},
 		async ({
 			name,
@@ -5577,8 +5630,10 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
+				if (createdBy !== undefined) {
+					const fromDenied = guardFrom(createdBy);
+					if (fromDenied) return fromDenied;
+				}
 				const pilotDenied = await guardAssignee("pilot", pilot);
 				if (pilotDenied) return pilotDenied;
 
@@ -5595,6 +5650,7 @@ export function registerTools(
 					targetDate,
 					progress,
 					createdBy,
+					...personDoorArgs(createdBy),
 				});
 
 				return {
@@ -5843,6 +5899,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update mission",
+			personDoor: true,
 		},
 		async ({
 			missionId,
@@ -5885,6 +5942,7 @@ export function registerTools(
 					progress,
 					callerOrchestrator,
 					cancelReason,
+					...personDoorArgs(callerOrchestrator),
 				});
 
 				return {

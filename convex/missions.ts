@@ -15,6 +15,10 @@ import type { OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
+import {
+	resolveVerifiedPerson,
+	verifiedPersonValidator,
+} from "./lib/personPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -167,6 +171,8 @@ export const create = mutation({
 		progress: v.optional(v.number()),
 		// Absent = the HUMAN path (a dashboard org member acting in its own name).
 		createdBy: v.optional(creatorValidator),
+		// A person reached through the MCP service account (convex/lib/personPrincipal.ts).
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
@@ -180,7 +186,12 @@ export const create = mutation({
 		// resolved scope, never a client-supplied argument (there is no
 		// `orgId` in this mutation's args) — an org caller may create only
 		// for an owner (org) inside its own scope, by construction.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedPerson(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedPerson,
+			{ door: "missions:create", assertedName: args.createdBy },
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not create a mission — ${JSON.stringify({ orgSlug: null })}`,
@@ -194,7 +205,12 @@ export const create = mutation({
 				`PILOT_REQUIRED: a mission needs a pilot — ${JSON.stringify({ door: "missions:create" })}`,
 			);
 		}
-		const { pilot, createdBy: claimedCreator, ...rest } = args;
+		const {
+			pilot,
+			createdBy: claimedCreator,
+			verifiedPerson: _verifiedPerson,
+			...rest
+		} = args;
 		// HUMAN path (no createdBy): the actor is the verified Clerk subject, the
 		// writer-role allowlist decides, createdBy/lastActedBy are "user:<subject>".
 		// A client-supplied createdBy is never an identity on this path: with one
@@ -599,11 +615,19 @@ export const update = mutation({
 		progress: v.optional(v.number()),
 		// Mandatory reason when status is being set to "cancelled" (Day 157).
 		cancelReason: v.optional(v.string()),
+		// A person reached through the MCP service account (convex/lib/personPrincipal.ts).
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missions:update", …) at mcp-server/src/tools.ts:5509 (imperative), never a subscribing pre-org client shell; the RBAC/org-keyed throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
-		const { missionId, callerOrchestrator, cancelReason, ...fields } = args;
+		const {
+			missionId,
+			callerOrchestrator,
+			cancelReason,
+			verifiedPerson,
+			...fields
+		} = args;
 
 		// Fail-closed multi-tenant fix (same defect class as create above) —
 		// update used to authorize on NOTHING outside the cancel branch (and
@@ -619,7 +643,12 @@ export const update = mutation({
 		// anonymous caller must get RBAC_DENIED, never "Mission ... not
 		// found" — a get-then-scope order lets missionId existence act as an
 		// unauthenticated existence oracle.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedPerson(
+			ctx,
+			await withOrgScope(ctx),
+			verifiedPerson,
+			{ door: "missions:update", assertedName: callerOrchestrator },
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update mission ${missionId} — ${JSON.stringify({ orgSlug: null })}`,

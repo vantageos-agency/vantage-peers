@@ -18,6 +18,10 @@ import {
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { resolveHumanActor } from "./lib/humanActor";
+import {
+	resolveVerifiedPerson,
+	verifiedPersonValidator,
+} from "./lib/personPrincipal";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -443,6 +447,9 @@ export const sendMessage = mutation({
 		// verifiedActor: the MCP's own header-verification result, the second proof
 		// carrier. Trusted ONLY from the service account; one proof per call.
 		verifiedActor: v.optional(verifiedActorValidator),
+		// A person reached through the MCP service account: sends in its own
+		// name, scope rebuilt from its token row (convex/lib/personPrincipal.ts).
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
@@ -451,10 +458,22 @@ export const sendMessage = mutation({
 		// credential lock so the lock can bind the presented credential's org
 		// against the SAME `orgSlug` the rest of this handler already derives
 		// (reused below by sendMessageCore — never re-derived).
-		const scope = await withOrgScope(ctx);
+		const { verifiedPerson, ...sendArgs } = args;
+		const scope = await resolveVerifiedPerson(
+			ctx,
+			await withOrgScope(ctx),
+			verifiedPerson,
+			{
+				door: "messages:sendMessage",
+				assertedName: args.from,
+				agentProof:
+					args.agentCredentialSecret !== undefined ||
+					args.verifiedActor !== undefined,
+			},
+		);
 
 		if (args.from === undefined) {
-			return await sendAsHuman(ctx, args, scope);
+			return await sendAsHuman(ctx, sendArgs, scope);
 		}
 		const from = args.from;
 
@@ -479,7 +498,11 @@ export const sendMessage = mutation({
 			"messages:sendMessage",
 		);
 
-		return await sendMessageCore(ctx, { ...args, from, fromInstanceId }, scope);
+		return await sendMessageCore(
+			ctx,
+			{ ...sendArgs, from, fromInstanceId },
+			scope,
+		);
 	},
 });
 

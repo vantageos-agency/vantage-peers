@@ -10,6 +10,7 @@ import {
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
 import { requireOrgAdmin } from "./lib/auth";
+import { isHumanActorName } from "./lib/humanActor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T2] agents — the agent as an ENTITY carrying its organisation.
@@ -52,6 +53,13 @@ function assertAgentNameUsable(name: string): void {
 	if (normalizeOrchestratorId(name) === "") {
 		throw new ConvexError(
 			`AGENT_NAME_INVALID: an agent name must not be empty or whitespace-only — ${JSON.stringify({ name })}`,
+		);
+	}
+	// "user:<subject>" is how a PERSON is recorded (convex/lib/humanActor.ts);
+	// an agent so named would read as a person on every row it touched.
+	if (isHumanActorName(name)) {
+		throw new ConvexError(
+			`AGENT_NAME_RESERVED: an agent name may not start with "user:", the prefix that records a person — ${JSON.stringify({ name })}`,
 		);
 	}
 }
