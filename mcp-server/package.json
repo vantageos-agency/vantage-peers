@@ -29,6 +29,7 @@
 		"dev": "bun run server.ts",
 		"start": "bun run dist/server-http.js",
 		"dev:http": "bun run server-http.ts",
+		"pretest": "npm run build",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage"
