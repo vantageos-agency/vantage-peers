@@ -834,3 +834,30 @@ export async function computePeersStuckOnYou(
 		thresholdMs,
 	);
 }
+
+// How many in_progress tasks ONE caller may hold in ONE project at once.
+// Stations run parallel agents, each under its own started task, so the cap
+// is DATA (taskClosureConfig, single-element string[] e.g. ["6"]), never a
+// code constant. Fail-closed = the historical one-per-project behaviour:
+// absent row, empty value, or any value that is not a positive integer
+// (0, negative, non-numeric, fractional) yields 1 — never "unlimited".
+const START_TASK_IN_PROGRESS_CAP_KEY = "startTaskInProgressCap";
+export const DEFAULT_START_TASK_IN_PROGRESS_CAP = 1;
+
+/** Reads the configured per-caller-per-project in_progress cap, default 1. */
+export async function getStartTaskInProgressCap(
+	ctx: QueryCtx | MutationCtx,
+): Promise<number> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", START_TASK_IN_PROGRESS_CAP_KEY))
+		.unique();
+	if (row === null || row.value.length === 0) {
+		return DEFAULT_START_TASK_IN_PROGRESS_CAP;
+	}
+	const raw = row.value[0].trim();
+	const parsed = raw === "" ? Number.NaN : Number(raw);
+	return Number.isSafeInteger(parsed) && parsed >= 1
+		? parsed
+		: DEFAULT_START_TASK_IN_PROGRESS_CAP;
+}

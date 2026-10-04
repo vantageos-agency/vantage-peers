@@ -35,6 +35,7 @@ import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
 	getMaxSegmentMinutes,
+	getStartTaskInProgressCap,
 } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 
@@ -2705,7 +2706,8 @@ export const failTask = mutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// assertNoConcurrentInProgress — one in_progress task per orchestrator per
+// assertNoConcurrentInProgress — at most `startTaskInProgressCap`
+// (taskClosureConfig, default 1) in_progress tasks per orchestrator per
 // distinct `project`. Shared by start and resume so re-entering the clock
 // via either verb is gated identically.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2722,6 +2724,9 @@ async function assertNoConcurrentInProgress(
 	// any other name.
 	if (!callerOrchestrator || isFleetSystemCaller(callerScope, callerOrchestrator))
 		return;
+	const cap = await getStartTaskInProgressCap(ctx);
+	// take(cap + 1): the target itself may be among the rows, so cap + 1 rows
+	// are enough to decide "at least `cap` OTHER open tasks".
 	const inProgressTasks = await ctx.db
 		.query("tasks")
 		.withIndex("by_assignee_project", (q) =>
@@ -2730,12 +2735,14 @@ async function assertNoConcurrentInProgress(
 				.eq("project", project)
 				.eq("status", "in_progress"),
 		)
-		.take(2);
+		.take(cap + 1);
 
-	const conflict = inProgressTasks.find((t) => t._id !== taskId);
-	if (conflict !== undefined) {
+	const others = inProgressTasks.filter((t) => t._id !== taskId);
+	if (others.length >= cap) {
+		const conflict = others[0];
+		const openIds = others.map((t) => t._id);
 		throw new ConvexError(
-			`TASK_START_BLOCKED: Cannot start task ${taskId} — caller ${callerOrchestrator} has an unclosed in_progress task "${conflict.title}" in project ${JSON.stringify(project ?? null)}. Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, attemptedTaskId: taskId, project: project ?? null })}`,
+			`TASK_START_BLOCKED: Cannot start task ${taskId} — caller ${callerOrchestrator} already holds ${others.length} unclosed in_progress task(s) in project ${JSON.stringify(project ?? null)} (cap ${cap}): ${openIds.join(", ")}; first "${conflict.title}". Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, openInProgressTaskIds: openIds, cap, attemptedTaskId: taskId, project: project ?? null })}`,
 		);
 	}
 }
