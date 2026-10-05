@@ -946,6 +946,9 @@ export default defineSchema({
 			),
 		),
 		forkRepo: v.optional(v.string()), // "elpiarthera/better-auth"
+		// TENANT, copied by the server from the repo's githubRepoMapping row when
+		// the webhook upserts the issue. Absent = fleet issue.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_repo_number", ["repo", "issueNumber"])
 		.index("by_status", ["status"])
@@ -976,8 +979,15 @@ export default defineSchema({
 		// convex/lib/reviewRouting.ts.
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// TENANT. Absent = a FLEET row (the operator's own repositories, the
+		// historical meaning of every existing row — no backfill). Present = the
+		// client org that owns the repo. Written ONLY by the server from the
+		// caller's verified scope (convex/githubRepoMapping.ts `add`); there is
+		// no argument for it anywhere.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_repo", ["repo"])
+		.index("by_org", ["orgId"])
 		// Issue #1276 fix — `resolveStaleDeployTasks` (convex/tasks.ts) used to
 		// open with an unbounded `ctx.db.query("githubRepoMapping").collect()`
 		// of the WHOLE table every single cron tick (every 6 hours), the one

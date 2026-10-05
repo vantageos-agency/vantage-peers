@@ -25,6 +25,13 @@ import {
 	deliveryClaimValidator,
 } from "./deliveryLedger";
 import {
+	FLEET_AUDIENCE,
+	audienceForOrgId,
+	issueMatchesMapping,
+	mappingInAudience,
+	type MappingAudience,
+} from "./lib/repoMappingTenant";
+import {
 	resolveVerifiedPerson,
 	type VerifiedPerson,
 	verifiedPersonValidator,
@@ -2539,15 +2546,14 @@ export const complete = mutation({
 
 		await unblockWaitersOn(ctx, args.taskId, now);
 
-		// Tenant gate for every fleet-repo side effect below (auto-link, IRP
-		// comments, fixPattern): decided from the task's server-stamped orgId,
-		// never from the caller-chosen `project` string. See
-		// taskMayReachFleetRepoRows.
-		const mayReachFleetRepoRows = await taskMayReachFleetRepoRows(ctx, task);
+		// Tenant of every repo-mapping side effect below (auto-link, IRP comments,
+		// fixPattern): the task's server-stamped orgId, never the caller-chosen
+		// `project` string. See convex/lib/repoMappingTenant.ts.
+		const mappingAudience = await audienceForOrgId(ctx, task.orgId);
 
 		// Auto-link: if task title contains #NNN, update the corresponding issue
 		const issueMatch = task.title.match(/#(\d+)/);
-		if (issueMatch && mayReachFleetRepoRows) {
+		if (issueMatch) {
 			const issueNumber = parseInt(issueMatch[1], 10);
 			// Find repo from project via githubRepoMapping — issue #1276-class
 			// fix: this used to be an unbounded `.collect()` of the WHOLE
@@ -2561,10 +2567,11 @@ export const complete = mutation({
 			// per-project overflow is strictly safer than throwing and blocking
 			// the task-completion write itself.
 			if (task.project) {
-				const { row: mapping } = await resolveGithubRepoMappingForProject(
-					ctx,
-					task.project,
-				);
+					const { row: mapping } = await resolveGithubRepoMappingForProject(
+						ctx,
+						task.project,
+						mappingAudience,
+					);
 				if (mapping) {
 					// Find the issue
 					const issue = await ctx.db
@@ -2573,8 +2580,8 @@ export const complete = mutation({
 							q.eq("repo", mapping.repo).eq("issueNumber", issueNumber),
 						)
 						.unique();
-					if (issue) {
-						// Link the task
+						if (issue && issueMatchesMapping(issue, mapping)) {
+							// Link the task
 						const existingTaskIds = issue.linkedTaskIds || [];
 						if (!existingTaskIds.includes(args.taskId as string)) {
 							await ctx.db.patch(issue._id, {
@@ -2607,7 +2614,7 @@ export const complete = mutation({
 		// IRP auto-comments: post a GitHub comment when key IRP steps are completed.
 		// IRP task titles follow the pattern "[#NNN] TN — <step name>".
 		const irpStepMatch = task.title.match(/\[#(\d+)\] T(\d+)/);
-		if (irpStepMatch && task.project && mayReachFleetRepoRows) {
+		if (irpStepMatch && task.project) {
 			const irpIssueNumber = parseInt(irpStepMatch[1], 10);
 			const stepNumber = parseInt(irpStepMatch[2], 10);
 
@@ -2616,8 +2623,11 @@ export const complete = mutation({
 			const author = authorMatch ? authorMatch[1] : null;
 			const authorMention = author ? `@${author} ` : "";
 
-			const allMappings = await ctx.db.query("githubRepoMapping").take(100);
-			const repoMapping = allMappings.find((m) => m.project === task.project);
+			const { row: repoMapping } = await resolveGithubRepoMappingForProject(
+				ctx,
+				task.project,
+				mappingAudience,
+			);
 
 			if (repoMapping) {
 				const dateStr = new Date().toISOString().split("T")[0];
@@ -2643,7 +2653,10 @@ export const complete = mutation({
 				}
 
 				// IRP auto-store fixPattern when the Fix step (T7) is completed
-				if (stepNumber === 7 && args.completionNote) {
+				// fixPatterns and its RAG entry are a GLOBAL fleet corpus with no
+				// tenant column: only a FLEET mapping may feed it. A client org's own
+				// repo still gets the GitHub comment above, never a row here.
+				if (stepNumber === 7 && args.completionNote && repoMapping.orgId === undefined) {
 					const note = args.completionNote;
 
 					// Parse structured completionNote: "Root cause: ... Fix: ... Files: ..."
@@ -3703,31 +3716,6 @@ function parseDeployTitle(
 export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
 
 /**
- * May a completing task reach the FLEET's `githubRepoMapping` / `issues` rows?
- *
- * Neither table has an `orgId`: they are the operator fleet's own repositories
- * and issues (see convex/githubRepoMapping.ts — master-only, "no per-org owner
- * field"). `task.project` is a string the creating member chose, so keying the
- * lookup on it alone let an org-a member name an org-b project and have
- * `complete` patch org-b's issue (and post a comment on org-b's repo). The
- * tenant is therefore taken from the row the SERVER stamped, `task.orgId`:
- * unstamped = fleet/master-created, or an ACTIVE `orgKind: "operator"` org.
- * Any client org is refused the auto-link; the completion itself is unaffected.
- */
-async function taskMayReachFleetRepoRows(
-	ctx: MutationCtx,
-	task: Doc<"tasks">,
-): Promise<boolean> {
-	if (task.orgId === undefined) return true;
-	const orgSlug = task.orgId;
-	const mapping = await ctx.db
-		.query("client_org_mapping")
-		.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
-		.unique();
-	return mapping !== null && mapping.isActive && mapping.orgKind === "operator";
-}
-
-/**
  * Resolve the single "winning" githubRepoMapping row for a project, reading
  * ONLY that project's own rows via the `by_project` index — never the whole
  * table. Bug-5 tiebreaker (unchanged from the pre-#1276-fix inline logic
@@ -3742,14 +3730,18 @@ async function taskMayReachFleetRepoRows(
 async function resolveGithubRepoMappingForProject(
 	ctx: MutationCtx,
 	project: string,
+	audience: MappingAudience,
 ): Promise<{ row: Doc<"githubRepoMapping"> | null; truncated: boolean }> {
-	const group = await ctx.db
+	const projectRows = await ctx.db
 		.query("githubRepoMapping")
 		.withIndex("by_project", (q) => q.eq("project", project))
 		.take(REPO_MAPPING_PER_PROJECT_SCAN_CAP + 1);
-	if (group.length > REPO_MAPPING_PER_PROJECT_SCAN_CAP) {
+	if (projectRows.length > REPO_MAPPING_PER_PROJECT_SCAN_CAP) {
 		return { row: null, truncated: true };
 	}
+	// TENANT: `project` is a free string two orgs may both use. Only the rows
+	// the acting task's own tenant may reach take part in the tiebreak below.
+	const group = projectRows.filter((m) => mappingInAudience(m, audience));
 	if (group.length === 0) {
 		return { row: null, truncated: false };
 	}
@@ -3846,7 +3838,7 @@ export const createDeployTaskWithDedup = internalMutation({
 		// tiebreaker, zero behavior change.
 		if (args.prMergedAt !== undefined) {
 			const { row: mapping, truncated: mappingTruncated } =
-				await resolveGithubRepoMappingForProject(ctx, repo);
+				await resolveGithubRepoMappingForProject(ctx, repo, FLEET_AUDIENCE);
 			if (mappingTruncated) {
 				// This project's own mapping-row set overflowed its cap (structurally
 				// near-impossible — see REPO_MAPPING_PER_PROJECT_SCAN_CAP). Refuse to
@@ -4106,21 +4098,32 @@ export const resolveStaleDeployTasks = internalMutation({
 		// extra `by_project` lookup per distinct project per page, still
 		// bounded by that page's own distinct-project count, never the
 		// fleet-wide repo corpus.
+		// TENANT: the cache key carries the task's own orgId — two orgs may map
+		// the same project slug and must never read each other's deploy state.
 		const repoCache = new Map<string, Doc<"githubRepoMapping"> | null>();
+		const audienceCache = new Map<string, MappingAudience>();
 
 		async function resolveMappingForProject(
 			project: string,
+			orgId: string | undefined,
 		): Promise<Doc<"githubRepoMapping"> | null> {
-			const cached = repoCache.get(project);
+			const key = `${orgId ?? ""}\u0000${project}`;
+			const cached = repoCache.get(key);
 			if (cached !== undefined) return cached;
+			const audKey = orgId ?? "";
+			let audience = audienceCache.get(audKey);
+			if (audience === undefined) {
+				audience = await audienceForOrgId(ctx, orgId);
+				audienceCache.set(audKey, audience);
+			}
 
 			// A single project's own mapping-row set overflowing its cap is
 			// structurally near-impossible (see REPO_MAPPING_PER_PROJECT_SCAN_CAP)
 			// — when it happens, refuse to guess a tiebreak winner from a
 			// partial set (`row` is null) rather than silently treating an
 			// unresolved mapping as "no bundled deploy happened".
-			const { row } = await resolveGithubRepoMappingForProject(ctx, project);
-			repoCache.set(project, row);
+			const { row } = await resolveGithubRepoMappingForProject(ctx, project, audience);
+			repoCache.set(key, row);
 			return row;
 		}
 
@@ -4129,7 +4132,7 @@ export const resolveStaleDeployTasks = internalMutation({
 			if (!parsed) continue;
 			scanned++;
 
-			const mapping = await resolveMappingForProject(parsed.repo);
+			const mapping = await resolveMappingForProject(parsed.repo, t.orgId);
 
 			if (
 				!mapping ||

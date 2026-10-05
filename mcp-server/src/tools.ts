@@ -2079,6 +2079,15 @@ export function registerTools(
 		);
 	};
 
+	// A caller the transport could not resolve is never served (absence is never
+	// master). Used by tools whose Convex door derives the tenant itself.
+	const guardResolvedCaller = (toolName: string) => {
+		if (oauthCtx) return null;
+		return mcpError(
+			`Forbidden: ${toolName} requires an authenticated caller, but the request carried no authorization context (absence is never master).`,
+		);
+	};
+
 	// Auth context threaded into every defineTool registration. The wrapper reads
 	// the declared scope and applies the SAME shared predicates the in-handler
 	// guards use (checkNamespace*/checkFromAllowed/isMasterScope), so migrated
@@ -8256,14 +8265,19 @@ export function registerTools(
 
 	// ── add_repo_mapping ────────────────────────────────────────────────────────
 
-	// oracle-justified: fleet webhook-routing config with no orgId on the table: writes are master-only (MCP scope
-	//   master; requireMasterScope in convex/githubRepoMapping.ts) and the reads are master-only at the
-	//   Convex door too (requireResolvedCaller masterOnly); the in-handler-filtered label on the read
-	//   tools is the MCP-layer kind, not a wider door.
+	// oracle-justified: githubRepoMapping rows carry an optional `orgId` (absent = fleet row), written
+	//   server-side from the caller's verified scope (convex/githubRepoMapping.ts resolveWriteTenant) and
+	//   never from an argument. The MCP layer therefore only refuses an unresolved caller; the Convex door
+	//   decides: master writes a fleet row, an org member needs the "manage-repo-mappings" scope, writes only
+	//   its own org's rows, and routes only to its own roster.
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"tenant (orgId) derived server-side from the verified scope in githubRepoMapping:add; member needs manage-repo-mappings",
+		},
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
 			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
@@ -8303,9 +8317,10 @@ export function registerTools(
 			title: "Add repo mapping",
 		},
 		async ({ repo, orchestrator, project, active, reviewer, fallbackReviewer }) => {
-			// C0.3: infra webhook routing config — master scope only
-			const masterDenied = guardMasterOnly("add_repo_mapping");
-			if (masterDenied) return masterDenied;
+			// Repo mappings are tenant-owned (orgId): an unresolved caller is refused
+			// here, the Convex door decides master / org-member / own-rows.
+			const unresolved = guardResolvedCaller("add_repo_mapping");
+			if (unresolved) return unresolved;
 			try {
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
 					repo,
@@ -8478,7 +8493,11 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"tenant (orgId) derived server-side from the verified scope in githubRepoMapping:remove; member removes only its own org's rows",
+		},
 		"remove_repo_mapping",
 		"Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
 			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
@@ -8497,9 +8516,8 @@ export function registerTools(
 			title: "Remove repo mapping",
 		},
 		async ({ repo }) => {
-			// C0.3: infra webhook routing config — master scope only
-			const masterDenied = guardMasterOnly("remove_repo_mapping");
-			if (masterDenied) return masterDenied;
+			const unresolved = guardResolvedCaller("remove_repo_mapping");
+			if (unresolved) return unresolved;
 			try {
 				const result = await convex.mutation(
 					"githubRepoMapping:remove" as any,

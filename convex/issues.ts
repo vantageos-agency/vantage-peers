@@ -116,6 +116,9 @@ export const upsertFromGitHub = internalMutation({
 		});
 		const assignedOrchestrator: string = mapping?.orchestrator ?? "sigma";
 		const project: string = mapping?.project ?? args.repo;
+		// TENANT: the issue belongs to whoever owns the repo's mapping row —
+		// copied from the server's own row, never from the webhook payload.
+		const orgId: string | undefined = mapping?.orgId;
 
 		// Derive priority from labels
 		const priority = derivePriority(args.labels);
@@ -138,6 +141,7 @@ export const upsertFromGitHub = internalMutation({
 				priority,
 				assignedOrchestrator,
 				project,
+				orgId,
 				githubUpdatedAt: args.githubUpdatedAt,
 			});
 			return existing._id;
@@ -154,6 +158,7 @@ export const upsertFromGitHub = internalMutation({
 			priority,
 			assignedOrchestrator,
 			project,
+			...(orgId !== undefined ? { orgId } : {}),
 			githubCreatedAt: args.githubCreatedAt,
 			githubUpdatedAt: args.githubUpdatedAt,
 		});
