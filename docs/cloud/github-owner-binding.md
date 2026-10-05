@@ -49,14 +49,64 @@ account may have been renamed or transferred while suspended, and the proof was
 not re-taken. Re-binding (`bind_github_owner`) is one self-serve step and
 restores routing.
 
-## Configuration this needs (not present until set)
+## Creating the GitHub App (operator checklist, one pass)
 
-- GitHub App with "Request user authorization (OAuth) during installation" on,
-  setup URL `https://<deployment>.convex.site/github/app/setup`, the
-  `installation` webhook event enabled on the existing `/github/webhook`.
-- Deployment env: `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`.
-  Without them `/github/app/setup` answers 501 and no binding can be created
-  (fail closed).
+GitHub → Settings → Developer settings → GitHub Apps → New GitHub App. `<site>` is
+the Convex deployment's HTTP site URL, `https://<deployment>.convex.site` (the
+host `convex/http.ts` is served on). Values the code depends on are cited.
+
+| Field | Value | Why / where the code reads it |
+|---|---|---|
+| GitHub App name | `VantagePeers Cloud` (any free name; its slug builds the install URL `https://github.com/apps/<slug>/installations/new?state=<state>`) | not read by code |
+| Homepage URL | your product page, e.g. `https://vantagepeers.com` | required by GitHub, not read by code |
+| Callback URL | `<site>/github/app/setup` | the route `convex/http.ts:880` (`path: "/github/app/setup"`, GET); it reads `state`, `code`, `installation_id` at `convex/http.ts:889-891` |
+| Request user authorization (OAuth) during installation | **ON** | without it GitHub sends no `code`, and `convex/http.ts:889-894` answers 400. With it ON GitHub redirects to the Callback URL and the Setup URL field is unavailable (leave it empty) |
+| Setup URL | leave empty (disabled by the option above) | |
+| Redirect on update | **OFF** | the callback needs a fresh single-use `state` issued by `bind_github_owner` (`convex/githubOwnerBinding.ts`, `startBinding`); an update redirect carries none and would only be answered 409 `state-unknown` |
+| Expire user authorization tokens | leave ON (default); the token is used once, in the same request | `convex/http.ts:895-910` |
+| Webhook: Active | ON | |
+| Webhook URL | `<site>/github/webhook` (the existing route, `convex/http.ts:28`) | the installation lifecycle is handled at `convex/http.ts:79-93` |
+| Webhook secret | the SAME value as the deployment's `GITHUB_WEBHOOK_SECRET` | the HMAC is verified at `convex/http.ts:36-70` with `process.env.GITHUB_WEBHOOK_SECRET`; a delivery whose signature differs is refused 401, and with no secret set, 503 |
+| SSL verification | Enabled | |
+
+**Permissions (minimal set the code needs today).** Derived by grep of the GitHub
+calls in `convex/`: `GET https://api.github.com/user/installations` and
+`GET https://api.github.com/user` (`convex/http.ts:909,923`) run with the
+authorising user's own OAuth token and need no App permission. Every REST call
+that reads or comments on a repo (`convex/githubComments.ts:19,32`,
+`convex/http.ts:336,627`) authenticates with the separate `GITHUB_TOKEN`
+variable, not with the App, so the App needs NO write permission:
+
+| Scope | Permission | Level | Needed for |
+|---|---|---|---|
+| Repository | Metadata | Read-only (mandatory, GitHub forces it) | any App |
+| Repository | Issues | Read-only | delivery of the `issues` and `issue_comment` events the webhook reads (`convex/http.ts:162,364,371,391,397,403,485`) |
+| Repository | Pull requests | Read-only | delivery of `pull_request` and `pull_request_review` (`convex/http.ts:508,554,576`) |
+| Organization | none | | |
+| Account | none | | |
+
+If a later change moves comments or file listing from `GITHUB_TOKEN` to an
+installation token, add Issues: Read and write (comments) and Contents or Pull
+requests: Read (PR files) then, not before.
+
+**Subscribe to events:** Issues, Issue comment, Pull request, Pull request review.
+`installation` (deleted, suspend) is delivered to every GitHub App without a
+subscription, and is the only one the binding logic reads (`convex/http.ts:79`).
+
+**Where to set the secrets.** Convex dashboard → the deployment → Settings →
+Environment Variables (names exactly as read by the code):
+
+- `GITHUB_APP_CLIENT_ID` — the App's "Client ID" (`convex/http.ts:883`)
+- `GITHUB_APP_CLIENT_SECRET` — "Generate a new client secret" on the App page
+  (`convex/http.ts:884`)
+- `GITHUB_WEBHOOK_SECRET` — already set for the repo webhook; the App's webhook
+  secret must equal it (`convex/http.ts:36`)
+
+Without the first two, `/github/app/setup` answers 501 and no binding can be
+created (fail closed, `convex/http.ts:883-887`).
+
+Install URL handed to an org admin after `bind_github_owner`:
+`https://github.com/apps/<slug>/installations/new?state=<state from the tool>`.
 
 ## Existing mappings without proof
 
