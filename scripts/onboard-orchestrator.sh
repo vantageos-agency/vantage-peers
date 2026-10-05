@@ -15,8 +15,8 @@ DRY=""; GH_REPO=""; PROJECT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY="--dry-run"; shift ;;
-    --repo) GH_REPO="${2:?$USAGE}"; shift 2 ;;
-    --project) PROJECT="${2:?$USAGE}"; shift 2 ;;
+    --repo) [ $# -ge 2 ] && [ -n "$2" ] || { echo "$USAGE" >&2; exit 2; }; GH_REPO="$2"; shift 2 ;;
+    --project) [ $# -ge 2 ] && [ -n "$2" ] || { echo "$USAGE" >&2; exit 2; }; PROJECT="$2"; shift 2 ;;
     *) echo "$USAGE" >&2; exit 2 ;;
   esac
 done
@@ -44,7 +44,10 @@ printf '[{"role":"%s","instanceId":"%s-vps"}]\n' "$ROLE" "$ROLE" > "$STATIONS"
 
 # 2. Register the agent and mint its credential (idempotent: skips a live credential).
 bun run "$REPO/scripts/mint-station-agents.mjs" --stations "$STATIONS" --dry-run
-[ "$DRY" = "--dry-run" ] && { echo "dry run: nothing written"; exit 0; }
+if [ "$DRY" = "--dry-run" ]; then
+  [ -n "$GH_REPO" ] && echo "plan: repo mapping $GH_REPO -> $ROLE (project $PROJECT)"
+  echo "dry run: nothing written"; exit 0
+fi
 bun run "$REPO/scripts/mint-station-agents.mjs" --stations "$STATIONS" --secrets-dir "$SECRETS"
 [ -s "$SECRETS/$ROLE.secret" ] || { echo "no secret file for $ROLE" >&2; exit 1; }
 
