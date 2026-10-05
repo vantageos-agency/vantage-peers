@@ -1297,14 +1297,22 @@ export const retrofitSeatRefreshToken = internalMutation({
 
 		// POLE REFUSE: a live (non-revoked, non-expired) refresh token
 		// already exists for this client — do not mint a second one.
-		const existingRefresh = await ctx.db
+		// An EXISTENCE question ("is any refresh token live?"), so it is answered
+		// by streaming the client's rows newest-first and stopping at the first
+		// live one — exact (no cap can hide a live token behind dead ones) and
+		// cheap in the usual case. Only a client whose every row is dead reads
+		// them all, and that read is the same one the refusal needs to be correct.
+		const now = Date.now();
+		let hasLiveRefresh = false;
+		for await (const r of ctx.db
 			.query("oauth_refresh_tokens")
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
-		const now = Date.now();
-		const hasLiveRefresh = existingRefresh.some(
-			(r) => r.revokedAt === undefined && r.expiresAt > now,
-		);
+			.order("desc")) {
+			if (r.revokedAt === undefined && r.expiresAt > now) {
+				hasLiveRefresh = true;
+				break;
+			}
+		}
 		if (hasLiveRefresh) {
 			throw new Error(
 				`SEAT_ALREADY_HAS_LIVE_REFRESH_TOKEN: clientId "${args.clientId}" already holds a live refresh token — retrofit refuses to mint a second one`,
@@ -1447,6 +1455,210 @@ export const listClients = query({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bounded walks over one client's tokens (R-31)
+//
+// `deleteClient`, `patchClientScopeAndRefreshTokens` and `revokeAccessTokensOnly`
+// used to `.collect()` every access and refresh token of the client in ONE
+// transaction. They now read CLIENT_TOKEN_BATCH rows per table per transaction
+// through `.paginate` (a cursor: a revoked or retargeted row STAYS in the
+// `by_clientId` range, so a re-read from the start would never advance) and
+// continue through `continueClientTokenWalk`, scheduled with runAfter(0).
+//
+// What does NOT change: the caller is authenticated and every refusal raised
+// BEFORE the walk (service account, reason length, client/profile existence,
+// revoked client) happens in the public mutation, exactly as before. The
+// continuation is internal-only, carries only data the public mutation
+// already derived, and re-applies the same per-row rules.
+//
+// What a reader should know: tokens past the first batch are touched a moment
+// later, not in the same transaction. A client with <= CLIENT_TOKEN_BATCH
+// tokens per table (every client seen in practice) is handled entirely in the
+// first transaction, exactly as before. The counts a public mutation returns
+// are those of its own (first) transaction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Token rows of one client read per table per transaction. */
+export const CLIENT_TOKEN_BATCH = 500;
+
+type TokenWalkOp = "revoke_all" | "retarget_scope" | "revoke_access_only";
+
+const tokenWalkOpValidator = v.union(
+	v.literal("revoke_all"),
+	v.literal("retarget_scope"),
+	v.literal("revoke_access_only"),
+);
+
+interface TokenWalkState {
+	accessCursor: string | null;
+	accessDone: boolean;
+	refreshCursor: string | null;
+	refreshDone: boolean;
+}
+
+const tokenWalkStateFields = {
+	accessCursor: v.union(v.string(), v.null()),
+	accessDone: v.boolean(),
+	refreshCursor: v.union(v.string(), v.null()),
+	refreshDone: v.boolean(),
+};
+
+interface ScopeProfileFields {
+	profileId: string;
+	fromAllowList: string[];
+	namespaceReadPrefixes: string[];
+	namespaceWritePrefixes: string[];
+	clerkOrgSlug: string | undefined;
+}
+
+/**
+ * One page of each table still to walk. `seen` counts rows read, `touched`
+ * rows actually patched. Per-row rules are the ones the old loops had:
+ *   revoke_all / revoke_access_only: patch `revokedAt` where absent.
+ *   retarget_scope: skip revoked and expired rows, patch the cached scope.
+ */
+async function walkClientTokensPage(
+	ctx: MutationCtx,
+	walk: {
+		op: TokenWalkOp;
+		clientId: string;
+		now: number;
+		profile: ScopeProfileFields | null;
+	},
+	state: TokenWalkState,
+): Promise<{
+	state: TokenWalkState;
+	accessSeen: number;
+	accessTouched: number;
+	refreshSeen: number;
+	refreshTouched: number;
+}> {
+	const next: TokenWalkState = { ...state };
+	let accessSeen = 0;
+	let accessTouched = 0;
+	let refreshSeen = 0;
+	let refreshTouched = 0;
+
+	if (!state.accessDone) {
+		const page = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", walk.clientId))
+			.paginate({ numItems: CLIENT_TOKEN_BATCH, cursor: state.accessCursor });
+		for (const t of page.page) {
+			accessSeen++;
+			if (walk.op === "retarget_scope") {
+				if (walk.profile === null) continue;
+				if (t.revokedAt !== undefined) continue;
+				if (t.expiresAt < walk.now) continue;
+				await ctx.db.patch(t._id, {
+					scopeProfile: walk.profile.profileId,
+					fromAllowList: walk.profile.fromAllowList,
+					namespaceReadPrefixes: walk.profile.namespaceReadPrefixes,
+					namespaceWritePrefixes: walk.profile.namespaceWritePrefixes,
+					clerkOrgSlug: walk.profile.clerkOrgSlug,
+				});
+				accessTouched++;
+			} else if (t.revokedAt === undefined) {
+				await ctx.db.patch(t._id, { revokedAt: walk.now });
+				accessTouched++;
+			}
+		}
+		next.accessDone = page.isDone;
+		next.accessCursor = page.continueCursor;
+	}
+
+	if (!state.refreshDone) {
+		const page = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_clientId", (q) => q.eq("clientId", walk.clientId))
+			.paginate({ numItems: CLIENT_TOKEN_BATCH, cursor: state.refreshCursor });
+		for (const r of page.page) {
+			refreshSeen++;
+			if (walk.op === "retarget_scope") {
+				if (walk.profile === null) continue;
+				if (r.revokedAt !== undefined) continue;
+				if (r.expiresAt < walk.now) continue;
+				await ctx.db.patch(r._id, { scopeProfile: walk.profile.profileId });
+				refreshTouched++;
+			} else if (r.revokedAt === undefined) {
+				await ctx.db.patch(r._id, { revokedAt: walk.now });
+				refreshTouched++;
+			}
+		}
+		next.refreshDone = page.isDone;
+		next.refreshCursor = page.continueCursor;
+	}
+
+	return { state: next, accessSeen, accessTouched, refreshSeen, refreshTouched };
+}
+
+/**
+ * continueClientTokenWalk — the self-scheduled continuation of the three
+ * client-token mutations above. Internal-only. For a scope retarget it
+ * re-reads the target profile by id; a profile that vanished mid-drain stops
+ * the walk loudly (the scheduled run fails and is logged) rather than
+ * retargeting to nothing.
+ */
+export const continueClientTokenWalk = internalMutation({
+	args: {
+		op: tokenWalkOpValidator,
+		clientId: v.string(),
+		now: v.number(),
+		newScopeProfile: v.optional(v.string()),
+		...tokenWalkStateFields,
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		let profile: ScopeProfileFields | null = null;
+		if (args.op === "retarget_scope") {
+			const row =
+				args.newScopeProfile === undefined
+					? null
+					: await ctx.db
+							.query("oauth_scope_profiles")
+							.withIndex("by_profileId", (q) =>
+								q.eq("profileId", args.newScopeProfile as string),
+							)
+							.unique();
+			if (!row) {
+				console.error(
+					`[continueClientTokenWalk] client ${args.clientId}: target scope_profile ${args.newScopeProfile} no longer exists — retarget stopped`,
+				);
+				throw new Error(
+					`scope_profile not found: ${args.newScopeProfile ?? "(none)"}`,
+				);
+			}
+			profile = {
+				profileId: row.profileId,
+				fromAllowList: row.fromAllowList,
+				namespaceReadPrefixes: row.namespaceReadPrefixes,
+				namespaceWritePrefixes: row.namespaceWritePrefixes,
+				clerkOrgSlug: row.clerkOrgSlug,
+			};
+		}
+		const r = await walkClientTokensPage(
+			ctx,
+			{ op: args.op, clientId: args.clientId, now: args.now, profile },
+			{
+				accessCursor: args.accessCursor,
+				accessDone: args.accessDone,
+				refreshCursor: args.refreshCursor,
+				refreshDone: args.refreshDone,
+			},
+		);
+		if (!r.state.accessDone || !r.state.refreshDone) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+				op: args.op,
+				clientId: args.clientId,
+				now: args.now,
+				newScopeProfile: args.newScopeProfile,
+				...r.state,
+			});
+		}
+		return null;
+	},
+});
+
 export const deleteClient = mutation({
 	args: { clientId: v.string() },
 	returns: v.object({
@@ -1468,32 +1680,26 @@ export const deleteClient = mutation({
 		const now = Date.now();
 		await ctx.db.patch(client._id, { revokedAt: now });
 
-		// Revoke all access tokens
-		const accessTokens = await ctx.db
-			.query("oauth_access_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
-		for (const t of accessTokens) {
-			if (t.revokedAt === undefined) {
-				await ctx.db.patch(t._id, { revokedAt: now });
-			}
-		}
-
-		// Revoke all refresh tokens
-		const refreshTokens = await ctx.db
-			.query("oauth_refresh_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
-		for (const t of refreshTokens) {
-			if (t.revokedAt === undefined) {
-				await ctx.db.patch(t._id, { revokedAt: now });
-			}
+		// Revoke the client's access and refresh tokens: the first batch of each
+		// here, the rest through the scheduler (see the walk helpers above).
+		const first = await walkClientTokensPage(
+			ctx,
+			{ op: "revoke_all", clientId: args.clientId, now, profile: null },
+			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+		);
+		if (!first.state.accessDone || !first.state.refreshDone) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+				op: "revoke_all",
+				clientId: args.clientId,
+				now,
+				...first.state,
+			});
 		}
 
 		return {
 			revokedClient: true,
-			revokedTokens: accessTokens.length,
-			revokedRefresh: refreshTokens.length,
+			revokedTokens: first.accessSeen,
+			revokedRefresh: first.refreshSeen,
 		};
 	},
 });
@@ -1576,43 +1782,35 @@ export const patchClientScopeAndRefreshTokens = mutation({
 		// Patch the client itself.
 		await ctx.db.patch(client._id, { scopeProfile: args.newScopeProfile });
 
-		// Walk live access tokens and refresh the cached scope + prefixes.
-		const tokens = await ctx.db
-			.query("oauth_access_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
-		let refreshed = 0;
-		for (const t of tokens) {
-			if (t.revokedAt !== undefined) continue;
-			if (t.expiresAt < now) continue;
-			await ctx.db.patch(t._id, {
-				scopeProfile: args.newScopeProfile,
-				fromAllowList: newProfile.fromAllowList,
-				namespaceReadPrefixes: newProfile.namespaceReadPrefixes,
-				namespaceWritePrefixes: newProfile.namespaceWritePrefixes,
-				clerkOrgSlug: newProfile.clerkOrgSlug,
+		// Retarget the client's live access tokens (cached scope + prefixes) AND
+		// its live refresh tokens. CRITICAL — refresh tokens cache `scopeProfile`
+		// (used by the /token refresh handler via loadScopeProfile): a stale
+		// refresh row would mint a NEW access token with the OLD profile's
+		// fromAllowList, silently re-introducing the stale identity. First batch
+		// of each table here, the rest through the scheduler.
+		const walkProfile: ScopeProfileFields = {
+			profileId: args.newScopeProfile,
+			fromAllowList: newProfile.fromAllowList,
+			namespaceReadPrefixes: newProfile.namespaceReadPrefixes,
+			namespaceWritePrefixes: newProfile.namespaceWritePrefixes,
+			clerkOrgSlug: newProfile.clerkOrgSlug,
+		};
+		const first = await walkClientTokensPage(
+			ctx,
+			{ op: "retarget_scope", clientId: args.clientId, now, profile: walkProfile },
+			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+		);
+		if (!first.state.accessDone || !first.state.refreshDone) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+				op: "retarget_scope",
+				clientId: args.clientId,
+				now,
+				newScopeProfile: args.newScopeProfile,
+				...first.state,
 			});
-			refreshed++;
 		}
-
-		// CRITICAL — refresh tokens cache `scopeProfile` (used by /token
-		// refresh handler L789 via loadScopeProfile(record.scopeProfile)).
-		// If we leave the refresh token row stale, the next refresh-flow
-		// MINTS a NEW access token with the OLD profile's fromAllowList,
-		// silently re-introducing the stale identity. Patch all live
-		// refresh tokens for this client so the next mint reads the new
-		// profile.
-		const refreshTokens = await ctx.db
-			.query("oauth_refresh_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
-		let refreshTokensRetargeted = 0;
-		for (const r of refreshTokens) {
-			if (r.revokedAt !== undefined) continue;
-			if (r.expiresAt < now) continue;
-			await ctx.db.patch(r._id, { scopeProfile: args.newScopeProfile });
-			refreshTokensRetargeted++;
-		}
+		const refreshed = first.accessTouched;
+		const refreshTokensRetargeted = first.refreshTouched;
 
 		const auditLogId = await ctx.db.insert("oauth_audit_log", {
 			eventType: "patch_client_scope",
@@ -1696,23 +1894,31 @@ export const revokeAccessTokensOnly = mutation({
 		}
 
 		const now = Date.now();
-		let revoked = 0;
-		const accessTokens = await ctx.db
-			.query("oauth_access_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
-		for (const t of accessTokens) {
-			if (t.revokedAt !== undefined) continue;
-			await ctx.db.patch(t._id, { revokedAt: now });
-			revoked++;
+		// Access tokens: first batch here, the rest through the scheduler. The
+		// refresh table is only COUNTED (never written), so it is not walked.
+		const first = await walkClientTokensPage(
+			ctx,
+			{ op: "revoke_access_only", clientId: args.clientId, now, profile: null },
+			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: true },
+		);
+		if (!first.state.accessDone) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+				op: "revoke_access_only",
+				clientId: args.clientId,
+				now,
+				...first.state,
+			});
 		}
+		const revoked = first.accessTouched;
 
 		// Count surviving refresh tokens (no patch). Useful in the response
-		// so the operator can confirm the refresh-flow can proceed.
+		// so the operator can confirm the refresh-flow can proceed. Read to at
+		// most CLIENT_TOKEN_BATCH rows: the figure is a floor if the client holds
+		// more than that.
 		const refreshTokens = await ctx.db
 			.query("oauth_refresh_tokens")
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.collect();
+			.take(CLIENT_TOKEN_BATCH);
 		const preserved = refreshTokens.filter(
 			(r) => r.revokedAt === undefined && r.expiresAt > now,
 		).length;
@@ -2130,6 +2336,43 @@ async function sha256Hex(input: string): Promise<string> {
 // renamed per D9 workspace-level naming (see the operator profile migrations).
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Clients retargeted per transaction when a scope profile is renamed. */
+export const CLIENT_RETARGET_BATCH = 500;
+
+async function retargetClientsBatch(
+	ctx: MutationCtx,
+	fromProfile: string,
+	toProfile: string,
+): Promise<{ count: number; more: boolean }> {
+	const clients = await ctx.db
+		.query("oauth_clients")
+		.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", fromProfile))
+		.take(CLIENT_RETARGET_BATCH);
+	for (const client of clients) {
+		await ctx.db.patch(client._id, { scopeProfile: toProfile });
+	}
+	return {
+		count: clients.length,
+		more: clients.length === CLIENT_RETARGET_BATCH,
+	};
+}
+
+/**
+ * continueClientRetarget — the self-scheduled continuation of
+ * patchScopeProfileEmergency's client retarget. Internal-only.
+ */
+export const continueClientRetarget = internalMutation({
+	args: { fromProfile: v.string(), toProfile: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const drained = await retargetClientsBatch(ctx, args.fromProfile, args.toProfile);
+		if (drained.more) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientRetarget, args);
+		}
+		return null;
+	},
+});
+
 // Max token rows deleted per table, per profile name, per transaction by the
 // emergency cascade revoke. 2 tables x 2 names x 500 = 2000 deletes worst case
 // per transaction, well inside Convex's per-mutation write budget.
@@ -2319,15 +2562,17 @@ export const patchScopeProfileEmergency = mutation({
 		let clientsRetargeted = 0;
 
 		if (args.rename !== undefined && args.rename !== args.profileId) {
-			const clientsToRetarget = await ctx.db
-				.query("oauth_clients")
-				.withIndex("by_scopeProfile", (q) =>
-					q.eq("scopeProfile", args.profileId),
-				)
-				.collect();
-			for (const client of clientsToRetarget) {
-				await ctx.db.patch(client._id, { scopeProfile: args.rename });
-				clientsRetargeted++;
+			// Bounded (R-31): a retargeted client leaves the old name's index range,
+			// so each batch reads the next clients; the rest is scheduled. Clients
+			// still on the old name for that moment are covered by the cascade
+			// revoke below, which names both profiles.
+			const drained = await retargetClientsBatch(ctx, args.profileId, args.rename);
+			clientsRetargeted = drained.count;
+			if (drained.more) {
+				await ctx.scheduler.runAfter(0, internal.oauth.continueClientRetarget, {
+					fromProfile: args.profileId,
+					toProfile: args.rename,
+				});
 			}
 		}
 
