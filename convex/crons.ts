@@ -29,6 +29,15 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 	{},
 );
 
+// Purge webhook delivery-id ledger rows past retention
+// (deliveryLedger.purgeExpired: bounded take(500) per run, by_receivedAt).
+crons.interval( // allow-time-estimate: polling interval — cron config
+	"purge expired webhook deliveries",
+	{ hours: 1 },
+	internal.deliveryLedger.purgeExpired,
+	{},
+);
+
 // Poll monitored deployments for errors every 5 minutes
 crons.interval(
 	"error monitor",

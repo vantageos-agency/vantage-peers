@@ -69,6 +69,7 @@ const post = (t: Awaited<ReturnType<typeof makeT>>, signature?: string) =>
 		headers: {
 			"content-type": "application/json",
 			"x-github-event": "issues",
+			"x-github-delivery": crypto.randomUUID(),
 			...(signature === undefined ? {} : { "x-hub-signature-256": signature }),
 		},
 		body: payload,

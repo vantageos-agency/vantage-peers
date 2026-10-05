@@ -112,6 +112,25 @@ http.route({
 			}
 		};
 
+		// 4b. Delivery idempotency. GitHub sends `x-github-delivery` (a GUID) on
+		// EVERY webhook delivery and reuses it on a redelivery. A signed request
+		// without it did not come from GitHub's delivery pipeline: refuse it (400)
+		// rather than process it with no dedup. This runs AFTER the signature check,
+		// so an unsigned caller still gets 401 and never touches the ledger.
+		const deliveryId = request.headers.get("x-github-delivery")?.trim();
+		if (!deliveryId) {
+			return new Response("Missing x-github-delivery", { status: 400 });
+		}
+		const claimed = await ctx.runMutation(internal.deliveryLedger.claim, {
+			deliveryId,
+			repo: repoFullName,
+			eventType: eventType ?? "unknown",
+		});
+		if (claimed === "duplicate") {
+			return new Response("OK - duplicate delivery", { status: 200 });
+		}
+
+		const processEvent = async (): Promise<Response> => {
 		// 5. Handle events
 
 		// Helper: extract issue fields for upsert
@@ -658,6 +677,16 @@ http.route({
 		}
 
 		return new Response("OK", { status: 200 });
+		};
+
+		// A failed run un-claims the delivery so GitHub's retry is processed
+		// instead of being swallowed as a duplicate, then rethrows (500).
+		try {
+			return await processEvent();
+		} catch (err) {
+			await ctx.runMutation(internal.deliveryLedger.release, { deliveryId });
+			throw err;
+		}
 	}),
 });
 

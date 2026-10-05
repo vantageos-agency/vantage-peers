@@ -114,6 +114,7 @@ async function postWebhook(
 		headers: {
 			"Content-Type": "application/json",
 			"x-github-event": "pull_request",
+			"x-github-delivery": crypto.randomUUID(),
 			"x-hub-signature-256": signGithubBody(body),
 		},
 		body,

@@ -102,6 +102,7 @@ import type * as search from "../search.js";
 import type * as stats from "../stats.js";
 import type * as tasks from "../tasks.js";
 import type * as tenantOrgSeed from "../tenantOrgSeed.js";
+import type * as deliveryLedger from "../deliveryLedger.js";
 
 import type {
   ApiFromModules,
@@ -204,6 +205,7 @@ declare const fullApi: ApiFromModules<{
   stats: typeof stats;
   tasks: typeof tasks;
   tenantOrgSeed: typeof tenantOrgSeed;
+  deliveryLedger: typeof deliveryLedger;
 }>;
 
 /**

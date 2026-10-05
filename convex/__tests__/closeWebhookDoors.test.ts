@@ -230,6 +230,7 @@ describe("server-side path: internal twins serve with NO identity", () => {
 			method: "POST",
 			headers: {
 				"x-github-event": "issues",
+				"x-github-delivery": crypto.randomUUID(),
 				"content-type": "application/json",
 				"x-hub-signature-256": signGithubBody(payload),
 			},

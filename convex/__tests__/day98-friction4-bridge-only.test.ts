@@ -117,6 +117,7 @@ async function postWebhook(t: ReturnType<typeof makeConvex>, body: string, event
 		headers: {
 			"Content-Type": "application/json",
 			"x-github-event": event,
+			"x-github-delivery": crypto.randomUUID(),
 			"x-hub-signature-256": signGithubBody(body),
 		},
 		body,
