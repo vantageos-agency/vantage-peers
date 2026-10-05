@@ -505,6 +505,34 @@ function patchWritesStatus(arg, scopeNode) {
 	return found;
 }
 
+/**
+ * Does the patch argument of a `db.patch/replace` receive a field under a key
+ * the derivation cannot read (`patch[key] = value`, key not a string literal)?
+ * tasks:update builds its patch that way from `Object.entries(fields)`, and
+ * `status` is one of those fields: whether that write is a TRANSITION or an
+ * UPDATE depends on runtime data. Such a write is could-not-judge (`?`), never
+ * silently UPDATE (Argus, PR #1457).
+ */
+function patchWritesDynamicKey(arg, scopeNode) {
+	const obj = strip(arg);
+	if (!obj || !ts.isIdentifier(obj)) return false;
+	const name = obj.text;
+	let found = false;
+	forEachDeep(scopeNode, (n) => {
+		if (found) return;
+		if (
+			ts.isBinaryExpression(n) &&
+			n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+			ts.isElementAccessExpression(n.left) &&
+			ts.isIdentifier(n.left.expression) &&
+			n.left.expression.text === name &&
+			!ts.isStringLiteralLike(n.left.argumentExpression)
+		)
+			found = true;
+	});
+	return found;
+}
+
 /** Effects of a set of Convex bodies. */
 function convexFacts(fnKeys) {
 	const facts = {
@@ -513,6 +541,9 @@ function convexFacts(fnKeys) {
 		idTables: new Set(),
 		writes: new Set(),
 		statusPatch: false,
+		// a patch gets a field under a key the derivation cannot read
+		// (`patch[key] = value`): its status write is undecidable (could-not-judge)
+		dynamicPatch: false,
 		reads: {
 			list: false,
 			get: false,
@@ -636,6 +667,12 @@ function convexFacts(fnKeys) {
 					const last = n.arguments[n.arguments.length - 1];
 					if (method !== "delete" && last && patchWritesStatus(last, node))
 						facts.statusPatch = true;
+					if (
+						method !== "delete" &&
+						last &&
+						patchWritesDynamicKey(last, node)
+					)
+						facts.dynamicPatch = true;
 				}
 			});
 		}
@@ -740,6 +777,17 @@ function writerTierOf(mcpTier, cf) {
 	return gate === "none" ? fallback : { tier: WRITER_TIER_OF_GATE[gate], gate };
 }
 
+/** A write tool for the writer side-car and table coherence, `?` verb included. */
+function isCertainWrite(verb, f) {
+	return (
+		WRITES.has(verb) ||
+		(verb === UNKNOWN &&
+			f.dynamicPatch &&
+			f.writes.size === 1 &&
+			f.writes.has("patch"))
+	);
+}
+
 /** Closed verb (backend-doctor src/detectors/predicates.ts:39-51) or `?`. */
 function verbOf(f) {
 	// No Convex function reached from the handler: the tool performs no data
@@ -751,8 +799,11 @@ function verbOf(f) {
 	if (w.size > 0) {
 		if (w.size === 1 && w.has("insert")) return "CREATE";
 		if (w.size === 1 && w.has("delete")) return "DELETE";
-		if (w.size === 1 && w.has("patch"))
-			return f.statusPatch ? "TRANSITION" : "UPDATE";
+		if (w.size === 1 && w.has("patch")) {
+			if (f.statusPatch) return "TRANSITION";
+			// A dynamic `patch[key] = value` may carry `status`: could-not-judge.
+			return f.dynamicPatch ? UNKNOWN : "UPDATE";
+		}
 		if (w.size === 2 && w.has("insert") && w.has("patch")) return "UPSERT";
 		return UNKNOWN; // a mix the closed set has no single verb for
 	}
@@ -1244,7 +1295,11 @@ for (const t of tools) {
 	rows.push({
 		_tier: effectiveTier(auth.tier, cf),
 		_verb: verb,
-		_writer: WRITES.has(verb) ? writerTierOf(auth.tier, cf) : null,
+		// The tool certainly writes even when its verb is could-not-judge: a
+		// patch-only tool whose patch carries a dynamic key. It keeps its writer
+		// row and its place in the table-coherence write set.
+		_isWrite: isCertainWrite(verb, cf),
+		_writer: isCertainWrite(verb, cf) ? writerTierOf(auth.tier, cf) : null,
 		_doors: cf.writeDoors.map((d) => `${d.key}=${d.gate}`).join("; "),
 		_src: `${relative(ROOT, t.file)}:${t.line}`,
 		table,
@@ -1286,7 +1341,7 @@ for (const r of rows) {
 		...new Set(g.filter((x) => READS.has(x._verb)).map((x) => x._tier)),
 	].sort();
 	const write = [
-		...new Set(g.filter((x) => WRITES.has(x._verb)).map((x) => x._tier)),
+		...new Set(g.filter((x) => x._isWrite).map((x) => x._tier)),
 	].sort();
 	if ([...read, ...write].includes(UNKNOWN)) r.rbac_coherence_table = UNKNOWN;
 	else if (read.length && write.length && read.join("+") !== write.join("+"))

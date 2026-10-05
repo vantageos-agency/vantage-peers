@@ -236,3 +236,107 @@ describe("tasks:complete — the target row's own org and creator/assignee decid
 		expect(row?.assignedTo).toBe("seat-a");
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HUMAN path (Argus follow-up on #1458). The sites above are pinned through the
+// agent path (callerOrchestrator / createdBy present). A dashboard member acting
+// in its OWN NAME carries neither, so a different branch runs
+// (resolveHumanActor, writer-role allowlist). Same boundary, same refusals.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("human path — the boundary derives from the verified identity, not an argument", () => {
+	async function seedHuman() {
+		const t = createT();
+		await seed(t);
+		await t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin", "org:editor"],
+				updatedAt: Date.now(),
+			}),
+		);
+		return t;
+	}
+
+	const countOf = (t: T, table: "missions" | "tasks") =>
+		t.run(async (ctx) => (await ctx.db.query(table).collect()).length);
+
+	const missionBase = {
+		name: "m",
+		project: "p",
+		status: "plan" as const,
+		priority: "medium" as const,
+		agents: [] as string[],
+	};
+	const taskBase = {
+		title: "t",
+		priority: "medium" as const,
+		status: "todo" as const,
+	};
+
+	test("P0 control: an own-org human create succeeds and is stamped org-a", async () => {
+		const t = await seedHuman();
+		const missionId = await asOrgA(t).mutation(api.missions.create, {
+			...missionBase,
+			pilot: "seat-a",
+		});
+		const taskId = await asOrgA(t).mutation(api.tasks.create, {
+			...taskBase,
+			assignedTo: "seat-a",
+		});
+		const mission = await t.run((ctx) => ctx.db.get(missionId));
+		const task = await t.run((ctx) => ctx.db.get(taskId));
+		expect(mission?.orgId).toBe("org-a");
+		expect(mission?.createdBy).toBe("user:user-org-a");
+		expect(task?.orgId).toBe("org-a");
+		expect(task?.createdBy).toBe("user:user-org-a");
+	});
+
+	test("P1 REFUSED: a human cannot create a mission naming an org-b pilot", async () => {
+		const t = await seedHuman();
+		await expect(
+			asOrgA(t).mutation(api.missions.create, { ...missionBase, pilot: "seat-b" }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await countOf(t, "missions")).toBe(0);
+	});
+
+	test("P2 REFUSED: a human cannot create a task with an org-b assignee", async () => {
+		const t = await seedHuman();
+		await expect(
+			asOrgA(t).mutation(api.tasks.create, { ...taskBase, assignedTo: "seat-b" }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await countOf(t, "tasks")).toBe(0);
+	});
+
+	test("P3 REFUSED: a human cannot act on an org-b task", async () => {
+		const t = await seedHuman();
+		const id = await seedTask(t, "org-b", "seat-b", "seat-b");
+		await expect(
+			asOrgA(t).mutation(api.tasks.update, { taskId: id, title: "hijacked" }),
+		).rejects.toThrow(/RBAC_DENIED|TASK_NOT_FOUND|not found/i);
+		const row = await t.run((ctx) => ctx.db.get(id));
+		expect(row?.title).toBe("seed task");
+		expect(row?.orgId).toBe("org-b");
+	});
+
+	test("P4 REFUSED: a human cannot act on an orgless legacy task", async () => {
+		const t = await seedHuman();
+		const id = await t.run((ctx) =>
+			ctx.db.insert("tasks", {
+				title: "seed task",
+				assignedTo: "seat-a",
+				priority: "medium",
+				status: "todo",
+				createdBy: "seat-a",
+				isReviewTask: false,
+				createdAt: 1,
+				updatedAt: 1,
+			}),
+		);
+		await expect(
+			asOrgA(t).mutation(api.tasks.update, { taskId: id, title: "claimed" }),
+		).rejects.toThrow(/RBAC_DENIED|TASK_NOT_FOUND|not found/i);
+		const row = await t.run((ctx) => ctx.db.get(id));
+		expect(row?.title).toBe("seed task");
+		expect(row?.orgId).toBeUndefined();
+	});
+});
