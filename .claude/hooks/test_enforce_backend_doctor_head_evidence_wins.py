@@ -290,3 +290,42 @@ def test_equidistant_ancestors_tie_refuses():
         assert verdict == "ambiguous", (verdict, msg)
         assert left[:12] in msg and right[:12] in msg
         assert _run(repo) == 2
+
+
+# ---------------------------------------------------------------------------
+# Two evidence files BOTH pinning HEAD (full sha and 12-char prefix): every
+# one is judged, any non-pass refuses -- in either glob order and either
+# path order. Kills mutant MH (judge only the last/first HEAD report).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("glob_order", ["sorted", "reversed"])
+@pytest.mark.parametrize("red_on", ["short", "full"])
+def test_two_head_files_one_red_refuses(monkeypatch, glob_order, red_on):
+    real = _glob.glob
+    monkeypatch.setattr(
+        _mod.glob, "glob",
+        lambda p, *a, **k: sorted(real(p, *a, **k), reverse=(glob_order == "reversed")),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _repo_with_ancestor(tmp, ancestor_mech=0)
+        short_mech, full_mech = (3, 0) if red_on == "short" else (0, 3)
+        (repo / "qa" / f"backend-doctor-{head[:12]}.json").write_text(json.dumps(
+            _payload(repo, head[:12], exit_code=1 if short_mech else 0, mech=short_mech)))
+        (repo / "qa" / f"backend-doctor-{head}.json").write_text(json.dumps(
+            _payload(repo, head, exit_code=1 if full_mech else 0, mech=full_mech)))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "red", (glob_order, red_on, verdict, msg)
+        assert _run(repo) == 2
+
+
+# Control: two HEAD files, both clean -> PASS (the poles above are not
+# satisfied by refusing whenever two HEAD files exist).
+def test_two_head_files_both_clean_passes():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _repo_with_ancestor(tmp, ancestor_mech=0)
+        (repo / "qa" / f"backend-doctor-{head[:12]}.json").write_text(
+            json.dumps(_payload(repo, head[:12])))
+        (repo / "qa" / f"backend-doctor-{head}.json").write_text(
+            json.dumps(_payload(repo, head)))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", (verdict, msg)
