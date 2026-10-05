@@ -4368,9 +4368,13 @@ export const bulkComplete = mutation({
  * reschedules itself while a full batch remains.
  *
  * A violation (RBAC, closure gate) in a later batch aborts that batch's
- * transaction and ends the drain — the rows stay open, nothing is closed
- * past the check, and the failure is in the scheduled-function log. It is
- * never skipped: a skipped row would match again and the drain would not end.
+ * transaction and ends the drain — the rows stay open and nothing is closed
+ * past the check. It is never skipped: a skipped row would match again and the
+ * drain would not end. Where it is readable: the scheduled run is "failed" and
+ * its reason is logged with the bulkRunId (operator); the first call already
+ * returned `remaining: true`, and re-calling the same filter — the protocol the
+ * tool documents — meets the same refusal in the foreground (caller). Pinned
+ * in bulkCompleteSelfScheduled.test.ts ("FAILURE").
  */
 export const bulkCompleteContinue = internalMutation({
 	args: {
@@ -4388,26 +4392,41 @@ export const bulkCompleteContinue = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const scope: OrgScope = { ...args.scope, scopes: [] };
-		const matched = await scanBulkCompleteMatches(ctx, args.filter, scope);
-		const exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
-		const batch = matched.slice(0, BULK_COMPLETE_HARD_CAP);
+		try {
+			const scope: OrgScope = { ...args.scope, scopes: [] };
+			const matched = await scanBulkCompleteMatches(ctx, args.filter, scope);
+			const exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
+			const batch = matched.slice(0, BULK_COMPLETE_HARD_CAP);
 
-		if (args.callerOrchestrator !== "" && !args.isFleetSystem) {
-			const denied = findBulkCompleteDenied(batch, args.callerOrchestrator);
-			if (denied !== undefined) {
-				throw new ConvexError(
-					`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${denied._id} — bulk close ${args.bulkRunId} stopped`,
-				);
+			if (args.callerOrchestrator !== "" && !args.isFleetSystem) {
+				const denied = findBulkCompleteDenied(batch, args.callerOrchestrator);
+				if (denied !== undefined) {
+					throw new ConvexError(
+						`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${denied._id} — bulk close denied`,
+					);
+				}
 			}
-		}
 
-		await closeBulkCompleteBatch(ctx, batch, args.note, Date.now());
+			await closeBulkCompleteBatch(ctx, batch, args.note, Date.now());
 
-		if (exceeded) {
-			await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, args);
+			if (exceeded) {
+				await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, args);
+			}
+			return null;
+		} catch (err) {
+			// The drain stops here: this batch's transaction is rolled back (nothing
+			// closed past the refusal) and the scheduled run ends "failed". Name the
+			// run and the reason in the log, then rethrow so the state is not lost.
+			// The caller-visible half: the rows stay open, `remaining: true` was
+			// reported, and re-calling the same filter (the documented protocol)
+			// meets the same refusal in the foreground.
+			console.error(
+				`[bulkCompleteContinue] run ${args.bulkRunId} stopped: ${
+					err instanceof ConvexError ? String(err.data) : String(err)
+				}`,
+			);
+			throw err;
 		}
-		return null;
 	},
 });
 
