@@ -101,7 +101,7 @@ describe("get_bulk_complete_run", () => {
 	});
 
 	it("OWN: the creator reads its run, failure reason included, via tasks:getBulkCompleteRun", async () => {
-		const { result, convex } = await call(ACTOR_A, RUN);
+		const { result, convex } = await call(ACTOR_A, { ...RUN, orgId: "org-a" });
 		expect(result.isError).not.toBe(true);
 		const body = JSON.parse(result.content[0].text);
 		expect(body.status).toBe("failed");
@@ -149,5 +149,71 @@ describe("get_bulk_complete_run", () => {
 		const body = JSON.parse(out.content[0].text);
 		expect(body.bulkRunId).toBe("bulk-1-aaaa");
 		expect(body.remaining).toBe(true);
+	});
+
+	it("REFUSED: a non-master caller never reads an org-less run (a run with no verified org is not served on a creator name alone)", async () => {
+		const { result } = await call(ACTOR_A, RUN);
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toMatch(/not found/i);
+	});
+
+	it("REFUSED: an org-b client is refused an org-a run even when its allow-list names the same creator", async () => {
+		const orgB: OAuthContext = {
+			...ACTOR_A,
+			clientId: "client-b",
+			actor: { orgSlug: "org-b", agentName: "alpha-role" },
+			namespaceReadPrefixes: ["team/org-b"],
+		};
+		const { result } = await call(orgB, { ...RUN, orgId: "org-a" });
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toMatch(/not found/i);
+	});
+
+	it("REFUSED: a seat token with no actor reads by its token-row org (clerkOrgSlug), not by name", async () => {
+		const seatB: OAuthContext = {
+			...ACTOR_A,
+			actor: undefined,
+			clerkOrgSlug: "org-b",
+			accessTokenHash: "h",
+		};
+		const denied = await call(seatB, { ...RUN, orgId: "org-a" });
+		expect(denied.result.isError).toBe(true);
+		const seatA: OAuthContext = { ...seatB, clerkOrgSlug: "org-a" };
+		const served = await call(seatA, { ...RUN, orgId: "org-a" });
+		expect(served.result.isError).not.toBe(true);
+	});
+
+	describe("bulk_complete_tasks forwards the VERIFIED org (and only that)", () => {
+		async function dispatch(ctx: OAuthContext) {
+			const { server, handlers } = buildFakeServer();
+			const convex = convexReturning(null);
+			registerTools(server, convex, ctx);
+			await handlers.get("bulk_complete_tasks")?.({
+				filter: { assignedTo: "alpha-role" },
+				dryRun: false,
+				callerOrchestrator: "alpha-role",
+			});
+			return (convex.mutation as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+		}
+
+		it("an org-a agent forwards verifiedOrg {orgSlug:'org-a'} from its verified actor", async () => {
+			const args = await dispatch(ACTOR_A);
+			expect(args?.verifiedOrg).toEqual({ orgSlug: "org-a" });
+		});
+
+		it("a seat token with no actor forwards the org on its token row", async () => {
+			const args = await dispatch({ ...ACTOR_A, actor: undefined, clerkOrgSlug: "org-c", accessTokenHash: "h" });
+			expect(args?.verifiedOrg).toEqual({ orgSlug: "org-c" });
+		});
+
+		it("the fleet master forwards none", async () => {
+			const args = await dispatch({ ...MASTER });
+			expect(args?.verifiedOrg).toBeUndefined();
+		});
+
+		it("a Clerk-JWT caller forwards none (Convex already sees its own org)", async () => {
+			const args = await dispatch({ ...ACTOR_A, clerkJwt: "jwt" });
+			expect(args?.verifiedOrg).toBeUndefined();
+		});
 	});
 });

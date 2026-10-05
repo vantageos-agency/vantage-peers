@@ -29,6 +29,7 @@ import {
 	type VerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
+import { resolveVerifiedOrg, verifiedOrgValidator } from "./lib/verifiedOrg";
 import {
 	assertMemberIsAdmin,
 	assertTaskVisibleToCaller,
@@ -4268,6 +4269,12 @@ export const bulkComplete = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller (the bearer's
+		// agent-credential org or the org on its access-token row). Believed from
+		// the fleet service account ONLY — any other caller presenting it is
+		// refused — and resolved against an ACTIVE client_org_mapping. It stamps
+		// the run's status row and nothing else (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		count: v.number(),
@@ -4291,6 +4298,14 @@ export const bulkComplete = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+		);
+		// Refuses a non-service-account caller that names an org, on a preview as
+		// on a live call, before anything is read.
+		const verifiedOrgSlug = await resolveVerifiedOrg(
+			ctx,
+			callerScope,
+			args.verifiedOrg,
+			"tasks:bulkComplete",
 		);
 
 		// Default dryRun to true (safety).
@@ -4384,7 +4399,13 @@ export const bulkComplete = mutation({
 		// with the bulkRunId this call returns. Written on the live path only.
 		await ctx.db.insert("bulk_complete_runs", {
 			bulkRunId,
-			...(callerScope.orgSlug !== null ? { orgId: callerScope.orgSlug } : {}),
+			// The run's org: the verified one the transport carried, else the
+			// caller's own scope; absent only for a fleet-master run.
+			...(verifiedOrgSlug !== undefined
+				? { orgId: verifiedOrgSlug }
+				: callerScope.orgSlug !== null
+					? { orgId: callerScope.orgSlug }
+					: {}),
 			createdBy: args.callerOrchestrator ?? "",
 			status: exceeded ? "running" : "complete",
 			closed: count,

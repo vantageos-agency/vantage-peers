@@ -1964,6 +1964,21 @@ export function registerTools(
 			? { args: { seatOrgSlug: seat.orgSlug } }
 			: { args: {} };
 	};
+
+	// The organisation THIS bearer was verified for, for a call that reaches
+	// Convex as the fleet service account (so `ctx.auth` there carries no org).
+	// Read from the verified oauthContext only: the agent credential's org
+	// (`actor`, bound to the principal's own org before it is set) or the org
+	// snapshotted on the access-token row. Never from an argument. The master
+	// and a Clerk-JWT caller (whose own org Convex already sees) forward none.
+	// Convex believes it from the service account only and resolves it against an
+	// active org (convex/lib/verifiedOrg.ts).
+	const verifiedOrgOf = (): string | undefined => {
+		if (!oauthCtx || oauthCtx.isMaster || oauthCtx.clerkJwt !== undefined) {
+			return undefined;
+		}
+		return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
+	};
 	const PERSON_DOOR_NOTE =
 		" A person signed in to its organisation omits it and acts in its own name.";
 	// Delegation guard — distinct question from guardFrom (identity CLAIM).
@@ -4489,11 +4504,15 @@ export function registerTools(
 					if (fromDenied) return fromDenied;
 				}
 
+				const verifiedOrg = verifiedOrgOf();
 				const result = await convex.mutation("tasks:bulkComplete" as any, {
 					filter,
 					dryRun,
 					completionNoteTemplate,
 					callerOrchestrator,
+					// The run's status row is stamped with this org (and a run is
+					// readable only by it), never with a name.
+					...(verifiedOrg !== undefined ? { verifiedOrg: { orgSlug: verifiedOrg } } : {}),
 				});
 				return {
 					content: [
@@ -4536,17 +4555,20 @@ export function registerTools(
 				if (row === null || row === undefined) {
 					return mcpError(`Bulk run not found: ${bulkRunId}`);
 				}
-				// TENANT GATE: a run stamped with an org is reachable only by an
-				// actor of that org. (A run made through the service account carries
-				// no org — it is then reachable by its CREATOR only, below.)
-				if (
-					row.orgId !== undefined &&
-					!rowVisibleToActorTenant(oauthCtx, row)
-				) {
-					return mcpError(`Bulk run not found: ${bulkRunId}`);
+				// TENANT GATE: a run is reachable by the organisation it was stamped
+				// with and by nobody else. A non-master caller must resolve an org
+				// (verified actor, else the token row's) and it must EQUAL the run's;
+				// a run with no org (a fleet-master run) is not served to a
+				// non-master caller at all — client isolation never rests on a name.
+				if (!oauthCtx || !oauthCtx.isMaster) {
+					const callerOrg = oauthCtx?.actor?.orgSlug ?? oauthCtx?.clerkOrgSlug;
+					if (callerOrg === undefined || row.orgId !== callerOrg) {
+						return mcpError(`Bulk run not found: ${bulkRunId}`);
+					}
 				}
-				// CREATOR GATE: the run's `createdBy` is the callerOrchestrator of
-				// the run; a non-master caller must be that identity (fromAllowList).
+				// CREATOR GATE, intersected with the tenant gate (never widening it):
+				// the run's `createdBy` is the callerOrchestrator of the run; a
+				// non-master caller must be that identity (fromAllowList).
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row, []);
 				if (filtered === null) {
 					return mcpError(`Bulk run not found: ${bulkRunId}`);
