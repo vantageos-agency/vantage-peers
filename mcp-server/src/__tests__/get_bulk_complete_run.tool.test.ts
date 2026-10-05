@@ -206,8 +206,37 @@ describe("get_bulk_complete_run", () => {
 			expect(args?.verifiedOrg).toEqual({ orgSlug: "org-c" });
 		});
 
-		it("the fleet master forwards none", async () => {
+		it("REFUSED BEFORE CONVEX: a non-master bearer whose org does not resolve (no actor org, no token-row org) is refused with a structured RBAC error; the mutation is never called, preview or live", async () => {
+			for (const dryRun of [true, false]) {
+				const { server, handlers } = buildFakeServer();
+				const convex = convexReturning(null);
+				registerTools(server, convex, { ...ACTOR_A, actor: undefined, clerkOrgSlug: undefined });
+				// No acting name: nothing for the identity guard to refuse, so without
+				// this gate the call would reach Convex as the bare service account.
+				const out = (await handlers.get("bulk_complete_tasks")?.({
+					filter: { assignedTo: "alpha-role" },
+					dryRun,
+				})) as { isError?: boolean; content: Array<{ text: string }> };
+				expect(out.isError).toBe(true);
+				expect(out.content[0].text).toMatch(/^REFUSED \(RBAC_DENIED\): bulk_complete_tasks/);
+				expect(out.content[0].text).toContain("no-verified-org");
+				expect((convex.mutation as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+			}
+		});
+
+		it("PRESENT: a Clerk-JWT non-master caller (Convex sees its own org) is NOT refused and forwards none", async () => {
+			const { server, handlers } = buildFakeServer();
+			const convex = convexReturning(null);
+			registerTools(server, convex, { ...ACTOR_A, actor: undefined, clerkOrgSlug: undefined, clerkJwt: "jwt" });
+			await handlers.get("bulk_complete_tasks")?.({ filter: { assignedTo: "alpha-role" } });
+			const calls = (convex.mutation as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(1);
+			expect((calls[0][1] as Record<string, unknown>).verifiedOrg).toBeUndefined();
+		});
+
+		it("PRESENT: the fleet master still reaches Convex and forwards none", async () => {
 			const args = await dispatch({ ...MASTER });
+			expect(args).toBeDefined();
 			expect(args?.verifiedOrg).toBeUndefined();
 		});
 
