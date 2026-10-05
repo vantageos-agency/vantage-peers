@@ -1,6 +1,8 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	assertAgentNameFree,
@@ -309,6 +311,74 @@ export const reactivateAgent = mutation({
 });
 
 /**
+ * Edges rewritten per side (parent, child) per transaction by `renameAgent`
+ * and its continuation. Both the read (`.take`) and the write (`patch`) are
+ * bounded by it; the remainder is drained by `renameAgentRelations`.
+ */
+export const RENAME_RELATIONS_BATCH_SIZE = 100;
+
+/**
+ * Rewrites at most RENAME_RELATIONS_BATCH_SIZE edges per side from `oldName`
+ * to `newName` within one org. Returns true when either side filled its batch
+ * (more edges may remain). No cursor is needed: a rewritten edge leaves the
+ * `(orgSlug, oldName)` index range, so the next `.take` reads the next
+ * un-rewritten edges.
+ */
+async function renameRelationsBatch(
+	ctx: MutationCtx,
+	orgSlug: string,
+	oldName: string,
+	newName: string,
+): Promise<boolean> {
+	const asParent = await ctx.db
+		.query("agent_relations")
+		.withIndex("by_parent", (q) =>
+			q.eq("orgSlug", orgSlug).eq("parentName", oldName),
+		)
+		.take(RENAME_RELATIONS_BATCH_SIZE);
+	for (const edge of asParent) {
+		await ctx.db.patch(edge._id, { parentName: newName });
+	}
+	const asChild = await ctx.db
+		.query("agent_relations")
+		.withIndex("by_child", (q) =>
+			q.eq("orgSlug", orgSlug).eq("childName", oldName),
+		)
+		.take(RENAME_RELATIONS_BATCH_SIZE);
+	for (const edge of asChild) {
+		await ctx.db.patch(edge._id, { childName: newName });
+	}
+	return (
+		asParent.length === RENAME_RELATIONS_BATCH_SIZE ||
+		asChild.length === RENAME_RELATIONS_BATCH_SIZE
+	);
+}
+
+/**
+ * renameAgentRelations — the self-scheduled continuation of `renameAgent`.
+ * Internal only: the caller was authorised (`requireOrgAdmin`) by the public
+ * mutation that scheduled it, and `orgSlug` is the one that call proved. The
+ * edge set is scoped by `(orgSlug, oldName)` so another org's edges that carry
+ * the same label are never read.
+ */
+export const renameAgentRelations = internalMutation({
+	args: { orgSlug: v.string(), oldName: v.string(), newName: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const more = await renameRelationsBatch(
+			ctx,
+			args.orgSlug,
+			args.oldName,
+			args.newName,
+		);
+		if (more) {
+			await ctx.scheduler.runAfter(0, internal.agents.renameAgentRelations, args);
+		}
+		return null;
+	},
+});
+
+/**
  * renameAgent — changes an agent's LABEL. The agent is its row (`_id`), so its
  * credentials, and anything else keyed on `agentId`, are untouched: a rename
  * never orphans a credential. Gated like `registerAgent` (`requireOrgAdmin`, no
@@ -316,7 +386,9 @@ export const reactivateAgent = mutation({
  * `normalizeOrchestratorId` (`AGENT_NAME_TAKEN` otherwise); renaming to another
  * spelling of the agent's OWN name (`ada` -> `Ada`) is allowed. Unknown name
  * raises `AGENT_NOT_FOUND`. `agent_relations` edges name agents by label, so the
- * agent's edges are rewritten to the new label in the same transaction.
+ * agent's edges are rewritten to the new label in batches of
+ * RENAME_RELATIONS_BATCH_SIZE per side (R-31): the first batch in this
+ * transaction, the rest via the self-scheduled `renameAgentRelations`.
  */
 export const renameAgent = mutation({
 	args: { orgSlug: v.string(), name: v.string(), newName: v.string() },
@@ -349,23 +421,18 @@ export const renameAgent = mutation({
 		});
 
 		if (oldName !== args.newName) {
-			const asParent = await ctx.db
-				.query("agent_relations")
-				.withIndex("by_parent", (q) =>
-					q.eq("orgSlug", args.orgSlug).eq("parentName", oldName),
-				)
-				.collect();
-			for (const edge of asParent) {
-				await ctx.db.patch(edge._id, { parentName: args.newName });
-			}
-			const asChild = await ctx.db
-				.query("agent_relations")
-				.withIndex("by_child", (q) =>
-					q.eq("orgSlug", args.orgSlug).eq("childName", oldName),
-				)
-				.collect();
-			for (const edge of asChild) {
-				await ctx.db.patch(edge._id, { childName: args.newName });
+			const more = await renameRelationsBatch(
+				ctx,
+				args.orgSlug,
+				oldName,
+				args.newName,
+			);
+			if (more) {
+				await ctx.scheduler.runAfter(0, internal.agents.renameAgentRelations, {
+					orgSlug: args.orgSlug,
+					oldName,
+					newName: args.newName,
+				});
 			}
 		}
 		return null;

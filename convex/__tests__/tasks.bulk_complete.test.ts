@@ -36,7 +36,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -372,7 +372,12 @@ describe("tasks.bulkComplete mutation (PR-F RED)", () => {
 	// `remaining: true`, and a second call with the SAME filter closes the
 	// rest — because the first batch is now "done" and drops out of the
 	// non-done scan.
+	// R-31: the first call also self-schedules a continuation. Fake timers hold
+	// it back so the caller-driven second call below is exercised on its own
+	// (a caller that still re-calls, as the MCP tool text instructs, stays
+	// correct); the pending continuation is then drained and finds nothing.
 	test("T8: 501 cron-spam tasks — live path drains cap batch + labels remaining, second call finishes the rest", async () => {
+		vi.useFakeTimers();
 		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
 
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -401,6 +406,8 @@ describe("tasks.bulkComplete mutation (PR-F RED)", () => {
 		});
 		expect(second.count).toBe(1);
 		expect(second.remaining).toBeUndefined();
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
+		vi.useRealTimers();
 	});
 
 	// ── T9: BULK_FILTER_TOO_BROAD — empty filter is rejected ─────────────────
