@@ -21,6 +21,7 @@
 		"fail_task",
 		"generate_upload_url",
 		"get_briefing_note",
+		"get_bulk_complete_run",
 		"get_diary",
 		"get_episode",
 		"get_fix_pattern",

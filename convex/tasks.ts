@@ -4187,20 +4187,27 @@ function findBulkCompleteDenied(
 	return batch.find((r) => r.createdBy !== caller && r.assignedTo !== caller);
 }
 
-/**
- * Day 130 closure gate + close for one batch. The gate runs up front for the
- * WHOLE batch so a single billable-but-never-started task aborts the batch
- * loudly rather than silently closing it with a false actualMinutes.
- */
-async function closeBulkCompleteBatch(
+type BulkGateResults = Awaited<ReturnType<typeof enforceClosureGate>>[];
+
+/** Closure gate for the WHOLE batch, before any row is written. */
+async function gateBulkCompleteBatch(
 	ctx: MutationCtx,
 	batch: Doc<"tasks">[],
 	note: string,
 	now: number,
-): Promise<void> {
-	const gateResults = await Promise.all(
+): Promise<BulkGateResults> {
+	return await Promise.all(
 		batch.map((task) => enforceClosureGate(ctx, task, note, now)),
 	);
+}
+
+async function writeBulkCompleteBatch(
+	ctx: MutationCtx,
+	batch: Doc<"tasks">[],
+	gateResults: BulkGateResults,
+	note: string,
+	now: number,
+): Promise<void> {
 	for (let i = 0; i < batch.length; i++) {
 		const task = batch[i];
 		const { actualMinutes, durationSource, closedSegments } = gateResults[i];
@@ -4215,6 +4222,21 @@ async function closeBulkCompleteBatch(
 			...(closedSegments !== undefined ? { workSegments: closedSegments } : {}),
 		});
 	}
+}
+
+/**
+ * Day 130 closure gate + close for one batch. The gate runs up front for the
+ * WHOLE batch so a single billable-but-never-started task aborts the batch
+ * loudly rather than silently closing it with a false actualMinutes.
+ */
+async function closeBulkCompleteBatch(
+	ctx: MutationCtx,
+	batch: Doc<"tasks">[],
+	note: string,
+	now: number,
+): Promise<void> {
+	const gateResults = await gateBulkCompleteBatch(ctx, batch, note, now);
+	await writeBulkCompleteBatch(ctx, batch, gateResults, note, now);
 }
 
 /**
@@ -4358,6 +4380,19 @@ export const bulkComplete = mutation({
 		// "done" and has left the non-done scan, so it terminates. The caller's
 		// verified scope is forwarded as data (it was resolved above, never taken
 		// from the request) because a scheduled function has no auth context.
+		// The run's status row — what a client polls (tasks:getBulkCompleteRun)
+		// with the bulkRunId this call returns. Written on the live path only.
+		await ctx.db.insert("bulk_complete_runs", {
+			bulkRunId,
+			...(callerScope.orgSlug !== null ? { orgId: callerScope.orgSlug } : {}),
+			createdBy: args.callerOrchestrator ?? "",
+			status: exceeded ? "running" : "complete",
+			closed: count,
+			remaining: exceeded,
+			startedAt: now,
+			updatedAt: now,
+		});
+
 		if (exceeded) {
 			await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, {
 				filter: args.filter,
@@ -4394,14 +4429,15 @@ export const bulkComplete = mutation({
  * every further batch, with the SAME completion note (same bulkRunId), then
  * reschedules itself while a full batch remains.
  *
- * A violation (RBAC, closure gate) in a later batch aborts that batch's
- * transaction and ends the drain — the rows stay open and nothing is closed
- * past the check. It is never skipped: a skipped row would match again and the
- * drain would not end. Where it is readable: the scheduled run is "failed" and
- * its reason is logged with the bulkRunId (operator); the first call already
- * returned `remaining: true`, and re-calling the same filter — the protocol the
- * tool documents — meets the same refusal in the foreground (caller). Pinned
- * in bulkCompleteSelfScheduled.test.ts ("FAILURE").
+ * A violation (RBAC, closure gate) in a later batch ends the drain — the rows
+ * stay open and nothing is closed past the check (the checks all precede the
+ * first patch). It is never skipped: a skipped row would match again and the
+ * drain would not end. Where it is readable: the run's status row
+ * (`bulk_complete_runs`, read through `getBulkCompleteRun` / the MCP tool
+ * `get_bulk_complete_run`) is set to "failed" with the reason, and the reason is
+ * logged with the bulkRunId. The failure is recorded and NOT rethrown: a rethrow
+ * would roll the run row back with the batch. Re-calling the same filter meets
+ * the same refusal in the foreground. Pinned in bulkCompleteSelfScheduled.test.ts.
  */
 export const bulkCompleteContinue = internalMutation({
 	args: {
@@ -4419,11 +4455,20 @@ export const bulkCompleteContinue = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		const run = await ctx.db
+			.query("bulk_complete_runs")
+			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
+			.first();
+		const now = Date.now();
+
+		let batch: Doc<"tasks">[];
+		let exceeded: boolean;
+		let gates: BulkGateResults;
 		try {
 			const scope: OrgScope = { ...args.scope, scopes: [] };
 			const matched = await scanBulkCompleteMatches(ctx, args.filter, scope);
-			const exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
-			const batch = matched.slice(0, BULK_COMPLETE_HARD_CAP);
+			exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
+			batch = matched.slice(0, BULK_COMPLETE_HARD_CAP);
 
 			if (args.callerOrchestrator !== "" && !args.isFleetSystem) {
 				const denied = findBulkCompleteDenied(batch, args.callerOrchestrator);
@@ -4433,27 +4478,103 @@ export const bulkCompleteContinue = internalMutation({
 					);
 				}
 			}
-
-			await closeBulkCompleteBatch(ctx, batch, args.note, Date.now());
-
-			if (exceeded) {
-				await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, args);
+			gates = await gateBulkCompleteBatch(ctx, batch, args.note, now);
+		} catch (err) {
+			// Nothing has been written yet (scan, RBAC and the closure gate all
+			// precede the first patch), so recording the failure here commits ONLY
+			// the run row: status "failed" + the reason, `remaining` true. The drain
+			// stops. Not rethrown on purpose: a rethrow would roll the run row back
+			// with the batch and the client would see nothing.
+			const reason = (
+				err instanceof ConvexError ? String(err.data) : String(err)
+			).slice(0, 500);
+			console.error(`[bulkCompleteContinue] run ${args.bulkRunId} stopped: ${reason}`);
+			if (run !== null) {
+				await ctx.db.patch(run._id, {
+					status: "failed" as const,
+					remaining: true,
+					failureReason: reason,
+					updatedAt: now,
+				});
 			}
 			return null;
-		} catch (err) {
-			// The drain stops here: this batch's transaction is rolled back (nothing
-			// closed past the refusal) and the scheduled run ends "failed". Name the
-			// run and the reason in the log, then rethrow so the state is not lost.
-			// The caller-visible half: the rows stay open, `remaining: true` was
-			// reported, and re-calling the same filter (the documented protocol)
-			// meets the same refusal in the foreground.
-			console.error(
-				`[bulkCompleteContinue] run ${args.bulkRunId} stopped: ${
-					err instanceof ConvexError ? String(err.data) : String(err)
-				}`,
-			);
-			throw err;
 		}
+
+		await writeBulkCompleteBatch(ctx, batch, gates, args.note, now);
+
+		if (run !== null) {
+			await ctx.db.patch(run._id, {
+				status: exceeded ? ("running" as const) : ("complete" as const),
+				closed: run.closed + batch.length,
+				remaining: exceeded,
+				updatedAt: now,
+			});
+		}
+		if (exceeded) {
+			await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, args);
+		}
+		return null;
+	},
+});
+
+/**
+ * getBulkCompleteRun — the status of one live bulkComplete run, by the
+ * `bulkRunId` its first call returned. Poll it: `running` while batches
+ * remain, `complete` when the pile is drained, `failed` with `failureReason`
+ * when a later batch was refused (RBAC or closure gate) — the rows that were
+ * not closed stay open and re-calling bulkComplete with the same filter meets
+ * the same refusal.
+ *
+ * Who reads it: the run's own organisation (the row's `orgId` is the caller's
+ * org at the time of the run) and the fleet master. Anyone else — another
+ * organisation, or a member asking about a fleet-master run — gets `null`,
+ * exactly as tasks:getById does for a row it will not serve, so the id is not
+ * an existence oracle; an anonymous caller is REFUSED (RBAC_DENIED), never
+ * answered with the bytes of an absence. An unknown id is `null` too.
+ */
+export const getBulkCompleteRun = query({
+	args: { bulkRunId: v.string() },
+	returns: v.union(
+		v.object({
+			bulkRunId: v.string(),
+			orgId: v.optional(v.string()),
+			createdBy: v.string(),
+			status: v.union(
+				v.literal("running"),
+				v.literal("complete"),
+				v.literal("failed"),
+			),
+			closed: v.number(),
+			remaining: v.boolean(),
+			failureReason: v.optional(v.string()),
+			startedAt: v.number(),
+			updatedAt: v.number(),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated 2026-10-05 with `grep -rn "getBulkCompleteRun" convex mcp-server/src` -> the only caller is the MCP tool get_bulk_complete_run (imperative convex.query); the dashboard has no reference. The anonymous refusal stays a RAISE; no render exists for a throw to crash.
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+		requireResolvedCaller(scope, "tasks:getBulkCompleteRun");
+		const row = await ctx.db
+			.query("bulk_complete_runs")
+			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
+			.first();
+		if (row === null) return null;
+		if (!scope.isMaster && (scope.orgSlug === null || row.orgId !== scope.orgSlug)) {
+			return null;
+		}
+		return {
+			bulkRunId: row.bulkRunId,
+			orgId: row.orgId,
+			createdBy: row.createdBy,
+			status: row.status,
+			closed: row.closed,
+			remaining: row.remaining,
+			failureReason: row.failureReason,
+			startedAt: row.startedAt,
+			updatedAt: row.updatedAt,
+		};
 	},
 });
 

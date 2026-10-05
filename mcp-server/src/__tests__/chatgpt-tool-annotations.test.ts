@@ -151,6 +151,7 @@ const READ_ONLY_TOOLS = new Set([
 	"get_recurring_task",
 	// Day 92 read-only tools added after Day 88
 	"get_briefing_note",
+	"get_bulk_complete_run", // R-31: status row of a bulk_complete_tasks run
 	"whoami",
 	"validate_task_payload",
 	// Day 102 — CRUD baseline PR-B episode 5-op surface (mission k575kc1r)
