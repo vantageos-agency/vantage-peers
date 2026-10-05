@@ -5,6 +5,7 @@ soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgR
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
 update_bu,businessUnits+client_org_mapping+oauth_access_tokens,?,org-member,orgResolver,businessUnits:update=orgResolver
+complete_task,client_org_mapping+fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 create_mandate,client_org_mapping+mandates+oauth_access_tokens,CREATE,master,masterOnly,mandates:create=masterOnly
 send_message,client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
@@ -18,7 +19,6 @@ add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:add
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
 validate_fix,fixPatterns,UPDATE,master,masterOnly,fixPatterns:validate=masterOnly
-complete_task,fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 add_repo_mapping,githubRepoMapping,UPSERT,master,masterOnly,githubRepoMapping:add=masterOnly
 remove_repo_mapping,githubRepoMapping,DELETE,master,masterOnly,githubRepoMapping:remove=masterOnly
 add_task_dependency,githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
