@@ -461,6 +461,68 @@ describe("task closure gate — FORGE createdBy:'system' (Day 130 follow-up #2)"
 	});
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORIGIN-WEBHOOK — "automation-webhook" tasks stay BILLABLE (PR #1453, Argus
+// REVISE). The closure gate exempts ONLY origin "automation". Widening that
+// line to "automation-webhook" left every other test green, so the guarantee
+// was unpinned. Pole 1 refuses; pole 2 is the control proving the exemption
+// still works for "automation" (so pole 1 is not red for an unrelated reason).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("task closure gate — origin 'automation-webhook' is NOT exempt (PR #1453)", () => {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	async function seedOriginTask(t: any, origin: "automation" | "automation-webhook", assignedTo: string) {
+		return await t.run(async (ctx: any) => {
+			const now = Date.now();
+			return await ctx.db.insert("tasks", {
+				title: `Never started, origin ${origin}`,
+				project: BILLABLE_PROJECT,
+				assignedTo,
+				priority: "high" as const,
+				status: "todo" as const,
+				createdBy: "system",
+				origin,
+				// Deliberately NO startedAt.
+				createdAt: now,
+				updatedAt: now,
+			});
+		});
+	}
+
+	test("(ORIGIN-WEBHOOK-1) origin 'automation-webhook', never started, ordinary note → REFUSED, row unchanged", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		const taskId = await seedOriginTask(t, "automation-webhook", "sigma");
+
+		await expect(
+			t.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma",
+				completionNote: "Handled the webhook-created task, no start_task call",
+			}),
+		).rejects.toThrow(/TASK_NEVER_STARTED_BILLABLE/);
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("todo");
+		expect(task?.status).not.toBe("done");
+		expect(task?.origin).toBe("automation-webhook");
+	});
+
+	test("(ORIGIN-WEBHOOK-2, control) origin 'automation', never started → completes (exempt)", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		await seedBillableConfig(t);
+		const taskId = await seedOriginTask(t, "automation", "sigma");
+
+		await t.mutation(api.tasks.complete, {
+			taskId,
+			callerOrchestrator: "sigma",
+			completionNote: "Handled the automation-created task, no start_task call",
+		});
+
+		const task = await t.query(api.tasks.get, { taskId });
+		expect(task?.status).toBe("done");
+	});
+});
 // =============================================================================
 // Day 130 follow-up #3 (Eta REVISE, PR #1091) — the backfill migration.
 //
