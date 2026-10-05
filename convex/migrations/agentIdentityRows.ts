@@ -30,6 +30,12 @@ import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 
 const DEFAULT_BATCH = 100;
 const MAX_BATCH = 200;
+/**
+ * Most agents of one org the clash check reads (R-31). An org with more is
+ * not guessed at: the row is COUNTED as a collision and left untouched, the
+ * same refuse-never-guess outcome as a real clash.
+ */
+export const AGENT_ROSTER_SCAN_CAP = 500;
 
 function checkBatch(batchSize: number): void {
 	if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_BATCH) {
@@ -75,12 +81,14 @@ export const backfillAgentNormalizedNames = internalMutation({
 			const roster = await ctx.db
 				.query("agents")
 				.withIndex("by_org", (q) => q.eq("orgSlug", row.orgSlug))
-				.collect();
-			const clash = roster.some(
+				.take(AGENT_ROSTER_SCAN_CAP + 1);
+			const clash =
+				roster.length > AGENT_ROSTER_SCAN_CAP ||
+				roster.some(
 				(other) =>
 					other._id !== row._id &&
 					normalizeOrchestratorId(other.name) === normalized,
-			);
+				);
 			if (clash) {
 				collisions += 1;
 				continue;

@@ -2622,13 +2622,28 @@ export const complete = mutation({
 
 		// Auto-complete mission: if this task belongs to a mission, check if all tasks are done
 		if (task.missionId) {
-			const missionTasks = await ctx.db
-				.query("tasks")
-				.withIndex("by_mission", (q) => q.eq("missionId", task.missionId!))
-				.collect();
-			const allDone = missionTasks.every(
-				(t) =>
-					t._id.toString() === args.taskId.toString() || t.status === "done",
+			// "Every task of the mission is done" is an EXISTENCE question — is there
+			// any OTHER task whose status is not "done"? — so it is answered with two
+			// index ranges either side of "done" (`by_mission` is [missionId, status]),
+			// each read to at most 2 rows (enough to see one that is not this task),
+			// never the mission's whole task set.
+			const missionId = task.missionId;
+			const notDone = [
+				...(await ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).lt("status", "done"),
+					)
+					.take(2)),
+				...(await ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).gt("status", "done"),
+					)
+					.take(2)),
+			];
+			const allDone = notDone.every(
+				(t) => t._id.toString() === args.taskId.toString(),
 			);
 			if (allDone) {
 				const mission = await ctx.db.get(task.missionId);
@@ -3635,6 +3650,9 @@ async function resolveGithubRepoMappingForProject(
 //
 // Called from convex/http.ts GitHub webhook handler (PR merged event).
 // ─────────────────────────────────────────────────────────────────────────────
+/** Open tasks of one project read per status by createDeployTaskWithDedup (R-31). */
+const DEPLOY_DEDUP_SCAN_CAP = 500;
+
 export const createDeployTaskWithDedup = internalMutation({
 	args: {
 		title: v.string(),
@@ -3717,12 +3735,19 @@ export const createDeployTaskWithDedup = internalMutation({
 		// We check the four open statuses to keep the query bounded.
 		const OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 
+		// Bounded (R-31): read through `by_project` ([project, status]) — the deploy
+		// title's repo slug IS the project the task is created under (see the
+		// Day 98 F1 note above) — at most DEPLOY_DEDUP_SCAN_CAP rows per status,
+		// never the whole open-task population. A deploy task filed under another
+		// project is a different partition and is not scanned.
 		const existing: Doc<"tasks">[] = [];
 		for (const status of OPEN_STATUSES) {
 			const batch = await ctx.db
 				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.collect();
+				.withIndex("by_project", (q) =>
+					q.eq("project", repo).eq("status", status),
+				)
+				.take(DEPLOY_DEDUP_SCAN_CAP);
 			for (const t of batch) {
 				const p = parseDeployTitle(t.title);
 				if (p && p.prNumber === prNumber && p.repo === repo) {
@@ -3761,8 +3786,10 @@ export const createDeployTaskWithDedup = internalMutation({
 		for (const status of OPEN_STATUSES) {
 			const batch = await ctx.db
 				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.collect();
+				.withIndex("by_project", (q) =>
+					q.eq("project", repo).eq("status", status),
+				)
+				.take(DEPLOY_DEDUP_SCAN_CAP);
 			for (const t of batch) {
 				if (t._id === newId) continue;
 				const p = parseDeployTitle(t.title);

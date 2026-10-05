@@ -10,6 +10,7 @@
 //
 
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
@@ -17,6 +18,9 @@ import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal mutation: cascade-close a mission + its open child tasks
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Tasks closed per transaction by `cascadeCloseMission` (R-31). */
+export const CASCADE_CLOSE_BATCH_SIZE = 200;
 
 export const cascadeCloseMission = internalMutation({
 	args: {
@@ -36,16 +40,26 @@ export const cascadeCloseMission = internalMutation({
 			"blocked",
 		] as const;
 		let tasksCompleted = 0;
+		// True when a status still held rows beyond this transaction's budget.
+		let more = false;
 
 		for (const status of OPEN_STATUSES) {
+			const budget = CASCADE_CLOSE_BATCH_SIZE - tasksCompleted;
+			if (budget <= 0) {
+				more = true;
+				break;
+			}
+			// A closed task leaves the (mission, status) range, so the next batch
+			// reads the next open ones; one extra row proves whether more remain.
 			const batch = await ctx.db
 				.query("tasks")
 				.withIndex("by_mission", (q) =>
 					q.eq("missionId", args.missionId).eq("status", status),
 				)
-				.collect();
+				.take(budget + 1);
+			if (batch.length > budget) more = true;
 
-			for (const task of batch) {
+			for (const task of batch.slice(0, budget)) {
 				const closedSegmentsOnCascade = closeTrailingSegmentOnExit(
 					task,
 					task.status,
@@ -69,6 +83,21 @@ export const cascadeCloseMission = internalMutation({
 				});
 				tasksCompleted++;
 			}
+		}
+
+		if (more) {
+			// R-31 — the rest of the mission's open tasks, then the mission itself,
+			// are handled by the continuation. The mission is NOT marked complete
+			// while a task is still open.
+			await ctx.scheduler.runAfter(
+				0,
+				internal.issueClosedSweepDb.cascadeCloseMission,
+				{ missionId: args.missionId, issueRef: args.issueRef },
+			);
+			console.log(
+				`[issueClosedSweep] cascadeCloseMission missionId=${args.missionId} issueRef=${args.issueRef} tasksCompleted=${tasksCompleted} (continuing)`,
+			);
+			return { tasksCompleted };
 		}
 
 		await ctx.db.patch(args.missionId, {
