@@ -28,6 +28,11 @@ things, all MECHANICAL:
 
 It PASSES only when evidence pins HEAD and is mechanically clean.
 
+SELECTION ORDER (v1.2.0): evidence whose sha pins HEAD DECIDES, whatever its
+position in glob order. A file keyed to HEAD by name that cannot be read is a
+could-not-judge -> REFUSE, never replaced by an ancestor. Only when NO HEAD
+evidence exists does the ancestor relaxation (see `evaluate`) apply.
+
 WHAT IT MUST NOT DO
 -------------------
 * NEVER refuse on a judgement/process rule (the doctor marks those; the gate
@@ -86,7 +91,7 @@ from _lib.command_predicate import (  # noqa: E402
     raw_carries_action_words,
 )
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # `convex run <module>:<fn>` executes an existing function; it pushes no code.
 # (`run --push` does, and raw_carries_action_words keeps that case closed.)
@@ -258,23 +263,83 @@ def _convex_changed_between(candidate_sha: str, ship_sha: str, cwd: str) -> list
     return [line for line in r.stdout.splitlines() if line.strip()]
 
 
-def _load_reports(repo_root: str) -> list[dict]:
-    """Every parseable backend-doctor evidence file under qa/. A malformed
-    file is skipped (it certifies nothing), never treated as a pass."""
-    out = []
+_SHA_RE = re.compile(r"[0-9a-fA-F]{7,40}")
+_NAME_SHA_RE = re.compile(r"^backend-doctor-([0-9a-fA-F]{7,40})\.json$")
+
+
+def _name_pins(path: str, ship_sha: str) -> bool:
+    """True iff the evidence FILENAME is keyed to `ship_sha`
+    (`qa/backend-doctor-<sha>.json`, prefix-matched)."""
+    m = _NAME_SHA_RE.match(os.path.basename(path))
+    return bool(m) and _sha_matches(m.group(1), ship_sha)
+
+
+def _load_evidence(repo_root: str, ship_sha: str) -> tuple[list[dict], list[tuple[str, str]]]:
+    """(reports, head_broken).
+
+    reports: every parseable evidence file under qa/ with a valid `sha`.
+    head_broken: (path, reason) for each file that CLAIMS to be HEAD evidence
+    -- its filename is keyed to HEAD -- but cannot be read as such (unreadable,
+    not JSON, not an object, `sha` missing/not a sha, or `sha` naming a
+    different commit than the filename). Such a file is a could-not-judge for
+    HEAD: the caller must REFUSE on it, never fall back to ancestor evidence.
+    Any other malformed file is skipped (it certifies nothing)."""
+    reports: list[dict] = []
+    head_broken: list[tuple[str, str]] = []
     for path in glob.glob(os.path.join(repo_root, EVIDENCE_GLOB)):
+        named_for_head = _name_pins(path, ship_sha)
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            if named_for_head:
+                head_broken.append((path, f"unreadable or not JSON ({exc.__class__.__name__})"))
             continue
-        sha = (data.get("sha") or "").strip()
-        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
+        if not isinstance(data, dict):
+            if named_for_head:
+                head_broken.append((path, "top-level JSON value is not an object"))
+            continue
+        raw_sha = data.get("sha")
+        sha = raw_sha.strip() if isinstance(raw_sha, str) else ""
+        if not _SHA_RE.fullmatch(sha):
+            if named_for_head:
+                head_broken.append((path, f"field `sha` is missing or not a git sha ({raw_sha!r})"))
+            continue
+        if named_for_head and not _sha_matches(sha, ship_sha):
+            head_broken.append((
+                path,
+                f"filename is keyed to HEAD but field `sha` names {sha[:12]}",
+            ))
             continue
         data["_path"] = path
         data["_sha"] = sha
-        out.append(data)
-    return out
+        reports.append(data)
+    return reports, head_broken
+
+
+def _judge(r: dict, pin_note: str) -> tuple[str, str]:
+    """Verdict for ONE report already accepted as covering HEAD."""
+    clean, incomplete = _clean_verdict(r)
+    if incomplete is not None:
+        return "incomplete", (
+            f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+            f"but records NO usable verdict: {incomplete}. "
+            "A report that omits (or non-integer-types) a verdict field "
+            "certifies nothing -- it is a could-not-judge, never a pass."
+        )
+    if clean:
+        return "pass", (
+            f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+            f"and is mechanically clean "
+            f"({r.get('checked')}/{r.get('total')} checked, "
+            f"{r.get('mechanical_violations', 0)} mechanical violations)."
+        )
+    return "red", (
+        f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+        f"but is MECHANICALLY RED: exit_code="
+        f"{r.get('exit_code')}, mechanical_violations="
+        f"{r.get('mechanical_violations')}."
+    )
 
 
 _MISSING = object()
@@ -358,7 +423,19 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
             f"{cwd!r} -- cannot resolve the commit being deployed."
         )
 
-    reports = _load_reports(repo_root)
+    reports, head_broken = _load_evidence(repo_root, ship)
+
+    # 1. HEAD EVIDENCE DECIDES. A file keyed to HEAD that cannot be read is a
+    #    could-not-judge for HEAD -> REFUSE; it never falls back to an ancestor.
+    if head_broken:
+        path, reason = sorted(head_broken)[0]
+        return "incomplete", (
+            f"backend-doctor evidence {os.path.basename(path)} is keyed to HEAD "
+            f"{ship[:12]} but is MALFORMED: {reason}. HEAD evidence that cannot "
+            "be read is a could-not-judge -- it is never replaced by an "
+            "ancestor's verdict."
+        )
+
     if not reports:
         return "absent", (
             "no backend-doctor evidence file exists under qa/backend-doctor-*.json. "
@@ -366,46 +443,34 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
             "backend-doctor@main."
         )
 
+    # Every report whose sha pins HEAD is judged, in path order, independent
+    # of glob order. Any non-pass among them refuses (fail-closed): two HEAD
+    # files that disagree cannot certify a deploy.
+    head_reports = sorted(
+        (r for r in reports if _sha_matches(r["_sha"], ship)),
+        key=lambda r: r["_path"],
+    )
+    if head_reports:
+        pin_note = f"pins HEAD {ship[:12]}"
+        verdicts = [_judge(r, pin_note) for r in head_reports]
+        for verdict, message in verdicts:
+            if verdict != "pass":
+                return verdict, message
+        return verdicts[0]
+
+    # 2. No HEAD evidence: the ancestor relaxation applies, unchanged.
     diverged = []  # (report, changed_files): ancestor evidence, convex/ moved
     for r in reports:
-        exact = _sha_matches(r["_sha"], ship)
-        pin_note = f"pins HEAD {ship[:12]}"
-        if exact:
-            covers_head = True
-        elif _is_ancestor(r["_sha"], ship, cwd):
-            changed = _convex_changed_between(r["_sha"], ship, cwd)
-            if changed:
-                diverged.append((r, changed))
-                continue
-            covers_head = True
-            pin_note = (
-                f"pins ancestor {r['_sha'][:12]} of HEAD {ship[:12]} "
-                "with no convex/ change since"
-            )
-        else:
+        if not _is_ancestor(r["_sha"], ship, cwd):
             continue
-
-        clean, incomplete = _clean_verdict(r)
-        if incomplete is not None:
-            return "incomplete", (
-                f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
-                f"but records NO usable verdict: {incomplete}. "
-                "A report that omits (or non-integer-types) a verdict field "
-                "certifies nothing -- it is a could-not-judge, never a pass."
-            )
-        if clean:
-            return "pass", (
-                f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
-                f"and is mechanically clean "
-                f"({r.get('checked')}/{r.get('total')} checked, "
-                f"{r.get('mechanical_violations', 0)} mechanical violations)."
-            )
-        return "red", (
-            f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
-            f"but is MECHANICALLY RED: exit_code="
-            f"{r.get('exit_code')}, mechanical_violations="
-            f"{r.get('mechanical_violations')}."
-        )
+        changed = _convex_changed_between(r["_sha"], ship, cwd)
+        if changed:
+            diverged.append((r, changed))
+            continue
+        return _judge(r, (
+            f"pins ancestor {r['_sha'][:12]} of HEAD {ship[:12]} "
+            "with no convex/ change since"
+        ))
 
     if diverged:
         r, changed = diverged[0]
