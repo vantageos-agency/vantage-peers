@@ -11,7 +11,11 @@ From the `vantage-memory` repo root, as the Unix user the station runs under:
 ```bash
 scripts/onboard-orchestrator.sh <role> /root/coding/<role>-workspace --dry-run   # plan only
 scripts/onboard-orchestrator.sh <role> /root/coding/<role>-workspace             # do it
+scripts/onboard-orchestrator.sh <role> /root/coding/<role>-workspace \
+    --repo <owner>/<role>-workspace --project <project-slug>                     # do it, and route its repo
 ```
+
+Pass `--repo` and `--project` whenever the station has a GitHub repository. They always go together.
 
 It ends with `OK: <role> onboarded`. Anything else is a failure, and the script names the step that failed.
 
@@ -60,7 +64,13 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 - **Fails:** `send_message channel=<role>` returns `recipient error … ne correspond à aucun destinataire`, because recipients come from `profiles` rows.
 - **Fix applied:** the script runs `set_summary` under the station's own credential and fails unless the response is a success.
 
-### 7. Proof
+### 7. Repo mapping: GitHub events never reach the station
+
+- **Fails:** webhook events and review routing for the station's repo go nowhere, because no `githubRepoMapping` row names the role.
+- **Check:** `githubRepoMapping:getByRepo` returns the row with the role and the project.
+- **Fix applied** (with `--repo` and `--project`): `scripts/add-repo-mapping.mjs` upserts the row and reads it back. The mutation needs master or service-account scope, and the org-admin JWT is refused with `RBAC_DENIED`. The MCP tools `add_repo_mapping` and `list_repo_mappings` are disabled on the production server. So the script calls Convex directly as the service account (`CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS` in `.env.local`).
+
+### 8. Proof
 
 - Over HTTP, both ways: `whoami` with the credential returns `agentName: <role>`, and a forged credential returns HTTP 401.
 - Through the real client: `claude mcp list` in the workspace must show both servers `Connected`.
