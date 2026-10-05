@@ -11,7 +11,11 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import { deliveryTestSeam } from "../deliveryLedger";
+import {
+	afterDeliveryWork,
+	DELIVERY_PROBE_FAIL_ENV,
+	deliveryTestSeam,
+} from "../deliveryLedger";
 import schema from "../schema";
 import {
 	TEST_WEBHOOK_SECRET,
@@ -341,5 +345,31 @@ describe("github webhook delivery idempotency", () => {
 		const res = await t.mutation(internal.deliveryLedger.purgeExpired, {});
 		expect(res.deleted).toBe(1);
 		expect((await ledger(t)).map((r) => r.deliveryId)).toEqual(["fresh"]);
+	});
+});
+
+// The failure-injection seam lives in production code, so BOTH of its gates are
+// pinned in both directions: the env flag and the "probe-" id prefix.
+describe("afterDeliveryWork seam gates (bipolar)", () => {
+	const GUID = "3f2b8c1e-5a6d-4e7f-9b0a-1c2d3e4f5a6b";
+	const saved = process.env[DELIVERY_PROBE_FAIL_ENV];
+	afterEach(() => {
+		if (saved === undefined) delete process.env[DELIVERY_PROBE_FAIL_ENV];
+		else process.env[DELIVERY_PROBE_FAIL_ENV] = saved;
+	});
+
+	test("flag set + real GUID delivery id -> no throw (prefix gate)", () => {
+		process.env[DELIVERY_PROBE_FAIL_ENV] = "1";
+		expect(() => afterDeliveryWork(GUID)).not.toThrow();
+	});
+
+	test("flag unset + probe- id -> no throw (env gate)", () => {
+		delete process.env[DELIVERY_PROBE_FAIL_ENV];
+		expect(() => afterDeliveryWork("probe-abc")).not.toThrow();
+	});
+
+	test("flag set + probe- id -> throws", () => {
+		process.env[DELIVERY_PROBE_FAIL_ENV] = "1";
+		expect(() => afterDeliveryWork("probe-abc")).toThrow("injected failure");
 	});
 });
