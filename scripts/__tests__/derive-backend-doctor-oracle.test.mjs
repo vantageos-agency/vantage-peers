@@ -635,4 +635,33 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 		},
 		TIMEOUT,
 	);
+
+	it(
+		"BOTH POLES — a patch built in a local (`const patch = { status }`) is TRANSITION, like the inline form (tasks:start vs tasks:resume)",
+		() => {
+			const root = copyTree();
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const crud = (name) =>
+				rowsOf(outOf(root)).find((x) => x.outil === name).crud;
+			expect(crud("resume_task")).toBe("TRANSITION");
+			expect(crud("start_task")).toBe("TRANSITION");
+			expect(committed("start_task").crud).toBe("TRANSITION");
+
+			// ABSENT pole: the local patch no longer names status -> UPDATE again.
+			const root2 = copyTree();
+			mutate(
+				root2,
+				"convex/tasks.ts",
+				'const patch: Record<string, unknown> = {\n\t\t\tstatus: "in_progress" as const,\n\t\t\tupdatedAt: now,\n\t\t\tpausedAt: undefined,',
+				"const patch: Record<string, unknown> = {\n\t\t\tupdatedAt: now,\n\t\t\tpausedAt: undefined,",
+			);
+			const r2 = derive(root2);
+			expect(r2.status, r2.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root2)).find((x) => x.outil === "start_task").crud,
+			).toBe("UPDATE");
+		},
+		TIMEOUT,
+	);
 });

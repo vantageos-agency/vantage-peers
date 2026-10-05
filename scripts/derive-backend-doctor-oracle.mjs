@@ -448,6 +448,63 @@ function reach(file, start, { followConvexRuns }) {
 	return { nodes, convexRefs };
 }
 
+/** True when an object literal names a `status` property (incl. shorthand). */
+function objectNamesStatus(obj) {
+	return obj.properties.some(
+		(p) => p.name && ts.isIdentifier(p.name) && p.name.text === "status",
+	);
+}
+
+/**
+ * Does the patch argument of a `db.patch/replace` write `status`? The patch is
+ * either an inline object literal, or an identifier built earlier in the same
+ * handler (`const patch = { status: ... }`, later `patch.status = ...`):
+ * tasks:start builds its patch in a local and was missed by the literal-only
+ * reading (R-37: start_task UPDATE vs resume_task TRANSITION).
+ */
+function patchWritesStatus(arg, scopeNode) {
+	const obj = strip(arg);
+	if (!obj) return false;
+	if (ts.isObjectLiteralExpression(obj)) return objectNamesStatus(obj);
+	if (!ts.isIdentifier(obj)) return false;
+	const name = obj.text;
+	let found = false;
+	forEachDeep(scopeNode, (n) => {
+		if (found) return;
+		if (
+			ts.isVariableDeclaration(n) &&
+			ts.isIdentifier(n.name) &&
+			n.name.text === name &&
+			n.initializer
+		) {
+			const init = strip(n.initializer);
+			if (init && ts.isObjectLiteralExpression(init) && objectNamesStatus(init))
+				found = true;
+		} else if (
+			ts.isBinaryExpression(n) &&
+			n.operatorToken.kind === ts.SyntaxKind.EqualsToken
+		) {
+			const l = n.left;
+			if (
+				ts.isPropertyAccessExpression(l) &&
+				ts.isIdentifier(l.expression) &&
+				l.expression.text === name &&
+				l.name.text === "status"
+			)
+				found = true;
+			else if (
+				ts.isElementAccessExpression(l) &&
+				ts.isIdentifier(l.expression) &&
+				l.expression.text === name &&
+				ts.isStringLiteralLike(l.argumentExpression) &&
+				l.argumentExpression.text === "status"
+			)
+				found = true;
+		}
+	});
+	return found;
+}
+
 /** Effects of a set of Convex bodies. */
 function convexFacts(fnKeys) {
 	const facts = {
@@ -577,16 +634,7 @@ function convexFacts(fnKeys) {
 					if (litTable && n.arguments.length > 1)
 						facts.tablesNamed.add(litTable);
 					const last = n.arguments[n.arguments.length - 1];
-					const obj = last && strip(last);
-					if (
-						method !== "delete" &&
-						obj &&
-						ts.isObjectLiteralExpression(obj) &&
-						obj.properties.some(
-							(p) =>
-								p.name && ts.isIdentifier(p.name) && p.name.text === "status",
-						)
-					)
+					if (method !== "delete" && last && patchWritesStatus(last, node))
 						facts.statusPatch = true;
 				}
 			});
