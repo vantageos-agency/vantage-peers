@@ -1987,6 +1987,21 @@ export function registerTools(
 		const orgSlug = verifiedOrgOf();
 		return orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {};
 	};
+	// A lookup miss at this boundary is a DENY, never a fall-through
+	// (.claude/rules/http-boundary-derives-from-principal.md): a NON-master bearer
+	// whose organisation cannot be resolved (no verified actor, no token-row org,
+	// and not a Clerk session, whose own org Convex already sees) is refused here,
+	// before Convex, instead of reaching a door that would compare names only.
+	// The fleet master and the stdio trust context are not this population.
+	const unresolvedOrgDenial = (door: string) => {
+		if (oauthCtx?.isMaster === true || oauthCtx?.clerkJwt !== undefined) {
+			return null;
+		}
+		if (verifiedOrgOf() !== undefined) return null;
+		return mcpError(
+			`RBAC_DENIED: ${door} needs the caller's verified organisation and this bearer resolves none — ${JSON.stringify({ reason: "verified-org-unresolved", door })}`,
+		);
+	};
 	const PERSON_DOOR_NOTE =
 		" A person signed in to its organisation omits it and acts in its own name.";
 	// Delegation guard — distinct question from guardFrom (identity CLAIM).
@@ -4498,6 +4513,8 @@ export function registerTools(
 		},
 		async ({ filter, dryRun, completionNoteTemplate, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("bulk_complete_tasks");
+				if (orgDenied) return orgDenied;
 				// k179nrp3apj700pm0h1ckewm2h8b3nz7 — the "filtered" declaration above
 				// claimed enforcement lives in tasks:bulkComplete, but that Convex
 				// handler only checks ownership of MATCHED TASKS against a
@@ -4893,6 +4910,8 @@ export function registerTools(
 			cancelReason,
 		}) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("update_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -4969,6 +4988,8 @@ export function registerTools(
 		},
 		async ({ taskId, completionNote, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("complete_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5031,6 +5052,8 @@ export function registerTools(
 		},
 		async ({ taskId, failureNote, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("fail_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5083,6 +5106,8 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("start_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5136,6 +5161,8 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("pause_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5186,6 +5213,8 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("resume_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5277,6 +5306,8 @@ export function registerTools(
 			callerOrchestrator,
 		}) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("correct_task_segment");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5339,6 +5370,8 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator, callerInstance }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("checkout_task");
+				if (orgDenied) return orgDenied;
 				const fromDenied = guardFrom(callerOrchestrator);
 				if (fromDenied) return fromDenied;
 
@@ -5392,6 +5425,8 @@ export function registerTools(
 		},
 		async ({ taskId, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("delete_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5471,6 +5506,8 @@ export function registerTools(
 			callerOrchestrator,
 		}) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("block_task");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
@@ -5551,6 +5588,8 @@ export function registerTools(
 		},
 		async ({ taskId, dependsOn, callerOrchestrator }) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("add_task_dependency");
+				if (orgDenied) return orgDenied;
 				if (callerOrchestrator) {
 					const fromDenied = guardFrom(callerOrchestrator);
 					if (fromDenied) return fromDenied;
