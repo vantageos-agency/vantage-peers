@@ -99,11 +99,11 @@ async function lookupByRepo(
 		.unique();
 }
 
-// Public door. Fleet-master only: the table has no orgId column (it maps the
-// FLEET's own repositories to orchestrators), so there is no tenant predicate
-// to scope by — same admission as `list`, `add` and `remove` in this file.
-// An ordinary org member is REFUSED by raising (`masterOnly`), never answered
-// with a null that would read as "no such repo".
+// Public door. Tenant-scoped like `list`, `add` and `remove` in this file: the
+// fleet master reads any row; an org member reads ONLY a row its own org owns
+// (`orgId` stamped server-side). A row that exists but is not the caller's (a
+// fleet row or another org's) is REFUSED by raising, never answered with a
+// null that would read as "no such repo"; a repo with no row at all is a null.
 // isolation-contract: no reactive subscriber. Enumerated by command against
 // the only subscribing consumer (vantage-peers-dashboard):
 //   grep -rn "api\.githubRepoMapping\." --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
@@ -117,9 +117,11 @@ export const getByRepo = query({
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {
 			alsoRefusePreOrg: true,
-			masterOnly: true,
 		});
-		return await lookupByRepo(ctx, args.repo);
+		const row = await lookupByRepo(ctx, args.repo);
+		if (row === null) return null;
+		requireRowOwnedBy(scope, row, "githubRepoMapping:getByRepo");
+		return row;
 	},
 });
 

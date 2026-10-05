@@ -242,16 +242,21 @@ const outOf = (root) => join(root, ".backend-doctor", "vp-by-tool.csv");
 
 describe("derive-backend-doctor-oracle coherence tier + written justification", () => {
 	it(
-		"PRESENT — the coherence flag compares what the Convex handlers enforce, not the MCP transport label",
+		"PRESENT — the coherence flag compares what the Convex handlers enforce, not the MCP transport label (githubRepoMapping: org-scoped door beside org writes is COHERENT(org))",
 		() => {
 			const rows = rowsOf(COMMITTED_CSV);
-			// githubRepoMapping: the MCP label of the two reads is `filtered`, but
-			// the handlers are master-only (requireResolvedCaller masterOnly), the
-			// same door as the master-only writes => one tier.
-			const repo = rows.filter((r) => r.table === "githubRepoMapping");
+			// githubRepoMapping: the MCP label of the reads is `filtered`; what counts
+			// is the handlers: getByRepo and list serve a member only its own org's
+			// rows and add/remove write only the caller's own org => one tier.
+			const repo = rows.filter((r) =>
+				r.table.split("+").includes("githubRepoMapping"),
+			);
 			expect(repo.length).toBeGreaterThanOrEqual(4);
+			// Repo mappings are tenant-owned (orgId stamped server-side): the reads
+			// (list/get) and the writes (add/remove) all resolve ONE org tier at the
+			// Convex door, so the table is COHERENT(org), not master.
 			for (const r of repo)
-				expect(r.rbac_coherence_table, r.outil).toBe("COHERENT(master)");
+				expect(r.rbac_coherence_table, r.outil).toBe("COHERENT(org)");
 			// tasks: actor-bound writes and org-filtered reads resolve ONE org tier
 			// at the Convex door (assertTaskVisibleToCaller == the readers' predicate).
 			for (const r of rows.filter((x) => x.table === "tasks"))
@@ -270,6 +275,7 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			expect(incoherent.map((r) => r.table)).toEqual(
 				expect.arrayContaining(["businessUnits", "profiles"]),
 			);
+			expect(incoherent.map((r) => r.table)).not.toContain("githubRepoMapping");
 			for (const r of incoherent)
 				expect(r.rbac_adjustment_needed, r.outil).toMatch(/^JUSTIFIED: \S/);
 		},
@@ -301,23 +307,28 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 	);
 
 	it(
-		"BOTH POLES — a read that stops being master-only at its Convex door flips the table to INCOHERENT",
+		"BOTH POLES — get_repo_mapping is COHERENT(org) as committed; a read door that becomes master-only again beside the org-scoped writes flips the table to INCOHERENT",
 		() => {
+			// PRESENT pole: the committed row.
+			const committed = rowsOf(COMMITTED_CSV).find(
+				(x) => x.outil === "get_repo_mapping",
+			);
+			expect(committed.rbac_coherence_table).toBe("COHERENT(org)");
+			// ABSENT-of-the-control pole: re-impose masterOnly on getByRepo.
 			const root = copyTree();
 			mutate(
 				root,
 				"convex/githubRepoMapping.ts",
-				'requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {\n\t\t\talsoRefusePreOrg: true,\n\t\t\tmasterOnly: true,\n\t\t});',
 				'requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {\n\t\t\talsoRefusePreOrg: true,\n\t\t});',
+				'requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {\n\t\t\talsoRefusePreOrg: true,\n\t\t\tmasterOnly: true,\n\t\t});',
 			);
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
 			const get = rowsOf(outOf(root)).find(
 				(x) => x.outil === "get_repo_mapping",
 			);
-			expect(get.rbac_coherence_table).toBe(
-				"INCOHERENT read=master+org write=master",
-			);
+			expect(get.rbac_coherence_table).toMatch(/^INCOHERENT /);
+			expect(get.rbac_coherence_table).not.toBe(committed.rbac_coherence_table);
 		},
 		TIMEOUT,
 	);
@@ -420,6 +431,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			expect(side.map((r) => r.outil).sort()).toEqual(
 				writes.map((r) => r.outil).sort(),
 			);
+			expect(side.length).toBeGreaterThan(0);
 			expect(side).toHaveLength(writes.length);
 			for (const r of side)
 				expect(r.writer_tier, r.outil).toMatch(

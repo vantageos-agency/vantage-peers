@@ -404,14 +404,21 @@ describe("issues.upsertFromGitHub stamps the issue from the mapping", () => {
 });
 
 describe("SAFE consumers (keyed by the exact, globally unique repo; no caller-chosen project string)", () => {
-	test("getByRepo (public) refuses an ordinary member, even for its own repo", async () => {
+	test("getByRepo (public): a member is served ITS OWN row, REFUSED another org's and the fleet's, null for no row", async () => {
 		const t = makeT();
 		await seed(t);
-		const err = await asOrg(t, "org-a")
-			.query(api.githubRepoMapping.getByRepo, { repo: "org-a/repo" })
-			.catch((e: unknown) => e);
-		expect(err).toBeInstanceOf(ConvexError);
-		expect((err as ConvexError<string>).message).toContain("RBAC_DENIED");
+		const a = asOrg(t, "org-a");
+		const own = await a.query(api.githubRepoMapping.getByRepo, { repo: "org-a/repo" });
+		expect(own?.orgId).toBe("org-a");
+		for (const repo of ["org-b/repo", "fleet/repo"]) {
+			const err = await a.query(api.githubRepoMapping.getByRepo, { repo }).catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(ConvexError);
+			expect(String((err as ConvexError<string>).data)).toContain("RBAC_DENIED");
+			expect(String((err as ConvexError<string>).data)).toContain("githubRepoMapping:getByRepo");
+		}
+		expect(await a.query(api.githubRepoMapping.getByRepo, { repo: "org-a/none" })).toBeNull();
+		const svc = t.withIdentity({ subject: "test-service-account-user-id" });
+		expect((await svc.query(api.githubRepoMapping.getByRepo, { repo: "org-b/repo" }))?.orgId).toBe("org-b");
 	});
 
 	test("webhook routing (getByRepoInternal) returns exactly the row of the named repo, with its tenant", async () => {
