@@ -2454,9 +2454,15 @@ export const complete = mutation({
 
 		await unblockWaitersOn(ctx, args.taskId, now);
 
+		// Tenant gate for every fleet-repo side effect below (auto-link, IRP
+		// comments, fixPattern): decided from the task's server-stamped orgId,
+		// never from the caller-chosen `project` string. See
+		// taskMayReachFleetRepoRows.
+		const mayReachFleetRepoRows = await taskMayReachFleetRepoRows(ctx, task);
+
 		// Auto-link: if task title contains #NNN, update the corresponding issue
 		const issueMatch = task.title.match(/#(\d+)/);
-		if (issueMatch) {
+		if (issueMatch && mayReachFleetRepoRows) {
 			const issueNumber = parseInt(issueMatch[1], 10);
 			// Find repo from project via githubRepoMapping — issue #1276-class
 			// fix: this used to be an unbounded `.collect()` of the WHOLE
@@ -2516,7 +2522,7 @@ export const complete = mutation({
 		// IRP auto-comments: post a GitHub comment when key IRP steps are completed.
 		// IRP task titles follow the pattern "[#NNN] TN — <step name>".
 		const irpStepMatch = task.title.match(/\[#(\d+)\] T(\d+)/);
-		if (irpStepMatch && task.project) {
+		if (irpStepMatch && task.project && mayReachFleetRepoRows) {
 			const irpIssueNumber = parseInt(irpStepMatch[1], 10);
 			const stepNumber = parseInt(irpStepMatch[2], 10);
 
@@ -3532,6 +3538,31 @@ function parseDeployTitle(
 // just its cron instance — see resolveStaleDeployTasksForProject usage at
 // `complete` and createDeployTaskWithDedup below).
 export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
+
+/**
+ * May a completing task reach the FLEET's `githubRepoMapping` / `issues` rows?
+ *
+ * Neither table has an `orgId`: they are the operator fleet's own repositories
+ * and issues (see convex/githubRepoMapping.ts — master-only, "no per-org owner
+ * field"). `task.project` is a string the creating member chose, so keying the
+ * lookup on it alone let an org-a member name an org-b project and have
+ * `complete` patch org-b's issue (and post a comment on org-b's repo). The
+ * tenant is therefore taken from the row the SERVER stamped, `task.orgId`:
+ * unstamped = fleet/master-created, or an ACTIVE `orgKind: "operator"` org.
+ * Any client org is refused the auto-link; the completion itself is unaffected.
+ */
+async function taskMayReachFleetRepoRows(
+	ctx: MutationCtx,
+	task: Doc<"tasks">,
+): Promise<boolean> {
+	if (task.orgId === undefined) return true;
+	const orgSlug = task.orgId;
+	const mapping = await ctx.db
+		.query("client_org_mapping")
+		.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+		.unique();
+	return mapping !== null && mapping.isActive && mapping.orgKind === "operator";
+}
 
 /**
  * Resolve the single "winning" githubRepoMapping row for a project, reading
