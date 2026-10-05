@@ -5006,7 +5006,7 @@ export const createForWebhookDelivery = internalMutation({
 		const { delivery, ...args } = rawArgs;
 		if (!(await claimDeliveryStep(ctx, delivery))) return null;
 		const id = await ctx.runMutation(internal.tasks.createForWebhook, args);
-		afterDeliveryWork();
+		afterDeliveryWork(delivery.deliveryId);
 		return id;
 	},
 });
@@ -5034,7 +5034,7 @@ export const createOrUpdateReviewTaskDelivery = internalMutation({
 			internal.tasks.createOrUpdateReviewTask,
 			args,
 		);
-		afterDeliveryWork();
+		afterDeliveryWork(delivery.deliveryId);
 		return id;
 	},
 });

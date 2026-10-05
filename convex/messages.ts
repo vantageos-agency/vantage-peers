@@ -572,7 +572,7 @@ export const sendMessageDelivery = internalMutation({
 			internal.messages.sendMessageInternal,
 			args,
 		);
-		afterDeliveryWork();
+		afterDeliveryWork(delivery.deliveryId);
 		return id;
 	},
 });

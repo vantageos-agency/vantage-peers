@@ -25,15 +25,26 @@ export type DeliveryClaim = {
 	eventType: string;
 };
 
-// Test seam: a delivery-keyed wrapper calls `afterDeliveryWork()` after its
-// nested work succeeded and before it returns. Production never sets
-// `deliveryTestSeam.afterWork`, so it is a no-op there; a test sets it to throw
-// and proves the claim AND the work both roll back (one transaction).
+// Failure-injection seam, used to prove that a throw AFTER the claim and the
+// work rolls both back. A delivery-keyed wrapper calls `afterDeliveryWork()`
+// after its nested work succeeded and before it returns.
+//   - convex-test: a test sets `deliveryTestSeam.afterWork` (module state).
+//   - a real deployment runs each function in its own isolate, so module state
+//     is not shared; there the seam is the env var named below. It fires ONLY
+//     for a delivery id starting "probe-" (never a real GitHub GUID), and only
+//     when the var is set, which production never does.
 export const deliveryTestSeam: { afterWork: (() => void) | undefined } = {
 	afterWork: undefined,
 };
-export function afterDeliveryWork(): void {
+export const DELIVERY_PROBE_FAIL_ENV = "DELIVERY_PROBE_FAIL_AFTER_WORK";
+export function afterDeliveryWork(deliveryId: string): void {
 	deliveryTestSeam.afterWork?.();
+	if (
+		deliveryId.startsWith("probe-") &&
+		process.env[DELIVERY_PROBE_FAIL_ENV] === "1"
+	) {
+		throw new Error("injected failure after claim and work");
+	}
 }
 
 // Claim-or-skip, to be called as the FIRST write of the mutation that does the

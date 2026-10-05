@@ -223,6 +223,74 @@ describe("github webhook delivery idempotency", () => {
 		expect(await taskTitles(t)).toHaveLength(1);
 	});
 
+	const injectFailureOnce = async (run: () => Promise<unknown>) => {
+		deliveryTestSeam.afterWork = () => {
+			throw new Error("injected failure after claim and work");
+		};
+		try {
+			await expect(run()).rejects.toThrow("injected failure");
+		} finally {
+			deliveryTestSeam.afterWork = undefined;
+		}
+	};
+
+	test("mission: work throws AFTER the claim in the same mutation -> claim AND mission roll back, redelivery creates exactly one mission", async () => {
+		const t = await makeT();
+		// missions.create needs an identity: the service account, as other tests do.
+		const asMaster = t.withIdentity({ subject: "test-service-account-user-id" });
+		const args = {
+			delivery: claimFor("d-8", "mission"),
+			name: "Fix #8 - redelivery",
+			project: "idem-project",
+			status: "execute" as const,
+			priority: "high" as const,
+			pilot: "sigma" as const,
+			agents: ["sigma"],
+			createdBy: "system" as const,
+		};
+		const missionCount = () =>
+			t.run(async (ctx) => (await ctx.db.query("missions").collect()).length);
+		await injectFailureOnce(() =>
+			asMaster.mutation(internal.missions.createForWebhookDelivery, args),
+		);
+		expect(
+			(await ledger(t)).filter((r) => r.deliveryId === "d-8"),
+		).toHaveLength(0);
+		expect(await missionCount()).toBe(0);
+		const first = await asMaster.mutation(internal.missions.createForWebhookDelivery, args);
+		const third = await asMaster.mutation(internal.missions.createForWebhookDelivery, args);
+		expect(first).not.toBeNull();
+		expect(third).toBeNull();
+		expect(await missionCount()).toBe(1);
+	});
+
+	test("review task: work throws AFTER the claim in the same mutation -> claim AND task roll back, redelivery creates exactly one task", async () => {
+		const t = await makeT();
+		const args = {
+			delivery: claimFor("d-9", "review-task"),
+			repoFullName: REPO,
+			prNumber: 9,
+			prTitle: "A pull request",
+			assignedTo: "sigma",
+			project: "idem-project",
+			priority: "high" as const,
+			createdBy: "system" as const,
+		};
+		await injectFailureOnce(() =>
+			t.mutation(internal.tasks.createOrUpdateReviewTaskDelivery, args),
+		);
+		expect(
+			(await ledger(t)).filter((r) => r.deliveryId === "d-9"),
+		).toHaveLength(0);
+		expect(await taskTitles(t)).toHaveLength(0);
+		const first = await t.mutation(internal.tasks.createOrUpdateReviewTaskDelivery, args);
+		const third = await t.mutation(internal.tasks.createOrUpdateReviewTaskDelivery, args);
+		expect(first).not.toBeNull();
+		expect(first).not.toBe("duplicate");
+		expect(third).toBe("duplicate");
+		expect(await taskTitles(t)).toHaveLength(1);
+	});
+
 	test("message: work throws AFTER the claim in the same mutation -> claim rolls back, redelivery creates exactly one message", async () => {
 		const t = await makeT();
 		const msg = {

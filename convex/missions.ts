@@ -356,7 +356,7 @@ export const createForWebhookDelivery = internalMutation({
 		const { delivery, ...mission } = args;
 		if (!(await claimDeliveryStep(ctx, delivery))) return null;
 		const id = await ctx.runMutation(api.missions.create, mission);
-		afterDeliveryWork();
+		afterDeliveryWork(delivery.deliveryId);
 		return id;
 	},
 });
