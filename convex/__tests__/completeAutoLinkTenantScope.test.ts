@@ -18,7 +18,7 @@
 //             link and fix the issue on the project they name.
 
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -27,6 +27,8 @@ const modules = Object.fromEntries(
 		([path]) => !path.includes("ragSync") && !path.includes("backfill"),
 	),
 );
+
+afterEach(() => vi.useRealTimers());
 
 const makeT = () => convexTest(schema, modules);
 type T = ReturnType<typeof makeT>;
@@ -157,5 +159,58 @@ describe("tasks.complete auto-link is bound to the task's own tenant", () => {
 		const issue = await issueOf(t, "org-op/repo");
 		expect(issue?.status).toBe("fixed");
 		expect(issue?.linkedTaskIds).toEqual([taskId]);
+	});
+
+	// ── IRP side effects (comment + fixPattern) share the same tenant gate ──
+	// Seam: the scheduler's own record. `ctx.scheduler.runAfter` writes a row to
+	// `_scheduled_functions`; we read it and never run it (ragSync is excluded
+	// from the module set), so "attempted" is observable without the network.
+	const IRP_NOTE = "Root cause: bad join. Fix: scope by org. Files: convex/tasks.ts, convex/lib/x.ts";
+	const STEP_NOTE = "Fixed in commit abcdef1234567, 3/3 pass";
+	const irp = async (caller: ReturnType<typeof asOrg>, project: string, step: number, note: string) => {
+		const taskId = await caller.mutation(api.tasks.create, {
+			title: `[#5] T${step} — step`,
+			assignedTo: ORCH,
+			priority: "high",
+			status: "todo",
+			createdBy: ORCH,
+			project,
+		});
+		await caller.mutation(api.tasks.complete, {
+			taskId,
+			callerOrchestrator: ORCH,
+			completionNote: note,
+		});
+	};
+	const fixPatternCount = (t: T) =>
+		t.run(async (ctx) => (await ctx.db.query("fixPatterns").collect()).length);
+	const scheduledNames = (t: T) =>
+		t.run(async (ctx) =>
+			(await ctx.db.system.query("_scheduled_functions").collect()).map((j) => j.name),
+		);
+
+	test("Q0 PRESENT: operator-org T7 creates 1 fixPattern; T6/T8/T11 each schedule a GitHub comment", async () => {
+		vi.useFakeTimers(); // scheduled rows are recorded, never fired
+		const t = makeT();
+		await seed(t);
+		const op = asOrg(t, "org-op");
+		await irp(op, "proj-org-op", 7, IRP_NOTE);
+		expect(await fixPatternCount(t)).toBe(1);
+		for (const step of [6, 8, 11]) await irp(op, "proj-org-op", step, STEP_NOTE);
+		const comments = (await scheduledNames(t)).filter((n) => n.includes("postComment"));
+		expect(comments.length).toBe(3);
+	});
+
+	test("Q1 REFUSED: client org-a naming org-b's project creates 0 fixPatterns and schedules no comment", async () => {
+		vi.useFakeTimers(); // scheduled rows are recorded, never fired
+		const t = makeT();
+		await seed(t);
+		const a = asOrg(t, "org-a");
+		await irp(a, "proj-org-b", 7, IRP_NOTE);
+		for (const step of [6, 8, 11]) await irp(a, "proj-org-b", step, STEP_NOTE);
+		expect(await fixPatternCount(t)).toBe(0);
+		const names = await scheduledNames(t);
+		expect(names.filter((n) => n.includes("postComment"))).toEqual([]);
+		expect(names.filter((n) => n.includes("FixPatternRagEntry"))).toEqual([]);
 	});
 });
