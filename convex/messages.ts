@@ -1,7 +1,8 @@
 import { type PaginationResult, paginationOptsValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import {
@@ -25,6 +26,11 @@ import {
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
+import {
+	afterDeliveryWork,
+	claimDeliveryStep,
+	deliveryClaimValidator,
+} from "./deliveryLedger";
 import {
 	computePeersStuckOnYou,
 	computeStaleInProgress,
@@ -541,6 +547,33 @@ export const sendMessageInternal = internalMutation({
 	handler: async (ctx, args) => {
 		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: true });
 		return await sendMessageCore(ctx, args, scope);
+	},
+});
+
+// `sendMessageInternal` for a delivery-keyed GitHub webhook call: the delivery
+// claim is the FIRST write of this transaction and the message is sent by a
+// NESTED mutation in the same transaction, so claim and message commit together
+// or not at all. null = this delivery step was already claimed (a redelivery).
+export const sendMessageDelivery = internalMutation({
+	args: {
+		delivery: deliveryClaimValidator,
+		from: creatorValidator,
+		fromInstanceId: v.optional(v.string()),
+		channel: v.string(),
+		content: v.string(),
+		sessionDay: v.optional(v.number()),
+		tenantId: v.optional(v.string()),
+	},
+	returns: v.union(v.id("messages"), v.null()),
+	handler: async (ctx, rawArgs): Promise<Id<"messages"> | null> => {
+		const { delivery, ...args } = rawArgs;
+		if (!(await claimDeliveryStep(ctx, delivery))) return null;
+		const id = await ctx.runMutation(
+			internal.messages.sendMessageInternal,
+			args,
+		);
+		afterDeliveryWork();
+		return id;
 	},
 });
 

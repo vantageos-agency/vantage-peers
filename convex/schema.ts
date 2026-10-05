@@ -1111,18 +1111,20 @@ export default defineSchema({
 	}).index("by_code", ["code"]),
 
 	// ── webhookDeliveries ────────────────────────────────────────────────────
-	// Idempotency ledger for POST /github/webhook. One row per GitHub delivery
-	// (`x-github-delivery` GUID, identical on a redelivery). Written by the single
-	// atomic mutation `deliveryLedger:claim`; deleted by `release` when the
-	// handler throws (so GitHub's retry is processed) and by the cron
-	// `deliveryLedger:purgeExpired` once past the retention window.
+	// Idempotency ledger for POST /github/webhook. One row per (GitHub delivery,
+	// creating step): `deliveryId` is the `x-github-delivery` GUID (identical on a
+	// redelivery), `step` names the creating call site inside that delivery. The
+	// row is inserted by `claimDeliveryStep` as the FIRST write of the very
+	// mutation that creates the task/message/mission, so claim and work commit
+	// together or not at all. Purged by cron (deliveryLedger:purgeExpired).
 	webhookDeliveries: defineTable({
 		deliveryId: v.string(),
+		step: v.string(),
 		repo: v.string(),
 		eventType: v.string(),
 		receivedAt: v.number(),
 	})
-		.index("by_deliveryId", ["deliveryId"])
+		.index("by_deliveryId_and_step", ["deliveryId", "step"])
 		.index("by_receivedAt", ["receivedAt"]),
 
 	// ── oauth_person_codes ───────────────────────────────────────────────────

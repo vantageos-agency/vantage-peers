@@ -20,6 +20,11 @@ import {
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import {
+	afterDeliveryWork,
+	claimDeliveryStep,
+	deliveryClaimValidator,
+} from "./deliveryLedger";
+import {
 	resolveVerifiedPerson,
 	type VerifiedPerson,
 	verifiedPersonValidator,
@@ -4979,5 +4984,57 @@ export const listReviewBacklogByLineage = internalQuery({
 		}
 
 		return { automation, bootstrapNoPrLink };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delivery-keyed mirrors for the GitHub webhook (idempotency per
+// `x-github-delivery`). Each claims its (delivery, step) as the FIRST write and
+// then runs the existing internal mutation as a NESTED mutation in the SAME
+// transaction: claim and task commit together or not at all, so a throw after
+// the claim rolls the claim back and a redelivery redoes exactly the work that
+// never committed. A duplicate or concurrent redelivery gets null / "duplicate".
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const createForWebhookDelivery = internalMutation({
+	args: {
+		...createTaskArgsValidator,
+		delivery: deliveryClaimValidator,
+	},
+	returns: v.union(v.id("tasks"), v.null()),
+	handler: async (ctx, rawArgs): Promise<Id<"tasks"> | null> => {
+		const { delivery, ...args } = rawArgs;
+		if (!(await claimDeliveryStep(ctx, delivery))) return null;
+		const id = await ctx.runMutation(internal.tasks.createForWebhook, args);
+		afterDeliveryWork();
+		return id;
+	},
+});
+
+export const createOrUpdateReviewTaskDelivery = internalMutation({
+	args: {
+		delivery: deliveryClaimValidator,
+		repoFullName: v.string(),
+		prNumber: v.number(),
+		prTitle: v.string(),
+		description: v.optional(v.string()),
+		assignedTo: v.optional(assigneeValidator),
+		project: v.optional(v.string()),
+		priority: priorityValidator,
+		createdBy: creatorValidator,
+		tags: v.optional(v.array(v.string())),
+	},
+	// null = REVIEWER_UNRESOLVED (as in createOrUpdateReviewTask);
+	// "duplicate" = this delivery step was already claimed.
+	returns: v.union(v.id("tasks"), v.null(), v.literal("duplicate")),
+	handler: async (ctx, rawArgs): Promise<Id<"tasks"> | null | "duplicate"> => {
+		const { delivery, ...args } = rawArgs;
+		if (!(await claimDeliveryStep(ctx, delivery))) return "duplicate" as const;
+		const id = await ctx.runMutation(
+			internal.tasks.createOrUpdateReviewTask,
+			args,
+		);
+		afterDeliveryWork();
+		return id;
 	},
 });

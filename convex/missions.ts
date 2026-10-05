@@ -1,8 +1,14 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { mutation, query, internalQuery } from "./_generated/server";
+import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
+import { api } from "./_generated/api";
+import {
+	afterDeliveryWork,
+	claimDeliveryStep,
+	deliveryClaimValidator,
+} from "./deliveryLedger";
 import type { QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
 	withOrgScope,
@@ -328,6 +334,32 @@ interface MissionsListArgs {
 	updatedSince?: number;
 	createdBefore?: number;
 }
+
+// Internal mirror of `create` for the GitHub webhook's issues.opened cascade.
+// The delivery claim is the FIRST write, and `create` then runs as a nested
+// mutation in the SAME transaction: the claim and the mission commit together
+// or not at all (a throw in `create` rolls the claim back too). null = this
+// delivery step was already claimed (a redelivery or a concurrent duplicate).
+export const createForWebhookDelivery = internalMutation({
+	args: {
+		delivery: deliveryClaimValidator,
+		name: v.string(),
+		project: v.string(),
+		status: missionStatusValidator,
+		priority: priorityValidator,
+		pilot: creatorValidator,
+		agents: v.array(v.string()),
+		createdBy: creatorValidator,
+	},
+	returns: v.union(v.id("missions"), v.null()),
+	handler: async (ctx, args): Promise<Id<"missions"> | null> => {
+		const { delivery, ...mission } = args;
+		if (!(await claimDeliveryStep(ctx, delivery))) return null;
+		const id = await ctx.runMutation(api.missions.create, mission);
+		afterDeliveryWork();
+		return id;
+	},
+});
 
 // Shared handler body for missions.list (public, org-scoped) and
 // missions.listForWebhook (internal, master-scoped — SEC-AUDIT Day 156: the

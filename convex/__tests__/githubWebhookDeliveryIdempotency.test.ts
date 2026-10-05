@@ -11,6 +11,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
+import { deliveryTestSeam } from "../deliveryLedger";
 import schema from "../schema";
 import {
 	TEST_WEBHOOK_SECRET,
@@ -105,6 +106,8 @@ const taskTitles = (t: T) =>
 	t.run(async (ctx) => (await ctx.db.query("tasks").collect()).map((r) => r.title));
 const ledger = (t: T) =>
 	t.run(async (ctx) => await ctx.db.query("webhookDeliveries").collect());
+const ledgerDeliveries = async (t: T) =>
+	new Set((await ledger(t)).map((r) => r.deliveryId));
 
 describe("github webhook delivery idempotency", () => {
 	beforeEach(() => {
@@ -143,7 +146,7 @@ describe("github webhook delivery idempotency", () => {
 		await post(t, assignedPayload, "issues", { delivery: "d-3b" });
 		const titles = await taskTitles(t);
 		expect(titles.filter((x) => x.includes("Assigned:"))).toHaveLength(2);
-		expect(await ledger(t)).toHaveLength(2);
+		expect(await ledgerDeliveries(t)).toEqual(new Set(["d-3a", "d-3b"]));
 	});
 
 	test("two concurrent redeliveries cannot both pass", async () => {
@@ -154,7 +157,9 @@ describe("github webhook delivery idempotency", () => {
 		]);
 		const titles = await taskTitles(t);
 		expect(titles.filter((x) => x.includes("Assigned:"))).toHaveLength(1);
-		expect(await ledger(t)).toHaveLength(1);
+		// one row per creating step (task + notice), never two for the same step
+		expect(await ledger(t)).toHaveLength(2);
+		expect(await ledgerDeliveries(t)).toEqual(new Set(["d-4"]));
 	});
 
 	test("missing delivery header (valid signature) -> 400, no task, no ledger row", async () => {
@@ -176,25 +181,74 @@ describe("github webhook delivery idempotency", () => {
 		expect(await taskTitles(t)).toHaveLength(0);
 	});
 
-	test("a handler failure releases the claim so GitHub's retry is processed", async () => {
+	const claimFor = (deliveryId: string, step: string) => ({
+		deliveryId,
+		step,
+		repo: REPO,
+		eventType: "issues",
+	});
+
+	test("task: work throws AFTER the claim in the same mutation -> claim AND task roll back, redelivery creates exactly one task", async () => {
 		const t = await makeT();
-		// assignee matches but `issue` is absent -> the handler throws.
-		const broken = JSON.stringify({
-			action: "assigned",
-			repository: { full_name: REPO },
-			assignee: { login: "elpiarthera" },
-		});
-		let status = 0;
+		const base = {
+			title: "[GitHub #9] Assigned: x",
+			assignedTo: "sigma",
+			project: "idem-project",
+			priority: "high" as const,
+			status: "todo" as const,
+			createdBy: "system" as const,
+			delivery: claimFor("d-6", "assigned-task"),
+		};
+		// Inject a throw after the task insert and the claim, inside the mutation.
+		deliveryTestSeam.afterWork = () => {
+			throw new Error("injected failure after claim and insert");
+		};
 		try {
-			status = (await post(t, broken, "issues", { delivery: "d-6" })).status;
-		} catch {
-			status = 500;
+			await expect(
+				t.mutation(internal.tasks.createForWebhookDelivery, base),
+			).rejects.toThrow("injected failure");
+		} finally {
+			deliveryTestSeam.afterWork = undefined;
 		}
-		expect(status).toBe(500);
-		expect(await ledger(t)).toHaveLength(0);
-		const retry = await post(t, assignedPayload, "issues", { delivery: "d-6" });
-		expect(retry.status).toBe(200);
-		expect((await taskTitles(t)).filter((x) => x.includes("Assigned:"))).toHaveLength(1);
+		// neither the claim nor the task survived the throw (same transaction)
+		expect(
+			(await ledger(t)).filter((r) => r.deliveryId === "d-6"),
+		).toHaveLength(0);
+		expect(await taskTitles(t)).toHaveLength(0);
+		// the redelivery succeeds, and a third delivery is a no-op
+		const first = await t.mutation(internal.tasks.createForWebhookDelivery, base);
+		const third = await t.mutation(internal.tasks.createForWebhookDelivery, base);
+		expect(first).not.toBeNull();
+		expect(third).toBeNull();
+		expect(await taskTitles(t)).toHaveLength(1);
+	});
+
+	test("message: work throws AFTER the claim in the same mutation -> claim rolls back, redelivery creates exactly one message", async () => {
+		const t = await makeT();
+		const msg = {
+			from: "system" as const,
+			channel: "sigma",
+			content: "[GitHub] hello",
+			delivery: claimFor("d-7", "comment-notice"),
+		};
+		// tenantId "" is refused by sendMessageCore AFTER the claim was taken.
+		await expect(
+			t.mutation(internal.messages.sendMessageDelivery, { ...msg, tenantId: "" }),
+		).rejects.toThrow();
+		expect(
+			(await ledger(t)).filter((r) => r.deliveryId === "d-7"),
+		).toHaveLength(0);
+		const first = await t.mutation(internal.messages.sendMessageDelivery, msg);
+		const again = await t.mutation(internal.messages.sendMessageDelivery, msg);
+		expect(first).not.toBeNull();
+		expect(again).toBeNull();
+		const count = await t.run(
+			async (ctx) =>
+				(await ctx.db.query("messages").collect()).filter((m) =>
+					m.content.includes("[GitHub] hello"),
+				).length,
+		);
+		expect(count).toBe(1);
 	});
 
 	test("purgeExpired drops only rows past retention", async () => {
@@ -203,12 +257,14 @@ describe("github webhook delivery idempotency", () => {
 			const old = Date.now() - 8 * 24 * 60 * 60 * 1000;
 			await ctx.db.insert("webhookDeliveries", {
 				deliveryId: "old",
+				step: "s",
 				repo: REPO,
 				eventType: "issues",
 				receivedAt: old,
 			});
 			await ctx.db.insert("webhookDeliveries", {
 				deliveryId: "fresh",
+				step: "s",
 				repo: REPO,
 				eventType: "issues",
 				receivedAt: Date.now(),
