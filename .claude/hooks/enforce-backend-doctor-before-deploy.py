@@ -31,7 +31,9 @@ It PASSES only when evidence pins HEAD and is mechanically clean.
 SELECTION ORDER (v1.2.0): evidence whose sha pins HEAD DECIDES, whatever its
 position in glob order. A file keyed to HEAD by name that cannot be read is a
 could-not-judge -> REFUSE, never replaced by an ancestor. Only when NO HEAD
-evidence exists does the ancestor relaxation (see `evaluate`) apply.
+evidence exists does the ancestor relaxation (see `evaluate`) apply, and then
+the NEAREST ancestor decides (fewest commits from HEAD, rev-list count of
+<sha>..HEAD); distinct ancestors at equal distance are a could-not-judge.
 
 WHAT IT MUST NOT DO
 -------------------
@@ -241,6 +243,23 @@ def _is_ancestor(candidate_sha: str, ship_sha: str, cwd: str) -> bool:
     return r.returncode == 0
 
 
+def _distance_to_head(ancestor_sha: str, ship_sha: str, cwd: str) -> int:
+    """Commits reachable from HEAD but not from the ancestor
+    (`git rev-list --count <ancestor>..<HEAD>`). Raises on a git failure: a
+    distance we cannot compute must never pick an ancestor (fail-closed)."""
+    r = subprocess.run(
+        ["git", "rev-list", "--count", f"{ancestor_sha}..{ship_sha}"],
+        capture_output=True, text=True, timeout=10, cwd=cwd,
+    )
+    out = r.stdout.strip()
+    if r.returncode != 0 or not out.isdigit():
+        raise RuntimeError(
+            f"git rev-list --count {ancestor_sha}..{ship_sha} failed "
+            f"(exit {r.returncode}): {r.stderr.strip()}"
+        )
+    return int(out)
+
+
 def _convex_changed_between(candidate_sha: str, ship_sha: str, cwd: str) -> list[str]:
     """Paths under convex/ that differ between `candidate_sha` and
     `ship_sha`. An EMPTY list means the deployed tree's convex/ subtree is
@@ -402,7 +421,7 @@ def _clean_verdict(report: dict) -> tuple[bool, str | None]:
 
 def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
     """(verdict, message). verdict in {"pass", "absent", "stale", "red",
-    "incomplete", "diverged", "refuse"}. Only "pass" allows; every other
+    "incomplete", "diverged", "ambiguous", "refuse"}. Only "pass" allows; every other
     verdict refuses.
 
     ANCESTOR-EVIDENCE RELAXATION: evidence for a commit cannot be committed
@@ -458,19 +477,50 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
                 return verdict, message
         return verdicts[0]
 
-    # 2. No HEAD evidence: the ancestor relaxation applies, unchanged.
-    diverged = []  # (report, changed_files): ancestor evidence, convex/ moved
-    for r in reports:
-        if not _is_ancestor(r["_sha"], ship, cwd):
-            continue
-        changed = _convex_changed_between(r["_sha"], ship, cwd)
+    # 2. No HEAD evidence: the NEAREST ancestor decides -- fewest commits from
+    #    HEAD (`git rev-list --count <sha>..HEAD`), never glob order. Distinct
+    #    commits at the same minimal distance are a could-not-judge.
+    ancestors = [
+        (_distance_to_head(r["_sha"], ship, cwd), r)
+        for r in reports
+        if _is_ancestor(r["_sha"], ship, cwd)
+    ]
+    if ancestors:
+        nearest_d = min(d for d, _ in ancestors)
+        nearest = sorted(
+            (r for d, r in ancestors if d == nearest_d),
+            key=lambda r: r["_path"],
+        )
+        commits: list[str] = []
+        for r in nearest:
+            if not any(_sha_matches(r["_sha"], c) for c in commits):
+                commits.append(r["_sha"])
+        if len(commits) > 1:
+            named = ", ".join(sorted(c[:12] for c in commits))
+            return "ambiguous", (
+                f"no evidence pins HEAD {ship[:12]}, and the nearest ancestor "
+                f"evidence is a TIE: distinct commits [{named}] are each "
+                f"{nearest_d} commit(s) from HEAD. Which tree stands in for "
+                "HEAD cannot be decided -- a could-not-judge, never a pass."
+            )
+        chosen = commits[0]
+        changed = _convex_changed_between(chosen, ship, cwd)
         if changed:
-            diverged.append((r, changed))
-            continue
-        return _judge(r, (
-            f"pins ancestor {r['_sha'][:12]} of HEAD {ship[:12]} "
-            "with no convex/ change since"
-        ))
+            diverged = [(nearest[0], changed)]
+        else:
+            pin_note = (
+                f"pins ancestor {chosen[:12]} of HEAD {ship[:12]} "
+                f"({nearest_d} commit(s) back, the nearest) with no convex/ "
+                "change since"
+            )
+            # Several files for the same commit: any non-pass refuses.
+            verdicts = [_judge(r, pin_note) for r in nearest]
+            for verdict, message in verdicts:
+                if verdict != "pass":
+                    return verdict, message
+            return verdicts[0]
+    else:
+        diverged = []
 
     if diverged:
         r, changed = diverged[0]

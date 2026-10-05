@@ -175,3 +175,118 @@ def test_no_head_evidence_ancestor_relaxation_unchanged():
         verdict, msg = _mod.evaluate(str(repo), str(repo))
         assert verdict == "pass", (verdict, msg)
         assert "pins ancestor" in msg
+
+
+# ---------------------------------------------------------------------------
+# Several ancestors, no HEAD evidence: the NEAREST ancestor decides (fewest
+# commits from HEAD, `git rev-list --count <sha>..HEAD`), never the first
+# glob match. Equal distance between distinct commits is a could-not-judge.
+# ---------------------------------------------------------------------------
+
+FAR_NAME = "backend-doctor-000-far.json"      # sorts before NEAR_NAME
+NEAR_NAME = "backend-doctor-001-near.json"
+
+
+def _init_bare(tmp):
+    repo = pathlib.Path(tmp)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t.co")
+    _git(repo, "config", "user.name", "t")
+    (repo / "convex").mkdir()
+    (repo / "convex" / "schema.ts").write_text("export default {}\n")
+    (repo / "README.md").write_text("r0\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "c0")
+    return repo
+
+
+def _docs_commit(repo, text):
+    (repo / "README.md").write_text(text + "\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", text)
+    return _head(repo)
+
+
+def _two_ancestors(tmp, far_mech, near_mech):
+    """far (c0) -> near (c1) -> HEAD (c2), docs-only commits, so convex/ is
+    byte-identical across all three. FAR's file sorts first."""
+    repo = _init_bare(tmp)
+    far = _head(repo)
+    near = _docs_commit(repo, "c1")
+    _docs_commit(repo, "c2")
+    (repo / "qa").mkdir()
+    (repo / "qa" / FAR_NAME).write_text(json.dumps(
+        _payload(repo, far, exit_code=1 if far_mech else 0, mech=far_mech)))
+    (repo / "qa" / NEAR_NAME).write_text(json.dumps(
+        _payload(repo, near, exit_code=1 if near_mech else 0, mech=near_mech)))
+    files = _mod.glob.glob(str(repo / _mod.EVIDENCE_GLOB))
+    assert pathlib.Path(files[0]).name == FAR_NAME, files
+    return repo, far, near
+
+
+# Pole G -- MUST_BLOCK: far ancestor green and sorted first, near one red.
+def test_nearest_ancestor_red_beats_farther_green_sorted_first():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _, near = _two_ancestors(tmp, far_mech=0, near_mech=3)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "red", (verdict, msg)
+        assert near[:12] in msg
+        assert _run(repo) == 2
+
+
+# Pole H -- MUST_PASS: far ancestor red and sorted first, near one green and
+# convex-identical.
+def test_nearest_ancestor_green_beats_farther_red_sorted_first():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _, near = _two_ancestors(tmp, far_mech=4, near_mech=0)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", (verdict, msg)
+        assert near[:12] in msg
+        assert _run(repo) == 0
+
+
+# Pole I -- MUST_BLOCK: the nearest ancestor is green but convex/ differs
+# between it and HEAD; the byte-identical rule applies to the CHOSEN ancestor,
+# and a farther green one whose convex/ happens to match HEAD (c1 changed
+# convex/, c2 reverted it) does not rescue it.
+def test_nearest_ancestor_convex_diverged_refuses():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _init_bare(tmp)
+        far = _head(repo)
+        (repo / "convex" / "schema.ts").write_text("export default { v: 2 }\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "c1 convex change")
+        near = _head(repo)
+        (repo / "convex" / "schema.ts").write_text("export default {}\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "c2 convex revert")
+        (repo / "qa").mkdir()
+        (repo / "qa" / FAR_NAME).write_text(json.dumps(_payload(repo, far)))
+        (repo / "qa" / NEAR_NAME).write_text(json.dumps(_payload(repo, near)))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "diverged", (verdict, msg)
+        assert _run(repo) == 2
+
+
+# Pole J -- MUST_BLOCK: two distinct ancestors at the SAME distance (the two
+# parents of a merge commit), both green -> tie -> could-not-judge.
+def test_equidistant_ancestors_tie_refuses():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _init_bare(tmp)
+        base = _head(repo)
+        _git(repo, "checkout", "-q", "-b", "left")
+        left = _docs_commit(repo, "left")
+        _git(repo, "checkout", "-q", base)
+        _git(repo, "checkout", "-q", "-b", "right")
+        (repo / "OTHER.md").write_text("right\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "right")
+        right = _head(repo)
+        _git(repo, "merge", "-q", "--no-edit", "left")
+        (repo / "qa").mkdir()
+        (repo / "qa" / FAR_NAME).write_text(json.dumps(_payload(repo, left)))
+        (repo / "qa" / NEAR_NAME).write_text(json.dumps(_payload(repo, right)))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ambiguous", (verdict, msg)
+        assert left[:12] in msg and right[:12] in msg
+        assert _run(repo) == 2
