@@ -2,14 +2,25 @@
 # onboard-orchestrator.sh — give a new orchestrator station its VantagePeers agent credential
 # and wire VantagePeers + VantageRegistry into its workspace. Runbook: runbooks/onboard-orchestrator.md
 #
-#   scripts/onboard-orchestrator.sh <role> <workspace-dir> [--dry-run]
+#   scripts/onboard-orchestrator.sh <role> <workspace-dir> [--dry-run] [--repo <owner/repo> --project <slug>]
 #
 # Always run from the vantage-memory repo root. Prints no secret value.
 set -euo pipefail
 
-ROLE="${1:?usage: onboard-orchestrator.sh <role> <workspace-dir> [--dry-run]}"
-WS="${2:?usage: onboard-orchestrator.sh <role> <workspace-dir> [--dry-run]}"
-DRY="${3:-}"
+USAGE="usage: onboard-orchestrator.sh <role> <workspace-dir> [--dry-run] [--repo <owner/repo> --project <slug>]"
+ROLE="${1:?$USAGE}"
+WS="${2:?$USAGE}"
+shift 2
+DRY=""; GH_REPO=""; PROJECT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY="--dry-run"; shift ;;
+    --repo) GH_REPO="${2:?$USAGE}"; shift 2 ;;
+    --project) PROJECT="${2:?$USAGE}"; shift 2 ;;
+    *) echo "$USAGE" >&2; exit 2 ;;
+  esac
+done
+{ [ -n "$GH_REPO" ] && [ -z "$PROJECT" ]; } || { [ -z "$GH_REPO" ] && [ -n "$PROJECT" ]; } && { echo "--repo and --project go together" >&2; exit 2; }
 REPO="$(git rev-parse --show-toplevel)"
 SECRETS="${VP_AGENT_SECRETS_DIR:-/home/elpi/.vantage-agent-secrets}"
 PROD_CONVEX="https://compassionate-goldfinch-737.convex.cloud"
@@ -114,6 +125,12 @@ call() { curl -s -X POST "$VP_MCP" -H "@$TMPD/$1.hdr" -d "$2"; }
 SUMMARY="$(call own "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"set_summary\",\"arguments\":{\"orchestratorId\":\"$ROLE\",\"instanceId\":\"$ROLE-vps\",\"summary\":\"Provisioned $(date -I); awaiting first launch.\"}}}")"
 if [[ "$SUMMARY" != *'"result"'* ]] || [[ "$SUMMARY" == *'"isError":true'* ]]; then
   echo "set_summary FAILED: ${SUMMARY:0:300}" >&2; exit 1
+fi
+
+# 8b. Repo mapping (optional): routes the station repo's GitHub events to the role. Master or
+#     service-account scope only, and the MCP tool is disabled in prod, so Convex directly.
+if [ -n "$GH_REPO" ]; then
+  ( cd "$REPO" && bun run scripts/add-repo-mapping.mjs "$GH_REPO" "$ROLE" "$PROJECT" ) || { echo "repo mapping FAILED" >&2; exit 1; }
 fi
 
 # 9. Proof, both ways over HTTP, then from a real Claude Code client in the workspace.
