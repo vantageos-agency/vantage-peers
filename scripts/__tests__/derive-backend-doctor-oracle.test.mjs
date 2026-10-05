@@ -379,12 +379,19 @@ function assertWriterTiers(rows) {
 	});
 }
 
+const DYNAMIC_PATCH_WRITERS = ["update_bu", "update_mandate", "update_mission"];
+
 describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => {
 	it(
 		"PRESENT — one row per write tool of the oracle, byte-identical to the committed side-car, derived tiers as measured",
 		() => {
 			const oracle = rowsOf(COMMITTED_CSV);
-			const writes = oracle.filter((r) => WRITE_VERBS.has(r.crud));
+			// Plus the patch-only tools whose patch carries a dynamic key: the verb is
+			// could-not-judge (`?`) but the tool certainly writes, so it keeps its row.
+			const writes = oracle.filter(
+				(r) =>
+					WRITE_VERBS.has(r.crud) || DYNAMIC_PATCH_WRITERS.includes(r.outil),
+			);
 			const side = rowsOf(COMMITTED_WRITER_CSV);
 			expect(side.map((r) => r.outil).sort()).toEqual(
 				writes.map((r) => r.outil).sort(),
@@ -661,6 +668,120 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 			expect(
 				rowsOf(outOf(root2)).find((x) => x.outil === "start_task").crud,
 			).toBe("UPDATE");
+		},
+		TIMEOUT,
+	);
+
+	// ── patchWritesStatus: the two property-assignment forms (Argus, PR #1457,
+	// mutant M2) ── synthetic edits of tasks:start's local patch: the literal no
+	// longer names `status`, the handler assigns it afterwards.
+	const LITERAL =
+		'status: "in_progress" as const,\n\t\t\tupdatedAt: now,\n\t\t\tpausedAt: undefined,\n\t\t};';
+	const withoutLiteralStatus = (assignment) => [
+		LITERAL,
+		`updatedAt: now,\n\t\t\tpausedAt: undefined,\n\t\t};\n\t\t${assignment}`,
+	];
+	const startVerb = (root) => {
+		const r = derive(root);
+		expect(r.status, r.stderr).toBe(0);
+		return rowsOf(outOf(root)).find((x) => x.outil === "start_task").crud;
+	};
+
+	it(
+		"BOTH POLES — `patch.status = …` after a status-less literal is TRANSITION; with no assignment at all it is UPDATE",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/tasks.ts",
+				...withoutLiteralStatus('patch.status = "in_progress";'),
+			);
+			expect(startVerb(root)).toBe("TRANSITION");
+
+			const absent = copyTree();
+			mutate(absent, "convex/tasks.ts", ...withoutLiteralStatus(""));
+			expect(startVerb(absent)).toBe("UPDATE");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		'BOTH POLES — `patch["status"] = …` after a status-less literal is TRANSITION; a different literal key is UPDATE',
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/tasks.ts",
+				...withoutLiteralStatus('patch["status"] = "in_progress";'),
+			);
+			expect(startVerb(root)).toBe("TRANSITION");
+
+			const other = copyTree();
+			mutate(
+				other,
+				"convex/tasks.ts",
+				...withoutLiteralStatus('patch["statusNote"] = "in_progress";'),
+			);
+			expect(startVerb(other)).toBe("UPDATE");
+		},
+		TIMEOUT,
+	);
+
+	// ── dynamic `patch[key] = value` (tasks:update, businessUnits:update, …) ──
+	const DYNAMIC_LOOP =
+		"for (const [key, value] of Object.entries(fields)) {\n\t\t\tif (value !== undefined) {\n\t\t\t\tpatch[key] = value;\n\t\t\t}\n\t\t}";
+
+	it(
+		"PRESENT — a patch filled under a computed key is could-not-judge (`?`), never UPDATE, and keeps its writer row",
+		() => {
+			for (const tool of DYNAMIC_PATCH_WRITERS) {
+				expect(committed(tool).crud, tool).toBe("?");
+				const writer = rowsOf(COMMITTED_WRITER_CSV).find(
+					(x) => x.outil === tool,
+				);
+				expect(writer, tool).toBeDefined();
+				expect(writer.writer_tier, tool).toMatch(
+					/^(org-member|org-admin|fleet-internal|master)$/,
+				);
+			}
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — replacing the computed-key loop of businessUnits:update with fixed keys makes update_bu UPDATE again",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/businessUnits.ts",
+				DYNAMIC_LOOP,
+				"if (fields.name !== undefined) patch.name = fields.name;",
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find((x) => x.outil === "update_bu").crud,
+			).toBe("UPDATE");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a computed-key write beside a literal-keyed `status` is still TRANSITION (the status write is certain)",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/businessUnits.ts",
+				DYNAMIC_LOOP,
+				`${DYNAMIC_LOOP}\n\t\tpatch.status = "archived";`,
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find((x) => x.outil === "update_bu").crud,
+			).toBe("TRANSITION");
 		},
 		TIMEOUT,
 	);
