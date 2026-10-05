@@ -13,7 +13,7 @@ import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 
-beforeEach(() => vi.useFakeTimers({ toFake: ["Date"] }));
+beforeEach(() => vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] }));
 afterEach(() => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
@@ -324,5 +324,151 @@ describe("existing mappings without proof are REPORTED", () => {
 		const mine = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
 		expect(mine.map((b) => b.owner)).toEqual(["org-a"]);
 		expect((await master(t).query(api.githubOwnerBinding.listBindings, {})).length).toBe(2);
+	});
+});
+
+describe("a revoked binding stops routing (it stays REPORTED)", () => {
+	const NOTE = "Fixed the defect in commit abcdef1234567 with regression test, 3/3 pass";
+	const upsert = (t: T, n: number) =>
+		t.mutation(internal.issues.upsertFromGitHub, {
+			repo: "org-a/repo",
+			issueNumber: n,
+			title: "t",
+			body: "b",
+			htmlUrl: "https://example.test/x",
+			labels: [],
+			status: "open",
+			githubCreatedAt: 1,
+			githubUpdatedAt: 1,
+		});
+	const issueOf = (t: T, n: number) =>
+		t.run(async (ctx) =>
+			ctx.db.query("issues").withIndex("by_repo_number", (q) => q.eq("repo", "org-a/repo").eq("issueNumber", n)).unique(),
+		);
+	const bind = async (t: T, installationId: number) => {
+		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
+		return t.mutation(internal.githubOwnerBinding.completeBindingInternal, {
+			state,
+			installationId,
+			accountLogin: "org-a",
+			accountType: "Organization",
+			githubUserLogin: "octocat",
+		});
+	};
+	const autoLink = async (t: T) => {
+		const c = member(t, "org-a");
+		const id = await c.mutation(api.tasks.create, {
+			title: "Fix thing #5",
+			assignedTo: ORCH,
+			priority: "high",
+			status: "todo",
+			createdBy: ORCH,
+			project: "pa",
+		});
+		await c.mutation(api.tasks.complete, { taskId: id, callerOrchestrator: ORCH, completionNote: NOTE });
+	};
+	const webhook = (t: T, event: string, body: Record<string, unknown>) => {
+		const raw = JSON.stringify(body);
+		return t.fetch("/github/webhook", {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-github-event": event, "x-hub-signature-256": signGithubBody(raw) },
+			body: raw,
+		});
+	};
+	const setup = async (t: T) => {
+		await seed(t, { bind: false });
+		await t.run(async (ctx) => {
+			await ctx.db.insert("taskClosureConfig", { key: "billableProjects", value: [], updatedAt: 0 });
+		});
+		expect((await bind(t, 11)).ok).toBe(true);
+		expect(await addMapping(member(t, "org-a"), "org-a/repo")).not.toBeInstanceOf(Error);
+		await t.run(async (ctx) => {
+			const m = await ctx.db.query("githubRepoMapping").withIndex("by_repo", (q) => q.eq("repo", "org-a/repo")).unique();
+			if (m) await ctx.db.patch(m._id, { project: "pa" });
+			await ctx.db.insert("issues", {
+				repo: "org-a/repo", issueNumber: 5, title: "i", body: "", htmlUrl: "https://example.test/5", labels: [],
+				status: "open", priority: "medium", assignedOrchestrator: ORCH, project: "pa",
+				githubCreatedAt: 1, githubUpdatedAt: 1, orgId: "org-a",
+			});
+		});
+	};
+
+	test("bound: routes; installation deleted: nothing reaches org-a's rows, add refused, still listed; re-bind restores", async () => {
+		vi.stubEnv("GITHUB_WEBHOOK_SECRET", TEST_WEBHOOK_SECRET);
+		const t = makeT();
+		await setup(t);
+		// routed while bound
+		await autoLink(t);
+		expect((await issueOf(t, 5))?.status).toBe("fixed");
+		await upsert(t, 9);
+		expect((await issueOf(t, 9))?.orgId).toBe("org-a");
+
+		// the installation is deleted (HMAC-verified webhook)
+		expect((await webhook(t, "installation", { action: "deleted", installation: { id: 11 } })).status).toBe(200);
+		await t.run(async (ctx) => {
+			const i = await ctx.db
+				.query("issues")
+				.withIndex("by_repo_number", (q) => q.eq("repo", "org-a/repo").eq("issueNumber", 5))
+				.unique();
+			if (i) await ctx.db.patch(i._id, { status: "open", linkedTaskIds: [], fixedBy: undefined, fixedAt: undefined, fixCommits: undefined });
+		});
+		const before = await issueOf(t, 5);
+		await autoLink(t);
+		expect(await issueOf(t, 5)).toEqual(before); // auto-link no longer reaches it
+		const err = await upsert(t, 10).catch((e: unknown) => e);
+		expect((err as ConvexError<string>).message).toContain("MAPPING_UNPROVEN");
+		expect(await issueOf(t, 10)).toBeNull();
+		// webhook routing for the repo stops: no issue row, no task
+		const tasksBefore = await t.run(async (ctx) => (await ctx.db.query("tasks").collect()).length);
+		const res = await webhook(t, "issues", {
+			action: "opened",
+			repository: { full_name: "org-a/repo" },
+			issue: { number: 11, title: "t", body: "b", html_url: "https://example.test/11", labels: [], created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", user: { login: "u" } },
+		});
+		expect(await res.text()).toContain("unproven");
+		expect(await issueOf(t, 11)).toBeNull();
+		expect(await t.run(async (ctx) => (await ctx.db.query("tasks").collect()).length)).toBe(tasksBefore);
+		// a new add is refused; the row is still REPORTED
+		denied(await addMapping(member(t, "org-a"), "org-a/second"), "github-owner-not-bound");
+		const listed = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
+		expect(listed.map((r) => [r.repo, r.reason])).toEqual([["org-a/repo", "owner-not-bound"]]);
+
+		// re-bind restores routing
+		expect((await bind(t, 12)).ok).toBe(true);
+		await autoLink(t);
+		expect((await issueOf(t, 5))?.status).toBe("fixed");
+		await upsert(t, 12);
+		expect((await issueOf(t, 12))?.orgId).toBe("org-a");
+		expect(await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {})).toEqual([]);
+	});
+
+	test("deploy-task routing: a cron-closed deploy task stops using an unproven mapping's deploy state", async () => {
+		const t = makeT();
+		await setup(t);
+		await t.run(async (ctx) => {
+			const m = await ctx.db.query("githubRepoMapping").withIndex("by_repo", (q) => q.eq("repo", "org-a/repo")).unique();
+			if (m) await ctx.db.patch(m._id, { lastDeployedAt: Date.now() + 60_000, lastDeployedSHA: "a-sha" });
+		});
+		await t.mutation(internal.githubOwnerBinding.deactivateInstallation, { installationId: 11 });
+		const id = await member(t, "org-a").mutation(api.tasks.create, {
+			title: "[Deploy] PR #3 merged — deploy pa to prod",
+			assignedTo: ORCH,
+			priority: "low",
+			status: "todo",
+			createdBy: ORCH,
+		});
+		await t.mutation(internal.tasks.resolveStaleDeployTasks, {});
+		expect((await t.run(async (ctx) => ctx.db.get(id)))?.status).toBe("todo");
+	});
+
+	test("unsuspend does NOT reactivate: re-binding is required", async () => {
+		vi.stubEnv("GITHUB_WEBHOOK_SECRET", TEST_WEBHOOK_SECRET);
+		const t = makeT();
+		await setup(t);
+		await webhook(t, "installation", { action: "suspend", installation: { id: 11 } });
+		expect((await webhook(t, "installation", { action: "unsuspend", installation: { id: 11 } })).status).toBe(200);
+		denied(await addMapping(member(t, "org-a"), "org-a/second"), "github-owner-not-bound");
+		expect((await bind(t, 11)).ok).toBe(true);
+		expect(await addMapping(member(t, "org-a"), "org-a/second")).not.toBeInstanceOf(Error);
 	});
 });

@@ -19,6 +19,7 @@ import {
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
+import { mappingIsProven } from "./githubOwnerBinding";
 import {
 	afterDeliveryWork,
 	claimDeliveryStep,
@@ -3741,7 +3742,12 @@ async function resolveGithubRepoMappingForProject(
 	}
 	// TENANT: `project` is a free string two orgs may both use. Only the rows
 	// the acting task's own tenant may reach take part in the tiebreak below.
-	const group = projectRows.filter((m) => mappingInAudience(m, audience));
+	// PROOF: an org-owned row routes only while its GitHub-owner binding is
+	// active; a revoked binding drops the row out of every consumer below.
+	const group: Doc<"githubRepoMapping">[] = [];
+	for (const m of projectRows) {
+		if (mappingInAudience(m, audience) && (await mappingIsProven(ctx, m))) group.push(m);
+	}
 	if (group.length === 0) {
 		return { row: null, truncated: false };
 	}

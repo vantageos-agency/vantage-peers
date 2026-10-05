@@ -35,6 +35,20 @@ A mapping whose owner is not bound to the caller's org is refused with
 5. The HMAC-verified `installation` webhook (`deleted` or `suspend`) deactivates
    the bindings of that installation.
 
+## Revocation stops routing
+
+An org-owned mapping routes only while its owner binding is ACTIVE. Once the
+binding is inactive (installation deleted or suspended, or deactivated), the
+mapping no longer reaches issues, tasks, GitHub comments or deploy state: the
+task auto-link, the IRP branch, deploy-task resolution, webhook routing
+(`OK - unproven repo mapping`) and issue upsert (`MAPPING_UNPROVEN`) all skip it.
+It stays listed by `listUnprovenMappings`.
+
+`unsuspend` does NOT reactivate. The event carries only an installation id; the
+account may have been renamed or transferred while suspended, and the proof was
+not re-taken. Re-binding (`bind_github_owner`) is one self-serve step and
+restores routing.
+
 ## Configuration this needs (not present until set)
 
 - GitHub App with "Request user authorization (OAuth) during installation" on,

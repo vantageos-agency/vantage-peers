@@ -4,6 +4,7 @@ import {
 	type MutationCtx,
 	type QueryCtx,
 	internalMutation,
+	internalQuery,
 	mutation,
 	query,
 } from "./_generated/server";
@@ -56,6 +57,7 @@ export async function activeBindingForOwner(
 	const rows = await ctx.db
 		.query("githubOwnerBindings")
 		.withIndex("by_owner", (q) => q.eq("owner", owner))
+		.order("desc")
 		.take(10);
 	return rows.find((r) => r.active) ?? null;
 }
@@ -71,6 +73,34 @@ export async function repoOwnerBoundToOrg(
 	const binding = await activeBindingForOwner(ctx, owner);
 	return binding !== null && binding.orgId === orgId;
 }
+
+/**
+ * Does this mapping row still ROUTE? A fleet row (no orgId) always does. An
+ * org-owned row routes only while its repo owner has an ACTIVE binding to that
+ * same org: a deleted/suspended installation or a deactivated binding withdraws
+ * the proof, and the row stops reaching issues, tasks, comments and deploy state
+ * (it stays listed by listUnprovenMappings).
+ */
+export async function mappingIsProven(
+	ctx: QueryCtx | MutationCtx,
+	row: Pick<Doc<"githubRepoMapping">, "repo" | "orgId">,
+): Promise<boolean> {
+	if (row.orgId === undefined) return true;
+	return await repoOwnerBoundToOrg(ctx, row.repo, row.orgId);
+}
+
+// Internal door for the HMAC-verified webhook: may this repo's mapping route?
+export const repoRoutable = internalQuery({
+	args: { repo: v.string() },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const row = await ctx.db
+			.query("githubRepoMapping")
+			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
+			.unique();
+		return row !== null && (await mappingIsProven(ctx, row));
+	},
+});
 
 const bindingView = v.object({
 	owner: v.string(),

@@ -9,6 +9,7 @@ import {
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
+import { mappingIsProven } from "./githubOwnerBinding";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +115,13 @@ export const upsertFromGitHub = internalMutation({
 		const mapping = await ctx.runQuery(internal.githubRepoMapping.getByRepoInternal, {
 			repo: args.repo,
 		});
+		// An org-owned mapping whose GitHub-owner binding is no longer active does
+		// not route. The webhook gates earlier; this is the defence in depth.
+		if (mapping !== null && !(await mappingIsProven(ctx, mapping))) {
+			throw new ConvexError(
+				`MAPPING_UNPROVEN: repo "${args.repo}" is mapped to an org whose GitHub owner binding is not active — ${JSON.stringify({ repo: args.repo })}`,
+			);
+		}
 		const assignedOrchestrator: string = mapping?.orchestrator ?? "sigma";
 		const project: string = mapping?.project ?? args.repo;
 		// TENANT: the issue belongs to whoever owns the repo's mapping row —

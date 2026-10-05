@@ -90,6 +90,12 @@ http.route({
 					status: 200,
 				});
 			}
+			// `unsuspend` deliberately does NOT reactivate bindings. The event carries
+			// only an installation id: while suspended the account may have been
+			// renamed, transferred or re-owned, and the proof (a GitHub user who can
+			// see the installation, checked at bind time) was not re-taken. Re-binding
+			// is one self-serve step; a silent reactivation would restore routing on
+			// an unverified claim, so the safer option is chosen.
 			return new Response("OK - installation event ignored", { status: 200 });
 		}
 
@@ -106,6 +112,12 @@ http.route({
 		console.log("Mapping result:", JSON.stringify(mapping));
 		if (!mapping || !mapping.active) {
 			return new Response("OK - unmapped repo", { status: 200 });
+		}
+
+		// An org-owned mapping routes only while its GitHub-owner binding is active
+		// (deleted/suspended installation or deactivated binding = no routing).
+		if (!(await ctx.runQuery(internal.githubOwnerBinding.repoRoutable, { repo: repoFullName }))) {
+			return new Response("OK - unproven repo mapping", { status: 200 });
 		}
 
 		// 4b. Delivery idempotency. The provider sends `x-github-delivery` (a GUID) on
