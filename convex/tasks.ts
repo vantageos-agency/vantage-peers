@@ -29,7 +29,12 @@ import {
 	type VerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
-import { resolveVerifiedOrg, verifiedOrgValidator } from "./lib/verifiedOrg";
+import {
+	assertRowInVerifiedOrg,
+	resolveDoorVerifiedOrg,
+	resolveVerifiedOrg,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import {
 	assertMemberIsAdmin,
 	assertTaskVisibleToCaller,
@@ -1741,6 +1746,11 @@ export const update = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
@@ -1753,6 +1763,7 @@ export const update = mutation({
 			agentCredentialSecret,
 			verifiedActor,
 			verifiedPerson,
+			verifiedOrg,
 			...fields
 		} = args;
 		const callerScope = await requireAuthenticatedCaller(
@@ -1762,12 +1773,14 @@ export const update = mutation({
 			verifiedActor,
 			{ proof: verifiedPerson, door: "tasks:update" },
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, verifiedOrg, "tasks:update");
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
 		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
 		// creator, so nobody could move it off a stopped reviewer. The coordinator
@@ -2212,6 +2225,11 @@ export const blockTask = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2222,12 +2240,14 @@ export const blockTask = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:blockTask");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:blockTask");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:blockTask");
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
@@ -2389,6 +2409,11 @@ export const complete = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
@@ -2401,12 +2426,14 @@ export const complete = mutation({
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "tasks:complete" },
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:complete");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:complete");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:complete");
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
@@ -2700,6 +2727,11 @@ export const failTask = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2710,12 +2742,14 @@ export const failTask = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:failTask");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:failTask");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:failTask");
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
@@ -2836,6 +2870,11 @@ export const start = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
@@ -2848,12 +2887,14 @@ export const start = mutation({
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "tasks:start" },
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:start");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:start");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:start");
 
 		// Block if any dependsOn tasks are not yet done.
@@ -2924,6 +2965,11 @@ export const pause = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2934,12 +2980,14 @@ export const pause = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:pause");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:pause");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:pause");
 
 		const segments = task.workSegments ?? [];
@@ -2984,6 +3032,11 @@ export const resume = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2994,12 +3047,14 @@ export const resume = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:resume");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:resume");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:resume");
 
 		if (task.pausedAt === undefined) {
@@ -3054,6 +3109,11 @@ export const correctSegment = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -3064,12 +3124,14 @@ export const correctSegment = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:correctSegment");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:correctSegment");
 		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 		// assertTaskCallerAuthorized above already refuses an undefined
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
@@ -3187,6 +3249,11 @@ export const checkout = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
@@ -3197,10 +3264,12 @@ export const checkout = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:checkout");
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:checkout");
 		// Tenant gate — claiming a row is a write on it.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 		if (task.status !== "todo") {
@@ -3257,6 +3326,11 @@ export const deleteTask = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
@@ -3267,11 +3341,13 @@ export const deleteTask = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:deleteTask");
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:deleteTask");
 		// Tenant gate — a hard delete of another organisation's row is the
 		// worst case of the write surface.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);

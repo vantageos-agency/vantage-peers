@@ -1979,6 +1979,14 @@ export function registerTools(
 		}
 		return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
 	};
+	// The args fragment a single-task write door takes to bind the call to the
+	// bearer's verified org: `{ verifiedOrg: { orgSlug } }`, or nothing for the
+	// master / a Clerk-JWT caller. Spread into the door call; it is the ONLY
+	// source of that field (never a tool argument).
+	const verifiedOrgArgs = (): { verifiedOrg?: { orgSlug: string } } => {
+		const orgSlug = verifiedOrgOf();
+		return orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {};
+	};
 	const PERSON_DOOR_NOTE =
 		" A person signed in to its organisation omits it and acts in its own name.";
 	// Delegation guard — distinct question from guardFrom (identity CLAIM).
@@ -4913,6 +4921,7 @@ export function registerTools(
 					callerOrchestrator,
 					cancelReason,
 					...personDoorArgs(callerOrchestrator),
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -4970,6 +4979,7 @@ export function registerTools(
 					completionNote,
 					callerOrchestrator,
 					...personDoorArgs(callerOrchestrator),
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5030,6 +5040,7 @@ export function registerTools(
 					taskId: taskId as any,
 					failureNote,
 					callerOrchestrator,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5081,6 +5092,7 @@ export function registerTools(
 					taskId: taskId as any,
 					callerOrchestrator,
 					...personDoorArgs(callerOrchestrator),
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5132,6 +5144,7 @@ export function registerTools(
 				await convex.mutation("tasks:pause" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5181,6 +5194,7 @@ export function registerTools(
 				await convex.mutation("tasks:resume" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5275,6 +5289,7 @@ export function registerTools(
 					end,
 					reason,
 					callerOrchestrator,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5331,6 +5346,7 @@ export function registerTools(
 					taskId: taskId as any,
 					callerOrchestrator,
 					callerInstance,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5384,6 +5400,7 @@ export function registerTools(
 				const result = await convex.mutation("tasks:deleteTask" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -5468,6 +5485,7 @@ export function registerTools(
 				if (callerOrchestrator)
 					blockArgs.callerOrchestrator = callerOrchestrator;
 
+				Object.assign(blockArgs, verifiedOrgArgs());
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
 
 				if (blockedBy && blockedBy.length > 0) {
@@ -5475,6 +5493,7 @@ export function registerTools(
 						taskId: taskId as any,
 						dependsOn: blockedBy.map((id: string) => id as any),
 						...(callerOrchestrator ? { callerOrchestrator } : {}),
+						...verifiedOrgArgs(),
 					});
 				}
 
@@ -5544,6 +5563,7 @@ export function registerTools(
 				if (callerOrchestrator)
 					updateArgs.callerOrchestrator = callerOrchestrator;
 
+				Object.assign(updateArgs, verifiedOrgArgs());
 				await convex.mutation("tasks:update" as any, updateArgs);
 
 				return {

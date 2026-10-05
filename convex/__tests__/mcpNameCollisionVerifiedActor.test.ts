@@ -1,13 +1,17 @@
 /// <reference types="vite/client" />
 /**
- * MEASUREMENT (companion of mcpNameCollisionExposure.test.ts): the same
- * org-a "eta" vs org-b "eta" collision, but with the STRICT-path proof the MCP
- * layer forwards for a non-master org caller: `verifiedActor` = the agents ROW
- * id of org-a's "eta" and the org it was verified in. Does that proof bind the
- * call to the target row's org?
+ * Companion of mcpNameCollisionExposure.test.ts: the same org-a "eta" vs org-b
+ * "eta" collision, but with the STRICT-path proof `verifiedActor` = the agents
+ * ROW id of org-a's "eta" and the org it was verified in.
  *
- * Each case asserts the CURRENT measured behaviour (`landed`), so a later fix
- * flips it deliberately.
+ * `verifiedActor` proves WHICH AGENT is acting (the name lock); it does not by
+ * itself bind the call to the target row's org, because the transport scope is
+ * the master service account. What binds the row is `verifiedOrg`, the same
+ * helper every task door takes. So:
+ *   REFUSED  verifiedActor + verifiedOrg org-a on an org-b row -> RBAC_DENIED, row untouched
+ *   PRESENT  the same pair on an org-a row                     -> lands
+ *   ALONE    verifiedActor without verifiedOrg                 -> NOT bound (pinned: no
+ *            transport forwards verifiedActor alone; the MCP layer forwards verifiedOrg)
  */
 
 import { convexTest } from "convex-test";
@@ -72,46 +76,71 @@ async function setup() {
 	return { t, taskId, agentId, row: () => t.run((ctx) => ctx.db.get(taskId)) };
 }
 
-describe("MEASUREMENT: org-a 'eta' WITH verifiedActor vs an org-b 'eta' task", () => {
-	test("EXPOSED: complete", async () => {
-		const { t, taskId, agentId, row } = await setup();
-		const err = await asService(t)
-			.mutation(api.tasks.complete, {
-				taskId,
-				completionNote: "closing, evidence abc1234 and more words here",
-				callerOrchestrator: "eta",
-				verifiedActor: { agentId, orgSlug: "org-a" },
-			})
-			.then(() => null, (e: Error) => e.message.slice(0, 140));
-		const landed = (await row())?.status === "done";
-		expect({ landed, err }).toMatchObject({ landed: expect.any(Boolean) });
-		expect(landed, `complete with verifiedActor: KNOWN EXPOSURE (unfixed), ${err ?? "no refusal"}`).toBe(true);
-	});
+type Door = "complete" | "update" | "deleteTask";
+const DOORS: Door[] = ["complete", "update", "deleteTask"];
 
-	test("EXPOSED: update", async () => {
-		const { t, taskId, agentId, row } = await setup();
-		const err = await asService(t)
-			.mutation(api.tasks.update, {
-				taskId,
-				title: "HIJACKED",
-				callerOrchestrator: "eta",
-				verifiedActor: { agentId, orgSlug: "org-a" },
-			})
-			.then(() => null, (e: Error) => e.message.slice(0, 140));
-		const landed = (await row())?.title === "HIJACKED";
-		expect(landed, `update with verifiedActor: KNOWN EXPOSURE (unfixed), ${err ?? "no refusal"}`).toBe(true);
-	});
+async function run(
+	door: Door,
+	t: Awaited<ReturnType<typeof setup>>["t"],
+	taskId: Id<"tasks">,
+	agentId: Id<"agents">,
+	withOrg: boolean,
+): Promise<string | null> {
+	const proof = {
+		callerOrchestrator: "eta",
+		verifiedActor: { agentId, orgSlug: "org-a" },
+		...(withOrg ? { verifiedOrg: { orgSlug: "org-a" } } : {}),
+	};
+	const as = asService(t);
+	const p =
+		door === "complete"
+			? as.mutation(api.tasks.complete, {
+					taskId,
+					completionNote: "closing, evidence abc1234 and more words here",
+					...proof,
+				})
+			: door === "update"
+				? as.mutation(api.tasks.update, { taskId, title: "HIJACKED", ...proof })
+				: as.mutation(api.tasks.deleteTask, { taskId, ...proof });
+	return await p.then(
+		() => null,
+		(e: Error) =>
+			`${e.message} ${JSON.stringify((e as { data?: unknown }).data ?? "")}`,
+	);
+}
 
-	test("EXPOSED: deleteTask", async () => {
-		const { t, taskId, agentId, row } = await setup();
-		const err = await asService(t)
-			.mutation(api.tasks.deleteTask, {
-				taskId,
-				callerOrchestrator: "eta",
-				verifiedActor: { agentId, orgSlug: "org-a" },
-			})
-			.then(() => null, (e: Error) => e.message.slice(0, 140));
-		const landed = (await row()) === null;
-		expect(landed, `deleteTask with verifiedActor: KNOWN EXPOSURE (unfixed), ${err ?? "no refusal"}`).toBe(true);
-	});
+const landedOf = (
+	door: Door,
+	r: Awaited<ReturnType<Awaited<ReturnType<typeof setup>>["row"]>>,
+) =>
+	door === "complete"
+		? r?.status === "done"
+		: door === "update"
+			? r?.title === "HIJACKED"
+			: r === null;
+
+describe("org-a 'eta' WITH verifiedActor vs an org-b 'eta' task", () => {
+	for (const door of DOORS) {
+		test(`REFUSED: ${door} with verifiedActor + verifiedOrg org-a on an org-b row`, async () => {
+			const { t, taskId, agentId, row } = await setup();
+			const before = JSON.stringify(await row());
+			const err = await run(door, t, taskId, agentId, true);
+			expect(err, `${door} must refuse`).toContain("RBAC_DENIED");
+			expect(JSON.stringify(await row())).toBe(before);
+		});
+
+		test(`PRESENT: ${door} with verifiedActor + verifiedOrg org-a on an org-a row`, async () => {
+			const { t, taskId, agentId, row } = await setup();
+			await t.run((ctx) => ctx.db.patch(taskId, { orgId: "org-a" }));
+			const err = await run(door, t, taskId, agentId, true);
+			expect(err).toBeNull();
+			expect(landedOf(door, await row())).toBe(true);
+		});
+
+		test(`ALONE (pinned, not bound): ${door} with verifiedActor and no verifiedOrg still reaches the org-b row`, async () => {
+			const { t, taskId, agentId, row } = await setup();
+			await run(door, t, taskId, agentId, false);
+			expect(landedOf(door, await row())).toBe(true);
+		});
+	}
 });

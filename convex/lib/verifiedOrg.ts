@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { lookupOrgMapping, type OrgScope } from "./auth";
+import { lookupOrgMapping, type OrgScope, withOrgScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedOrg — the organisation the MCP transport VERIFIED for a caller it
@@ -73,4 +73,49 @@ export async function resolveVerifiedOrg(
 		);
 	}
 	return proof.orgSlug;
+}
+
+/**
+ * The door-side entry for a single-row write (a task door that takes
+ * `verifiedOrg`). Reads the TRANSPORT scope itself (the same
+ * `withOrgScope(allowNoIdentityMaster:false)` the door's caller resolution
+ * used), so it stays correct when the door's own scope was rebuilt for a
+ * person: the claim is believed from the service account only either way.
+ * Returns undefined when no proof is carried (the door is byte-unchanged).
+ */
+export async function resolveDoorVerifiedOrg(
+	ctx: MutationCtx,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<string | undefined> {
+	if (proof === undefined) return undefined;
+	const transportScope = await withOrgScope(ctx, {
+		allowNoIdentityMaster: false,
+	});
+	return await resolveVerifiedOrg(ctx, transportScope, proof, door);
+}
+
+/**
+ * The target row's organisation must EQUAL the verified one. A service-account
+ * call is master-scoped, so the row-level tenant gate does not narrow and the
+ * creator/assignee check compares NAMES, which collide across organisations;
+ * the verified org is the only thing that separates them. A row that states no
+ * org never equals one (an unstamped row is refused, never matched). No-op when
+ * `verifiedOrgSlug` is undefined. Refuses with the same RBAC_DENIED shape as
+ * `resolveVerifiedOrg`, before anything is written.
+ */
+export function assertRowInVerifiedOrg(
+	row: { orgId?: string },
+	verifiedOrgSlug: string | undefined,
+	rowId: string,
+	door: string,
+): void {
+	if (verifiedOrgSlug === undefined) return;
+	if (row.orgId !== verifiedOrgSlug) {
+		refuse(
+			"row-outside-verified-org",
+			door,
+			`task ${rowId} is outside the verified organisation "${verifiedOrgSlug}" (tenant boundary)`,
+		);
+	}
 }
