@@ -35,6 +35,7 @@ import type * as errorMonitorRefusalClassifier from "../errorMonitorRefusalClass
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubDeployGate from "../githubDeployGate.js";
+import type * as githubOwnerBinding from "../githubOwnerBinding.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as gumroadWebhook from "../gumroadWebhook.js";
 import type * as http from "../http.js";
@@ -148,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;
   githubDeployGate: typeof githubDeployGate;
+  githubOwnerBinding: typeof githubOwnerBinding;
   githubRepoMapping: typeof githubRepoMapping;
   gumroadWebhook: typeof gumroadWebhook;
   http: typeof http;

@@ -8276,7 +8276,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"tenant (orgId) derived server-side from the verified scope in githubRepoMapping:add; member needs manage-repo-mappings",
+				"guardResolvedCaller() refuses an unresolved caller; tenant (orgId) derived server-side from the verified scope in githubRepoMapping:add; member needs manage-repo-mappings and a GitHub-verified owner binding",
 		},
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
@@ -8496,7 +8496,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"tenant (orgId) derived server-side from the verified scope in githubRepoMapping:remove; member removes only its own org's rows",
+				"guardResolvedCaller() refuses an unresolved caller; tenant (orgId) derived server-side from the verified scope in githubRepoMapping:remove; member removes only its own org rows",
 		},
 		"remove_repo_mapping",
 		"Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
@@ -8531,6 +8531,100 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify({ repo, ...result }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── bind_github_owner ───────────────────────────────────────────────────────
+
+	// oracle-justified: the binding row is written server-side only by the GitHub-verified
+	//   setup callback (convex/http.ts /github/app/setup); this tool only asks Convex for a
+	//   single-use install state, and Convex requires an org ADMIN of the caller's own org
+	//   (githubOwnerBinding:startBinding -> requireOrgAdmin). Nothing here names an owner.
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"guardResolvedCaller() refuses an unresolved caller; org admin of the own org enforced by githubOwnerBinding:startBinding (requireOrgAdmin); no owner/org argument exists",
+		},
+		"bind_github_owner",
+		"Start binding a GitHub account (owner) to your organisation: returns a single-use install state. " +
+			"WHEN: before add_repo_mapping for a repo whose GitHub owner is not yet bound to your org; org admin only. " +
+			"EXAMPLE: bind_github_owner — then install the VantagePeers GitHub App on the owning account with this state; GitHub verifies the owner.",
+		{},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Bind GitHub owner",
+		},
+		async () => {
+			const unresolved = guardResolvedCaller("bind_github_owner");
+			if (unresolved) return unresolved;
+			try {
+				const res = await convex.mutation("githubOwnerBinding:startBinding" as any, {});
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									...res,
+									next: "Install the VantagePeers GitHub App on the GitHub account that owns the repos, passing this state; the owner is proven by GitHub, never by what you type. The state is single-use and expires in 15 minutes.",
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── get_github_owner_bindings ──────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"guardResolvedCaller() refuses an unresolved caller; result set scoped by githubOwnerBinding:listBindings (own org for a member, all for master); unproven mappings are master-only at the Convex door",
+		},
+		"get_github_owner_bindings",
+		"List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof. " +
+			"WHEN: use to see which repos you may map, or to audit mappings created without GitHub proof. " +
+			"EXAMPLE: get_github_owner_bindings.",
+		{},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List GitHub owner bindings",
+		},
+		async () => {
+			const unresolved = guardResolvedCaller("get_github_owner_bindings");
+			if (unresolved) return unresolved;
+			try {
+				const bindings = await convex.query("githubOwnerBinding:listBindings" as any, {});
+				const unprovenMappings = isMasterScope(oauthCtx)
+					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {})
+					: undefined;
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ bindings, unprovenMappings }, null, 2),
 						},
 					],
 				};

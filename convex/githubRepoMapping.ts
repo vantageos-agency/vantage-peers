@@ -7,6 +7,7 @@ import {
 	mutation,
 	query,
 } from "./_generated/server";
+import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import {
 	type OrgScope,
 	requireOrchestratorOnRoster,
@@ -349,6 +350,23 @@ export const add = mutation({
 		}
 		if (args.fallbackReviewer !== undefined) {
 			requireOrchestratorOnRoster(scope, args.fallbackReviewer, "githubRepoMapping:add", "assignee");
+		}
+		// PROOF OF OWNERSHIP. A member may map only a repo whose GitHub OWNER is
+		// bound to its own org through a GitHub-verified step
+		// (convex/githubOwnerBinding.ts). A first claim is never enough: without
+		// this, org-a could map "org-b/newrepo" and receive org-b's issues.
+		// Master (fleet) rows are not subject to it.
+		if (tenant !== undefined) {
+			if (ownerOfRepo(args.repo) === null) {
+				throw new ConvexError(
+					`INVALID_REPO: repo must be "owner/name" — ${JSON.stringify({ repo: args.repo })}`,
+				);
+			}
+			if (!(await repoOwnerBoundToOrg(ctx, args.repo, tenant))) {
+				throw new ConvexError(
+					`RBAC_DENIED: the GitHub owner of "${args.repo}" is not bound to org "${tenant}" — bind it through the GitHub App install (bind_github_owner) first — ${JSON.stringify({ reason: "github-owner-not-bound", door: "githubRepoMapping:add", repo: args.repo })}`,
+				);
+			}
 		}
 		// Upsert by repo
 		const existing = await ctx.db

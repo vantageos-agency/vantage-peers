@@ -53,6 +53,19 @@ async function seed(t: T) {
 				...(slug === "org-op" ? { orgKind: "operator" as const } : {}),
 			});
 		}
+		// GitHub-verified owner bindings (the proof add() requires of a member).
+		for (const slug of ["org-a", "org-b"]) {
+			await ctx.db.insert("githubOwnerBindings", {
+				owner: slug,
+				orgId: slug,
+				installationId: slug === "org-a" ? 1 : 2,
+				accountType: "Organization",
+				githubUserLogin: `gh-${slug}`,
+				boundBy: `admin-${slug}`,
+				boundAt: 1,
+				active: true,
+			});
+		}
 		// org-a and org-b BOTH map the SAME project slug; "only-b" is org-b's alone.
 		const rows: Array<[string, string, string | undefined]> = [
 			["org-a/repo", "shared-proj", "org-a"],

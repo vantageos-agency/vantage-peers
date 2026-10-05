@@ -74,6 +74,25 @@ http.route({
 		const eventType = request.headers.get("x-github-event");
 		const action = payload.action;
 
+		// 3b. GitHub App `installation` lifecycle (HMAC-verified above). A deleted or
+		// suspended installation withdraws the proof behind its owner bindings.
+		if (eventType === "installation") {
+			const installation = payload.installation as Record<string, unknown> | undefined;
+			const installationId = installation?.id;
+			if (
+				typeof installationId === "number" &&
+				(action === "deleted" || action === "suspend")
+			) {
+				const n = await ctx.runMutation(internal.githubOwnerBinding.deactivateInstallation, {
+					installationId,
+				});
+				return new Response(`OK - installation ${String(action)}, ${n} binding(s) deactivated`, {
+					status: 200,
+				});
+			}
+			return new Response("OK - installation event ignored", { status: 200 });
+		}
+
 		// 4. Get repo mapping
 		const repoFullName = (payload.repository as Record<string, unknown> | undefined)?.full_name as string | undefined;
 		console.log("Webhook repo:", JSON.stringify(repoFullName), "eventType:", eventType, "action:", action);
@@ -876,6 +895,77 @@ http.route({
 			completedAt: task.completedAt ?? task.updatedAt,
 			noteExcerpt: note.slice(0, 200),
 		});
+	}),
+});
+
+// GitHub App setup callback — the GitHub-VERIFIED step of owner binding
+// (convex/githubOwnerBinding.ts). GitHub redirects the installing user here with
+// `installation_id`, `code` (OAuth, "request user authorization during
+// installation") and the server-issued `state`. The owner is NEVER read from the
+// query string: it is the `account.login` GitHub returns for an installation the
+// authorising user can really see (`GET /user/installations`, user token).
+// FAIL CLOSED: without GITHUB_APP_CLIENT_ID / GITHUB_APP_CLIENT_SECRET no binding
+// can be created.
+http.route({
+	path: "/github/app/setup",
+	method: "GET",
+	handler: httpAction(async (ctx, request) => {
+		const clientId = process.env.GITHUB_APP_CLIENT_ID;
+		const clientSecret = process.env.GITHUB_APP_CLIENT_SECRET;
+		if (!clientId || !clientSecret) {
+			return new Response("GitHub App not configured", { status: 501 });
+		}
+		const url = new URL(request.url);
+		const state = url.searchParams.get("state");
+		const code = url.searchParams.get("code");
+		const installationId = Number(url.searchParams.get("installation_id"));
+		if (!state || !code || !Number.isInteger(installationId) || installationId <= 0) {
+			return new Response("Missing state, code or installation_id", { status: 400 });
+		}
+		const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+			method: "POST",
+			headers: { Accept: "application/json", "Content-Type": "application/json" },
+			body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+		});
+		const tokenJson = (await tokenRes.json().catch(() => null)) as { access_token?: string } | null;
+		const userToken = tokenJson?.access_token;
+		if (!tokenRes.ok || !userToken) {
+			return new Response("GitHub authorisation failed", { status: 502 });
+		}
+		const authHeaders = {
+			Authorization: `Bearer ${userToken}`,
+			Accept: "application/vnd.github+json",
+		};
+		const instRes = await fetch("https://api.github.com/user/installations?per_page=100", {
+			headers: authHeaders,
+		});
+		if (!instRes.ok) return new Response("GitHub installations lookup failed", { status: 502 });
+		const instJson = (await instRes.json().catch(() => null)) as {
+			installations?: Array<{ id?: number; account?: { login?: string; type?: string } }>;
+		} | null;
+		const match = instJson?.installations?.find((i) => i.id === installationId);
+		const login = match?.account?.login;
+		if (!match || !login) {
+			return new Response("Installation not accessible to the authorising GitHub user", {
+				status: 403,
+			});
+		}
+		const userRes = await fetch("https://api.github.com/user", { headers: authHeaders });
+		const userJson = (await userRes.json().catch(() => null)) as { login?: string } | null;
+		if (!userRes.ok || !userJson?.login) {
+			return new Response("GitHub user lookup failed", { status: 502 });
+		}
+		const result = await ctx.runMutation(internal.githubOwnerBinding.completeBindingInternal, {
+			state,
+			installationId,
+			accountLogin: login,
+			accountType: match.account?.type ?? "unknown",
+			githubUserLogin: userJson.login,
+		});
+		if (!result.ok) {
+			return new Response(`Binding refused: ${result.reason}`, { status: 409 });
+		}
+		return new Response(`Bound GitHub owner ${result.owner} to ${result.orgId}`, { status: 200 });
 	}),
 });
 
