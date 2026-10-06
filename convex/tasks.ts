@@ -36,7 +36,6 @@ import {
 	repoOwner,
 	resolveReviewer,
 } from "./lib/reviewRouting";
-import { FLEET_SCOPE_ORG_ID } from "./lib/fleetScope";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
 	enforceClosureGate,
@@ -3549,18 +3548,14 @@ export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
  * lookup on it alone let an org-a member name an org-b project and have
  * `complete` patch org-b's issue (and post a comment on org-b's repo). The
  * tenant is therefore taken from the row the SERVER stamped, `task.orgId`:
- * unstamped or FLEET_SCOPE_ORG_ID = fleet/master-created, or an ACTIVE `orgKind: "operator"` org.
+ * unstamped = fleet/master-created, or an ACTIVE `orgKind: "operator"` org.
  * Any client org is refused the auto-link; the completion itself is unaffected.
  */
 async function taskMayReachFleetRepoRows(
 	ctx: MutationCtx,
 	task: Doc<"tasks">,
 ): Promise<boolean> {
-	// Unstamped, or stamped by convex/migrations/backfill_org_stamp with the
-	// fleet scope: both are the fleet's own rows. Client orgs stay refused.
-	if (task.orgId === undefined || task.orgId === FLEET_SCOPE_ORG_ID) {
-		return true;
-	}
+	if (task.orgId === undefined) return true;
 	const orgSlug = task.orgId;
 	const mapping = await ctx.db
 		.query("client_org_mapping")

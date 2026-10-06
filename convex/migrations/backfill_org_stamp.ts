@@ -1,16 +1,20 @@
-// CANONICAL FLEET STAMP: FLEET_SCOPE_ORG_ID (convex/lib/fleetScope.ts), because it
-// is the @vantageos/cloud-identity 0.11.0 primitive's fleet stamp. This migration
-// is the one to run. convex/migrations/fleetOrgStamp.ts stamps the fleet with the
-// operator SLUG instead; it is superseded and must not be run.
+// CANONICAL FLEET STAMP (RULING 4, task k174d95s5qqy8t2r5rdrz3pr3d8fqv82): the
+// OPERATOR ORG, i.e. the `clerkOrgSlug` of the single ACTIVE client_org_mapping
+// row with orgKind "operator", derived at run time (convex/lib/operatorOrg.ts),
+// never a typed slug. FLEET_SCOPE_ORG_ID is retired. convex/migrations/
+// fleetOrgStamp.ts stamps the same value by the same derivation: it is NOT
+// superseded, it is consistent with this migration.
 // backfill_org_stamp — stamp every row that has no tenant with its real org, or
-// with FLEET_SCOPE_ORG_ID when the row is fleet-owned, so the
+// with the operator org when the row is fleet-owned, so the
 // @vantageos/cloud-identity primitive (which refuses an unstamped target to
 // everyone) can be switched on door by door.
 //
 // REPRESENTATION. The stamp is the org SLUG (`client_org_mapping.clerkOrgSlug`,
 // the same string `withOrgScope` puts in `scope.orgSlug` and the doors compare
 // with `record.orgId === scope.orgSlug`), never the mapping row's `_id`. The
-// fleet stamp is the constant FLEET_SCOPE_ORG_ID (convex/lib/fleetScope.ts).
+// fleet stamp is the operator org's slug. Slug stamps are LABELS; moving stamps
+// to stored org ids is the R-53 identity-by-ID lane, out of scope here.
+// ZERO or 2+ active operator orgs: the run is REFUSED (ConvexError, fail closed).
 //
 // THE RULES (an org is decided ONLY from ID-linked data; a name is a label):
 //   tasks            1. its mission (`missionId`): the mission's stamp, or, if
@@ -26,8 +30,8 @@
 //   RULE A: the `createdBy` / `from` label resolves, under
 //     normalizeOrchestratorId, to EXACTLY ONE `agents` row across ALL
 //     organisations (any isActive state). That row's `orgSlug` is looked up in
-//     `client_org_mapping`: an active mapping with orgKind "operator" -> FLEET
-//     stamp; an active mapping otherwise -> that slug; no/inactive mapping ->
+//     `client_org_mapping`: an active mapping with orgKind "operator" -> the
+//     operator org stamp; an active mapping otherwise -> that slug; no/inactive mapping ->
 //     undecidable. Zero or 2+ agent rows -> undecidable (unknown / ambiguous).
 //   Undecidable rows are LEFT UNSTAMPED and counted. Nothing else stamps them.
 //
@@ -49,7 +53,7 @@ import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { FLEET_SCOPE_ORG_ID } from "../lib/fleetScope";
+import { findOperatorOrg } from "../lib/operatorOrg";
 
 export const TABLE_ORDER = [
 	"missions",
@@ -95,6 +99,8 @@ type Verdict =
 	| { kind: "undecidable"; reason: Reason };
 
 type Resolver = {
+	// The slug of the ONE active orgKind "operator" mapping row: the fleet stamp.
+	operatorSlug: string;
 	// clerkOrgSlug -> "operator" | "client", ACTIVE mappings only
 	kindBySlug: Map<string, "operator" | "client">;
 	// normalized name -> orgSlug of every agents row carrying it
@@ -108,6 +114,14 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 	if (mappings.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
 			`backfill_org_stamp: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to decide from a truncated read.`,
+		);
+	}
+	const operator = await findOperatorOrg(db);
+	if (operator.kind !== "one") {
+		throw new ConvexError(
+			operator.kind === "overCap"
+				? "backfill_org_stamp: active client_org_mapping rows exceed the read cap; refusing to derive the operator org from a truncated read."
+				: `backfill_org_stamp: expected exactly one active operator organisation (orgKind "operator"), found ${operator.kind === "none" ? 0 : operator.count}; refusing the run.`,
 		);
 	}
 	const kindBySlug = new Map<string, "operator" | "client">();
@@ -132,7 +146,7 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 		list.push(a.orgSlug);
 		agentOrgsByName.set(key, list);
 	}
-	return { kindBySlug, agentOrgsByName };
+	return { operatorSlug: operator.slug, kindBySlug, agentOrgsByName };
 }
 
 // RULE A.
@@ -160,9 +174,13 @@ function byAgent(r: Resolver, label: string | undefined): Verdict {
 // decided by its OWN rule (rule A), so a dry run and a real run agree whatever
 // order the tables were walked in; a parent that is itself undecidable makes the
 // child undecidable (parentUnstamped).
-function byParent(stamp: string | undefined, parentOwn: Verdict): Verdict {
+function byParent(
+	r: Resolver,
+	stamp: string | undefined,
+	parentOwn: Verdict,
+): Verdict {
 	if (stamp !== undefined) {
-		return stamp === FLEET_SCOPE_ORG_ID
+		return stamp === r.operatorSlug
 			? { kind: "fleet" }
 			: { kind: "org", orgId: stamp };
 	}
@@ -171,11 +189,11 @@ function byParent(stamp: string | undefined, parentOwn: Verdict): Verdict {
 		: parentOwn;
 }
 
-const stampOf = (verdict: Verdict): string | null =>
+const stampOf = (r: Resolver, verdict: Verdict): string | null =>
 	verdict.kind === "org"
 		? verdict.orgId
 		: verdict.kind === "fleet"
-			? FLEET_SCOPE_ORG_ID
+			? r.operatorSlug
 			: null;
 
 const reasonCountsValidator = v.object({
@@ -217,6 +235,7 @@ type Tally = {
 // The ONE decision point. A row that already carries a tenant yields null and is
 // therefore never written.
 function settle(
+	resolver: Resolver,
 	tally: Tally,
 	id: string,
 	current: string | undefined,
@@ -234,7 +253,7 @@ function settle(
 	}
 	if (verdict.kind === "fleet") tally.toStampFleet++;
 	else tally.toStampOrg++;
-	return stampOf(verdict);
+	return stampOf(resolver, verdict);
 }
 
 type PageEnd = { isDone: boolean; nextCursor: string | null };
@@ -264,6 +283,7 @@ async function walk(
 		const page = await ctx.db.query("missions").paginate(opts);
 		for (const row of page.page) {
 			const s = settle(
+				resolver,
 				tally,
 				row._id,
 				row.orgId,
@@ -277,6 +297,7 @@ async function walk(
 		const page = await ctx.db.query("messages").paginate(opts);
 		for (const row of page.page) {
 			const s = settle(
+				resolver,
 				tally,
 				row._id,
 				row.tenantId,
@@ -294,8 +315,12 @@ async function walk(
 			const verdict =
 				parent === null
 					? byAgent(resolver, row.createdBy)
-					: byParent(parent.orgId, byAgent(resolver, parent.createdBy));
-			const s = settle(tally, row._id, row.orgId, verdict);
+					: byParent(
+							resolver,
+							parent.orgId,
+							byAgent(resolver, parent.createdBy),
+						);
+			const s = settle(resolver, tally, row._id, row.orgId, verdict);
 			await commit("tasks", row._id, "orgId", s);
 		}
 		return { isDone: page.isDone, nextCursor: page.continueCursor };
@@ -307,8 +332,8 @@ async function walk(
 			const verdict: Verdict =
 				parent === null
 					? { kind: "undecidable", reason: "parentUnstamped" }
-					: byParent(parent.tenantId, byAgent(resolver, parent.from));
-			const s = settle(tally, row._id, row.tenantId, verdict);
+					: byParent(resolver, parent.tenantId, byAgent(resolver, parent.from));
+			const s = settle(resolver, tally, row._id, row.tenantId, verdict);
 			await commit("messageReceipts", row._id, "tenantId", s);
 		}
 		return { isDone: page.isDone, nextCursor: page.continueCursor };
@@ -317,6 +342,7 @@ async function walk(
 		const page = await ctx.db.query("briefingNotes").paginate(opts);
 		for (const row of page.page) {
 			const s = settle(
+				resolver,
 				tally,
 				row._id,
 				row.orgId,
@@ -329,6 +355,7 @@ async function walk(
 	const page = await ctx.db.query("recurringTasks").paginate(opts);
 	for (const row of page.page) {
 		const s = settle(
+			resolver,
 			tally,
 			row._id,
 			row.orgId,

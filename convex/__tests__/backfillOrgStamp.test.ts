@@ -7,7 +7,6 @@ import type { FunctionReturnType } from "convex/server";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
-import { FLEET_SCOPE_ORG_ID } from "../lib/fleetScope";
 import { type StampTable, TABLE_ORDER } from "../migrations/backfill_org_stamp";
 import schema from "../schema";
 
@@ -16,6 +15,9 @@ const modules = Object.fromEntries(
 );
 const run = internal.migrations.backfill_org_stamp.run;
 const NOW = 1_700_000_000_000;
+// The operator org's slug as SEEDED in the operator mapping row; the migration
+// derives it from orgKind, the test only names what it seeded.
+const FLEET_STAMP = "fleet-org";
 
 type Totals = {
 	examined: number;
@@ -231,8 +233,53 @@ async function snapshot(t: T, s: Seeded) {
 }
 
 describe("backfill_org_stamp", () => {
-	test("the fleet constant is the cloud-identity value", () => {
-		expect(FLEET_SCOPE_ORG_ID).toBe("vantageos:fleet");
+	test("REFUSED: zero active operator orgs refuses the run and writes nothing", async () => {
+		const t = createT();
+		const id = await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme-hr",
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "acme-hr",
+				isActive: true,
+				createdAt: NOW,
+			});
+			return await ctx.db.insert("missions", {
+				name: "m",
+				project: "p",
+				status: "execute" as const,
+				priority: "medium" as const,
+				pilot: "x",
+				agents: [],
+				createdBy: "sigma",
+				createdAt: NOW,
+				updatedAt: NOW,
+			});
+		});
+		await expect(
+			t.mutation(run, { table: "missions", dryRun: false }),
+		).rejects.toThrow(/exactly one active operator/);
+		expect((await t.run((ctx) => ctx.db.get(id)))?.orgId).toBeUndefined();
+	});
+
+	test("REFUSED: two active operator orgs refuses the run", async () => {
+		const t = createT();
+		await t.run(async (ctx) => {
+			for (const slug of ["op-a", "op-b"]) {
+				await ctx.db.insert("client_org_mapping", {
+					clerkOrgSlug: slug,
+					allowedOrchestrators: [],
+					scopes: [],
+					displayName: slug,
+					isActive: true,
+					createdAt: NOW,
+					orgKind: "operator" as const,
+				});
+			}
+		});
+		await expect(
+			t.mutation(run, { table: "missions", dryRun: true }),
+		).rejects.toThrow(/found 2/);
 	});
 
 	test("dry run counts per table and writes nothing", async () => {
@@ -284,7 +331,7 @@ describe("backfill_org_stamp", () => {
 		await walkAll(t, false);
 		const snap = await snapshot(t, s);
 		expect(snap).toEqual({
-			mFleet: FLEET_SCOPE_ORG_ID,
+			mFleet: FLEET_STAMP,
 			mOrg: "acme-hr",
 			mUnknown: undefined,
 			mAmbiguous: undefined,
@@ -292,17 +339,17 @@ describe("backfill_org_stamp", () => {
 			mKept: "keep-org",
 			tOrg: "acme-hr",
 			tOrphanParent: undefined,
-			tFleetByAgent: FLEET_SCOPE_ORG_ID,
+			tFleetByAgent: FLEET_STAMP,
 			tKept: "keep-org",
 			tInheritKept: "keep-org",
-			xFleet: FLEET_SCOPE_ORG_ID,
+			xFleet: FLEET_STAMP,
 			xUnknown: undefined,
 			xKept: "keep-org",
-			rFleet: FLEET_SCOPE_ORG_ID,
+			rFleet: FLEET_STAMP,
 			rUnknown: undefined,
 			rKept: "keep-org",
 			note: "acme-hr",
-			recurring: FLEET_SCOPE_ORG_ID,
+			recurring: FLEET_STAMP,
 		});
 	});
 
@@ -368,16 +415,16 @@ describe("backfill_org_stamp", () => {
 		expect(c.missions.examined).toBe(6);
 		expect(c.tasks.examined).toBe(5);
 		const snap = await snapshot(t, s);
-		expect(snap.mFleet).toBe(FLEET_SCOPE_ORG_ID);
+		expect(snap.mFleet).toBe(FLEET_STAMP);
 		expect(snap.mUnmapped).toBeUndefined();
-		expect(snap.recurring).toBe(FLEET_SCOPE_ORG_ID);
-		expect(snap.rFleet).toBe(FLEET_SCOPE_ORG_ID);
+		expect(snap.recurring).toBe(FLEET_STAMP);
+		expect(snap.rFleet).toBe(FLEET_STAMP);
 	});
 });
 
 // k174d95s5qqy8t2r5rdrz3pr3d8fqv82 — Argus REVISE on #1475. The R-52 gate in
 // tasks.complete (`taskMayReachFleetRepoRows`) must still admit a fleet task
-// AFTER the backfill has stamped it with FLEET_SCOPE_ORG_ID.
+// AFTER the backfill has stamped it with FLEET_STAMP.
 describe("a stamped fleet task still reaches the fleet's issue on complete", () => {
 	const NOTE =
 		"Fixed the defect in commit abcdef1234567 with regression test, 3/3 pass";
@@ -485,7 +532,7 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 		const r = await t.mutation(run, { table: "tasks", dryRun: false });
 		expect(r.stamped).toBe(1);
 		const stamped = await t.run(async (ctx) => ctx.db.get(taskId));
-		expect(stamped?.orgId).toBe(FLEET_SCOPE_ORG_ID);
+		expect(stamped?.orgId).toBe(FLEET_STAMP);
 		await completeAsFleet(t, taskId);
 		expect(await issueStatus(t)).toBe("fixed");
 	});
