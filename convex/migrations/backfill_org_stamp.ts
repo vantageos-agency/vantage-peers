@@ -1,3 +1,7 @@
+// CANONICAL FLEET STAMP: FLEET_SCOPE_ORG_ID (convex/lib/fleetScope.ts), because it
+// is the @vantageos/cloud-identity 0.11.0 primitive's fleet stamp. This migration
+// is the one to run. convex/migrations/fleetOrgStamp.ts stamps the fleet with the
+// operator SLUG instead; it is superseded and must not be run.
 // backfill_org_stamp — stamp every row that has no tenant with its real org, or
 // with FLEET_SCOPE_ORG_ID when the row is fleet-owned, so the
 // @vantageos/cloud-identity primitive (which refuses an unstamped target to

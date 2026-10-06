@@ -6,7 +6,7 @@
 import type { FunctionReturnType } from "convex/server";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { FLEET_SCOPE_ORG_ID } from "../lib/fleetScope";
 import { type StampTable, TABLE_ORDER } from "../migrations/backfill_org_stamp";
 import schema from "../schema";
@@ -372,5 +372,128 @@ describe("backfill_org_stamp", () => {
 		expect(snap.mUnmapped).toBeUndefined();
 		expect(snap.recurring).toBe(FLEET_SCOPE_ORG_ID);
 		expect(snap.rFleet).toBe(FLEET_SCOPE_ORG_ID);
+	});
+});
+
+// k174d95s5qqy8t2r5rdrz3pr3d8fqv82 — Argus REVISE on #1475. The R-52 gate in
+// tasks.complete (`taskMayReachFleetRepoRows`) must still admit a fleet task
+// AFTER the backfill has stamped it with FLEET_SCOPE_ORG_ID.
+describe("a stamped fleet task still reaches the fleet's issue on complete", () => {
+	const NOTE =
+		"Fixed the defect in commit abcdef1234567 with regression test, 3/3 pass";
+
+	async function seedFleetIssue(t: T, taskOrgId?: string) {
+		return await t.run(async (ctx) => {
+			await ctx.db.insert("taskClosureConfig", {
+				key: "billableProjects",
+				value: [],
+				updatedAt: 0,
+			});
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "fleet-org",
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "fleet-org",
+				isActive: true,
+				createdAt: NOW,
+				orgKind: "operator" as const,
+			});
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme-hr",
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "acme-hr",
+				isActive: true,
+				createdAt: NOW,
+			});
+			await ctx.db.insert("agents", {
+				orgSlug: "fleet-org",
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: NOW,
+			});
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "fleet/repo",
+				orchestrator: "sigma",
+				project: "proj-fleet",
+				active: true,
+			});
+			await ctx.db.insert("issues", {
+				repo: "fleet/repo",
+				issueNumber: 5,
+				title: "fleet issue",
+				body: "",
+				htmlUrl: "https://example.test/fleet/5",
+				labels: [],
+				status: "open",
+				priority: "medium",
+				assignedOrchestrator: "sigma",
+				project: "proj-fleet",
+				githubCreatedAt: 1,
+				githubUpdatedAt: 1,
+			});
+			return await ctx.db.insert("tasks", {
+				title: "Fix flaky thing #5",
+				assignedTo: "sigma",
+				priority: "high" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+				project: "proj-fleet",
+				createdAt: NOW,
+				updatedAt: NOW,
+				...(taskOrgId === undefined ? {} : { orgId: taskOrgId }),
+			});
+		});
+	}
+
+	const issueStatus = (t: T) =>
+		t.run(
+			async (ctx) =>
+				(
+					await ctx.db
+						.query("issues")
+						.withIndex("by_repo_number", (q) =>
+							q.eq("repo", "fleet/repo").eq("issueNumber", 5),
+						)
+						.unique()
+				)?.status,
+		);
+
+	const completeAsFleet = (
+		t: T,
+		taskId: Awaited<ReturnType<typeof seedFleetIssue>>,
+	) =>
+		t
+			.withIdentity({ subject: "test-service-account-user-id" })
+			.mutation(api.tasks.complete, {
+				taskId,
+				callerOrchestrator: "sigma",
+				completionNote: NOTE,
+			});
+
+	test("PRESENT (pre-backfill baseline): an unstamped fleet task fixes the issue", async () => {
+		const t = createT();
+		const taskId = await seedFleetIssue(t);
+		await completeAsFleet(t, taskId);
+		expect(await issueStatus(t)).toBe("fixed");
+	});
+
+	test("PRESENT: the same task, stamped through the migration (dryRun:false), fixes the issue", async () => {
+		const t = createT();
+		const taskId = await seedFleetIssue(t);
+		const r = await t.mutation(run, { table: "tasks", dryRun: false });
+		expect(r.stamped).toBe(1);
+		const stamped = await t.run(async (ctx) => ctx.db.get(taskId));
+		expect(stamped?.orgId).toBe(FLEET_SCOPE_ORG_ID);
+		await completeAsFleet(t, taskId);
+		expect(await issueStatus(t)).toBe("fixed");
+	});
+
+	test("REFUSED: a client-org task is still refused the fleet's issue", async () => {
+		const t = createT();
+		const taskId = await seedFleetIssue(t, "acme-hr");
+		await completeAsFleet(t, taskId);
+		expect(await issueStatus(t)).toBe("open");
 	});
 });

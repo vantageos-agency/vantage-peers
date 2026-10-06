@@ -1,3 +1,7 @@
+// SUPERSEDED, DO NOT RUN. This file stamps the fleet with the operator org SLUG.
+// The canonical fleet stamp is FLEET_SCOPE_ORG_ID (convex/lib/fleetScope.ts),
+// because it is the @vantageos/cloud-identity 0.11.0 primitive's fleet stamp; use
+// convex/migrations/backfill_org_stamp.ts. Kept for history only.
 // ─────────────────────────────────────────────────────────────────────────────
 // fleetOrgStamp — stamp the FLEET'S unstamped rows with the fleet org slug,
 // only where the row itself PROVES the attribution.
