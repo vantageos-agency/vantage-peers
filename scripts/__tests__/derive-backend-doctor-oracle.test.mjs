@@ -731,11 +731,27 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 	const DYNAMIC_LOOP =
 		"for (const [key, value] of Object.entries(fields)) {\n\t\t\tif (value !== undefined) {\n\t\t\t\tpatch[key] = value;\n\t\t\t}\n\t\t}";
 
+	// The computed keys come from `Object.entries(fields)`, `fields` the rest of
+	// the handler's own args: the args validator decides whether `status` can be
+	// among them (task k17dvkdh8c8r5xhmt5nxdk9kys8fs5aw, #1457 follow-up).
+	const verbOfTool = (root, tool) => {
+		const r = derive(root);
+		expect(r.status, r.stderr).toBe(0);
+		return rowsOf(outOf(root)).find((x) => x.outil === tool).crud;
+	};
+
 	it(
-		"PRESENT — a patch filled under a computed key is could-not-judge (`?`), never UPDATE, and keeps its writer row",
+		"POLE (a) — computed keys from the handler's args, whose validator declares `status`, are TRANSITION and keep their writer row",
 		() => {
+			const root = copyTree();
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const fresh = rowsOf(outOf(root));
 			for (const tool of DYNAMIC_PATCH_WRITERS) {
-				expect(committed(tool).crud, tool).toBe("?");
+				expect(fresh.find((x) => x.outil === tool).crud, tool).toBe(
+					"TRANSITION",
+				);
+				expect(committed(tool).crud, tool).toBe("TRANSITION");
 				const writer = rowsOf(COMMITTED_WRITER_CSV).find(
 					(x) => x.outil === tool,
 				);
@@ -744,6 +760,79 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 					/^(org-member|org-admin|fleet-internal|master)$/,
 				);
 			}
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"POLE (b) — the same computed-key loop over args that do NOT declare `status` is UPDATE",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/mandates.ts",
+				"\t\tstatus: v.optional(mandateStatusValidator),\n\t\ttokensCost",
+				"\t\ttokensCost",
+			);
+			expect(verbOfTool(root, "update_mandate")).toBe("UPDATE");
+
+			// `status` declared, but destructured out by name before the rest:
+			// the rest the loop reads cannot carry it.
+			const named = copyTree();
+			mutate(
+				named,
+				"convex/businessUnits.ts",
+				"const { buId, callerOrchestrator, ...fields } = args;",
+				"const { buId, callerOrchestrator, status: _status, ...fields } = args;",
+			);
+			expect(verbOfTool(named, "update_bu")).toBe("UPDATE");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"POLE (c) — computed keys the derivation cannot trace to a declared field set stay could-not-judge (`?`)",
+		() => {
+			// keys from an object that is not the handler's args
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/mandates.ts",
+				"for (const [key, value] of Object.entries(fields)) {",
+				"const elsewhere: Record<string, unknown> = JSON.parse(String(fields.tokensCost));\n\t\tfor (const [key, value] of Object.entries(elsewhere)) {",
+			);
+			expect(verbOfTool(root, "update_mandate")).toBe("?");
+
+			// a key that is not the loop's own key binding
+			const computed = copyTree();
+			mutate(
+				computed,
+				"convex/mandates.ts",
+				"\t\t\t\tpatch[key] = value;",
+				"\t\t\t\tpatch[key.toUpperCase()] = value;",
+			);
+			expect(verbOfTool(computed, "update_mandate")).toBe("?");
+
+			// no literal `status` in the validator, but a spread that may carry one
+			const spread = copyTree();
+			mutate(
+				spread,
+				"convex/mandates.ts",
+				"\t\tstatus: v.optional(mandateStatusValidator),\n\t\ttokensCost",
+				"\t\t...extraArgs,\n\t\ttokensCost",
+			);
+			expect(verbOfTool(spread, "update_mandate")).toBe("?");
+
+			// two const rests of args under the loop's name: which field set the
+			// loop reads is ambiguous, so argFieldsOf answers nothing
+			const ambiguous = copyTree();
+			mutate(
+				ambiguous,
+				"convex/businessUnits.ts",
+				"const { buId, callerOrchestrator, ...fields } = args;",
+				"const { buId, callerOrchestrator, ...fields } = args;\n\t\t{\n\t\t\tconst { callerOrchestrator: _c, ...fields } = args;\n\t\t\tvoid fields;\n\t\t}",
+			);
+			expect(verbOfTool(ambiguous, "update_bu")).toBe("?");
 		},
 		TIMEOUT,
 	);

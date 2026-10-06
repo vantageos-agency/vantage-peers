@@ -533,6 +533,152 @@ function patchWritesDynamicKey(arg, scopeNode) {
 	return found;
 }
 
+/** Names an args validator object literal declares, or null when unreadable. */
+function declaredArgNames(argsNode) {
+	const obj = argsNode && strip(argsNode);
+	if (!obj || !ts.isObjectLiteralExpression(obj)) return null;
+	const names = new Set();
+	for (const p of obj.properties) {
+		// a spread (`...shared`) or a computed name may declare anything
+		if (!p.name) return null;
+		if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))
+			names.add(p.name.text);
+		else return null;
+	}
+	return names;
+}
+
+/**
+ * The field names a handler-local object `x` can carry, when `x` IS the
+ * handler's args parameter or the REST of a `const { a, b, ...x } = args`
+ * destructuring of it: the args validator's declared names, minus the names
+ * destructured out before the rest. Null when `x` cannot be traced to them.
+ */
+function argFieldsOf(name, handler, argsNode) {
+	const declared = declaredArgNames(argsNode);
+	if (!declared || !handler?.parameters) return null;
+	const param = handler.parameters[1];
+	if (!param) return null;
+	const restOf = (pattern) => {
+		const rest = pattern.elements.find((e) => e.dotDotDotToken);
+		if (!rest || !ts.isIdentifier(rest.name) || rest.name.text !== name)
+			return null;
+		const out = new Set(declared);
+		for (const e of pattern.elements) {
+			if (e === rest) continue;
+			const key = e.propertyName ?? e.name;
+			if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) return null;
+			out.delete(key.text);
+		}
+		return out;
+	};
+	if (ts.isObjectBindingPattern(param.name)) return restOf(param.name);
+	if (!ts.isIdentifier(param.name)) return null;
+	const argsName = param.name.text;
+	if (name === argsName) return declared;
+	let found = null;
+	let ambiguous = false;
+	forEachDeep(handler, (n) => {
+		if (
+			!ts.isVariableDeclaration(n) ||
+			!ts.isObjectBindingPattern(n.name) ||
+			!n.initializer
+		)
+			return;
+		const init = strip(n.initializer);
+		if (!init || !ts.isIdentifier(init) || init.text !== argsName) return;
+		if (!(ts.getCombinedNodeFlags(n) & ts.NodeFlags.Const)) return;
+		const fields = restOf(n.name);
+		if (!fields) return;
+		if (found) ambiguous = true;
+		found = fields;
+	});
+	return ambiguous ? null : found;
+}
+
+/**
+ * The loop that binds `key` around `node`, read as a key source:
+ * `for (const [key, …] of Object.entries(x))`, `for (const key of
+ * Object.keys(x))`, `for (const key in x)`. Returns the identifier `x`, or null.
+ */
+function keySourceOf(node, key) {
+	for (let p = node.parent; p; p = p.parent) {
+		if (!ts.isForOfStatement(p) && !ts.isForInStatement(p)) continue;
+		const init = p.initializer;
+		if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1)
+			continue;
+		const binding = init.declarations[0].name;
+		const expr = strip(p.expression);
+		if (ts.isForInStatement(p)) {
+			if (ts.isIdentifier(binding) && binding.text === key)
+				return expr && ts.isIdentifier(expr) ? expr.text : null;
+			continue;
+		}
+		let method = null;
+		if (
+			ts.isArrayBindingPattern(binding) &&
+			binding.elements[0] &&
+			!ts.isOmittedExpression(binding.elements[0]) &&
+			ts.isIdentifier(binding.elements[0].name) &&
+			binding.elements[0].name.text === key
+		)
+			method = "entries";
+		else if (ts.isIdentifier(binding) && binding.text === key) method = "keys";
+		else continue;
+		if (
+			!expr ||
+			!ts.isCallExpression(expr) ||
+			expr.arguments.length !== 1 ||
+			!ts.isPropertyAccessExpression(expr.expression) ||
+			expr.expression.expression.getText() !== "Object" ||
+			expr.expression.name.text !== method
+		)
+			return null;
+		const src = strip(expr.arguments[0]);
+		return src && ts.isIdentifier(src) ? src.text : null;
+	}
+	return null;
+}
+
+/**
+ * Can a dynamic `patch[key] = value` write `status`? Decidable when every
+ * computed key is the key binding of a loop over the handler's own args (or
+ * the rest of their destructuring) and the args validator is an inline object
+ * literal: then `status` is reachable exactly when the validator declares it
+ * and it was not destructured out first. Returns "status" (a TRANSITION, the
+ * conservative verb, as start_task), "no-status" (UPDATE), or UNKNOWN when any
+ * key comes from somewhere the derivation cannot trace (task
+ * k17dvkdh8c8r5xhmt5nxdk9kys8fs5aw, after Argus on #1457).
+ */
+function dynamicPatchStatusOf(arg, scopeNode, fn) {
+	const obj = strip(arg);
+	if (!obj || !ts.isIdentifier(obj)) return UNKNOWN;
+	const name = obj.text;
+	const verdicts = [];
+	forEachDeep(scopeNode, (n) => {
+		if (
+			!ts.isBinaryExpression(n) ||
+			n.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+			!ts.isElementAccessExpression(n.left) ||
+			!ts.isIdentifier(n.left.expression) ||
+			n.left.expression.text !== name ||
+			ts.isStringLiteralLike(n.left.argumentExpression)
+		)
+			return;
+		const key = n.left.argumentExpression;
+		// the handler's OWN body: a helper's parameters are not the args
+		const src =
+			scopeNode === fn.handler && ts.isIdentifier(key)
+				? keySourceOf(n, key.text)
+				: null;
+		const fields = src ? argFieldsOf(src, fn.handler, fn.args) : null;
+		if (!fields) verdicts.push(UNKNOWN);
+		else verdicts.push(fields.has("status") ? "status" : "no-status");
+	});
+	if (verdicts.includes(UNKNOWN) || verdicts.length === 0) return UNKNOWN;
+	return verdicts.includes("status") ? "status" : "no-status";
+}
+
 /** Effects of a set of Convex bodies. */
 function convexFacts(fnKeys) {
 	const facts = {
@@ -544,6 +690,9 @@ function convexFacts(fnKeys) {
 		// a patch gets a field under a key the derivation cannot read
 		// (`patch[key] = value`): its status write is undecidable (could-not-judge)
 		dynamicPatch: false,
+		// what those computed keys can carry (dynamicPatchStatusOf): "status",
+		// "no-status", or UNKNOWN; null while no dynamic patch was seen
+		dynamicPatchStatus: null,
 		reads: {
 			list: false,
 			get: false,
@@ -671,8 +820,17 @@ function convexFacts(fnKeys) {
 						method !== "delete" &&
 						last &&
 						patchWritesDynamicKey(last, node)
-					)
+					) {
 						facts.dynamicPatch = true;
+						const seen = dynamicPatchStatusOf(last, node, fn);
+						const prev = facts.dynamicPatchStatus;
+						facts.dynamicPatchStatus =
+							prev === UNKNOWN || seen === UNKNOWN
+								? UNKNOWN
+								: prev === "status" || seen === "status"
+									? "status"
+									: "no-status";
+					}
 				}
 			});
 		}
@@ -801,8 +959,12 @@ function verbOf(f) {
 		if (w.size === 1 && w.has("delete")) return "DELETE";
 		if (w.size === 1 && w.has("patch")) {
 			if (f.statusPatch) return "TRANSITION";
-			// A dynamic `patch[key] = value` may carry `status`: could-not-judge.
-			return f.dynamicPatch ? UNKNOWN : "UPDATE";
+			if (!f.dynamicPatch) return "UPDATE";
+			// A dynamic `patch[key] = value` may carry `status`: decided from the
+			// args validator when the keys trace to it, could-not-judge otherwise.
+			if (f.dynamicPatchStatus === "status") return "TRANSITION";
+			if (f.dynamicPatchStatus === "no-status") return "UPDATE";
+			return UNKNOWN;
 		}
 		if (w.size === 2 && w.has("insert") && w.has("patch")) return "UPSERT";
 		return UNKNOWN; // a mix the closed set has no single verb for
