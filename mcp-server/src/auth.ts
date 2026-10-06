@@ -503,6 +503,65 @@ export function personActorOf(
 	return personActorName(ctx.userId);
 }
 
+/**
+ * The organisation an MCP SEAT acts for, derived ONLY from the verified
+ * principal the bearer middleware resolved — the token row's snapshotted org
+ * (`clerkOrgSlug`) and/or the credential-bound actor's org — never from a tool
+ * argument. Task k174f54w3fv3amnk16v68tb3jh8frxxt.
+ *
+ * Why it exists: a non-master seat reaches Convex as the fleet SERVICE ACCOUNT
+ * (master, no org), so a Convex door that scopes recipients by the caller's org
+ * cannot see the seat's org unless the MCP forwards it. The Convex door
+ * believes the forwarded value from the service account only.
+ *
+ * Outcomes:
+ *   - `{ kind: "none" }`  nothing to forward: the master caller (fleet reach is
+ *     its own), or a Clerk-JWT session (the caller's own JWT is forwarded and
+ *     Convex resolves its org itself).
+ *   - `{ kind: "org" }`   the seat's verified org.
+ *   - `{ kind: "refused" }` no resolvable org (SEAT_ORG_UNRESOLVED), or the two
+ *     verified sources name different orgs (SEAT_ORG_CONFLICT): never fleet
+ *     reach by default.
+ */
+export type SeatOrgResolution =
+	| { kind: "none" }
+	| { kind: "org"; orgSlug: string }
+	| { kind: "refused"; error: string };
+
+export function resolveSeatOrg(
+	ctx: OAuthContext | undefined,
+): SeatOrgResolution {
+	if (ctx === undefined) {
+		return {
+			kind: "refused",
+			error:
+				"SEAT_ORG_UNRESOLVED: no authorization context on this request — refusing rather than granting fleet reach.",
+		};
+	}
+	if (isMasterScope(ctx) || ctx.clerkJwt !== undefined) return { kind: "none" };
+	const fromToken = ctx.clerkOrgSlug;
+	const fromActor = ctx.actor?.orgSlug;
+	if (
+		fromToken !== undefined &&
+		fromActor !== undefined &&
+		fromToken !== fromActor
+	) {
+		return {
+			kind: "refused",
+			error: `SEAT_ORG_CONFLICT: the bearer's organisation ("${fromToken}") and the agent credential's organisation ("${fromActor}") differ — refusing.`,
+		};
+	}
+	const orgSlug = fromToken ?? fromActor;
+	if (orgSlug === undefined || orgSlug === "") {
+		return {
+			kind: "refused",
+			error:
+				"SEAT_ORG_UNRESOLVED: this seat carries no verified organisation, so its recipients cannot be scoped — refusing rather than granting fleet reach.",
+		};
+	}
+	return { kind: "org", orgSlug };
+}
+
 function agentCredentialRequired(claimedName: string): string {
 	return (
 		`AGENT_CREDENTIAL_REQUIRED: this call names "${claimedName}" but the ` +

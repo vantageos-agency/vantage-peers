@@ -26,6 +26,7 @@ import {
 	isMasterScope,
 	type OAuthContext,
 	personActorOf,
+	resolveSeatOrg,
 	rowVisibleToActorTenant,
 } from "./auth.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
@@ -1918,6 +1919,24 @@ export function registerTools(
 		oauthCtx?.accessTokenHash !== undefined
 			? { verifiedPerson: { accessTokenHash: oauthCtx.accessTokenHash } }
 			: {};
+	// The seat's VERIFIED org for a door that scopes RECIPIENTS by org
+	// (messages:sendMessage). A seat reaches Convex as the service account
+	// (fleet master, no org), so without this the org scope never applies to it
+	// (task k174f54w3fv3amnk16v68tb3jh8frxxt). Read from the resolved principal
+	// (resolveSeatOrg), never from a tool argument. A person acting in its own
+	// name forwards verifiedPerson instead (Convex rebuilds its org scope).
+	const seatOrgDoorArgs = (
+		actingName: string | undefined,
+	):
+		| { args: { seatOrgSlug?: string } }
+		| { denied: ReturnType<typeof mcpError> } => {
+		if (Object.keys(personDoorArgs(actingName)).length > 0) return { args: {} };
+		const seat = resolveSeatOrg(oauthCtx);
+		if (seat.kind === "refused") return { denied: mcpError(seat.error) };
+		return seat.kind === "org"
+			? { args: { seatOrgSlug: seat.orgSlug } }
+			: { args: {} };
+	};
 	const PERSON_DOOR_NOTE =
 		" A person signed in to its organisation omits it and acts in its own name.";
 	// Delegation guard — distinct question from guardFrom (identity CLAIM).
@@ -3218,6 +3237,10 @@ export function registerTools(
 					channel === "broadcast" || channel.includes(",")
 						? channel
 						: normalizeOrchestratorId(channel);
+				// The seat's verified org rides along so Convex scopes the
+				// RECIPIENTS to it (see seatOrgDoorArgs). Resolved before any write.
+				const seatDoor = seatOrgDoorArgs(from);
+				if ("denied" in seatDoor) return seatDoor.denied;
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from: normFrom,
 					fromInstanceId: senderInstance,
@@ -3226,6 +3249,7 @@ export function registerTools(
 					sessionDay: derivedSessionDay,
 					tenantId,
 					...personDoorArgs(from),
+					...seatDoor.args,
 				});
 				const sender = from ?? personActorOf(oauthCtx);
 
