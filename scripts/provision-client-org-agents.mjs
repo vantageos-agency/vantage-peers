@@ -39,6 +39,9 @@ const clerkOrgId = arg("clerk-org-id");
 const agents = (arg("agents", "") || "").split(",").filter(Boolean);
 const stage = arg("stage-dir");
 const ttlDays = Number(arg("ttl-days", "90"));
+// --seat-only: a non-agent seat (e.g. a client portal relay). Bearer only, no agents row,
+// no agent credential, and it need not be on the org roster.
+const seatOnly = argv.includes("--seat-only");
 if (!org || !clerkOrgId || agents.length === 0 || !stage) {
 	console.error("usage: --org <slug> --clerk-org-id <org_…> --agents a,b --stage-dir <dir> [--ttl-days 90]");
 	process.exit(2);
@@ -67,7 +70,7 @@ admin.setAuth(await getScopedUserToken(process.env.CLERK_ORG_ADMIN_USER_ID_VANTA
 
 const mapping = await svc.query(api.clientOrgMapping.getByClerkSlug, { orgSlug: org });
 if (!mapping || mapping.isActive !== true) throw new Error(`ORG_NOT_READY: no active client_org_mapping for ${org}`);
-const missing = agents.filter((a) => !(mapping.allowedOrchestrators ?? []).includes(a));
+const missing = seatOnly ? [] : agents.filter((a) => !(mapping.allowedOrchestrators ?? []).includes(a));
 if (missing.length) throw new Error(`ROSTER_MISSING: ${missing.join(",")} not in ${org}'s allowedOrchestrators`);
 
 const now = Date.now();
@@ -111,6 +114,10 @@ for (const agent of agents) {
 	});
 	const bearerPath = writeSecret(`${agent}.bearer`, access);
 
+	if (seatOnly) {
+		console.log(`${agent}: seat-only client=${clientId} profile=${profileId} access expires ${new Date(expiresAt).toISOString()} -> ${bearerPath}`);
+		continue;
+	}
 	// 3. agent registry, by ID, in THIS org
 	let row = await admin.query(api.agents.getAgent, { orgSlug: org, name: agent });
 	if (!row) {
