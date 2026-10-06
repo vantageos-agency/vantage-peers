@@ -4,6 +4,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import { fleetOperatorSlug } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -26,34 +27,37 @@ function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): b
 
 // The (orchestrator, date) key is a NAME that two organisations, or the fleet,
 // can all hold, so it can name several rows. The caller's own row is the one
-// whose server-stamped tenant is the caller's: the unstamped (fleet) row for
-// master, the row stamped with its org for an org caller. The tenant is an
-// INDEX predicate (by_org_orchestrator_date), so a foreign tenant's row is never
-// read, never returned, and can never lock the caller out. A scope with no
-// tenant (anonymous / pre-org) owns nothing.
-function ownTenantOf(scope: OrgScope): { tenant: string | undefined } | null {
-	if (scope.isMaster) return { tenant: undefined };
-	if (scope.orgSlug === null) return null;
-	return { tenant: scope.orgSlug };
-}
-
+// whose server-stamped tenant is the caller's, selected through the
+// by_org_orchestrator_date INDEX so a foreign tenant's row is never read,
+// never returned, and can never lock the caller out.
+//   org caller -> the row stamped with its org (an org caller never matches the
+//                 unstamped row, and matches the operator slug only if it IS
+//                 the operator org).
+//   master     -> the FLEET's row: stamped with the operator org (what
+//                 backfill_org_stamp writes), else unstamped (what a master
+//                 write writes). Operator-stamped is preferred, deterministically.
+// `.first()`, never `.unique()`: a row landing between deploy and backfill must
+// not make the selection throw. A scope with no tenant owns nothing.
 async function ownDiaryRow(
 	ctx: QueryCtx,
 	scope: OrgScope,
 	orchestrator: string,
 	date: string,
 ): Promise<Doc<"diary"> | null> {
-	const own = ownTenantOf(scope);
-	if (own === null) return null;
-	return await ctx.db
-		.query("diary")
-		.withIndex("by_org_orchestrator_date", (q) =>
-			q
-				.eq("orgId", own.tenant)
-				.eq("orchestrator", orchestrator)
-				.eq("date", date),
-		)
-		.unique();
+	const at = (tenant: string | undefined) =>
+		ctx.db
+			.query("diary")
+			.withIndex("by_org_orchestrator_date", (q) =>
+				q.eq("orgId", tenant).eq("orchestrator", orchestrator).eq("date", date),
+			)
+			.first();
+	if (scope.isMaster) {
+		const operatorSlug = await fleetOperatorSlug(ctx.db);
+		const operatorRow =
+			operatorSlug === undefined ? null : await at(operatorSlug);
+		return operatorRow ?? (await at(undefined));
+	}
+	return scope.orgSlug === null ? null : await at(scope.orgSlug);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

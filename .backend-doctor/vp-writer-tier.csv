@@ -5,6 +5,7 @@ soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgR
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
 update_bu,businessUnits+client_org_mapping+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
+write_diary,client_org_mapping+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 complete_task,client_org_mapping+fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 create_mandate,client_org_mapping+mandates+oauth_access_tokens,CREATE,master,masterOnly,mandates:create=masterOnly
@@ -14,7 +15,6 @@ update_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens
 update_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 create_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
 create_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
-write_diary,diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly

@@ -24,13 +24,13 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
-		([path]) => !path.includes("ragSync") && !path.includes("backfill"),
+		([path]) => !path.includes("ragSync"),
 	),
 );
 
@@ -395,5 +395,108 @@ describe("diary shared (seat, date) key — own-row selection, R-52 follow-up", 
 		expect(names(await a.query(api.diary.list, {}))).toEqual(["from a"]);
 		expect(names(await a.query(api.diary.listByDateRange, { ...range, orchestrator: SEAT }))).toEqual(["from a"]);
 		expect(names(await a.query(api.diary.listByDateRange, range))).toEqual(["from a"]);
+	});
+});
+
+// RULING 4: after backfill_org_stamp the fleet's rows carry the OPERATOR org's
+// slug, while a master write still stamps nothing. Master's own tenant is
+// therefore {unstamped, operator-stamped}, never the unstamped one alone.
+describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => {
+	async function seedFleet(t: T) {
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "fleet-org",
+				allowedOrchestrators: ["sigma"],
+				scopes: [],
+				displayName: "fleet-org",
+				isActive: true,
+				orgKind: "operator" as const,
+				createdAt: 1,
+			});
+			await ctx.db.insert("agents", {
+				orgSlug: "fleet-org",
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: 1,
+			});
+		});
+	}
+	const backfill = async (t: T, table: "diary" | "missions") => {
+		const r = await t.mutation(internal.migrations.backfill_org_stamp.run, {
+			table,
+			dryRun: false,
+		});
+		expect(r.stamped).toBeGreaterThan(0);
+	};
+
+	test("PRESENT Q1: master get reads the operator-stamped fleet row and master write updates it in place", async () => {
+		const t = makeT();
+		await seedFleet(t);
+		await t.run((ctx) =>
+			ctx.db.insert("diary", {
+				date: "2026-10-01",
+				orchestrator: "sigma",
+				content: "fleet v1",
+				createdAt: 1,
+			}),
+		);
+		await backfill(t, "diary");
+		const row = await t.run((ctx) => ctx.db.query("diary").first());
+		expect(row?.orgId).toBe("fleet-org");
+		const m = asMaster(t);
+		const got = await m.query(api.diary.get, { date: "2026-10-01", orchestrator: "sigma" });
+		expect(got?.content).toBe("fleet v1");
+		await m.mutation(api.diary.write, { date: "2026-10-01", orchestrator: "sigma", content: "fleet v2" });
+		const rows = await t.run((ctx) => ctx.db.query("diary").collect());
+		expect(rows).toHaveLength(1);
+		expect(rows[0].content).toBe("fleet v2");
+	});
+
+	test("PRESENT Q1b: with an unstamped and an operator-stamped candidate, master prefers the operator-stamped row and never throws", async () => {
+		const t = makeT();
+		await seedFleet(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("diary", { date: "2026-10-01", orchestrator: "sigma", content: "unstamped", createdAt: 1 });
+			await ctx.db.insert("diary", { date: "2026-10-01", orchestrator: "sigma", content: "operator", createdAt: 2, orgId: "fleet-org" });
+		});
+		const got = await asMaster(t).query(api.diary.get, { date: "2026-10-01", orchestrator: "sigma" });
+		expect(got?.content).toBe("operator");
+	});
+
+	test("REFUSED: an ordinary org-a member still cannot read or touch an operator-stamped fleet row", async () => {
+		const t = makeT();
+		await seedFleet(t);
+		await seedOrgs(t);
+		const id = await t.run((ctx) =>
+			ctx.db.insert("diary", { date: "2026-10-01", orchestrator: SEAT, content: "fleet", createdAt: 1, orgId: "fleet-org" }),
+		);
+		const a = asOrg(t, "org-a");
+		expect(await a.query(api.diary.get, { date: "2026-10-01", orchestrator: SEAT })).toBeNull();
+		await expect(
+			a.mutation(api.diary.deleteDiary, { diaryId: id, callerOrchestrator: SEAT }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+	});
+
+	test("PRESENT Q2: a master task completes sigma's operator-stamped fleet mission", async () => {
+		const t = makeT();
+		await seedFleet(t);
+		const missionId = await t.run((ctx) =>
+			ctx.db.insert("missions", { ...missionRow(undefined), createdBy: "sigma" }),
+		);
+		await backfill(t, "missions");
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.orgId).toBe("fleet-org");
+		await completeTaskNaming(t, asMaster(t), missionId, "sigma");
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("complete");
+	});
+
+	test("REFUSED: an org-a task still cannot close an operator-stamped fleet mission", async () => {
+		const t = makeT();
+		await seedFleet(t);
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("fleet-org")));
+		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("execute");
 	});
 });
