@@ -117,6 +117,8 @@ async function seedDiary(t: T, owner: Owner) {
 			orchestrator: ownerName(owner),
 			content: "seed",
 			createdAt: Date.now(),
+			...(owner === "own" ? { orgId: "org-a" } : {}),
+			...(owner === "other" ? { orgId: "org-b" } : {}),
 		}),
 	);
 }
@@ -142,6 +144,8 @@ async function seedBu(t: T, owner: Owner) {
 			managementFee: 10,
 			createdAt: now,
 			updatedAt: now,
+			...(owner === "own" ? { orgId: "org-a" } : {}),
+			...(owner === "other" ? { orgId: "org-b" } : {}),
 		}),
 	);
 }

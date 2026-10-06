@@ -544,3 +544,73 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 		expect(await issueStatus(t)).toBe("open");
 	});
 });
+
+// R-52 (task k17cncab6ymjkkwf7mbe72f9zh8fp0j2): diary and businessUnits carry
+// an optional tenant stamp that their writers now require. The backfill is how
+// legacy (unstamped) rows reach it, by rule A on the row's owner key.
+describe("backfill_org_stamp — diary and businessUnits (R-52 stamp)", () => {
+	test("stamps each row from its owner key's agent, leaves an unknown owner alone", async () => {
+		const t = createT();
+		await t.run(async (ctx) => {
+			const mapping = (slug: string, operator: boolean) =>
+				ctx.db.insert("client_org_mapping", {
+					clerkOrgSlug: slug,
+					allowedOrchestrators: [],
+					scopes: [],
+					displayName: slug,
+					isActive: true,
+					createdAt: NOW,
+					...(operator ? { orgKind: "operator" as const } : {}),
+				});
+			await mapping("fleet-org", true);
+			await mapping("acme-hr", false);
+			for (const [name, orgSlug] of [["sigma", "fleet-org"], ["nadia", "acme-hr"]]) {
+				await ctx.db.insert("agents", {
+					orgSlug,
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: NOW,
+				});
+			}
+			for (const orchestrator of ["nadia", "sigma", "stranger"]) {
+				await ctx.db.insert("diary", {
+					date: "2026-10-01",
+					orchestrator,
+					content: "c",
+					createdAt: NOW,
+				});
+				await ctx.db.insert("businessUnits", {
+					name: orchestrator,
+					description: "d",
+					purpose: "p",
+					orchestratorId: orchestrator,
+					status: "idea",
+					businessModel: "m",
+					targetCustomers: "c",
+					services: [],
+					pricing: "0",
+					revenueProjections: { y1: 0, y2: 0, y3: 0 },
+					coreTeam: { agents: [], skills: [], hooks: [], plugins: [] },
+					coreProcesses: [],
+					dependencies: [],
+					kpis: [],
+					managementFee: 10,
+					createdAt: NOW,
+					updatedAt: NOW,
+				});
+			}
+		});
+		for (const table of ["diary", "businessUnits"] as const) {
+			const r = await t.mutation(run, { table, dryRun: false });
+			expect(r).toMatchObject({ toStampOrg: 1, toStampFleet: 1, undecidable: 1, stamped: 2 });
+		}
+		const stamps = await t.run(async (ctx) => ({
+			diary: (await ctx.db.query("diary").collect()).map((d) => [d.orchestrator, d.orgId ?? null]),
+			bus: (await ctx.db.query("businessUnits").collect()).map((b) => [b.orchestratorId, b.orgId ?? null]),
+		}));
+		const expected = [["nadia", "acme-hr"], ["sigma", "fleet-org"], ["stranger", null]];
+		expect(stamps.diary).toEqual(expected);
+		expect(stamps.bus).toEqual(expected);
+	});
+});

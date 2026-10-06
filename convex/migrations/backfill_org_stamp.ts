@@ -27,6 +27,8 @@
 //                    rule A on the message; undecidable message -> undecidable.
 //   missions, messages, briefingNotes, recurringTasks
 //                    rule A.
+//   diary            rule A on its `orchestrator` (the owner key). R-52 stamp.
+//   businessUnits    rule A on its `orchestratorId` (the owner key). R-52 stamp.
 //   RULE A: the `createdBy` / `from` label resolves, under
 //     normalizeOrchestratorId, to EXACTLY ONE `agents` row across ALL
 //     organisations (any isActive state). That row's `orgSlug` is looked up in
@@ -62,6 +64,8 @@ export const TABLE_ORDER = [
 	"messageReceipts",
 	"briefingNotes",
 	"recurringTasks",
+	"diary",
+	"businessUnits",
 ] as const;
 export type StampTable = (typeof TABLE_ORDER)[number];
 
@@ -72,6 +76,8 @@ const tableValidator = v.union(
 	v.literal("messageReceipts"),
 	v.literal("briefingNotes"),
 	v.literal("recurringTasks"),
+	v.literal("diary"),
+	v.literal("businessUnits"),
 );
 
 const DEFAULT_PAGE_SIZE: Record<StampTable, number> = {
@@ -81,6 +87,8 @@ const DEFAULT_PAGE_SIZE: Record<StampTable, number> = {
 	messageReceipts: 100,
 	briefingNotes: 20,
 	recurringTasks: 100,
+	diary: 100,
+	businessUnits: 100,
 };
 const MAX_PAGE_SIZE = 500;
 const MAPPING_READ_CAP = 1000;
@@ -349,6 +357,34 @@ async function walk(
 				byAgent(resolver, row.createdBy),
 			);
 			await commit("briefingNotes", row._id, "orgId", s);
+		}
+		return { isDone: page.isDone, nextCursor: page.continueCursor };
+	}
+	if (table === "diary") {
+		const page = await ctx.db.query("diary").paginate(opts);
+		for (const row of page.page) {
+			const s = settle(
+				resolver,
+				tally,
+				row._id,
+				row.orgId,
+				byAgent(resolver, row.orchestrator),
+			);
+			await commit("diary", row._id, "orgId", s);
+		}
+		return { isDone: page.isDone, nextCursor: page.continueCursor };
+	}
+	if (table === "businessUnits") {
+		const page = await ctx.db.query("businessUnits").paginate(opts);
+		for (const row of page.page) {
+			const s = settle(
+				resolver,
+				tally,
+				row._id,
+				row.orgId,
+				byAgent(resolver, row.orchestratorId),
+			);
+			await commit("businessUnits", row._id, "orgId", s);
 		}
 		return { isDone: page.isDone, nextCursor: page.continueCursor };
 	}

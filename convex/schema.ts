@@ -608,6 +608,11 @@ export default defineSchema({
 		// migrations/diary_backfill_createdBy — NOT auth-verified.
 		createdBy: v.optional(creatorValidator),
 		createdAt: v.number(),
+		// R-52 tenant stamp: the org slug of the org-scoped caller that created the
+		// row (server-derived from withOrgScope, never an argument). Absent =
+		// fleet-owned (master-written) or not yet backfilled; an org caller is
+		// refused an unstamped row.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
 		.index("by_date", ["date"]),
@@ -884,6 +889,8 @@ export default defineSchema({
 		managementFee: v.number(), // ElPi Corp % cut (default 10)
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		// R-52 tenant stamp: see diary.orgId. Server-derived from withOrgScope.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_orchestrator", ["orchestratorId"])
 		.index("by_status", ["status"])

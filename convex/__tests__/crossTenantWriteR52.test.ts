@@ -1,0 +1,336 @@
+/// <reference types="vite/client" />
+// crossTenantWriteR52.test.ts — task k17cncab6ymjkkwf7mbe72f9zh8fp0j2, step 3.
+//
+// R-52: a write that reaches a row carrying no (or an optional) tenant value,
+// where the target is chosen by an argument or a caller-chosen stored field,
+// must be dominated by a guard reading a SERVER-STAMPED tenant.
+//
+// Four sites, each pinned by two poles:
+//   REFUSED  an ordinary member of org-a targeting an org-b row, or a fleet
+//            (unstamped) row, is refused and the row is byte-identical after.
+//   PRESENT  the legitimate owner (an org-a member on an org-a row) and the
+//            fleet service account (master) are still served.
+//
+//   businessUnits:update   patch by args.buId
+//   diary:write            patch by args.orchestrator + args.date
+//   diary:deleteDiary      delete by args.diaryId
+//   tasks:complete         patch of the mission named by the task's own
+//                          caller-set missionId (completion itself is never
+//                          refused; only the foreign mission is left alone)
+//
+// Fictitious identifiers only. The roster name "seat-x" sits on BOTH orgs'
+// rosters on purpose: the roster check alone cannot tell the two tenants
+// apart, which is exactly the gap the row stamp closes.
+
+import { convexTest } from "convex-test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import schema from "../schema";
+
+const modules = Object.fromEntries(
+	Object.entries(import.meta.glob("../**/*.ts")).filter(
+		([path]) => !path.includes("ragSync") && !path.includes("backfill"),
+	),
+);
+
+const makeT = () => convexTest(schema, modules);
+type T = ReturnType<typeof makeT>;
+
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
+
+const SEAT = "seat-x";
+const asOrg = (t: T, slug: string) =>
+	t.withIdentity({ subject: `user-${slug}`, organizationId: slug } as Parameters<
+		T["withIdentity"]
+	>[0]);
+const asMaster = (t: T) =>
+	t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+		T["withIdentity"]
+	>[0]);
+
+async function seedOrgs(t: T) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("taskClosureConfig", {
+			key: "billableProjects",
+			value: [],
+			updatedAt: 0,
+		});
+		for (const slug of ["org-a", "org-b"]) {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: slug,
+				allowedOrchestrators: [SEAT],
+				scopes: ["view-own-tasks", "view-own-missions"],
+				displayName: slug,
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		}
+	});
+}
+
+const buFields = (name: string, orgId: string | undefined) => ({
+	name,
+	description: "d",
+	purpose: "p",
+	orchestratorId: SEAT,
+	status: "idea" as const,
+	businessModel: "m",
+	targetCustomers: "c",
+	services: [],
+	pricing: "0",
+	revenueProjections: { y1: 0, y2: 0, y3: 0 },
+	coreTeam: { agents: [], skills: [], hooks: [], plugins: [] },
+	coreProcesses: [],
+	dependencies: [],
+	kpis: [],
+	managementFee: 10,
+	createdAt: 1,
+	updatedAt: 1,
+	...(orgId !== undefined ? { orgId } : {}),
+});
+
+const NOTE = "Completed the work in commit abcdef1234567 with regression test, 3/3 pass";
+
+describe("businessUnits:update — R-52", () => {
+	test("REFUSED: org-a member cannot patch org-b's business unit (shared roster name)", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const buId = await t.run((ctx) =>
+			ctx.db.insert("businessUnits", buFields("org-b bu", "org-b")),
+		);
+		const before = await t.run((ctx) => ctx.db.get(buId));
+		await expect(
+			asOrg(t, "org-a").mutation(api.businessUnits.update, {
+				buId,
+				callerOrchestrator: SEAT,
+				name: "hijacked",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(buId))).toEqual(before);
+	});
+
+	test("REFUSED: org-a member cannot patch a fleet (unstamped) business unit", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const buId = await t.run((ctx) =>
+			ctx.db.insert("businessUnits", buFields("fleet bu", undefined)),
+		);
+		const before = await t.run((ctx) => ctx.db.get(buId));
+		await expect(
+			asOrg(t, "org-a").mutation(api.businessUnits.update, {
+				buId,
+				callerOrchestrator: SEAT,
+				name: "hijacked",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(buId))).toEqual(before);
+	});
+
+	test("PRESENT: org-a creates a business unit, stamped org-a, and updates it", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const a = asOrg(t, "org-a");
+		const { createdAt: _c, updatedAt: _u, orgId: _o, ...createArgs } = buFields("own bu", undefined);
+		const buId = await a.mutation(api.businessUnits.create, createArgs);
+		expect((await t.run((ctx) => ctx.db.get(buId)))?.orgId).toBe("org-a");
+		await a.mutation(api.businessUnits.update, {
+			buId,
+			callerOrchestrator: SEAT,
+			name: "renamed",
+		});
+		expect((await t.run((ctx) => ctx.db.get(buId)))?.name).toBe("renamed");
+	});
+
+	test("PRESENT: the fleet service account still patches fleet and org rows", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const fleet = await t.run((ctx) =>
+			ctx.db.insert("businessUnits", buFields("fleet bu", undefined)),
+		);
+		const orgB = await t.run((ctx) =>
+			ctx.db.insert("businessUnits", buFields("org-b bu", "org-b")),
+		);
+		const m = asMaster(t);
+		await m.mutation(api.businessUnits.update, { buId: fleet, callerOrchestrator: "system", name: "f2" });
+		await m.mutation(api.businessUnits.update, { buId: orgB, callerOrchestrator: "system", name: "b2" });
+		expect((await t.run((ctx) => ctx.db.get(fleet)))?.name).toBe("f2");
+		expect((await t.run((ctx) => ctx.db.get(orgB)))?.name).toBe("b2");
+	});
+});
+
+const diaryRow = (orgId: string | undefined) => ({
+	date: "2026-10-01",
+	orchestrator: SEAT,
+	content: "original",
+	createdAt: 1,
+	...(orgId !== undefined ? { orgId } : {}),
+});
+
+describe("diary:write — R-52", () => {
+	test("REFUSED: org-a member cannot overwrite org-b's entry for the same seat name and date", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow("org-b")));
+		const before = await t.run((ctx) => ctx.db.get(id));
+		await expect(
+			asOrg(t, "org-a").mutation(api.diary.write, {
+				date: "2026-10-01",
+				orchestrator: SEAT,
+				content: "overwritten",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(id))).toEqual(before);
+	});
+
+	test("REFUSED: org-a member cannot overwrite a fleet (unstamped) entry", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow(undefined)));
+		const before = await t.run((ctx) => ctx.db.get(id));
+		await expect(
+			asOrg(t, "org-a").mutation(api.diary.write, {
+				date: "2026-10-01",
+				orchestrator: SEAT,
+				content: "overwritten",
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(id))).toEqual(before);
+	});
+
+	test("PRESENT: org-a inserts a stamped entry and upserts it", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const a = asOrg(t, "org-a");
+		const id = await a.mutation(api.diary.write, { date: "2026-10-01", orchestrator: SEAT, content: "v1" });
+		expect((await t.run((ctx) => ctx.db.get(id)))?.orgId).toBe("org-a");
+		const again = await a.mutation(api.diary.write, { date: "2026-10-01", orchestrator: SEAT, content: "v2" });
+		expect(again).toBe(id);
+		expect((await t.run((ctx) => ctx.db.get(id)))?.content).toBe("v2");
+	});
+
+	test("PRESENT: the fleet service account still upserts a fleet entry", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow(undefined)));
+		const got = await asMaster(t).mutation(api.diary.write, {
+			date: "2026-10-01",
+			orchestrator: SEAT,
+			content: "master v2",
+		});
+		expect(got).toBe(id);
+		expect((await t.run((ctx) => ctx.db.get(id)))?.content).toBe("master v2");
+	});
+});
+
+describe("diary:deleteDiary — R-52", () => {
+	test("REFUSED: org-a member cannot delete org-b's entry (shared seat name)", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow("org-b")));
+		await expect(
+			asOrg(t, "org-a").mutation(api.diary.deleteDiary, { diaryId: id, callerOrchestrator: SEAT }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+	});
+
+	test("REFUSED: org-a member cannot delete a fleet (unstamped) entry", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow(undefined)));
+		await expect(
+			asOrg(t, "org-a").mutation(api.diary.deleteDiary, { diaryId: id, callerOrchestrator: SEAT }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+	});
+
+	test("PRESENT: org-a deletes its own entry; master deletes any", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const own = await t.run((ctx) => ctx.db.insert("diary", diaryRow("org-a")));
+		const other = await t.run((ctx) =>
+			ctx.db.insert("diary", { ...diaryRow("org-b"), date: "2026-10-02" }),
+		);
+		await asOrg(t, "org-a").mutation(api.diary.deleteDiary, { diaryId: own, callerOrchestrator: SEAT });
+		expect(await t.run((ctx) => ctx.db.get(own))).toBeNull();
+		await asMaster(t).mutation(api.diary.deleteDiary, { diaryId: other, callerOrchestrator: "system" });
+		expect(await t.run((ctx) => ctx.db.get(other))).toBeNull();
+	});
+});
+
+const missionRow = (orgId: string | undefined) => ({
+	name: "m",
+	project: "p",
+	status: "execute" as const,
+	priority: "medium" as const,
+	pilot: SEAT,
+	agents: [SEAT],
+	createdBy: SEAT,
+	createdAt: 1,
+	updatedAt: 1,
+	...(orgId !== undefined ? { orgId } : {}),
+});
+
+async function completeTaskNaming(
+	t: T,
+	caller: ReturnType<typeof asOrg>,
+	missionId: Id<"missions">,
+	by: string,
+) {
+	const taskId = await caller.mutation(api.tasks.create, {
+		title: "Close the loop",
+		assignedTo: by,
+		priority: "high",
+		status: "todo",
+		createdBy: by,
+		missionId,
+	});
+	await caller.mutation(api.tasks.complete, {
+		taskId,
+		callerOrchestrator: by,
+		completionNote: NOTE,
+	});
+	return t.run((ctx) => ctx.db.get(taskId));
+}
+
+describe("tasks:complete mission auto-complete — R-52", () => {
+	test("REFUSED: org-a task naming org-b's mission leaves that mission untouched", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("org-b")));
+		const before = await t.run((ctx) => ctx.db.get(missionId));
+		const task = await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		expect(task?.status).toBe("done");
+		expect(await t.run((ctx) => ctx.db.get(missionId))).toEqual(before);
+	});
+
+	test("REFUSED: org-a task naming a fleet mission leaves it untouched", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow(undefined)));
+		const before = await t.run((ctx) => ctx.db.get(missionId));
+		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		expect(await t.run((ctx) => ctx.db.get(missionId))).toEqual(before);
+	});
+
+	test("PRESENT: org-a task on org-a's own mission still completes the mission", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("org-a")));
+		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("complete");
+	});
+
+	test("PRESENT: a fleet (master) task on a fleet mission still completes the mission", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow(undefined)));
+		await completeTaskNaming(t, asMaster(t), missionId, "sigma");
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("complete");
+	});
+});

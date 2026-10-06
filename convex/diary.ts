@@ -77,6 +77,16 @@ export const write = mutation({
 			.unique();
 
 		if (existing !== null) {
+			// R-52 — the entry's own server-stamped tenant must be the caller's.
+			// (orchestrator, date) is a NAME key that two organisations, or the
+			// fleet, can share; only the stamp tells their rows apart. An unstamped
+			// entry is fleet-owned or not yet backfilled and is refused to every org
+			// caller. Master is unchanged.
+			if (!scope.isMaster && existing.orgId !== scope.orgSlug) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+				);
+			}
 			// Update content fields only — do NOT overwrite createdBy (preserve
 			// original auth-verified author captured at creation time).
 			await ctx.db.patch(existing._id, {
@@ -95,6 +105,11 @@ export const write = mutation({
 			blockers: args.blockers,
 			createdBy: args.createdBy,
 			createdAt: now,
+			// R-52 tenant stamp, derived from the verified scope. A master write is
+			// fleet-owned (unstamped), as `tasks` does.
+			...(scope.isMaster || scope.orgSlug === null
+				? {}
+				: { orgId: scope.orgSlug }),
 		});
 	},
 });
@@ -120,6 +135,7 @@ export const get = query({
 			blockers: v.optional(v.array(v.string())),
 			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
+			orgId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -168,6 +184,7 @@ const DIARY_LIST_ROW = v.object({
 	blockers: v.optional(v.array(v.string())),
 	createdBy: v.optional(creatorValidator),
 	createdAt: v.number(),
+	orgId: v.optional(v.string()),
 });
 
 export const list = query({
@@ -329,6 +346,14 @@ export const deleteDiary = mutation({
 		const entry = await ctx.db.get(args.diaryId);
 		if (!entry) throw new Error("Diary entry not found");
 
+		// R-52 — the entry's own server-stamped tenant must be the caller's; the
+		// roster check below keys on a name another organisation may also hold.
+		if (!scope.isMaster && entry.orgId !== scope.orgSlug) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+			);
+		}
+
 		if (!isOrchestratorAllowedForScope(scope, entry.orchestrator)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} (orchestrator "${entry.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
@@ -376,6 +401,7 @@ export const listByDateRange = query({
 			blockers: v.optional(v.array(v.string())),
 			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
+			orgId: v.optional(v.string()),
 		}),
 	),
 	handler: async (ctx, args) => {

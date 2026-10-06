@@ -2626,7 +2626,16 @@ export const complete = mutation({
 			);
 			if (allDone) {
 				const mission = await ctx.db.get(task.missionId);
-				if (mission && mission.status !== "complete") {
+				// R-52 — `task.missionId` is set by the caller (create/update accept
+				// it as an argument), so the mission is a caller-chosen target. It is
+				// closed only when ITS server-stamped tenant is the task's own
+				// (itself stamped from the caller's scope at create). A foreign or
+				// fleet mission is left untouched; the task completion is not refused.
+				if (
+					mission &&
+					mission.orgId === task.orgId &&
+					mission.status !== "complete"
+				) {
 					await ctx.db.patch(task.missionId, {
 						status: "complete",
 						updatedAt: Date.now(),

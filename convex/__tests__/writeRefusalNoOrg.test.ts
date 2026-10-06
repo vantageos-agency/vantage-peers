@@ -132,6 +132,7 @@ const seedDiary = (t: T) =>
 			orchestrator: SEAT,
 			content: "seed entry",
 			createdAt: NOW,
+			orgId: "org-a",
 		}),
 	);
 
