@@ -41,7 +41,9 @@
  */
 
 import { v } from "convex/values";
+import type { DatabaseReader } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { findOperatorOrg } from "./lib/operatorOrg";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
@@ -99,13 +101,83 @@ export function expectedOrgIdForNamespace(
 	return tail === "" ? undefined : tail;
 }
 
+// RULING 4 (task k174d95s5qqy8t2r5rdrz3pr3d8fqv82): the FLEET namespace owns
+// BOTH the unstamped rows (undecidable ones stay unstamped) AND the rows stamped
+// with the operator org by convex/migrations/backfill_org_stamp. The operator
+// slug is DERIVED at run time from the active orgKind "operator" mapping row
+// (convex/lib/operatorOrg.ts), never typed. `operatorSlug` is only ever
+// consulted for PHASE1_NAMESPACE; a tenant namespace is unchanged.
 export function matchesNamespaceScope(
 	row: { orgId?: string | null | undefined },
 	namespace: string,
+	operatorSlug?: string,
 ): boolean {
 	const expected = expectedOrgIdForNamespace(namespace);
 	const actual = row.orgId ?? undefined;
-	return actual === expected;
+	if (actual === expected) return true;
+	return (
+		namespace === PHASE1_NAMESPACE &&
+		operatorSlug !== undefined &&
+		actual === operatorSlug
+	);
+}
+
+// The operator slug to ALSO read for the fleet namespace, or undefined when the
+// namespace is not the fleet's or the operator org is not exactly one (fail
+// closed: only the unstamped rows are read, nothing is widened).
+async function fleetOperatorSlug(
+	db: DatabaseReader,
+	namespace: string,
+): Promise<string | undefined> {
+	if (namespace !== PHASE1_NAMESPACE) return undefined;
+	const op = await findOperatorOrg(db);
+	return op.kind === "one" ? op.slug : undefined;
+}
+
+type OrgPage<R> = {
+	page: R[];
+	isDone: boolean;
+	continueCursor: string;
+};
+type PageOpts = { numItems: number; cursor: string | null };
+
+// Reads the unstamped range, then the operator-stamped range, as ONE logical
+// paginated scan. The continuation cursor carries its phase ("U|" / "O|") so the
+// callers' existing `while (!isDone)` loops are unchanged. Every page is a
+// single bounded `.paginate`.
+async function paginateOrgScopes<R>(
+	namespace: string,
+	operatorSlug: string | undefined,
+	opts: PageOpts,
+	read: (orgId: string | undefined, o: PageOpts) => Promise<OrgPage<R>>,
+): Promise<OrgPage<R>> {
+	if (operatorSlug === undefined) {
+		return await read(expectedOrgIdForNamespace(namespace), opts);
+	}
+	const raw = opts.cursor;
+	const inOperator = raw?.startsWith("O|") === true;
+	const inner =
+		raw === null
+			? null
+			: raw.startsWith("U|") || raw.startsWith("O|")
+				? raw.slice(2) || null
+				: raw;
+	const r = await read(inOperator ? operatorSlug : undefined, {
+		numItems: opts.numItems,
+		cursor: inner,
+	});
+	if (inOperator) {
+		return {
+			page: r.page,
+			isDone: r.isDone,
+			continueCursor: r.isDone ? r.continueCursor : `O|${r.continueCursor}`,
+		};
+	}
+	return {
+		page: r.page,
+		isDone: false,
+		continueCursor: r.isDone ? "O|" : `U|${r.continueCursor}`,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,17 +256,24 @@ export const _fetchBriefingNotesForBundle = internalQuery({
 		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		const expectedOrgId = expectedOrgIdForNamespace(args.namespace);
 		// Use the `by_orgId` index for tenant-scoped reads. Convex treats
 		// `q.eq("orgId", undefined)` as matching rows where the field is unset
 		// (master tenant), which is the Phase 1 case for `project/elpi-corp`.
-		const result = await ctx.db
-			.query("briefingNotes")
-			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
-			.paginate(args.paginationOpts);
+		// The fleet namespace additionally reads the operator-stamped rows.
+		const op = await fleetOperatorSlug(ctx.db, args.namespace);
+		const result = await paginateOrgScopes(
+			args.namespace,
+			op,
+			args.paginationOpts,
+			(orgId, o) =>
+				ctx.db
+					.query("briefingNotes")
+					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+					.paginate(o),
+		);
 		const since = args.sinceMs;
 		const scoped = result.page.filter((r) =>
-			matchesNamespaceScope(r, args.namespace),
+			matchesNamespaceScope(r, args.namespace, op),
 		);
 		const filtered =
 			since === undefined
@@ -217,14 +296,20 @@ export const _fetchTasksForBundle = internalQuery({
 		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		const expectedOrgId = expectedOrgIdForNamespace(args.namespace);
-		const result = await ctx.db
-			.query("tasks")
-			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
-			.paginate(args.paginationOpts);
+		const op = await fleetOperatorSlug(ctx.db, args.namespace);
+		const result = await paginateOrgScopes(
+			args.namespace,
+			op,
+			args.paginationOpts,
+			(orgId, o) =>
+				ctx.db
+					.query("tasks")
+					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+					.paginate(o),
+		);
 		const since = args.sinceMs;
 		const scoped = result.page.filter((r) =>
-			matchesNamespaceScope(r, args.namespace),
+			matchesNamespaceScope(r, args.namespace, op),
 		);
 		const filtered =
 			since === undefined
@@ -496,14 +581,20 @@ export const _findBriefingByTitleAndContent = internalQuery({
 		// used by the export-side reads above (`expectedOrgIdForNamespace` +
 		// `matchesNamespaceScope`), reusing the existing `by_orgId` index — no
 		// new index needed.
-		const expectedOrgId = expectedOrgIdForNamespace(namespace);
-		const result = await ctx.db
-			.query("briefingNotes")
-			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
-			.paginate(paginationOpts);
+		const op = await fleetOperatorSlug(ctx.db, namespace);
+		const result = await paginateOrgScopes(
+			namespace,
+			op,
+			paginationOpts,
+			(orgId, o) =>
+				ctx.db
+					.query("briefingNotes")
+					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+					.paginate(o),
+		);
 		const hit = result.page.find(
 			(r) =>
-				matchesNamespaceScope(r, namespace) &&
+				matchesNamespaceScope(r, namespace, op) &&
 				r.title === title &&
 				r.content === content,
 		);
@@ -526,14 +617,20 @@ export const _findTaskByTitleAndDescription = internalQuery({
 	handler: async (ctx, { namespace, title, description, paginationOpts }) => {
 		// Same cross-tenant fix as `_findBriefingByTitleAndContent` above —
 		// see that comment for the full rationale.
-		const expectedOrgId = expectedOrgIdForNamespace(namespace);
-		const result = await ctx.db
-			.query("tasks")
-			.withIndex("by_orgId", (q) => q.eq("orgId", expectedOrgId))
-			.paginate(paginationOpts);
+		const op = await fleetOperatorSlug(ctx.db, namespace);
+		const result = await paginateOrgScopes(
+			namespace,
+			op,
+			paginationOpts,
+			(orgId, o) =>
+				ctx.db
+					.query("tasks")
+					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+					.paginate(o),
+		);
 		const hit = result.page.find(
 			(r) =>
-				matchesNamespaceScope(r, namespace) &&
+				matchesNamespaceScope(r, namespace, op) &&
 				r.title === title &&
 				(r.description ?? "") === description,
 		);
@@ -612,14 +709,20 @@ export const _insertImportedBriefing = internalMutation({
 		// its own prior copy instead of missing it because orgId was never
 		// written (the row would silently fall outside the tenant's scope on
 		// every future dedup lookup, forcing perpetual duplicate imports).
+		// A NEW fleet import stays unstamped, exactly like a fresh fleet briefing
+		// (briefingNotes.create writes `orgId: undefined` for the master); the
+		// dedup lookup also finds the operator-stamped copy the backfill wrote.
 		const orgId = expectedOrgIdForNamespace(args.namespace);
-		const existing = await ctx.db
-			.query("briefingNotes")
-			.withIndex("by_orgId_contentHash", (q) =>
-				q.eq("orgId", orgId).eq("contentHash", args.contentHash),
-			)
-			.unique();
-		if (existing !== null) return existing._id;
+		const op = await fleetOperatorSlug(ctx.db, args.namespace);
+		for (const scope of op === undefined ? [orgId] : [orgId, op]) {
+			const existing = await ctx.db
+				.query("briefingNotes")
+				.withIndex("by_orgId_contentHash", (q) =>
+					q.eq("orgId", scope).eq("contentHash", args.contentHash),
+				)
+				.first();
+			if (existing !== null) return existing._id;
+		}
 		return await ctx.db.insert("briefingNotes", {
 			title: args.title,
 			topic: args.topic,
@@ -662,14 +765,19 @@ export const _insertImportedTask = internalMutation({
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
 		// Same orgId-tagging rationale as `_insertImportedBriefing` above.
+		// NEW fleet import stays unstamped like a fresh fleet task (orgIdForWrite
+		// yields undefined for the master); dedup also sees the operator stamp.
 		const orgId = expectedOrgIdForNamespace(args.namespace);
-		const existing = await ctx.db
-			.query("tasks")
-			.withIndex("by_orgId_contentHash", (q) =>
-				q.eq("orgId", orgId).eq("contentHash", args.contentHash),
-			)
-			.unique();
-		if (existing !== null) return existing._id;
+		const op = await fleetOperatorSlug(ctx.db, args.namespace);
+		for (const scope of op === undefined ? [orgId] : [orgId, op]) {
+			const existing = await ctx.db
+				.query("tasks")
+				.withIndex("by_orgId_contentHash", (q) =>
+					q.eq("orgId", scope).eq("contentHash", args.contentHash),
+				)
+				.first();
+			if (existing !== null) return existing._id;
+		}
 		return await ctx.db.insert("tasks", {
 			title: args.title,
 			description: args.description,

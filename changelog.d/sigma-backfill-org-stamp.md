@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **`backfill_org_stamp` migration stamps unstamped rows with their org, or with the operator org when the row is fleet-owned.** Internal, dry run by default, cursor-paginated, idempotent (`convex/migrations/backfill_org_stamp.ts`). The fleet stamp is the `clerkOrgSlug` of the single ACTIVE `orgKind: "operator"` mapping row, derived at run time (`convex/lib/operatorOrg.ts`), never typed; zero or two active operator orgs refuses the run. `FLEET_SCOPE_ORG_ID` is retired. Because the stamp is the operator org, `tasks.complete`'s fleet-repo gate already admits it (no `tasks.ts` change), and `fleetOrgStamp.ts` is consistent with this migration, not superseded. The fleet OKF bundle (`okfBundle.ts` export, dedupe and import lookups) now reads both unstamped rows and operator-stamped rows. Slug stamps remain labels; moving to stored org ids is the R-53 lane, out of scope.

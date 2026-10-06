@@ -1,5 +1,5 @@
 outil,table,crud,writer_tier,writer_gate,write_doors
-import_okf_bundle,_storage+briefingNotes+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
+import_okf_bundle,_storage+briefingNotes+client_org_mapping+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
