@@ -139,6 +139,9 @@ export const setOrgKind = internalMutation({
 // setOrgKind: the return carries {previous, current}. Only the allow-list is
 // patched; roster, scopes and isActive are untouched.
 // ─────────────────────────────────────────────────────────────────────────────
+// Upper bound on active org mappings scanned to build the operator roster.
+const MAX_ACTIVE_ORG_MAPPINGS = 500;
+
 export const setAddressableFleetCoordinators = internalMutation({
 	args: {
 		clerkOrgSlug: v.string(),
@@ -165,7 +168,16 @@ export const setAddressableFleetCoordinators = internalMutation({
 			);
 		}
 
-		const rows = await ctx.db.query("client_org_mapping").collect();
+		// read-bound: active org mappings are bounded by construction (one row per onboarded org, operator-written only); the cap is enforced fail-closed below.
+		const rows = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_isActive", (q) => q.eq("isActive", true))
+			.take(MAX_ACTIVE_ORG_MAPPINGS + 1);
+		if (rows.length > MAX_ACTIVE_ORG_MAPPINGS) {
+			throw new ConvexError(
+				`ORG_MAPPING_SCAN_CAP_EXCEEDED: more than ${MAX_ACTIVE_ORG_MAPPINGS} active client_org_mapping rows; refusing to validate against a partial operator roster`,
+			);
+		}
 		const operatorRoster = new Set<string>();
 		for (const r of rows) {
 			if (r.orgKind !== "operator" || !r.isActive) continue;
