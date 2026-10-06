@@ -1,0 +1,64 @@
+{
+	"schema_version": 1,
+	"ruling": "RULING 6 (Pi), task k172fnxzt4f71yj801mqjcdgnx8fr0md",
+	"semantics": "RATCHET ONLY. Each `count` is a CEILING of non-conforming sites/rows for one mechanical rule. A deploy refuses when the evidence count for a baselined rule is ABOVE its count, when a red mechanical rule is not listed here, when a module listed under `modules` with 0 carries a site, or when any value here is HIGHER than the same value on origin/main. Values may only go down.",
+	"evidence_contract": "The deploy evidence must carry `mechanical_rule_counts` {rule_id: int} (and `mechanical_rule_module_counts` {rule_id: {module: int}} for a rule with a zero-lane module). Without it the gate refuses; it never compares totals.",
+	"rules": {
+		"R-2": {
+			"count": 6,
+			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
+			"output_line": "R-2: 6 of 106 applicable oracle rows VIOLATE",
+			"modules": {}
+		},
+		"R-8": {
+			"count": 2,
+			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
+			"output_line": "R-8: 2 of 106 applicable oracle rows VIOLATE",
+			"modules": {}
+		},
+		"R-13": {
+			"count": 108,
+			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
+			"output_line": "R-13: 108 of 108 applicable oracle rows VIOLATE",
+			"modules": {}
+		},
+		"R-28": {
+			"count": 7,
+			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
+			"output_line": "R-28: 7 of 7 applicable oracle rows VIOLATE",
+			"modules": {}
+		},
+		"R-31": {
+			"count": 18,
+			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
+			"output_line": "R-31: 18 site(s) VIOLATE",
+			"modules": {}
+		},
+		"R-52": {
+			"count": 4,
+			"measured_tree_sha": "e85618d056f0dd0a39ea57ea70a3b85190a17bde",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /root/coding/vantage-memory/.claude/worktrees/agent-a234d7faa2d009387/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-e85618d/",
+			"output_line": "R-52: 4 site(s) VIOLATE",
+			"modules": {}
+		},
+		"R-53": {
+			"count": 113,
+			"measured_tree_sha": "e85618d056f0dd0a39ea57ea70a3b85190a17bde",
+			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /root/coding/vantage-memory/.claude/worktrees/agent-a234d7faa2d009387/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-e85618d/",
+			"output_line": "R-53: 113 site(s) VIOLATE",
+			"modules": {}
+		}
+	}
+}
