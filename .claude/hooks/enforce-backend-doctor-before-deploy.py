@@ -35,6 +35,32 @@ evidence exists does the ancestor relaxation (see `evaluate`) apply, and then
 the NEAREST ancestor decides (fewest commits from HEAD, rev-list count of
 <sha>..HEAD); distinct ancestors at equal distance are a could-not-judge.
 
+RATCHET BASELINE (v1.3.0, RULING 6, task k172fnxzt4f71yj801mqjcdgnx8fr0md)
+-------------------------------------------------------------------------
+Data file: `.claude/config/backend-doctor-baseline.json` (data, not code: it
+sits beside `token-authorities.json`, the repo's other gate-data file, so a
+fleet sync of `.claude/hooks/` never overwrites one repository's measured
+ceilings). Each `rules.<R-N>` carries `count` (a CEILING of non-conforming
+sites/rows), an optional `modules` {module: int} map, and the `command`,
+`cli_commit`, `measured_tree_sha` and doctor `output_line` it came from.
+
+RATCHET ONLY -- it lowers a bar, it never raises one. It applies only when a
+report is MECHANICALLY RED and the file exists (no file = the RED verdict
+above, unchanged). Then the gate REFUSES when:
+  * the evidence lacks `mechanical_rule_counts` {rule_id: int}, or that map
+    lists a number of red rules different from `mechanical_violations`
+    (could-not-judge: the total counts red RULES, not sites, so comparing
+    totals would let a new site in an already-red rule through);
+  * a red mechanical rule is NOT in the baseline;
+  * a baselined rule's count is ABOVE its `count`;
+  * a module the baseline holds at 0 for a red rule carries a site (needs
+    `mechanical_rule_module_counts[rule]` in the evidence, else could-not-judge);
+  * the file differs from `git show origin/main:<file>` by any rise: a higher
+    value, a rule added, a zero lane deleted; or it is absent/unreadable there.
+A count BELOW its ceiling passes and the message names the ceiling to lower.
+backend-doctor@1bda92f does NOT emit `mechanical_rule_counts`; until it does,
+its raw evidence still refuses on a red tree (verdict "incomplete").
+
 WHAT IT MUST NOT DO
 -------------------
 * NEVER refuse on a judgement/process rule (the doctor marks those; the gate
@@ -54,7 +80,9 @@ EVIDENCE FILE (keyed to SHA, mirroring enforce-clerk-jwt-smoke-prod.py's
     "convex_path": "<absolute convex path scored>",
     "exit_code": 0,                            # doctor process exit code
     "checked": 47, "total": 47,                # coverage tally
-    "mechanical_violations": 0                 # the only refusal-driving count
+    "mechanical_violations": 0,                # count of red MECHANICAL RULES
+    "mechanical_rule_counts": {"R-53": 113},   # ratchet only (see above)
+    "mechanical_rule_module_counts": {"R-53": {"convex/x.ts": 2}}  # optional
   }
 
 Deploy detection reuses the SHARED action tokenizer
@@ -93,7 +121,7 @@ from _lib.command_predicate import (  # noqa: E402
     raw_carries_action_words,
 )
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # `convex run <module>:<fn>` executes an existing function; it pushes no code.
 # (`run --push` does, and raw_carries_action_words keeps that case closed.)
@@ -336,7 +364,179 @@ def _load_evidence(repo_root: str, ship_sha: str) -> tuple[list[dict], list[tupl
     return reports, head_broken
 
 
-def _judge(r: dict, pin_note: str) -> tuple[str, str]:
+# ---------------------------------------------------------------------------
+# RULING 6 -- the ratchet baseline (task k172fnxzt4f71yj801mqjcdgnx8fr0md).
+# ---------------------------------------------------------------------------
+
+BASELINE_PATH = ".claude/config/backend-doctor-baseline.json"
+BASELINE_REF = "origin/main"
+_RULE_ID_RE = re.compile(r"^[A-Z]+-\d+$")
+
+
+class BaselineError(Exception):
+    """The baseline (working tree or origin/main) cannot be read as data."""
+
+
+def _nonneg_int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _parse_baseline(text: str, where: str) -> dict[str, dict]:
+    """{rule_id: {"count": int, "modules": {module: int}}}, or raise."""
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise BaselineError(f"{where} is not JSON ({exc})") from exc
+    rules = doc.get("rules") if isinstance(doc, dict) else None
+    if not isinstance(rules, dict):
+        raise BaselineError(f"{where} has no `rules` object")
+    out: dict[str, dict] = {}
+    for rule, entry in rules.items():
+        if not _RULE_ID_RE.match(str(rule)) or not isinstance(entry, dict):
+            raise BaselineError(f"{where}: entry {rule!r} is not a rule object")
+        count = entry.get("count")
+        if not _nonneg_int(count):
+            raise BaselineError(f"{where}: {rule}.count={count!r} is not an integer >= 0")
+        modules = entry.get("modules", {})
+        if not isinstance(modules, dict) or not all(
+                isinstance(k, str) and _nonneg_int(v) for k, v in modules.items()):
+            raise BaselineError(f"{where}: {rule}.modules is not a {{module: int>=0}} map")
+        out[rule] = {"count": count, "modules": dict(modules)}
+    return out
+
+
+def _baseline_on_ref(repo_root: str) -> dict[str, dict] | None:
+    """The baseline as committed on origin/main, or None when absent there.
+    A git failure other than "path not in that tree" raises (fail-closed)."""
+    r = subprocess.run(
+        ["git", "show", f"{BASELINE_REF}:{BASELINE_PATH}"],
+        capture_output=True, text=True, timeout=10, cwd=repo_root,
+    )
+    if r.returncode != 0:
+        err = r.stderr.strip()
+        if "does not exist in" in err or "exists on disk, but not in" in err:
+            return None
+        raise BaselineError(
+            f"`git show {BASELINE_REF}:{BASELINE_PATH}` failed "
+            f"(exit {r.returncode}): {err}"
+        )
+    return _parse_baseline(r.stdout, f"{BASELINE_REF}:{BASELINE_PATH}")
+
+
+def _baseline_rises(cur: dict[str, dict], ref: dict[str, dict]) -> list[str]:
+    """Every way `cur` is LOOSER than `ref`. A rule or a zero-lane absent from
+    `ref` and present in `cur` is a rise from nothing; a module lane present in
+    `ref` and deleted from `cur` is a lane reopened."""
+    rises: list[str] = []
+    for rule, entry in sorted(cur.items()):
+        base = ref.get(rule)
+        if base is None:
+            rises.append(f"{rule} is baselined at {entry['count']} but absent "
+                         f"from {BASELINE_REF} (a rule may not be ADDED)")
+            continue
+        if entry["count"] > base["count"]:
+            rises.append(f"{rule}.count {base['count']} -> {entry['count']}")
+        for mod, v in sorted(entry["modules"].items()):
+            if mod in base["modules"] and v > base["modules"][mod]:
+                rises.append(f"{rule}.modules[{mod}] {base['modules'][mod]} -> {v}")
+        for mod in sorted(set(base["modules"]) - set(entry["modules"])):
+            rises.append(f"{rule}.modules[{mod}] (={base['modules'][mod]}) "
+                         "was deleted -- a lane may not be reopened")
+    return rises
+
+
+def _ratchet(r: dict, repo_root: str, pin_note: str) -> tuple[str, str] | None:
+    """Judge a MECHANICALLY RED report against the ratchet baseline.
+
+    None when the repository has no baseline file (the plain RED verdict
+    stands). Otherwise a verdict: "pass" only when every red mechanical rule is
+    baselined and at or under its ceiling; "incomplete" when the evidence
+    cannot show per-rule counts; "ratchet" for every ratchet refusal."""
+    path = os.path.join(repo_root, BASELINE_PATH)
+    if not os.path.exists(path):
+        return None
+    name = os.path.basename(r["_path"])
+    head = f"backend-doctor evidence {name} {pin_note} and is mechanically red"
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            cur = _parse_baseline(fh.read(), BASELINE_PATH)
+        ref = _baseline_on_ref(repo_root)
+    except (OSError, BaselineError) as exc:
+        return "ratchet", f"{head}; the ratchet baseline cannot be read: {exc}."
+    if ref is None:
+        return "ratchet", (
+            f"{head}; {BASELINE_PATH} does not exist on {BASELINE_REF}. An "
+            "unmerged baseline has never been reviewed and certifies nothing."
+        )
+    rises = _baseline_rises(cur, ref)
+    if rises:
+        return "ratchet", (
+            f"{head}; {BASELINE_PATH} is HIGHER than on {BASELINE_REF}: "
+            + "; ".join(rises) + ". A baseline may only go down."
+        )
+
+    counts = r.get("mechanical_rule_counts", _MISSING)
+    if counts is _MISSING or not isinstance(counts, dict) or not all(
+            isinstance(k, str) and _nonneg_int(v) for k, v in counts.items()):
+        return "incomplete", (
+            f"{head}, but carries no usable `mechanical_rule_counts` "
+            f"{{rule_id: int}} (cli_commit {r.get('cli_commit')!r}). The total "
+            "`mechanical_violations` counts red RULES, not sites: it cannot show "
+            "which rules are red nor how many sites each has, so the ratchet "
+            "refuses rather than compare totals. backend-doctor must emit "
+            "per-rule counts in --json-evidence."
+        )
+    red = {k: v for k, v in counts.items() if v > 0}
+    if len(red) != r.get("mechanical_violations"):
+        return "incomplete", (
+            f"{head}, but `mechanical_rule_counts` lists {len(red)} red rule(s) "
+            f"[{', '.join(sorted(red))}] while mechanical_violations="
+            f"{r.get('mechanical_violations')}. A per-rule map that disagrees "
+            "with the total is a could-not-judge."
+        )
+
+    refusals: list[str] = []
+    for rule, n in sorted(red.items()):
+        if rule not in cur:
+            refusals.append(f"{rule} is red ({n}) and not in the baseline")
+        elif n > cur[rule]["count"]:
+            refusals.append(f"{rule} has {n}, above its baseline {cur[rule]['count']}")
+    module_counts = r.get("mechanical_rule_module_counts", {})
+    for rule, entry in sorted(cur.items()):
+        lanes = sorted(m for m, v in entry["modules"].items() if v == 0)
+        if not lanes or rule not in red:
+            continue
+        per_mod = module_counts.get(rule) if isinstance(module_counts, dict) else None
+        if not isinstance(per_mod, dict) or not all(
+                isinstance(k, str) and _nonneg_int(v) for k, v in per_mod.items()):
+            return "incomplete", (
+                f"{head}; {rule} has zero-lane module(s) [{', '.join(lanes)}] in "
+                f"the baseline but the evidence carries no usable "
+                f"`mechanical_rule_module_counts[{rule!r}]`, so a site in a "
+                "closed lane cannot be ruled out."
+            )
+        for mod in lanes:
+            if per_mod.get(mod, 0) > 0:
+                refusals.append(f"{rule} has {per_mod[mod]} site(s) in {mod}, "
+                                "a lane the baseline closed at 0")
+    if refusals:
+        return "ratchet", (
+            f"{head} ABOVE the ratchet baseline {BASELINE_PATH}: "
+            + "; ".join(refusals) + "."
+        )
+    room = [f"{rule} {n} < {cur[rule]['count']}"
+            for rule, n in sorted(red.items()) if n < cur[rule]["count"]]
+    room += [f"{rule} 0 < {e['count']}" for rule, e in sorted(cur.items())
+             if rule not in red and e["count"] > 0]
+    note = (f" Lower the baseline in the same PR: {', '.join(room)}." if room else "")
+    return "pass", (
+        f"{head}, but every red mechanical rule is at or under its ratchet "
+        f"baseline ({', '.join(f'{k}={v}' for k, v in sorted(red.items()))})."
+        + note
+    )
+
+
+def _judge(r: dict, pin_note: str, repo_root: str | None = None) -> tuple[str, str]:
     """Verdict for ONE report already accepted as covering HEAD."""
     clean, incomplete = _clean_verdict(r)
     if incomplete is not None:
@@ -353,6 +553,10 @@ def _judge(r: dict, pin_note: str) -> tuple[str, str]:
             f"({r.get('checked')}/{r.get('total')} checked, "
             f"{r.get('mechanical_violations', 0)} mechanical violations)."
         )
+    if repo_root is not None:
+        ratcheted = _ratchet(r, repo_root, pin_note)
+        if ratcheted is not None:
+            return ratcheted
     return "red", (
         f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
         f"but is MECHANICALLY RED: exit_code="
@@ -471,7 +675,7 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
     )
     if head_reports:
         pin_note = f"pins HEAD {ship[:12]}"
-        verdicts = [_judge(r, pin_note) for r in head_reports]
+        verdicts = [_judge(r, pin_note, repo_root) for r in head_reports]
         for verdict, message in verdicts:
             if verdict != "pass":
                 return verdict, message
@@ -514,7 +718,7 @@ def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
                 "change since"
             )
             # Several files for the same commit: any non-pass refuses.
-            verdicts = [_judge(r, pin_note) for r in nearest]
+            verdicts = [_judge(r, pin_note, repo_root) for r in nearest]
             for verdict, message in verdicts:
                 if verdict != "pass":
                     return verdict, message
@@ -563,7 +767,9 @@ def _print_block(verdict: str, detail: str, ship_hint: str) -> None:
         '         {"sha","cli_commit","convex_path","exit_code",'
         '"checked","total","mechanical_violations"}\n'
         "    3. The gate reads that file, verifies sha == `git rev-parse HEAD`,\n"
-        "       and that mechanical_violations == 0 (exit_code != 2).\n"
+        "       and that mechanical_violations == 0, or (RULING 6) that every\n"
+        "       red rule in `mechanical_rule_counts` is at or under its ceiling in\n"
+        f"       {BASELINE_PATH}.\n"
         "\n"
         "  The gate refuses ONLY on MECHANICAL non-conformance -- never on a "
         "judgement/process rule (a report with exit_code=1 but "

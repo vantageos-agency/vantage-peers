@@ -421,3 +421,251 @@ def test_must_refuse_unreadable_input_unchanged():
                        capture_output=True, text=True)
     assert p.returncode == 0
     assert "[hook warning]" in p.stderr
+
+
+# ---------------------------------------------------------------------------
+# RULING 6 (task k172fnxzt4f71yj801mqjcdgnx8fr0md) -- the ratchet baseline.
+# Select with `-k ratchet`.
+#
+# The baseline is the COMMITTED data file `.claude/config/backend-doctor-
+# baseline.json` (copied into each temp repo, never re-typed here). The
+# measured evidence below is the file backend-doctor@1bda92f wrote for
+# vantage-peers e85618d:
+#   cd <backend-doctor@1bda92f> && npx tsx src/cli.ts <vp@e85618d>/convex \
+#       --json-evidence <scratch>/
+# plus `mechanical_rule_counts`, the per-rule field the gate requires. The
+# doctor at 1bda92f does NOT emit that field; its values are the doctor's own
+# stdout count lines for that run (`R-53: 113 site(s) VIOLATE`, ...). `sha` is
+# rewritten to the temp repo's HEAD so the evidence pins the tree deployed.
+# ---------------------------------------------------------------------------
+
+BASELINE_REL = pathlib.Path(".claude/config/backend-doctor-baseline.json")
+REAL_BASELINE = pathlib.Path(__file__).resolve().parents[2] / BASELINE_REL
+
+MEASURED_E85618D = {
+    "sha": "e85618d056f0dd0a39ea57ea70a3b85190a17bde",
+    "cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
+    "convex_path": "/root/coding/vantage-memory/.claude/worktrees/agent-a234d7faa2d009387/convex",
+    "exit_code": 1,
+    "checked": 51,
+    "total": 52,
+    "mechanical_violations": 7,
+}
+MEASURED_E85618D_RULE_COUNTS = {
+    "R-2": 6, "R-8": 2, "R-13": 108, "R-28": 7, "R-31": 18, "R-52": 4, "R-53": 113,
+}
+
+
+def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
+    """Temp repo whose origin/main carries `main_baseline` (default: the real
+    committed baseline) and whose HEAD carries `head_baseline` (default: same)."""
+    repo, _ = _init_repo(tmp)
+    real = json.loads(REAL_BASELINE.read_text())
+    on_main = real if main_baseline is None else main_baseline
+    path = repo / BASELINE_REL
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(on_main, indent=2))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "baseline")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    if head_baseline is not None:
+        path.write_text(json.dumps(head_baseline, indent=2))
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "baseline edit")
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+    return repo, head
+
+
+def _copy_baseline():
+    return json.loads(REAL_BASELINE.read_text())
+
+
+def _write_measured(repo, head, counts=None, extra=None, mech=None):
+    ev = dict(MEASURED_E85618D)
+    ev["sha"] = head
+    if counts is not False:
+        ev["mechanical_rule_counts"] = dict(
+            MEASURED_E85618D_RULE_COUNTS if counts is None else counts)
+    if mech is not None:
+        ev["mechanical_violations"] = mech
+    if extra:
+        ev.update(extra)
+    (repo / "qa" / f"backend-doctor-{head}.json").write_text(json.dumps(ev))
+
+
+def test_ratchet_baseline_values_carry_their_command():
+    real = _copy_baseline()
+    assert set(real["rules"]) == set(MEASURED_E85618D_RULE_COUNTS)
+    for rule, entry in real["rules"].items():
+        assert entry["command"].startswith("cd ")
+        assert "npx tsx src/cli.ts" in entry["command"]
+        assert entry["output_line"].startswith(f"{rule}: {entry['count']} ")
+        assert entry["cli_commit"] == "1bda92f854f8f851ea38af11511968df0c7042e5"
+
+
+def test_ratchet_block_one_more_r53_site():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        counts = dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 114})
+        _write_measured(repo, head, counts=counts)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "R-53" in msg and "114" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_raised_baseline_vs_origin_main():
+    with tempfile.TemporaryDirectory() as tmp:
+        raised = _copy_baseline()
+        raised["rules"]["R-53"]["count"] = 114
+        repo, head = _ratchet_repo(tmp, head_baseline=raised)
+        counts = dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 114})
+        _write_measured(repo, head, counts=counts)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "origin/main" in msg and "R-53" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_new_rule_added_to_baseline_vs_origin_main():
+    with tempfile.TemporaryDirectory() as tmp:
+        widened = _copy_baseline()
+        widened["rules"]["R-3"] = dict(widened["rules"]["R-2"], count=1)
+        repo, head = _ratchet_repo(tmp, head_baseline=widened)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-3": 1}),
+                        mech=8)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "R-3" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_reopened_zero_lane_vs_origin_main():
+    with tempfile.TemporaryDirectory() as tmp:
+        lane = _copy_baseline()
+        lane["rules"]["R-53"]["modules"] = {"convex/diary.ts": 0}
+        reopened = _copy_baseline()  # the zero lane deleted on the branch
+        repo, head = _ratchet_repo(tmp, main_baseline=lane, head_baseline=reopened)
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "convex/diary.ts" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_red_mechanical_rule_not_in_baseline():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-3": 1}),
+                        mech=8)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "R-3" in msg
+        assert "not in the baseline" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_raw_doctor_evidence_without_per_rule_counts():
+    """backend-doctor@1bda92f's evidence carries only the TOTAL (7 red rules).
+    A total cannot show which rules are red nor how many sites each has, so the
+    gate refuses rather than compare totals."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head, counts=False)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete" and "mechanical_rule_counts" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_counts_disagree_with_mechanical_violations():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        counts = {k: v for k, v in MEASURED_E85618D_RULE_COUNTS.items()
+                  if k != "R-31"}
+        _write_measured(repo, head, counts=counts)  # 6 red listed, total says 7
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete" and "mechanical_violations" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_site_in_zero_lane_module():
+    with tempfile.TemporaryDirectory() as tmp:
+        lane = _copy_baseline()
+        lane["rules"]["R-53"]["modules"] = {"convex/diary.ts": 0}
+        repo, head = _ratchet_repo(tmp, main_baseline=lane)
+        _write_measured(repo, head, extra={
+            "mechanical_rule_module_counts": {"R-53": {"convex/diary.ts": 1}},
+        })
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "convex/diary.ts" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_zero_lane_without_module_counts():
+    with tempfile.TemporaryDirectory() as tmp:
+        lane = _copy_baseline()
+        lane["rules"]["R-53"]["modules"] = {"convex/diary.ts": 0}
+        repo, head = _ratchet_repo(tmp, main_baseline=lane)
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete"
+        assert "mechanical_rule_module_counts" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_block_baseline_absent_on_origin_main():
+    """An unmerged baseline certifies nothing: it has never been reviewed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, _ = _init_repo(tmp)
+        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        path = repo / BASELINE_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(REAL_BASELINE.read_text())
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "unmerged baseline")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True).stdout.strip()
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "origin/main" in msg
+        assert _run(repo) == 2
+
+
+def test_ratchet_pass_measured_e85618d_at_baseline():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
+
+
+def test_ratchet_pass_lowered_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        counts = dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 112})
+        _write_measured(repo, head, counts=counts)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert "R-53" in msg and "112" in msg  # names room to lower the baseline
+        assert _run(repo) == 0
+
+
+def test_ratchet_pass_lowered_baseline_vs_origin_main():
+    with tempfile.TemporaryDirectory() as tmp:
+        lowered = _copy_baseline()
+        lowered["rules"]["R-53"]["count"] = 112
+        repo, head = _ratchet_repo(tmp, head_baseline=lowered)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 112}))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
+
+
+def test_ratchet_pass_rule_gone_green_drops_out():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        counts = dict(MEASURED_E85618D_RULE_COUNTS, **{"R-8": 0})
+        _write_measured(repo, head, counts=counts, mech=6)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
