@@ -822,6 +822,17 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 				"\t\t...extraArgs,\n\t\ttokensCost",
 			);
 			expect(verbOfTool(spread, "update_mandate")).toBe("?");
+
+			// two const rests of args under the loop's name: which field set the
+			// loop reads is ambiguous, so argFieldsOf answers nothing
+			const ambiguous = copyTree();
+			mutate(
+				ambiguous,
+				"convex/businessUnits.ts",
+				"const { buId, callerOrchestrator, ...fields } = args;",
+				"const { buId, callerOrchestrator, ...fields } = args;\n\t\t{\n\t\t\tconst { callerOrchestrator: _c, ...fields } = args;\n\t\t\tvoid fields;\n\t\t}",
+			);
+			expect(verbOfTool(ambiguous, "update_bu")).toBe("?");
 		},
 		TIMEOUT,
 	);
