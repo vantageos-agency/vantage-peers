@@ -45,11 +45,11 @@
 			"modules": {}
 		},
 		"R-52": {
-			"count": 4,
-			"measured_tree_sha": "e85618d056f0dd0a39ea57ea70a3b85190a17bde",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /root/coding/vantage-memory/.claude/worktrees/agent-a234d7faa2d009387/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-e85618d/",
-			"output_line": "R-52: 4 site(s) VIOLATE",
+			"count": 0,
+			"measured_tree_sha": "d8a7b7be28039166f7a4b2a56ace803f8e932bd4",
+			"cli_commit": "23e4e54",
+			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-r52/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-d8a7b7b/",
+			"output_line": "R-52: 0 sites VIOLATE (6 could-not-judge, unchanged); MECHANICAL RULE COUNTS: R-2 6, R-8 2, R-13 108, R-28 7, R-31 18, R-53 113",
 			"modules": {}
 		},
 		"R-53": {
