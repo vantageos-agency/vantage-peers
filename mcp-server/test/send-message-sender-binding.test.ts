@@ -61,6 +61,9 @@ function memberCtx(over: Partial<OAuthContext> = {}): OAuthContext {
 		fromAllowList: ["bob", "bea"],
 		namespaceReadPrefixes: ["team/org-b"],
 		namespaceWritePrefixes: ["team/org-b"],
+		// A seat carries its verified org (token row); send_message forwards it
+		// (send-message-seat-org.test.ts) and refuses a seat that has none.
+		clerkOrgSlug: "org-b",
 		expiresAt: Date.now() + 3_600_000,
 		isMaster: false,
 		...over,

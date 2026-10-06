@@ -120,7 +120,14 @@ async function sendMessageCore(
 	ctx: MutationCtx,
 	args: SendMessageArgs,
 	scope: OrgScope,
+	// The recipient scope when it differs from the caller's own: an MCP seat of a
+	// client org reaches Convex as the service account (fleet master, no org), so
+	// `scope` alone would give it fleet reach. Set only by `sendMessage`, from
+	// `resolveSeatRecipientScope`; it narrows recipients and nothing else (the
+	// tenant stamp still derives from `scope`).
+	recipientScope?: OrgScope,
 ): Promise<Doc<"messages">["_id"]> {
+	const reach = recipientScope ?? scope;
 	// Tenant-scope write symmetry (task sigma/tenant-scope-write-symmetry):
 		// the scoped READS (listMessages/listByChannel/searchMessagesByKeyword)
 		// force `.eq("tenantId", scope.orgSlug)` for non-master callers — the
@@ -249,7 +256,7 @@ async function sendMessageCore(
 			// fleet-wide branch is gated on BOTH isMaster AND orgSlug===null;
 			// this discriminant is applied locally here, not in lib/auth.ts
 			// (shared type, out of scope for this fix).
-			if (scope.isMaster && scope.orgSlug === null) {
+			if (reach.isMaster && reach.orgSlug === null) {
 				// True internal/master emitter: exclude every orchestrator bound
 				// to any client tenant — active OR inactive — so an internal
 				// broadcast never reaches a client orchestrator, the exact leak
@@ -282,7 +289,7 @@ async function sendMessageCore(
 				// orchestratorId (the literal string "*" is not a
 				// registered orchestrator), so this yields zero recipients
 				// and the bounce below fires — fail-closed, not a leak.
-				const allowed = new Set(scope.allowedOrchestrators);
+				const allowed = new Set(reach.allowedOrchestrators);
 				recipients = orchestratorIds.filter(
 					(o) => o !== args.from && allowed.has(o),
 				);
@@ -316,7 +323,7 @@ async function sendMessageCore(
 			// roster is the ["*"] read sentinel, which names nobody) may reach only
 			// orchestrators on its OWN roster, directly or via one of their
 			// instances. Enforced here, in Convex, so no transport can bypass it.
-			const fleetWide = scope.isMaster && scope.orgSlug === null;
+			const fleetWide = reach.isMaster && reach.orgSlug === null;
 			const instanceOwner = new Map<string, string>();
 			for (const p of profiles) {
 				if (p.instanceId !== undefined) {
@@ -328,8 +335,8 @@ async function sendMessageCore(
 			// empty by default, written only by setAddressableFleetCoordinators).
 			// Never inferred; "*" is never a grant.
 			let coordinators: string[] = [];
-			if (!fleetWide && scope.orgSlug !== null) {
-				const orgSlug = scope.orgSlug;
+			if (!fleetWide && reach.orgSlug !== null) {
+				const orgSlug = reach.orgSlug;
 				const mapping = await ctx.db
 					.query("client_org_mapping")
 					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
@@ -339,7 +346,7 @@ async function sendMessageCore(
 					.map(normalizeOrchestratorId);
 			}
 			const isReachable = (orchestrator: string): boolean =>
-				isOrchestratorOnOrgRoster(scope, orchestrator) ||
+				isOrchestratorOnOrgRoster(reach, orchestrator) ||
 				coordinators.includes(normalizeOrchestratorId(orchestrator));
 			const isOnOwnRoster = (part: string): boolean => {
 				if (fleetWide) return true;
@@ -392,6 +399,66 @@ async function sendMessageCore(
 		}
 
 	return messageId;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// seatOrgSlug — the verified org of an MCP SEAT of a client organisation, forwarded
+// by the MCP server on the service-account path (task
+// k174f54w3fv3amnk16v68tb3jh8frxxt). That path resolves as the true fleet master
+// (isMaster, orgSlug null), so the #1470 recipient scope never applied to a seat.
+// The MCP derives the value from the bearer's verified principal (the token row's
+// org / the credential-bound actor org), never from a tool argument; this door
+// believes it from the SERVICE ACCOUNT ONLY (same trust rule as `verifiedActor`
+// and `verifiedPerson`), refuses it from anyone else, and fails closed unless it
+// names an ACTIVE client_org_mapping row. It yields the org's own recipient scope
+// (roster + addressableFleetCoordinators, applied by sendMessageCore).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function resolveSeatRecipientScope(
+	ctx: MutationCtx,
+	transportScope: OrgScope,
+	seatOrgSlug: string | undefined,
+	tenantId: string | undefined,
+): Promise<OrgScope | undefined> {
+	if (seatOrgSlug === undefined) return undefined;
+	const door = "messages:sendMessage";
+	const refuse = (reason: string, detail: string): never => {
+		throw new ConvexError(
+			`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
+		);
+	};
+	if (
+		!(
+			transportScope.isMaster &&
+			transportScope.masterSource === "service-account"
+		)
+	) {
+		return refuse(
+			"seat-org-not-trusted",
+			"seatOrgSlug is a transport-verified claim and is accepted only from the fleet service account",
+		);
+	}
+	const mapping =
+		seatOrgSlug === "" ? null : await lookupOrgMapping(ctx, seatOrgSlug);
+	if (!mapping || !mapping.isActive) {
+		return refuse(
+			"seat-org-not-active",
+			`seatOrgSlug "${seatOrgSlug}" is not a known, active organisation`,
+		);
+	}
+	if (tenantId !== undefined && tenantId !== seatOrgSlug) {
+		return refuse(
+			"seat-org-tenant-mismatch",
+			`seatOrgSlug "${seatOrgSlug}" and tenantId "${tenantId}" name different organisations`,
+		);
+	}
+	return {
+		userId: transportScope.userId,
+		orgSlug: seatOrgSlug,
+		allowedOrchestrators: mapping.allowedOrchestrators,
+		scopes: mapping.scopes,
+		isMaster: false,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -491,6 +558,10 @@ export const sendMessage = mutation({
 		// A person reached through the MCP service account: sends in its own
 		// name, scope rebuilt from its token row (convex/lib/personPrincipal.ts).
 		verifiedPerson: v.optional(verifiedPersonValidator),
+		// The verified org of an MCP seat of a client organisation (see
+		// resolveSeatRecipientScope). Service account only; any other caller is
+		// refused. Scopes the RECIPIENTS to that org's roster + coordinators.
+		seatOrgSlug: v.optional(v.string()),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
@@ -499,7 +570,7 @@ export const sendMessage = mutation({
 		// credential lock so the lock can bind the presented credential's org
 		// against the SAME `orgSlug` the rest of this handler already derives
 		// (reused below by sendMessageCore — never re-derived).
-		const { verifiedPerson, ...sendArgs } = args;
+		const { verifiedPerson, seatOrgSlug, ...sendArgs } = args;
 		// The transport's own scope is bound first (the service account, or the
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
 		// person is carried (convex/lib/personPrincipal.ts).
@@ -515,6 +586,15 @@ export const sendMessage = mutation({
 					args.agentCredentialSecret !== undefined ||
 					args.verifiedActor !== undefined,
 			},
+		);
+
+		// Judged on the TRANSPORT scope: the claim is believed from the service
+		// account only, and a person-resolved scope is never that.
+		const recipientScope = await resolveSeatRecipientScope(
+			ctx,
+			transportScope,
+			seatOrgSlug,
+			args.tenantId,
 		);
 
 		if (args.from === undefined) {
@@ -547,6 +627,7 @@ export const sendMessage = mutation({
 			ctx,
 			{ ...sendArgs, from, fromInstanceId },
 			scope,
+			recipientScope,
 		);
 	},
 });
