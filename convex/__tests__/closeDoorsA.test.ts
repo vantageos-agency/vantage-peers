@@ -117,12 +117,14 @@ async function orgWorld() {
 			orchestrator: "sigma",
 			content: "org-a private diary",
 			createdAt: now(),
+			orgId: "org-a",
 		});
 		await ctx.db.insert("diary", {
 			date: "2026-09-30",
 			orchestrator: "tau",
 			content: "org-b private diary",
 			createdAt: now(),
+			orgId: "org-b",
 		});
 		const buA = await ctx.db.insert("businessUnits", {
 			name: "BU of org a",

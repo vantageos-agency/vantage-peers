@@ -173,33 +173,32 @@ const diaryRow = (orgId: string | undefined) => ({
 });
 
 describe("diary:write — R-52", () => {
-	test("REFUSED: org-a member cannot overwrite org-b's entry for the same seat name and date", async () => {
+	test("REFUSED: org-a's write never alters org-b's entry for the same seat name and date", async () => {
 		const t = makeT();
 		await seedOrgs(t);
 		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow("org-b")));
 		const before = await t.run((ctx) => ctx.db.get(id));
-		await expect(
-			asOrg(t, "org-a").mutation(api.diary.write, {
-				date: "2026-10-01",
-				orchestrator: SEAT,
-				content: "overwritten",
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		const mine = await asOrg(t, "org-a").mutation(api.diary.write, {
+			date: "2026-10-01",
+			orchestrator: SEAT,
+			content: "org-a's own",
+		});
+		expect(mine).not.toBe(id);
 		expect(await t.run((ctx) => ctx.db.get(id))).toEqual(before);
+		expect((await t.run((ctx) => ctx.db.get(mine)))?.orgId).toBe("org-a");
 	});
 
-	test("REFUSED: org-a member cannot overwrite a fleet (unstamped) entry", async () => {
+	test("REFUSED: org-a's write never alters a fleet (unstamped) entry", async () => {
 		const t = makeT();
 		await seedOrgs(t);
 		const id = await t.run((ctx) => ctx.db.insert("diary", diaryRow(undefined)));
 		const before = await t.run((ctx) => ctx.db.get(id));
-		await expect(
-			asOrg(t, "org-a").mutation(api.diary.write, {
-				date: "2026-10-01",
-				orchestrator: SEAT,
-				content: "overwritten",
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		const mine = await asOrg(t, "org-a").mutation(api.diary.write, {
+			date: "2026-10-01",
+			orchestrator: SEAT,
+			content: "org-a's own",
+		});
+		expect(mine).not.toBe(id);
 		expect(await t.run((ctx) => ctx.db.get(id))).toEqual(before);
 	});
 
@@ -332,5 +331,69 @@ describe("tasks:complete mission auto-complete — R-52", () => {
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow(undefined)));
 		await completeTaskNaming(t, asMaster(t), missionId, "sigma");
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("complete");
+	});
+});
+
+describe("diary shared (seat, date) key — own-row selection, R-52 follow-up", () => {
+	const key = { date: "2026-10-03", orchestrator: SEAT };
+	const contentOf = async (t: T, caller: ReturnType<typeof asOrg>) =>
+		(await caller.query(api.diary.get, key))?.content;
+
+	test("PRESENT P1: org-b writes the shared key, then org-a writes it; each reads back its own", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const b = asOrg(t, "org-b");
+		const a = asOrg(t, "org-a");
+		const idB = await b.mutation(api.diary.write, { ...key, content: "from b" });
+		const idA = await a.mutation(api.diary.write, { ...key, content: "from a" });
+		expect(idA).not.toBe(idB);
+		expect(await contentOf(t, a)).toBe("from a");
+		expect(await contentOf(t, b)).toBe("from b");
+		await a.mutation(api.diary.write, { ...key, content: "a v2" });
+		expect(await contentOf(t, a)).toBe("a v2");
+		expect(await contentOf(t, b)).toBe("from b");
+	});
+
+	test("PRESENT P2: master writes the shared key, then org-a writes it; both succeed", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const m = asMaster(t);
+		const a = asOrg(t, "org-a");
+		const idM = await m.mutation(api.diary.write, { ...key, content: "fleet" });
+		const idA = await a.mutation(api.diary.write, { ...key, content: "from a" });
+		expect(idA).not.toBe(idM);
+		expect(await contentOf(t, a)).toBe("from a");
+		expect(await contentOf(t, m)).toBe("fleet");
+	});
+
+	test("PRESENT: get on a shared key returns the caller's own row for org-a, org-b and master", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("diary", { ...key, content: "fleet", createdAt: 1 });
+			await ctx.db.insert("diary", { ...key, content: "from a", createdAt: 2, orgId: "org-a" });
+			await ctx.db.insert("diary", { ...key, content: "from b", createdAt: 3, orgId: "org-b" });
+		});
+		expect(await contentOf(t, asOrg(t, "org-a"))).toBe("from a");
+		expect(await contentOf(t, asOrg(t, "org-b"))).toBe("from b");
+		expect(await contentOf(t, asMaster(t))).toBe("fleet");
+	});
+
+	test("REFUSED: list and listByDateRange never return a foreign tenant's row to an org caller", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("diary", { ...key, content: "from a", createdAt: 2, orgId: "org-a" });
+			await ctx.db.insert("diary", { ...key, content: "from b", createdAt: 3, orgId: "org-b" });
+			await ctx.db.insert("diary", { ...key, content: "fleet", createdAt: 1 });
+		});
+		const a = asOrg(t, "org-a");
+		const range = { from: "2026-10-01", to: "2026-10-31" };
+		const names = (rows: unknown) =>
+			(Array.isArray(rows) ? rows : []).map((r: { content: string }) => r.content);
+		expect(names(await a.query(api.diary.list, { orchestrator: SEAT }))).toEqual(["from a"]);
+		expect(names(await a.query(api.diary.list, {}))).toEqual(["from a"]);
+		expect(names(await a.query(api.diary.listByDateRange, { ...range, orchestrator: SEAT }))).toEqual(["from a"]);
+		expect(names(await a.query(api.diary.listByDateRange, range))).toEqual(["from a"]);
 	});
 });

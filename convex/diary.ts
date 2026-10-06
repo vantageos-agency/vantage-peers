@@ -1,6 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
@@ -22,6 +22,38 @@ function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): b
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
 	return scope.allowedOrchestrators.includes(orchestrator);
+}
+
+// The (orchestrator, date) key is a NAME that two organisations, or the fleet,
+// can all hold, so it can name several rows. The caller's own row is the one
+// whose server-stamped tenant is the caller's: the unstamped (fleet) row for
+// master, the row stamped with its org for an org caller. The tenant is an
+// INDEX predicate (by_org_orchestrator_date), so a foreign tenant's row is never
+// read, never returned, and can never lock the caller out. A scope with no
+// tenant (anonymous / pre-org) owns nothing.
+function ownTenantOf(scope: OrgScope): { tenant: string | undefined } | null {
+	if (scope.isMaster) return { tenant: undefined };
+	if (scope.orgSlug === null) return null;
+	return { tenant: scope.orgSlug };
+}
+
+async function ownDiaryRow(
+	ctx: QueryCtx,
+	scope: OrgScope,
+	orchestrator: string,
+	date: string,
+): Promise<Doc<"diary"> | null> {
+	const own = ownTenantOf(scope);
+	if (own === null) return null;
+	return await ctx.db
+		.query("diary")
+		.withIndex("by_org_orchestrator_date", (q) =>
+			q
+				.eq("orgId", own.tenant)
+				.eq("orchestrator", orchestrator)
+				.eq("date", date),
+		)
+		.unique();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,19 +101,12 @@ export const write = mutation({
 		const now = Date.now();
 
 		// Check for existing entry
-		const existing = await ctx.db
-			.query("diary")
-			.withIndex("by_orchestrator_date", (q) =>
-				q.eq("orchestrator", args.orchestrator).eq("date", args.date),
-			)
-			.unique();
+		const existing = await ownDiaryRow(ctx, scope, args.orchestrator, args.date);
 
 		if (existing !== null) {
-			// R-52 — the entry's own server-stamped tenant must be the caller's.
-			// (orchestrator, date) is a NAME key that two organisations, or the
-			// fleet, can share; only the stamp tells their rows apart. An unstamped
-			// entry is fleet-owned or not yet backfilled and is refused to every org
-			// caller. Master is unchanged.
+			// R-52 — the row was selected as the caller's OWN (ownDiaryRow), so this
+			// can only fire if that selection is ever loosened; it keeps the patch
+			// bound to the row's server-stamped tenant. Master is unchanged.
 			if (!scope.isMaster && existing.orgId !== scope.orgSlug) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
@@ -153,12 +178,7 @@ export const get = query({
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "diary:get", { alsoRefusePreOrg: true });
 		if (!isOrchestratorAllowedForScope(scope, args.orchestrator)) return null;
-		return await ctx.db
-			.query("diary")
-			.withIndex("by_orchestrator_date", (q) =>
-				q.eq("orchestrator", args.orchestrator).eq("date", args.date),
-			)
-			.unique();
+		return await ownDiaryRow(ctx, scope, args.orchestrator, args.date);
 	},
 });
 
@@ -251,11 +271,20 @@ export const list = query({
 
 		const orchestrator = args.orchestrator;
 		let rows: Doc<"diary">[];
-		if (orchestrator !== undefined) {
+		if (orchestrator !== undefined && scope.isMaster) {
 			rows = await ctx.db
 				.query("diary")
 				.withIndex("by_orchestrator_date", (q) =>
 					q.eq("orchestrator", orchestrator),
+				)
+				.order("desc")
+				.take(fetchCap);
+		} else if (orchestrator !== undefined) {
+			// R-52: an org caller reads only its own tenant's rows of the name.
+			rows = await ctx.db
+				.query("diary")
+				.withIndex("by_org_orchestrator_date", (q) =>
+					q.eq("orgId", scope.orgSlug ?? undefined).eq("orchestrator", orchestrator),
 				)
 				.order("desc")
 				.take(fetchCap);
@@ -273,8 +302,8 @@ export const list = query({
 				roster.map((name) =>
 					ctx.db
 						.query("diary")
-						.withIndex("by_orchestrator_date", (q) =>
-							q.eq("orchestrator", name),
+						.withIndex("by_org_orchestrator_date", (q) =>
+							q.eq("orgId", scope.orgSlug ?? undefined).eq("orchestrator", name),
 						)
 						.order("desc")
 						.take(fetchCap),
@@ -418,10 +447,24 @@ export const listByDateRange = query({
 		if (args.orchestrator !== undefined) {
 			const orchestrator = args.orchestrator;
 			if (!isOrchestratorAllowedForScope(scope, orchestrator)) return [];
+			if (scope.isMaster) {
+				return await ctx.db
+					.query("diary")
+					.withIndex("by_orchestrator_date", (q) =>
+						q
+							.eq("orchestrator", orchestrator)
+							.gte("date", args.from)
+							.lte("date", args.to),
+					)
+					.order("asc")
+					.collect();
+			}
+			// R-52: an org caller reads only its own tenant's rows of the name.
 			return await ctx.db
 				.query("diary")
-				.withIndex("by_orchestrator_date", (q) =>
+				.withIndex("by_org_orchestrator_date", (q) =>
 					q
+						.eq("orgId", scope.orgSlug ?? undefined)
 						.eq("orchestrator", orchestrator)
 						.gte("date", args.from)
 						.lte("date", args.to),
@@ -446,8 +489,9 @@ export const listByDateRange = query({
 			scope.allowedOrchestrators.map((o) =>
 				ctx.db
 					.query("diary")
-					.withIndex("by_orchestrator_date", (q) =>
+					.withIndex("by_org_orchestrator_date", (q) =>
 						q
+							.eq("orgId", scope.orgSlug ?? undefined)
 							.eq("orchestrator", o as Doc<"diary">["orchestrator"])
 							.gte("date", args.from)
 							.lte("date", args.to),

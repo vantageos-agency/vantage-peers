@@ -615,6 +615,9 @@ export default defineSchema({
 		orgId: v.optional(v.string()),
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
+		// R-11/R-52: the tenant is an index predicate. An undefined orgId (fleet) is
+		// matched by `.eq("orgId", undefined)`.
+		.index("by_org_orchestrator_date", ["orgId", "orchestrator", "date"])
 		.index("by_date", ["date"]),
 	// by_createdBy_date intentionally omitted: createdBy filtering is handled
 	// as a universal post-take in-memory filter (mirrors tasks.ts:371-373 pattern).
