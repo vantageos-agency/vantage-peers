@@ -72,8 +72,14 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
 
 A person uses the VantagePeers connector at `https://vantage-peers-production.up.railway.app/mcp`. They sign in with Clerk on the authorize page, as a member of the client's Clerk organisation, and land in that org. The org is joined on its slug (`orgKeyOf` = slug, else id).
 
-- **Needed from the client:** each person's email. Invite each person to the Clerk organisation, with the role the client decides.
-- A person's session reads and writes `team/<slug>`. The agents' shared namespace is `project/<slug>`, so the two do not share memories unless a profile grants both. Decide this per client, and state the decision.
+- **Needed from the client:** each person's email. Invite each person to the Clerk organisation, with the role the client decides:
+  ```
+  CLERK_SECRET_KEY=$CLERK_SECRET_KEY_VANTAGE_PEERS node scripts/invite-client-people.mjs \
+    --clerk-org-id <org_…> --role org:member --email <a> --email <b>          # dry run, sends nothing
+  … --send                                                                     # sends the invitations
+  ```
+  The dry run is the default. An invitation is an email to a real person, so it goes out only on an explicit `--send`. For CGT Alsachimie, the operator ruled that it is sent on site, with the client.
+- A person's session reads `team/<slug>` and `project/<slug>` (the agents' shared memory), and writes `team/<slug>` only. This was ruled by Pi on 2026-10-06 and is implemented in the MCP server: PR sigma/person-reads-org-project.
 
 ## Renewal
 
