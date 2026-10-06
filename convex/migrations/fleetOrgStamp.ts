@@ -1,7 +1,8 @@
 // CONSISTENT with convex/migrations/backfill_org_stamp.ts, NOT superseded (RULING 4,
 // task k174d95s5qqy8t2r5rdrz3pr3d8fqv82): both stamp the fleet with the OPERATOR
-// ORG's slug, derived at run time from the active orgKind "operator" mapping row
-// (convex/lib/operatorOrg.ts), never typed. FLEET_SCOPE_ORG_ID is retired.
+// ORG's slug, derived at run time from the active orgKind "operator" mapping row,
+// never typed. This file derives it inline (see the operator lookup below);
+// backfill_org_stamp.ts uses convex/lib/operatorOrg.ts. FLEET_SCOPE_ORG_ID is retired.
 // ─────────────────────────────────────────────────────────────────────────────
 // fleetOrgStamp — stamp the FLEET'S unstamped rows with the fleet org slug,
 // only where the row itself PROVES the attribution.

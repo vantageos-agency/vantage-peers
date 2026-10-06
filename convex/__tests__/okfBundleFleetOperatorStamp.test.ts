@@ -242,4 +242,57 @@ describe("fleet OKF bundle after the operator-slug stamp", () => {
 		});
 		expect(await drain(t, "_fetchTasksForBundle")).toEqual(["legacy"]);
 	});
+
+	test("PAGINATION: a multi-page export crosses the U| -> O| boundary with no loss and no duplicate", async () => {
+		const t = createT();
+		await seed(t);
+		// 5 more unstamped (no resolvable creator) and 5 more fleet rows (stamped by the run).
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 5; i++) {
+				for (const createdBy of ["stranger", "sigma"]) {
+					await ctx.db.insert("tasks", {
+						title: `${createdBy}-${i}`,
+						description: `d ${createdBy}-${i}`,
+						assignedTo: "sigma",
+						priority: "medium" as const,
+						status: "todo" as const,
+						createdBy,
+						createdAt: NOW,
+						updatedAt: NOW,
+					});
+				}
+			}
+		});
+		await stampThroughMigration(t);
+		const titles: string[] = [];
+		const phases: string[] = [];
+		let cursor: string | null = null;
+		for (let i = 0; i < 50; i++) {
+			const r: {
+				page: { title: string }[];
+				isDone: boolean;
+				continueCursor: string;
+			} = await t.query(internal.okfBundle._fetchTasksForBundle, {
+				namespace: PHASE1_NAMESPACE,
+				paginationOpts: { numItems: 2, cursor },
+			});
+			titles.push(...r.page.map((p) => p.title));
+			if (r.isDone) break;
+			phases.push(r.continueCursor.slice(0, 2));
+			cursor = r.continueCursor;
+		}
+		// Several pages in each phase, and exactly one U| -> O| transition.
+		expect(phases.filter((p) => p === "U|").length).toBeGreaterThan(1);
+		expect(phases.filter((p) => p === "O|").length).toBeGreaterThan(1);
+		expect(phases.indexOf("O|")).toBeGreaterThan(phases.lastIndexOf("U|"));
+		// 6 unstamped + 6 operator-stamped, each exactly once; the client row never.
+		expect(titles.length).toBe(new Set(titles).size);
+		expect(titles.sort()).toEqual(
+			[
+				"stamped-task",
+				"unstamped-task",
+				...[0, 1, 2, 3, 4].flatMap((i) => [`sigma-${i}`, `stranger-${i}`]),
+			].sort(),
+		);
+	});
 });
