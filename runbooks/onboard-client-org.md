@@ -27,7 +27,7 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
      '{"clerkOrgSlug":"<slug>","displayName":"<name>","allowedOrchestrators":["<a>","<b>"],"scopes":["view-own-tasks","view-own-missions"]}'
    CONVEX_DEPLOY_KEY=<prod key> npx convex run clientOrgMapping:setOrgKind '{"clerkOrgSlug":"<slug>","orgKind":"client"}'
    ```
-   The roster cannot be edited afterwards: no write path changes `allowedOrchestrators`. Name every agent now.
+   Name every agent now. To add an agent later, append it (append-only, client orgs only, never an operator name such as pi or sigma): `CONVEX_DEPLOY_KEY=<prod key> npx convex run clientOrgMapping:addRosterMembers '{"clerkOrgSlug":"<slug>","names":["<agent>"]}'`.
 
 3. **Create one scope profile per agent, bound to the org.**
    ```
