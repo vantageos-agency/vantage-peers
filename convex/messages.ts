@@ -308,6 +308,46 @@ async function sendMessageCore(
 					.filter((id): id is string => id !== undefined),
 			);
 
+			// Cross-tenant DIRECT-message fix (task
+			// k17axar1dx4k6grekykm9tzz098frfm3): `profiles` carries no tenant, so
+			// the sets above span every org. Mirror the broadcast branch: only the
+			// true internal master (isMaster && orgSlug === null) reaches
+			// fleet-wide; any client-scoped caller (including a client org whose
+			// roster is the ["*"] read sentinel, which names nobody) may reach only
+			// orchestrators on its OWN roster, directly or via one of their
+			// instances. Enforced here, in Convex, so no transport can bypass it.
+			const fleetWide = scope.isMaster && scope.orgSlug === null;
+			const instanceOwner = new Map<string, string>();
+			for (const p of profiles) {
+				if (p.instanceId !== undefined) {
+					instanceOwner.set(p.instanceId, p.orchestratorId);
+				}
+			}
+			// Pi ruling (b): the org's own roster PLUS its explicit allow-list of
+			// fleet coordinators (client_org_mapping.addressableFleetCoordinators,
+			// empty by default, written only by setAddressableFleetCoordinators).
+			// Never inferred; "*" is never a grant.
+			let coordinators: string[] = [];
+			if (!fleetWide && scope.orgSlug !== null) {
+				const orgSlug = scope.orgSlug;
+				const mapping = await ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+					.first();
+				coordinators = (mapping?.addressableFleetCoordinators ?? [])
+					.filter((n) => n !== "*")
+					.map(normalizeOrchestratorId);
+			}
+			const isReachable = (orchestrator: string): boolean =>
+				isOrchestratorOnOrgRoster(scope, orchestrator) ||
+				coordinators.includes(normalizeOrchestratorId(orchestrator));
+			const isOnOwnRoster = (part: string): boolean => {
+				if (fleetWide) return true;
+				if (knownRoles.has(part) && isReachable(part)) return true;
+				const owner = instanceOwner.get(part);
+				return owner !== undefined && isReachable(owner);
+			};
+
 			const rawParts = args.channel
 				.split(",")
 				.map((s) => s.trim())
@@ -325,7 +365,8 @@ async function sendMessageCore(
 			for (const part of rawParts) {
 				if (part === args.from) continue; // sender excluding itself never needs to resolve
 				const isKnown = knownRoles.has(part) || knownInstances.has(part);
-				if (!isKnown) {
+				// One foreign or unknown part refuses the WHOLE send (same bounce).
+				if (!isKnown || !isOnOwnRoster(part)) {
 					bounce();
 				}
 			}

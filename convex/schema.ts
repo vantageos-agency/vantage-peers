@@ -1467,6 +1467,13 @@ export default defineSchema({
 		// (never a customer). Absent means "client" — no existing row changes
 		// meaning.
 		orgKind: v.optional(v.union(v.literal("operator"), v.literal("client"))),
+		// addressableFleetCoordinators: operator-org orchestrators (by role) this
+		// CLIENT org may message directly, in addition to its own roster. Absent or
+		// empty means none. Held as data, written only by
+		// clientOrgMapping:setAddressableFleetCoordinators (validated against the
+		// operator roster); never inferred, and "*" is never a grant. Read only by
+		// sendMessageCore's direct-channel branch.
+		addressableFleetCoordinators: v.optional(v.array(v.string())),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_isActive", ["isActive"]),

@@ -45,7 +45,7 @@ const orgAdminIdentity = (org: string) => ({
 async function seedOrgMapping(
 	t: ReturnType<typeof createT>,
 	clerkOrgSlug: string,
-	allowedOrchestrators: string[] = ["b", "c"],
+	allowedOrchestrators: string[] = ["b", "c", "recipient-role"],
 ) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
