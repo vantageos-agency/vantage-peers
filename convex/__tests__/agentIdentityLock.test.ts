@@ -76,7 +76,7 @@ async function seedOrgMapping(t: ReturnType<typeof createT>, clerkOrgSlug: strin
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
-			allowedOrchestrators: ["b", "c"],
+			allowedOrchestrators: ["b", "c", "recipient-role"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
 			isActive: true,

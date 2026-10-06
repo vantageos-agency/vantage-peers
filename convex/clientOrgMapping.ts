@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getByClerkSlug — the HTTP-layer accessor onto client_org_mapping.
@@ -121,5 +122,71 @@ export const setOrgKind = internalMutation({
 			previous,
 			current: args.orgKind,
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setAddressableFleetCoordinators — the ONE write path for a client org's
+// allow-list of fleet coordinators it may message directly (Pi ruling (b),
+// task k17axar1dx4k6grekykm9tzz098frfm3). Run by the operator via
+// `npx convex run clientOrgMapping:setAddressableFleetCoordinators
+// '{"clerkOrgSlug":"...","names":["pi"]}'` — internalMutation, never wired to
+// an MCP tool or client surface.
+//
+// Every name must be an orchestrator on the roster of an ACTIVE row marked
+// orgKind "operator" (never a client's, never "*"). Names are stored
+// normalised and de-duplicated; an empty list clears the grant. Audited like
+// setOrgKind: the return carries {previous, current}. Only the allow-list is
+// patched; roster, scopes and isActive are untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+export const setAddressableFleetCoordinators = internalMutation({
+	args: {
+		clerkOrgSlug: v.string(),
+		names: v.array(v.string()),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		previous: v.array(v.string()),
+		current: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", args.clerkOrgSlug))
+			.unique();
+		if (!row) {
+			throw new ConvexError(
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		if (row.orgKind === "operator") {
+			throw new ConvexError(
+				`OPERATOR_ORG_HAS_NO_ALLOW_LIST: "${args.clerkOrgSlug}" is the operator org; the allow-list applies to client orgs only`,
+			);
+		}
+
+		const rows = await ctx.db.query("client_org_mapping").collect();
+		const operatorRoster = new Set<string>();
+		for (const r of rows) {
+			if (r.orgKind !== "operator" || !r.isActive) continue;
+			for (const name of r.allowedOrchestrators) {
+				if (name !== "*") operatorRoster.add(normalizeOrchestratorId(name));
+			}
+		}
+
+		const current: string[] = [];
+		for (const raw of args.names) {
+			const name = normalizeOrchestratorId(raw);
+			if (name === "*" || !operatorRoster.has(name)) {
+				throw new ConvexError(
+					`NOT_OPERATOR_ORCHESTRATOR: "${raw}" is not an orchestrator of the operator org roster; only operator orchestrators may be made addressable`,
+				);
+			}
+			if (!current.includes(name)) current.push(name);
+		}
+
+		const previous = row.addressableFleetCoordinators ?? [];
+		await ctx.db.patch(row._id, { addressableFleetCoordinators: current });
+		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
 	},
 });

@@ -356,6 +356,16 @@ Both-pole tests: `mcp-server/test/actor-from-credential.test.ts`, `convex/__test
 
 ---
 
+### §4.9 Direct messages are bounded to the caller's own organisation (VantagePeers Cloud)
+
+Measured on prod 2026-10-06: a client-org seat sent a direct message to a fleet orchestrator and it was delivered, because the direct-channel branch of `sendMessage` resolved recipients from every profile. It is now enforced in Convex (`convex/messages.ts`, `sendMessageCore`), so no transport can bypass it.
+
+- A client-scoped caller may address only (a) orchestrators on its own `client_org_mapping.allowedOrchestrators` roster, by role or by one of their instances, and (b) the fleet coordinators on its explicit allow-list `addressableFleetCoordinators`. A `["*"]` roster or allow-list names nobody.
+- The allow-list is empty by default, is never inferred, and is written only by the internal mutation `clientOrgMapping:setAddressableFleetCoordinators`, which accepts only orchestrators of the operator org (the `orgKind: "operator"` row's roster) and returns `{previous, current}`. Example (operator command, run after deploy): `npx convex run clientOrgMapping:setAddressableFleetCoordinators '{"clerkOrgSlug":"iris-rh","names":["pi"]}'`.
+- A comma list with one out-of-scope part is refused as a whole with the existing `recipient error / message non livré` bounce; no message or receipt is written.
+- The internal master (service account, `isMaster && orgSlug === null`) keeps fleet-wide reach. Broadcast is unchanged (own roster only).
+- Tests: `convex/__tests__/directMessageOrgScoped.test.ts`, `convex/__tests__/directMessageFleetCoordinators.test.ts`.
+
 ## 5. Cloud vs Self-host — non-negotiable separation
 
 - **Cloud runbooks:** `docs/cloud/` only.

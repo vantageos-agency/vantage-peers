@@ -323,13 +323,29 @@ async function sendMessageCore(
 					instanceOwner.set(p.instanceId, p.orchestratorId);
 				}
 			}
+			// Pi ruling (b): the org's own roster PLUS its explicit allow-list of
+			// fleet coordinators (client_org_mapping.addressableFleetCoordinators,
+			// empty by default, written only by setAddressableFleetCoordinators).
+			// Never inferred; "*" is never a grant.
+			let coordinators: string[] = [];
+			if (!fleetWide && scope.orgSlug !== null) {
+				const orgSlug = scope.orgSlug;
+				const mapping = await ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+					.first();
+				coordinators = (mapping?.addressableFleetCoordinators ?? [])
+					.filter((n) => n !== "*")
+					.map(normalizeOrchestratorId);
+			}
+			const isReachable = (orchestrator: string): boolean =>
+				isOrchestratorOnOrgRoster(scope, orchestrator) ||
+				coordinators.includes(normalizeOrchestratorId(orchestrator));
 			const isOnOwnRoster = (part: string): boolean => {
 				if (fleetWide) return true;
-				if (knownRoles.has(part) && isOrchestratorOnOrgRoster(scope, part)) {
-					return true;
-				}
+				if (knownRoles.has(part) && isReachable(part)) return true;
 				const owner = instanceOwner.get(part);
-				return owner !== undefined && isOrchestratorOnOrgRoster(scope, owner);
+				return owner !== undefined && isReachable(owner);
 			};
 
 			const rawParts = args.channel
