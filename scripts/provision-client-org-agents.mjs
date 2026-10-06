@@ -72,6 +72,11 @@ const toplevel = (dir) => {
 	}
 };
 const stageReal = realOfNearest(stage);
+let stageAnchor = stageReal;
+while (!existsSync(stageAnchor)) stageAnchor = dirname(stageAnchor);
+// Refuse ANY git work tree, not only this one: a secret committed to another repo leaks the same way.
+const stageTree = toplevel(stageAnchor);
+if (stageTree) throw new Error(`--stage-dir must be outside any git work tree (${stageReal} is inside ${stageTree})`);
 for (const root of new Set([toplevel(dirname(fileURLToPath(import.meta.url))), toplevel(process.cwd())])) {
 	if (root && (stageReal === root || stageReal.startsWith(root + sep))) {
 		throw new Error(`--stage-dir must be outside the repository (${stageReal} is inside ${root})`);
