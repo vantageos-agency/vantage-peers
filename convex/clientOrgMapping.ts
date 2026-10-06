@@ -202,3 +202,103 @@ export const setAddressableFleetCoordinators = internalMutation({
 		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
 	},
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// addRosterMembers — the ONE write path that edits a client org's roster
+// (client_org_mapping.allowedOrchestrators) after creation (task
+// k173nws3xcp969t7dtvet5zqd58fr8gr). Run by the operator via
+// `npx convex run clientOrgMapping:addRosterMembers
+// '{"clerkOrgSlug":"...","names":["bob"]}'` — internalMutation, never wired to
+// an MCP tool or client surface.
+//
+// APPEND ONLY: existing names are never removed or reordered, and a name
+// already present is a no-op. Client orgs only — the operator org is refused,
+// as is an inactive org. Each name is normalised and must match
+// ^[a-z][a-z0-9-]{0,40}$ ("*" and "" can never match). A name on the roster of
+// an ACTIVE operator org is refused: a client org must not claim a fleet
+// orchestrator's identity. The whole call is validated before the single
+// patch, so a refusal leaves the roster untouched. Audited like setOrgKind:
+// the return carries {previous, current}. Only allowedOrchestrators is patched.
+// ─────────────────────────────────────────────────────────────────────────────
+const ROSTER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,40}$/;
+
+export const addRosterMembers = internalMutation({
+	args: {
+		clerkOrgSlug: v.string(),
+		names: v.array(v.string()),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		previous: v.array(v.string()),
+		current: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", args.clerkOrgSlug))
+			.unique();
+		if (!row) {
+			throw new ConvexError(
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		if (row.orgKind === "operator") {
+			throw new ConvexError(
+				`OPERATOR_ORG_ROSTER_OUT_OF_SCOPE: "${args.clerkOrgSlug}" is the operator org; this path appends to client org rosters only`,
+			);
+		}
+		if (!row.isActive) {
+			throw new ConvexError(
+				`ORG_MAPPING_INACTIVE: "${args.clerkOrgSlug}" is inactive; refusing to edit its roster`,
+			);
+		}
+
+		const names: string[] = [];
+		for (const raw of args.names) {
+			const name = normalizeOrchestratorId(raw);
+			if (!ROSTER_NAME_PATTERN.test(name)) {
+				throw new ConvexError(
+					`INVALID_ROSTER_NAME: "${raw}" must match ${ROSTER_NAME_PATTERN.source} after normalisation ("*" and the empty string are never valid)`,
+				);
+			}
+			if (!names.includes(name)) names.push(name);
+		}
+
+		// read-bound: active org mappings are bounded by construction (one row per onboarded org, operator-written only); the cap is enforced fail-closed below.
+		const rows = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_isActive", (q) => q.eq("isActive", true))
+			.take(MAX_ACTIVE_ORG_MAPPINGS + 1);
+		if (rows.length > MAX_ACTIVE_ORG_MAPPINGS) {
+			throw new ConvexError(
+				`ORG_MAPPING_SCAN_CAP_EXCEEDED: more than ${MAX_ACTIVE_ORG_MAPPINGS} active client_org_mapping rows; refusing to check names against a partial operator roster`,
+			);
+		}
+		const operatorRoster = new Set<string>();
+		for (const r of rows) {
+			if (r.orgKind !== "operator" || !r.isActive) continue;
+			for (const name of r.allowedOrchestrators) {
+				if (name !== "*") operatorRoster.add(normalizeOrchestratorId(name));
+			}
+		}
+		for (const name of names) {
+			if (operatorRoster.has(name)) {
+				throw new ConvexError(
+					`OPERATOR_ORCHESTRATOR_NAME: "${name}" is on an active operator org roster; a client org may not claim a fleet orchestrator's name`,
+				);
+			}
+		}
+
+		const previous = row.allowedOrchestrators;
+		const current = [...previous];
+		for (const name of names) {
+			if (
+				!current.some((existing) => normalizeOrchestratorId(existing) === name)
+			) {
+				current.push(name);
+			}
+		}
+		await ctx.db.patch(row._id, { allowedOrchestrators: current });
+		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
+	},
+});
