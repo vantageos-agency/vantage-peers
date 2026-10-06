@@ -176,6 +176,12 @@ describe("Path B org authority — client_org_mapping is the ONLY source of gran
 		expect(oauthCtx?.scopes).toEqual(["view-own-tasks", "view-own-missions"]);
 		expect(oauthCtx?.scopeProfile).toBe("team-member");
 		expect(oauthCtx?.isMaster).toBe(false);
+		// A signed-in person reads project/<org> (read-only), writes team/<org> only.
+		expect(oauthCtx?.namespaceReadPrefixes).toEqual([
+			"team/org_prometheus",
+			"project/org_prometheus",
+		]);
+		expect(oauthCtx?.namespaceWritePrefixes).toEqual(["team/org_prometheus"]);
 	});
 
 	it("POLE ALLOW — two different clientIds (different `sub`) for the SAME org_id mapping get IDENTICAL authority", async () => {

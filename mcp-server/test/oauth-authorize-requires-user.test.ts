@@ -22,6 +22,9 @@ import schema from "../../convex/schema";
 import { app } from "../server-http.js";
 import {
 	_setInternalClientForTest,
+	checkNamespaceRead,
+	checkNamespaceWrite,
+	type OAuthContext,
 	sha256Base64Url,
 	sha256Hex,
 } from "../src/auth.js";
@@ -306,7 +309,7 @@ describe("consent and organisation choice", () => {
 		expect(row.clientId).toBe(CLIENT_ID);
 		// authority comes from client_org_mapping for org-a, not the client's profile
 		expect(row.fromAllowList).toEqual(["agent-a"]);
-		expect(row.namespaceReadPrefixes).toEqual(["team/org-a"]);
+		expect(row.namespaceReadPrefixes).toEqual(["team/org-a", "project/org-a"]);
 		expect(row.namespaceWritePrefixes).toEqual(["team/org-a"]);
 		expect(row.scopes).toEqual(
 			expect.arrayContaining(["vantage:read", "vantage:write", "mcp:full"]),
@@ -499,6 +502,52 @@ describe("consent and organisation choice", () => {
 		);
 		expect(r.status).toBe(400);
 		expect(r.json?.error).toBe("invalid_target");
+	});
+});
+
+describe("a person reads the organisation's shared agent memory, never writes it", () => {
+	async function personContext(userId: string, orgId: string) {
+		await postToken(await issuedCodeFor(userId, orgId));
+		const rows = await t.run(async (ctx) =>
+			ctx.db.query("oauth_access_tokens").collect(),
+		);
+		const row = rows[0];
+		const ctx: OAuthContext = {
+			clientId: row.clientId,
+			userId: row.userId,
+			scopes: row.scopes,
+			scopeProfile: row.scopeProfile,
+			fromAllowList: row.fromAllowList,
+			namespaceReadPrefixes: row.namespaceReadPrefixes,
+			namespaceWritePrefixes: row.namespaceWritePrefixes,
+			expiresAt: row.expiresAt,
+			isMaster: false,
+			principal: "person",
+		};
+		return { row, ctx };
+	}
+
+	it("the token's read prefixes include project/<org>; its write prefixes do not", async () => {
+		const { row } = await personContext("user_1", "org_A");
+		expect(row.namespaceReadPrefixes).toContain("project/org-a");
+		expect(row.namespaceWritePrefixes).not.toContain("project/org-a");
+		expect(row.namespaceWritePrefixes).toEqual(["team/org-a"]);
+	});
+
+	it("a person of A reads project/A, but cannot read project/B nor write project/A", async () => {
+		const { ctx } = await personContext("user_1", "org_A");
+		expect(checkNamespaceRead(ctx, "project/org-a")).toBeNull();
+		expect(checkNamespaceRead(ctx, "project/org-a/sub")).toBeNull();
+		expect(checkNamespaceRead(ctx, "project/org-b")).toMatch(/Forbidden/);
+		expect(checkNamespaceWrite(ctx, "project/org-a")).toMatch(/Forbidden/);
+		expect(checkNamespaceWrite(ctx, "project/org-a/sub")).toMatch(/Forbidden/);
+		expect(checkNamespaceWrite(ctx, "team/org-a")).toBeNull();
+	});
+
+	it("a person of B gets project/B and nothing of A", async () => {
+		const { ctx } = await personContext("user_2", "org_B");
+		expect(checkNamespaceRead(ctx, "project/org-b")).toBeNull();
+		expect(checkNamespaceRead(ctx, "project/org-a")).toMatch(/Forbidden/);
 	});
 });
 
