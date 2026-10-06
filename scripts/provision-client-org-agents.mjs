@@ -23,8 +23,10 @@
  * CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS, CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
@@ -50,7 +52,31 @@ if (!Number.isInteger(ttlDays) || ttlDays < 1 || ttlDays > 365) throw new Error(
 for (const n of ["CONVEX_URL", "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS", "CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS"]) {
 	if (!process.env[n]) throw new Error(`Missing env var: ${n}`);
 }
-if (stage.startsWith(process.cwd())) throw new Error("--stage-dir must be outside the repository");
+// Secrets must never land in a git tree. Resolve the stage dir to its real path (through
+// relative segments, `..` and symlinks, via its nearest existing ancestor) and refuse it if it
+// sits inside this script's repository or inside any repository containing the cwd.
+const realOfNearest = (p) => {
+	let cur = resolve(p);
+	const rest = [];
+	while (!existsSync(cur)) {
+		rest.unshift(basename(cur));
+		cur = dirname(cur);
+	}
+	return join(realpathSync(cur), ...rest);
+};
+const toplevel = (dir) => {
+	try {
+		return realpathSync(execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim());
+	} catch {
+		return null;
+	}
+};
+const stageReal = realOfNearest(stage);
+for (const root of new Set([toplevel(dirname(fileURLToPath(import.meta.url))), toplevel(process.cwd())])) {
+	if (root && (stageReal === root || stageReal.startsWith(root + sep))) {
+		throw new Error(`--stage-dir must be outside the repository (${stageReal} is inside ${root})`);
+	}
+}
 mkdirSync(stage, { recursive: true, mode: 0o700 });
 chmodSync(stage, 0o700);
 

@@ -62,9 +62,12 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
    - the agent's own memory round-trips;
    - a message to a sibling agent is accepted;
    - a write to `orchestrator/sigma` is refused;
-   - a read of `project/vantage-peers` is refused.
+   - a read of `project/vantage-peers` is REFUSED with an error (an empty success fails the probe: it cannot tell a refusal from an absence);
+   - with `--reverse-bearer-file`: a marker is first written to `project/<slug>` by the first agent and read back (the positive control), then the foreign bearer's read of it must be refused.
 
    It must exit 0. For another org, the `ORG` constant in the script names the org; make it an argument if you reuse the script.
+
+   **A portal seat** (a client web app relaying to its agents) is minted with `--seat-only --agents <slug>`: a bearer and no agent credential. Its profile's `fromAllowList` is `[<slug>]`, so the portal MUST send `from: "<slug>"` (CGT: `from: "cgt-alsachimie"`). Any other `from` is refused. Since PR #1470 it reaches only the org's own roster.
 
 8. **Wire the workspaces.** The `vantage-peers` server in each workspace's `.mcp.json` sends `Authorization: Bearer <agent>.bearer` and `x-vantage-agent-credential: <agent>.secret`. Use a headersHelper that reads the two files, so the secret stays out of `.mcp.json`.
 
