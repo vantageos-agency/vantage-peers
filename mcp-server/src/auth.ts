@@ -1398,7 +1398,10 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 					scopes: mapping.scopes,
 					scopeProfile: "team-member",
 					fromAllowList: mapping.allowedOrchestrators,
-					namespaceReadPrefixes: [`team/${orgId}`],
+					// A Clerk session JWT is a signed-in person, so it reads the same
+					// as a person's OAuth token: project/<orgId> read-only (Pi ruling
+					// k175syk4m5a54ra8k36rxdcha58frsnw), writes stay team/<orgId>.
+					namespaceReadPrefixes: [`team/${orgId}`, `project/${orgId}`],
 					namespaceWritePrefixes: [`team/${orgId}`],
 					expiresAt: clerkResult.exp * 1000,
 					isMaster: false,

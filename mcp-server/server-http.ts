@@ -1021,7 +1021,11 @@ app.post("/token", async (c) => {
 				],
 				scopeProfile: PERSON_TOKEN_SCOPE_PROFILE,
 				fromAllowList: mapping.allowedOrchestrators,
-				namespaceReadPrefixes: [`team/${orgKey}`],
+				// A person READS the organisation's shared agent memory
+				// (project/<orgKey>, Pi ruling k175syk4m5a54ra8k36rxdcha58frsnw) but
+				// WRITES only team/<orgKey>: the agents' namespace is not a person's
+				// to write unless separately ruled. orgKey is the verified org key.
+				namespaceReadPrefixes: [`team/${orgKey}`, `project/${orgKey}`],
 				namespaceWritePrefixes: [`team/${orgKey}`],
 				expiresAt: Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000,
 				clerkOrgSlug: orgKey,

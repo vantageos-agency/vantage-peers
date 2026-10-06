@@ -186,7 +186,7 @@ Correspondance exacte ou hiérarchique : `project/<client-org>/sub` passe si le 
 | Field | Value |
 |---|---|
 | `scopeProfile` | `"team-member"` |
-| `namespaceReadPrefixes` | `["team/<orgId>"]` |
+| `namespaceReadPrefixes` | `["team/<orgId>", "project/<orgId>"]` (project/<orgId> is the org agents' shared memory, read-only for people) |
 | `namespaceWritePrefixes` | `["team/<orgId>"]` |
 | `fromAllowList` | `[]` (no identity filter — team members write under their own userId) |
 | `isMaster` | `false` |
