@@ -133,7 +133,7 @@ describe("RENAME — the credential follows the row", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
 		);
-		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "calliope" });
+		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "calliope" });
 	});
 
 	test("the write-surface lock accepts the NEW name and refuses the OLD one after a rename", async () => {
@@ -200,7 +200,7 @@ describe("RENAME — the credential follows the row", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
 		);
-		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "calliope" });
+		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "calliope" });
 	});
 });
 
@@ -218,7 +218,7 @@ describe("ORG — one org's credential never acts for another org's same-named a
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secretA },
 		);
-		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "clio" });
+		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "clio" });
 		const rows = await t.run(async (ctx) => ctx.db.query("agent_credentials").collect());
 		expect(rows).toHaveLength(1);
 		expect(rows[0].agentId).toBe(idA);
@@ -425,7 +425,7 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
 		);
-		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "clio" });
+		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "clio" });
 	});
 
 	test("agent normalizedName backfill: sets it, and refuses a colliding pair", async () => {
@@ -487,7 +487,7 @@ describe("LEGACY credential (agentId undefined) follows the ROW across rename an
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
 		);
-		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "calliope" });
+		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "calliope" });
 		const rows = await t.run(async (ctx) => ctx.db.query("agent_credentials").collect());
 		expect(rows[0].agentId).toBe(id);
 
@@ -526,7 +526,7 @@ describe("LEGACY credential (agentId undefined) follows the ROW across rename an
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
 		);
-		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "calliope" });
+		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "calliope" });
 		const status = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
 			{ orgSlug: "org-a", agentName: "clio" },

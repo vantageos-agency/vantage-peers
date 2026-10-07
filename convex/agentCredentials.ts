@@ -53,6 +53,8 @@ const mintResultValidator = v.object({
 const resolvedIdentityValidator = v.object({
 	orgSlug: v.string(),
 	agentName: v.string(),
+	// The `agents` ROW id: the identity. The name above is its current label.
+	agentId: v.id("agents"),
 });
 
 /**
@@ -195,7 +197,7 @@ export const revokeAgentCredential = mutation({
  * a subscribed list does not apply.
  *
  * THREE OUTCOMES, never two:
- *   - resolves            -> { orgSlug, agentName }
+ *   - resolves            -> { orgSlug, agentName, agentId }
  *   - empty secret        -> RAISES reason "no-credential"
  *   - wrong / rotated-out / inactive agent
  *                         -> RAISES reason "credential-not-recognised"
@@ -244,7 +246,11 @@ export const resolveAgentCredential = query({
 				"credential-not-recognised",
 			);
 		}
-		return { orgSlug: resolved.agent.orgSlug, agentName: resolved.agent.name };
+		return {
+			orgSlug: resolved.agent.orgSlug,
+			agentName: resolved.agent.name,
+			agentId: resolved.agent._id,
+		};
 	},
 });
 

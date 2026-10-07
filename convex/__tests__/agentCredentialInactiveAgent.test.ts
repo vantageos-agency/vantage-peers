@@ -99,7 +99,7 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 				presentedSecret: secret,
 			},
 		);
-		expect(resolved).toEqual({ orgSlug: "org-o", agentName: "alice" });
+		expect(resolved).toMatchObject({ orgSlug: "org-o", agentName: "alice" });
 	});
 
 	test("DENY: the SAME credential is refused once the agent is inactive", async () => {
@@ -150,7 +150,7 @@ describe("resolveAgentCredential — an inactive agent is a DENY", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretP,
 			}),
-		).toEqual({ orgSlug: "org-p", agentName: "alice" });
+		).toMatchObject({ orgSlug: "org-p", agentName: "alice" });
 	});
 });
 

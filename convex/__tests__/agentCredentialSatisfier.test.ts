@@ -114,13 +114,13 @@ describe("P1 — a presented credential resolves to its own identity", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: aSecret,
 			}),
-		).toEqual({ orgSlug: "org-a", agentName: "shared-name" });
+		).toMatchObject({ orgSlug: "org-a", agentName: "shared-name" });
 		// NEGATIVE control: the other org's credential is NOT org A's identity.
 		const bResolved = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: bSecret },
 		);
-		expect(bResolved).toEqual({ orgSlug: "org-b", agentName: "shared-name" });
+		expect(bResolved).toMatchObject({ orgSlug: "org-b", agentName: "shared-name" });
 		expect(bResolved?.orgSlug).not.toBe("org-a");
 	});
 

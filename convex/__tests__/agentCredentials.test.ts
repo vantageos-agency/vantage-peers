@@ -101,7 +101,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		const resolved = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 			presentedSecret: minted.secret,
 		});
-		expect(resolved).toEqual({ orgSlug: "org-o", agentName: "a1" });
+		expect(resolved).toMatchObject({ orgSlug: "org-o", agentName: "a1" });
 	});
 
 	test("stored row carries a hash distinct from the plaintext — no plaintext at rest", async () => {
@@ -176,7 +176,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: first.secret },
 		);
-		expect(resolvedFirstBefore).toEqual({ orgSlug: "org-o", agentName: "a1" });
+		expect(resolvedFirstBefore).toMatchObject({ orgSlug: "org-o", agentName: "a1" });
 
 		const second = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
@@ -196,7 +196,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: second.secret },
 		);
-		expect(resolvedSecond).toEqual({ orgSlug: "org-o", agentName: "a1" });
+		expect(resolvedSecond).toMatchObject({ orgSlug: "org-o", agentName: "a1" });
 
 		// Rotation preserves the audit trail — the old row still exists,
 		// just inactive.
@@ -242,7 +242,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: mintedA1.secret },
 		);
-		expect(resolvedA1).toEqual({ orgSlug: "org-o", agentName: "a1" });
+		expect(resolvedA1).toMatchObject({ orgSlug: "org-o", agentName: "a1" });
 
 		// A1's secret must never resolve to A2's identity, nor authenticate as
 		// A2 under any interpretation.
@@ -252,7 +252,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: mintedA2.secret },
 		);
-		expect(resolvedA2).toEqual({ orgSlug: "org-o", agentName: "a2" });
+		expect(resolvedA2).toMatchObject({ orgSlug: "org-o", agentName: "a2" });
 
 		// Rotating A1 must not disturb A2's still-active credential.
 		await tAdminO.mutation(api.agentCredentials.mintAgentCredential, {
@@ -263,7 +263,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: mintedA2.secret },
 		);
-		expect(resolvedA2StillGood).toEqual({ orgSlug: "org-o", agentName: "a2" });
+		expect(resolvedA2StillGood).toMatchObject({ orgSlug: "org-o", agentName: "a2" });
 	});
 
 	test("POLE DENY: non-admin member of O is refused mintAgentCredential (RBAC_DENIED)", async () => {

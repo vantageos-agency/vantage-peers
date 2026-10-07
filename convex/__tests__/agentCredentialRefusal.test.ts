@@ -98,8 +98,8 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		const rb = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 			presentedSecret: b,
 		});
-		expect(ra).toEqual({ orgSlug: "org-a", agentName: "b" });
-		expect(rb).toEqual({ orgSlug: "org-b", agentName: "b" });
+		expect(ra).toMatchObject({ orgSlug: "org-a", agentName: "b" });
+		expect(rb).toMatchObject({ orgSlug: "org-b", agentName: "b" });
 	});
 
 	test("WRONG: an unknown secret RAISES RBAC_DENIED, naming the door and reason credential-not-recognised", async () => {

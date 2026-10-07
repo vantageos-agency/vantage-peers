@@ -1215,6 +1215,19 @@ export default defineSchema({
 		// The MCP write gate reads both (src/registerTool.ts -> memberWriterRoles).
 		orgRole: v.optional(v.string()),
 		principal: v.optional(v.literal("person")),
+		// SEAT IDENTITY BY ID (Pi ruling k174d95s5qqy8t2r5rdrz3pr3d8fqv82). Stamped at mint AND at
+		// refresh (both go through oauth:createAccessToken) when the token's scope profile
+		// (profileId <agent>-<org>, clerkOrgSlug) names exactly ONE agent that resolves, in the
+		// PROFILE'S OWN ORG, to one active `agents` row. `agentId` is that row's `_id`;
+		// `agentOrgId` is the org key it was resolved in (client_org_mapping key: the Clerk org
+		// slug, or the Clerk org id when the org has no slug). A profile that resolves no agent
+		// stamps none and stays an org-level seat that cannot act as an agent. The MCP decides
+		// "this seat acts as itself" on this ID, never on a typed name. Optional ONLY for rows
+		// minted before the stamp existed (backfilled by
+		// migrations/agentIdentityRows:backfillSeatTokenAgentIds; the lookup resolves such a row
+		// live meanwhile).
+		agentId: v.optional(v.id("agents")),
+		agentOrgId: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
@@ -1785,7 +1798,15 @@ export default defineSchema({
 		// on this, so renaming the agent never orphans or re-targets the credential. Optional ONLY
 		// for the rollout of rows minted before this field existed; such rows resolve through the
 		// (orgSlug, agentName) fallback until migrations/agentIdentityRows:backfillCredentialAgentIds
-		// has set it. Every new mint sets it.
+		// has set it. Every new mint sets it, and `mintAgentCredential` is the ONLY writer: it
+		// cannot insert a row without it (an `agents` row is required to mint).
+		//
+		// CONTRACT STEP (expand / backfill / contract): this stays `v.optional` until the backfill
+		// above has run on PROD with `missingAgentIds` and `ambiguousIds` both empty (or each
+		// listed row revoked/re-minted by an operator). Only then is the validator tightened to
+		// `v.id("agents")` and the (orgSlug, agentName) fallback in
+		// convex/lib/agentIdentity.ts `resolveAgentCredentialCore` removed. Tightening earlier
+		// would make every un-backfilled row fail schema validation at deploy.
 		agentId: v.optional(v.id("agents")),
 		// DENORMALISED LABEL (kept, not dropped): the agent's name AT MINT TIME, for audit reports
 		// and for the legacy fallback above. It is NOT the identity and may go stale after a

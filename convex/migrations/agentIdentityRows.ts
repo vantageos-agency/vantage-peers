@@ -11,6 +11,8 @@
  *     '{"dryRun":true,"cursor":null}'
  *   npx convex run migrations/agentIdentityRows:backfillCredentialAgentIds \
  *     '{"dryRun":true,"cursor":null}'
+ *   npx convex run migrations/agentIdentityRows:backfillSeatTokenAgentIds \
+ *     '{"dryRun":true,"cursor":null}'
  *
  * Repeat each with `cursor` = the returned `continueCursor` until `isDone`.
  * Run the names backfill first; the two are independent but the report of the
@@ -25,8 +27,10 @@
  *  - Bounded: at most `batchSize` (default 100, max 200) rows per call.
  */
 import { v } from "convex/values";
+import type { Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { resolveSeatAgent } from "../lib/seatAgent";
 
 const DEFAULT_BATCH = 100;
 const MAX_BATCH = 200;
@@ -123,6 +127,10 @@ export const backfillCredentialAgentIds = internalMutation({
 		alreadySet: v.number(),
 		missingAgent: v.number(),
 		ambiguous: v.number(),
+		// The rows this run could NOT decide, BY ID, so an operator acts on named
+		// rows (revoke, re-mint, or fix the agent) instead of reading a count.
+		missingAgentIds: v.array(v.id("agent_credentials")),
+		ambiguousIds: v.array(v.id("agent_credentials")),
 		isDone: v.boolean(),
 		continueCursor: v.string(),
 	}),
@@ -137,6 +145,8 @@ export const backfillCredentialAgentIds = internalMutation({
 		let alreadySet = 0;
 		let missingAgent = 0;
 		let ambiguous = 0;
+		const missingAgentIds: Id<"agent_credentials">[] = [];
+		const ambiguousIds: Id<"agent_credentials">[] = [];
 		for (const row of page.page) {
 			if (row.agentId !== undefined) {
 				alreadySet += 1;
@@ -152,10 +162,12 @@ export const backfillCredentialAgentIds = internalMutation({
 				.take(2);
 			if (candidates.length === 0) {
 				missingAgent += 1;
+				missingAgentIds.push(row._id);
 				continue;
 			}
 			if (candidates.length > 1) {
 				ambiguous += 1;
+				ambiguousIds.push(row._id);
 				continue;
 			}
 			updated += 1;
@@ -170,6 +182,90 @@ export const backfillCredentialAgentIds = internalMutation({
 			alreadySet,
 			missingAgent,
 			ambiguous,
+			missingAgentIds,
+			ambiguousIds,
+			isDone: page.isDone,
+			continueCursor: page.continueCursor,
+		};
+	},
+});
+
+/**
+ * Stamps `agentId` / `agentOrgId` on seat access tokens minted before the stamp
+ * existed (oauth_access_tokens). Same shape and guarantees as the credential
+ * backfill above: dry-run first, cursor-paged, idempotent, REFUSES NEVER GUESSES.
+ * The agent is resolved by the same rule as at mint (convex/lib/seatAgent.ts:
+ * the profile's single agent, in the profile's own org). A live (unrevoked,
+ * unexpired) row that resolves to none is an org-level seat: it is COUNTED and
+ * LISTED BY ID in `undecidableIds`, never patched. Revoked and expired rows are
+ * skipped (`skipped`): they no longer authenticate.
+ *
+ *   npx convex run migrations/agentIdentityRows:backfillSeatTokenAgentIds \
+ *     '{"dryRun":true,"cursor":null}'
+ */
+export const backfillSeatTokenAgentIds = internalMutation({
+	args: {
+		dryRun: v.boolean(),
+		cursor: v.union(v.string(), v.null()),
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		dryRun: v.boolean(),
+		scanned: v.number(),
+		updated: v.number(),
+		alreadySet: v.number(),
+		skipped: v.number(),
+		undecidable: v.number(),
+		undecidableIds: v.array(v.id("oauth_access_tokens")),
+		isDone: v.boolean(),
+		continueCursor: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		const batchSize = args.batchSize ?? DEFAULT_BATCH;
+		checkBatch(batchSize);
+		const page = await ctx.db
+			.query("oauth_access_tokens")
+			.paginate({ numItems: batchSize, cursor: args.cursor });
+		const now = Date.now();
+
+		let updated = 0;
+		let alreadySet = 0;
+		let skipped = 0;
+		const undecidableIds: Id<"oauth_access_tokens">[] = [];
+		for (const row of page.page) {
+			if (row.agentId !== undefined) {
+				alreadySet += 1;
+				continue;
+			}
+			if (
+				row.revokedAt !== undefined ||
+				row.expiresAt < now ||
+				row.principal !== undefined
+			) {
+				skipped += 1;
+				continue;
+			}
+			const agent = await resolveSeatAgent(ctx, row);
+			if (!agent) {
+				undecidableIds.push(row._id);
+				continue;
+			}
+			updated += 1;
+			if (!args.dryRun) {
+				await ctx.db.patch(row._id, {
+					agentId: agent._id,
+					agentOrgId: agent.orgSlug,
+				});
+			}
+		}
+		return {
+			dryRun: args.dryRun,
+			scanned: page.page.length,
+			updated,
+			alreadySet,
+			skipped,
+			undecidable: undecidableIds.length,
+			undecidableIds,
 			isDone: page.isDone,
 			continueCursor: page.continueCursor,
 		};
