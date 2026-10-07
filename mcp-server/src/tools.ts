@@ -4530,30 +4530,6 @@ export function registerTools(
 				}
 
 				const verifiedOrg = verifiedOrgOf();
-				// A non-master bearer whose org does not resolve would reach Convex as
-				// the bare service account — the name-only master scan across every
-				// tenant. Refuse BEFORE Convex, on a preview as on a live call. (A
-				// Clerk-JWT caller is exempt: Convex resolves its own org from the
-				// JWT; the master and local stdio trust context are the fleet path.)
-				if (
-					verifiedOrg === undefined &&
-					oauthCtx !== undefined &&
-					!oauthCtx.isMaster &&
-					oauthCtx.clerkJwt === undefined
-				) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text:
-									`REFUSED (RBAC_DENIED): ${BULK_COMPLETE_TASKS_TOOL_NAME} needs an organisation and this bearer carries none ` +
-									`— ${JSON.stringify({ reason: "no-verified-org", tool: BULK_COMPLETE_TASKS_TOOL_NAME })}. ` +
-									`Nothing was matched or closed.`,
-							},
-						],
-						isError: true as const,
-					};
-				}
 				const result = await convex.mutation("tasks:bulkComplete" as any, {
 					filter,
 					dryRun,

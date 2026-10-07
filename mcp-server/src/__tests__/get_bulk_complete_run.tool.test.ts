@@ -218,8 +218,8 @@ describe("get_bulk_complete_run", () => {
 					dryRun,
 				})) as { isError?: boolean; content: Array<{ text: string }> };
 				expect(out.isError).toBe(true);
-				expect(out.content[0].text).toMatch(/^REFUSED \(RBAC_DENIED\): bulk_complete_tasks/);
-				expect(out.content[0].text).toContain("no-verified-org");
+				expect(out.content[0].text).toMatch(/RBAC_DENIED: bulk_complete_tasks/);
+				expect(out.content[0].text).toContain("verified-org-unresolved");
 				expect((convex.mutation as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
 			}
 		});
