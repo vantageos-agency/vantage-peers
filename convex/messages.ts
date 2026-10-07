@@ -28,6 +28,11 @@ import {
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
 import { findAgentByName } from "./lib/agentIdentity";
+import {
+	recipientScopeOfPrincipal,
+	requireTargetOrgOfPrincipal,
+	requireVerifiedActorPrincipal,
+} from "./lib/actingPrincipal";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -690,6 +695,8 @@ async function sendAsHuman(
 	);
 }
 
+const SEND_DOOR = "messages:sendMessage";
+
 export const sendMessage = mutation({
 	args: {
 		// OPTIONAL: omitting `from` is the HUMAN path (a dashboard org member
@@ -746,12 +753,42 @@ export const sendMessage = mutation({
 
 		// Judged on the TRANSPORT scope: the claim is believed from the service
 		// account only, and a person-resolved scope is never that.
-		const recipientScope = await resolveSeatRecipientScope(
+		const seatScope = await resolveSeatRecipientScope(
 			ctx,
 			transportScope,
 			seatOrgSlug,
 			args.tenantId,
 		);
+
+		// R-53: an acting agent forwarded BY ID (`verifiedActor`) is resolved
+		// through @vantageos/cloud-identity (convex/lib/actingPrincipal.ts), and
+		// every organisation this call names (the seat's verified org, a declared
+		// tenantId) is checked against the principal's stored org ID before
+		// anything is written. The recipients and the tenant stamp then derive
+		// from the principal's own org, never from the service-account transport:
+		// a same-named agent of another org can neither act as this org's agent
+		// nor reach its recipients.
+		let recipientScope = seatScope;
+		if (args.verifiedActor !== undefined) {
+			const principal = await requireVerifiedActorPrincipal(
+				ctx,
+				transportScope,
+				args.verifiedActor,
+				SEND_DOOR,
+			);
+			if (seatOrgSlug !== undefined) {
+				await requireTargetOrgOfPrincipal(ctx, principal, seatOrgSlug, SEND_DOOR);
+			}
+			if (args.tenantId !== undefined) {
+				await requireTargetOrgOfPrincipal(ctx, principal, args.tenantId, SEND_DOOR);
+			}
+			recipientScope = await recipientScopeOfPrincipal(
+				ctx,
+				transportScope,
+				principal,
+				SEND_DOOR,
+			);
+		}
 
 		if (args.from === undefined) {
 			return await sendAsHuman(ctx, sendArgs, scope);
