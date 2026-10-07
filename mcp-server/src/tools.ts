@@ -8604,23 +8604,48 @@ export function registerTools(
 		"get_github_owner_bindings",
 		"List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof. " +
 			"WHEN: use to see which repos you may map, or to audit mappings created without GitHub proof. " +
-			"EXAMPLE: get_github_owner_bindings.",
-		{},
+			"EXAMPLE: get_github_owner_bindings limit=100. " +
+			"Default limit 100, cap 500. Pages by cursor: pass `nextCursor` back as `cursor` (and `unprovenNextCursor` as `unprovenCursor`); null means exhausted.",
+		{
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(500)
+				.default(100)
+				.describe("Max items per page. Default 100, cap 500."),
+			cursor: z
+				.string()
+				.optional()
+				.describe("Opaque cursor for the bindings list: the `nextCursor` of the previous call."),
+			unprovenCursor: z
+				.string()
+				.optional()
+				.describe(
+					"Opaque cursor for the unproven-mappings list (master only): the `unprovenNextCursor` of the previous call.",
+				),
+		},
 		{
 			readOnlyHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List GitHub owner bindings",
 		},
-		async () => {
+		async ({ limit, cursor, unprovenCursor }) => {
 			const unresolved = guardResolvedCaller("get_github_owner_bindings");
 			if (unresolved) return unresolved;
 			try {
-				// Both reads are capped server-side and return { items, truncated }:
-				// the truncation flags are passed on so a capped list never reads as complete.
-				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {});
+				// Both reads are cursor-paginated server-side and return { items,
+				// nextCursor }: the cursors are passed on so a page never reads as the whole list.
+				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {
+					limit,
+					...(cursor !== undefined ? { cursor } : {}),
+				});
 				const unprovenPage = isMasterScope(oauthCtx)
-					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {})
+					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {
+							limit,
+							...(unprovenCursor !== undefined ? { cursor: unprovenCursor } : {}),
+						})
 					: undefined;
 				return {
 					content: [
@@ -8629,9 +8654,9 @@ export function registerTools(
 							text: JSON.stringify(
 								{
 									bindings: bindingsPage.items,
-									bindingsTruncated: bindingsPage.truncated,
+									nextCursor: bindingsPage.nextCursor,
 									unprovenMappings: unprovenPage?.items,
-									unprovenMappingsTruncated: unprovenPage?.truncated,
+									unprovenNextCursor: unprovenPage?.nextCursor,
 								},
 								null,
 								2,

@@ -2549,8 +2549,8 @@ export const complete = mutation({
 
 		// Tenant of every repo-mapping side effect below (auto-link, IRP comments,
 		// fixPattern): the task's server-stamped orgId, never the caller-chosen
-		// `project` string. See convex/lib/repoMappingTenant.ts.
-		const mappingAudience = await audienceForOrgId(ctx, task.orgId);
+		// `project` string. See convex/lib/repoMappingTenant.ts and
+		// `resolveRepoMappingForTask`.
 
 		// Auto-link: if task title contains #NNN, update the corresponding issue
 		const issueMatch = task.title.match(/#(\d+)/);
@@ -2568,11 +2568,7 @@ export const complete = mutation({
 			// per-project overflow is strictly safer than throwing and blocking
 			// the task-completion write itself.
 			if (task.project) {
-					const { row: mapping } = await resolveGithubRepoMappingForProject(
-						ctx,
-						task.project,
-						mappingAudience,
-					);
+					const { row: mapping } = await resolveRepoMappingForTask(ctx, task);
 				if (mapping) {
 					// Find the issue
 					const issue = await ctx.db
@@ -2624,13 +2620,16 @@ export const complete = mutation({
 			const author = authorMatch ? authorMatch[1] : null;
 			const authorMention = author ? `@${author} ` : "";
 
-			const { row: repoMapping } = await resolveGithubRepoMappingForProject(
-				ctx,
-				task.project,
-				mappingAudience,
-			);
+			const { row: repoMapping } = await resolveRepoMappingForTask(ctx, task);
 
-			if (repoMapping) {
+			// The resolver already filters by the task's tenant; the effects below (a
+			// GitHub comment on this repo, a fleet-corpus write) re-check the TARGET
+			// row's own tenant against the task's, so the guard sits on the write: the
+			// row is the fleet's (unstamped) or the task's own org's, never another's.
+			if (
+				repoMapping &&
+				(repoMapping.orgId === undefined || repoMapping.orgId === task.orgId)
+			) {
 				const dateStr = new Date().toISOString().split("T")[0];
 				const orch = task.assignedTo;
 				const orchCapitalized = orch.charAt(0).toUpperCase() + orch.slice(1);
@@ -3728,6 +3727,20 @@ export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
  * from a partial set), exactly the "measure or refuse, never guess"
  * doctrine `resolveStaleDeployTasks`'s `truncated` field already reports.
  */
+/**
+ * The repo mapping a completing task may reach: its `project`, resolved inside
+ * the audience of the task's own server-stamped orgId (fleet task: fleet rows;
+ * operator-org task: fleet + own rows; client-org task: own rows only).
+ */
+async function resolveRepoMappingForTask(
+	ctx: MutationCtx,
+	task: Doc<"tasks">,
+): Promise<{ row: Doc<"githubRepoMapping"> | null; truncated: boolean }> {
+	if (!task.project) return { row: null, truncated: false };
+	const audience = await audienceForOrgId(ctx, task.orgId);
+	return await resolveGithubRepoMappingForProject(ctx, task.project, audience);
+}
+
 async function resolveGithubRepoMappingForProject(
 	ctx: MutationCtx,
 	project: string,

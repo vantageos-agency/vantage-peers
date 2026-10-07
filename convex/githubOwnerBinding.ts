@@ -1,3 +1,4 @@
+import { type ActingCredential, resolveActingPrincipal } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -8,7 +9,9 @@ import {
 	mutation,
 	query,
 } from "./_generated/server";
-import { requireOrgAdmin, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { lookupOrgMapping, requireOrgAdmin, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { signInstallState } from "./lib/installState";
+import { findOperatorOrg } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GitHub owner binding — the proof behind "this repo belongs to this org".
@@ -124,34 +127,85 @@ function toView(r: Doc<"githubOwnerBindings">) {
 	};
 }
 
-function randomState(): string {
+function randomNonce(): string {
 	const bytes = new Uint8Array(24);
 	crypto.getRandomValues(bytes);
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// Step 1. Org admin only, own org only.
+const START_DOOR = "githubOwnerBinding:startBinding";
+
+function refuseStart(reason: string, detail: string): never {
+	throw new ConvexError(`RBAC_DENIED: ${detail} — ${JSON.stringify({ door: START_DOOR, reason })}`);
+}
+
+// Step 1. Org admin only, own org only. The caller is identified BY ID through
+// @vantageos/cloud-identity: a dashboard human is a `person` (stored subject +
+// the org claim it presented), the fleet service account is a `service`. Each
+// lookup reads a stored row by id; a miss, an inactive row or an unmapped org is
+// a typed refusal, never a default principal. Only a person of a CLIENT-style
+// org reaches the binding: a service account (the fleet) has no client org.
 export const startBinding = mutation({
 	args: {},
 	returns: v.object({ state: v.string(), expiresAt: v.number() }),
 	handler: async (ctx) => {
 		// write-contract: MCP-transport-only (tool bind_github_owner); an
 		// imperative call, never a render. The refusal is a coded RBAC_DENIED.
-		const scope = await withOrgScope(ctx);
-		if (scope.isMaster || scope.orgSlug === null) {
-			throw new ConvexError(
-				"RBAC_DENIED: startBinding binds a GitHub owner to a CLIENT org; the caller has no client organisation — " +
-					JSON.stringify({ door: "githubOwnerBinding:startBinding" }),
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) refuseStart("anonymous", "no authenticated identity presented");
+		const claims = identity as Record<string, unknown>;
+		const orgClaim =
+			(claims.organizationSlug as string | undefined) ??
+			(claims.org_slug as string | undefined) ??
+			null;
+		const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
+		const credential: ActingCredential =
+			serviceAccountUserId && identity.subject === serviceAccountUserId
+				? { kind: "service", serviceAccountId: identity.subject }
+				: orgClaim !== null
+					? { kind: "person", personId: identity.subject, verifiedOrgId: orgClaim }
+					: refuseStart("no-organisation", "identity has no organisation attached");
+		const mappingOf = (orgId: string) => lookupOrgMapping(ctx, orgId);
+		const who = await resolveActingPrincipal(
+			credential,
+			{
+				personById: async (personId, orgId) => {
+					const m = await mappingOf(orgId);
+					return m === null ? null : { id: personId, orgId, active: m.isActive };
+				},
+				serviceAccountById: async (id) => {
+					const op = await findOperatorOrg(ctx.db);
+					return op.kind === "one" ? { id, orgId: op.slug, active: true } : null;
+				},
+				organisationById: async (orgId) => {
+					const m = await mappingOf(orgId);
+					return m === null ? null : { id: orgId, active: m.isActive };
+				},
+				orgKindOf: async (orgId) => (await mappingOf(orgId))?.orgKind ?? null,
+			},
+			START_DOOR,
+		);
+		if (!who.ok) refuseStart(who.refusal.reason, who.refusal.detail);
+		const principal = who.principal;
+		if (principal.kind !== "person") {
+			refuseStart(
+				"no-client-organisation",
+				"startBinding binds a GitHub owner to a CLIENT org; the caller has no client organisation",
 			);
 		}
-		await requireOrgAdmin(ctx, scope.orgSlug);
-		const state = randomState();
+		await requireOrgAdmin(ctx, principal.orgId);
+		const secret = process.env.GITHUB_APP_CLIENT_SECRET;
+		if (!secret) {
+			// Fail closed: without the App secret no signed state can be issued.
+			refuseStart("github-app-not-configured", "the GitHub App is not configured on this deployment");
+		}
+		const state = await signInstallState(randomNonce(), secret);
 		const now = Date.now();
 		const expiresAt = now + INSTALL_STATE_TTL_MS;
 		await ctx.db.insert("githubInstallStates", {
 			state,
-			orgId: scope.orgSlug,
-			createdBy: scope.userId,
+			orgId: principal.orgId,
+			createdBy: principal.principalId,
 			expiresAt,
 		});
 		return { state, expiresAt };
@@ -229,18 +283,22 @@ export const deactivateInstallation = internalMutation({
 	},
 });
 
-// R-30: the read bounds are OURS and named. Each read fetches CAP + 1 rows so a
-// full page can be told from a truncated one, and returns `truncated` instead of
-// a short list that reads as complete.
-export const OWNER_BINDING_LIST_CAP = 500;
-export const UNPROVEN_MAPPING_SCAN_CAP = 2000;
+// R-3 / R-30: both list reads are CURSOR-paginated with a named default and a
+// named maximum. A caller pages with `cursor` = the previous `nextCursor`;
+// `nextCursor: null` means the scan is exhausted, a string means more remain.
+export const OWNER_LIST_DEFAULT_LIMIT = 100;
+export const OWNER_LIST_MAX_LIMIT = 500;
 
-// Own org's bindings (a member), or all (master). `truncated: true` means more
-// bindings exist than the cap returned.
+export function pageSize(limit: number | undefined): number {
+	if (limit === undefined || !Number.isFinite(limit)) return OWNER_LIST_DEFAULT_LIMIT;
+	return Math.min(Math.max(Math.floor(limit), 1), OWNER_LIST_MAX_LIMIT);
+}
+
+// Own org's bindings (a member), or all (master), one page at a time.
 export const listBindings = query({
-	args: {},
-	returns: v.object({ items: v.array(bindingView), truncated: v.boolean() }),
-	handler: async (ctx) => {
+	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+	returns: v.object({ items: v.array(bindingView), nextCursor: v.union(v.string(), v.null()) }),
+	handler: async (ctx, args) => {
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// isolation-contract: no reactive subscriber. Enumerated by command:
 		//   grep -rn "api\.githubOwnerBinding\." --include=*.tsx --include=*.ts app components hooks lib
@@ -249,15 +307,16 @@ export const listBindings = query({
 		requireResolvedCaller(scope, "githubOwnerBinding:listBindings", {
 			alsoRefusePreOrg: true,
 		});
-		const rows = scope.isMaster
-			? await ctx.db.query("githubOwnerBindings").take(OWNER_BINDING_LIST_CAP + 1)
+		const opts = { numItems: pageSize(args.limit), cursor: args.cursor ?? null };
+		const page = scope.isMaster
+			? await ctx.db.query("githubOwnerBindings").paginate(opts)
 			: await ctx.db
 					.query("githubOwnerBindings")
 					.withIndex("by_org", (q) => q.eq("orgId", scope.orgSlug as string))
-					.take(OWNER_BINDING_LIST_CAP + 1);
+					.paginate(opts);
 		return {
-			items: rows.slice(0, OWNER_BINDING_LIST_CAP).map(toView),
-			truncated: rows.length > OWNER_BINDING_LIST_CAP,
+			items: page.page.map(toView),
+			nextCursor: page.isDone ? null : page.continueCursor,
 		};
 	},
 });
@@ -265,20 +324,21 @@ export const listBindings = query({
 type UnprovenMapping = { repo: string; orgId: string; project: string; reason: string };
 
 /**
- * The scan behind `listUnprovenMappings`, with the cap passed in. The public
- * query always passes the named `UNPROVEN_MAPPING_SCAN_CAP`; the parameter is
- * the seam that lets the truncation signal be pinned at cap+1 with a small cap
- * instead of seeding 2001 rows. Callers are the master-only handler and tests;
- * it performs no authorisation of its own.
+ * One page of the scan behind `listUnprovenMappings`: reads `numItems`
+ * githubRepoMapping rows from `cursor` and reports the unproven ones among them.
+ * A page may therefore hold fewer than `numItems` items (or none) while
+ * `nextCursor` is still a string: only `nextCursor: null` ends the scan. It
+ * performs no authorisation of its own; callers are the master-only handler and
+ * tests.
  */
 export async function collectUnprovenMappings(
 	ctx: QueryCtx,
-	cap: number,
-): Promise<{ items: UnprovenMapping[]; truncated: boolean }> {
+	numItems: number,
+	cursor: string | null,
+): Promise<{ items: UnprovenMapping[]; nextCursor: string | null }> {
 	const out: UnprovenMapping[] = [];
-	const scanned = await ctx.db.query("githubRepoMapping").take(cap + 1);
-	const rows = scanned.slice(0, cap);
-	for (const m of rows) {
+	const page = await ctx.db.query("githubRepoMapping").paginate({ numItems, cursor });
+	for (const m of page.page) {
 		if (m.orgId === undefined) continue;
 		const owner = ownerOfRepo(m.repo);
 		const binding = owner === null ? null : await activeBindingForOwner(ctx, owner);
@@ -293,15 +353,13 @@ export async function collectUnprovenMappings(
 			});
 		}
 	}
-	return { items: out, truncated: scanned.length > cap };
+	return { items: out, nextCursor: page.isDone ? null : page.continueCursor };
 }
 
 // Existing mappings that carry an org but NO proof: reported, never silently
 // kept. Master only (the repo-mapping corpus is fleet configuration).
-// `truncated: true` means the mapping table holds more rows than the scan cap, so
-// the report may omit unproven mappings beyond it.
 export const listUnprovenMappings = query({
-	args: {},
+	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
 	returns: v.object({
 		items: v.array(
 			v.object({
@@ -311,15 +369,15 @@ export const listUnprovenMappings = query({
 				reason: v.string(),
 			}),
 		),
-		truncated: v.boolean(),
+		nextCursor: v.union(v.string(), v.null()),
 	}),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// isolation-contract: no reactive subscriber (new door, 0 dashboard hits).
 		requireResolvedCaller(scope, "githubOwnerBinding:listUnprovenMappings", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 		});
-		return await collectUnprovenMappings(ctx, UNPROVEN_MAPPING_SCAN_CAP);
+		return await collectUnprovenMappings(ctx, pageSize(args.limit), args.cursor ?? null);
 	},
 });

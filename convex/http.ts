@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
 import { prTouchesDeployableConvex } from "./githubDeployGate";
+import { verifyInstallStateSignature } from "./lib/installState";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -933,6 +934,14 @@ http.route({
 		const installationId = Number(url.searchParams.get("installation_id"));
 		if (!state || !code || !Number.isInteger(installationId) || installationId <= 0) {
 			return new Response("Missing state, code or installation_id", { status: 400 });
+		}
+		// The state is `<nonce>.<hmac>` issued by githubOwnerBinding:startBinding.
+		// Verify its signature BEFORE any call to GitHub: a forged or foreign
+		// state is refused 401 and costs this deployment nothing outbound. Whether
+		// the state is live, unused and which org owns it is decided later by the
+		// stored row (single-use delivery key), never by the signature alone.
+		if (!(await verifyInstallStateSignature(state, clientSecret))) {
+			return new Response("Invalid install state", { status: 401 });
 		}
 		const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
 			method: "POST",

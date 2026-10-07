@@ -12,13 +12,19 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import {
 	collectUnprovenMappings,
-	OWNER_BINDING_LIST_CAP,
-	UNPROVEN_MAPPING_SCAN_CAP,
+	OWNER_LIST_DEFAULT_LIMIT,
+	OWNER_LIST_MAX_LIMIT,
+	pageSize,
 } from "../githubOwnerBinding";
+import { signInstallState } from "../lib/installState";
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 
-beforeEach(() => vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] }));
+beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+	// startBinding signs the install state with the GitHub App client secret.
+	vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
+});
 afterEach(() => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
@@ -157,11 +163,31 @@ describe("startBinding / completeBindingInternal", () => {
 		const t = makeT();
 		await seed(t, { bind: false });
 		const r = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		expect(r.state).toMatch(/^[0-9a-f]{48}$/);
+		expect(r.state).toMatch(/^[0-9a-f]{48}\.[0-9a-f]{64}$/);
 		const row = await t.run(async (ctx) => (await ctx.db.query("githubInstallStates").collect())[0]);
 		expect(row.orgId).toBe("org-a");
 		denied(await member(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
 		denied(await master(t).mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
+	});
+
+	test("REFUSED: no signed state can be issued without the GitHub App secret (fail closed)", async () => {
+		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "");
+		const t = makeT();
+		await seed(t, { bind: false });
+		denied(await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
+		expect(await t.run(async (ctx) => (await ctx.db.query("githubInstallStates").collect()).length)).toBe(0);
+	});
+
+	test("REFUSED: an anonymous caller and an identity with no organisation", async () => {
+		const t = makeT();
+		await seed(t, { bind: false });
+		denied(await t.mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
+		denied(
+			await t
+				.withIdentity({ subject: "loner" })
+				.mutation(api.githubOwnerBinding.startBinding, {})
+				.catch((e: unknown) => e),
+		);
 	});
 
 	const complete = (t: T, state: string, login = "gh-owner") =>
@@ -259,10 +285,32 @@ describe("GitHub-verified setup callback /github/app/setup", () => {
 		const t = makeT();
 		await seed(t, { bind: false });
 		stubGitHub({ tokenOk: false });
-		expect((await setup(t, { state: "s", code: "c", installation_id: "5" })).status).toBe(502);
+		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
+		expect((await setup(t, { state, code: "c", installation_id: "5" })).status).toBe(502);
 		stubGitHub({ installs: [{ id: 5, account: { login: "x", type: "User" } }] });
-		expect((await setup(t, { state: "unknown", code: "c", installation_id: "5" })).status).toBe(409);
+		// signed by this deployment but never issued: the stored row decides (409)
+		const signedUnknown = await signInstallState("f".repeat(48), "csecret");
+		expect((await setup(t, { state: signedUnknown, code: "c", installation_id: "5" })).status).toBe(409);
 		expect((await setup(t, { state: "s" })).status).toBe(400);
+	});
+
+	test("REFUSED 401 before ANY call to GitHub: unsigned, foreign-signed and tampered state", async () => {
+		vi.stubEnv("GITHUB_APP_CLIENT_ID", "cid");
+		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
+		const t = makeT();
+		await seed(t, { bind: false });
+		const calls = stubGitHub({ installs: [{ id: 5, account: { login: "x", type: "User" } }] });
+		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
+		const foreign = await signInstallState("a".repeat(48), "another-secret");
+		const tampered = `${"0".repeat(48)}.${state.split(".")[1]}`;
+		for (const bad of ["nope", "a".repeat(48), foreign, tampered, `${state}00`]) {
+			expect((await setup(t, { state: bad, code: "c", installation_id: "5" })).status).toBe(401);
+		}
+		expect(calls).toEqual([]);
+		expect(await t.run(async (ctx) => (await ctx.db.query("githubOwnerBindings").collect()).length)).toBe(0);
+		// the genuine state still reaches GitHub
+		expect((await setup(t, { state, code: "c", installation_id: "5" })).status).toBe(200);
+		expect(calls.length).toBeGreaterThan(0);
 	});
 });
 
@@ -315,7 +363,7 @@ describe("existing mappings without proof are REPORTED", () => {
 			await ctx.db.insert("githubRepoMapping", { repo: "fleet/z", orchestrator: ORCH, project: "p", active: true });
 		});
 		const list = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
-		expect(list.truncated).toBe(false);
+		expect(list.nextCursor).toBeNull();
 		expect(list.items.map((r) => [r.repo, r.reason]).sort()).toEqual([
 			["org-b/y", "owner-bound-to-another-org"],
 			["squat/x", "owner-not-bound"],
@@ -328,30 +376,16 @@ describe("existing mappings without proof are REPORTED", () => {
 		const t = makeT();
 		await seed(t);
 		const mine = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
-		expect(mine.truncated).toBe(false);
+		expect(mine.nextCursor).toBeNull();
 		expect(mine.items.map((b) => b.owner)).toEqual(["org-a"]);
 		expect((await master(t).query(api.githubOwnerBinding.listBindings, {})).items.length).toBe(2);
 	});
 
-	// R-30: the read cap is a NAMED constant and hitting it is SAID, never a
-	// silent short list. Three poles: over the cap / exactly at the cap / empty.
-	test("listBindings truncation signal: cap+1 rows -> truncated true with exactly the cap; at the cap -> false; empty -> false", async () => {
+	// R-3: both reads are cursor-paginated with a named default and maximum.
+	// Poles: empty -> exhausted; more rows than a page -> a cursor that walks every
+	// row exactly once; the limit is clamped to the named maximum.
+	test("listBindings pages by cursor: every row exactly once, null cursor ends it, empty is exhausted", async () => {
 		const t = makeT();
-		const insert = (n: number, from: number) =>
-			t.run(async (ctx) => {
-				for (let i = from; i < from + n; i++) {
-					await ctx.db.insert("githubOwnerBindings", {
-						owner: `own${i}`,
-						orgId: "org-a",
-						installationId: i,
-						accountType: "Organization",
-						githubUserLogin: `gh${i}`,
-						boundBy: "admin-org-a",
-						boundAt: 1,
-						active: true,
-					});
-				}
-			});
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-a",
@@ -363,55 +397,86 @@ describe("existing mappings without proof are REPORTED", () => {
 			});
 		});
 		const empty = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
-		expect(empty).toEqual({ items: [], truncated: false });
-		await insert(OWNER_BINDING_LIST_CAP, 0);
-		const atCap = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
-		expect(atCap.items.length).toBe(OWNER_BINDING_LIST_CAP);
-		expect(atCap.truncated).toBe(false);
-		await insert(1, OWNER_BINDING_LIST_CAP);
-		const over = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
-		expect(over.items.length).toBe(OWNER_BINDING_LIST_CAP);
-		expect(over.truncated).toBe(true);
-		const asMaster = await master(t).query(api.githubOwnerBinding.listBindings, {});
-		expect(asMaster.items.length).toBe(OWNER_BINDING_LIST_CAP);
-		expect(asMaster.truncated).toBe(true);
+		expect(empty).toEqual({ items: [], nextCursor: null });
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 5; i++) {
+				await ctx.db.insert("githubOwnerBindings", {
+					owner: `own${i}`,
+					orgId: "org-a",
+					installationId: i,
+					accountType: "Organization",
+					githubUserLogin: `gh${i}`,
+					boundBy: "admin-org-a",
+					boundAt: 1,
+					active: true,
+				});
+			}
+		});
+		const seen: string[] = [];
+		let cursor: string | undefined;
+		let pages = 0;
+		for (;;) {
+			const page = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {
+				limit: 2,
+				...(cursor !== undefined ? { cursor } : {}),
+			});
+			expect(page.items.length).toBeLessThanOrEqual(2);
+			seen.push(...page.items.map((b) => b.owner));
+			pages++;
+			if (page.nextCursor === null) break;
+			cursor = page.nextCursor;
+		}
+		expect(pages).toBe(3);
+		expect([...seen].sort()).toEqual(["own0", "own1", "own2", "own3", "own4"]);
+		const asMaster = await master(t).query(api.githubOwnerBinding.listBindings, { limit: 3 });
+		expect(asMaster.items.length).toBe(3);
+		expect(asMaster.nextCursor).not.toBeNull();
 	});
 
-	// The scan is pinned at a SMALL cap through the `collectUnprovenMappings`
-	// seam: seeding UNPROVEN_MAPPING_SCAN_CAP + 1 (2001) rows timed out the 5000ms
-	// default under CI's unflagged `npx vitest run` (Eta REVISE, PR #1461). The
-	// public query passes the named constant to this same function.
-	test("listUnprovenMappings truncation signal: scan cap+1 mappings -> truncated true; at the cap -> false; empty -> false", async () => {
+	test("pageSize: default when absent or not finite; clamped to [1, named max]", () => {
+		expect(pageSize(undefined)).toBe(OWNER_LIST_DEFAULT_LIMIT);
+		expect(pageSize(Number.NaN)).toBe(OWNER_LIST_DEFAULT_LIMIT);
+		expect(pageSize(0)).toBe(1);
+		expect(pageSize(-5)).toBe(1);
+		expect(pageSize(7.9)).toBe(7);
+		expect(pageSize(OWNER_LIST_MAX_LIMIT + 1000)).toBe(OWNER_LIST_MAX_LIMIT);
+	});
+
+	test("listUnprovenMappings pages by cursor: a page scans `limit` mappings, null cursor ends the scan", async () => {
 		const t = makeT();
-		const CAP = 3;
-		const insert = (n: number, from: number) =>
-			t.run(async (ctx) => {
-				for (let i = from; i < from + n; i++) {
-					await ctx.db.insert("githubRepoMapping", {
-						repo: `sq${i}/r`,
-						orchestrator: ORCH,
-						project: "p",
-						active: true,
-						orgId: "org-a",
-					});
-				}
-			});
-		const scan = () => t.run((ctx) => collectUnprovenMappings(ctx, CAP));
-		expect(await scan()).toEqual({ items: [], truncated: false });
-		await insert(CAP, 0);
-		const atCap = await scan();
-		expect(atCap.items.length).toBe(CAP);
-		expect(atCap.truncated).toBe(false);
-		await insert(1, CAP);
-		const over = await scan();
-		expect(over.items.length).toBe(CAP);
-		expect(over.truncated).toBe(true);
-		// the public door is wired to the same scan: below its named cap it reports
-		// every unproven row and no truncation.
-		const viaQuery = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
-		expect(UNPROVEN_MAPPING_SCAN_CAP).toBeGreaterThan(CAP + 1);
-		expect(viaQuery.items.length).toBe(CAP + 1);
-		expect(viaQuery.truncated).toBe(false);
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 5; i++) {
+				await ctx.db.insert("githubRepoMapping", {
+					repo: `sq${i}/r`,
+					orchestrator: ORCH,
+					project: "p",
+					active: true,
+					orgId: "org-a",
+				});
+			}
+			// a fleet row is scanned but never reported
+			await ctx.db.insert("githubRepoMapping", { repo: "fleet/z", orchestrator: ORCH, project: "p", active: true });
+		});
+		expect(await t.run((ctx) => collectUnprovenMappings(ctx, 50, null))).toMatchObject({ nextCursor: null });
+		const seen: string[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const page: Awaited<ReturnType<typeof collectUnprovenMappings>> = await t.run((ctx) =>
+				collectUnprovenMappings(ctx, 2, cursor),
+			);
+			seen.push(...page.items.map((m) => m.repo));
+			cursor = page.nextCursor;
+			pages++;
+		} while (cursor !== null);
+		expect(pages).toBe(3);
+		expect([...seen].sort()).toEqual(["sq0/r", "sq1/r", "sq2/r", "sq3/r", "sq4/r"]);
+		const viaQuery = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, { limit: 2 });
+		expect(viaQuery.items.length).toBe(2);
+		expect(viaQuery.nextCursor).not.toBeNull();
+		const all = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
+		expect(all.items.length).toBe(5);
+		expect(all.nextCursor).toBeNull();
 	});
 });
 
@@ -527,7 +592,7 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 		expect((await issueOf(t, 5))?.status).toBe("fixed");
 		await upsert(t, 12);
 		expect((await issueOf(t, 12))?.orgId).toBe("org-a");
-		expect(await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {})).toEqual({ items: [], truncated: false });
+		expect(await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {})).toEqual({ items: [], nextCursor: null });
 	});
 
 	test("deploy-task routing: a cron-closed deploy task stops using an unproven mapping's deploy state", async () => {

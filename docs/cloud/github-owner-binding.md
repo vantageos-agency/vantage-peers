@@ -22,7 +22,9 @@ A mapping whose owner is not bound to the caller's org is refused with
 ## How an owner gets bound (self-serve, no operator step)
 
 1. An org ADMIN calls `bind_github_owner` (Convex `githubOwnerBinding:startBinding`).
-   It returns a single-use `state`, valid 15 minutes, tied to the admin's org.
+   It returns a single-use `state`, valid 15 minutes, tied to the admin's org. The
+   state is `<nonce>.<HMAC-SHA-256>` signed with the App client secret; the setup
+   callback verifies the signature (401 on a forged one) before it calls GitHub.
 2. The admin installs the VantagePeers GitHub App on the GitHub account that
    owns the repos, with that `state` on the install/setup URL.
 3. GitHub redirects to `GET /github/app/setup` with `installation_id`, `code`, `state`.
@@ -114,8 +116,10 @@ Install URL handed to an org admin after `bind_github_owner`:
 mapping rows whose owner is not bound, or bound to another org
 (`githubOwnerBinding:listUnprovenMappings`). They are reported, not silently kept.
 
-Both reads are capped (`OWNER_BINDING_LIST_CAP` 500 bindings,
-`UNPROVEN_MAPPING_SCAN_CAP` 2000 scanned mappings) and return
-`{ items, truncated }`. `get_github_owner_bindings` passes the flags on as
-`bindingsTruncated` and `unprovenMappingsTruncated`: `true` means more rows exist
-than were returned, so the list is not the whole set.
+Both reads are cursor-paginated (`limit` default 100, max 500) and return
+`{ items, nextCursor }`. `get_github_owner_bindings` takes `limit`, `cursor` (bindings)
+and `unprovenCursor` (unproven mappings) and returns `nextCursor` and
+`unprovenNextCursor`: a string means more remain (pass it back as the matching
+cursor), `null` means that list is exhausted. An unproven-mappings page scans
+`limit` mapping rows, so a page may hold fewer items than `limit` (or none) while
+its cursor is still a string.
