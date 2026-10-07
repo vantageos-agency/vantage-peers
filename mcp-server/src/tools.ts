@@ -25,6 +25,7 @@ import {
 	filterRowsToActorTenant,
 	isMasterScope,
 	type OAuthContext,
+	PERSON_ACTOR_PREFIX,
 	personActorOf,
 	resolveSeatOrg,
 	rowVisibleToActorTenant,
@@ -3233,8 +3234,13 @@ export function registerTools(
 				// splitting behaviour in the Convex layer.
 				const normFrom =
 					from === undefined ? undefined : normalizeOrchestratorId(from);
+				// A person channel ("user:<Clerk subject>") is also kept verbatim: a
+				// subject is case-sensitive and Convex matches it byte for byte
+				// against the name the person was written down under.
 				const normChannel =
-					channel === "broadcast" || channel.includes(",")
+					channel === "broadcast" ||
+					channel.includes(",") ||
+					channel.toLowerCase().startsWith(PERSON_ACTOR_PREFIX)
 						? channel
 						: normalizeOrchestratorId(channel);
 				// The seat's verified org rides along so Convex scopes the

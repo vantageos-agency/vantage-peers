@@ -256,6 +256,9 @@ describe("END TWO sweep — no MCP reader of an envelope-capable door may swallo
 			// Dashboard-only paginated history read; no MCP reader exists, so S1b's
 			// call-site set below is unchanged.
 			"messages:listByChannelPaginated",
+			// A person's own unread replies (client portal reply path); no MCP reader
+			// (grep -rn listMyInbox mcp-server/src -> 0), so S1b is unchanged.
+			"messages:listMyInbox",
 			"profiles:listProfiles",
 		]);
 	});
