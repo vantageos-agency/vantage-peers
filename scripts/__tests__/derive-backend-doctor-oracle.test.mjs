@@ -899,3 +899,142 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 		TIMEOUT,
 	);
 });
+
+// ── table_conserver_supprimer: the disposition declared at the tool ─────────
+// backend-standard §5 R-13: a disposition from a closed set (stays / goes /
+// undecided with an owner and a deadline). The doctor reads it from
+// `table_conserver_supprimer` (backend-doctor src/detectors/predicates.ts r13:
+// conform on ^CONSERVER / ^SUPPRIMER, or undecided + owner: + deadline). The
+// only source is the tool author's `// oracle-disposition: <value>` comment in
+// the block before its defineTool( call; nothing is generated, so an
+// undeclared tool keeps an empty cell and still counts under R-13.
+
+const DELETE_BU_JUSTIFIED_TAIL =
+	"//   create, update and list, which admit a member by roster.\n\tdefineTool(";
+
+function declareDeleteBu(root, value) {
+	mutate(
+		root,
+		"mcp-server/src/tools.ts",
+		DELETE_BU_JUSTIFIED_TAIL,
+		DELETE_BU_JUSTIFIED_TAIL.replace(
+			"\n\tdefineTool(",
+			`\n\t// oracle-disposition:${value === "" ? "" : ` ${value}`}\n\tdefineTool(`,
+		),
+	);
+}
+
+describe("derive-backend-doctor-oracle declared disposition (R-13)", () => {
+	it(
+		"ABSENT — with no oracle-disposition marker in the tree, every committed row has an empty disposition",
+		() => {
+			const rows = rowsOf(COMMITTED_CSV);
+			expect(rows).toHaveLength(TOOL_COUNT);
+			for (const r of rows)
+				expect(r.table_conserver_supprimer, r.outil).toBe("");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"PRESENT — a declared tool carries its disposition verbatim; an undeclared neighbour stays empty; the justification is not swallowed",
+		() => {
+			const root = copyTree();
+			declareDeleteBu(
+				root,
+				"CONSERVER — business units are the tenant hierarchy",
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const rows = rowsOf(outOf(root));
+			const del = rows.find((x) => x.outil === "delete_bu");
+			expect(del.table_conserver_supprimer).toBe(
+				"CONSERVER — business units are the tenant hierarchy",
+			);
+			// the oracle-justified block above it ends where the next marker starts
+			expect(del.rbac_adjustment_needed).toMatch(/^JUSTIFIED: master-only/);
+			expect(del.rbac_adjustment_needed).not.toContain("oracle-disposition");
+			expect(del.rbac_adjustment_needed).not.toContain("CONSERVER");
+			// the same table's other tools declared nothing: nothing is inferred
+			for (const x of rows.filter((y) => y.outil !== "delete_bu"))
+				expect(x.table_conserver_supprimer, x.outil).toBe("");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"PRESENT — a declaration placed BEFORE an oracle-justified block, with a continuation line, reads to the next marker",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"mcp-server/src/tools.ts",
+				"\t// oracle-justified: master-only by design: deleting a business unit",
+				"\t// oracle-disposition: SUPPRIMER — superseded by the org roster\n\t//   (survivor: update_bu)\n\t// oracle-justified: master-only by design: deleting a business unit",
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const del = rowsOf(outOf(root)).find((x) => x.outil === "delete_bu");
+			expect(del.table_conserver_supprimer).toBe(
+				"SUPPRIMER — superseded by the org roster (survivor: update_bu)",
+			);
+			expect(del.rbac_adjustment_needed).toMatch(/^JUSTIFIED: master-only/);
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"PRESENT — an undecided disposition carrying an owner and a deadline is accepted",
+		() => {
+			const root = copyTree();
+			declareDeleteBu(root, "UNDECIDED owner: sigma deadline: 2026-11-30");
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find((x) => x.outil === "delete_bu")
+					.table_conserver_supprimer,
+			).toBe("UNDECIDED owner: sigma deadline: 2026-11-30");
+		},
+		TIMEOUT,
+	);
+
+	for (const [label, value, message] of [
+		[
+			"a value outside the closed set",
+			"KEEP",
+			"outside {CONSERVER, SUPPRIMER, UNDECIDED}",
+		],
+		[
+			"a lower-case keyword",
+			"conserver",
+			"outside {CONSERVER, SUPPRIMER, UNDECIDED}",
+		],
+		[
+			"a keyword run into another word",
+			"CONSERVERS",
+			"outside {CONSERVER, SUPPRIMER, UNDECIDED}",
+		],
+		["a bare UNDECIDED", "UNDECIDED", "UNDECIDED without owner: and deadline:"],
+		[
+			"an UNDECIDED with an owner and no deadline",
+			"UNDECIDED owner: sigma",
+			"UNDECIDED without owner: and deadline:",
+		],
+		["an empty marker", "", "oracle-disposition marker carries no value"],
+	])
+		for (const mode of [[], ["--check"]])
+			it(
+				`REFUSED — ${label} => exit 2, nothing written ${mode.join(" ") || "(write)"}`,
+				() => {
+					const root = copyTree();
+					declareDeleteBu(root, value);
+					const before = readFileSync(outOf(root), "utf8");
+					const r = derive(root, ...mode);
+					expect(r.status, r.stdout).toBe(2);
+					expect(r.stderr).toContain("delete_bu");
+					expect(r.stderr).toContain(message);
+					expect(readFileSync(outOf(root), "utf8")).toBe(before);
+				},
+				TIMEOUT,
+			);
+});
