@@ -18,6 +18,7 @@
  */
 
 import { v, ConvexError } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
 import { withOrgScope } from "./lib/auth";
@@ -201,6 +202,13 @@ export const generateUploadUrl = mutation({
 // Called by kb:softDeleteDocument.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Chunks marked per transaction by `markDocSoftDeleted` (R-31). A marked chunk
+ * leaves the `(namespace, isLatest=true)` range, so each batch reads the next
+ * unmarked chunks and no cursor is needed.
+ */
+export const MARK_DOC_BATCH_SIZE = 200;
+
 export const markDocSoftDeleted = internalMutation({
 	args: {
 		namespace: v.string(),
@@ -213,9 +221,17 @@ export const markDocSoftDeleted = internalMutation({
 			.withIndex("by_namespace", (q) =>
 				q.eq("namespace", args.namespace).eq("isLatest", true),
 			)
-			.collect();
+			.take(MARK_DOC_BATCH_SIZE);
 		for (const row of rows) {
 			await ctx.db.patch(row._id, { isLatest: false, updatedAt: now });
+		}
+		// A full batch means more may remain: continue in the background rather
+		// than reading the document's whole chunk set in one transaction. The
+		// return value is this batch's count.
+		if (rows.length === MARK_DOC_BATCH_SIZE) {
+			await ctx.scheduler.runAfter(0, internal.kbMutations.markDocSoftDeleted, {
+				namespace: args.namespace,
+			});
 		}
 		return rows.length;
 	},

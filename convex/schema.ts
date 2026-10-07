@@ -298,6 +298,30 @@ export default defineSchema({
 		.index("by_orgId_project_status", ["orgId", "project", "status"])
 		.index("by_orgId_pilot_status", ["orgId", "pilot", "status"]),
 
+	// ── bulk_complete_runs ─────────────────────────────────────────────────────
+	// One row per LIVE tasks:bulkComplete run, keyed by the bulkRunId the first
+	// call returns. bulkComplete closes its first batch in the call and drains
+	// the rest through a scheduled continuation; this row is where a client
+	// reads how that went (running / complete / failed + the reason), because a
+	// scheduled function has no caller to throw at. `orgId` is the caller's
+	// verified org at the time of the run (absent for a fleet-master run);
+	// tasks:getBulkCompleteRun serves the run's own org and the master only.
+	bulk_complete_runs: defineTable({
+		bulkRunId: v.string(),
+		orgId: v.optional(v.string()),
+		createdBy: v.string(), // the callerOrchestrator of the run
+		status: v.union(
+			v.literal("running"),
+			v.literal("complete"),
+			v.literal("failed"),
+		),
+		closed: v.number(), // tasks closed so far, across batches
+		remaining: v.boolean(), // true while (or because) rows beyond the closed ones matched
+		failureReason: v.optional(v.string()),
+		startedAt: v.number(),
+		updatedAt: v.number(),
+	}).index("by_bulkRunId", ["bulkRunId"]),
+
 	// ── tasks ──────────────────────────────────────────────────────────────────
 	tasks: defineTable({
 		title: v.string(),

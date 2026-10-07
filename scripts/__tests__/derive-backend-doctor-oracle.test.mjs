@@ -30,6 +30,30 @@ const COMMITTED_WRITER_CSV = join(
 );
 const TIMEOUT = 120_000;
 
+/**
+ * The number of MCP tools the registry holds, DERIVED rather than typed: the
+ * data rows of the committed oracle CSV (one row per registered defineTool),
+ * counted with a quote-aware pass because cells may hold newlines. A typed
+ * count drifted every time a tool was added (108 -> 109 with
+ * get_bulk_complete_run); the PRESENT test below still proves the committed
+ * CSV is byte-identical to a fresh derivation, so a stale CSV cannot make this
+ * number lie.
+ */
+function countCsvDataRows(text) {
+	let rows = 0;
+	let inQuotes = false;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i];
+		if (ch === '"') {
+			if (inQuotes && text[i + 1] === '"') i++;
+			else inQuotes = !inQuotes;
+		} else if (ch === "\n" && !inQuotes) rows++;
+	}
+	return rows - 1; // minus the header line
+}
+const TOOL_COUNT = countCsvDataRows(readFileSync(COMMITTED_CSV, "utf8"));
+const TOOL_COUNT_SHORT = TOOL_COUNT - 1;
+
 const temps = [];
 afterEach(() => {
 	for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -66,19 +90,19 @@ function mutate(root, rel, from, to) {
 
 describe("derive-backend-doctor-oracle population guard", () => {
 	it(
-		"PRESENT — the normal tree derives 108 rows, byte-identical to the committed CSV",
+		`PRESENT — the normal tree derives ${TOOL_COUNT} rows, byte-identical to the committed CSV`,
 		() => {
 			const root = copyTree();
 			rmSync(join(root, ".backend-doctor"), { recursive: true });
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
-			expect(r.stdout).toContain("108 rows");
+			expect(r.stdout).toContain(`${TOOL_COUNT} rows`);
 			const fresh = readFileSync(
 				join(root, ".backend-doctor", "vp-by-tool.csv"),
 				"utf8",
 			);
 			expect(fresh).toBe(readFileSync(COMMITTED_CSV, "utf8"));
-			expect(fresh.trimEnd().split("\n")).toHaveLength(109);
+			expect(fresh.trimEnd().split("\n")).toHaveLength(TOOL_COUNT + 1); // header + one row per tool
 			const check = derive(root, "--check");
 			expect(check.status, check.stderr).toBe(0);
 		},
@@ -124,7 +148,7 @@ describe("derive-backend-doctor-oracle population guard", () => {
 
 	for (const mode of [[], ["--check"]])
 		it(
-			`REFUSED — one defineTool hidden from the AST walk (non-literal name) => exit 2 expected 108 found 107 ${mode.join(" ") || "(write)"}`,
+			`REFUSED — one defineTool hidden from the AST walk (non-literal name) => exit 2 expected ${TOOL_COUNT} found ${TOOL_COUNT_SHORT} ${mode.join(" ") || "(write)"}`,
 			() => {
 				const root = copyTree();
 				// store_document_chunked is NOT a core name: only the lexical count
@@ -138,7 +162,7 @@ describe("derive-backend-doctor-oracle population guard", () => {
 				const r = derive(root, ...mode);
 				expect(r.status).toBe(2);
 				expect(r.stderr).toContain(
-					"expected 108 tools (lexical defineTool( count across mcp-server/src), found 107 (AST enumeration)",
+					`expected ${TOOL_COUNT} tools (lexical defineTool( count across mcp-server/src), found ${TOOL_COUNT_SHORT} (AST enumeration)`,
 				);
 				expect(r.stderr).toContain(
 					"mcp-server/src/tools/kbIngest.ts: 3 defineTool( call site(s) in the text, 2 enumerated as tools",
@@ -396,7 +420,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			expect(side.map((r) => r.outil).sort()).toEqual(
 				writes.map((r) => r.outil).sort(),
 			);
-			expect(side).toHaveLength(54);
+			expect(side).toHaveLength(writes.length);
 			for (const r of side)
 				expect(r.writer_tier, r.outil).toMatch(
 					/^(public|org-member|org-admin|fleet-internal|master)$/,

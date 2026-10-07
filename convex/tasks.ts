@@ -30,6 +30,12 @@ import {
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
 import {
+	assertRowInVerifiedOrg,
+	resolveDoorVerifiedOrg,
+	resolveVerifiedOrg,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
+import {
 	assertMemberIsAdmin,
 	assertTaskVisibleToCaller,
 	resolveHumanActor,
@@ -1740,6 +1746,11 @@ export const update = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
@@ -1752,6 +1763,7 @@ export const update = mutation({
 			agentCredentialSecret,
 			verifiedActor,
 			verifiedPerson,
+			verifiedOrg,
 			...fields
 		} = args;
 		const callerScope = await requireAuthenticatedCaller(
@@ -1761,12 +1773,14 @@ export const update = mutation({
 			verifiedActor,
 			{ proof: verifiedPerson, door: "tasks:update" },
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, verifiedOrg, "tasks:update");
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
 		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
 		// creator, so nobody could move it off a stopped reviewer. The coordinator
@@ -2211,6 +2225,11 @@ export const blockTask = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2221,12 +2240,14 @@ export const blockTask = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:blockTask");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:blockTask");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:blockTask");
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
@@ -2388,6 +2409,11 @@ export const complete = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
@@ -2400,12 +2426,14 @@ export const complete = mutation({
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "tasks:complete" },
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:complete");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:complete");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:complete");
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
@@ -2622,13 +2650,28 @@ export const complete = mutation({
 
 		// Auto-complete mission: if this task belongs to a mission, check if all tasks are done
 		if (task.missionId) {
-			const missionTasks = await ctx.db
-				.query("tasks")
-				.withIndex("by_mission", (q) => q.eq("missionId", task.missionId!))
-				.collect();
-			const allDone = missionTasks.every(
-				(t) =>
-					t._id.toString() === args.taskId.toString() || t.status === "done",
+			// "Every task of the mission is done" is an EXISTENCE question — is there
+			// any OTHER task whose status is not "done"? — so it is answered with two
+			// index ranges either side of "done" (`by_mission` is [missionId, status]),
+			// each read to at most 2 rows (enough to see one that is not this task),
+			// never the mission's whole task set.
+			const missionId = task.missionId;
+			const notDone = [
+				...(await ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).lt("status", "done"),
+					)
+					.take(2)),
+				...(await ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).gt("status", "done"),
+					)
+					.take(2)),
+			];
+			const allDone = notDone.every(
+				(t) => t._id.toString() === args.taskId.toString(),
 			);
 			if (allDone) {
 				const mission = await ctx.db.get(task.missionId);
@@ -2684,6 +2727,11 @@ export const failTask = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2694,12 +2742,14 @@ export const failTask = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:failTask");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:failTask");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:failTask");
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
@@ -2820,6 +2870,11 @@ export const start = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.null(),
@@ -2832,12 +2887,14 @@ export const start = mutation({
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "tasks:start" },
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:start");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:start");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:start");
 
 		// Block if any dependsOn tasks are not yet done.
@@ -2908,6 +2965,11 @@ export const pause = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2918,12 +2980,14 @@ export const pause = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:pause");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:pause");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:pause");
 
 		const segments = task.workSegments ?? [];
@@ -2968,6 +3032,11 @@ export const resume = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2978,12 +3047,14 @@ export const resume = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:resume");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:resume");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:resume");
 
 		if (task.pausedAt === undefined) {
@@ -3038,6 +3109,11 @@ export const correctSegment = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -3048,12 +3124,14 @@ export const correctSegment = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:correctSegment");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:correctSegment");
 		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 		// assertTaskCallerAuthorized above already refuses an undefined
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
@@ -3171,6 +3249,11 @@ export const checkout = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ claimed: v.boolean(), reason: v.optional(v.string()) }),
 	handler: async (ctx, args) => {
@@ -3181,10 +3264,12 @@ export const checkout = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:checkout");
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
 		}
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:checkout");
 		// Tenant gate — claiming a row is a write on it.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 		if (task.status !== "todo") {
@@ -3241,6 +3326,11 @@ export const deleteTask = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller. Believed from
+		// the fleet service account ONLY (any other caller presenting it is
+		// refused); when present the target task's orgId must equal it, else the
+		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
@@ -3251,11 +3341,13 @@ export const deleteTask = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:deleteTask");
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
+		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:deleteTask");
 		// Tenant gate — a hard delete of another organisation's row is the
 		// worst case of the write surface.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
@@ -3635,6 +3727,9 @@ async function resolveGithubRepoMappingForProject(
 //
 // Called from convex/http.ts GitHub webhook handler (PR merged event).
 // ─────────────────────────────────────────────────────────────────────────────
+/** Open tasks of one project read per status by createDeployTaskWithDedup (R-31). */
+const DEPLOY_DEDUP_SCAN_CAP = 500;
+
 export const createDeployTaskWithDedup = internalMutation({
 	args: {
 		title: v.string(),
@@ -3717,12 +3812,19 @@ export const createDeployTaskWithDedup = internalMutation({
 		// We check the four open statuses to keep the query bounded.
 		const OPEN_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 
+		// Bounded (R-31): read through `by_project` ([project, status]) — the deploy
+		// title's repo slug IS the project the task is created under (see the
+		// Day 98 F1 note above) — at most DEPLOY_DEDUP_SCAN_CAP rows per status,
+		// never the whole open-task population. A deploy task filed under another
+		// project is a different partition and is not scanned.
 		const existing: Doc<"tasks">[] = [];
 		for (const status of OPEN_STATUSES) {
 			const batch = await ctx.db
 				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.collect();
+				.withIndex("by_project", (q) =>
+					q.eq("project", repo).eq("status", status),
+				)
+				.take(DEPLOY_DEDUP_SCAN_CAP);
 			for (const t of batch) {
 				const p = parseDeployTitle(t.title);
 				if (p && p.prNumber === prNumber && p.repo === repo) {
@@ -3761,8 +3863,10 @@ export const createDeployTaskWithDedup = internalMutation({
 		for (const status of OPEN_STATUSES) {
 			const batch = await ctx.db
 				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status))
-				.collect();
+				.withIndex("by_project", (q) =>
+					q.eq("project", repo).eq("status", status),
+				)
+				.take(DEPLOY_DEDUP_SCAN_CAP);
 			for (const t of batch) {
 				if (t._id === newId) continue;
 				const p = parseDeployTitle(t.title);
@@ -4072,6 +4176,156 @@ function renderTemplate(
 /** Hard cap to prevent blast radius beyond a realistic cron-spam batch. */
 const BULK_COMPLETE_HARD_CAP = 500;
 
+type BulkCompleteStatus = "todo" | "in_progress" | "review" | "blocked";
+
+const bulkCompleteFilterValidator = v.object({
+	autoGeneratedOnly: v.optional(v.boolean()),
+	assignedTo: v.optional(v.string()),
+	// Day 163 — narrows the scan to a single open status instead of the
+	// full todo/in_progress/review/blocked sweep. Counts as a reductive
+	// predicate on its own (it directly bounds what the index scan sees).
+	status: v.optional(
+		v.union(
+			v.literal("todo"),
+			v.literal("in_progress"),
+			v.literal("review"),
+			v.literal("blocked"),
+		),
+	),
+});
+
+interface BulkCompleteFilter {
+	autoGeneratedOnly?: boolean;
+	assignedTo?: string;
+	status?: BulkCompleteStatus;
+}
+
+/**
+ * Scans non-done tasks through the `by_status` index and returns at most
+ * BULK_COMPLETE_HARD_CAP + 1 matches (the +1 is the overflow sentinel). The
+ * tenant gate (`isRowVisibleToScope`) is applied to every row; a row outside
+ * the caller's organisation is never matched.
+ */
+async function scanBulkCompleteMatches(
+	ctx: MutationCtx,
+	filter: BulkCompleteFilter,
+	scope: OrgScope,
+	// The verified org the transport forwarded (`verifiedOrg`). A service-account
+	// call is master-scoped, so `scope` alone reaches every tenant and the
+	// creator/assignee check is a NAME, and names collide across orgs (an org-a
+	// "eta" matched org-b's "eta" tasks). When present, only rows STATING this org
+	// are matched. Absent (the master / fleet path) nothing narrows.
+	onlyOrgId?: string,
+): Promise<Doc<"tasks">[]> {
+	const hasAutoGeneratedOnly = filter.autoGeneratedOnly === true;
+	const hasAssignedTo = filter.assignedTo !== undefined && filter.assignedTo !== "";
+	const matched: Doc<"tasks">[] = [];
+	const statuses: readonly BulkCompleteStatus[] =
+		filter.status !== undefined
+			? [filter.status]
+			: ["todo", "in_progress", "review", "blocked"];
+
+	for (const status of statuses) {
+		const cursor = ctx.db
+			.query("tasks")
+			.withIndex("by_status", (q) => q.eq("status", status));
+		for await (const task of cursor) {
+			const cronMatch =
+				hasAutoGeneratedOnly &&
+				(/^cron-/i.test(task.createdBy ?? "") ||
+					/^\/?check-messages$/i.test(task.title ?? ""));
+			const assignedMatch = hasAssignedTo && task.assignedTo === filter.assignedTo;
+
+			let include: boolean;
+			if (hasAutoGeneratedOnly && hasAssignedTo) {
+				include = cronMatch && assignedMatch;
+			} else if (hasAutoGeneratedOnly) {
+				include = cronMatch;
+			} else if (hasAssignedTo) {
+				include = assignedMatch;
+			} else {
+				// status-only filter: every row in this status matches.
+				include = true;
+			}
+
+			if (
+				include &&
+				(onlyOrgId === undefined || task.orgId === onlyOrgId) &&
+				isRowVisibleToScope(scope, task)
+			) {
+				matched.push(task);
+				// Collect cap+1 to detect overflow without scanning entire table.
+				if (matched.length > BULK_COMPLETE_HARD_CAP) return matched;
+			}
+		}
+	}
+	return matched;
+}
+
+/**
+ * RBAC for a batch: unless the caller is the verified fleet "system", every
+ * task must have createdBy or assignedTo equal to the caller. Returns the
+ * first violating task, or undefined.
+ */
+function findBulkCompleteDenied(
+	batch: Doc<"tasks">[],
+	caller: string,
+): Doc<"tasks"> | undefined {
+	return batch.find((r) => r.createdBy !== caller && r.assignedTo !== caller);
+}
+
+type BulkGateResults = Awaited<ReturnType<typeof enforceClosureGate>>[];
+
+/** Closure gate for the WHOLE batch, before any row is written. */
+async function gateBulkCompleteBatch(
+	ctx: MutationCtx,
+	batch: Doc<"tasks">[],
+	note: string,
+	now: number,
+): Promise<BulkGateResults> {
+	return await Promise.all(
+		batch.map((task) => enforceClosureGate(ctx, task, note, now)),
+	);
+}
+
+async function writeBulkCompleteBatch(
+	ctx: MutationCtx,
+	batch: Doc<"tasks">[],
+	gateResults: BulkGateResults,
+	note: string,
+	now: number,
+): Promise<void> {
+	for (let i = 0; i < batch.length; i++) {
+		const task = batch[i];
+		const { actualMinutes, durationSource, closedSegments } = gateResults[i];
+		await ctx.db.patch(task._id, {
+			status: "done" as const,
+			completionOutcome: "succeeded" as const,
+			completedAt: now,
+			updatedAt: now,
+			completionNote: note,
+			...(actualMinutes !== undefined ? { actualMinutes } : {}),
+			...(durationSource !== undefined ? { durationSource } : {}),
+			...(closedSegments !== undefined ? { workSegments: closedSegments } : {}),
+		});
+	}
+}
+
+/**
+ * Day 130 closure gate + close for one batch. The gate runs up front for the
+ * WHOLE batch so a single billable-but-never-started task aborts the batch
+ * loudly rather than silently closing it with a false actualMinutes.
+ */
+async function closeBulkCompleteBatch(
+	ctx: MutationCtx,
+	batch: Doc<"tasks">[],
+	note: string,
+	now: number,
+): Promise<void> {
+	const gateResults = await gateBulkCompleteBatch(ctx, batch, note, now);
+	await writeBulkCompleteBatch(ctx, batch, gateResults, note, now);
+}
+
 /**
  * Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — bulkComplete's live path
  * used to REFUSE outright once matched > cap ("Narrow your filter and
@@ -4092,21 +4346,7 @@ const BULK_COMPLETE_HARD_CAP = 500;
  */
 export const bulkComplete = mutation({
 	args: {
-		filter: v.object({
-			autoGeneratedOnly: v.optional(v.boolean()),
-			assignedTo: v.optional(v.string()),
-			// Day 163 — narrows the scan to a single open status instead of the
-			// full todo/in_progress/review/blocked sweep. Counts as a reductive
-			// predicate on its own (it directly bounds what the index scan sees).
-			status: v.optional(
-				v.union(
-					v.literal("todo"),
-					v.literal("in_progress"),
-					v.literal("review"),
-					v.literal("blocked"),
-				),
-			),
-		}),
+		filter: bulkCompleteFilterValidator,
 		dryRun: v.optional(v.boolean()),
 		completionNoteTemplate: v.optional(v.string()),
 		callerOrchestrator: v.optional(v.string()),
@@ -4115,6 +4355,12 @@ export const bulkComplete = mutation({
 		// agent identity; no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for the caller (the bearer's
+		// agent-credential org or the org on its access-token row). Believed from
+		// the fleet service account ONLY — any other caller presenting it is
+		// refused — and resolved against an ACTIVE client_org_mapping. It stamps
+		// the run's status row and nothing else (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		count: v.number(),
@@ -4139,6 +4385,14 @@ export const bulkComplete = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
+		// Refuses a non-service-account caller that names an org, on a preview as
+		// on a live call, before anything is read.
+		const verifiedOrgSlug = await resolveVerifiedOrg(
+			ctx,
+			callerScope,
+			args.verifiedOrg,
+			"tasks:bulkComplete",
+		);
 
 		// Default dryRun to true (safety).
 		const dryRun = args.dryRun !== false;
@@ -4161,51 +4415,14 @@ export const bulkComplete = mutation({
 			);
 		}
 
-		// Iterate non-done tasks via index with early-stop at cap+1.
-		// The +1 allows dry-run to accurately report "more than cap" without
-		// scanning the entire table. `status` narrows the outer loop itself
-		// when supplied, instead of always sweeping all four open statuses.
-		const matched: Doc<"tasks">[] = [];
-		const statuses = hasStatus
-			? ([args.filter.status as NonNullable<typeof args.filter.status>] as const)
-			: (["todo", "in_progress", "review", "blocked"] as const);
-
-		outer: for (const status of statuses) {
-			const cursor = ctx.db
-				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", status));
-			for await (const task of cursor) {
-				const cronMatch =
-					hasAutoGeneratedOnly &&
-					(/^cron-/i.test(task.createdBy ?? "") ||
-						/^\/?check-messages$/i.test(task.title ?? ""));
-				const assignedMatch =
-					hasAssignedTo && task.assignedTo === args.filter.assignedTo;
-
-				let include: boolean;
-				if (hasAutoGeneratedOnly && hasAssignedTo) {
-					include = cronMatch && assignedMatch;
-				} else if (hasAutoGeneratedOnly) {
-					include = cronMatch;
-				} else if (hasAssignedTo) {
-					include = assignedMatch;
-				} else {
-					// status-only filter: every row in this status matches.
-					include = true;
-				}
-
-				// Tenant gate — the scan crosses every tenant's rows; a row outside
-				// the caller's organisation is never matched, counted, previewed or
-				// closed. (Master reads every tenant, unchanged.)
-				if (include && isRowVisibleToScope(callerScope, task)) {
-					matched.push(task);
-					// Collect cap+1 to detect overflow without scanning entire table.
-					if (matched.length > BULK_COMPLETE_HARD_CAP) {
-						break outer;
-					}
-				}
-			}
-		}
+		// Non-done tasks via the by_status index, early-stop at cap+1 (the +1
+		// lets a dry-run report "more than cap" without scanning the whole table).
+		const matched = await scanBulkCompleteMatches(
+			ctx,
+			args.filter,
+			callerScope,
+			verifiedOrgSlug,
+		);
 
 		const exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
 		// Truncate to cap (the +1 overflow sentinel is not included in results).
@@ -4222,14 +4439,10 @@ export const bulkComplete = mutation({
 		// (any write requires dryRun=false, and BULK_CALLER_REQUIRED above
 		// already makes callerOrchestrator mandatory before a write can happen —
 		// omission never bypasses a mutation here, class sweep 2026-07-23).
-		if (
-			args.callerOrchestrator !== undefined &&
-			!isFleetSystemCaller(callerScope, args.callerOrchestrator)
-		) {
+		const isFleetSystem = isFleetSystemCaller(callerScope, args.callerOrchestrator);
+		if (args.callerOrchestrator !== undefined && !isFleetSystem) {
 			const caller = args.callerOrchestrator;
-			const denied = cappedResults.find(
-				(r) => r.createdBy !== caller && r.assignedTo !== caller,
-			);
+			const denied = findBulkCompleteDenied(cappedResults, caller);
 			if (denied !== undefined) {
 				throw new ConvexError(
 					`RBAC_DENIED: ${caller} is not creator or assignee of task ${denied._id} — bulk close denied`,
@@ -4264,26 +4477,48 @@ export const bulkComplete = mutation({
 		const note = renderTemplate(template, { day, bulkRunId, executedAt });
 
 		// Day 130 closure gate — bulkComplete is the SECOND closure path
-		// (tasks.complete is the first). Gate every matched task the same
-		// way, up front, so a single billable-but-never-started task in the
-		// batch aborts the whole bulk operation loudly rather than silently
-		// closing it with a false actualMinutes.
-		const gateResults = await Promise.all(
-			cappedResults.map((task) => enforceClosureGate(ctx, task, note, now)),
-		);
+		// (tasks.complete is the first); see closeBulkCompleteBatch.
+		await closeBulkCompleteBatch(ctx, cappedResults, note, now);
 
-		for (let i = 0; i < cappedResults.length; i++) {
-			const task = cappedResults[i];
-			const { actualMinutes, durationSource, closedSegments } = gateResults[i];
-			await ctx.db.patch(task._id, {
-				status: "done" as const,
-				completionOutcome: "succeeded" as const,
-				completedAt: now,
-				updatedAt: now,
-				completionNote: note,
-				...(actualMinutes !== undefined ? { actualMinutes } : {}),
-				...(durationSource !== undefined ? { durationSource } : {}),
-				...(closedSegments !== undefined ? { workSegments: closedSegments } : {}),
+		// R-31 — the pile beyond this batch is drained by a self-scheduled
+		// continuation (`ctx.scheduler.runAfter(0, …)`), not left to the caller to
+		// re-call. The continuation re-scans the same filter: this batch is now
+		// "done" and has left the non-done scan, so it terminates. The caller's
+		// verified scope is forwarded as data (it was resolved above, never taken
+		// from the request) because a scheduled function has no auth context.
+		// The run's status row — what a client polls (tasks:getBulkCompleteRun)
+		// with the bulkRunId this call returns. Written on the live path only.
+		await ctx.db.insert("bulk_complete_runs", {
+			bulkRunId,
+			// The run's org: the verified one the transport carried, else the
+			// caller's own scope; absent only for a fleet-master run.
+			...(verifiedOrgSlug !== undefined
+				? { orgId: verifiedOrgSlug }
+				: callerScope.orgSlug !== null
+					? { orgId: callerScope.orgSlug }
+					: {}),
+			createdBy: args.callerOrchestrator ?? "",
+			status: exceeded ? "running" : "complete",
+			closed: count,
+			remaining: exceeded,
+			startedAt: now,
+			updatedAt: now,
+		});
+
+		if (exceeded) {
+			await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, {
+				filter: args.filter,
+				scope: {
+					userId: callerScope.userId,
+					orgSlug: callerScope.orgSlug,
+					allowedOrchestrators: callerScope.allowedOrchestrators,
+					isMaster: callerScope.isMaster,
+				},
+				callerOrchestrator: args.callerOrchestrator ?? "",
+				isFleetSystem,
+				note,
+				bulkRunId,
+				...(verifiedOrgSlug !== undefined ? { onlyOrgId: verifiedOrgSlug } : {}),
 			});
 		}
 
@@ -4295,6 +4530,170 @@ export const bulkComplete = mutation({
 			...(exceeded
 				? { cappedAt: BULK_COMPLETE_HARD_CAP, remaining: true }
 				: {}),
+		};
+	},
+});
+
+/**
+ * bulkCompleteContinue — the self-scheduled continuation of `bulkComplete`
+ * (R-31, standard §15:420). Internal only: `bulkComplete` authenticated the
+ * caller and forwards the scope it resolved; this function re-applies the same
+ * tenant gate, the same creator/assignee check and the same closure gate to
+ * every further batch, with the SAME completion note (same bulkRunId), then
+ * reschedules itself while a full batch remains.
+ *
+ * A violation (RBAC, closure gate) in a later batch ends the drain — the rows
+ * stay open and nothing is closed past the check (the checks all precede the
+ * first patch). It is never skipped: a skipped row would match again and the
+ * drain would not end. Where it is readable: the run's status row
+ * (`bulk_complete_runs`, read through `getBulkCompleteRun` / the MCP tool
+ * `get_bulk_complete_run`) is set to "failed" with the reason, and the reason is
+ * logged with the bulkRunId. The failure is recorded and NOT rethrown: a rethrow
+ * would roll the run row back with the batch. Re-calling the same filter meets
+ * the same refusal in the foreground. Pinned in bulkCompleteSelfScheduled.test.ts.
+ */
+export const bulkCompleteContinue = internalMutation({
+	args: {
+		filter: bulkCompleteFilterValidator,
+		scope: v.object({
+			userId: v.string(),
+			orgSlug: v.union(v.string(), v.null()),
+			allowedOrchestrators: v.array(v.string()),
+			isMaster: v.boolean(),
+		}),
+		callerOrchestrator: v.string(),
+		isFleetSystem: v.boolean(),
+		note: v.string(),
+		bulkRunId: v.string(),
+		// Carried from the first call's verifiedOrg so every batch keeps the narrowing.
+		onlyOrgId: v.optional(v.string()),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const run = await ctx.db
+			.query("bulk_complete_runs")
+			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
+			.first();
+		const now = Date.now();
+
+		let batch: Doc<"tasks">[];
+		let exceeded: boolean;
+		let gates: BulkGateResults;
+		try {
+			const scope: OrgScope = { ...args.scope, scopes: [] };
+			const matched = await scanBulkCompleteMatches(
+				ctx,
+				args.filter,
+				scope,
+				args.onlyOrgId,
+			);
+			exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
+			batch = matched.slice(0, BULK_COMPLETE_HARD_CAP);
+
+			if (args.callerOrchestrator !== "" && !args.isFleetSystem) {
+				const denied = findBulkCompleteDenied(batch, args.callerOrchestrator);
+				if (denied !== undefined) {
+					throw new ConvexError(
+						`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${denied._id} — bulk close denied`,
+					);
+				}
+			}
+			gates = await gateBulkCompleteBatch(ctx, batch, args.note, now);
+		} catch (err) {
+			// Nothing has been written yet (scan, RBAC and the closure gate all
+			// precede the first patch), so recording the failure here commits ONLY
+			// the run row: status "failed" + the reason, `remaining` true. The drain
+			// stops. Not rethrown on purpose: a rethrow would roll the run row back
+			// with the batch and the client would see nothing.
+			const reason = (
+				err instanceof ConvexError ? String(err.data) : String(err)
+			).slice(0, 500);
+			console.error(`[bulkCompleteContinue] run ${args.bulkRunId} stopped: ${reason}`);
+			if (run !== null) {
+				await ctx.db.patch(run._id, {
+					status: "failed" as const,
+					remaining: true,
+					failureReason: reason,
+					updatedAt: now,
+				});
+			}
+			return null;
+		}
+
+		await writeBulkCompleteBatch(ctx, batch, gates, args.note, now);
+
+		if (run !== null) {
+			await ctx.db.patch(run._id, {
+				status: exceeded ? ("running" as const) : ("complete" as const),
+				closed: run.closed + batch.length,
+				remaining: exceeded,
+				updatedAt: now,
+			});
+		}
+		if (exceeded) {
+			await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, args);
+		}
+		return null;
+	},
+});
+
+/**
+ * getBulkCompleteRun — the status of one live bulkComplete run, by the
+ * `bulkRunId` its first call returned. Poll it: `running` while batches
+ * remain, `complete` when the pile is drained, `failed` with `failureReason`
+ * when a later batch was refused (RBAC or closure gate) — the rows that were
+ * not closed stay open and re-calling bulkComplete with the same filter meets
+ * the same refusal.
+ *
+ * Who reads it: the run's own organisation (the row's `orgId` is the caller's
+ * org at the time of the run) and the fleet master. Anyone else — another
+ * organisation, or a member asking about a fleet-master run — gets `null`,
+ * exactly as tasks:getById does for a row it will not serve, so the id is not
+ * an existence oracle; an anonymous caller is REFUSED (RBAC_DENIED), never
+ * answered with the bytes of an absence. An unknown id is `null` too.
+ */
+export const getBulkCompleteRun = query({
+	args: { bulkRunId: v.string() },
+	returns: v.union(
+		v.object({
+			bulkRunId: v.string(),
+			orgId: v.optional(v.string()),
+			createdBy: v.string(),
+			status: v.union(
+				v.literal("running"),
+				v.literal("complete"),
+				v.literal("failed"),
+			),
+			closed: v.number(),
+			remaining: v.boolean(),
+			failureReason: v.optional(v.string()),
+			startedAt: v.number(),
+			updatedAt: v.number(),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — enumerated 2026-10-05 with `grep -rn "getBulkCompleteRun" convex mcp-server/src` -> the only caller is the MCP tool get_bulk_complete_run (imperative convex.query); the dashboard has no reference. The anonymous refusal stays a RAISE; no render exists for a throw to crash.
+		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+		requireResolvedCaller(scope, "tasks:getBulkCompleteRun");
+		const row = await ctx.db
+			.query("bulk_complete_runs")
+			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
+			.first();
+		if (row === null) return null;
+		if (!scope.isMaster && (scope.orgSlug === null || row.orgId !== scope.orgSlug)) {
+			return null;
+		}
+		return {
+			bulkRunId: row.bulkRunId,
+			orgId: row.orgId,
+			createdBy: row.createdBy,
+			status: row.status,
+			closed: row.closed,
+			remaining: row.remaining,
+			failureReason: row.failureReason,
+			startedAt: row.startedAt,
+			updatedAt: row.updatedAt,
 		};
 	},
 });

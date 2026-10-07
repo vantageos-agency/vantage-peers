@@ -564,29 +564,32 @@ export const remove = mutation({
 // Creates tasks from recurring templates when nextRunAt <= now
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Schedules read per `processDueTasks` transaction (R-31). */
+export const PROCESS_DUE_PAGE = 100;
+
 export const processDueTasks = internalMutation({
-	args: {},
-	handler: async (ctx) => {
+	args: { cursor: v.optional(v.union(v.string(), v.null())) },
+	returns: v.object({ created: v.number(), failed: v.number() }),
+	handler: async (ctx, args) => {
 		const now = Date.now();
 
-		// Deliberately uncapped, unlike the by_status scans in tasks.ts
-		// (resolveStaleDeployTasks, createDeployTaskWithDedup): this table
-		// holds recurring-task DEFINITIONS, one row per schedule an
-		// orchestrator has registered, not per generated task — it grows by
-		// human/config action, not by cron output feeding itself. Fleet-wide
-		// count is small and bounded by how many distinct recurring jobs
-		// exist, several orders of magnitude below the `tasks` table's open
-		// population. Revisit this call if that assumption stops holding.
-		const dueTasks = await ctx.db
+		// Only the DUE schedules (`active` and `nextRunAt <= now`, both inside the
+		// index range), a page at a time. A cursor, not a re-read from the start:
+		// a poison row (below) keeps its `nextRunAt` and so stays in range, and a
+		// re-read would let a few of them starve every later row. Counts are for
+		// this page; the rest continues through the scheduler.
+		const page = await ctx.db
 			.query("recurringTasks")
-			.withIndex("by_active", (q) => q.eq("active", true))
-			.collect();
+			.withIndex("by_active", (q) =>
+				q.eq("active", true).lte("nextRunAt", now),
+			)
+			.paginate({ numItems: PROCESS_DUE_PAGE, cursor: args.cursor ?? null });
+		const dueTasks = page.page;
 
 		let created = 0;
 		let failed = 0;
 
 		for (const recurring of dueTasks) {
-			if (recurring.nextRunAt > now) continue;
 
 			// Per-row isolation (#1167): a single poison recurring row — e.g. a
 			// malformed cronExpression that makes getNextRunTime throw, or an
@@ -649,6 +652,12 @@ export const processDueTasks = internalMutation({
 			console.error(
 				`Recurring tasks: ${failed} row(s) skipped due to per-row errors`,
 			);
+		}
+
+		if (!page.isDone) {
+			await ctx.scheduler.runAfter(0, internal.recurringTasks.processDueTasks, {
+				cursor: page.continueCursor,
+			});
 		}
 
 		return { created, failed };

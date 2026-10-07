@@ -5,9 +5,9 @@ const crons = cronJobs();
 
 // R-20 — this file only registers cron schedules; it performs no table scan
 // itself. Each target handler enforces its own per-run bound + outcome log:
-//   - recurringTasks.processDueTasks      -> uncapped, see the reasoning
-//     comment on its own collect() in recurringTasks.ts (definitions table,
-//     not the tasks table — a deliberate, declared divergence)
+//   - recurringTasks.processDueTasks      -> PROCESS_DUE_PAGE per transaction over
+//     the due range of by_active, continued by ctx.scheduler.runAfter(0, self)
+//     (recurringTasks.ts, R-31)
 //   - errorMonitorActions.pollAllDeployments -> DEPLOY_POLL_CAP (errorMonitorActions.ts)
 //   - errorMonitorAutoResolver.autoResolveStaleIrp -> limit:50 (errorMonitorAutoResolver.ts:119)
 //   - tasks.resolveStaleDeployTasks       -> RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP (tasks.ts)
@@ -18,6 +18,7 @@ crons.interval(
 	"process recurring tasks",
 	{ minutes: 15 },
 	internal.recurringTasks.processDueTasks,
+	{},
 );
 
 // Purge person-flow authorization codes two hours past their expiry

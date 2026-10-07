@@ -61,6 +61,7 @@ import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
+import type * as lib_verifiedOrg from "../lib/verifiedOrg.js";
 import type * as licenses from "../licenses.js";
 import type * as mandates from "../mandates.js";
 import type * as memberScopesMigration from "../memberScopesMigration.js";
@@ -166,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
   "lib/tenantSlug": typeof lib_tenantSlug;
+  "lib/verifiedOrg": typeof lib_verifiedOrg;
   licenses: typeof licenses;
   mandates: typeof mandates;
   memberScopesMigration: typeof memberScopesMigration;

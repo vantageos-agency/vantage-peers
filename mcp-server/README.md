@@ -113,7 +113,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 ## Tools
 
 <!-- tools:start -->
-79 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+80 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (9)
 
@@ -227,9 +227,10 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `export_okf_bundle` (read) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (3)
+### Other (4)
 
 - `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
+- `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
 - `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
 - `whoami` (read) — Returns the orchestrator identity baked into the current bearer's scope context.
 
