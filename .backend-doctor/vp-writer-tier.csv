@@ -42,7 +42,7 @@ pause_task,memberWriterRoles+tasks,TRANSITION,org-member,orgResolver,tasks:pause
 soft_delete_document,memories,UPDATE,org-member,orgResolver,kb:softDeleteDocument=orgResolver
 store_episode,memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
 store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
-mark_as_read,messageReceipts,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
+mark_as_read,messageReceipts+oauth_access_tokens,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
 soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTemplates:softDelete=masterOnly
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
 instantiate_template_into_mission,missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver

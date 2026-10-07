@@ -17,7 +17,11 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { resolveHumanActor } from "./lib/humanActor";
+import {
+	isHumanActorName,
+	memberActorOf,
+	resolveHumanActor,
+} from "./lib/humanActor";
 import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
@@ -98,6 +102,68 @@ const cappedStaleInProgressValidator = v.object({
 // No hardcoded list — new orchestrators are included automatically after calling update_profile.
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Person recipients (task k1792yz3em7hyw84d765hq71j98ft5h4, client portal reply
+// path). A PERSON is written down as "user:<verified Clerk subject>" (sendAsHuman,
+// convex/lib/humanActor.ts), a colon-prefixed value no roster slug can equal. A
+// portal request therefore carries a sender an agent can answer, provided the
+// reply is addressed to that name. WHO may address a person is decided here and
+// nowhere else:
+//   - only an agent of the SAME organisation: the person must already have
+//     written in the sender's own tenant. The row that proves it was stamped by
+//     the verified scope at that time (never a client string), so a person of
+//     another org has no such row in this tenant and is refused;
+//   - the fleet master (no org) is refused: a fleet orchestrator replying to a
+//     client's person is a cross-org message;
+//   - a foreign person and an unknown person get ONE refusal (same code, same
+//     reason), so the refusal is not an oracle for "this subject exists".
+// The bound on the proof scan is stated, not hidden: the 200 most recent rows the
+// person wrote. A person whose last 200 messages are all in another org is
+// reported as not in this org (fail closed).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PERSON_PROOF_SCAN = 200;
+
+async function requirePersonRecipientInOrg(
+	ctx: MutationCtx,
+	reach: OrgScope,
+	person: string,
+): Promise<void> {
+	const door = "messages:sendMessage";
+	const refuse = (reason: string): never => {
+		throw new ConvexError(
+			`RBAC_DENIED: "${person}" is not a person of the sender's organisation — ${JSON.stringify({ reason, door, orgSlug: reach.orgSlug })}`,
+		);
+	};
+	if (reach.orgSlug === null) return refuse("person-recipient-needs-org-agent");
+	const orgSlug = reach.orgSlug;
+	const written = await ctx.db
+		.query("messages")
+		.withIndex("by_from", (q) => q.eq("from", person))
+		.order("desc")
+		.take(PERSON_PROOF_SCAN);
+	if (!written.some((m) => m.tenantId === orgSlug)) {
+		return refuse("person-recipient-not-in-org");
+	}
+}
+
+// A person's inbox belongs to that person. The generic reads take a free
+// `recipient`; for a person name only the person itself (or the fleet master,
+// bound at the MCP layer) may name it. Other orgs are already excluded by the
+// tenant filter on the receipts; this closes the same-org colleague.
+function assertPersonInboxOwner(
+	scope: OrgScope,
+	recipient: string,
+	door: string,
+): void {
+	if (!isHumanActorName(recipient)) return;
+	if (scope.isMaster && scope.orgSlug === null) return;
+	if (scope.userId !== "" && recipient === memberActorOf(scope)) return;
+	throw new ConvexError(
+		`RBAC_DENIED: a person's inbox may be read only by that person — ${JSON.stringify({ reason: "person-inbox-not-yours", door, orgSlug: scope.orgSlug })}`,
+	);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // sendMessageCore — shared delivery core for both the public `sendMessage`
 // and the HMAC-webhook-only `sendMessageInternal`
 // (task sigma/tenant-scope-write-symmetry). Performs recipient resolution,
@@ -153,8 +219,12 @@ async function sendMessageCore(
 			if (args.tenantId === undefined) {
 				// Absent tenant on the master path: unchanged legacy
 				// internal-fleet behavior (e.g. the GitHub webhook's
-				// sendMessageInternal calls, which never pass tenantId).
-				derivedTenantId = undefined;
+				// sendMessageInternal calls, which never pass tenantId) -- EXCEPT
+				// an MCP seat of a client org: its verified org (recipientScope,
+				// resolveSeatRecipientScope) is the tenant, so the row and its
+				// receipts are visible to that org's own scoped readers (a person
+				// reading a reply addressed to it).
+				derivedTenantId = recipientScope?.orgSlug ?? undefined;
 			} else if (args.tenantId === "") {
 				// Empty string is a VALUE the caller explicitly supplied, not
 				// an omission — silently treating "" as "absent" would mask
@@ -371,6 +441,12 @@ async function sendMessageCore(
 			}
 			for (const part of rawParts) {
 				if (part === args.from) continue; // sender excluding itself never needs to resolve
+				if (isHumanActorName(part)) {
+					// A PERSON ("user:<subject>"): addressable by an agent of the
+					// SAME org only, never by role or profile.
+					await requirePersonRecipientInOrg(ctx, reach, part);
+					continue;
+				}
 				const isKnown = knownRoles.has(part) || knownInstances.has(part);
 				// One foreign or unknown part refuses the WHOLE send (same bounce).
 				if (!isKnown || !isOnOwnRoster(part)) {
@@ -386,7 +462,8 @@ async function sendMessageCore(
 
 		for (const recipient of recipients) {
 			// Determine if this is an instance target or role target
-			const isInstance = recipient.includes("-");
+			// A person is one inbox, never an instance: its subject is not split.
+			const isInstance = !isHumanActorName(recipient) && recipient.includes("-");
 			const role = isInstance ? recipient.split("-")[0] : recipient;
 
 			await ctx.db.insert("messageReceipts", {
@@ -459,6 +536,53 @@ async function resolveSeatRecipientScope(
 		scopes: mapping.scopes,
 		isMaster: false,
 	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// requireSeatSenderNotForeign — what the service-account + seatOrgSlug path may
+// believe about `from`. That path resolves as the fleet master, so the roster
+// bind (requireOrchestratorOnRoster) and the credential lock (no org to bind to)
+// never judged the sender, and `from` was free text: measured, a seat of one org
+// could send as a fleet orchestrator, as another org's orchestrator, or as
+// "user:<subject>" (a forged person). The within-org identity of an agent is the
+// MCP layer's job (the bearer's fromAllowList / the resolved credential, which
+// this door cannot see); what THIS door can refuse, from data, is every identity
+// that is not the seat's own:
+//   - a person name (a person is never an agent, and is written only from a
+//     verified subject);
+//   - an identity known anywhere in the system (a profile, an instance, any
+//     org's roster) that is not on the seat org's own roster.
+// A label no identity owns (the portal's "cgt-alsachimie") is not an
+// impersonation of anyone and is left to the MCP allow-list; it is the shape the
+// person path replaces.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function requireSeatSenderNotForeign(
+	ctx: MutationCtx,
+	seat: OrgScope,
+	from: string,
+): Promise<void> {
+	const door = "messages:sendMessage";
+	const refuse = (reason: string): never => {
+		throw new ConvexError(
+			`RBAC_DENIED: sender "${from}" is not an identity of org "${seat.orgSlug}" — ${JSON.stringify({ reason, door, from, orgSlug: seat.orgSlug })}`,
+		);
+	};
+	if (isHumanActorName(from)) return refuse("seat-sender-is-person");
+	if (isRecipientOnRoster(seat, from)) return;
+	const claimed = normalizeOrchestratorId(from);
+	const owns = (id: string | undefined): boolean =>
+		id !== undefined &&
+		(normalizeOrchestratorId(id) === claimed ||
+			claimed.startsWith(`${normalizeOrchestratorId(id)}-`));
+	const profiles = await ctx.db.query("profiles").collect();
+	if (profiles.some((p) => owns(p.orchestratorId) || owns(p.instanceId))) {
+		return refuse("seat-sender-foreign-identity");
+	}
+	const mappings = await ctx.db.query("client_org_mapping").collect();
+	if (mappings.some((m) => m.allowedOrchestrators.some(owns))) {
+		return refuse("seat-sender-foreign-identity");
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -602,6 +726,11 @@ export const sendMessage = mutation({
 		}
 		const from = args.from;
 
+		// The seat path's `from` is judged here, from data (see the function).
+		if (recipientScope !== undefined) {
+			await requireSeatSenderNotForeign(ctx, recipientScope, from);
+		}
+
 		await requireAgentCredentialMatch(
 			ctx,
 			args.agentCredentialSecret,
@@ -730,6 +859,7 @@ export const checkNewMessages = query({
 		// silent. The bare `[]` this line returns is pinned as an ARRAY by
 		// convex/__tests__/preOrgRefusalCarriesItsMarker.test.ts.
 		if (!scope.isMaster && scope.orgSlug === null) return [];
+		assertPersonInboxOwner(scope, args.recipient, "messages:checkNewMessages");
 
 		const effectiveTenantId =
 			scope.isMaster && scope.orgSlug === null
@@ -947,6 +1077,12 @@ export const checkNewMessagesEnvelope = query({
 			};
 		}
 
+		assertPersonInboxOwner(
+			scope,
+			args.recipient,
+			"messages:checkNewMessagesEnvelope",
+		);
+
 		const effectiveTenantId =
 			scope.isMaster && scope.orgSlug === null
 				? args.tenantId
@@ -1129,6 +1265,90 @@ export const checkNewMessagesEnvelope = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// listMyInbox — the unread messages addressed to the CALLING PERSON.
+//
+// The recipient is never an argument: it is "user:<verified subject>", derived
+// from the caller's own scope (a Clerk member), or from the token row behind a
+// `verifiedPerson` carried by the MCP service account. Four callers, each told in
+// the shape it can survive (.claude/rules/refusal-is-distinguishable-from-absence.md):
+//   anonymous                     RAISES RBAC_DENIED
+//   signed in, no organisation    { refused: true, items: [] } (a mounted render)
+//   the bare service account /
+//   a master with no org          RAISES RBAC_DENIED (it is not a person)
+//   a person                      { items } -- a real absence is { items: [] }
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const listMyInbox = query({
+	args: {
+		verifiedPerson: v.optional(verifiedPersonValidator),
+		since: v.optional(v.number()),
+		limit: v.optional(v.number()),
+	},
+	returns: v.object({
+		refused: v.optional(v.literal(true)),
+		items: v.array(
+			v.object({
+				receiptId: v.id("messageReceipts"),
+				messageId: v.id("messages"),
+				from: creatorValidator,
+				fromInstanceId: v.optional(v.string()),
+				channel: v.optional(v.string()),
+				content: v.string(),
+				createdAt: v.number(),
+			}),
+		),
+	}),
+	handler: async (ctx, args) => {
+		const door = "messages:listMyInbox";
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, door);
+		if (transportScope.refused) return { refused: true as const, items: [] };
+		const scope = await resolveVerifiedPerson(
+			ctx,
+			transportScope,
+			args.verifiedPerson,
+			{ door },
+		);
+		if (scope.orgSlug === null || scope.userId === "") {
+			throw new ConvexError(
+				`RBAC_DENIED: "${door}" reads a person's inbox and the caller is not a person — ${JSON.stringify({ reason: "not-a-person", door, orgSlug: scope.orgSlug })}`,
+			);
+		}
+		const tenantId = scope.orgSlug;
+		const recipient = memberActorOf(scope);
+		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
+		const since = args.since;
+		const receipts = await ctx.db
+			.query("messageReceipts")
+			.withIndex("by_tenant_recipient_unread", (q) =>
+				q
+					.eq("tenantId", tenantId)
+					.eq("recipient", recipient)
+					.eq("readAt", undefined),
+			)
+			.filter((q) =>
+				since !== undefined ? q.gt(q.field("_creationTime"), since) : true,
+			)
+			.take(limit);
+		const items = [];
+		for (const receipt of receipts) {
+			const message = await ctx.db.get(receipt.messageId);
+			if (message === null) continue;
+			items.push({
+				receiptId: receipt._id,
+				messageId: receipt.messageId,
+				from: message.from,
+				fromInstanceId: message.fromInstanceId,
+				channel: message.channel,
+				content: message.content,
+				createdAt: message.createdAt,
+			});
+		}
+		return { items };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // markAsRead — mark one or more receipts as read
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1149,6 +1369,9 @@ export const markAsRead = mutation({
 		// ALWAYS passes it (tools.ts mark_as_read), closing the cross-owner hole
 		// where any caller could mark another orchestrator's mail read.
 		callerOrchestrator: v.optional(creatorValidator),
+		// A person reached through the MCP service account acknowledges its OWN
+		// receipts (convex/lib/personPrincipal.ts); scope rebuilt from its token.
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
@@ -1165,7 +1388,16 @@ export const markAsRead = mutation({
 		// JWT or its service-account token; see
 		// mcp-server/src/authenticatedConvexClient.ts), so the fail-closed
 		// default here never breaks that live path.
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedPerson(
+			ctx,
+			transportScope,
+			args.verifiedPerson,
+			{
+				door: "messages:markAsRead",
+				assertedName: args.callerOrchestrator,
+			},
+		);
 
 		const normalizedIds = args.receiptIds.map((raw, index) =>
 			requireId(
@@ -1182,7 +1414,18 @@ export const markAsRead = mutation({
 		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
 			if (receipt === null) continue;
-			if (!isOrchestratorAllowedForScope(scope, receipt.recipient)) {
+			// A person's own receipt ("user:<subject>", written by a reply addressed
+			// to it) is acknowledged by that person and by nobody else; the tenant
+			// gate below still applies.
+			const ownPersonReceipt =
+				scope.orgSlug !== null &&
+				scope.userId !== "" &&
+				isHumanActorName(receipt.recipient) &&
+				receipt.recipient === memberActorOf(scope);
+			if (
+				!ownPersonReceipt &&
+				!isOrchestratorAllowedForScope(scope, receipt.recipient)
+			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not mark receipt ${receiptId} (recipient "${receipt.recipient}") as read — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 				);
