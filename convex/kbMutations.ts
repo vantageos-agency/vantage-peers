@@ -376,22 +376,30 @@ export const claimUpload = mutation({
 				"AUTH_UPLOAD_TICKET_HASH_MISMATCH: the blob's content does not match the sha256 declared for this ticket.",
 			);
 
+		// The org the blob is bound to comes from the caller's VERIFIED scope; the
+		// ticket row only vouches for it (checked above). Only the fleet master,
+		// which acts on any org, takes the org the ticket was issued for.
+		const claimOrgId = scope.isMaster ? ticket.orgId : scope.orgSlug;
+		if (claimOrgId === null)
+			throw new ConvexError(
+				"RBAC_DENIED: caller has no verified organisation — claimUpload",
+			);
 		const existing = await ctx.db
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
 			.unique();
-		if (existing !== null && existing.orgId !== ticket.orgId)
+		if (existing !== null && existing.orgId !== claimOrgId)
 			throw new ConvexError(
 				"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
 			);
 		if (existing === null)
 			await ctx.db.insert("kbUploads", {
 				storageId: args.storageId,
-				orgId: ticket.orgId,
+				orgId: claimOrgId,
 				createdAt: now,
 			});
 		await ctx.db.patch(ticket._id, { usedAt: now, storageId: args.storageId });
-		return { storageId: args.storageId, orgId: ticket.orgId };
+		return { storageId: args.storageId, orgId: claimOrgId };
 	},
 });
 
