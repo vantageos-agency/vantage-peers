@@ -38,6 +38,8 @@ __pycache__/
 # The only exceptions — regenerated caches and run locks: not content, rebuilt on their own.
 .claude/**/__pycache__/
 .claude/**/*.pyc
+# Agent worktrees are full checkouts of other branches, never content of this one.
+.claude/worktrees/
 .claude/**/.pytest_cache/
 .claude/scheduled_tasks.lock
 .themis-seats.local.json
