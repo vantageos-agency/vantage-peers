@@ -14,6 +14,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
+import { taskActorIdFields } from "./lib/actorIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -537,6 +538,10 @@ export const instantiateTemplateIntoMission = mutation({
 				// mission (the children would become fleet rows inside a client
 				// mission, invisible to the client that owns the parent).
 				orgId: mission.orgId,
+				...(await taskActorIdFields(ctx, mission.orgId, {
+					createdBy,
+					assignedTo: step.assignedTo ?? mission.pilot,
+				})),
 				createdAt: now,
 				updatedAt: now,
 			});

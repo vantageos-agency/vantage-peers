@@ -46,6 +46,7 @@ import {
 	computeStaleInProgress,
 	computeStuckInProgress,
 } from "./lib/taskClosureGate";
+import { actorIdResolver } from "./lib/actorIds";
 
 // getUnreadCount only needs the count, not the rows; the receipts table per
 // recipient is small, so this bound exists to guard against unbounded growth
@@ -279,8 +280,15 @@ async function sendMessageCore(
 			);
 		}
 
+		// R-53: sender and recipients BY ID, resolved within the message's own
+		// tenant (the operator org for a fleet message). A name with no agents row
+		// in that org stays unset: never guessed, never matched across orgs.
+		const resolveActor = actorIdResolver(ctx, derivedTenantId);
+		const fromId = await resolveActor(args.from);
+
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
+			...(fromId !== undefined ? { fromId } : {}),
 			fromInstanceId: args.fromInstanceId,
 			channel: args.channel,
 			content: args.content,
@@ -478,9 +486,11 @@ async function sendMessageCore(
 			const isInstance = !isHumanActorName(recipient) && recipient.includes("-");
 			const role = isInstance ? recipient.split("-")[0] : recipient;
 
+			const recipientId = await resolveActor(role);
 			await ctx.db.insert("messageReceipts", {
 				messageId,
 				recipient: role,
+				...(recipientId !== undefined ? { recipientId } : {}),
 				recipientInstanceId: isInstance ? recipient : undefined,
 				tenantId: derivedTenantId,
 				readAt: undefined,
@@ -909,6 +919,7 @@ export const checkNewMessages = query({
 			messageId: v.id("messages"),
 			from: creatorValidator,
 			fromInstanceId: v.optional(v.string()),
+			fromId: v.optional(v.string()),
 			channel: v.optional(v.string()),
 			content: v.string(),
 			createdAt: v.number(),
@@ -1129,6 +1140,7 @@ export const checkNewMessagesEnvelope = query({
 				messageId: v.id("messages"),
 				from: creatorValidator,
 				fromInstanceId: v.optional(v.string()),
+				fromId: v.optional(v.string()),
 				channel: v.optional(v.string()),
 				content: v.string(),
 				createdAt: v.number(),
@@ -1388,6 +1400,7 @@ export const listMyInbox = query({
 				messageId: v.id("messages"),
 				from: creatorValidator,
 				fromInstanceId: v.optional(v.string()),
+				fromId: v.optional(v.string()),
 				channel: v.optional(v.string()),
 				content: v.string(),
 				createdAt: v.number(),
@@ -1692,6 +1705,7 @@ export const listMessages = query({
 			_creationTime: v.number(),
 			from: creatorValidator,
 			fromInstanceId: v.optional(v.string()),
+			fromId: v.optional(v.string()),
 			channel: v.optional(v.string()),
 			to: v.optional(creatorValidator),
 			content: v.string(),
@@ -2002,6 +2016,7 @@ const listByChannelRow = v.object({
 	_creationTime: v.number(),
 	from: creatorValidator,
 	fromInstanceId: v.optional(v.string()),
+	fromId: v.optional(v.string()),
 	tenantId: v.optional(v.string()),
 	channel: v.string(),
 	content: v.string(),

@@ -1,29 +1,31 @@
 outil,table,crud,writer_tier,writer_gate,write_doors
-import_okf_bundle,_storage+briefingNotes+client_org_mapping+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
+import_okf_bundle,_storage+agents+briefingNotes+client_org_mapping+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
+complete_task,agents+client_org_mapping+fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
+update_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
+add_task_dependency,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
+block_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
 send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
+fail_task,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
+create_task,agents+client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
+instantiate_template_into_mission,agents+client_org_mapping+missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
 bulk_complete_tasks,bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
 update_bu,businessUnits+client_org_mapping+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
 write_diary,client_org_mapping+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
-complete_task,client_org_mapping+fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
-update_task,client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 create_mandate,client_org_mapping+mandates+oauth_access_tokens,CREATE,master,masterOnly,mandates:create=masterOnly
 create_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens,CREATE,org-member,orgResolver,missions:create=orgResolver
 update_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens,TRANSITION,org-member,orgResolver,missions:update=orgResolver
 update_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 create_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
-create_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
 validate_fix,fixPatterns,UPDATE,master,masterOnly,fixPatterns:validate=masterOnly
 add_repo_mapping,githubRepoMapping,UPSERT,master,masterOnly,githubRepoMapping:add=masterOnly
 remove_repo_mapping,githubRepoMapping,DELETE,master,masterOnly,githubRepoMapping:remove=masterOnly
-add_task_dependency,githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
-block_task,githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
 link_commit_to_issue,issues,UPDATE,master,masterOnly,issues:linkCommit=masterOnly
 update_issue_status,issues,TRANSITION,master,masterOnly,issues:updateStatus=masterOnly
 verify_issue,issues,TRANSITION,master,masterOnly,issues:verify=masterOnly
@@ -34,7 +36,6 @@ delete_recurring_task,memberWriterRoles,DELETE,org-member,orgResolver,recurringT
 pause_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:pause=orgResolver
 resume_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:resume=orgResolver
 delete_message,memberWriterRoles+messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
-fail_task,memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
 update_mission_status,memberWriterRoles+missions,TRANSITION,org-member,orgResolver,missions:updateStatus=orgResolver
 resume_task,memberWriterRoles+taskClosureConfig+tasks,TRANSITION,org-member,orgResolver,tasks:resume=orgResolver
 start_task,memberWriterRoles+taskClosureConfig+tasks,TRANSITION,org-member,orgResolver,tasks:start=orgResolver
@@ -46,7 +47,6 @@ store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgReso
 mark_as_read,messageReceipts+oauth_access_tokens,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
 soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTemplates:softDelete=masterOnly
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
-instantiate_template_into_mission,missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
 add_deployment,monitoredDeployments,UPSERT,master,masterOnly,errorMonitor:addDeployment=masterOnly
 remove_deployment,monitoredDeployments,UPDATE,master,masterOnly,errorMonitor:removeDeployment=masterOnly
 set_summary,profiles,UPSERT,master,masterOnly,profiles:updateDynamic=masterOnly

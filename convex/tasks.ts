@@ -56,6 +56,7 @@ import {
 	getStartTaskInProgressCap,
 } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
+import { actorIdResolver, taskActorIdFields } from "./lib/actorIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -457,6 +458,11 @@ const taskFullValidator = v.object({
 	reviewArtifactRef: v.optional(v.string()),
 	reviewArtifactAttachedBy: v.optional(creatorValidator),
 	lastAssignedTo: v.optional(v.string()),
+	lastAssignedToId: v.optional(v.string()),
+	cancelledById: v.optional(v.string()),
+	reviewArtifactAttachedById: v.optional(v.string()),
+	createdById: v.optional(v.string()),
+	assignedToId: v.optional(v.string()),
 	lastActedBy: v.optional(v.string()), // human actor "user:<subject>" (memberActorOf)
 	isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 	// R-18 import idempotency key; only OKF-imported rows carry it.
@@ -607,6 +613,12 @@ async function insertTask(
 		// `isRowVisibleToScope` leg 3 reads this and nothing else; a row that
 		// reaches the database unstamped is readable by no org caller at all.
 		orgId,
+		// R-53: the actors BY ID, resolved within the row's own org (the operator
+		// org for a fleet row) from the already-verified createdBy / assignedTo.
+		...(await taskActorIdFields(ctx, orgId, {
+			createdBy: args.createdBy,
+			assignedTo: args.assignedTo,
+		})),
 		...(origin !== undefined ? { origin } : {}),
 		createdAt: now,
 		updatedAt: now,
@@ -759,6 +771,11 @@ export const get = query({
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
 			lastAssignedTo: v.optional(v.string()),
+			lastAssignedToId: v.optional(v.string()),
+			cancelledById: v.optional(v.string()),
+			reviewArtifactAttachedById: v.optional(v.string()),
+			createdById: v.optional(v.string()),
+			assignedToId: v.optional(v.string()),
 			lastActedBy: v.optional(v.string()), // human actor "user:<subject>" (memberActorOf)
 			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
@@ -869,6 +886,11 @@ export const getById = query({
 			reviewArtifactRef: v.optional(v.string()),
 			reviewArtifactAttachedBy: v.optional(creatorValidator),
 			lastAssignedTo: v.optional(v.string()),
+			lastAssignedToId: v.optional(v.string()),
+			cancelledById: v.optional(v.string()),
+			reviewArtifactAttachedById: v.optional(v.string()),
+			createdById: v.optional(v.string()),
+			assignedToId: v.optional(v.string()),
 			lastActedBy: v.optional(v.string()), // human actor "user:<subject>" (memberActorOf)
 			isReviewTask: v.optional(v.boolean()), // create-time review-ness, immutable (Eta REVISE #1254)
 			// R-18 import idempotency key; only OKF-imported rows carry it.
@@ -1857,6 +1879,14 @@ export const update = mutation({
 		// gate can decide review-tasks-only scoping at read time.
 		if (patch.assignedTo !== undefined && patch.assignedTo !== task.assignedTo) {
 			patch.lastAssignedTo = task.assignedTo;
+			// R-53: the same reassignment BY ID, resolved within the task's own org.
+			// A name that resolves to no agents row clears the stale ID (patch with
+			// undefined removes the field) rather than leaving the previous
+			// assignee's ID beside the new name.
+			const resolveActor = actorIdResolver(ctx, task.orgId);
+			patch.assignedToId = await resolveActor(patch.assignedTo);
+			patch.lastAssignedToId =
+				task.assignedToId ?? (await resolveActor(task.assignedTo));
 		}
 
 		// Day 159 — the anonymous-block gate must live at the STATUS boundary,
@@ -1917,6 +1947,11 @@ export const update = mutation({
 				);
 			}
 			patch.cancelledBy = memberActor ?? callerOrchestrator;
+			// R-53: the canceller BY ID, within the task's own org (a person is
+			// its own "user:<subject>" ID). Unresolvable stays unset.
+			patch.cancelledById = await actorIdResolver(ctx, task.orgId)(
+				patch.cancelledBy,
+			);
 			patch.cancelReason = cancelReason;
 		} else if (cancelReason !== undefined) {
 			// MINOR #6 (convex-reviewer REVISE) — cancelReason must never be
@@ -2076,6 +2111,10 @@ export const attachReviewArtifact = mutation({
 		await ctx.db.patch(args.taskId, {
 			reviewArtifactRef: args.artifactRef,
 			reviewArtifactAttachedBy: args.callerOrchestrator,
+			// R-53: the attacher BY ID, within the task's own org.
+			reviewArtifactAttachedById: await actorIdResolver(ctx, task.orgId)(
+				args.callerOrchestrator,
+			),
 			updatedAt: Date.now(),
 		});
 		return null;
@@ -2158,9 +2197,15 @@ async function unblockWaitersOn(
 			content,
 			createdAt: now,
 		});
+		// R-53: the target BY ID — the waiter's own stored assignee ID, else the
+		// name resolved within the waiter's own org (never another org's agent).
+		const recipientId =
+			waiter.assignedToId ??
+			(await actorIdResolver(ctx, waiter.orgId)(waiter.assignedTo));
 		await ctx.db.insert("messageReceipts", {
 			messageId,
 			recipient: waiter.assignedTo,
+			...(recipientId !== undefined ? { recipientId } : {}),
 			readAt: undefined,
 		});
 	}
@@ -3762,6 +3807,10 @@ export const createDeployTaskWithDedup = internalMutation({
 				// events; it has no Clerk principal and no client org could own a
 				// deploy chore for the fleet's own PRs. Master reads it via leg 1.
 				orgId: undefined,
+				...(await taskActorIdFields(ctx, undefined, {
+					createdBy: args.createdBy,
+					assignedTo: args.assignedTo,
+				})),
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -3852,6 +3901,10 @@ export const createDeployTaskWithDedup = internalMutation({
 			// TENANT: fleet/master — same deploy-automation justification as the
 			// early-return insert above in this same mutation.
 			orgId: undefined,
+			...(await taskActorIdFields(ctx, undefined, {
+				createdBy: args.createdBy,
+				assignedTo: args.assignedTo,
+			})),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -5254,6 +5307,10 @@ export const createOrUpdateReviewTask = internalMutation({
 			// webhook-driven automation over this repo's own pull requests —
 			// no Clerk principal, no client org to own a review chore.
 			orgId: undefined,
+			...(await taskActorIdFields(ctx, undefined, {
+				createdBy: args.createdBy,
+				assignedTo,
+			})),
 			createdAt: now,
 			updatedAt: now,
 			// Day 130 follow-up #2 — the inforgeable automation signal. This
