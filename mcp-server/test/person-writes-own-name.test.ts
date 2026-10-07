@@ -405,7 +405,26 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 
 	it("a single-name seat acting as itself creates as that seat, never as a person", async () => {
 		const token = "seat-token-raw-agent-a";
+		// The seat is an agent BY ID: its profile (<agent>-<org>) names one agent and
+		// that agent exists in the profile's own org (the stamp is resolved from it).
 		await t.run(async (ctx) => {
+			await ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				name: "agent-a",
+				normalizedName: "agent-a",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "agent-a-org-a",
+				description: "Seat agent-a in org org-a",
+				fromAllowList: ["agent-a"],
+				namespaceReadPrefixes: ["team/org-a"],
+				namespaceWritePrefixes: ["team/org-a"],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				clerkOrgSlug: "org-a",
+			});
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: await sha256Hex(token),
 				clientId: "seat-client",
@@ -429,10 +448,50 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 		const [row] = await rows("tasks");
 		expect(row.createdBy).toBe("agent-a");
 
-		// A seat that omits the name is not a person: still refused.
+		// A seat that omits the name acts as its resolved agent: never as a person.
 		const omitted = await call(tools, "create_task", TASK);
-		expect(omitted.isError).toBe(true);
-		expect(await rows("tasks")).toHaveLength(1);
+		expect(omitted.isError, omitted.content[0].text).toBeUndefined();
+		const all = await rows("tasks");
+		expect(all).toHaveLength(2);
+		expect(all.every((r2) => r2.createdBy === "agent-a")).toBe(true);
+	});
+
+	it("an org-level seat (its profile resolves no agent of its own org) naming an agent is refused", async () => {
+		const token = "seat-token-raw-orglevel";
+		await t.run(async (ctx) => {
+			// The profile exists, but org-a has no agent "agent-a" registered.
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "agent-a-org-a",
+				description: "Seat agent-a in org org-a",
+				fromAllowList: ["agent-a"],
+				namespaceReadPrefixes: ["team/org-a"],
+				namespaceWritePrefixes: ["team/org-a"],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				clerkOrgSlug: "org-a",
+			});
+			await ctx.db.insert("oauth_access_tokens", {
+				tokenHash: await sha256Hex(token),
+				clientId: "seat-client",
+				userId: "seat-user",
+				scopes: ["vantage:read", "vantage:write"],
+				scopeProfile: "agent-a-org-a",
+				fromAllowList: ["agent-a"],
+				namespaceReadPrefixes: ["team/org-a"],
+				namespaceWritePrefixes: ["team/org-a"],
+				expiresAt: Date.now() + 3_600_000,
+				createdAt: Date.now(),
+				clerkOrgSlug: "org-a",
+			});
+		});
+		const tools = realTools(await contextFor(token));
+		const r = await call(tools, "create_task", {
+			...TASK,
+			createdBy: "agent-a",
+		});
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain("AGENT_CREDENTIAL_REQUIRED");
+		expect(await rows("tasks")).toHaveLength(0);
 	});
 });
 

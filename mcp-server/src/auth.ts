@@ -126,7 +126,24 @@ export type OAuthContext = {
 	 * on a declared name, and that is that identity's own all-authority, not a
 	 * widening.
 	 */
-	actor?: { orgSlug: string; agentName: string };
+	actor?: { orgSlug: string; agentName: string; agentId?: string };
+	/**
+	 * The agent a one-agent SEAT token acts as, by `agents` ROW ID, stamped by
+	 * Convex at mint and at refresh and re-read live on every request
+	 * (`oauth:getAccessTokenByHash`). Pi ruling k174d95s5qqy8t2r5rdrz3pr3d8fqv82:
+	 * the MCP forwards IDs only.
+	 *
+	 *   - object    : the seat acts as this agent. `agentName` is the agent's
+	 *                 CURRENT label (what a typed name is compared to); `orgId` is
+	 *                 the org key the agent was resolved in and must equal the
+	 *                 token's own `clerkOrgSlug`.
+	 *   - null      : Convex resolved no single agent of the profile's own org:
+	 *                 an ORG-LEVEL seat that cannot act as an agent.
+	 *   - undefined : the provider predates the stamp (older Convex than this
+	 *                 server, reader-first deploy). The legacy single-name rule
+	 *                 applies until Convex is deployed; see {@link isSeatActingAsItself}.
+	 */
+	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
 };
 
 declare module "hono" {
@@ -197,6 +214,8 @@ type OAuthLookupResult = {
 	clerkOrgSlug?: string;
 	orgRole?: string;
 	principal?: "person";
+	/** Absent from a Convex that predates the stamp; null when none resolved. */
+	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -442,6 +461,23 @@ export function checkActorBinding(
 			"own resolved identity. Omit the name to act as the resolved agent."
 		);
 	}
+	// A seat token that resolved to an agent BY ID: the typed name is only
+	// checked to EQUAL that agent's name. Like a credential, it is authoritative
+	// in EVERY mode - a typed name never overrides the resolved identity.
+	const seat = seatAgentOf(ctx);
+	if (seat !== undefined) {
+		if (
+			normalizeOrchestratorId(claimedName) ===
+			normalizeOrchestratorId(seat.agentName)
+		)
+			return null;
+		return (
+			`AGENT_IDENTITY_MISMATCH: this seat acts as agent "${seat.agentName}" ` +
+			`(${seat.agentId}, org "${seat.orgId}") but this call names ` +
+			`"${claimedName}" — a seat may only act under its own resolved ` +
+			"identity. Omit the name to act as the resolved agent."
+		);
+	}
 	// Fleet callers (HTTP master bearer) are strict regardless of the env mode —
 	// a fail-closed default lives in code, never in a Railway variable
 	// (railway-mcp-redeploy.md). The stdio trust context is NOT this population.
@@ -450,6 +486,23 @@ export function checkActorBinding(
 	if (actorCredentialMode() === "permissive") return null;
 	if (isSeatActingAsItself(ctx, claimedName)) return null;
 	return agentCredentialRequired(claimedName);
+}
+
+/**
+ * The agent a seat token resolved to BY ID, or undefined when it resolved none.
+ * Believed only when the stamp's org is the token's OWN org: a stamp that names
+ * another org's agent is never an identity for this token.
+ */
+export function seatAgentOf(
+	ctx: OAuthContext,
+): { agentId: string; orgId: string; agentName: string } | undefined {
+	const seat = ctx.seatAgent;
+	if (seat === undefined || seat === null) return undefined;
+	if (seat.agentId === "" || seat.agentName === "") return undefined;
+	if (ctx.clerkOrgSlug === undefined || seat.orgId !== ctx.clerkOrgSlug) {
+		return undefined;
+	}
+	return seat;
 }
 
 /**
@@ -462,10 +515,21 @@ export function checkActorBinding(
  *   - the row carries no `principal` (a person token, or any principal kind
  *     added later, is NOT exempt by default);
  *   - its `fromAllowList` holds exactly ONE name and that name is not `"*"`;
- *   - the claimed name equals that one name (normalizeOrchestratorId on both
- *     sides).
- * Such a row can only ever name itself, so the typed name adds nothing the
- * token does not already grant: serving it widens nothing.
+ *   - the seat resolved to an AGENT BY ID (`seatAgent`, stamped by Convex from
+ *     the profile's single agent in the profile's own org), and the claimed name
+ *     equals THAT AGENT'S name (normalizeOrchestratorId on both sides). The
+ *     decision is the ID the token carries; the typed name is only compared to
+ *     the resolved agent's name. An org-level seat (`seatAgent: null`) names no
+ *     agent, so it is never exempt, whatever the allowlist says.
+ *
+ * TRANSITIONAL (contract step, delete with the next MCP release after Convex has
+ * been deployed with the stamp): when `seatAgent` is ABSENT altogether the
+ * provider is an older Convex that cannot stamp, and the legacy rule applies -
+ * the claim equals the single allowlisted name. It exists only so that the
+ * reader-first deploy order (railway-mcp-redeploy.md) does not strand every seat
+ * between the MCP going live and Convex following. A provider that stamps
+ * always sends the key (an object or null), so a stamped provider never reaches
+ * this branch.
  */
 export function isSeatActingAsItself(
 	ctx: OAuthContext,
@@ -477,7 +541,21 @@ export function isSeatActingAsItself(
 	if (ctx.fromAllowList.length !== 1) return false;
 	const only = normalizeOrchestratorId(ctx.fromAllowList[0]);
 	if (only === "" || only === "*") return false;
-	return normalizeOrchestratorId(claimedName) === only;
+	if (ctx.seatAgent === undefined) {
+		return normalizeOrchestratorId(claimedName) === only;
+	}
+	const seat = seatAgentOf(ctx);
+	if (seat === undefined) return false;
+	return sameLabel(claimedName, seat.agentName);
+}
+
+/**
+ * Two display labels are the same label under normalizeOrchestratorId (NFC,
+ * lowercase, trim). Used ONLY to check a typed name against the label of an
+ * agent already resolved BY ID; it admits nobody on its own.
+ */
+function sameLabel(left: string, right: string): boolean {
+	return normalizeOrchestratorId(left) === normalizeOrchestratorId(right);
 }
 
 /**
@@ -1054,7 +1132,12 @@ async function tryVerifyClerkJwt(token: string): Promise<ClerkJwtResult> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Shape returned by agentCredentials:resolveAgentCredential
-type ResolvedAgentLookup = { orgSlug: string; agentName: string } | null;
+type ResolvedAgentLookup = {
+	orgSlug: string;
+	agentName: string;
+	/** The agents ROW id. Absent from a Convex that predates it. */
+	agentId?: string;
+} | null;
 
 type ActorResolution =
 	| { ok: true; actor: OAuthContext["actor"] }
@@ -1159,7 +1242,13 @@ async function resolveActorFromRequest(
 
 	return {
 		ok: true,
-		actor: { orgSlug: resolved.orgSlug, agentName: resolved.agentName },
+		actor: {
+			orgSlug: resolved.orgSlug,
+			agentName: resolved.agentName,
+			...(typeof resolved.agentId === "string" && resolved.agentId !== ""
+				? { agentId: resolved.agentId }
+				: {}),
+		},
 	};
 }
 

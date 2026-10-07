@@ -36,6 +36,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
+import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 
@@ -982,6 +983,14 @@ export const provisionOrganization = mutation({
 
 			const accessToken = randomOpaqueHex(32);
 			const tokenHash = await sha256Hex(accessToken);
+			// Seat identity by ID: stamped when the seat's agent already exists in
+			// this org; otherwise the seat starts org-level and is stamped at its
+			// first refresh, once the agent is registered.
+			const seatAgent = await resolveSeatAgent(ctx, {
+				scopeProfile: profileId,
+				fromAllowList: [name],
+				clerkOrgSlug: slug,
+			});
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash,
 				clientId,
@@ -995,6 +1004,9 @@ export const provisionOrganization = mutation({
 				refreshTokenHash,
 				createdAt: now,
 				clerkOrgSlug: slug,
+				...(seatAgent
+					? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
+					: {}),
 			});
 
 			seats.push({
@@ -2154,6 +2166,14 @@ export const createAccessToken = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createAccessToken", …) at mcp-server/server-http.ts:889, mcp-server/server-http.ts:1032, mcp-server/server-http.ts:1520 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createAccessToken");
+		// Seat identity by ID, resolved HERE (mint and refresh both come through
+		// this door) from the profile in its own org; never from an argument.
+		const seatAgent = await resolveSeatAgent(ctx, {
+			scopeProfile: args.scopeProfile,
+			fromAllowList: args.fromAllowList,
+			clerkOrgSlug: args.clerkOrgSlug,
+			principal: args.principal,
+		});
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -2172,6 +2192,9 @@ export const createAccessToken = mutation({
 			...(args.codeHash !== undefined ? { codeHash: args.codeHash } : {}),
 			...(args.orgRole !== undefined ? { orgRole: args.orgRole } : {}),
 			...(args.principal !== undefined ? { principal: args.principal } : {}),
+			...(seatAgent
+				? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
+				: {}),
 		});
 	},
 });
@@ -2189,6 +2212,19 @@ const oauthContextShape = v.object({
 	clerkOrgSlug: v.optional(v.string()),
 	orgRole: v.optional(v.string()),
 	principal: v.optional(v.literal("person")),
+	// The agent this token acts as, by ROW ID, re-read against the live agent
+	// (name = its CURRENT label). null: an org-level seat (no agent resolved in the
+	// profile's own org), a person token, or a stamp whose agent is no longer
+	// active. Always present, so a reader can tell "none" from "provider predates
+	// the stamp" (key absent).
+	seatAgent: v.union(
+		v.object({
+			agentId: v.id("agents"),
+			orgId: v.string(),
+			agentName: v.string(),
+		}),
+		v.null(),
+	),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2221,6 +2257,7 @@ export const getAccessTokenByHash = query({
 		if (!row) return null;
 		if (row.revokedAt !== undefined) return null;
 		if (row.expiresAt < Date.now()) return null;
+		const agent = await liveSeatAgent(ctx, row);
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -2235,6 +2272,9 @@ export const getAccessTokenByHash = query({
 				: {}),
 			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
 			...(row.principal !== undefined ? { principal: row.principal } : {}),
+			seatAgent: agent
+				? { agentId: agent._id, orgId: agent.orgSlug, agentName: agent.name }
+				: null,
 		};
 	},
 });

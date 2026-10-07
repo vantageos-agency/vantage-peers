@@ -42,6 +42,7 @@ import {
 	type OAuthContext,
 	personActorOf,
 	recordUnattributedClaim,
+	seatAgentOf,
 } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,6 +274,10 @@ function bindActingNames(
 		if (claimed === undefined || claimed === null) {
 			if (oauthCtx?.actor) {
 				bound = { ...bound, [key]: oauthCtx.actor.agentName };
+			} else if (oauthCtx && !isMasterScope(oauthCtx)) {
+				// A seat that resolved to an agent BY ID acts as that agent.
+				const seat = seatAgentOf(oauthCtx);
+				if (seat !== undefined) bound = { ...bound, [key]: seat.agentName };
 			}
 			continue;
 		}

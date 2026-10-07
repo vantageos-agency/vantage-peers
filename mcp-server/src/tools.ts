@@ -44,6 +44,7 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
+import { withVerifiedActor } from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1876,9 +1877,12 @@ function passesBriefingNoteParticipantScope(
 
 export function registerTools(
 	server: McpServer,
-	convex: ConvexHttpClient,
+	rawConvex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
 ): void {
+	// The acting agent's unique ID rides every actor-taking Convex door
+	// (verifiedActor.ts). Same client object when no ID was resolved.
+	const convex = withVerifiedActor(rawConvex, oauthCtx);
 	// Intercept EVERY server.registerTool(...) call made below (directly or
 	// through defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
 	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive

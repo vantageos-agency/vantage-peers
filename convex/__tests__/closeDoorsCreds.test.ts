@@ -142,7 +142,7 @@ describe("agentCredentials:resolveAgentCredential — closed to a non-service ca
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
 		);
-		expect(resolved).toEqual({ orgSlug: "acme", agentName: "sigma" });
+		expect(resolved).toMatchObject({ orgSlug: "acme", agentName: "sigma" });
 	});
 
 	test("ALLOW-side refusal: the service account with a made-up secret is still refused with its code", async () => {

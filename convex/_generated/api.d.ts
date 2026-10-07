@@ -59,6 +59,7 @@ import type * as lib_memberScopes from "../lib/memberScopes.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
+import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
@@ -166,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/personPrincipal": typeof lib_personPrincipal;
   "lib/reviewRouting": typeof lib_reviewRouting;
+  "lib/seatAgent": typeof lib_seatAgent;
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
   "lib/tenantSlug": typeof lib_tenantSlug;

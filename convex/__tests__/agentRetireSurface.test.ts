@@ -178,7 +178,7 @@ describe("agent retire surface", () => {
 			const ok = await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets[name],
 			});
-			expect(ok).toEqual({ orgSlug: "org-a", agentName: name });
+			expect(ok).toMatchObject({ orgSlug: "org-a", agentName: name });
 		}
 	});
 
@@ -240,7 +240,7 @@ describe("agent retire surface", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: fresh.secret,
 			}),
-		).toEqual({ orgSlug: "org-a", agentName: "beta" });
+		).toMatchObject({ orgSlug: "org-a", agentName: "beta" });
 
 		// Already active: a NO-OP. The sweep is scoped to the inactive -> active
 		// transition, so a doubled call writes NOTHING and the live credential
@@ -253,7 +253,7 @@ describe("agent retire surface", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: fresh.secret,
 			}),
-		).toEqual({ orgSlug: "org-a", agentName: "beta" });
+		).toMatchObject({ orgSlug: "org-a", agentName: "beta" });
 		await expect(
 			admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", name: "nobody" }),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
@@ -280,7 +280,7 @@ describe("agent retire surface", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: fresh.secret,
 			}),
-		).toEqual({ orgSlug: "org-a", agentName: "beta" });
+		).toMatchObject({ orgSlug: "org-a", agentName: "beta" });
 	});
 
 	test("POLE 6b: reactivateAgent sweeps a credential that SURVIVED the retirement and reports the count; Y and Z untouched per name in both tables", async () => {
@@ -319,7 +319,7 @@ describe("agent retire surface", () => {
 				await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 					presentedSecret: secrets[n],
 				}),
-			).toEqual({ orgSlug: "org-a", agentName: n });
+			).toMatchObject({ orgSlug: "org-a", agentName: n });
 		}
 	});
 
@@ -349,7 +349,7 @@ describe("agent retire surface", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secrets.beta,
 			}),
-		).toEqual({ orgSlug: "org-a", agentName: "beta" });
+		).toMatchObject({ orgSlug: "org-a", agentName: "beta" });
 	});
 
 	// CROSS-ORG LEG of the negative pole. The same agent NAME exists in org-b
@@ -385,7 +385,7 @@ describe("agent retire surface", () => {
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
 				presentedSecret: secretB,
 			}),
-		).toEqual({ orgSlug: "org-b", agentName: "beta" });
+		).toMatchObject({ orgSlug: "org-b", agentName: "beta" });
 	}
 
 	test("POLE 7a: same-named agent in another org — org-a deactivateAgent(beta) retires A/beta and leaves B/beta untouched", async () => {
