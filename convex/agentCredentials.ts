@@ -13,6 +13,7 @@ import {
 	resolveAgentCredentialCore,
 	sha256Hex,
 } from "./lib/agentIdentity";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T4] agentCredentials — the per-agent CREDENTIAL, on top of P-T2's
@@ -116,6 +117,8 @@ export const mintAgentCredential = mutation({
 
 		await ctx.db.insert("agent_credentials", {
 			orgSlug: agent.orgSlug,
+			clerkOrgId:
+				agent.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, agent.orgSlug)),
 			agentId: agent._id,
 			agentName: agent.name,
 			secretHash,

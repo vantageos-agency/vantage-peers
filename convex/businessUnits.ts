@@ -9,6 +9,7 @@ import {
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -86,6 +87,7 @@ const buObject = v.object({
 	createdAt: v.number(),
 	updatedAt: v.number(),
 	orgId: v.optional(v.string()),
+	clerkOrgId: v.optional(v.string()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,7 +154,10 @@ export const create = mutation({
 			// argument. A master write is fleet-owned (unstamped), as `tasks` does.
 			...(scope.isMaster || scope.orgSlug === null
 				? {}
-				: { orgId: scope.orgSlug }),
+				: {
+						orgId: scope.orgSlug,
+						clerkOrgId: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+					}),
 		});
 	},
 });

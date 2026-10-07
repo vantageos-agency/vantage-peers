@@ -15,6 +15,7 @@ import {
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { taskActorIdFields } from "./lib/actorIds";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -542,6 +543,8 @@ export const instantiateTemplateIntoMission = mutation({
 					createdBy,
 					assignedTo: step.assignedTo ?? mission.pilot,
 				})),
+				clerkOrgId:
+					mission.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, mission.orgId)),
 				createdAt: now,
 				updatedAt: now,
 			});

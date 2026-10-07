@@ -57,6 +57,7 @@ import {
 } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 import { actorIdResolver, taskActorIdFields } from "./lib/actorIds";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -431,6 +432,7 @@ const taskFullValidator = v.object({
 	updatedAt: v.number(),
 	// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 	orgId: v.optional(v.string()),
+	clerkOrgId: v.optional(v.string()),
 	// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
 	origin: v.optional(taskOriginValidator),
 	// Day 157 — terminal cancelled status (see schema.ts).
@@ -619,6 +621,8 @@ async function insertTask(
 			createdBy: args.createdBy,
 			assignedTo: args.assignedTo,
 		})),
+		// Permanent Clerk org id of the same tenant (Pi ruling (d)).
+		clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
 		...(origin !== undefined ? { origin } : {}),
 		createdAt: now,
 		updatedAt: now,
@@ -746,6 +750,7 @@ export const get = query({
 			updatedAt: v.number(),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			clerkOrgId: v.optional(v.string()),
 			// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
 			origin: v.optional(taskOriginValidator),
 			// Day 157 — terminal cancelled status (see schema.ts).
@@ -861,6 +866,7 @@ export const getById = query({
 			updatedAt: v.number(),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			clerkOrgId: v.optional(v.string()),
 			// Day 130 follow-up #2 — inforgeable automation signal (see schema.ts).
 			origin: v.optional(taskOriginValidator),
 			// Day 157 — terminal cancelled status (see schema.ts).
@@ -4541,15 +4547,14 @@ export const bulkComplete = mutation({
 		// from the request) because a scheduled function has no auth context.
 		// The run's status row — what a client polls (tasks:getBulkCompleteRun)
 		// with the bulkRunId this call returns. Written on the live path only.
+		const runOrgSlug = verifiedOrgSlug ?? callerScope.orgSlug ?? undefined;
+		const runClerkOrgId = await clerkOrgIdForSlug(ctx, runOrgSlug);
 		await ctx.db.insert("bulk_complete_runs", {
 			bulkRunId,
 			// The run's org: the verified one the transport carried, else the
 			// caller's own scope; absent only for a fleet-master run.
-			...(verifiedOrgSlug !== undefined
-				? { orgId: verifiedOrgSlug }
-				: callerScope.orgSlug !== null
-					? { orgId: callerScope.orgSlug }
-					: {}),
+			...(runOrgSlug !== undefined ? { orgId: runOrgSlug } : {}),
+			...(runClerkOrgId !== undefined ? { clerkOrgId: runClerkOrgId } : {}),
 			createdBy: args.callerOrchestrator ?? "",
 			status: exceeded ? "running" : "complete",
 			closed: count,

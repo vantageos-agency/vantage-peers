@@ -55,6 +55,7 @@ import {
 import type { BundleEntry } from "./okfValidator";
 import { creatorValidator, memoryTypeValidator } from "./schema";
 import { taskActorIdFields } from "./lib/actorIds";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
@@ -733,6 +734,7 @@ export const _insertImportedBriefing = internalMutation({
 			contentHash: args.contentHash,
 			createdAt: args.now,
 			orgId,
+			clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
 		});
 	},
 });
@@ -794,6 +796,7 @@ export const _insertImportedTask = internalMutation({
 				createdBy: args.createdBy,
 				assignedTo: args.assignedTo,
 			})),
+			clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
 		});
 	},
 });

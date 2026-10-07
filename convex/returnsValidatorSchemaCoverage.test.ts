@@ -275,12 +275,12 @@ function extractDocMatchesFromFile(filePath: string): DocValidatorMatch[] {
 
 const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string }> = {
 	"receiptTenantBackfill._receiptsForCaller": {
-		fields: ["messageId", "recipientId", "recipientInstanceId", "readAt"],
+		fields: ["messageId", "recipientId", "recipientInstanceId", "tenantOrgId", "readAt"],
 		reason:
 			"Deliberately narrow both-directions isolation-proof projection (_id/recipient/tenantId) for the #1257 receipt-tenant backfill — the test authenticates as a scoped identity and asserts it reads only its own tenant's rows; the full receipt shape (messageId/recipientInstanceId/readAt) is irrelevant to that proof. Handler maps to this shape explicitly, never spreads the raw row.",
 	},
 	"receiptTenantBackfill._undefinedTenantReceiptPage": {
-		fields: ["recipientId", "tenantId", "readAt"],
+		fields: ["recipientId", "tenantId", "tenantOrgId", "readAt"],
 		reason:
 			"Deliberately narrow page-reader projection (_id/messageId/recipient/recipientInstanceId) for the #1257 backfill's one-shot scan — the both-ends resolver (post-leak-fix) keys on recipient AND the message's sender (looked up via messageId), so messageId is now PRESENT. tenantId is undefined by construction on this population (it is what the backfill sets), and readAt is irrelevant to tenant resolution. Handler maps to this shape explicitly, never spreads the raw row.",
 	},
@@ -317,6 +317,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"createdAt",
 			"updatedAt",
 			"orgId",
+			"clerkOrgId",
 		],
 		reason:
 			"`fields: \"lite\"|\"full\"` API (documented at the `list` query) — `liteValidator` is the deliberate lite projection; `buObject` (the full shape, in the same union) already COVERS.",
@@ -330,6 +331,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"updatedAt",
 			"updatedBy",
 			"orgId",
+			"clerkOrgId",
 			"contentHash",
 		],
 		reason:
@@ -364,6 +366,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"createdAt",
 			"updatedAt",
 			"orgId",
+			"clerkOrgId",
 			"cancelledBy",
 			"cancelReason",
 			"lastActedBy",
@@ -393,6 +396,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"createdAt",
 			"updatedAt",
 			"orgId",
+			"clerkOrgId",
 			"origin",
 			"cancelledBy",
 			"cancelReason",

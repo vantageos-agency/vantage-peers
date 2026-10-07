@@ -17,6 +17,7 @@ import {
 import { requireAuthenticatedCaller } from "./tasks";
 import { resolveHumanActor } from "./lib/humanActor";
 import { taskActorIdFields } from "./lib/actorIds";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -229,6 +230,9 @@ export const create = mutation({
 			// TENANT of the schedule, from the scope resolved above — never an
 			// argument. Every task this schedule later generates inherits it.
 			orgId: scope.isMaster ? undefined : (scope.orgSlug ?? undefined),
+			clerkOrgId: scope.isMaster
+				? undefined
+				: await clerkOrgIdForSlug(ctx, scope.orgSlug),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -627,6 +631,9 @@ export const processDueTasks = internalMutation({
 						createdBy: recurring.createdBy,
 						assignedTo: recurring.assignedTo,
 					})),
+					clerkOrgId:
+						recurring.clerkOrgId ??
+						(await clerkOrgIdForSlug(ctx, recurring.orgId)),
 					createdAt: now,
 					updatedAt: now,
 				});

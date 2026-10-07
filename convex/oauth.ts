@@ -39,6 +39,7 @@ import { isHumanActorName } from "./lib/humanActor";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -2174,6 +2175,7 @@ export const createAccessToken = mutation({
 			clerkOrgSlug: args.clerkOrgSlug,
 			principal: args.principal,
 		});
+		const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, args.clerkOrgSlug);
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -2189,6 +2191,8 @@ export const createAccessToken = mutation({
 			...(args.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: args.clerkOrgSlug }
 				: {}),
+			// Permanent Clerk org id of the same org (Pi ruling (d)), from its mapping.
+			...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
 			...(args.codeHash !== undefined ? { codeHash: args.codeHash } : {}),
 			...(args.orgRole !== undefined ? { orgRole: args.orgRole } : {}),
 			...(args.principal !== undefined ? { principal: args.principal } : {}),

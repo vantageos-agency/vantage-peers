@@ -5,6 +5,7 @@ import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -183,7 +184,10 @@ export const write = mutation({
 			// fleet-owned (unstamped), as `tasks` does.
 			...(scope.isMaster || scope.orgSlug === null
 				? {}
-				: { orgId: scope.orgSlug }),
+				: {
+						orgId: scope.orgSlug,
+						clerkOrgId: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+					}),
 		});
 	},
 });
@@ -210,6 +214,7 @@ export const get = query({
 			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
 			orgId: v.optional(v.string()),
+			clerkOrgId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -254,6 +259,7 @@ const DIARY_LIST_ROW = v.object({
 	createdBy: v.optional(creatorValidator),
 	createdAt: v.number(),
 	orgId: v.optional(v.string()),
+	clerkOrgId: v.optional(v.string()),
 });
 
 export const list = query({
@@ -482,6 +488,7 @@ export const listByDateRange = query({
 			createdBy: v.optional(creatorValidator),
 			createdAt: v.number(),
 			orgId: v.optional(v.string()),
+			clerkOrgId: v.optional(v.string()),
 		}),
 	),
 	handler: async (ctx, args) => {

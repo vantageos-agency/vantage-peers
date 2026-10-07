@@ -25,6 +25,7 @@ import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -243,6 +244,9 @@ export const create = mutation({
 			createdAt: now,
 			updatedAt: now,
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
+			clerkOrgId: scope.isMaster
+				? undefined
+				: await clerkOrgIdForSlug(ctx, scope.orgSlug),
 		});
 	},
 });
@@ -273,6 +277,7 @@ export const get = query({
 			updatedAt: v.number(),
 			// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 			orgId: v.optional(v.string()),
+			clerkOrgId: v.optional(v.string()),
 			// Day 157 — terminal cancelled status (see schema.ts).
 			cancelledBy: v.optional(creatorValidator),
 			cancelReason: v.optional(v.string()),

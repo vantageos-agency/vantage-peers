@@ -108,6 +108,7 @@ export const getSession = query({
 			_creationTime: v.number(),
 			sessionId: v.string(),
 			tenantId: v.optional(v.string()),
+			tenantOrgId: v.optional(v.string()),
 			origin: v.string(),
 			userId: v.optional(v.string()),
 			createdAt: v.number(),
