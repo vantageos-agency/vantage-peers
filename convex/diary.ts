@@ -4,7 +4,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorSlug } from "./lib/operatorOrg";
+import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -26,38 +26,80 @@ function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): b
 }
 
 // The (orchestrator, date) key is a NAME that two organisations, or the fleet,
-// can all hold, so it can name several rows. The caller's own row is the one
-// whose server-stamped tenant is the caller's, selected through the
-// by_org_orchestrator_date INDEX so a foreign tenant's row is never read,
-// never returned, and can never lock the caller out.
-//   org caller -> the row stamped with its org (an org caller never matches the
-//                 unstamped row, and matches the operator slug only if it IS
-//                 the operator org).
-//   master     -> the FLEET's row: stamped with the operator org (what
-//                 backfill_org_stamp writes), else unstamped (what a master
-//                 write writes). Operator-stamped is preferred, deterministically.
+// can all hold, so it can name several rows. The tenants a caller may read and
+// write are the stamps of its OWN range, selected through the
+// by_org_orchestrator_date INDEX so a foreign tenant's row is never read, never
+// returned, and can never lock the caller out.
+//   master              -> the FLEET's range: operator-stamped (what
+//                          backfill_org_stamp writes) then unstamped (what a
+//                          master write writes), in that preference order.
+//   operator-org member -> the SAME fleet range (RULING 4: unstamped rows ARE
+//                          the operator org's range).
+//   any other org       -> only the rows stamped with its own org. It never
+//                          matches the unstamped range, and never the operator
+//                          slug (it is not the operator org).
+//   no tenant           -> nothing.
+// The operator slug is derived at run time and only when EXACTLY ONE operator
+// org is active; otherwise the fleet range is the unstamped rows alone.
+async function readableTenants(
+	ctx: QueryCtx,
+	scope: OrgScope,
+): Promise<(string | undefined)[]> {
+	const operatorSlug = await fleetOperatorSlug(ctx.db);
+	const fleet = operatorSlug === undefined ? [undefined] : [operatorSlug, undefined];
+	if (scope.isMaster) return fleet;
+	if (scope.orgSlug === null) return [];
+	return scope.orgSlug === operatorSlug ? fleet : [scope.orgSlug];
+}
+
 // `.first()`, never `.unique()`: a row landing between deploy and backfill must
-// not make the selection throw. A scope with no tenant owns nothing.
+// not make the selection throw. Deterministic: the first tenant in
+// readableTenants order that has a row.
 async function ownDiaryRow(
 	ctx: QueryCtx,
 	scope: OrgScope,
 	orchestrator: string,
 	date: string,
 ): Promise<Doc<"diary"> | null> {
-	const at = (tenant: string | undefined) =>
-		ctx.db
+	for (const tenant of await readableTenants(ctx, scope)) {
+		const row = await ctx.db
 			.query("diary")
 			.withIndex("by_org_orchestrator_date", (q) =>
 				q.eq("orgId", tenant).eq("orchestrator", orchestrator).eq("date", date),
 			)
 			.first();
-	if (scope.isMaster) {
-		const operatorSlug = await fleetOperatorSlug(ctx.db);
-		const operatorRow =
-			operatorSlug === undefined ? null : await at(operatorSlug);
-		return operatorRow ?? (await at(undefined));
+		if (row !== null) return row;
 	}
-	return scope.orgSlug === null ? null : await at(scope.orgSlug);
+	return null;
+}
+
+async function readRange(
+	ctx: QueryCtx,
+	scope: OrgScope,
+	names: string[],
+	from: string,
+	to: string,
+): Promise<Doc<"diary">[]> {
+	const tenants = await readableTenants(ctx, scope);
+	const perRange = await Promise.all(
+		tenants.flatMap((tenant) =>
+			names.map((name) =>
+				ctx.db
+					.query("diary")
+					.withIndex("by_org_orchestrator_date", (q) =>
+						q
+							.eq("orgId", tenant)
+							.eq("orchestrator", name)
+							.gte("date", from)
+							.lte("date", to),
+					)
+					.collect(),
+			),
+		),
+	);
+	return perRange
+		.flat()
+		.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,7 +153,10 @@ export const write = mutation({
 			// R-52 — the row was selected as the caller's OWN (ownDiaryRow), so this
 			// can only fire if that selection is ever loosened; it keeps the patch
 			// bound to the row's server-stamped tenant. Master is unchanged.
-			if (!scope.isMaster && existing.orgId !== scope.orgSlug) {
+			if (
+				!scope.isMaster &&
+				!sameTenantStamp(existing.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
 				);
@@ -283,37 +328,36 @@ export const list = query({
 				)
 				.order("desc")
 				.take(fetchCap);
-		} else if (orchestrator !== undefined) {
-			// R-52: an org caller reads only its own tenant's rows of the name.
-			rows = await ctx.db
-				.query("diary")
-				.withIndex("by_org_orchestrator_date", (q) =>
-					q.eq("orgId", scope.orgSlug ?? undefined).eq("orchestrator", orchestrator),
-				)
-				.order("desc")
-				.take(fetchCap);
 		} else if (scope.isMaster) {
 			rows = await ctx.db.query("diary").order("desc").take(fetchCap);
 		} else {
-			// Member, no `orchestrator` argument. diary has no orgId column, so the
-			// tenant key is the roster: read each rostered orchestrator through
-			// by_orchestrator_date (bounded `fetchCap` per orchestrator) instead of
-			// taking the whole table and filtering afterwards, which both read other
-			// tenants' rows and let their volume starve the member's page. Merged
+			// Member (with or without an `orchestrator` argument). The tenant key is
+			// the row's stamp (readableTenants: its own org, or the fleet range for
+			// the operator org), the name key is the roster: one bounded indexed
+			// read per (tenant, rostered name) instead of taking the table and
+			// filtering afterwards, which both read other tenants' rows and let
+			// their volume starve the member's page. The tenant ranges are disjoint
+			// (distinct orgId values), so the merge needs no de-duplication; merged
 			// newest-first by _creationTime, the order the table read used.
-			const roster = [...new Set(scope.allowedOrchestrators)];
-			const perOrchestrator = await Promise.all(
-				roster.map((name) =>
-					ctx.db
-						.query("diary")
-						.withIndex("by_org_orchestrator_date", (q) =>
-							q.eq("orgId", scope.orgSlug ?? undefined).eq("orchestrator", name),
-						)
-						.order("desc")
-						.take(fetchCap),
+			const names =
+				orchestrator !== undefined
+					? [orchestrator]
+					: [...new Set(scope.allowedOrchestrators)];
+			const tenants = await readableTenants(ctx, scope);
+			const perRange = await Promise.all(
+				tenants.flatMap((tenant) =>
+					names.map((name) =>
+						ctx.db
+							.query("diary")
+							.withIndex("by_org_orchestrator_date", (q) =>
+								q.eq("orgId", tenant).eq("orchestrator", name),
+							)
+							.order("desc")
+							.take(fetchCap),
+					),
 				),
 			);
-			rows = perOrchestrator
+			rows = perRange
 				.flat()
 				.sort((a, b) => b._creationTime - a._creationTime);
 		}
@@ -381,7 +425,10 @@ export const deleteDiary = mutation({
 
 		// R-52 — the entry's own server-stamped tenant must be the caller's; the
 		// roster check below keys on a name another organisation may also hold.
-		if (!scope.isMaster && entry.orgId !== scope.orgSlug) {
+		if (
+			!scope.isMaster &&
+			!sameTenantStamp(entry.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+		) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
 			);
@@ -463,18 +510,8 @@ export const listByDateRange = query({
 					.order("asc")
 					.collect();
 			}
-			// R-52: an org caller reads only its own tenant's rows of the name.
-			return await ctx.db
-				.query("diary")
-				.withIndex("by_org_orchestrator_date", (q) =>
-					q
-						.eq("orgId", scope.orgSlug ?? undefined)
-						.eq("orchestrator", orchestrator)
-						.gte("date", args.from)
-						.lte("date", args.to),
-				)
-				.order("asc")
-				.collect();
+			// R-52: an org caller reads only its own tenant range of the name.
+			return await readRange(ctx, scope, [orchestrator], args.from, args.to);
 		}
 
 		if (scope.isMaster) {
@@ -487,24 +524,14 @@ export const listByDateRange = query({
 				.collect();
 		}
 		// Member without an `orchestrator` arg: one indexed range read PER
-		// orchestrator in its own roster — the roster is the predicate of the
-		// read, not a filter applied to rows already read.
-		const perOrchestrator = await Promise.all(
-			scope.allowedOrchestrators.map((o) =>
-				ctx.db
-					.query("diary")
-					.withIndex("by_org_orchestrator_date", (q) =>
-						q
-							.eq("orgId", scope.orgSlug ?? undefined)
-							.eq("orchestrator", o as Doc<"diary">["orchestrator"])
-							.gte("date", args.from)
-							.lte("date", args.to),
-					)
-					.collect(),
-			),
+		// (tenant range, rostered orchestrator) — the tenant and the roster are the
+		// predicates of the read, not a filter applied to rows already read.
+		return await readRange(
+			ctx,
+			scope,
+			[...new Set(scope.allowedOrchestrators)],
+			args.from,
+			args.to,
 		);
-		return perOrchestrator
-			.flat()
-			.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 	},
 });

@@ -26,6 +26,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { fleetOperatorSlug, isFleetStamp, sameTenantStamp } from "../lib/operatorOrg";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -498,5 +499,119 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("fleet-org")));
 		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("execute");
+	});
+});
+
+// RULING 4, member side: master writes stay unstamped, and those rows ARE the
+// operator org's range, so a MEMBER of the operator org reads and writes them;
+// any other org stays on its own stamp only.
+describe("operator-org member sees the fleet range — R-52 follow-up", () => {
+	const D = "2026-10-07";
+	async function seedWorld(t: T) {
+		await t.run(async (ctx) => {
+			for (const [slug, kind] of [["fleet-org", "operator"], ["org-a", "client"]] as const) {
+				await ctx.db.insert("client_org_mapping", {
+					clerkOrgSlug: slug,
+					allowedOrchestrators: ["sigma"],
+					scopes: ["view-own-tasks"],
+					displayName: slug,
+					isActive: true,
+					orgKind: kind,
+					createdAt: 1,
+				});
+			}
+		});
+		await asMaster(t).mutation(api.diary.write, { date: D, orchestrator: "sigma", content: "fleet entry" });
+	}
+	const contents = (rows: unknown) =>
+		(Array.isArray(rows) ? rows : []).map((r: { content: string }) => r.content);
+
+	test("PRESENT R1: master writes, then an operator-org member's get returns the row", async () => {
+		const t = makeT();
+		await seedWorld(t);
+		const got = await asOrg(t, "fleet-org").query(api.diary.get, { date: D, orchestrator: "sigma" });
+		expect(got?.content).toBe("fleet entry");
+	});
+
+	test("PRESENT R2: an operator-org member's list {orchestrator} and listByDateRange contain it", async () => {
+		const t = makeT();
+		await seedWorld(t);
+		const m = asOrg(t, "fleet-org");
+		expect(contents(await m.query(api.diary.list, { orchestrator: "sigma" }))).toEqual(["fleet entry"]);
+		expect(
+			contents(await m.query(api.diary.listByDateRange, { from: D, to: D, orchestrator: "sigma" })),
+		).toEqual(["fleet entry"]);
+	});
+
+	test("PRESENT R3: an operator-org member's list {} (the dashboard feed call) and range without orchestrator contain it", async () => {
+		const t = makeT();
+		await seedWorld(t);
+		const m = asOrg(t, "fleet-org");
+		expect(contents(await m.query(api.diary.list, {}))).toEqual(["fleet entry"]);
+		expect(contents(await m.query(api.diary.listByDateRange, { from: D, to: D }))).toEqual(["fleet entry"]);
+	});
+
+	test("PRESENT: an operator-org member writing the key updates the fleet row, no duplicate", async () => {
+		const t = makeT();
+		await seedWorld(t);
+		await asOrg(t, "fleet-org").mutation(api.diary.write, { date: D, orchestrator: "sigma", content: "member v2" });
+		const rows = await t.run((ctx) => ctx.db.query("diary").collect());
+		expect(rows).toHaveLength(1);
+		expect(rows[0].content).toBe("member v2");
+	});
+
+	test("REFUSED: a non-operator org member reads no unstamped fleet row (get, list, list {}, range)", async () => {
+		const t = makeT();
+		await seedWorld(t);
+		const a = asOrg(t, "org-a");
+		expect(await a.query(api.diary.get, { date: D, orchestrator: "sigma" })).toBeNull();
+		expect(contents(await a.query(api.diary.list, { orchestrator: "sigma" }))).toEqual([]);
+		expect(contents(await a.query(api.diary.list, {}))).toEqual([]);
+		expect(contents(await a.query(api.diary.listByDateRange, { from: D, to: D }))).toEqual([]);
+		expect(contents(await a.query(api.diary.listByDateRange, { from: D, to: D, orchestrator: "sigma" }))).toEqual([]);
+	});
+});
+
+describe("fleetOperatorSlug fails closed — R-52 follow-up", () => {
+	const mapping = (slug: string, orgKind: "operator" | "client") => ({
+		clerkOrgSlug: slug,
+		allowedOrchestrators: [],
+		scopes: [],
+		displayName: slug,
+		isActive: true,
+		orgKind,
+		createdAt: 1,
+	});
+	test("exactly one operator org -> its slug; 2+ -> undefined; 0 -> undefined", async () => {
+		const one = makeT();
+		await one.run((ctx) => ctx.db.insert("client_org_mapping", mapping("op-1", "operator")));
+		expect(await one.run((ctx) => fleetOperatorSlug(ctx.db))).toBe("op-1");
+
+		const two = makeT();
+		await two.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", mapping("op-1", "operator"));
+			await ctx.db.insert("client_org_mapping", mapping("op-2", "operator"));
+		});
+		expect(await two.run((ctx) => fleetOperatorSlug(ctx.db) ?? null)).toBeNull();
+
+		const none = makeT();
+		await none.run((ctx) => ctx.db.insert("client_org_mapping", mapping("org-a", "client")));
+		expect(await none.run((ctx) => fleetOperatorSlug(ctx.db) ?? null)).toBeNull();
+	});
+
+	test("with 2 operators, no operator slug widens: only the unstamped stamp is the fleet's", () => {
+		expect(isFleetStamp("op-1", undefined)).toBe(false);
+		expect(isFleetStamp(undefined, undefined)).toBe(true);
+		expect(sameTenantStamp("op-1", undefined, undefined)).toBe(false);
+	});
+
+	test("with 2 active operators a master get does not read an operator-stamped row", async () => {
+		const t = makeT();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", mapping("op-1", "operator"));
+			await ctx.db.insert("client_org_mapping", mapping("op-2", "operator"));
+			await ctx.db.insert("diary", { date: "2026-10-07", orchestrator: "sigma", content: "stamped", createdAt: 1, orgId: "op-1" });
+		});
+		expect(await asMaster(t).query(api.diary.get, { date: "2026-10-07", orchestrator: "sigma" })).toBeNull();
 	});
 });

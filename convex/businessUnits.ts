@@ -8,6 +8,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -222,7 +223,10 @@ export const update = mutation({
 		// can both hold; only the stamp tells their rows apart. An unstamped row is
 		// fleet-owned or not yet backfilled and is refused to every org caller.
 		// Master is unchanged.
-		if (!scope.isMaster && bu.orgId !== scope.orgSlug) {
+		if (
+			!scope.isMaster &&
+			!sameTenantStamp(bu.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+		) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
 			);
