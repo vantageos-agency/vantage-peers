@@ -8616,15 +8616,26 @@ export function registerTools(
 			const unresolved = guardResolvedCaller("get_github_owner_bindings");
 			if (unresolved) return unresolved;
 			try {
-				const bindings = await convex.query("githubOwnerBinding:listBindings" as any, {});
-				const unprovenMappings = isMasterScope(oauthCtx)
+				// Both reads are capped server-side and return { items, truncated }:
+				// the truncation flags are passed on so a capped list never reads as complete.
+				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {});
+				const unprovenPage = isMasterScope(oauthCtx)
 					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {})
 					: undefined;
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ bindings, unprovenMappings }, null, 2),
+							text: JSON.stringify(
+								{
+									bindings: bindingsPage.items,
+									bindingsTruncated: bindingsPage.truncated,
+									unprovenMappings: unprovenPage?.items,
+									unprovenMappingsTruncated: unprovenPage?.truncated,
+								},
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -10490,6 +10501,13 @@ export function registerTools(
 	// ── get_repo_mapping ────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix. Convex githubRepoMapping:getByRepo exists.
 	// Lookup key is `repo` (string e.g. "vantageos-agency/vantage-peers-plugin"), not a doc ID.
+
+	// oracle-justified: a single-row lookup by repo key, so its verb (READ-GET) differs from
+	//   list_repo_mappings (READ-LIST) by design; it is registered but not advertised in
+	//   mcp-server/tool-exposure.json core (hors-MCP), whereas list_repo_mappings is advertised. Its isolation
+	//   differs from remove_repo_mapping only in the tail of the guard: both scope by org in-handler
+	//   (requireRowOwnedBy refuses a row the caller's org does not own); the read refuses an unresolved
+	//   caller with requireResolvedCaller, the delete with requireScope("manage-repo-mappings").
 	defineTool(
 		server,
 		authCtx,

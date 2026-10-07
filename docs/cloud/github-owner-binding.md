@@ -113,3 +113,9 @@ Install URL handed to an org admin after `bind_github_owner`:
 `get_github_owner_bindings` (master) also lists `unprovenMappings`: org-owned
 mapping rows whose owner is not bound, or bound to another org
 (`githubOwnerBinding:listUnprovenMappings`). They are reported, not silently kept.
+
+Both reads are capped (`OWNER_BINDING_LIST_CAP` 500 bindings,
+`UNPROVEN_MAPPING_SCAN_CAP` 2000 scanned mappings) and return
+`{ items, truncated }`. `get_github_owner_bindings` passes the flags on as
+`bindingsTruncated` and `unprovenMappingsTruncated`: `true` means more rows exist
+than were returned, so the list is not the whole set.

@@ -229,10 +229,17 @@ export const deactivateInstallation = internalMutation({
 	},
 });
 
-// Own org's bindings (a member), or all (master).
+// R-30: the read bounds are OURS and named. Each read fetches CAP + 1 rows so a
+// full page can be told from a truncated one, and returns `truncated` instead of
+// a short list that reads as complete.
+export const OWNER_BINDING_LIST_CAP = 500;
+export const UNPROVEN_MAPPING_SCAN_CAP = 2000;
+
+// Own org's bindings (a member), or all (master). `truncated: true` means more
+// bindings exist than the cap returned.
 export const listBindings = query({
 	args: {},
-	returns: v.array(bindingView),
+	returns: v.object({ items: v.array(bindingView), truncated: v.boolean() }),
 	handler: async (ctx) => {
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// isolation-contract: no reactive subscriber. Enumerated by command:
@@ -243,27 +250,35 @@ export const listBindings = query({
 			alsoRefusePreOrg: true,
 		});
 		const rows = scope.isMaster
-			? await ctx.db.query("githubOwnerBindings").take(500)
+			? await ctx.db.query("githubOwnerBindings").take(OWNER_BINDING_LIST_CAP + 1)
 			: await ctx.db
 					.query("githubOwnerBindings")
 					.withIndex("by_org", (q) => q.eq("orgId", scope.orgSlug as string))
-					.take(500);
-		return rows.map(toView);
+					.take(OWNER_BINDING_LIST_CAP + 1);
+		return {
+			items: rows.slice(0, OWNER_BINDING_LIST_CAP).map(toView),
+			truncated: rows.length > OWNER_BINDING_LIST_CAP,
+		};
 	},
 });
 
 // Existing mappings that carry an org but NO proof: reported, never silently
 // kept. Master only (the repo-mapping corpus is fleet configuration).
+// `truncated: true` means the mapping table holds more rows than the scan cap, so
+// the report may omit unproven mappings beyond it.
 export const listUnprovenMappings = query({
 	args: {},
-	returns: v.array(
-		v.object({
-			repo: v.string(),
-			orgId: v.string(),
-			project: v.string(),
-			reason: v.string(),
-		}),
-	),
+	returns: v.object({
+		items: v.array(
+			v.object({
+				repo: v.string(),
+				orgId: v.string(),
+				project: v.string(),
+				reason: v.string(),
+			}),
+		),
+		truncated: v.boolean(),
+	}),
 	handler: async (ctx) => {
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// isolation-contract: no reactive subscriber (new door, 0 dashboard hits).
@@ -272,7 +287,8 @@ export const listUnprovenMappings = query({
 			masterOnly: true,
 		});
 		const out: Array<{ repo: string; orgId: string; project: string; reason: string }> = [];
-		const rows = await ctx.db.query("githubRepoMapping").take(2000);
+		const scanned = await ctx.db.query("githubRepoMapping").take(UNPROVEN_MAPPING_SCAN_CAP + 1);
+		const rows = scanned.slice(0, UNPROVEN_MAPPING_SCAN_CAP);
 		for (const m of rows) {
 			if (m.orgId === undefined) continue;
 			const owner = ownerOfRepo(m.repo);
@@ -288,6 +304,6 @@ export const listUnprovenMappings = query({
 				});
 			}
 		}
-		return out;
+		return { items: out, truncated: scanned.length > UNPROVEN_MAPPING_SCAN_CAP };
 	},
 });

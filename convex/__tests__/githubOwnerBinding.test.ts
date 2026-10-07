@@ -10,6 +10,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
+import { OWNER_BINDING_LIST_CAP, UNPROVEN_MAPPING_SCAN_CAP } from "../githubOwnerBinding";
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 
@@ -310,7 +311,8 @@ describe("existing mappings without proof are REPORTED", () => {
 			await ctx.db.insert("githubRepoMapping", { repo: "fleet/z", orchestrator: ORCH, project: "p", active: true });
 		});
 		const list = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
-		expect(list.map((r) => [r.repo, r.reason]).sort()).toEqual([
+		expect(list.truncated).toBe(false);
+		expect(list.items.map((r) => [r.repo, r.reason]).sort()).toEqual([
 			["org-b/y", "owner-bound-to-another-org"],
 			["squat/x", "owner-not-bound"],
 		]);
@@ -322,8 +324,77 @@ describe("existing mappings without proof are REPORTED", () => {
 		const t = makeT();
 		await seed(t);
 		const mine = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
-		expect(mine.map((b) => b.owner)).toEqual(["org-a"]);
-		expect((await master(t).query(api.githubOwnerBinding.listBindings, {})).length).toBe(2);
+		expect(mine.truncated).toBe(false);
+		expect(mine.items.map((b) => b.owner)).toEqual(["org-a"]);
+		expect((await master(t).query(api.githubOwnerBinding.listBindings, {})).items.length).toBe(2);
+	});
+
+	// R-30: the read cap is a NAMED constant and hitting it is SAID, never a
+	// silent short list. Three poles: over the cap / exactly at the cap / empty.
+	test("listBindings truncation signal: cap+1 rows -> truncated true with exactly the cap; at the cap -> false; empty -> false", async () => {
+		const t = makeT();
+		const insert = (n: number, from: number) =>
+			t.run(async (ctx) => {
+				for (let i = from; i < from + n; i++) {
+					await ctx.db.insert("githubOwnerBindings", {
+						owner: `own${i}`,
+						orgId: "org-a",
+						installationId: i,
+						accountType: "Organization",
+						githubUserLogin: `gh${i}`,
+						boundBy: "admin-org-a",
+						boundAt: 1,
+						active: true,
+					});
+				}
+			});
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "org-a",
+				allowedOrchestrators: [ORCH],
+				scopes: ["view-own-tasks", "manage-repo-mappings"],
+				displayName: "org-a",
+				isActive: true,
+				createdAt: 1,
+			});
+		});
+		const empty = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
+		expect(empty).toEqual({ items: [], truncated: false });
+		await insert(OWNER_BINDING_LIST_CAP, 0);
+		const atCap = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
+		expect(atCap.items.length).toBe(OWNER_BINDING_LIST_CAP);
+		expect(atCap.truncated).toBe(false);
+		await insert(1, OWNER_BINDING_LIST_CAP);
+		const over = await member(t, "org-a").query(api.githubOwnerBinding.listBindings, {});
+		expect(over.items.length).toBe(OWNER_BINDING_LIST_CAP);
+		expect(over.truncated).toBe(true);
+		const asMaster = await master(t).query(api.githubOwnerBinding.listBindings, {});
+		expect(asMaster.items.length).toBe(OWNER_BINDING_LIST_CAP);
+		expect(asMaster.truncated).toBe(true);
+	});
+
+	test("listUnprovenMappings truncation signal: scan cap+1 mappings -> truncated true; at the cap -> false", async () => {
+		const t = makeT();
+		const insert = (n: number, from: number) =>
+			t.run(async (ctx) => {
+				for (let i = from; i < from + n; i++) {
+					await ctx.db.insert("githubRepoMapping", {
+						repo: `sq${i}/r`,
+						orchestrator: ORCH,
+						project: "p",
+						active: true,
+						orgId: "org-a",
+					});
+				}
+			});
+		await insert(UNPROVEN_MAPPING_SCAN_CAP, 0);
+		const atCap = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
+		expect(atCap.items.length).toBe(UNPROVEN_MAPPING_SCAN_CAP);
+		expect(atCap.truncated).toBe(false);
+		await insert(1, UNPROVEN_MAPPING_SCAN_CAP);
+		const over = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
+		expect(over.items.length).toBe(UNPROVEN_MAPPING_SCAN_CAP);
+		expect(over.truncated).toBe(true);
 	});
 });
 
@@ -431,7 +502,7 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 		// a new add is refused; the row is still REPORTED
 		denied(await addMapping(member(t, "org-a"), "org-a/second"), "github-owner-not-bound");
 		const listed = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
-		expect(listed.map((r) => [r.repo, r.reason])).toEqual([["org-a/repo", "owner-not-bound"]]);
+		expect(listed.items.map((r) => [r.repo, r.reason])).toEqual([["org-a/repo", "owner-not-bound"]]);
 
 		// re-bind restores routing
 		expect((await bind(t, 12)).ok).toBe(true);
@@ -439,7 +510,7 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 		expect((await issueOf(t, 5))?.status).toBe("fixed");
 		await upsert(t, 12);
 		expect((await issueOf(t, 12))?.orgId).toBe("org-a");
-		expect(await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {})).toEqual([]);
+		expect(await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {})).toEqual({ items: [], truncated: false });
 	});
 
 	test("deploy-task routing: a cron-closed deploy task stops using an unproven mapping's deploy state", async () => {
