@@ -262,6 +262,40 @@ export const listBindings = query({
 	},
 });
 
+type UnprovenMapping = { repo: string; orgId: string; project: string; reason: string };
+
+/**
+ * The scan behind `listUnprovenMappings`, with the cap passed in. The public
+ * query always passes the named `UNPROVEN_MAPPING_SCAN_CAP`; the parameter is
+ * the seam that lets the truncation signal be pinned at cap+1 with a small cap
+ * instead of seeding 2001 rows. Callers are the master-only handler and tests;
+ * it performs no authorisation of its own.
+ */
+export async function collectUnprovenMappings(
+	ctx: QueryCtx,
+	cap: number,
+): Promise<{ items: UnprovenMapping[]; truncated: boolean }> {
+	const out: UnprovenMapping[] = [];
+	const scanned = await ctx.db.query("githubRepoMapping").take(cap + 1);
+	const rows = scanned.slice(0, cap);
+	for (const m of rows) {
+		if (m.orgId === undefined) continue;
+		const owner = ownerOfRepo(m.repo);
+		const binding = owner === null ? null : await activeBindingForOwner(ctx, owner);
+		if (binding === null) {
+			out.push({ repo: m.repo, orgId: m.orgId, project: m.project, reason: "owner-not-bound" });
+		} else if (binding.orgId !== m.orgId) {
+			out.push({
+				repo: m.repo,
+				orgId: m.orgId,
+				project: m.project,
+				reason: "owner-bound-to-another-org",
+			});
+		}
+	}
+	return { items: out, truncated: scanned.length > cap };
+}
+
 // Existing mappings that carry an org but NO proof: reported, never silently
 // kept. Master only (the repo-mapping corpus is fleet configuration).
 // `truncated: true` means the mapping table holds more rows than the scan cap, so
@@ -286,24 +320,6 @@ export const listUnprovenMappings = query({
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 		});
-		const out: Array<{ repo: string; orgId: string; project: string; reason: string }> = [];
-		const scanned = await ctx.db.query("githubRepoMapping").take(UNPROVEN_MAPPING_SCAN_CAP + 1);
-		const rows = scanned.slice(0, UNPROVEN_MAPPING_SCAN_CAP);
-		for (const m of rows) {
-			if (m.orgId === undefined) continue;
-			const owner = ownerOfRepo(m.repo);
-			const binding = owner === null ? null : await activeBindingForOwner(ctx, owner);
-			if (binding === null) {
-				out.push({ repo: m.repo, orgId: m.orgId, project: m.project, reason: "owner-not-bound" });
-			} else if (binding.orgId !== m.orgId) {
-				out.push({
-					repo: m.repo,
-					orgId: m.orgId,
-					project: m.project,
-					reason: "owner-bound-to-another-org",
-				});
-			}
-		}
-		return { items: out, truncated: scanned.length > UNPROVEN_MAPPING_SCAN_CAP };
+		return await collectUnprovenMappings(ctx, UNPROVEN_MAPPING_SCAN_CAP);
 	},
 });

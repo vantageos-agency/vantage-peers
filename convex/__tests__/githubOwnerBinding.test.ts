@@ -10,7 +10,11 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
-import { OWNER_BINDING_LIST_CAP, UNPROVEN_MAPPING_SCAN_CAP } from "../githubOwnerBinding";
+import {
+	collectUnprovenMappings,
+	OWNER_BINDING_LIST_CAP,
+	UNPROVEN_MAPPING_SCAN_CAP,
+} from "../githubOwnerBinding";
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 
@@ -373,8 +377,13 @@ describe("existing mappings without proof are REPORTED", () => {
 		expect(asMaster.truncated).toBe(true);
 	});
 
-	test("listUnprovenMappings truncation signal: scan cap+1 mappings -> truncated true; at the cap -> false", async () => {
+	// The scan is pinned at a SMALL cap through the `collectUnprovenMappings`
+	// seam: seeding UNPROVEN_MAPPING_SCAN_CAP + 1 (2001) rows timed out the 5000ms
+	// default under CI's unflagged `npx vitest run` (Eta REVISE, PR #1461). The
+	// public query passes the named constant to this same function.
+	test("listUnprovenMappings truncation signal: scan cap+1 mappings -> truncated true; at the cap -> false; empty -> false", async () => {
 		const t = makeT();
+		const CAP = 3;
 		const insert = (n: number, from: number) =>
 			t.run(async (ctx) => {
 				for (let i = from; i < from + n; i++) {
@@ -387,14 +396,22 @@ describe("existing mappings without proof are REPORTED", () => {
 					});
 				}
 			});
-		await insert(UNPROVEN_MAPPING_SCAN_CAP, 0);
-		const atCap = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
-		expect(atCap.items.length).toBe(UNPROVEN_MAPPING_SCAN_CAP);
+		const scan = () => t.run((ctx) => collectUnprovenMappings(ctx, CAP));
+		expect(await scan()).toEqual({ items: [], truncated: false });
+		await insert(CAP, 0);
+		const atCap = await scan();
+		expect(atCap.items.length).toBe(CAP);
 		expect(atCap.truncated).toBe(false);
-		await insert(1, UNPROVEN_MAPPING_SCAN_CAP);
-		const over = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
-		expect(over.items.length).toBe(UNPROVEN_MAPPING_SCAN_CAP);
+		await insert(1, CAP);
+		const over = await scan();
+		expect(over.items.length).toBe(CAP);
 		expect(over.truncated).toBe(true);
+		// the public door is wired to the same scan: below its named cap it reports
+		// every unproven row and no truncation.
+		const viaQuery = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
+		expect(UNPROVEN_MAPPING_SCAN_CAP).toBeGreaterThan(CAP + 1);
+		expect(viaQuery.items.length).toBe(CAP + 1);
+		expect(viaQuery.truncated).toBe(false);
 	});
 });
 
