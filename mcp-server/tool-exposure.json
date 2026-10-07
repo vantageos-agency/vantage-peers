@@ -8,6 +8,7 @@
 		"bulk_complete_tasks",
 		"check_messages",
 		"checkout_task",
+		"claim_upload",
 		"complete_task",
 		"correct_task_segment",
 		"create_briefing_note",

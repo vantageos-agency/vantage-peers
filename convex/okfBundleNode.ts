@@ -31,7 +31,7 @@ import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { type ActionCtx, action } from "./_generated/server";
-import { requireTenantNamespace } from "./lib/auth";
+import { requireResolvedCaller, requireTenantNamespace } from "./lib/auth";
 import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
@@ -687,6 +687,46 @@ export const validateOkfBundle = action({
 		// 1. Fetch the tarball bytes (storageId wins when both are passed).
 		let blob: Blob | null;
 		if (storageId !== null) {
+			// OWNERSHIP GATE — a storageId is a handle into the SHARED `_storage`,
+			// so an identity alone is not authority to read it: before this gate,
+			// any identified caller holding another organisation's storageId had
+			// that blob unpacked and its entry paths, counts and messages returned
+			// (cross-tenant peek, backend standard R-8). The caller is resolved from
+			// its VERIFIED identity (never an argument), then ownership is ASSERTED
+			// against the binding the upload/store path wrote (kbUploads, written by
+			// kbMutations:bindOrAssertStorageOwnership from kb:storeDocumentChunked
+			// and the export path). Validate NEVER binds: a first-claim here would
+			// let the first org to validate a leaked storageId become its owner, and
+			// would make this read-only tool reach a mutation. Unbound ->
+			// AUTH_STORAGE_UNBOUND; bound to another org -> AUTH_STORAGE_NOT_OWNED.
+			// Master (the fleet's service account) keeps reading any blob, as in
+			// assertScopeAuthorizesOrg.
+			// `isolation-contract:` alsoRefusePreOrg — an action has no reactive
+			// subscriber; the one consumer is the masked MCP tool validate_okf_bundle
+			// (grep -rn "validateOkfBundle" in vantage-peers-dashboard
+			// {app,components,hooks,lib,contexts,providers} -> 0 hits).
+			// The bundleUrl branch reads no VP data and keeps its SSRF gate only.
+			const scope = await ctx.runQuery(
+				internal.lib.auth.resolveOrgScopeForAction,
+				{},
+			);
+			requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle", {
+				alsoRefusePreOrg: true,
+			});
+			if (!scope.isMaster) {
+				const owner: string | null = await ctx.runQuery(
+					internal.kbMutations.getStorageOwner,
+					{ storageId },
+				);
+				if (owner === null)
+					throw new Error(
+						"AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store, never by validation.",
+					);
+				if (owner !== scope.orgSlug)
+					throw new Error(
+						"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+					);
+			}
 			blob = await ctx.storage.get(storageId);
 			if (blob === null) {
 				throw new Error(

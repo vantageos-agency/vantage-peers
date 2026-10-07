@@ -26,7 +26,6 @@ import {
 	BUNDLE_SOFT_CAP_BYTES,
 } from "../okfBundle";
 import { assertCanValidate, packTarball } from "../okfBundleNode";
-import type { ValidationError } from "../okfValidator";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
@@ -35,6 +34,7 @@ import {
 	serializeTask,
 	type TaskDoc,
 } from "../okfSerializer";
+import type { ValidationError } from "../okfValidator";
 import schema from "../schema";
 
 // String FunctionReference — mirrors the codegen-lag workaround used by
@@ -60,7 +60,10 @@ const createTestConvex = () => convexTest(schema, modules);
 // in this file is made as an authenticated caller. The anonymous refusal is
 // pinned in closeDoorsB.test.ts.
 const asCaller = (t: ReturnType<typeof createTestConvex>) =>
-	t.withIdentity({ subject: "okf-validate-caller", organizationSlug: "acme" } as Parameters<typeof t.withIdentity>[0]);
+	t.withIdentity({
+		subject: "okf-validate-caller",
+		organizationSlug: "acme",
+	} as Parameters<typeof t.withIdentity>[0]);
 
 const FIXED_MS = 1_700_000_000_000;
 
@@ -135,9 +138,33 @@ async function storeBundle(
 	buf: Buffer,
 ): Promise<string> {
 	// convex-test exposes ctx.storage.store via the test harness `t.run`.
+	// The storageId path resolves the caller's organisation and ASSERTS the
+	// blob is bound to it (okfValidateStorageOwnership.test.ts). So the
+	// caller's org `acme` is seeded as an active mapping (asCaller is an
+	// ordinary member of it), and the blob is bound to `acme` the way the
+	// upload/store path binds it (a kbUploads row) — validate never binds.
 	return await t.run(async (ctx) => {
+		const mapped = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "acme"))
+			.first();
+		if (mapped === null)
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme",
+				allowedOrchestrators: ["sigma"],
+				scopes: ["view-own-tasks"],
+				displayName: "acme",
+				isActive: true,
+				createdAt: Date.now(),
+			});
 		const blob = new Blob([new Uint8Array(buf)]);
-		return await ctx.storage.store(blob);
+		const storageId = await ctx.storage.store(blob);
+		await ctx.db.insert("kbUploads", {
+			storageId,
+			orgId: "acme",
+			createdAt: Date.now(),
+		});
+		return storageId;
 	});
 }
 
@@ -176,7 +203,7 @@ describe("validate_okf_bundle action — schema violations", () => {
 		const tamperedEntries = [
 			{
 				path: "index.md",
-				content: "---\nokf_version: \"0.1\"\ntype: index\n---\n# Bundle\n",
+				content: '---\nokf_version: "0.1"\ntype: index\n---\n# Bundle\n',
 			},
 			{
 				path: "memories/mem_bad.md",
@@ -193,7 +220,9 @@ describe("validate_okf_bundle action — schema violations", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toBeDefined();
-		expect(result.errors?.some((e: ValidationError) => e.rule === "MISSING_TYPE")).toBe(true);
+		expect(
+			result.errors?.some((e: ValidationError) => e.rule === "MISSING_TYPE"),
+		).toBe(true);
 	});
 
 	test("entry with malformed YAML frontmatter → valid:false + INVALID_YAML", async () => {
@@ -201,12 +230,13 @@ describe("validate_okf_bundle action — schema violations", () => {
 		const tamperedEntries = [
 			{
 				path: "index.md",
-				content: "---\nokf_version: \"0.1\"\ntype: index\n---\n# Bundle\n",
+				content: '---\nokf_version: "0.1"\ntype: index\n---\n# Bundle\n',
 			},
 			{
 				path: "memories/mem_bad_yaml.md",
 				// Missing closing fence → malformed frontmatter.
-				content: "---\ntype: memory-feedback\nDescription without closing fence\nBody.\n",
+				content:
+					"---\ntype: memory-feedback\nDescription without closing fence\nBody.\n",
 			},
 		];
 		const buf = await packTarball(tamperedEntries);
@@ -218,7 +248,9 @@ describe("validate_okf_bundle action — schema violations", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toBeDefined();
-		expect(result.errors?.some((e: ValidationError) => e.rule === "INVALID_YAML")).toBe(true);
+		expect(
+			result.errors?.some((e: ValidationError) => e.rule === "INVALID_YAML"),
+		).toBe(true);
 	});
 });
 
@@ -267,7 +299,10 @@ describe("validate_okf_bundle action — read-only invariant", () => {
 describe("validate_okf_bundle action — counting stats", () => {
 	test("stats count only family entries, not index.md/log.md", async () => {
 		const t = createTestConvex();
-		const memories = [memoryFixture(), memoryFixture({ _id: "mem_validate_002" })];
+		const memories = [
+			memoryFixture(),
+			memoryFixture({ _id: "mem_validate_002" }),
+		];
 		const briefings = [briefingFixture()];
 		const tasks: TaskDoc[] = [];
 		const { entries } = assembleBundle(

@@ -52,7 +52,10 @@
  *                    A row's tier is what the Convex handlers it reaches
  *                    enforce on the data door (master / org, see convexTierOf),
  *                    NOT the MCP transport label: a direct caller of the public
- *                    backend never passes through the MCP layer.
+ *                    backend never passes through the MCP layer. A row whose
+ *                    every door is master-only is an authority tier (R-10),
+ *                    not a tenant model: it is left out of the compare and
+ *                    recorded as `; master-only: read|write` (standard §2).
  *   rbac_adjustment_needed  a remediation decision, no code source => `?`,
  *                    except (1) the tool's own `// oracle-justified: <reason>`
  *                    comment block, immediately before its defineTool( call,
@@ -62,10 +65,13 @@
  *                    refuse), and (2) a `public`/`filtered` scope `reason`
  *                    string, quoted verbatim as `source reason (...)`.
  *   table_purpose    the leading comment of the table in convex/schema.ts
- *                    (banner lines dropped); `?` when there is none.
+ *                    (banner lines dropped); else the `purpose` declared for
+ *                    it in .backend-doctor/dispositions.json (refused when
+ *                    schema.ts already has one); for a row with no table, the
+ *                    first sentence of the tool's own description.
  *   table_conserver_supprimer  a disposition decision (backend-standard §5
  *                    R-13: the table stays / goes / is undecided with an owner
- *                    and a deadline). Its ONLY source is the tool's own
+ *                    and a deadline). Its first source is the tool's own
  *                    `// oracle-disposition: <value>` comment in the block
  *                    immediately before its defineTool( call (same block as
  *                    `oracle-justified:`; each marker's text runs to the next
@@ -80,6 +86,13 @@
  *                    Anything else — another word, a lower-case keyword, a
  *                    bare UNDECIDED, a decision that also says undecided, an
  *                    empty marker — exits 2 and writes nothing.
+ *                    FALLBACK, for a row whose tool carries no marker:
+ *                    the disposition DECLARED in .backend-doctor/dispositions.json
+ *                    (one entry per table, or per tool for a row with no table;
+ *                    CONSERVER / SUPPRIMER / undecided + owner + YYYY-MM-DD
+ *                    deadline). A marker always wins over the file. Missing,
+ *                    stale, out-of-set, bare-undecided or schema-restating file
+ *                    entries refuse (exit 2).
  *   statut_suppression  a current tool is not removed => "".
  *
  * Writer authority (backend-standard R-10) has NO column in the 18-column
@@ -152,6 +165,7 @@ const MCP_SRC = join(ROOT, "mcp-server", "src");
 const CONVEX = join(ROOT, "convex");
 const OUT = join(ROOT, ".backend-doctor", "vp-by-tool.csv");
 const WRITER_OUT = join(ROOT, ".backend-doctor", "vp-writer-tier.csv");
+const DISPOSITIONS = join(ROOT, ".backend-doctor", "dispositions.json");
 const UNKNOWN = "?";
 
 /** Exit 2 with a named population failure; nothing is written. */
@@ -170,6 +184,7 @@ const REQUIRED_INPUTS = [
 	join(MCP_SRC, "registerTool.ts"),
 	join(ROOT, "mcp-server", "tool-exposure.json"),
 	join(CONVEX, "schema.ts"),
+	DISPOSITIONS,
 ];
 {
 	const missing = REQUIRED_INPUTS.filter((f) => !existsSync(f));
@@ -367,12 +382,15 @@ for (const file of walkFiles(CONVEX)) {
 			if (!m || !ts.isIdentifier(d.name)) continue;
 			const cfg = init.arguments[0] && strip(init.arguments[0]);
 			let args = null;
+			let returns = null;
 			let handler = cfg ?? null;
 			if (cfg && ts.isObjectLiteralExpression(cfg)) {
 				for (const p of cfg.properties) {
 					const key = p.name && ts.isIdentifier(p.name) ? p.name.text : null;
 					if (key === "args" && ts.isPropertyAssignment(p))
 						args = p.initializer;
+					if (key === "returns" && ts.isPropertyAssignment(p))
+						returns = p.initializer;
 					if (key === "handler")
 						handler = ts.isPropertyAssignment(p) ? p.initializer : p;
 				}
@@ -382,6 +400,7 @@ for (const file of walkFiles(CONVEX)) {
 				kind: m[2].toLowerCase(),
 				internal: Boolean(m[1]),
 				args,
+				returns,
 				handler,
 			});
 		}
@@ -551,6 +570,51 @@ function patchWritesDynamicKey(arg, scopeNode) {
 	return found;
 }
 
+/**
+ * The cardinality a read door DECLARES in its `returns` validator: "list" for
+ * `v.array(...)`, or for an object envelope carrying an array AND a
+ * continuation/truncation signal (`truncated`, `isDone`, `continueCursor`,
+ * `nextCursor`, `hasMore` — the response-shape markers R-3 reads); "get" for
+ * any other object (a document, possibly with embedded child rows); null when
+ * there is no validator or it cannot be read. `v.union(x, v.null())` is x.
+ */
+const CONTINUATION_KEYS = new Set([
+	"truncated",
+	"isDone",
+	"continueCursor",
+	"nextCursor",
+	"hasMore",
+]);
+function cardinalityOf(fn) {
+	const visit = (node) => {
+		const n = node && strip(node);
+		if (!n || !ts.isCallExpression(n)) return null;
+		const callee = n.expression.getText().replace(/\s+/g, "");
+		if (callee === "v.array") return "list";
+		if (callee === "v.null") return "null";
+		if (callee === "v.union") {
+			const parts = new Set(n.arguments.map(visit));
+			parts.delete("null");
+			return parts.size === 1 ? [...parts][0] : null;
+		}
+		if (callee === "v.object") {
+			const props = objProps(n.arguments[0]);
+			if (!props) return null;
+			const values = Object.values(props).map((p) =>
+				strip(p).getText().replace(/\s+/g, ""),
+			);
+			const hasArray = values.some((t) => t.startsWith("v.array("));
+			const hasSignal = Object.keys(props).some((k) =>
+				CONTINUATION_KEYS.has(k),
+			);
+			return hasArray && hasSignal ? "list" : "get";
+		}
+		return null;
+	};
+	const c = visit(fn.returns);
+	return c === "null" ? null : c;
+}
+
 /** Names an args validator object literal declares, or null when unreadable. */
 function declaredArgNames(argsNode) {
 	const obj = argsNode && strip(argsNode);
@@ -705,12 +769,24 @@ function convexFacts(fnKeys) {
 		idTables: new Set(),
 		writes: new Set(),
 		statusPatch: false,
-		// a patch gets a field under a key the derivation cannot read
-		// (`patch[key] = value`): its status write is undecidable (could-not-judge)
+		// a patch gets a field under a computed key (`patch[key] = value`)
 		dynamicPatch: false,
 		// what those computed keys can carry (dynamicPatchStatusOf): "status",
 		// "no-status", or UNKNOWN; null while no dynamic patch was seen
 		dynamicPatchStatus: null,
+		// the same write facts restricted to each reached door's OWN handler body
+		// (helpers it calls excluded): what decides the verb of a multi-table
+		// write whose helpers mix ops (verbOf).
+		own: {
+			writes: new Set(),
+			statusPatch: false,
+			dynamicPatch: false,
+			dynamicPatchStatus: null,
+		},
+		// `ctx.storage.<method>` calls: file-storage effects outside ctx.db
+		storage: new Set(),
+		// per reached query: the cardinality its `returns` validator declares
+		cardinalities: [],
 		reads: {
 			list: false,
 			get: false,
@@ -726,6 +802,9 @@ function convexFacts(fnKeys) {
 		paginate: false,
 		external: false,
 		guards: new Set(),
+		// per reached Convex function: the gates in its reached code that REFUSE a
+		// caller (see refusingGatesOf); empty when it only resolves or filters.
+		refusingGates: [],
 		// per reached Convex function: the tier its OWN handler enforces on the
 		// data door (see convexTierOf) — the coherence flag compares THESE, not
 		// the MCP transport label.
@@ -748,11 +827,13 @@ function convexFacts(fnKeys) {
 		if (fn.args)
 			for (const m of fn.args.getText().matchAll(/v\.id\(\s*"(\w+)"\s*\)/g))
 				facts.idTables.add(m[1]);
+		if (fn.kind === "query") facts.cardinalities.push(cardinalityOf(fn));
 		if (!fn.handler) continue;
 		const { nodes } = reach(fn.file, fn.handler, { followConvexRuns: true });
 		const fnGuards = new Set();
 		let fnText = "";
 		for (const [, node] of nodes) {
+			const isOwnBody = node === fn.handler;
 			const text = node.getText();
 			// Guard and tier detection read CODE only: a helper named in a comment
 			// ("filterByOrgScope() does not fit") is not a call the handler makes.
@@ -780,6 +861,7 @@ function convexFacts(fnKeys) {
 				if (method === "withSearchIndex") facts.search.add("bm25");
 				if (method === "vectorSearch") facts.search.add("vector");
 				if (method === "paginate") facts.paginate = true;
+				if (/(^|\.)storage$/.test(recv)) facts.storage.add(method);
 				if (!onDb) return;
 				if (method === "query" && litTable) {
 					facts.tablesNamed.add(litTable);
@@ -822,18 +904,23 @@ function convexFacts(fnKeys) {
 						facts.tablesNamed.add(litTable);
 				} else if (method === "insert") {
 					facts.writes.add("insert");
+					if (isOwnBody) facts.own.writes.add("insert");
 					if (litTable) facts.tablesNamed.add(litTable);
 				} else if (
 					method === "patch" ||
 					method === "replace" ||
 					method === "delete"
 				) {
-					facts.writes.add(method === "delete" ? "delete" : "patch");
+					const op = method === "delete" ? "delete" : "patch";
+					facts.writes.add(op);
+					if (isOwnBody) facts.own.writes.add(op);
 					if (litTable && n.arguments.length > 1)
 						facts.tablesNamed.add(litTable);
 					const last = n.arguments[n.arguments.length - 1];
-					if (method !== "delete" && last && patchWritesStatus(last, node))
+					if (method !== "delete" && last && patchWritesStatus(last, node)) {
 						facts.statusPatch = true;
+						if (isOwnBody) facts.own.statusPatch = true;
+					}
 					if (
 						method !== "delete" &&
 						last &&
@@ -841,18 +928,23 @@ function convexFacts(fnKeys) {
 					) {
 						facts.dynamicPatch = true;
 						const seen = dynamicPatchStatusOf(last, node, fn);
-						const prev = facts.dynamicPatchStatus;
-						facts.dynamicPatchStatus =
-							prev === UNKNOWN || seen === UNKNOWN
-								? UNKNOWN
-								: prev === "status" || seen === "status"
-									? "status"
-									: "no-status";
+						facts.dynamicPatchStatus = foldDynamicStatus(
+							facts.dynamicPatchStatus,
+							seen,
+						);
+						if (isOwnBody) {
+							facts.own.dynamicPatch = true;
+							facts.own.dynamicPatchStatus = foldDynamicStatus(
+								facts.own.dynamicPatchStatus,
+								seen,
+							);
+						}
 					}
 				}
 			});
 		}
 		facts.tiers.add(convexTierOf(fnText, fnGuards));
+		facts.refusingGates.push(refusingGatesOf(fnText, fnGuards));
 		if (fn.kind !== "query")
 			facts.writeDoors.push({ key, gate: writerGateOf(fnText, fnGuards) });
 	}
@@ -878,6 +970,27 @@ function convexTierOf(text, guards) {
 	)
 		return "master";
 	return guards.size > 0 ? "org" : "unguarded";
+}
+
+/**
+ * The gates in one door's reached code (comments removed) that REFUSE a
+ * caller, as opposed to resolving it (withOrgScope, resolveOrgContext,
+ * getUserIdentity) or filtering its rows after the read (filterByOrgScope):
+ * requireResolvedCaller / requireScope / requireAuthenticatedCaller (each
+ * raises RBAC_DENIED, convex/lib/auth.ts), requireOrgAdmin, and the
+ * master-only refusal convexTierOf reads. These are the scope checks R-8
+ * looks for when the MCP transport label says there is none.
+ */
+const REFUSING_GUARDS = [
+	"requireResolvedCaller",
+	"requireScope",
+	"requireAuthenticatedCaller",
+];
+function refusingGatesOf(code, guards) {
+	const gates = REFUSING_GUARDS.filter((g) => guards.has(g));
+	if (/\brequireOrgAdmin\s*\(/.test(code)) gates.push("requireOrgAdmin");
+	if (convexTierOf(code, guards) === "master") gates.push("masterOnly");
+	return gates;
 }
 
 /**
@@ -971,24 +1084,33 @@ function verbOf(f) {
 	// (backend-doctor predicates.ts R-2, oracle-axis2.ts R-8).
 	if (f.resolved.length === 0 && f.unresolved.length === 0) return "n/a";
 	if (f.resolved.length === 0) return UNKNOWN;
-	const w = f.writes;
-	if (w.size > 0) {
-		if (w.size === 1 && w.has("insert")) return "CREATE";
-		if (w.size === 1 && w.has("delete")) return "DELETE";
-		if (w.size === 1 && w.has("patch")) {
-			if (f.statusPatch) return "TRANSITION";
-			if (!f.dynamicPatch) return "UPDATE";
-			// A dynamic `patch[key] = value` may carry `status`: decided from the
-			// args validator when the keys trace to it, could-not-judge otherwise.
-			if (f.dynamicPatchStatus === "status") return "TRANSITION";
-			if (f.dynamicPatchStatus === "no-status") return "UPDATE";
-			return UNKNOWN;
-		}
-		if (w.size === 2 && w.has("insert") && w.has("patch")) return "UPSERT";
-		return UNKNOWN; // a mix the closed set has no single verb for
+	if (f.writes.size > 0) {
+		const all = writeVerbOf(
+			f.writes,
+			f.statusPatch,
+			f.dynamicPatch,
+			f.dynamicPatchStatus,
+		);
+		if (all !== UNKNOWN) return all;
+		// A multi-table write keeps ITS verb and declares every table (standard
+		// §2, R-2). When the ops reached through helpers mix (briefingNotes:create
+		// inserts the note, then syncParticipantIndex deletes + re-inserts the
+		// participant index rows), the verb is the door's own: the writes in the
+		// reached doors' OWN handler bodies. Helper writes stay declared in
+		// `table`. Own-body ops that still mix stay `?`.
+		if (f.own.writes.size === 0) return UNKNOWN;
+		return writeVerbOf(
+			f.own.writes,
+			f.own.statusPatch,
+			f.own.dynamicPatch,
+			f.own.dynamicPatchStatus,
+		);
 	}
 	if (f.search.size > 0) return "SEARCH";
-	if (f.external && !f.reads.list && !f.reads.get) return "EXTERNAL-EFFECT";
+	// `ctx.storage.*` is file storage, outside ctx.db: an external effect
+	// declared with what it touches (`_storage`, standard §2 R-2 / R-25).
+	if ((f.external || f.storage.size > 0) && !f.reads.list && !f.reads.get)
+		return "EXTERNAL-EFFECT";
 	if (f.reads.list && !f.reads.get) return "READ-LIST";
 	if (f.reads.get && !f.reads.list) return "READ-GET";
 	// list + get: a list tool that also does a per-row existence/visibility probe
@@ -1003,7 +1125,43 @@ function verbOf(f) {
 		[...f.reads.probeTables].every((t) => !f.reads.listTables.has(t))
 	)
 		return "READ-LIST";
-	return UNKNOWN; // no effect seen, or list+get mixed
+	// list + get otherwise (a by-id parent fetch beside a list of its children,
+	// a list that re-fetches each row by id): the verb's cardinality is what the
+	// reached queries DECLARE in their `returns` validators (cardinalityOf).
+	// All must agree; an unreadable or absent validator keeps `?`.
+	if (f.reads.list && f.reads.get && f.cardinalities.length > 0) {
+		const c = new Set(f.cardinalities);
+		if (c.size === 1 && c.has("list")) return "READ-LIST";
+		if (c.size === 1 && c.has("get")) return "READ-GET";
+	}
+	return UNKNOWN; // no effect seen, or list+get mixed with no readable cardinality
+}
+
+/** Fold two dynamic-patch status verdicts ("status", "no-status", UNKNOWN). */
+function foldDynamicStatus(prev, seen) {
+	return prev === UNKNOWN || seen === UNKNOWN
+		? UNKNOWN
+		: prev === "status" || seen === "status"
+			? "status"
+			: "no-status";
+}
+
+/** The closed write verb of one set of ops, or `?`. */
+function writeVerbOf(w, statusPatch, dynamicPatch, dynamicPatchStatus) {
+	if (w.size === 1 && w.has("insert")) return "CREATE";
+	if (w.size === 1 && w.has("delete")) return "DELETE";
+	if (w.size === 1 && w.has("patch")) {
+		if (statusPatch) return "TRANSITION";
+		if (!dynamicPatch) return "UPDATE";
+		// A dynamic `patch[key] = value` may carry `status`: decided from the
+		// args validator when the keys trace to it (main's #1472), could-not-judge
+		// otherwise.
+		if (dynamicPatchStatus === "status") return "TRANSITION";
+		if (dynamicPatchStatus === "no-status") return "UPDATE";
+		return UNKNOWN;
+	}
+	if (w.size === 2 && w.has("insert") && w.has("patch")) return "UPSERT";
+	return UNKNOWN; // a mix the closed set has no single verb for
 }
 
 // ── MCP tool registrations ──────────────────────────────────────────────────
@@ -1477,6 +1635,36 @@ const WRITES = new Set([
 ]);
 
 const purposes = schemaPurposes();
+
+// ── dispositions (R-13): declared data, validated before any row is written ──
+const FILE_DISPOSITION_SET = ["CONSERVER", "SUPPRIMER", "undecided"];
+const dispositions = (() => {
+	let doc;
+	try {
+		doc = JSON.parse(readFileSync(DISPOSITIONS, "utf8"));
+	} catch (e) {
+		refuseDispositions([`${relative(ROOT, DISPOSITIONS)} unreadable: ${e}`]);
+	}
+	return { tables: doc.tables ?? {}, tools: doc.tools ?? {} };
+})();
+
+function refuseDispositions(problems) {
+	console.error(
+		`REFUSED: ${relative(ROOT, DISPOSITIONS)} does not declare a valid disposition for every row (${problems.length} problem(s)); nothing written/checked`,
+	);
+	for (const p of problems) console.error(`  - ${p}`);
+	process.exit(2);
+}
+
+/** First sentence of a tool description: the purpose of a row whose table
+ * the derivation cannot name (read from the tool's own source). */
+function purposeOfDescription(description) {
+	const text = description.replace(/\s+/g, " ").trim();
+	if (!text || /^[A-Z0-9_]+$/.test(text)) return UNKNOWN; // an unresolved constant
+	const m = /^(.+?[.!?])(\s|$)/.exec(text);
+	return (m ? m[1] : text).slice(0, 240);
+}
+
 const rows = [];
 for (const t of tools) {
 	const { nodes: mcpNodes, convexRefs } = reach(t.file, t.handler, {
@@ -1489,12 +1677,26 @@ for (const t of tools) {
 	const byIdEffect =
 		cf.reads.get || cf.writes.has("patch") || cf.writes.has("delete");
 	if (byIdEffect) for (const tb of cf.idTables) tables.add(tb);
+	// file storage touched through ctx.storage.* is declared like a table
+	if (cf.storage.size > 0) tables.add("_storage");
 	const table = [...tables].sort().join("+");
 	const auth = authorityOf(t.scope);
 	const convexGuards = [...cf.guards].sort();
-	const enforce = convexGuards.length
-		? `${auth.enforce} + convex:${convexGuards.join("/")}`
-		: auth.enforce;
+	// A `public` MCP scope is the TRANSPORT label: a direct caller of the
+	// public backend never crosses it. When EVERY reached Convex door refuses
+	// by a gate of its own (refusingGatesOf), that gate is the scope check and
+	// the cell names it; a door with no refusing gate keeps `AUCUN` (R-8).
+	const doorGates =
+		t.scope.kind === "public" &&
+		cf.refusingGates.length > 0 &&
+		cf.refusingGates.every((g) => g.length > 0)
+			? [...new Set(cf.refusingGates.flat())]
+			: null;
+	const enforce = doorGates
+		? `convex-door(${doorGates.join("/")}) + convex:${convexGuards.join("/")} (MCP transport: public, no transport check)`
+		: convexGuards.length
+			? `${auth.enforce} + convex:${convexGuards.join("/")}`
+			: auth.enforce;
 	const sf = schemaFacts(t.schemaNode);
 	const tokens = Math.ceil(
 		((t.name ?? "").length + t.description.length + sf.text.length) / 4,
@@ -1508,22 +1710,28 @@ for (const t of tools) {
 		]
 			.filter(Boolean)
 			.join(" | ") || UNKNOWN;
+	// a table's purpose: its convex/schema.ts leading comment, else the purpose
+	// declared in dispositions.json (only allowed where schema.ts has none)
+	const purposeOf = (tb) =>
+		purposes.get(tb) || dispositions.tables[tb]?.purpose || UNKNOWN;
 	const purpose = tables.size
 		? [...tables]
 				.sort()
 				.map((tb) =>
-					tables.size > 1
-						? `${tb}: ${purposes.get(tb) || UNKNOWN}`
-						: purposes.get(tb) || UNKNOWN,
+					tables.size > 1 ? `${tb}: ${purposeOf(tb)}` : purposeOf(tb),
 				)
 				.join(" | ")
-		: UNKNOWN;
+		: purposeOfDescription(t.description);
 	const opDetail =
 		[...cf.resolved, ...cf.unresolved.map((u) => `${u}(UNRESOLVED)`)].join(
 			"; ",
 		) || "(no Convex call reached)";
 	rows.push({
 		_tier: effectiveTier(auth.tier, cf),
+		// every reached Convex door refuses all but the fleet master (proven at
+		// the door, never from the MCP label): an authority tier, not a tenant model
+		_convexMasterOnly:
+			cf.tiers.size > 0 && [...cf.tiers].every((x) => x === "master"),
 		_verb: verb,
 		// The tool certainly writes even when its verb is could-not-judge: a
 		// patch-only tool whose patch carries a dynamic key. It keeps its writer
@@ -1567,17 +1775,108 @@ for (const r of rows) {
 		continue;
 	}
 	const g = groups.get(r.table);
-	const read = [
-		...new Set(g.filter((x) => READS.has(x._verb)).map((x) => x._tier)),
-	].sort();
-	const write = [
-		...new Set(g.filter((x) => x._isWrite).map((x) => x._tier)),
-	].sort();
+	const readers = g.filter((x) => READS.has(x._verb));
+	const writers = g.filter((x) => x._isWrite);
+	// Standard §2: read/write coherence is "the SAME tenant model" (R-7), and
+	// writer authority is "a distinct tier from the same set" as reader
+	// authority (R-10; the set is public / org-member / org-admin /
+	// fleet-internal / master). A door that admits ONLY the fleet master,
+	// proven in its own Convex code, is such an authority tier: it lets no
+	// member read or write across orgs, so it cannot split the tenant model.
+	// Those doors are left out of the tenant-model compare and recorded beside
+	// the verdict (`master-only: read|write`); their tier lives in the R-10
+	// writer side-car. A table whose every door is master-only is
+	// COHERENT(master). Comparing master against org here merged the two §2
+	// authority fields into the coherence field — the merge R-14 refuses.
+	const tenantTiers = (rs) =>
+		[
+			...new Set(rs.filter((x) => !x._convexMasterOnly).map((x) => x._tier)),
+		].sort();
+	const read = tenantTiers(readers);
+	const write = tenantTiers(writers);
+	const masterSides = [
+		readers.some((x) => x._convexMasterOnly) ? "read" : "",
+		writers.some((x) => x._convexMasterOnly) ? "write" : "",
+	].filter(Boolean);
+	const tenant = [...new Set([...read, ...write])];
 	if ([...read, ...write].includes(UNKNOWN)) r.rbac_coherence_table = UNKNOWN;
 	else if (read.length && write.length && read.join("+") !== write.join("+"))
 		r.rbac_coherence_table = `INCOHERENT read=${read.join("+")} write=${write.join("+")}`;
+	else if (tenant.length === 0 && masterSides.length)
+		r.rbac_coherence_table = "COHERENT(master)";
 	else
-		r.rbac_coherence_table = `COHERENT(${[...new Set([...read, ...write])].join("+") || "no-effect"})`;
+		r.rbac_coherence_table = `COHERENT(${tenant.join("+") || "no-effect"}${
+			tenant.length && masterSides.length
+				? `; master-only: ${masterSides.join("+")}`
+				: ""
+		})`;
+}
+
+// table_conserver_supprimer — a tool's own marker was applied above; the rest
+// come from dispositions.json, one entry per table, or
+// per tool for a row whose table the derivation cannot name. Missing, stale,
+// out-of-set, bare-undecided or schema-restating entries refuse (exit 2).
+{
+	const problems = [];
+	const used = { tables: new Set(), tools: new Set() };
+	const check = (kind, key, e) => {
+		if (!FILE_DISPOSITION_SET.includes(e.disposition))
+			problems.push(
+				`${key}: disposition "${e.disposition}" is not one of ${FILE_DISPOSITION_SET.join(", ")}`,
+			);
+		if (
+			e.disposition === "undecided" &&
+			!(
+				typeof e.owner === "string" &&
+				e.owner.trim() &&
+				/^\d{4}-\d{2}-\d{2}$/.test(e.deadline ?? "")
+			)
+		)
+			problems.push(`${key}: undecided needs owner and deadline (YYYY-MM-DD)`);
+		if (kind === "tables" && e.purpose && purposes.get(key))
+			problems.push(
+				`${key}: purpose given here but convex/schema.ts already states one`,
+			);
+	};
+	for (const kind of ["tables", "tools"])
+		for (const [key, e] of Object.entries(dispositions[kind]))
+			check(kind, key, e);
+	for (const r of rows) {
+		// a tool's own `oracle-disposition:` marker wins over the file
+		if (r.table_conserver_supprimer !== "") continue;
+		const keys = r.table ? r.table.split("+") : [r.outil];
+		const kind = r.table ? "tables" : "tools";
+		const entries = [];
+		for (const k of keys) {
+			const e = dispositions[kind][k];
+			if (!e) {
+				problems.push(
+					kind === "tables"
+						? `no disposition declared for table ${k}`
+						: `no disposition declared for tool ${k} (a row with no table)`,
+				);
+				continue;
+			}
+			used[kind].add(k);
+			entries.push([k, e]);
+		}
+		const keysOf = (d) =>
+			entries.filter(([, e]) => e.disposition === d).map(([k]) => k);
+		const undecided = entries.filter(([, e]) => e.disposition === "undecided");
+		if (undecided.length) {
+			const [, first] = undecided[0];
+			r.table_conserver_supprimer = `undecided — owner: ${first.owner}, deadline: ${first.deadline} (dispositions.json: ${undecided.map(([k]) => k).join(", ")})`;
+		} else if (keysOf("SUPPRIMER").length) {
+			const keep = keysOf("CONSERVER");
+			r.table_conserver_supprimer = `SUPPRIMER (dispositions.json: ${keysOf("SUPPRIMER").join(", ")}${keep.length ? `; CONSERVER: ${keep.join(", ")}` : ""})`;
+		} else if (entries.length)
+			r.table_conserver_supprimer = `CONSERVER (dispositions.json: ${keysOf("CONSERVER").join(", ")})`;
+	}
+	for (const kind of ["tables", "tools"])
+		for (const key of Object.keys(dispositions[kind]))
+			if (!used[kind].has(key))
+				problems.push(`stale disposition entry ${key} (no row uses it)`);
+	if (problems.length) refuseDispositions([...new Set(problems)]);
 }
 
 rows.sort(

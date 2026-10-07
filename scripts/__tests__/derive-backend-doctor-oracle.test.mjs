@@ -70,6 +70,7 @@ function copyTree() {
 		"convex",
 		".backend-doctor/vp-by-tool.csv",
 		".backend-doctor/vp-writer-tier.csv",
+		".backend-doctor/dispositions.json",
 	])
 		cpSync(join(REPO, rel), join(dir, rel), { recursive: true, filter: skip });
 	return dir;
@@ -93,7 +94,9 @@ describe("derive-backend-doctor-oracle population guard", () => {
 		`PRESENT — the normal tree derives ${TOOL_COUNT} rows, byte-identical to the committed CSV`,
 		() => {
 			const root = copyTree();
-			rmSync(join(root, ".backend-doctor"), { recursive: true });
+			// the two derived CSVs go; the declared input dispositions.json stays
+			rmSync(join(root, ".backend-doctor", "vp-by-tool.csv"));
+			rmSync(join(root, ".backend-doctor", "vp-writer-tier.csv"));
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
 			expect(r.stdout).toContain(`${TOOL_COUNT} rows`);
@@ -165,7 +168,7 @@ describe("derive-backend-doctor-oracle population guard", () => {
 					`expected ${TOOL_COUNT} tools (lexical defineTool( count across mcp-server/src), found ${TOOL_COUNT_SHORT} (AST enumeration)`,
 				);
 				expect(r.stderr).toContain(
-					"mcp-server/src/tools/kbIngest.ts: 3 defineTool( call site(s) in the text, 2 enumerated as tools",
+					"mcp-server/src/tools/kbIngest.ts: 4 defineTool( call site(s) in the text, 3 enumerated as tools",
 				);
 			},
 			TIMEOUT,
@@ -266,18 +269,52 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 	);
 
 	it(
-		"PRESENT — every row that stays INCOHERENT carries a written JUSTIFIED: reason from its source",
+		"PRESENT — a master-only Convex door is an AUTHORITY tier, not a tenant model: businessUnits and profiles are COHERENT, the master-only side recorded",
 		() => {
 			const rows = rowsOf(COMMITTED_CSV);
-			const incoherent = rows.filter((r) =>
-				r.rbac_coherence_table.startsWith("INCOHERENT"),
-			);
-			expect(incoherent.map((r) => r.table)).toEqual(
-				expect.arrayContaining(["businessUnits", "profiles"]),
+			// §2: read/write coherence = "the SAME tenant model"; writer authority =
+			// "a distinct tier from the same set" (R-10). businessUnits: roster-
+			// scoped (org) reads and create; only businessUnits:remove is
+			// master-only. profiles: roster-scoped get_profile; list_peers and every
+			// write master-only. Neither lets a member read or write across orgs.
+			for (const r of rows.filter((x) => x.table === "businessUnits"))
+				expect(r.rbac_coherence_table, r.outil).toBe(
+					"COHERENT(org; master-only: write)",
+				);
+			for (const r of rows.filter((x) => x.table === "profiles"))
+				expect(r.rbac_coherence_table, r.outil).toBe(
+					"COHERENT(org; master-only: read+write)",
+				);
+			// every row that is still INCOHERENT carries a written reason, and
+			// githubRepoMapping (org-scoped on both sides, #1461) is not among them
+			const incoherent = rows.filter((x) =>
+				x.rbac_coherence_table.startsWith("INCOHERENT"),
 			);
 			expect(incoherent.map((r) => r.table)).not.toContain("githubRepoMapping");
 			for (const r of incoherent)
-				expect(r.rbac_adjustment_needed, r.outil).toMatch(/^JUSTIFIED: \S/);
+				expect(r.rbac_adjustment_needed, r.outil).toMatch(
+					/^(CORRIGER|REVOIR|JUSTIFIED): \S/,
+				);
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a tenant-model divergence still flags: create_bu's door losing its org resolver (identity-gated only) beside org reads is INCOHERENT",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/businessUnits.ts",
+				"const scope = await withOrgScope(ctx);\n\t\tif (!isOrchestratorAllowedForScope(scope, args.orchestratorId)) {",
+				"const scope = { isMaster: true, orgSlug: null };\n\t\tif (!isOrchestratorAllowedForScope(scope, args.orchestratorId)) {",
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const list = rowsOf(outOf(root)).find((x) => x.outil === "list_bus");
+			expect(list.rbac_coherence_table).toBe(
+				"INCOHERENT read=org write=identite",
+			);
 		},
 		TIMEOUT,
 	);
@@ -307,7 +344,7 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 	);
 
 	it(
-		"BOTH POLES — get_repo_mapping is COHERENT(org) as committed; a read door that becomes master-only again beside the org-scoped writes flips the table to INCOHERENT",
+		"BOTH POLES — get_repo_mapping is COHERENT(org) as committed; a read door that becomes master-only again beside the org-scoped writes keeps the org tenant model and records the master-only read",
 		() => {
 			// PRESENT pole: the committed row.
 			const committed = rowsOf(COMMITTED_CSV).find(
@@ -327,7 +364,10 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			const get = rowsOf(outOf(root)).find(
 				(x) => x.outil === "get_repo_mapping",
 			);
-			expect(get.rbac_coherence_table).toMatch(/^INCOHERENT /);
+			// R-28: a master-only read beside org-scoped writes is an AUTHORITY
+			// tier, not a second tenant model (no member reads across orgs): the
+			// table stays COHERENT(org) and the master-only side is recorded.
+			expect(get.rbac_coherence_table).toBe("COHERENT(org; master-only: read)");
 			expect(get.rbac_coherence_table).not.toBe(committed.rbac_coherence_table);
 		},
 		TIMEOUT,
@@ -433,6 +473,17 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			);
 			expect(side.length).toBeGreaterThan(0);
 			expect(side).toHaveLength(writes.length);
+			// 54 + create_briefing_note / update_briefing_note, whose verbs are now
+			// read from the door's own body (R-2) instead of `?`. validate_okf_bundle
+			// ASSERTS storage ownership and never binds (Argus REVISE #1465): it is a
+			// read, so it has no writer row. + generate_upload_url (now writes its
+			// upload ticket, CREATE) and claim_upload (binds the blob, UPSERT).
+			expect(
+				side.find((r) => r.outil === "validate_okf_bundle"),
+			).toBeUndefined();
+			expect(oracle.find((r) => r.outil === "validate_okf_bundle").crud).toBe(
+				"READ-GET",
+			);
 			for (const r of side)
 				expect(r.writer_tier, r.outil).toMatch(
 					/^(public|org-member|org-admin|fleet-internal|master)$/,
@@ -910,6 +961,290 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 		},
 		TIMEOUT,
 	);
+});
+
+// ── R-2: every row carries a verb from the closed set. Each `?` the derivation
+// used to emit is resolved by a rule over code, and each rule keeps a
+// could-not-judge pole for the shape it cannot read. ──
+describe("derive-backend-doctor-oracle R-2 closed verb (no `?` on a readable handler)", () => {
+	const committed = (name) =>
+		rowsOf(COMMITTED_CSV).find((x) => x.outil === name);
+	const verbIn = (root, name) =>
+		rowsOf(outOf(root)).find((x) => x.outil === name).crud;
+	const deriveOk = (root) => {
+		const r = derive(root);
+		expect(r.status, r.stderr).toBe(0);
+	};
+
+	it(
+		"PRESENT — no committed row carries crud `?`, and the nine former `?` rows carry the verb their handler reads as",
+		() => {
+			const unknown = rowsOf(COMMITTED_CSV).filter((r) => r.crud === "?");
+			expect(unknown.map((r) => r.outil)).toEqual([]);
+			expect(committed("generate_upload_url").crud).toBe("CREATE");
+			expect(committed("generate_upload_url").table).toBe(
+				"_storage+uploadTickets",
+			);
+			expect(committed("claim_upload").crud).toBe("UPSERT");
+			expect(committed("create_briefing_note").crud).toBe("CREATE");
+			expect(committed("update_briefing_note").crud).toBe("UPDATE");
+			// main's #1472: a computed-key patch is decided from the args validator;
+			// these three declare `status`, so they are TRANSITION.
+			for (const tool of DYNAMIC_PATCH_WRITERS)
+				expect(committed(tool).crud, tool).toBe("TRANSITION");
+			expect(committed("get_fix_pattern").crud).toBe("READ-GET");
+			expect(committed("list_broadcast_status").crud).toBe("READ-LIST");
+			expect(committed("check_messages").crud).toBe("READ-LIST");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a write mixing ops through a helper keeps the door's own verb; a second op in the door's own body is `?` again",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/briefingNotes.ts",
+				"\t\tawait syncParticipantIndex(ctx, noteId, args.participants);",
+				"\t\tawait syncParticipantIndex(ctx, noteId, args.participants);\n\t\tawait ctx.db.delete(noteId);",
+			);
+			deriveOk(root);
+			expect(verbIn(root, "create_briefing_note")).toBe("?");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a storage-only door is EXTERNAL-EFFECT on _storage; with its storage call removed it has no readable effect (`?`)",
+		() => {
+			// generate_upload_url's door also writes its upload ticket (CREATE);
+			// without that insert it is the storage-only shape this rule reads.
+			const storageOnly = copyTree();
+			mutate(
+				storageOnly,
+				"convex/kbMutations.ts",
+				'await ctx.db.insert("uploadTickets", {',
+				"void ({",
+			);
+			deriveOk(storageOnly);
+			expect(verbIn(storageOnly, "generate_upload_url")).toBe(
+				"EXTERNAL-EFFECT",
+			);
+			expect(
+				rowsOf(outOf(storageOnly)).find(
+					(x) => x.outil === "generate_upload_url",
+				).table,
+			).toBe("_storage");
+
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/kbMutations.ts",
+				'await ctx.db.insert("uploadTickets", {',
+				"void ({",
+			);
+			mutate(
+				root,
+				"convex/kbMutations.ts",
+				"const uploadUrl = await ctx.storage.generateUploadUrl();",
+				'const uploadUrl = "";',
+			);
+			// generate_upload_url also reaches the ticketless generateUploadUrl
+			// (no sha256 passed): its storage call goes too
+			mutate(
+				root,
+				"convex/kbMutations.ts",
+				"return await ctx.storage.generateUploadUrl();",
+				'return "";',
+			);
+			// with no storage effect the row has no table: R-13 then requires a
+			// per-tool disposition entry for it (dispositions.json `tools`)
+			const p = join(root, ".backend-doctor", "dispositions.json");
+			const doc = JSON.parse(readFileSync(p, "utf8"));
+			doc.tools.generate_upload_url = {
+				disposition: "CONSERVER",
+				reason: "pole",
+			};
+			writeFileSync(p, JSON.stringify(doc));
+			deriveOk(root);
+			expect(verbIn(root, "generate_upload_url")).toBe("?");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — a list+get read takes its cardinality from its returns validator: without the truncation signal the envelope is one document (READ-GET)",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/messages.ts",
+				'\t\t// True when `limit` truncated the receipts list — "I showed you N of M"\n\t\t// must never render identically to "there are N".\n\t\ttruncated: v.boolean(),\n\t}),',
+				"\t}),",
+			);
+			deriveOk(root);
+			expect(verbIn(root, "list_broadcast_status")).toBe("READ-GET");
+		},
+		TIMEOUT,
+	);
+});
+
+// ── R-8: a public MCP scope is the TRANSPORT label; the scope check that binds
+// a direct caller is the Convex door's own. When every reached door refuses by
+// a gate, the cell names that gate instead of `AUCUN`. ──
+describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex door", () => {
+	const committed = (name) =>
+		rowsOf(COMMITTED_CSV).find((x) => x.outil === name);
+
+	it(
+		"PRESENT — the two public-scope data ops whose doors refuse by requireResolvedCaller carry that gate, not AUCUN",
+		() => {
+			for (const tool of ["validate_mandate_spending", "validate_okf_bundle"]) {
+				const cell = committed(tool).scope_enforcement;
+				expect(cell, tool).not.toMatch(/AUCUN/);
+				expect(cell, tool).toMatch(/^convex-door\(requireResolvedCaller/);
+				expect(cell, tool).toContain("MCP transport: public");
+			}
+			// no committed data-op row keeps a bare zero-scope cell
+			const zero = rowsOf(COMMITTED_CSV).filter(
+				(r) =>
+					r.crud !== "n/a" &&
+					r.crud !== "" &&
+					(r.scope_enforcement === "" || /AUCUN/.test(r.scope_enforcement)),
+			);
+			expect(zero.map((r) => r.outil)).toEqual([]);
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"ABSENT — the same door with its requireResolvedCaller gate removed is AUCUN again",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				"convex/mandates.ts",
+				'requireResolvedCaller(scope, "mandates:validateSpending", {\n\t\t\tmasterOnly: true,\n\t\t});',
+				"",
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(
+				rowsOf(outOf(root)).find((x) => x.outil === "validate_mandate_spending")
+					.scope_enforcement,
+			).toMatch(/^AUCUN\(public_no_scope_check\)/);
+		},
+		TIMEOUT,
+	);
+});
+
+// ── R-13: the disposition is DATA (.backend-doctor/dispositions.json), one
+// entry per table (or per tool whose table the derivation cannot name), read
+// into `table_conserver_supprimer`; never a constant in code. ──
+describe("derive-backend-doctor-oracle R-13 disposition from the declared data file", () => {
+	const DISPOSITIONS = ".backend-doctor/dispositions.json";
+	const editDispositions = (root, fn) => {
+		const p = join(root, DISPOSITIONS);
+		const doc = JSON.parse(readFileSync(p, "utf8"));
+		fn(doc);
+		writeFileSync(p, JSON.stringify(doc, null, "\t"));
+	};
+	const row = (root, name) => rowsOf(outOf(root)).find((x) => x.outil === name);
+
+	it(
+		"PRESENT — every committed row carries a decided disposition, or an undecided one with owner + deadline; no purpose is `?`",
+		() => {
+			const rows = rowsOf(COMMITTED_CSV);
+			for (const r of rows) {
+				const d = r.table_conserver_supprimer;
+				expect(d, r.outil).toMatch(
+					/^(CONSERVER|SUPPRIMER)\b|^undecided — owner: \S+, deadline: \d{4}-\d{2}-\d{2}\b/,
+				);
+				expect(r.table_purpose, r.outil).not.toMatch(/(^|: )\?( \||$)/);
+			}
+			const undecided = rows.filter((r) =>
+				r.table_conserver_supprimer.startsWith("undecided"),
+			);
+			expect(undecided.map((r) => r.outil)).toEqual(["validate_task_payload"]);
+			expect(
+				rowsOf(COMMITTED_CSV).find((x) => x.outil === "list_mandates")
+					.table_conserver_supprimer,
+			).toBe("CONSERVER (dispositions.json: mandates)");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"BOTH POLES — the cell follows the data: flipping mandates to SUPPRIMER flips every mandates row",
+		() => {
+			const root = copyTree();
+			editDispositions(root, (doc) => {
+				doc.tables.mandates.disposition = "SUPPRIMER";
+			});
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(row(root, "list_mandates").table_conserver_supprimer).toBe(
+				"SUPPRIMER (dispositions.json: mandates)",
+			);
+		},
+		TIMEOUT,
+	);
+
+	const refusals = [
+		[
+			"a table with no entry",
+			(doc) => {
+				delete doc.tables.mandates;
+			},
+			"no disposition declared for table mandates",
+		],
+		[
+			"a stale entry no row uses",
+			(doc) => {
+				doc.tables.table_that_does_not_exist = {
+					disposition: "CONSERVER",
+					reason: "x",
+				};
+			},
+			"stale disposition entry table_that_does_not_exist",
+		],
+		[
+			"a disposition outside the closed set",
+			(doc) => {
+				doc.tables.mandates.disposition = "KEEP";
+			},
+			'mandates: disposition "KEEP" is not one of CONSERVER, SUPPRIMER, undecided',
+		],
+		[
+			"a bare undecided (no deadline)",
+			(doc) => {
+				delete doc.tools.validate_task_payload.deadline;
+			},
+			"validate_task_payload: undecided needs owner and deadline (YYYY-MM-DD)",
+		],
+		[
+			"a purpose restating a schema.ts comment",
+			(doc) => {
+				doc.tables.mandates.purpose = "restated";
+			},
+			"mandates: purpose given here but convex/schema.ts already states one",
+		],
+	];
+	for (const [what, edit, message] of refusals)
+		it(
+			`REFUSED — ${what} => exit 2, nothing written`,
+			() => {
+				const root = copyTree();
+				editDispositions(root, edit);
+				const before = readFileSync(outOf(root), "utf8");
+				const r = derive(root);
+				expect(r.status).toBe(2);
+				expect(r.stderr).toContain(message);
+				expect(readFileSync(outOf(root), "utf8")).toBe(before);
+			},
+			TIMEOUT,
+		);
 });
 
 // ── table_conserver_supprimer: the disposition declared at the tool ─────────

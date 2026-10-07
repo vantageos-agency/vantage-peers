@@ -477,6 +477,18 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 		expect(r.content[0].text).toContain("role-not-writer");
 	});
 
+	it("claim_upload stays refused for a viewer", async () => {
+		const { tools } = toolsFor(
+			await contextFor(await personToken("user_viewer")),
+		);
+		const r = (await tools.get("claim_upload")?.({
+			storageId: "kg2anjqa",
+			ticket: "a".repeat(64),
+		})) as ToolResult;
+		expect(r.isError).toBe(true);
+		expect(r.content[0].text).toContain("role-not-writer");
+	});
+
 	it("the exemption is the declaration: without ownStateOnly the same viewer call is refused by the role gate", async () => {
 		// delete_message is also bounded by an owner check, but declares no
 		// ownStateOnly, so a viewer is refused before that check is reached.

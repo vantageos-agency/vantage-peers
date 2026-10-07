@@ -1260,6 +1260,32 @@ export default defineSchema({
 		createdAt: v.number(),
 	}).index("by_storageId", ["storageId"]),
 
+	// ── uploadTickets ─────────────────────────────────────────────────────────
+	// Single-use upload tickets: how a client's own upload becomes its blob
+	// without first-claim. generate_upload_url
+	// (kbMutations:generateUploadUrlWithTicket) issues one per upload URL, bound
+	// to the caller's verified org; only its sha256 is stored. After the upload,
+	// kbMutations:claimUpload(storageId, ticket) binds the storageId to that org
+	// in kbUploads, only for a valid, unused, unexpired ticket of the caller's
+	// own org and a blob created after issuance, and consumes the ticket.
+	//
+	// Index: by_ticketHash — O(1) lookup of a presented ticket.
+	uploadTickets: defineTable({
+		ticketHash: v.string(),
+		orgId: v.string(),
+		// lowercase hex sha256 the client DECLARED for the file it uploads;
+		// claimUpload refuses a blob whose _storage sha256 differs
+		contentSha256: v.string(),
+		createdAt: v.number(),
+		expiresAt: v.number(),
+		usedAt: v.optional(v.number()),
+		storageId: v.optional(v.id("_storage")),
+	})
+		.index("by_ticketHash", ["ticketHash"])
+		// purgeUploadTickets reads expired and used tickets by these, bounded
+		.index("by_expiresAt", ["expiresAt"])
+		.index("by_usedAt", ["usedAt"]),
+
 	// ── oauth_clients ─────────────────────────────────────────────────────────
 	// OAuth 2.0 Dynamic Client Registration (RFC 7591).
 	// One row per registered OAuth client (Claude.ai custom connector, Nadia,
