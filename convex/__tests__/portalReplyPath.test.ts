@@ -235,6 +235,27 @@ describe("PART 1a — what the portal's service-account + seatOrgSlug path accep
 		}
 	});
 
+	test("PRESENT: the seat org's own registered agent wins over a fleet profile of the same name", async () => {
+		// "sigma" is a fleet profile (seed). An agents row of the SEAT's own org
+		// with that name is that org's own identity: accepted, not read as foreign.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("agents", {
+				orgSlug: CGT,
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		const id = await service().mutation(api.messages.sendMessage, {
+			from: "sigma",
+			channel: "neo",
+			content: "own",
+			seatOrgSlug: CGT,
+		});
+		expect(id).toBeDefined();
+	});
+
 	test("the seat path stamps the seat's verified org on the message and its receipts", async () => {
 		const id = await service().mutation(api.messages.sendMessage, {
 			from: "hal",
