@@ -18,6 +18,7 @@ import type * as clientOrgMapping from "../clientOrgMapping.js";
 import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
+import type * as deliveryLedger from "../deliveryLedger.js";
 import type * as diary from "../diary.js";
 import type * as episodes from "../episodes.js";
 import type * as errorMonitor from "../errorMonitor.js";
@@ -122,6 +123,7 @@ declare const fullApi: ApiFromModules<{
   credentials: typeof credentials;
   crons: typeof crons;
   dashboard: typeof dashboard;
+  deliveryLedger: typeof deliveryLedger;
   diary: typeof diary;
   episodes: typeof episodes;
   errorMonitor: typeof errorMonitor;

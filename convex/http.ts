@@ -1,5 +1,5 @@
 import { httpRouter } from "convex/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
@@ -89,6 +89,25 @@ http.route({
 			return new Response("OK - unmapped repo", { status: 200 });
 		}
 
+		// 4b. Delivery idempotency. The provider sends `x-github-delivery` (a GUID) on
+		// EVERY webhook delivery and reuses it on a redelivery. A signed request
+		// without it did not come from the provider's delivery pipeline: refuse it
+		// (400) rather than process it with no dedup. This runs AFTER the signature
+		// check, so an unsigned caller still gets 401 and never touches the ledger.
+		// The claim itself is NOT taken here: each creating mutation below takes it
+		// as the first write of its own transaction (`delivery: stepClaim(...)`), so
+		// the claim and the row it guards commit together or not at all.
+		const deliveryId = request.headers.get("x-github-delivery")?.trim();
+		if (!deliveryId) {
+			return new Response("Missing x-github-delivery", { status: 400 });
+		}
+		const stepClaim = (step: string) => ({
+			deliveryId,
+			step,
+			repo: repoFullName,
+			eventType: eventType ?? "unknown",
+		});
+
 		const orchestrator = mapping.orchestrator as CreatorLiteral;
 		const orchestratorAssignee = mapping.orchestrator as AssigneeLiteral;
 		const project = mapping.project;
@@ -104,7 +123,8 @@ http.route({
 				return;
 			}
 			for (const channel of coordinators) {
-				await ctx.runMutation(internal.messages.sendMessageInternal, {
+				await ctx.runMutation(internal.messages.sendMessageDelivery, {
+					delivery: stepClaim(`reviewer-unresolved:${subject}:${channel}`),
 					from: "system",
 					channel,
 					content: text,
@@ -149,7 +169,8 @@ http.route({
 
 			// 4. Guard: no template or empty steps — notify and exit
 			if (template === null || template.steps.length === 0) {
-				await ctx.runMutation(internal.messages.sendMessageInternal, {
+				await ctx.runMutation(internal.messages.sendMessageDelivery, {
+					delivery: stepClaim("no-template-notice"),
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string} — template issue-resolution-v3 not found, no mission created. ${issue.html_url as string}`,
@@ -212,7 +233,8 @@ http.route({
 				return true;
 			});
 			if (coveringTask) {
-				await ctx.runMutation(internal.tasks.createForWebhook, {
+				await ctx.runMutation(internal.tasks.createForWebhookDelivery, {
+					delivery: stepClaim("bridge-covered"),
 					title: `[Bridge #${issue.number as number}] covered by task ${coveringTask._id}`,
 					description: `New GitHub issue #${issue.number as number} "${issue.title as string}" detected by webhook. Existing open task ${coveringTask._id} ("${coveringTask.title}") already references this issue in its scope — no T0..T(N-1) cascade spawned (Day 98 multi-issue collapse).\n\nWhen the covering task closes, manually verify this issue is resolved + close on GitHub. The auto-resolver (Mechanism c) will cascade-close this Bridge once the covering task is done AND the GH issue is closed.\n\nIssue: ${issue.html_url as string}\nIssue author: @${(issue.user as Record<string, unknown>).login as string}\nRepo: ${repoFullName}`,
 					assignedTo: orchestratorAssignee,
@@ -232,9 +254,10 @@ http.route({
 			let missionId: Id<"missions">;
 			try {
 				console.log(`Creating mission for issue #${issue.number as number}`);
-				missionId = await ctx.runMutation(
-					api.missions.create,
+				const createdMissionId = await ctx.runMutation(
+					internal.missions.createForWebhookDelivery,
 					{
+						delivery: stepClaim("mission"),
 						name: missionName,
 						project,
 						pilot: orchestrator,
@@ -244,6 +267,11 @@ http.route({
 						status: "execute",
 					},
 				);
+				if (createdMissionId === null) {
+					// A concurrent or earlier delivery already claimed the mission step.
+					return new Response("OK - duplicate delivery", { status: 200 });
+				}
+				missionId = createdMissionId;
 				console.log("Mission created:", missionId);
 
 				// 7. Create tasks from template steps (T0-based numbering)
@@ -267,7 +295,8 @@ http.route({
 						assignee = reviewer;
 					}
 
-					await ctx.runMutation(internal.tasks.createForWebhook, {
+					await ctx.runMutation(internal.tasks.createForWebhookDelivery, {
+						delivery: stepClaim(`cascade-task-${i}`),
 						title: `[#${issue.number as number}] T${i} — ${step.title}`,
 						description: `${step.description}\n\nIssue: ${issue.html_url as string}\nIssue author: @${(issue.user as Record<string, unknown>).login as string}\nRepo: ${repoFullName}`,
 						assignedTo: assignee,
@@ -322,7 +351,8 @@ http.route({
 			}
 
 			// 9. Notify orchestrator after mission is fully built
-			await ctx.runMutation(internal.messages.sendMessageInternal, {
+			await ctx.runMutation(internal.messages.sendMessageDelivery, {
+				delivery: stepClaim("issue-opened-notice"),
 				from: "system",
 				channel: orchestrator,
 				content: `[GitHub] New issue #${issue.number as number}: ${issue.title as string}. Mission created with ${template.steps.length} IRP tasks (T0-T${template.steps.length - 1}). Last task assigned to Eta for review. ${issue.html_url as string}`,
@@ -348,7 +378,8 @@ http.route({
 				(label?.name as string | undefined)?.toLowerCase().includes("urgent") ||
 				(label?.name as string | undefined)?.toLowerCase().includes("p0")
 			) {
-				await ctx.runMutation(internal.messages.sendMessageInternal, {
+				await ctx.runMutation(internal.messages.sendMessageDelivery, {
+					delivery: stepClaim("issue-labeled-urgent-notice"),
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] Issue #${issue.number as number} labeled ${label?.name as string}: ${issue.title as string} — ${issue.html_url as string}`,
@@ -403,7 +434,8 @@ http.route({
 
 			// Notify orchestrator of every external comment
 			const commentBody = (comment.body as string) || "";
-			await ctx.runMutation(internal.messages.sendMessageInternal, {
+			await ctx.runMutation(internal.messages.sendMessageDelivery, {
+				delivery: stepClaim("comment-notice"),
 				from: "system",
 				channel: orchestrator,
 				content: `[GitHub] New comment on #${issue.number as number} by ${(comment.user as Record<string, unknown>).login as string}: ${commentBody.slice(0, 200)}${commentBody.length > 200 ? "..." : ""} — ${comment.html_url as string}`,
@@ -411,7 +443,8 @@ http.route({
 
 			// Create mention task if @elpiarthera mentioned
 			if (commentBody.includes("@elpiarthera")) {
-				await ctx.runMutation(internal.tasks.createForWebhook, {
+				await ctx.runMutation(internal.tasks.createForWebhookDelivery, {
+					delivery: stepClaim("comment-mention-task"),
 					title: `[GitHub #${issue.number as number}] Mentioned: ${issue.title as string}`,
 					description: `Comment by ${(comment.user as Record<string, unknown>).login as string}: ${commentBody}\n\nURL: ${comment.html_url as string}`,
 					assignedTo: orchestratorAssignee,
@@ -434,7 +467,8 @@ http.route({
 			// producing ~56 stale tasks across 4 PRs (Day 99 friction harvest).
 			if (issue.state !== "closed") {
 				const commentIssueNumber = issue.number as number;
-				await ctx.runMutation(internal.tasks.createForWebhook, {
+				await ctx.runMutation(internal.tasks.createForWebhookDelivery, {
+					delivery: stepClaim("comment-bridge-task"),
 					title: `[Bridge #${commentIssueNumber}] comment on issue "${(issue.title as string).slice(0, 60)}"`,
 					description: `New comment on GitHub issue #${commentIssueNumber} by ${(comment.user as Record<string, unknown>).login as string}.\n\nComment: ${commentBody.slice(0, 500)}${commentBody.length > 500 ? "..." : ""}\n\nIssue: ${issue.html_url as string}\nComment: ${comment.html_url as string}\nRepo: ${repoFullName}\n\n[Day 98 F4] Bridge task only — check if issue #${commentIssueNumber} is already covered by an existing IRP mission. If yes, close this task. If no, escalate to ${orchestrator}.`,
 					assignedTo: orchestratorAssignee,
@@ -455,7 +489,8 @@ http.route({
 			const issue = payload.issue as Record<string, unknown>;
 			const assignee = payload.assignee as Record<string, unknown> | undefined;
 			if (assignee?.login === "elpiarthera") {
-				await ctx.runMutation(internal.tasks.createForWebhook, {
+				await ctx.runMutation(internal.tasks.createForWebhookDelivery, {
+					delivery: stepClaim("assigned-task"),
 					title: `[GitHub #${issue.number as number}] Assigned: ${issue.title as string}`,
 					description: `Assigned to elpiarthera\n\nURL: ${issue.html_url as string}`,
 					assignedTo: orchestratorAssignee,
@@ -465,7 +500,8 @@ http.route({
 					createdBy: "system",
 					tags: ["github", "assigned"],
 				});
-				await ctx.runMutation(internal.messages.sendMessageInternal, {
+				await ctx.runMutation(internal.messages.sendMessageDelivery, {
+					delivery: stepClaim("assigned-notice"),
 					from: "system",
 					channel: orchestrator,
 					content: `[GitHub] Assigned to you: #${issue.number as number} ${issue.title as string} — ${issue.html_url as string}`,
@@ -491,7 +527,8 @@ http.route({
 			// pushes before this fix).
 			// Reviewer + liveness are resolved from data inside the mutation
 			// (convex/lib/reviewRouting.ts) — no assignee is passed from here.
-			const reviewTaskId: Id<"tasks"> | null = await ctx.runMutation(internal.tasks.createOrUpdateReviewTask, {
+			const reviewTaskId: Id<"tasks"> | null | "duplicate" = await ctx.runMutation(internal.tasks.createOrUpdateReviewTaskDelivery, {
+				delivery: stepClaim("review-task"),
 				repoFullName,
 				prNumber: pr.number as number,
 				prTitle: pr.title as string,
@@ -502,6 +539,9 @@ http.route({
 				tags: ["github", "pr-review", action as string],
 			});
 
+			if (reviewTaskId === "duplicate") {
+				return new Response("OK - duplicate delivery", { status: 200 });
+			}
 			if (reviewTaskId === null) {
 				// REVIEWER_UNRESOLVED: nothing was created; say so, visibly.
 				await notifyReviewerUnresolved(`${repoFullName} PR #${pr.number as number}`);
@@ -512,7 +552,8 @@ http.route({
 			const reviewTask = await ctx.runQuery(internal.tasks.getByIdForWebhook, {
 				taskId: reviewTaskId,
 			});
-			await ctx.runMutation(internal.messages.sendMessageInternal, {
+			await ctx.runMutation(internal.messages.sendMessageDelivery, {
+				delivery: stepClaim("review-notice"),
 				from: "system",
 				channel: reviewTask?.assignedTo ?? orchestrator,
 				content: `[GitHub] ${actionLabel}: ${repoFullName} PR #${pr.number as number} by ${(pr.user as Record<string, unknown>)?.login as string ?? "unknown"}: ${pr.title as string} — ${pr.html_url as string}`,
@@ -534,7 +575,8 @@ http.route({
 			const reviewBody = (review.body as string || "").slice(0, 200);
 			const bodySnippet = reviewBody ? ` — "${reviewBody}${(review.body as string || "").length > 200 ? "..." : ""}"` : "";
 
-			await ctx.runMutation(internal.messages.sendMessageInternal, {
+			await ctx.runMutation(internal.messages.sendMessageDelivery, {
+				delivery: stepClaim("review-submitted-notice"),
 				from: "system",
 				channel: orchestrator,
 				content: `[GitHub] PR #${pr.number as number} review: ${reviewState} by ${reviewer}${bodySnippet}. ${pr.title as string} — ${pr.html_url as string}`,

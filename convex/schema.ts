@@ -1120,6 +1120,23 @@ export default defineSchema({
 		expiresAt: v.number(),
 	}).index("by_code", ["code"]),
 
+	// ── webhookDeliveries ────────────────────────────────────────────────────
+	// Idempotency ledger for POST /github/webhook. One row per (GitHub delivery,
+	// creating step): `deliveryId` is the `x-github-delivery` GUID (identical on a
+	// redelivery), `step` names the creating call site inside that delivery. The
+	// row is inserted by `claimDeliveryStep` as the FIRST write of the very
+	// mutation that creates the task/message/mission, so claim and work commit
+	// together or not at all. Purged by cron (deliveryLedger:purgeExpired).
+	webhookDeliveries: defineTable({
+		deliveryId: v.string(),
+		step: v.string(),
+		repo: v.string(),
+		eventType: v.string(),
+		receivedAt: v.number(),
+	})
+		.index("by_deliveryId_and_step", ["deliveryId", "step"])
+		.index("by_receivedAt", ["receivedAt"]),
+
 	// ── oauth_person_codes ───────────────────────────────────────────────────
 	// Authorization codes of the PERSON flow (GET /authorize -> Clerk sign-in ->
 	// org picker -> consent). Only the SHA-256 digest of the code is stored.
