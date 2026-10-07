@@ -250,6 +250,40 @@ describe("upload ticket bound to the declared content sha256", () => {
 		expect(await bindingsOf(t, leaked)).toEqual([]);
 	});
 
+	// Origin: Argus REVISE at d460b96 (M5) and Eta REVISE at 4907062. The test
+	// above is stopped by the content binding, not by the owner check. This one
+	// has org-B's ticket declare the SAME sha256 as org-A's blob, issued before
+	// the upload, with org-A already holding the claim: only the other-org-owner
+	// check in claimUpload can refuse it. Without it, org-B's ticket is consumed
+	// and claim_upload returns {orgId: "org-B"} for a blob whose kbUploads row is
+	// org-A's.
+	test("REFUSED — org-B's ticket declaring the SAME sha256 cannot claim a blob org-A already holds; row unchanged, ticket not consumed", async () => {
+		const t = createT();
+		await seedOrg(t, "org-A");
+		await seedOrg(t, "org-B");
+		const shared = await bundle("shared file");
+		const a = await issue(t, "org-A", sha256Of(shared));
+		const b = await issue(t, "org-B", sha256Of(shared));
+		const storageId = await upload(t, shared);
+		await asOrg(t, "org-A").mutation(CLAIM, { storageId, ticket: a.ticket });
+		const before = await bindingsOf(t, storageId);
+		expect(before.map((r) => r.orgId)).toEqual(["org-A"]);
+
+		await expect(
+			asOrg(t, "org-B").mutation(CLAIM, { storageId, ticket: b.ticket }),
+		).rejects.toThrow(/AUTH_STORAGE_NOT_OWNED/);
+
+		expect(await bindingsOf(t, storageId)).toEqual(before);
+		const tickets = await t.run(async (ctx) =>
+			ctx.db
+				.query("uploadTickets")
+				.collect(),
+		);
+		const orgB = tickets.filter((r) => r.orgId === "org-B");
+		expect(orgB).toHaveLength(1);
+		expect(orgB[0].usedAt).toBeUndefined();
+	});
+
 	test("REFUSED — a blob whose content differs from the declared hash; the ticket stays usable for the declared file", async () => {
 		const t = createT();
 		await seedOrg(t, "org-A");
