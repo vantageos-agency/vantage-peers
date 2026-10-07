@@ -164,9 +164,8 @@ const READ_ONLY_TOOLS = new Set([
 	"search_tasks_by_keyword",
 	"search_messages_by_keyword",
 	"search_briefing_notes_by_keyword",
-	// Day 107 — OKF Phase 1 T3 (PR #850): export action surfaces a tarball without
-	// mutating the namespace state; readOnlyHint=true at exportOkfBundle.ts:108.
-	"export_okf_bundle",
+	// export_okf_bundle is NOT here: it stores a blob and binds its storageId to
+	// the exporter's org (kbUploads), so it writes (readOnlyHint=false).
 	// Day 108 — OKF Phase 2 B1 (mission k5779qbxh, task k1796g7g): validate
 	// action runs the pure validator against a fetched tarball without
 	// touching the DB; readOnlyHint=true at validateOkfBundle.ts.

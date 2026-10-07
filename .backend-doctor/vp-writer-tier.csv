@@ -1,5 +1,6 @@
 outil,table,crud,writer_tier,writer_gate,write_doors
-import_okf_bundle,_storage+agents+briefingNotes+client_org_mapping+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
+import_okf_bundle,_storage+agents+briefingNotes+client_org_mapping+kbUploads+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
+export_okf_bundle,_storage+briefingNotes+client_org_mapping+kbUploads+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:exportOkfBundle=orgResolver
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
 claim_upload,_storage+kbUploads+uploadTickets,UPSERT,org-member,orgResolver,kbMutations:claimUpload=orgResolver
 generate_upload_url,_storage+uploadTickets,CREATE,org-member,orgResolver,kbMutations:generateUploadUrl=orgResolver; kbMutations:generateUploadUrlWithTicket=orgResolver

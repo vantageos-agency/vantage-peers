@@ -430,6 +430,23 @@ export const exportOkfBundle = action({
 			{ type: "application/x-tar" },
 		);
 		const storageId = await ctx.storage.store(blob);
+		// OWNERSHIP AT CREATION — the producer binds the id it just created to
+		// the exporter's verified org BEFORE the URL is returned (the producer
+		// path of kbMutations:getStorageOwner's contract; import and validate
+		// only ASSERT it). Unbound, the blob would be importable by any org that
+		// learned the id. The org comes from the RESOLVED scope, never an
+		// argument. The fleet master has no org slug and stays unbound (it may
+		// read any blob).
+		const exporterScope = await ctx.runQuery(
+			internal.lib.auth.resolveOrgScopeForAction,
+			{},
+		);
+		if (!exporterScope.isMaster && exporterScope.orgSlug !== null) {
+			await ctx.runMutation(
+				internal.kbMutations.bindOrAssertStorageOwnership,
+				{ storageId, orgId: exporterScope.orgSlug },
+			);
+		}
 		const bundleUrl = await ctx.storage.getUrl(storageId);
 		if (bundleUrl === null) {
 			throw new Error(
@@ -953,6 +970,40 @@ export const importOkfBundle = action({
 
 		let buf: Buffer;
 		if (args.storageId) {
+			// OWNERSHIP GATE — a storageId is a handle into the SHARED `_storage`,
+			// so passing the namespace gate is not authority to read someone
+			// else's blob: importing it would copy another organisation's bundle
+			// into the caller's own namespace. ASSERT-ONLY, like validateOkfBundle:
+			// the binding is written by the upload/store/export paths, never by
+			// import, so the first org to import a leaked id does NOT become its
+			// owner. The caller is resolved from its VERIFIED identity (never an
+			// argument) and checked BEFORE any ctx.storage.get. Unbound ->
+			// AUTH_STORAGE_UNBOUND; bound to another org -> AUTH_STORAGE_NOT_OWNED.
+			// Master (the fleet's service account) keeps reading any blob.
+			// `isolation-contract:` alsoRefusePreOrg — an action has no reactive
+			// subscriber (grep -rln "importOkfBundle" in vantage-peers-dashboard,
+			// excluding node_modules and .next -> 0 hits).
+			const scope = await ctx.runQuery(
+				internal.lib.auth.resolveOrgScopeForAction,
+				{},
+			);
+			requireResolvedCaller(scope, "okfBundleNode:importOkfBundle", {
+				alsoRefusePreOrg: true,
+			});
+			if (!scope.isMaster) {
+				const owner: string | null = await ctx.runQuery(
+					internal.kbMutations.getStorageOwner,
+					{ storageId: args.storageId },
+				);
+				if (owner === null)
+					throw new Error(
+						"AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store/export, never by import.",
+					);
+				if (owner !== scope.orgSlug)
+					throw new Error(
+						"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+					);
+			}
 			const blob = await ctx.storage.get(args.storageId);
 			if (!blob) {
 				throw new Error(

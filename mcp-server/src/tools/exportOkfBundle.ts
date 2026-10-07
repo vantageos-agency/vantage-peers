@@ -123,7 +123,9 @@ export function registerExportOkfBundle(
 			"EXAMPLE: export_okf_bundle namespace='project/elpi-corp' format='tarball'.",
 		exportOkfBundleArgsSchema,
 		{
-			readOnlyHint: true,
+			// Not read-only: the export stores a blob and binds its storageId to the
+			// exporter's org (kbUploads), so import/validate can assert ownership.
+			readOnlyHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Export OKF bundle",
