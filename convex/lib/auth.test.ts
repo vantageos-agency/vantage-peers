@@ -471,3 +471,128 @@ describe("requireScope", () => {
 		expect(() => requireScope(irisRhScope, "view-own-tasks")).not.toThrow();
 	});
 });
+
+// =============================================================================
+// connector agent credential — a ChatGPT / Claude.ai connector reaches Convex as
+// the SERVICE ACCOUNT (no org of its own). Measured at 386dd4b: the Convex
+// credential lock (requireAgentCredentialMatch) is a no-op for that caller
+// whatever agent name it asserts, so it is NOT where a connector's
+// AGENT_CREDENTIAL_REQUIRED comes from (that refusal is the MCP-layer
+// checkActorBinding, pinned in mcp-server/test/connector-agent-identity.test.ts).
+// These poles pin the Convex half in both directions.
+// =============================================================================
+
+describe("connector agent credential", () => {
+	const asServiceAccount = (t: ReturnType<typeof createTestConvex>) =>
+		t.withIdentity({ subject: "test-service-account-user-id" });
+	const adminOf = (t: ReturnType<typeof createTestConvex>, org: string) =>
+		t.withIdentity({
+			subject: `admin-of-${org}`,
+			org_slug: org,
+			org_role: "org:admin",
+		} as Parameters<ReturnType<typeof createTestConvex>["withIdentity"]>[0]);
+
+	async function seedWorld() {
+		const t = createTestConvex();
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "iris-rh",
+			allowedOrchestrators: ["clio", "hélios"],
+		});
+		await seedOrgMapping(t, {
+			clerkOrgSlug: "other-hr",
+			allowedOrchestrators: ["clio", "zed"],
+		});
+		await t.run(async (ctx) => {
+			for (const o of ["clio", "hélios", "zed"]) {
+				await ctx.db.insert("profiles", {
+					orchestratorId: o,
+					name: o,
+					static: { role: o, workspace: "test", capabilities: [] },
+					dynamic: { lastSeen: Date.now(), sessionCount: 1 },
+				});
+			}
+		});
+		const ids: Record<string, string> = {};
+		for (const [org, name] of [
+			["iris-rh", "clio"],
+			["iris-rh", "hélios"],
+			["other-hr", "clio"],
+		] as const) {
+			ids[`${org}/${name}`] = await adminOf(t, org).mutation(
+				api.agents.registerAgent,
+				{ orgSlug: org, name },
+			);
+		}
+		return { t, ids };
+	}
+
+	test("known agent, service account, seat org, no credential: delivered (the lock is a no-op for this caller)", async () => {
+		const { t } = await seedWorld();
+		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
+			from: "clio",
+			channel: "hélios",
+			content: "x",
+			seatOrgSlug: "iris-rh",
+		});
+		expect(id).toBeTruthy();
+	});
+
+	test("accent spelling: the accented agent sends under its own spelling", async () => {
+		const { t } = await seedWorld();
+		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
+			from: "hélios",
+			channel: "clio",
+			content: "x",
+			seatOrgSlug: "iris-rh",
+		});
+		expect(id).toBeTruthy();
+	});
+
+	test("verifiedActor of clio asserting from=hélios: AGENT_IDENTITY_MISMATCH", async () => {
+		const { t, ids } = await seedWorld();
+		await expect(
+			asServiceAccount(t).mutation(api.messages.sendMessage, {
+				from: "hélios",
+				channel: "clio",
+				content: "x",
+				seatOrgSlug: "iris-rh",
+				verifiedActor: {
+					agentId: ids["iris-rh/clio"] as never,
+					orgSlug: "iris-rh",
+				},
+			}),
+		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
+	});
+
+	test("another org's clio cannot act as the iris-rh clio: ORG_MISMATCH", async () => {
+		const { t, ids } = await seedWorld();
+		await expect(
+			asServiceAccount(t).mutation(api.messages.sendMessage, {
+				from: "clio",
+				channel: "hélios",
+				content: "x",
+				seatOrgSlug: "iris-rh",
+				verifiedActor: {
+					agentId: ids["other-hr/clio"] as never,
+					orgSlug: "other-hr",
+				},
+			}),
+		).rejects.toThrow(/ORG_MISMATCH/);
+	});
+
+	test("an org member (not the service account) with no credential is still refused AGENT_CREDENTIAL_REQUIRED", async () => {
+		const { t } = await seedWorld();
+		await expect(
+			t
+				.withIdentity({
+					subject: "member-iris",
+					organizationId: "iris-rh",
+				} as Parameters<ReturnType<typeof createTestConvex>["withIdentity"]>[0])
+				.mutation(api.messages.sendMessage, {
+					from: "clio",
+					channel: "hélios",
+					content: "x",
+				}),
+		).rejects.toThrow(/AGENT_CREDENTIAL_REQUIRED/);
+	});
+});

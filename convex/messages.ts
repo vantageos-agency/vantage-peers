@@ -768,7 +768,14 @@ export const sendMessage = mutation({
 			args.agentCredentialSecret,
 			from,
 			scope.orgSlug,
-			{ scope, verifiedActor: args.verifiedActor, declaredOrgSlug: args.tenantId },
+			{
+				scope,
+				verifiedActor: args.verifiedActor,
+				// The org the call names: the explicit tenantId, else the seat org the
+				// service account forwarded (already refused above when it disagrees
+				// with tenantId). A verifiedActor of another org is then ORG_MISMATCH.
+				declaredOrgSlug: args.tenantId ?? seatOrgSlug,
+			},
 		);
 
 		// The sender derives from the verified caller: a member of an org may
