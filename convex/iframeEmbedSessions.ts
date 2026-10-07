@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { withOrgScope, type OrgScope } from "./lib/auth";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // iframeEmbedSessions — session registry for VP Gen UI iframe embeds.
@@ -86,6 +87,9 @@ export const createSession = mutation({
 		return await ctx.db.insert("iframeEmbedSessions", {
 			sessionId: args.sessionId,
 			tenantId,
+			// The id of the stored tenant, from the same mapping join every other
+			// stamped write uses. A fleet session with no tenant stays unstamped.
+			tenantOrgId: await clerkOrgIdForSlug(ctx, tenantId),
 			origin: args.origin,
 			userId: args.userId,
 			createdAt: now,

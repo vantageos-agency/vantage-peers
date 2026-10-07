@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { MutationCtx, query } from "./_generated/server";
 import { withOrgScope } from "./lib/auth";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orgMembership — audit record of who administers which organisation.
@@ -69,6 +70,7 @@ export async function upsertAdminMembership(
 
 	await ctx.db.insert("orgMembership", {
 		clerkOrgSlug,
+		clerkOrgId: await clerkOrgIdForSlug(ctx, clerkOrgSlug),
 		clerkUserId,
 		role: "admin",
 		createdAt: now,

@@ -100,6 +100,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
+import { clerkOrgIdForSlug } from "../lib/orgClerkId";
 
 // ── Budgets ─────────────────────────────────────────────────────────────────
 // TWO DISTINCT BUDGETS, and both bind. They are measured in different units and
@@ -452,7 +453,11 @@ async function processPage(
 						`table tasks, cursor ${cursor}: patch number ${writes + 1} against a write budget of ${budgets.writeBudget}. Nothing from this pass was written.`,
 					);
 				}
-				await ctx.db.patch(task._id, { orgId: org });
+				const orgClerkId = await clerkOrgIdForSlug(ctx, org);
+				await ctx.db.patch(task._id, {
+					orgId: org,
+					...(orgClerkId === undefined ? {} : { clerkOrgId: orgClerkId }),
+				});
 				delta.stamped++;
 				writes++;
 			}

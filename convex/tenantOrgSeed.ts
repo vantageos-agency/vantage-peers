@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // seedClientOrgMapping — idempotent per-org row provisioning.
@@ -126,6 +127,7 @@ export const bindScopeProfileToOrg = internalMutation({
 
 		await ctx.db.patch(profile._id, {
 			clerkOrgSlug: args.clerkOrgSlug,
+			clerkOrgId: await clerkOrgIdForSlug(ctx, args.clerkOrgSlug),
 			updatedAt: Date.now(),
 		});
 		return profile._id;

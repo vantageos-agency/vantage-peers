@@ -53,6 +53,7 @@ import {
 	type QueryCtx,
 } from "./_generated/server";
 import { withOrgScope } from "./lib/auth";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Master sentinel + client-org fetch
@@ -454,7 +455,13 @@ export const backfillReceiptTenants = internalMutation({
 					// selection query above is ever loosened.
 					const current = await ctx.db.get(receipt._id);
 					if (current !== null && current.tenantId === undefined) {
-						await ctx.db.patch(receipt._id, { tenantId: tenantSlug });
+						const tenantClerkOrgId = await clerkOrgIdForSlug(ctx, tenantSlug);
+						await ctx.db.patch(receipt._id, {
+							tenantId: tenantSlug,
+							...(tenantClerkOrgId === undefined
+								? {}
+								: { tenantOrgId: tenantClerkOrgId }),
+						});
 						patched++;
 					}
 				}
