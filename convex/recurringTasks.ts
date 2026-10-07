@@ -16,6 +16,7 @@ import {
 } from "./lib/auth";
 import { requireAuthenticatedCaller } from "./tasks";
 import { resolveHumanActor } from "./lib/humanActor";
+import { taskActorIdFields } from "./lib/actorIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -622,6 +623,10 @@ export const processDueTasks = internalMutation({
 					// inference: the generated task belongs to whoever owns the
 					// schedule, by definition.
 					orgId: recurring.orgId,
+					...(await taskActorIdFields(ctx, recurring.orgId, {
+						createdBy: recurring.createdBy,
+						assignedTo: recurring.assignedTo,
+					})),
 					createdAt: now,
 					updatedAt: now,
 				});

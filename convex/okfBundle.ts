@@ -54,6 +54,7 @@ import {
 } from "./okfSerializer";
 import type { BundleEntry } from "./okfValidator";
 import { creatorValidator, memoryTypeValidator } from "./schema";
+import { taskActorIdFields } from "./lib/actorIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
@@ -789,6 +790,10 @@ export const _insertImportedTask = internalMutation({
 			createdAt: args.now,
 			updatedAt: args.now,
 			orgId,
+			...(await taskActorIdFields(ctx, orgId, {
+				createdBy: args.createdBy,
+				assignedTo: args.assignedTo,
+			})),
 		});
 	},
 });

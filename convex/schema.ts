@@ -178,6 +178,12 @@ export default defineSchema({
 	// channel: "broadcast" | "pi" | "tau" | "phi" | "pi,tau"
 	messages: defineTable({
 		from: creatorValidator,
+		// R-53 identity-by-ID (Pi ruling (b)/(f), task k174d95s5qqy8t2r5rdrz3pr3d8fqv82):
+		// the sender BY ID. For an agent the `agents` row `_id` (as a string), for a
+		// person the stable principal "user:<subject>". `from` stays the display
+		// LABEL. Optional: expand phase, rows written before it are filled by
+		// migrations/backfill_actor_ids and undecidable ones stay unset.
+		fromId: v.optional(v.string()),
 		fromInstanceId: v.optional(v.string()), // "pi-chromebook", "tau-vps-1"
 		tenantId: v.optional(v.string()),
 		channel: v.string(),
@@ -187,6 +193,7 @@ export default defineSchema({
 	})
 		.index("by_day", ["sessionDay"])
 		.index("by_from", ["from", "createdAt"])
+		.index("by_fromId", ["fromId", "createdAt"])
 		.index("by_channel", ["channel", "createdAt"])
 		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"])
 		// Day 103 — tenant-scoped listing for Clerk callers (task k176wgsrhha0fr0dxxahctvhw588q5a1).
@@ -213,11 +220,15 @@ export default defineSchema({
 	messageReceipts: defineTable({
 		messageId: v.id("messages"),
 		recipient: creatorValidator, // role-level: "pi" | "tau" | "phi"
+		// The recipient BY ID: the `agents` row `_id` for an agent, "user:<subject>"
+		// for a person (R-53; see messages.fromId). `recipient` stays the label.
+		recipientId: v.optional(v.string()),
 		recipientInstanceId: v.optional(v.string()), // instance-level: "pi-vps"
 		tenantId: v.optional(v.string()),
 		readAt: v.optional(v.number()), // undefined = unread, ms epoch = read
 	})
 		.index("by_recipient_unread", ["recipient", "readAt"])
+		.index("by_recipientId_unread", ["recipientId", "readAt"])
 		.index("by_instance_unread", ["recipientInstanceId", "readAt"])
 		.index("by_message", ["messageId"])
 		.index("by_tenant_recipient_unread", ["tenantId", "recipient", "readAt"])
@@ -330,6 +341,16 @@ export default defineSchema({
 		tags: v.optional(v.array(v.string())),
 		// Orchestrator or person assigned — open string (issue #132)
 		assignedTo: v.string(),
+		// R-53 identity-by-ID (Pi ruling (b)/(f)): the actors BY ID. The `agents` row
+		// `_id` (string) for an agent, "user:<subject>" for a person. The name columns
+		// (assignedTo / createdBy / lastAssignedTo) stay the display LABELS and the
+		// authorisation compare until the door lanes move to the IDs. Optional:
+		// expand phase; filled by migrations/backfill_actor_ids, undecidable stays unset.
+		assignedToId: v.optional(v.string()),
+		createdById: v.optional(v.string()),
+		lastAssignedToId: v.optional(v.string()),
+		cancelledById: v.optional(v.string()),
+		reviewArtifactAttachedById: v.optional(v.string()),
 		priority: v.union(
 			v.literal("urgent"),
 			v.literal("high"),
@@ -521,6 +542,7 @@ export default defineSchema({
 		reviewPrNumber: v.optional(v.number()),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
+		.index("by_assigneeId_status", ["assignedToId", "status"])
 		.index("by_project", ["project", "status"])
 		.index("by_priority", ["priority", "status"])
 		.index("by_status", ["status", "createdAt"])
